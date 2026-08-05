@@ -16,3 +16,11 @@ flash = ["dep:nusb", "dep:pollster"]
 ferrotherm = { version = "0.5", path = ".." }
 nusb = { version = "0.1", optional = true }
 pollster = { version = "0.4", optional = true }
+
+[[example]]
+name = "idcode"
+required-features = ["flash"]
+
+[[example]]
+name = "probe"
+required-features = ["flash"]

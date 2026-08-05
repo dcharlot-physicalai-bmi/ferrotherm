@@ -123,6 +123,66 @@ pub fn find_sync(config: &[u8]) -> Option<usize> {
         .map(|i| i + 4)
 }
 
+
+/// A decoded configuration packet.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Packet {
+    Nop,
+    Write { reg: u32, data: Vec<u32> },
+    Read { reg: u32, count: u32 },
+    /// Type-2 continuation of the previous register.
+    Continue { words: usize },
+    Unknown(u32),
+}
+
+/// Walk a configuration word stream from the sync word onward. Returns the packets in order;
+/// stops at the end of the buffer. Used to validate our encoders against real bitstreams.
+pub fn decode(words: &[u32]) -> Vec<Packet> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < words.len() {
+        let w = words[i];
+        i += 1;
+        if w == NOOP {
+            out.push(Packet::Nop);
+            continue;
+        }
+        let typ = w >> 29;
+        match typ {
+            1 => {
+                let op = (w >> 27) & 0x3;
+                let reg = (w >> 13) & 0x3FFF;
+                let count = (w & 0x7FF) as usize;
+                match op {
+                    1 => out.push(Packet::Read { reg, count: count as u32 }),
+                    2 => {
+                        let end = (i + count).min(words.len());
+                        out.push(Packet::Write { reg, data: words[i..end].to_vec() });
+                        i = end;
+                    }
+                    _ => out.push(Packet::Unknown(w)),
+                }
+            }
+            2 => {
+                let count = (w & 0x07FF_FFFF) as usize;
+                let end = (i + count).min(words.len());
+                out.push(Packet::Continue { words: end - i });
+                i = end;
+            }
+            _ => out.push(Packet::Unknown(w)),
+        }
+    }
+    out
+}
+
+/// Read a big-endian word stream out of raw configuration bytes.
+pub fn to_words(config: &[u8]) -> Vec<u32> {
+    config
+        .chunks_exact(4)
+        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +225,25 @@ mod tests {
     }
 
     /// Packet encodings against the values documented in UG470.
+
+    /// Our own encoders must decode back to themselves — and the decoder must agree with the
+    /// packet layout the device actually accepts (see examples/decode_bit.rs, run against a
+    /// real generated bitstream).
+    #[test]
+    fn encode_decode_roundtrip() {
+        let mut words = vec![DUMMY, SYNC];
+        words.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::RCRC]);
+        words.push(NOOP);
+        words.extend_from_slice(&[type1_write(reg::IDCODE, 1), 0x0363_1093]);
+        words.extend_from_slice(&[type1_read(reg::STAT, 1)]);
+        let sync_at = find_sync(&crate::frame::words_to_bytes(&words)).unwrap();
+        let decoded = decode(&to_words(&crate::frame::words_to_bytes(&words))[sync_at / 4..]);
+        assert_eq!(decoded[0], Packet::Write { reg: reg::CMD, data: vec![cmd::RCRC] });
+        assert_eq!(decoded[1], Packet::Nop);
+        assert_eq!(decoded[2], Packet::Write { reg: reg::IDCODE, data: vec![0x0363_1093] });
+        assert_eq!(decoded[3], Packet::Read { reg: reg::STAT, count: 1 });
+    }
+
     #[test]
     fn packet_headers() {
         assert_eq!(type1_read(reg::STAT, 1), 0x2800_E001);
