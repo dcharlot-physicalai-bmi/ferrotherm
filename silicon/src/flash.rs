@@ -32,6 +32,9 @@ const MPSSE_SET_DIVISOR: u8 = 0x86;
 const MPSSE_SET_LOW: u8 = 0x80;
 const MPSSE_SEND_IMMEDIATE: u8 = 0x87;
 
+/// Maximum payload bytes in one MPSSE byte-clocking command (16-bit length field).
+const MPSSE_MAX_BYTES: usize = 65536;
+
 const PIN_DIR: u8 = 0x0B; // TCK, TDI, TMS out; TDO in
 const PIN_IDLE: u8 = 0x08; // TMS high
 
@@ -169,11 +172,16 @@ impl Tap {
         let n = tx.len();
         let mut cmds = vec![CLK_TMS, 0x02, 0x01]; // RTI -> Shift-DR (TMS 1,0,0)
         if n > 1 {
-            let len = (n - 2) as u16; // bytes except the last one, minus 1
-            cmds.push(if capture { CLK_BYTES_IO } else { CLK_BYTES_OUT });
-            cmds.push(len as u8);
-            cmds.push((len >> 8) as u8);
-            cmds.extend_from_slice(&tx[..n - 1]);
+            // An MPSSE byte command carries a 16-BIT length, so at most 65536 bytes per command.
+            // A single command for a whole 104 KB bitstream wraps the field and the chip then
+            // reads the remaining payload as opcodes — it stalls with no error. Chunk it.
+            for chunk in tx[..n - 1].chunks(MPSSE_MAX_BYTES) {
+                let len = (chunk.len() - 1) as u16;
+                cmds.push(if capture { CLK_BYTES_IO } else { CLK_BYTES_OUT });
+                cmds.push(len as u8);
+                cmds.push((len >> 8) as u8);
+                cmds.extend_from_slice(chunk);
+            }
         }
         let last = tx[n - 1];
         // Bits 0..=6 of the final byte here; bit 7 must ride the TMS clock that exits Shift-DR,
@@ -382,6 +390,25 @@ pub fn xc7_part(idcode: u32) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A payload larger than one MPSSE command must be split. Writing 104 KB as a single
+    /// command wraps the 16-bit length field and the chip silently consumes the overflow as
+    /// opcodes — the configuration just stops with no error reported anywhere.
+    #[test]
+    fn large_payloads_split_into_multiple_commands() {
+        assert_eq!(MPSSE_MAX_BYTES, 65536);
+        let payload = vec![0xA5u8; 104_139];
+        let chunks: Vec<_> = payload[..payload.len() - 1].chunks(MPSSE_MAX_BYTES).collect();
+        assert_eq!(chunks.len(), 2, "104 KB needs two commands");
+        for c in &chunks {
+            assert!(c.len() <= MPSSE_MAX_BYTES);
+            let len_field = (c.len() - 1) as u16;
+            assert_eq!(len_field as usize + 1, c.len(), "length field must not wrap");
+        }
+        // the naive single-command encoding would have claimed this many bytes:
+        let wrapped = ((payload.len() - 2) as u16) as usize + 1;
+        assert_ne!(wrapped, payload.len() - 1, "the wrap this test exists to prevent");
+    }
 
     #[test]
     fn byte_reversal_is_an_involution() {
