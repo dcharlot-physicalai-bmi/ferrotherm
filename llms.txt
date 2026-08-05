@@ -1,0 +1,39 @@
+# ferrotherm
+
+> Thermodynamic computing in pure Rust: sparse energy-based models, chromatic block-Gibbs,
+> parallel tempering, thermodynamic linear algebra, stochastic differentiable programs, a
+> variational compiler onto device graph topologies, and a joules ledger pricing every operation
+> against swappable device models. Zero dependencies, std-only, wasm-clean, deterministic by seed.
+> Every module is verified against exact physics (Onsager 1944, exhaustive ground states,
+> Gaussian elimination, finite-difference gradients) in `cargo test`.
+
+Install: `cargo add ferrotherm` (or git: https://github.com/dcharlot-physicalai-bmi/ferrotherm)
+
+## Docs
+
+- [README](https://github.com/dcharlot-physicalai-bmi/ferrotherm/blob/main/README.md): layer map, verification results, measured numbers with provenance labels
+- [AGENTS.md](https://github.com/dcharlot-physicalai-bmi/ferrotherm/blob/main/AGENTS.md): invariants, task recipes, contribution rules for AI agents
+- [API docs](https://docs.rs/ferrotherm): module-level docs carry the math and its sources
+
+## Key modules
+
+- graph, gibbs: sparse pairwise EBMs, chromatic block-Gibbs with clamping
+- device: published degree-16 grid topology of Z1-class thermodynamic chips
+- ledger: joules accounting (samples/reads/writes x device Prices; Z1_SPICE = vendor pre-silicon estimates)
+- tempering: simulated annealing + parallel tempering (replica exchange), ladder-health diagnostics
+- tla: thermodynamic linear algebra (OU network solves SPD systems, samples N(A^-1 b, A^-1/beta))
+- program: stochastic differentiable circuits; REINFORCE + parameter-shift + FD-referee gradients
+- compile: variational compilation of conditionals onto device patches; chain-rule KL error bound
+- ffi: C ABI (ft_*) for wasm and host languages
+
+## Examples (each is a verification gate, exit code = pass/fail)
+
+- ring_tv, onsager: sampler vs exact Boltzmann / Onsager closed form
+- z1_ledger: generative vs 100 Hz control regimes priced at vendor SPICE costs
+- grad_check, gibbs_grad, lqr_energy: gradient cross-validation; trained controller vs provable optimum
+- compile_chain, reach_on_z1: compilation error bound verified exactly; the control-workload boundary
+- flips_bench: CPU throughput anchor
+
+## Live
+
+- In-browser instrument (verifies vs Onsager on YOUR GPU, then measures): https://energy.physicalai-bmi.org/thermo

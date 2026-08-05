@@ -1,0 +1,22 @@
+[package]
+name = "ferrotherm"
+version = "0.1.0"
+edition = "2021"
+description = "Thermodynamic computing in pure Rust: sparse energy-based models, chromatic block-Gibbs, parallel tempering, thermodynamic linear algebra, stochastic differentiable programs, a variational compiler onto device topologies, and a first-class joules ledger. std-only, zero dependencies, wasm-clean, deterministic by seed."
+license = "Apache-2.0"
+repository = "https://github.com/dcharlot-physicalai-bmi/ferrotherm"
+homepage = "https://energy.physicalai-bmi.org/thermo"
+documentation = "https://docs.rs/ferrotherm"
+readme = "README.md"
+keywords = ["thermodynamic", "ising", "gibbs-sampling", "energy-based-models", "probabilistic"]
+categories = ["science", "algorithms", "simulation", "wasm", "mathematics"]
+exclude = ["web/", "target/"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true

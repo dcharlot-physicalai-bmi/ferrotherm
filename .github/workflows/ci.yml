@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Unit tests
+        run: cargo test --release
+      - name: Examples build
+        run: cargo build --release --examples
+      - name: Verification examples (exact-physics gates)
+        run: |
+          cargo run --release --example ring_tv
+          cargo run --release --example onsager
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: wasm cdylib builds clean
+        run: cargo build --release --lib --target wasm32-unknown-unknown

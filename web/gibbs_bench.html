@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ferrotherm — WebGPU chromatic Gibbs bench</title>
+<style>
+  body { font-family: ui-monospace, Menlo, monospace; background: #0b1220; color: #d8e1f0; margin: 2rem; }
+  h1 { font-size: 1.1rem; color: #e8c766; }
+  .card { background: #111a2e; border: 1px solid #24314d; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; max-width: 62rem; }
+  .ok { color: #7dd87d; } .bad { color: #ee7777; } .dim { color: #8794ab; }
+  td { padding: 0.15rem 1rem 0.15rem 0; }
+</style>
+</head>
+<body>
+<h1>ferrotherm — chromatic Gibbs on YOUR GPU (WebGPU)</h1>
+<div class="card" id="log">starting…</div>
+<script type="module">
+const log = (s, cls = '') => { const d = document.getElementById('log'); d.innerHTML += `<div class="${cls}">${s}</div>`; };
+const post = async (obj) => { try { await fetch('/result', { method: 'POST', body: JSON.stringify(obj) }); } catch (e) {} };
+
+// Z1-topology coupling rules (1,0),(2,1),(2,3),(4,1) x 4 rotations = degree 16, all odd Manhattan
+// distance, hence 2-colorable by checkerboard parity. NN mode = first 4 offsets, periodic.
+const WGSL = `
+struct Params { w: u32, h: u32, parity: u32, mode: u32, beta: f32, j: f32, hb: f32, sweep: u32, seed: u32 };
+@group(0) @binding(0) var<uniform> P: Params;
+@group(0) @binding(1) var<storage, read_write> spins: array<u32>;
+
+fn pcg3d(v0: vec3<u32>) -> vec3<u32> {
+  var v = v0 * 1664525u + 1013904223u;
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+  v = v ^ (v >> vec3<u32>(16u));
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+  return v;
+}
+
+const OFFS = array<vec2<i32>, 16>(
+  vec2(1,0), vec2(0,1), vec2(-1,0), vec2(0,-1),
+  vec2(2,1), vec2(-1,2), vec2(-2,-1), vec2(1,-2),
+  vec2(2,3), vec2(-3,2), vec2(-2,-3), vec2(3,-2),
+  vec2(4,1), vec2(-1,4), vec2(-4,-1), vec2(1,-4)
+);
+
+@compute @workgroup_size(8, 8)
+fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let x = i32(gid.x); let y = i32(gid.y);
+  let w = i32(P.w); let h = i32(P.h);
+  if (x >= w || y >= h) { return; }
+  if (((gid.x + gid.y) & 1u) != P.parity) { return; }
+  let idx = u32(y * w + x);
+  var f = P.hb;
+  if (P.mode == 0u) { // NN periodic (verification lattice)
+    for (var k = 0u; k < 4u; k++) {
+      let o = OFFS[k];
+      let nx = (x + o.x + w) % w; let ny = (y + o.y + h) % h;
+      f += P.j * (2.0 * f32(spins[u32(ny * w + nx)]) - 1.0);
+    }
+  } else { // degree-16 Z1 topology, open boundaries
+    for (var k = 0u; k < 16u; k++) {
+      let o = OFFS[k];
+      let nx = x + o.x; let ny = y + o.y;
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h) {
+        f += P.j * (2.0 * f32(spins[u32(ny * w + nx)]) - 1.0);
+      }
+    }
+  }
+  let p_up = 1.0 / (1.0 + exp(-2.0 * P.beta * f));
+  let r = pcg3d(vec3<u32>(idx, P.sweep, P.seed)).x;
+  let u = f32(r) * 2.3283064365386963e-10; // 1/2^32
+  spins[idx] = select(0u, 1u, u < p_up);
+}`;
+
+const SLOT = 256; // dynamic-offset alignment
+function packParams(view, off, w, h, parity, mode, beta, j, hb, sweep, seed) {
+  const u = new Uint32Array(view, off, 9);
+  const f = new Float32Array(view, off, 9);
+  u[0] = w; u[1] = h; u[2] = parity; u[3] = mode;
+  f[4] = beta; f[5] = j; f[6] = hb;
+  u[7] = sweep; u[8] = seed;
+}
+
+async function makeCtx(device, w, h, ordered) {
+  const n = w * h;
+  const spins = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+  const init = new Uint32Array(n);
+  if (ordered) init.fill(1); else { for (let i = 0; i < n; i++) init[i] = (Math.random() < 0.5) ? 1 : 0; }
+  device.queue.writeBuffer(spins, 0, init);
+  const module = device.createShaderModule({ code: WGSL });
+  // dynamic uniform offsets REQUIRE an explicit layout: layout 'auto' never grants
+  // hasDynamicOffset, and setBindGroup(..., [offset]) then fails validation SILENTLY —
+  // the spins never move and a frozen |M| = 1 masquerades as data. Found the hard way.
+  const bgl = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 48 } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+    ],
+  });
+  const pipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+    compute: { module, entryPoint: 'sweep' },
+  });
+  const NBATCH = 256; // sweeps per batch => 2*NBATCH dispatches
+  const ubuf = device.createBuffer({ size: 2 * NBATCH * SLOT, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const bind = device.createBindGroup({
+    layout: bgl,
+    entries: [
+      { binding: 0, resource: { buffer: ubuf, size: 48 } },
+      { binding: 1, resource: { buffer: spins } },
+    ],
+  });
+  const staging = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  return { w, h, n, spins, pipeline, ubuf, bind, staging, NBATCH };
+}
+
+function runBatch(device, ctx, cfg, nSweeps, sweep0) {
+  // one writeBuffer + one encoder for nSweeps sweeps (2 dispatches each), queue-ordered
+  const arr = new ArrayBuffer(2 * nSweeps * SLOT);
+  for (let s = 0; s < nSweeps; s++) {
+    for (let par = 0; par < 2; par++) {
+      packParams(arr, (2 * s + par) * SLOT, ctx.w, ctx.h, par, cfg.mode, cfg.beta, cfg.j, cfg.hb, sweep0 + s, cfg.seed);
+    }
+  }
+  device.queue.writeBuffer(ctx.ubuf, 0, arr);
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  pass.setPipeline(ctx.pipeline);
+  const wgx = Math.ceil(ctx.w / 8), wgy = Math.ceil(ctx.h / 8);
+  for (let d = 0; d < 2 * nSweeps; d++) {
+    pass.setBindGroup(0, ctx.bind, [d * SLOT]);
+    pass.dispatchWorkgroups(wgx, wgy);
+  }
+  pass.end();
+  device.queue.submit([enc.finish()]);
+}
+
+async function readMag(device, ctx) {
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(ctx.spins, 0, ctx.staging, 0, ctx.n * 4);
+  device.queue.submit([enc.finish()]);
+  await ctx.staging.mapAsync(GPUMapMode.READ);
+  const a = new Uint32Array(ctx.staging.getMappedRange().slice(0));
+  ctx.staging.unmap();
+  let m = 0;
+  for (let i = 0; i < ctx.n; i++) m += 2 * a[i] - 1;
+  return m / ctx.n;
+}
+
+const onsager = (beta) => { const s = Math.sinh(2 * beta); const x = 1 - Math.pow(s, -4); return x <= 0 ? 0 : Math.pow(x, 1 / 8); };
+
+(async () => {
+  if (!navigator.gpu) { log('WebGPU unavailable', 'bad'); await post({ error: 'no webgpu' }); return; }
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+  const gpuErrors = [];
+  device.addEventListener('uncapturederror', (e) => { gpuErrors.push(String(e.error?.message || e.error)); log(`GPU ERROR: ${e.error?.message}`, 'bad'); });
+  const info = adapter.info || {};
+  log(`adapter: ${info.vendor || '?'} ${info.architecture || ''} ${info.description || ''}`, 'dim');
+  window.__gpuErrors = gpuErrors;
+
+  // ---- 1. VERIFICATION: 64x64 NN lattice vs Onsager, two temperatures ----
+  log('<b>1. verification vs Onsager (64x64 nearest-neighbor, periodic)</b>');
+  const verif = [];
+  for (const beta of [0.5, 0.6]) {
+    const ctx = await makeCtx(device, 64, 64, true);
+    const cfg = { mode: 0, beta, j: 1.0, hb: 0.0, seed: 0x150D + Math.floor(beta * 100) };
+    let sweep = 0;
+    for (let b = 0; b < 12; b++) { runBatch(device, ctx, cfg, 256, sweep); sweep += 256; } // ~3000 burn-in
+    await device.queue.onSubmittedWorkDone();
+    let acc = 0; const reads = 30;
+    for (let r = 0; r < reads; r++) {
+      runBatch(device, ctx, cfg, 100, sweep); sweep += 100;
+      await device.queue.onSubmittedWorkDone();
+      acc += Math.abs(await readMag(device, ctx));
+    }
+    const m = acc / reads, ex = onsager(beta), d = Math.abs(m - ex);
+    const pass = d < 0.02;
+    verif.push({ beta, m, exact: ex, pass });
+    log(`beta ${beta}: |M| = ${m.toFixed(4)}  Onsager = ${ex.toFixed(4)}  |delta| = ${d.toFixed(4)}  ${pass ? '<span class=ok>ok</span>' : '<span class=bad>FAIL</span>'}`);
+  }
+  if (!verif.every(v => v.pass)) { log('verification failed — throughput numbers would be meaningless', 'bad'); await post({ info, verif, gpuErrors, error: 'verif failed' }); return; }
+
+  // ---- 2. THROUGHPUT: full-die Z1 topology 576x468 = 269,568 nodes, degree 16 ----
+  log('<b>2. throughput: Z1 topology at die scale (576 x 468 = 269,568 nodes, degree 16)</b>');
+  const ctx = await makeCtx(device, 576, 468, false);
+  const cfg = { mode: 1, beta: 0.9, j: 0.08, hb: 0.0, seed: 0xBE7C };
+  let sweep = 0;
+  // warmup (pipeline compile, caches)
+  for (let b = 0; b < 4; b++) { runBatch(device, ctx, cfg, 256, sweep); sweep += 256; }
+  await device.queue.onSubmittedWorkDone();
+  // probe to size the timed run
+  let t0 = performance.now();
+  runBatch(device, ctx, cfg, 256, sweep); sweep += 256;
+  await device.queue.onSubmittedWorkDone();
+  const probeDt = (performance.now() - t0) / 1000;
+  const targetBatches = Math.max(4, Math.min(64, Math.ceil(0.8 / probeDt)));
+  // timed run
+  t0 = performance.now();
+  for (let b = 0; b < targetBatches; b++) { runBatch(device, ctx, cfg, 256, sweep); sweep += 256; }
+  await device.queue.onSubmittedWorkDone();
+  const dt = (performance.now() - t0) / 1000;
+  const sweeps = targetBatches * 256;
+  const flips = sweeps * ctx.n;
+  const fps = flips / dt;
+  log(`${sweeps} sweeps in ${dt.toFixed(3)} s  ->  <b>${(fps / 1e9).toFixed(2)}e9 flips/s</b>  (${(1e9 / fps).toFixed(2)} ns/flip)`);
+  log(`independent samples/s at K_mix = 250: ${(fps / (250 * ctx.n)).toFixed(1)}`);
+
+  // ---- 3. the impedance tax ----
+  log('<b>3. joules per flip = platform watts / measured flips per second</b>');
+  const rows = [['10 W (tablet/phone pkg)', 10], ['25 W (laptop GPU pkg)', 25], ['60 W (desktop GPU pkg)', 60]];
+  let tbl = '<table><tr class=dim><td>platform assumption</td><td>J/flip</td><td>vs Z1 SPICE 7.09 fJ</td></tr>';
+  for (const [label, wts] of rows) {
+    const jpf = wts / fps;
+    tbl += `<tr><td>${label}</td><td>${(jpf * 1e12).toFixed(2)} pJ</td><td>${Math.round(jpf / 7.09e-15).toLocaleString()}x</td></tr>`;
+  }
+  log(tbl + '</table>');
+  log(`<span class=dim>Z1 prices are pre-silicon SPICE projections (arXiv:2608.01615 Table IV). Package watts here cover the
+  whole platform, not just the sampler — both biases stated. Measured hardware anchor for physics-native vs
+  OPTIMIZED digital samplers: 5-18x throughput (Aadit et al., Nature Electronics 2022).</span>`);
+
+  await post({ info: { vendor: info.vendor, architecture: info.architecture, description: info.description }, verif, gpuErrors,
+               z1: { sweeps, dt, flips_per_s: fps, ns_per_flip: 1e9 / fps, ind_samples_per_s: fps / (250 * ctx.n) } });
+  log('<b>done — results posted.</b>', 'ok');
+})();
+</script>
+</body>
+</html>
