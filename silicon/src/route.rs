@@ -230,9 +230,17 @@ impl<'g> Fabric<'g> {
     }
 }
 
+/// Tile kinds that carry interconnect and contain no logic: the switchboxes themselves plus the
+/// break and terminator tiles that continue wires across clock-region and die boundaries.
+/// Excluding the break tiles silently breaks every route that crosses a clock region — the
+/// symptom is a handful of links failing while their neighbours succeed.
+pub fn is_interconnect(kind: &str) -> bool {
+    kind.starts_with("INT_") || kind.starts_with("BRKH_") || kind.ends_with("_TERM_INT")
+}
+
 /// The default expansion rule: interconnect tiles only.
 pub fn interconnect_only(_name: &str, kind: &str) -> bool {
-    kind.starts_with("INT_")
+    is_interconnect(kind)
 }
 
 /// Interconnect everywhere, plus two named logic tiles as ENDPOINTS. Logic tiles are never
@@ -242,7 +250,7 @@ pub fn interconnect_with_endpoints<'a>(
     src_tile: &'a str,
     dst_tile: &'a str,
 ) -> impl Fn(&str, &str) -> bool + 'a {
-    move |name: &str, kind: &str| kind.starts_with("INT_") || name == src_tile || name == dst_tile
+    move |name: &str, kind: &str| is_interconnect(kind) || name == src_tile || name == dst_tile
 }
 
 #[cfg(test)]
@@ -320,6 +328,9 @@ mod tests {
         assert!(interconnect_only("INT_L_X0Y0", "INT_L") && interconnect_only("t", "INT_R"));
         assert!(!interconnect_only("CLBLL_L_X2Y0", "CLBLL_L"));
         assert!(!interconnect_only("t", "CLBLM_R"));
+        assert!(is_interconnect("BRKH_INT"), "clock-region break tiles carry wires");
+        assert!(is_interconnect("B_TERM_INT"));
+        assert!(!is_interconnect("CLBLL_L"));
         // endpoints are reachable but never transited
         let rule = interconnect_with_endpoints("CLBLL_L_X2Y0", "CLBLL_L_X2Y9");
         assert!(rule("CLBLL_L_X2Y0", "CLBLL_L"), "source endpoint allowed");
