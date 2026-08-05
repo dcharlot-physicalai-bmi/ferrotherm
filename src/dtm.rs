@@ -75,13 +75,76 @@ pub struct Ebm {
     pub edges: Vec<(u16, u16)>,
     pub j: Vec<f64>,
     pub h: Vec<f64>,
+    /// CSR adjacency: for node i, neighbours in `nbr[offset[i]..offset[i+1]]` with the index of
+    /// the edge that connects them in `eidx`. Without this a sweep is O(N * E) and the published
+    /// scale (4,900 nodes, ~29k edges) is unreachable; with it a sweep is O(E).
+    offset: Vec<u32>,
+    nbr: Vec<u32>,
+    eidx: Vec<u32>,
+    /// A proper 2-colouring. Every published pattern grid is bipartite (all connection rules have
+    /// odd Manhattan length), so one sweep is two independent half sweeps.
+    pub classes: [Vec<u32>; 2],
 }
 
 impl Ebm {
     pub fn new(n: usize, edges: Vec<(u16, u16)>) -> Ebm {
         let ne = edges.len();
-        Ebm { n, edges, j: vec![0.0; ne], h: vec![0.0; n] }
+        let mut deg = vec![0u32; n];
+        for &(a, b) in &edges {
+            deg[a as usize] += 1;
+            deg[b as usize] += 1;
+        }
+        let mut offset = vec![0u32; n + 1];
+        for i in 0..n {
+            offset[i + 1] = offset[i] + deg[i];
+        }
+        let mut nbr = vec![0u32; offset[n] as usize];
+        let mut eidx = vec![0u32; offset[n] as usize];
+        let mut cur = offset.clone();
+        for (k, &(a, b)) in edges.iter().enumerate() {
+            let (a, b) = (a as usize, b as usize);
+            nbr[cur[a] as usize] = b as u32;
+            eidx[cur[a] as usize] = k as u32;
+            cur[a] += 1;
+            nbr[cur[b] as usize] = a as u32;
+            eidx[cur[b] as usize] = k as u32;
+            cur[b] += 1;
+        }
+        // BFS 2-colouring; falls back to "everything in one class" if the graph is not bipartite,
+        // which would make sweeps sequential rather than wrong.
+        let mut colour = vec![u8::MAX; n];
+        let mut bipartite = true;
+        let mut stack = Vec::new();
+        for s in 0..n {
+            if colour[s] != u8::MAX {
+                continue;
+            }
+            colour[s] = 0;
+            stack.push(s);
+            while let Some(u) = stack.pop() {
+                for k in offset[u]..offset[u + 1] {
+                    let v = nbr[k as usize] as usize;
+                    if colour[v] == u8::MAX {
+                        colour[v] = 1 - colour[u];
+                        stack.push(v);
+                    } else if colour[v] == colour[u] {
+                        bipartite = false;
+                    }
+                }
+            }
+        }
+        let mut classes = [Vec::new(), Vec::new()];
+        for i in 0..n {
+            let c = if bipartite { colour[i] as usize } else { 0 };
+            classes[c].push(i as u32);
+        }
+        Ebm { n, edges, j: vec![0.0; ne], h: vec![0.0; n], offset, nbr, eidx, classes }
     }
+
+    pub fn is_bipartite(&self) -> bool {
+        !self.classes[1].is_empty()
+    }
+
     pub fn energy(&self, s: &[i8]) -> f64 {
         let mut e = 0.0;
         for (k, &(a, b)) in self.edges.iter().enumerate() {
@@ -92,17 +155,17 @@ impl Ebm {
         }
         e
     }
+
+    #[inline]
     fn field(&self, i: usize, s: &[i8], extra: &[f64]) -> f64 {
         let mut f = self.h[i] + extra[i];
-        for (k, &(a, b)) in self.edges.iter().enumerate() {
-            if a as usize == i {
-                f += self.j[k] * s[b as usize] as f64;
-            } else if b as usize == i {
-                f += self.j[k] * s[a as usize] as f64;
-            }
+        for k in self.offset[i]..self.offset[i + 1] {
+            let k = k as usize;
+            f += self.j[self.eidx[k] as usize] * s[self.nbr[k] as usize] as f64;
         }
         f
     }
+
     /// Gibbs sweeps over the nodes in `free`, with per-node extra external fields.
     pub fn gibbs(&self, s: &mut [i8], free: &[usize], extra: &[f64], sweeps: usize, rng: &mut Pcg) {
         for _ in 0..sweeps {
@@ -111,6 +174,31 @@ impl Ebm {
                 let p_up = 1.0 / (1.0 + (-2.0 * f).exp());
                 s[i] = if rng.f64() < p_up { 1 } else { -1 };
             }
+        }
+    }
+
+    /// Chromatic sweeps over ALL nodes: two half sweeps per sweep, the schedule hardware uses.
+    pub fn gibbs_chromatic(&self, s: &mut [i8], extra: &[f64], sweeps: usize, rng: &mut Pcg) {
+        for _ in 0..sweeps {
+            for c in 0..2 {
+                for idx in 0..self.classes[c].len() {
+                    let i = self.classes[c][idx] as usize;
+                    let f = self.field(i, s, extra);
+                    let p_up = 1.0 / (1.0 + (-2.0 * f).exp());
+                    s[i] = if rng.f64() < p_up { 1 } else { -1 };
+                }
+            }
+        }
+    }
+
+    /// Accumulate sufficient statistics from the current state.
+    #[inline]
+    pub fn accumulate(&self, s: &[i8], ss: &mut [f64], si: &mut [f64], w: f64) {
+        for (k, &(a, b)) in self.edges.iter().enumerate() {
+            ss[k] += w * (s[a as usize] * s[b as usize]) as f64;
+        }
+        for i in 0..self.n {
+            si[i] += w * s[i] as f64;
         }
     }
 }
