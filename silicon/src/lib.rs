@@ -3,6 +3,7 @@
 //! Pure Rust, no vendor tools, no third-party stacks. Selected algorithms ported with permission
 //! from Open Interface Engineering's openie-fpga; this crate is fully independent of it.
 
+pub mod bitstream;
 pub mod lut;
 
 #[cfg(feature = "flash")]

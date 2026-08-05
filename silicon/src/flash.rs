@@ -264,6 +264,50 @@ impl Tap {
     }
 }
 
+/// An explicit acknowledgement that an operation will clear the design currently running on the
+/// fabric. Reconfiguration cannot be requested by accident: the caller must name the consequence.
+pub enum Consequence {
+    ClearsTheRunningDesign,
+}
+
+impl Tap {
+    /// Load a raw configuration payload into fabric SRAM: JPROGRAM (clear), CFG_IN (the payload),
+    /// JSTART (release the startup sequence), then report the status register.
+    ///
+    /// This ERASES whatever is currently configured. On a board that boots from SPI flash the
+    /// stored image is untouched, but the live fabric stays as loaded here until the next power
+    /// cycle — which is why the caller must pass [`Consequence::ClearsTheRunningDesign`].
+    pub fn configure(&mut self, config: &[u8], _ack: Consequence) -> Result<Stat, String> {
+        self.reset()?;
+        // clear configuration memory
+        self.shift_ir(IR_JPROGRAM)?;
+        self.run_clocks(120_000)?; // config-clear settle
+        // shift the payload through the configuration port
+        let mut payload = Vec::with_capacity(config.len());
+        for b in config {
+            payload.push(reverse_byte(*b));
+        }
+        self.shift_ir(IR_CFG_IN)?;
+        self.shift_dr(&payload, false)?;
+        // release the startup sequencer
+        self.shift_ir(IR_JSTART)?;
+        self.run_clocks(2_000)?;
+        self.shift_ir(IR_BYPASS)?;
+        Ok(Stat(self.read_config_reg(crate::bitstream::reg::STAT)?))
+    }
+
+    /// Hold the TAP in Run-Test/Idle for `n` TCK cycles.
+    pub fn run_clocks(&mut self, n: usize) -> Result<(), String> {
+        let mut left = n;
+        while left > 0 {
+            let batch = left.min(6);
+            self.ftdi.write(&[CLK_TMS, (batch - 1) as u8, 0x00])?;
+            left -= batch;
+        }
+        Ok(())
+    }
+}
+
 /// 7-series STAT register (UG470 Table 5-25) — the bits worth naming.
 pub struct Stat(pub u32);
 
