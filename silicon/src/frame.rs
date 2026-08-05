@@ -92,12 +92,142 @@ pub fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|w| w.to_be_bytes()).collect()
 }
 
+
+/// Bus-width auto-detect pattern that precedes the sync word.
+pub const BUS_WIDTH_SYNC: u32 = 0x0000_00BB;
+pub const BUS_WIDTH_DETECT: u32 = 0x1122_0044;
+
+/// Assemble a complete 7-series configuration stream for a sparse set of frames.
+///
+/// The packet order reproduces a stream this device family actually accepts (decoded from a
+/// known-good XC7A100T bitstream), rather than an order invented from the register list:
+/// bus-width detect, sync, RCRC, TIMER/WBSTAR/COR0/COR1/IDCODE, switch, MASK/CTL0/CTL1, then per
+/// contiguous frame run a FAR write and an FDRI burst, then GRESTORE/LFRM/START/RCRC/DESYNC.
+/// No CRC value is written — RCRC resets the register and the device does not compare.
+pub fn assemble(idcode: u32, buf: &crate::framebuf::FrameBuf) -> Vec<u32> {
+    let mut w = Vec::new();
+    w.extend_from_slice(&[DUMMY; 8]);
+    w.push(BUS_WIDTH_SYNC);
+    w.push(BUS_WIDTH_DETECT);
+    w.extend_from_slice(&[DUMMY; 4]);
+    w.push(SYNC);
+    w.push(NOOP);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::RCRC]);
+    w.extend_from_slice(&[NOOP, NOOP]);
+    w.extend_from_slice(&[type1_write(reg::TIMER, 1), 0]);
+    w.extend_from_slice(&[type1_write(reg::WBSTAR, 1), 0]);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::NULL]);
+    w.extend_from_slice(&[type1_write(reg::COR0, 1), 0x0200_3FE5]);
+    w.extend_from_slice(&[type1_write(reg::COR1, 1), 0]);
+    w.extend_from_slice(&[type1_write(reg::IDCODE, 1), idcode]);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::SWITCH]);
+    // TWO noops here, not one — read off a stream the device accepted rather than guessed.
+    w.extend_from_slice(&[NOOP, NOOP]);
+    w.extend_from_slice(&[type1_write(reg::MASK, 1), 0x0000_0401]);
+    w.extend_from_slice(&[type1_write(reg::CTL0, 1), 0x0000_0501]);
+    w.extend_from_slice(&[type1_write(reg::MASK, 1), 0]);
+    w.extend_from_slice(&[type1_write(reg::CTL1, 1), 0]);
+
+    for (start, words) in buf.runs() {
+        w.extend_from_slice(&[type1_write(reg::FAR, 1), start]);
+        w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::WCFG]);
+        w.push(NOOP);
+        // (FDRI follows immediately; the witness stream has exactly one NOOP here)
+        w.extend_from_slice(&frame_write_payload(&words));
+    }
+
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::GRESTORE]);
+    w.push(NOOP);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::LFRM]);
+    w.extend_from_slice(&[NOOP; 100]);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::START]);
+    w.push(NOOP);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::RCRC]);
+    w.extend_from_slice(&[NOOP, NOOP]);
+    w.extend_from_slice(&[type1_write(reg::CMD, 1), cmd::DESYNC]);
+    w.extend_from_slice(&[NOOP; 16]);
+    w
+}
+
+/// The FDRI packet for a burst of frame words (type-2 continuation when it exceeds a type-1).
+fn frame_write_payload(words: &[u32]) -> Vec<u32> {
+    let mut v = Vec::with_capacity(words.len() + 2);
+    if words.len() <= 0x7FF {
+        v.push(type1_write(reg::FDRI, words.len() as u32));
+    } else {
+        v.push(type1_write(reg::FDRI, 0));
+        v.push(type2_write(words.len() as u32));
+    }
+    v.extend_from_slice(words);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The published CRC-32C check value: CRC32C("123456789") = 0xE3069283. An independent
     /// anchor — if the polynomial or reflection were wrong, this would not land.
+
+    /// THE WITNESS TEST: the 34 configuration words after the sync word, as they appear in a
+    /// bitstream real XC7A100T silicon accepted. These are not values we chose — they were read
+    /// off a working stream, and our assembler must reproduce them exactly. If a future change
+    /// reorders a packet or drops a NOOP, this fails before anything reaches a board.
+    #[test]
+    fn header_matches_the_accepted_stream() {
+        const WITNESS: [u32; 34] = [
+            NOOP,
+            0x3000_8001, cmd::RCRC,      // CMD <= RCRC
+            NOOP, NOOP,
+            0x3002_2001, 0x0000_0000,    // TIMER  <= 0
+            0x3002_0001, 0x0000_0000,    // WBSTAR <= 0
+            0x3000_8001, cmd::NULL,      // CMD <= NULL
+            0x3001_2001, 0x0200_3FE5,    // COR0
+            0x3001_C001, 0x0000_0000,    // COR1
+            0x3001_8001, 0x0363_1093,    // IDCODE (XC7A100T)
+            0x3000_8001, cmd::SWITCH,    // CMD <= SWITCH
+            NOOP, NOOP,
+            0x3000_C001, 0x0000_0401,    // MASK
+            0x3000_A001, 0x0000_0501,    // CTL0
+            0x3000_C001, 0x0000_0000,    // MASK
+            0x3003_0001, 0x0000_0000,    // CTL1
+            0x3000_2001, 0x0000_0000,    // FAR <= 0
+            0x3000_8001, cmd::WCFG,      // CMD <= WCFG
+            NOOP,
+        ];
+        let mut fb = crate::framebuf::FrameBuf::new();
+        for f in 0..4u32 {
+            fb.frame_mut(f);
+        }
+        let words = assemble(0x0363_1093, &fb);
+        let sync_at = words.iter().position(|&w| w == SYNC).expect("sync") + 1;
+        assert_eq!(
+            &words[sync_at..sync_at + WITNESS.len()],
+            &WITNESS[..],
+            "generated header diverged from the stream silicon accepted"
+        );
+        // and the register encodings the witness implies
+        assert_eq!(type1_write(reg::TIMER, 1), 0x3002_2001);
+        assert_eq!(type1_write(reg::CTL1, 1), 0x3003_0001);
+    }
+
+    /// Frames stream as one FDRI burst per contiguous run, with the count matching the words.
+    #[test]
+    fn frame_runs_become_fdri_bursts() {
+        let mut fb = crate::framebuf::FrameBuf::new();
+        for f in [0u32, 1, 2, 100] {
+            fb.frame_mut(f);
+        }
+        let words = assemble(0x0363_1093, &fb);
+        let far_writes = words
+            .windows(2)
+            .filter(|w| w[0] == type1_write(reg::FAR, 1))
+            .count();
+        assert_eq!(far_writes, 2, "two runs -> two FAR writes");
+        let total_frame_words: usize = fb.runs().iter().map(|(_, w)| w.len()).sum();
+        assert_eq!(total_frame_words, 4 * WORDS_PER_FRAME);
+    }
+
     #[test]
     fn crc32c_standard_vector() {
         assert_eq!(crc32c(b"123456789"), 0xE306_9283);

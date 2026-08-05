@@ -31,6 +31,9 @@ pub mod cmd {
     pub const LFRM: u32 = 0x03;
     pub const RCFG: u32 = 0x04;
     pub const START: u32 = 0x05;
+    pub const RCAP: u32 = 0x06;
+    pub const GRESTORE: u32 = 0x0A;
+    pub const SWITCH: u32 = 0x09;
     pub const RCRC: u32 = 0x07;
     pub const DESYNC: u32 = 0x0D;
     pub const IPROG: u32 = 0x0F;
