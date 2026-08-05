@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thermodynamic sampling on an FPGA you can buy · ferrotherm</title>
+<meta name="description" content="Step by step: run a thermodynamic sampler on an Alchitry Pt V2. Pure Rust, no vendor tools. Every number on this page was measured.">
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111a2e; --line:#24314d;
+    --ink:#d8e1f0; --ink-dim:#a7b3c9; --ink-faint:#7d8aa3;
+    --gold:#cfaa5b; --gold-dim:rgba(207,170,91,.55);
+    --ok:#7dd87d; --cool:#5b8fd4;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+       font-size:17px;line-height:1.68;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:74ch;margin:0 auto;padding:0 24px}
+  header.hero{padding:88px 0 56px;border-bottom:1px solid var(--line)}
+  .mark{font-family:var(--mono);color:var(--gold);letter-spacing:.14em;
+        text-transform:uppercase;font-size:12px}
+  h1{font-size:clamp(34px,6vw,54px);line-height:1.06;margin:18px 0 20px;
+     letter-spacing:-.02em;text-wrap:balance;font-weight:600}
+  h2{font-size:clamp(24px,3.4vw,32px);line-height:1.18;margin:0 0 14px;
+     letter-spacing:-.015em;text-wrap:balance;font-weight:600}
+  h3{font-size:19px;margin:34px 0 10px;font-weight:600}
+  .lede{font-size:20px;color:var(--ink-dim);max-width:62ch}
+  section{padding:56px 0;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;
+           text-transform:uppercase;color:var(--gold);margin:0 0 10px}
+  p{margin:0 0 16px;color:var(--ink-dim)}
+  p.tight{margin-bottom:8px}
+  b,strong{color:var(--ink);font-weight:600}
+  a{color:var(--gold);text-decoration:none;border-bottom:1px solid var(--gold-dim)}
+  a:hover{border-bottom-color:var(--gold)}
+  code{font-family:var(--mono);font-size:.88em;color:var(--ink);
+       background:rgba(255,255,255,.05);padding:1px 5px;border-radius:4px}
+  pre{font-family:var(--mono);font-size:13px;line-height:1.6;background:#080e18;
+      border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+      overflow-x:auto;color:var(--ink-dim);margin:0 0 8px}
+  pre b{color:var(--gold);font-weight:600}
+  pre .ok{color:var(--ok)}
+  .cap{font-family:var(--mono);font-size:12px;color:var(--ink-faint);margin:0 0 26px}
+  canvas{display:block;width:100%;height:auto;background:#080e18;
+         border:1px solid var(--line);border-radius:10px}
+  .step{border-left:2px solid var(--gold-dim);padding-left:20px;margin:34px 0}
+  .step .n{font-family:var(--mono);font-size:12px;color:var(--gold);letter-spacing:.1em}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0 18px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);
+        font-family:var(--mono);font-size:13px;color:var(--ink-dim)}
+  th{color:var(--ink-faint);font-weight:500;text-transform:uppercase;
+     letter-spacing:.08em;font-size:11px}
+  td b{color:var(--gold);font-weight:600}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:640px){.grid2{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .card h4{margin:0 0 6px;font-size:15px;color:var(--ink)}
+  .card p{font-size:14px;margin:0;color:var(--ink-faint)}
+  .note{border-left:2px solid var(--cool);padding-left:18px;color:var(--ink-faint);font-size:15px}
+  footer{padding:56px 0 90px;color:var(--ink-faint);font-size:14px}
+  .ctl{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 4px}
+  button{font-family:var(--mono);font-size:12px;letter-spacing:.05em;
+          background:transparent;color:var(--gold);border:1px solid var(--gold-dim);
+          border-radius:6px;padding:7px 14px;cursor:pointer}
+  button:hover{border-color:var(--gold)}
+  input[type=range]{accent-color:var(--gold);width:190px}
+  .readout{font-family:var(--mono);font-size:12px;color:var(--ink-faint)}
+</style>
+</head>
+<body>
+
+<header class="hero"><div class="wrap">
+  <p class="mark">Institute for Physical AI @ BMI · ferrotherm</p>
+  <h1>Thermodynamic sampling on an FPGA you can buy.</h1>
+  <p class="lede">A new class of chip computes by drawing random samples with its own thermal
+  noise. The physics is a century old and belongs to everyone. This page shows you how to build
+  that machine yourself, on a 350 dollar board, in pure Rust, with no vendor toolchain anywhere in
+  the path. Every number here was measured on real silicon.</p>
+</div></header>
+
+<section><div class="wrap">
+  <p class="eyebrow">What you are building</p>
+  <h2>A p-bit is a coin whose bias is set by its neighbours.</h2>
+  <p>An ordinary bit is 0 or 1. A probabilistic bit, or p-bit, is a coin that gets flipped over
+  and over, and the only thing you control is how the coin is weighted. Its neighbours set that
+  weight: the more of them that agree, the more strongly the coin leans one way.</p>
+  <p>Drag the field below and watch the coin's bias follow it. This one curve, the sigmoid, is the
+  entire computation a thermodynamic chip performs, repeated across hundreds of thousands of
+  cells.</p>
+  <canvas id="c-pbit" width="900" height="260"></canvas>
+  <div class="ctl">
+    <span class="readout">local field</span>
+    <input id="f-pbit" type="range" min="-300" max="300" value="80">
+    <span class="readout" id="r-pbit"></span>
+  </div>
+  <p class="cap">Interactive. The bar is the running fraction of samples that came up +1.</p>
+
+  <h3>Half the lattice can flip at once</h3>
+  <p>If two p-bits are not connected, nothing they do can disturb each other, so they may be
+  updated at the same instant. Colour the grid like a checkerboard and every square of one colour
+  is independent of every other. That is why this computation suits hardware: one sweep is two
+  parallel half sweeps, not thousands of sequential steps.</p>
+  <canvas id="c-lattice" width="900" height="300"></canvas>
+  <div class="ctl">
+    <button id="b-lattice">Run</button>
+    <span class="readout">temperature</span>
+    <input id="t-lattice" type="range" min="20" max="140" value="60">
+    <span class="readout" id="r-lattice"></span>
+  </div>
+  <p class="cap">Interactive. Lower the temperature and order appears on its own. Nothing here is
+  scripted: the pattern is the sampler settling.</p>
+</div></section>
+
+<section><div class="wrap">
+  <p class="eyebrow">The board</p>
+  <h2>Alchitry Pt V2.</h2>
+  <p>An Artix-7 XC7A100T in a 484 ball package, with 63,400 six input lookup tables. Each lookup
+  table can hold one p-bit. A dual channel USB chip on the board speaks JTAG to the FPGA, which is
+  the only wire you need: identify the chip, load a design, read its state back.</p>
+  <canvas id="c-board" width="900" height="420"></canvas>
+  <p class="cap">Diagram, not a photograph. Positions are schematic; part numbers and capacities
+  are from the vendor listing and the AMD datasheet.</p>
+  <div class="grid2">
+    <div class="card"><h4>XC7A100T-2FGG484I</h4>
+      <p>63,400 LUT6 · 126,800 flip flops · 4,860 Kb block RAM · 240 DSP slices. The package on
+      the vendor listing reads FGG84I; the board's own schematic says FGG484.</p></div>
+    <div class="card"><h4>FT2232H</h4>
+      <p>Two USB channels. Channel A drives JTAG in MPSSE mode: four pins, TCK TDI TDO TMS. This
+      is the entire interface used on this page.</p></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <p class="eyebrow">Step by step</p>
+  <h2>From an empty board to a fabric on silicon.</h2>
+  <p>Six steps. Each one prints something you can check. The outputs shown are real, copied from
+  a run against a Pt V2 driven over a network link from the other side of the world.</p>
+
+  <div class="step">
+    <p class="n">STEP 0</p>
+    <h3>Install</h3>
+    <p>Two crates, no dependencies beyond the USB transport. The core runs anywhere, including a
+    browser; the silicon layer talks to the board.</p>
+    <pre>cargo add ferrotherm
+cargo add ferrotherm-silicon --features flash</pre>
+  </div>
+
+  <div class="step">
+    <p class="n">STEP 1</p>
+    <h3>Ask the chip what it is</h3>
+    <p>Every FPGA holds a hardwired identity code. Reading it proves the whole path works: USB,
+    the MPSSE engine, the JTAG state machine, and the chip itself.</p>
+    <pre>$ cargo run --features flash --example probe
+
+board: <b>Alchitry Pt V2</b>
+IDCODE (JTAG DR):        <b>0x13631093</b>  -> XC7A100T
+IDCODE (config port):    <b>0x13631093</b>
+cross-check: <span class="ok">PASS</span> - two independent paths agree</pre>
+    <p>Read the identity twice, by two unrelated mechanisms. If the packet layer were wrong they
+    would disagree. A value you can predict is the right first thing to measure.</p>
+  </div>
+
+  <div class="step">
+    <p class="n">STEP 2</p>
+    <h3>Prove the sampler is a sampler</h3>
+    <p>Before trusting any hardware, check the mathematics against an answer nobody chose. Onsager
+    solved the two dimensional Ising model exactly in 1944. Our sampler must reproduce it.</p>
+    <pre>$ cargo run --release --example onsager
+
+     beta  |M| sampled      M exact   |delta|
+     0.50       0.9111       0.9113    0.0002  ok
+     0.60       0.9736       0.9736    0.0000  ok
+     0.70       0.9902       0.9902    0.0000  ok
+verdict: <span class="ok">PASS</span> - sampler reproduces the exact 2D Ising solution</pre>
+    <p>Four decimal places against a closed form from 1944. This gate runs before every release.</p>
+  </div>
+
+  <div class="step">
+    <p class="n">STEP 3</p>
+    <h3>Build a fabric</h3>
+    <p>Each p-bit becomes one lookup table holding a stochastic threshold, placed into a real
+    slice, with its couplings routed through real interconnect. The tool resolves every switch to
+    physical configuration bits.</p>
+    <pre>$ cargo run --release --example pbit_fabric
+
+placing 8 p-bits, one LUT6 each:
+  p-bit 0: CLBLL_L_X2Y102 site SLICE_X0Y102
+  ...
+stochastic-threshold LUT (threshold 3): INIT = <b>0xFFFEFEE8FEE8E880</b>
+8/8 truth tables written into frames
+couplings routed: <b>7</b> (22 PIPs total), failed: 0
+bitstream: <b>11,416 bytes</b>, 26 frames, <b>398</b> configuration bits set
+verdict: <span class="ok">FABRIC EMITTED</span></pre>
+  </div>
+
+  <div class="step">
+    <p class="n">STEP 4</p>
+    <h3>Load it</h3>
+    <p>Clear the configuration memory, stream the bitstream through the configuration port,
+    release the startup sequencer. The status register tells you what happened at each stage.</p>
+    <pre>$ cargo run --features flash --example config_trace
+
+  at start          STAT=0x5000190C
+JPROGRAM (clear configuration memory):
+  after 20k clocks  STAT=<b>0x00000000</b>   <span style="color:#7d8aa3">the fabric is now blank</span>
+CFG_IN (stream the payload):
+  after payload     STAT=<b>0x601079FC</b>   <span style="color:#7d8aa3">configured</span></pre>
+    <p>The top digit of that status word encodes how the chip was configured: 5 after booting from
+    its own flash, 6 after a load over JTAG. Comparing whole status words across different
+    configuration paths will tell you a successful load failed.</p>
+  </div>
+
+  <div class="step">
+    <p class="n">STEP 5</p>
+    <h3>Ask the silicon where the bits went</h3>
+    <p>Read the configuration back out of the chip and compare it against a bitstream produced by
+    a different toolchain entirely. This is the only version of the test that means anything:
+    checking a readback against your own writes proves nothing, because a wrong address agrees
+    with itself.</p>
+    <pre>$ cargo run --features flash --example readback
+
+reference: FAR 0x00000000, 25856 payload words (256 frames)
+reading 4 frames from FAR 0x00000000...
+<b>404/404 words match (100.0%)</b>
+verdict: <span class="ok">THE DEVICE AGREES</span></pre>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <p class="eyebrow">What it costs</p>
+  <h2>Every sample has a price, and the price is mostly not the sample.</h2>
+  <p>A thermodynamic chip is cheap per update and expensive per crossing. Using the published
+  figures for one such design, a single node update costs about seven femtojoules, reading one
+  node out costs the same as 239 updates, and writing one costs about 21,700. The architecture
+  wins where many local updates happen between rare crossings, and loses where they do not.</p>
+  <table>
+    <tr><th>operation</th><th>energy</th><th>in updates</th></tr>
+    <tr><td>sample one node</td><td><b>7.09 fJ</b></td><td>1</td></tr>
+    <tr><td>read one node out</td><td>1.692 pJ</td><td>239</td></tr>
+    <tr><td>write one node</td><td>153.6 pJ</td><td><b>21,665</b></td></tr>
+  </table>
+  <p class="cap">Pre silicon circuit simulation figures from the vendor's own appendix
+  (arXiv:2608.01615, Table IV), not measured silicon. ferrotherm carries these as a swappable
+  price list, so any workload can be costed in joules before it is built.</p>
+  <div class="note">
+    <p>Measured on our side for comparison: the same sampler in a browser tab on a laptop GPU runs
+    at 9.35 billion node updates per second, which puts it between 151 and 905 times the projected
+    per update energy of the dedicated chip depending on the wattage you charge it. Two to three
+    orders of magnitude, not the four often quoted. Both biases are stated: our figure covers the
+    whole platform, theirs excludes input and output entirely.</p>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <p class="eyebrow">Status</p>
+  <h2>Roadmap.</h2>
+
+  <h3>Shipped</h3>
+  <table>
+    <tr><th>capability</th><th>evidence</th></tr>
+    <tr><td>identify the chip</td><td>two independent paths agree</td></tr>
+    <tr><td>load a design</td><td>104 KB streamed over JTAG, chip reports configured</td></tr>
+    <tr><td>read configuration back</td><td><b>404/404</b> words vs a foreign bitstream</td></tr>
+    <tr><td>place and route a fabric</td><td>8 p-bits, 7 couplings, 22 PIPs, 398 bits</td></tr>
+    <tr><td>sampler correctness</td><td>Onsager to four decimals</td></tr>
+    <tr><td>throughput, browser GPU</td><td>9.35e9 node updates per second</td></tr>
+  </table>
+
+  <h3>In progress</h3>
+  <p class="tight">The emitted fabric is combinational today: lookup tables and the wires between
+  them. Two pieces turn it into a running sampler, and both sit on layers already built.</p>
+  <div class="grid2">
+    <div class="card"><h4>Sequential fabric</h4>
+      <p>A flip flop per p-bit to hold state, and a clock to advance it. Needs the AFF and AFFMUX
+      configuration bits plus clock routing through a global buffer.</p></div>
+    <div class="card"><h4>State readout</h4>
+      <p>CAPTURE latches the flip flops into configuration frames, which the readback path on this
+      page already reads correctly. No input or output pins required.</p></div>
+  </div>
+
+  <h3>Next</h3>
+  <div class="grid2">
+    <div class="card"><h4>The rest of the ladder</h4>
+      <p>Alchitry Cu V2 and Au V2, Kria KV260, the M.2 Artix, Alveo U55C and AWS F2. The same
+      fabric compiler, different chip databases.</p></div>
+    <div class="card"><h4>Scale</h4>
+      <p>Thousands of p-bits per die rather than eight, and the energy ledger reported per
+      completed sample rather than per update.</p></div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <p><a href="https://github.com/dcharlot-physicalai-bmi/ferrotherm">Repository</a> ·
+     <a href="https://crates.io/crates/ferrotherm">ferrotherm</a> ·
+     <a href="https://crates.io/crates/ferrotherm-silicon">ferrotherm-silicon</a> ·
+     <a href="https://energy.physicalai-bmi.org/thermo">The energy programme</a></p>
+  <p style="font-size:13px;margin-top:14px">Physics: Ising 1925 · Glauber 1963 · Onsager 1944 ·
+  Geman and Geman 1984. Fabric data: Project X-Ray database, ISC licence. Apache 2.0.
+  Institute for Physical AI at BMI.</p>
+</div></footer>
+
+<script>
+// ---- p-bit: a coin whose bias is a sigmoid of its field -------------------
+(function(){
+  var c=document.getElementById('c-pbit'), x=c.getContext('2d');
+  var f=document.getElementById('f-pbit'), r=document.getElementById('r-pbit');
+  var hist=[], up=0, n=0;
+  function draw(){
+    var field=+f.value/100, p=1/(1+Math.exp(-2*field));
+    var W=c.width,H=c.height; x.clearRect(0,0,W,H);
+    // sigmoid curve
+    x.strokeStyle='rgba(207,170,91,.85)'; x.lineWidth=2; x.beginPath();
+    for(var i=0;i<=300;i++){
+      var fx=-3+6*i/300, py=1/(1+Math.exp(-2*fx));
+      var px=60+ (W-140)*(fx+3)/6, pyy=H-50-(H-100)*py;
+      i?x.lineTo(px,pyy):x.moveTo(px,pyy);
+    }
+    x.stroke();
+    // axes
+    x.strokeStyle='rgba(255,255,255,.12)'; x.lineWidth=1;
+    x.beginPath(); x.moveTo(60,H-50); x.lineTo(W-80,H-50); x.stroke();
+    x.beginPath(); x.moveTo(60,30); x.lineTo(60,H-50); x.stroke();
+    // marker
+    var mx=60+(W-140)*(field+3)/6, my=H-50-(H-100)*p;
+    x.strokeStyle='rgba(255,255,255,.2)'; x.setLineDash([3,4]);
+    x.beginPath(); x.moveTo(mx,H-50); x.lineTo(mx,my); x.lineTo(60,my); x.stroke(); x.setLineDash([]);
+    x.fillStyle='#cfaa5b'; x.beginPath(); x.arc(mx,my,5,0,6.283); x.fill();
+    // sample stream
+    for(var k=0;k<3;k++){ var s=Math.random()<p; hist.push(s); up+=s?1:0; n++; if(hist.length>90){ up-=hist.shift()?1:0; } }
+    var bx=W-64;
+    for(var i=0;i<hist.length;i++){
+      x.fillStyle=hist[i]?'rgba(207,170,91,.9)':'rgba(91,143,212,.55)';
+      x.fillRect(bx, H-56-i*2.3, 34, 1.9);
+    }
+    x.font='11px ui-monospace,Menlo,monospace'; x.fillStyle='#7d8aa3'; x.textAlign='center';
+    x.fillText('samples', bx+17, H-34);
+    x.textAlign='left';
+    x.fillText('P(+1)', 20, 40); x.fillText('field', W-140, H-30);
+    r.textContent='field '+field.toFixed(2)+'   P(+1) = '+p.toFixed(3)+
+                  '   measured '+(hist.length? (up/hist.length).toFixed(3):'-');
+    requestAnimationFrame(draw);
+  }
+  f.addEventListener('input',function(){hist=[];up=0;});
+  draw();
+})();
+
+// ---- lattice: chromatic sweep, order appearing as temperature drops -------
+(function(){
+  var c=document.getElementById('c-lattice'), x=c.getContext('2d');
+  var b=document.getElementById('b-lattice'), t=document.getElementById('t-lattice');
+  var r=document.getElementById('r-lattice');
+  var N=48, s=new Int8Array(N*N), running=true, phase=0;
+  for(var i=0;i<N*N;i++) s[i]=Math.random()<0.5?-1:1;
+  function sweep(){
+    var beta=+t.value/100;
+    for(var y=0;y<N;y++) for(var xx=0;xx<N;xx++){
+      if(((xx+y)&1)!==phase) continue;
+      var i=y*N+xx, f=0;
+      f+=s[y*N+((xx+1)%N)]; f+=s[y*N+((xx+N-1)%N)];
+      f+=s[((y+1)%N)*N+xx]; f+=s[((y+N-1)%N)*N+xx];
+      s[i]=(Math.random()<1/(1+Math.exp(-2*beta*f)))?1:-1;
+    }
+    phase^=1;
+  }
+  function draw(){
+    if(running){ sweep(); sweep(); }
+    var W=c.width,H=c.height, cell=Math.min(H-30,(W-30))/N, ox=(W-cell*N)/2, oy=(H-cell*N)/2;
+    x.clearRect(0,0,W,H);
+    for(var y=0;y<N;y++) for(var xx=0;xx<N;xx++){
+      x.fillStyle = s[y*N+xx]>0 ? 'rgba(207,170,91,.88)' : 'rgba(70,95,130,.7)';
+      x.fillRect(ox+xx*cell, oy+y*cell, cell-0.6, cell-0.6);
+    }
+    var m=0; for(var i=0;i<N*N;i++) m+=s[i];
+    r.textContent='beta '+(+t.value/100).toFixed(2)+'   |M| '+Math.abs(m/(N*N)).toFixed(3);
+    requestAnimationFrame(draw);
+  }
+  b.addEventListener('click',function(){running=!running;this.textContent=running?'Pause':'Run';});
+  b.textContent='Pause';
+  draw();
+})();
+
+// ---- board diagram --------------------------------------------------------
+(function(){
+  var c=document.getElementById('c-board'), x=c.getContext('2d');
+  var W=c.width,H=c.height;
+  function box(px,py,w,h,fill,stroke){
+    x.fillStyle=fill; x.strokeStyle=stroke; x.lineWidth=1.5;
+    x.beginPath(); x.roundRect(px,py,w,h,6); x.fill(); x.stroke();
+  }
+  function label(tx,ty,s,col,size,align){
+    x.font=(size||12)+'px ui-monospace,Menlo,monospace'; x.fillStyle=col||'#a7b3c9';
+    x.textAlign=align||'center'; x.fillText(s,tx,ty);
+  }
+  x.clearRect(0,0,W,H);
+  // PCB
+  box(70,40,W-140,H-80,'rgba(20,32,54,.9)','rgba(90,120,170,.5)');
+  label(W/2,H-24,'Alchitry Pt V2  ·  schematic diagram, not to scale','#7d8aa3',12);
+  // FPGA
+  box(W/2-110,H/2-90,220,180,'rgba(207,170,91,.12)','rgba(207,170,91,.7)');
+  label(W/2,H/2-58,'XC7A100T','#cfaa5b',18);
+  label(W/2,H/2-34,'Artix-7  ·  FGG484','#a7b3c9',12);
+  label(W/2,H/2+2,'63,400 LUT6','#d8e1f0',13);
+  label(W/2,H/2+22,'126,800 flip flops','#a7b3c9',12);
+  label(W/2,H/2+42,'4,860 Kb block RAM','#a7b3c9',12);
+  label(W/2,H/2+68,'each LUT6 = one p-bit','#cfaa5b',12);
+  // FT2232H
+  box(110,H/2-40,120,80,'rgba(91,143,212,.12)','rgba(91,143,212,.6)');
+  label(170,H/2-14,'FT2232H','#5b8fd4',13);
+  label(170,H/2+6,'USB / JTAG','#a7b3c9',11);
+  label(170,H/2+24,'MPSSE','#7d8aa3',11);
+  // DDR3
+  box(W-230,H/2-40,120,80,'rgba(255,255,255,.05)','rgba(120,140,180,.5)');
+  label(W-170,H/2-14,'DDR3L','#a7b3c9',13);
+  label(W-170,H/2+8,'256 MB','#7d8aa3',11);
+  // USB-C
+  box(74,H/2-22,34,44,'rgba(255,255,255,.08)','rgba(120,140,180,.5)');
+  label(91,H/2+38,'USB-C','#7d8aa3',10);
+  // connections
+  x.strokeStyle='rgba(91,143,212,.65)'; x.lineWidth=2;
+  x.beginPath(); x.moveTo(230,H/2); x.lineTo(W/2-110,H/2); x.stroke();
+  label((230+W/2-110)/2,H/2-10,'4 wires','#5b8fd4',11);
+  x.strokeStyle='rgba(120,140,180,.4)';
+  x.beginPath(); x.moveTo(W/2+110,H/2); x.lineTo(W-230,H/2); x.stroke();
+  x.strokeStyle='rgba(91,143,212,.65)';
+  x.beginPath(); x.moveTo(108,H/2); x.lineTo(110,H/2); x.stroke();
+  // headers
+  for(var i=0;i<3;i++){
+    box(150+i*200,58,150,18,'rgba(255,255,255,.04)','rgba(120,140,180,.35)');
+    box(150+i*200,H-76,150,18,'rgba(255,255,255,.04)','rgba(120,140,180,.35)');
+  }
+  label(W/2,52,'Alchitry Element headers','#7d8aa3',11);
+})();
+</script>
+</body>
+</html>
