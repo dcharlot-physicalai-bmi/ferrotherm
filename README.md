@@ -97,7 +97,9 @@ thermodynamic-computing corpus currently leaves empty.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against
   Onsager on the visitor's GPU before reporting throughput** (measured here: |M| 0.9143 vs 0.9113,
   0.9750 vs 0.9736 on Apple metal-3). Measured: **9.35e9 flips/s** at full die scale (269,568
-  nodes, degree 16; 0.107 ns/flip), ~800× the single-thread CPU floor (1.16e7 flips/s, 86 ns/flip).
+  nodes, degree 16; 0.107 ns/flip). CPU on the same machine, measured quiet: 7.3e7 flips/s
+  single-thread (13.6 ns/flip), 3.8e8 flips/s at 18 threads via `sweeps_par` (an earlier
+  published 86 ns/flip figure was contaminated by concurrent background load and is corrected).
   Energy per flip at package watts / measured rate: 10 W → 1.07 nJ (151× the Z1 SPICE projection),
   25 W → 2.67 nJ (377×), 60 W → 6.4 nJ (905×). So the measured gap between a first-pass browser
   sampler on consumer silicon and the vendor's pre-silicon projection is **2–3 orders of

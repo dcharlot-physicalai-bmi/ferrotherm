@@ -59,4 +59,5 @@ pub mod het;
 pub mod lrw;
 pub mod sbm;
 pub mod dtm;
+pub mod targets;
 pub mod ffi;

@@ -21,13 +21,17 @@ pub struct Sampler<'g> {
     pub rng: Pcg,
     /// Nodes whose value is held fixed (conditioning / "clamping"); sweeps skip them.
     pub clamped: Vec<bool>,
+    /// Base seed for the parallel path's per-(sweep, class, chunk) RNG streams.
+    par_seed: u64,
+    /// Sweeps completed via the parallel path (advances its stream derivation).
+    par_sweeps: u64,
 }
 
 impl<'g> Sampler<'g> {
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x5EED);
         let s = (0..g.n).map(|_| rng.spin(0.5)).collect();
-        Sampler { g, beta, s, rng, clamped: vec![false; g.n] }
+        Sampler { g, beta, s, rng, clamped: vec![false; g.n], par_seed: seed, par_sweeps: 0 }
     }
 
     /// Clamp node i to value v (observation / conditioning input).
@@ -66,6 +70,75 @@ impl<'g> Sampler<'g> {
     pub fn sweeps(&mut self, n: usize, mut ledger: Option<&mut Ledger>) {
         for _ in 0..n {
             self.sweep(ledger.as_deref_mut());
+        }
+    }
+
+    /// One full chromatic sweep across `threads` OS threads — the performance core.
+    ///
+    /// Within a color class every node's conditional is independent (no two adjacent), so the
+    /// class is split into contiguous chunks, each updated by its own thread reading the shared
+    /// spin field and writing only its own chunk's nodes. Reads touch only OTHER-color nodes,
+    /// which no thread writes during this phase, so the access pattern is race-free by
+    /// construction of the coloring.
+    ///
+    /// Determinism: each (sweep, class, chunk) gets its own counter-derived RNG stream, so the
+    /// result is bit-reproducible for a fixed (seed, threads). A different thread count is a
+    /// different, equally valid sample path (document the thread count next to the seed).
+    pub fn sweep_par(&mut self, threads: usize, ledger: Option<&mut Ledger>) {
+        assert!(threads >= 1);
+        let beta = self.beta;
+        let g = self.g;
+        let sweep_idx = self.par_sweeps;
+        let base = self.par_seed;
+        let mut updated = 0u64;
+        for (ci, class) in g.classes.iter().enumerate() {
+            let chunk = class.len().div_ceil(threads);
+            if chunk == 0 {
+                continue;
+            }
+            // SAFETY: chunks are disjoint index sets within one color class; every write target
+            // is unique to one thread, and every read is either a bias, an other-color neighbour
+            // (not written this phase), or the thread's own not-yet-updated node.
+            let sp = self.s.as_mut_ptr() as usize;
+            let clamped = &self.clamped;
+            std::thread::scope(|scope| {
+                for (ti, part) in class.chunks(chunk).enumerate() {
+                    let part: &[u32] = part;
+                    scope.spawn(move || {
+                        let mut rng = Pcg::new(
+                            base ^ sweep_idx.wrapping_mul(0x9E3779B97F4A7C15) ^ (ci as u64) << 32,
+                            0xC0DE ^ ti as u64,
+                        );
+                        let s_ptr = sp as *mut i8;
+                        for &iu in part {
+                            let i = iu as usize;
+                            if clamped[i] {
+                                continue;
+                            }
+                            let mut f = g.h[i];
+                            for k in g.offset[i]..g.offset[i + 1] {
+                                f += g.w[k] * unsafe { *s_ptr.add(g.nbr[k] as usize) } as f64;
+                            }
+                            let p_up = sigma(2.0 * beta * f);
+                            unsafe {
+                                *s_ptr.add(i) = rng.spin(p_up);
+                            }
+                        }
+                    });
+                }
+            });
+            updated += class.iter().filter(|&&iu| !self.clamped[iu as usize]).count() as u64;
+        }
+        self.par_sweeps += 1;
+        if let Some(l) = ledger {
+            l.samples += updated;
+        }
+    }
+
+    /// Run `n` parallel sweeps.
+    pub fn sweeps_par(&mut self, n: usize, threads: usize, mut ledger: Option<&mut Ledger>) {
+        for _ in 0..n {
+            self.sweep_par(threads, ledger.as_deref_mut());
         }
     }
 
@@ -139,6 +212,35 @@ mod tests {
             .sum::<f64>()
             / 2.0;
         assert!(tv < 0.02, "TV distance to exact Boltzmann = {tv}");
+    }
+
+    /// The parallel path must satisfy the same physics standard as the sequential one: Onsager's
+    /// exact magnetization on the 2D lattice, and bit-reproducibility for fixed (seed, threads).
+    #[test]
+    fn parallel_sweep_physics_and_determinism() {
+        let g = crate::ising::lattice2d(48, 1.0);
+        let beta = 0.6;
+        let mut smp = Sampler::new(&g, beta, 0x9A7);
+        for s in smp.s.iter_mut() {
+            *s = 1;
+        }
+        smp.sweeps_par(2000, 8, None);
+        let mut acc = 0.0;
+        let reads = 2000;
+        for _ in 0..reads {
+            smp.sweep_par(8, None);
+            let m: i64 = smp.s.iter().map(|&v| v as i64).sum();
+            acc += (m as f64 / g.n as f64).abs();
+        }
+        let m = acc / reads as f64;
+        let exact = crate::ising::onsager_m(beta);
+        assert!((m - exact).abs() < 0.01, "parallel |M| {m:.4} vs Onsager {exact:.4}");
+        // determinism for fixed (seed, threads)
+        let mut a = Sampler::new(&g, beta, 0x1234);
+        let mut b = Sampler::new(&g, beta, 0x1234);
+        a.sweeps_par(50, 4, None);
+        b.sweeps_par(50, 4, None);
+        assert_eq!(a.s, b.s, "same (seed, threads) must reproduce bit-identically");
     }
 
     /// Clamped nodes must never change and must steer the conditional distribution.

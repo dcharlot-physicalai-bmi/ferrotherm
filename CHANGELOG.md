@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 (2026-08-05)
+
+The performance core, the same-machine parity measurement, and the FPGA deployment-target database.
+
+- `gibbs::Sampler::sweep_par` / `sweeps_par`: multithreaded chromatic sweeps (scoped threads,
+  race-free by coloring, per-(sweep, class, chunk) RNG streams; bit-reproducible for a fixed
+  (seed, threads)). Passes the same Onsager physics gate as the sequential path.
+- Same-machine, same-model parity vs THRML (JAX 0.11, Python 3.14, CPU), measured quiet:
+  at 16,384 nodes ferrotherm 6.3e7 flips/s single-thread vs THRML 1.68e7 (3.7x); at ~270k nodes
+  ferrotherm 3.8e8 at 18 threads vs THRML 1.05e8 (3.6x; THRML's vectorization beats our single
+  thread at that size, 9.5 vs 13.6 ns). Browser WebGPU on the same machine: 9.35e9 (89x THRML-CPU;
+  THRML has no GPU path on non-CUDA hardware). Scripts: `scripts/thrml_bench.py`,
+  `examples/parity_bench.rs`.
+- Corrected a published number: the earlier 86 ns/flip CPU figure was measured while background
+  jobs shared the machine; quiet re-measurement gives 13.6 ns/flip. Recorded as a discipline rule.
+- `targets`: the FPGA deployment-target database — edge parts (iCE40/ECP5/Gowin/Artix, with open-
+  toolchain status), buyable cards (Alveo U55C = AWS F2 silicon twin; V80 flagship with a
+  first-mover slot), cloud instances (AWS F2 active at $1.98/hr; Azure NP sunsetting May 2027;
+  Alibaba/Huawei FPGA clouds verified dead), academic clusters (AMD HACC, NSF OCT: F2-class
+  silicon at $0), and a $200 salvage CI tier. Capacity model anchored to the measured DSIM-2
+  machine (arXiv:2606.25313: 18x VP1902, 1e12 flips/s) after the anchor test caught the first
+  version ~10x optimistic. Large-part and calibration sweeps queued.
+
 ## 0.3.0 (2026-08-05)
 
 Wave 3 of the field ingest: the flagship architecture and two more hardware-algorithm lines.
