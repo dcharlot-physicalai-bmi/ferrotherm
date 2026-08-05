@@ -5,6 +5,7 @@
 
 pub mod bitstream;
 pub mod frame;
+pub mod segbits;
 pub mod lut;
 
 #[cfg(feature = "flash")]
