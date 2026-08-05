@@ -8,6 +8,7 @@ pub mod frame;
 pub mod framebuf;
 pub mod json;
 pub mod pips;
+pub mod route;
 pub mod segbits;
 pub mod tilegrid;
 pub mod lut;

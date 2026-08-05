@@ -131,6 +131,11 @@ impl TileGrid {
                 Tile { name: name.to_string(), kind, grid_x, grid_y, bits, sites },
             );
         }
+        if tiles.is_empty() {
+            // A truncated or error-page download parses to zero tiles and then every lookup
+            // "just" returns None — the failure surfaces far from its cause. Refuse it here.
+            return Err("tilegrid parsed to zero tiles (truncated or wrong file?)".into());
+        }
         Ok(TileGrid { tiles })
     }
 
@@ -181,6 +186,13 @@ mod tests {
       "frames": 36, "offset": 0, "words": 2}}, "clock_region": "X0Y0", "grid_x": 10,
       "grid_y": 207, "sites": {"SLICE_X0Y0": "SLICEL", "SLICE_X1Y0": "SLICEL"},
       "type": "CLBLL_L"}}"#;
+
+    /// A download that failed into an error page must be refused, not parsed as an empty fabric.
+    #[test]
+    fn empty_or_error_input_is_refused() {
+        assert!(TileGrid::parse("404: Not Found").is_err());
+        assert!(TileGrid::parse("{}").is_err());
+    }
 
     #[test]
     fn loads_a_real_tile() {
