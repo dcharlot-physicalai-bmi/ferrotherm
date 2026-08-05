@@ -135,11 +135,11 @@ pub struct Tap {
 
 impl Tap {
     pub fn new(ftdi: Ftdi) -> Result<Tap, String> {
-        // 60 MHz base clock, loopback off, TCK = 60/((1+14)*2) = 2 MHz, pins idle.
+        // 60 MHz base clock, loopback off, TCK = 60/((1+2)*2) = 10 MHz, pins idle.
         ftdi.write(&[
             MPSSE_DIS_DIV5,
             MPSSE_LOOPBACK_DIS,
-            MPSSE_SET_DIVISOR, 14, 0x00,
+            MPSSE_SET_DIVISOR, 2, 0x00,
             MPSSE_SET_LOW, PIN_IDLE, PIN_DIR,
         ])?;
         let mut t = Tap { ftdi };
@@ -323,14 +323,19 @@ impl Tap {
     }
 
     /// Hold the TAP in Run-Test/Idle for `n` TCK cycles.
+    ///
+    /// A TMS command clocks at most 6 cycles, so long settles need many commands — but they are
+    /// BUFFERED INTO ONE TRANSFER. Issuing a USB transfer per 6 clocks turns the 120,000-cycle
+    /// post-JPROGRAM settle into 20,000 round trips, which stalls the configuration for minutes.
     pub fn run_clocks(&mut self, n: usize) -> Result<(), String> {
+        let mut cmds = Vec::with_capacity((n / 6 + 1) * 3);
         let mut left = n;
         while left > 0 {
             let batch = left.min(6);
-            self.ftdi.write(&[CLK_TMS, (batch - 1) as u8, 0x00])?;
+            cmds.extend_from_slice(&[CLK_TMS, (batch - 1) as u8, 0x00]);
             left -= batch;
         }
-        Ok(())
+        self.ftdi.write(&cmds)
     }
 }
 
