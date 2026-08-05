@@ -1,16 +1,20 @@
-// THE INTEGRATION: place a ferrotherm p-bit fabric into real slices, route its couplings through
-// real interconnect, and emit a complete XC7A100T bitstream.
+// THE INTEGRATION: place a fabric of binary stochastic neurons into real slices, route its
+// couplings through real interconnect, and emit a complete XC7A100T bitstream.
 //
-// Each p-bit is one LUT6 holding the stochastic-threshold truth table; its output is routed to
-// the next p-bit's LUT input, which is the coupling a sampler is built from. Everything is
+// One neuron is one LUT6 holding the stochastic-threshold truth table; its output is routed to
+// the next neuron's LUT input, which is the coupling a sampler is built from. Everything is
 // resolved to physical configuration bits and assembled into a loadable stream.
 //
-// usage: pbit_fabric <tilegrid> <tileconn> <tt_INT_L> <tt_INT_R> <tt_CLBLL_L>
-//                    <segbits_int_l> <segbits_int_r> <segbits_clbll_l> <ppips_clbll_l> [n_pbits]
+// usage: bsn_fabric <tilegrid> <tileconn> <tt_INT_L> <tt_INT_R> <tt_CLBLL_L>
+//                   <segbits_int_l> <segbits_int_r> <segbits_clbll_l> <ppips_clbll_l>
+//                   [ppips_int_l] [ppips_int_r] [n_neurons]
+//
+// The two interconnect ppips files are optional to pass and load-bearing to omit: without them
+// every coupling fails, because permanent connections get routed through as if they were switches.
 use ferrotherm_silicon::bitstream::{decode, find_sync, to_words, Packet};
 use ferrotherm_silicon::frame::{assemble, words_to_bytes};
 use ferrotherm_silicon::framebuf::FrameBuf;
-use ferrotherm_silicon::lut::pbit_threshold_init;
+use ferrotherm_silicon::lut::bsn_threshold_init;
 use ferrotherm_silicon::pips::{PipDb, Ppips};
 use ferrotherm_silicon::route::{parse_tileconn, Fabric};
 use ferrotherm_silicon::segbits::SegBits;
@@ -22,7 +26,7 @@ const IDCODE_XC7A100T: u32 = 0x0363_1093;
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let rd = |i: usize| std::fs::read_to_string(&a[i]).expect("read");
-    let n_pbits: usize = a.get(11).and_then(|s| s.parse().ok()).unwrap_or(8);
+    let n_neurons: usize = a.get(11).and_then(|s| s.parse().ok()).unwrap_or(8);
 
     let grid = TileGrid::parse(&rd(0)).expect("tilegrid");
     let conns = parse_tileconn(&rd(1)).expect("tileconn");
@@ -54,20 +58,20 @@ fn main() {
         .filter(|t| t.grid_y > 100 && t.logic_block().is_some() && t.sites.len() >= 2)
         .collect();
     tiles.sort_by_key(|t| (t.grid_x, t.grid_y));
-    let placed: Vec<_> = tiles.into_iter().take(n_pbits).collect();
-    if placed.len() < n_pbits {
+    let placed: Vec<_> = tiles.into_iter().take(n_neurons).collect();
+    if placed.len() < n_neurons {
         println!("only {} slices available", placed.len());
         return;
     }
-    println!("placing {n_pbits} p-bits, one LUT6 each:");
+    println!("placing {n_neurons} binary stochastic neurons, one LUT6 each:");
     for (i, t) in placed.iter().enumerate() {
-        println!("  p-bit {i}: {} site {}", t.name, t.sites[0].0);
+        println!("  neuron {i}: {} site {}", t.name, t.sites[0].0);
     }
 
     // ---- write the truth tables ----
     let mut fb = FrameBuf::new();
     let threshold = 3u8;
-    let init = pbit_threshold_init(threshold);
+    let init = bsn_threshold_init(threshold);
     println!("\nstochastic-threshold LUT (threshold {threshold}): INIT = 0x{init:016X}");
     let init_bits = clb_seg
         .lut_init_bits("CLBLL_L.SLICEL_X0.ALUT")
@@ -80,19 +84,19 @@ fn main() {
             Err(e) => println!("  LUT write failed in {}: {e}", t.name),
         }
     }
-    println!("{luts_written}/{n_pbits} truth tables written into frames");
+    println!("{luts_written}/{n_neurons} truth tables written into frames");
 
-    // ---- route the couplings: p-bit i output -> p-bit i+1 input ----
+    // ---- route the couplings: neuron i output -> neuron i+1 input ----
     let clb_pips = PipDb::parse(&rd(4)).expect("CLBLL_L");
     let out_wire = clb_pips.sites[0].pins.get("A").expect("A").clone();
     let in_wire = clb_pips.sites[0].pins.get("A1").expect("A1").clone();
     let fab = Fabric::with_ppips(&grid, dbs, pp, conns);
 
     let (mut routed, mut pips_total, mut failed) = (0usize, 0usize, 0usize);
-    let n_links = n_pbits - 1;
-    for i in 0..n_pbits {
+    let n_links = n_neurons - 1;
+    for i in 0..n_neurons {
         let src_t = &placed[i];
-        if i + 1 >= n_pbits {
+        if i + 1 >= n_neurons {
             continue; // a chain: the wrap-around would span the whole column
         }
         let dst_t = &placed[i + 1];
@@ -140,7 +144,7 @@ fn main() {
             }
             None => {
                 failed += 1;
-                println!("  no route: p-bit {i} -> {}", i + 1);
+                println!("  no route: neuron {i} -> {}", i + 1);
             }
         }
     }
@@ -165,12 +169,12 @@ fn main() {
     println!("decoded: {} packets, {unknown} unknown, {frame_words} frame words ({} frames)",
              packets.len(), frame_words / 101);
 
-    std::fs::write("pbit_fabric.bit", &bytes).expect("write");
-    println!("wrote pbit_fabric.bit");
+    std::fs::write("bsn_fabric.bit", &bytes).expect("write");
+    println!("wrote bsn_fabric.bit");
     println!(
         "\nverdict: {}",
-        if luts_written == n_pbits && routed == n_links && failed == 0 && unknown == 0 {
-            "FABRIC EMITTED - every p-bit placed, every coupling routed, all bits resolved, \
+        if luts_written == n_neurons && routed == n_links && failed == 0 && unknown == 0 {
+            "FABRIC EMITTED - every neuron placed, every coupling routed, all bits resolved, \
              stream well formed"
         } else {
             "incomplete - see the counts above"

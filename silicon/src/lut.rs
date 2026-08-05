@@ -9,7 +9,7 @@
 //! exact grade (grade B). Both hold the same law: software == emulator == silicon configuration.
 
 /// LUT6 init word for the stochastic-threshold p-bit update.
-pub fn pbit_threshold_init(threshold: u8) -> u64 {
+pub fn bsn_threshold_init(threshold: u8) -> u64 {
     let mut init = 0u64;
     for idx in 0u64..64 {
         let neighbours = (idx & 0b1_1111).count_ones() as u8; // I0..I4
@@ -38,7 +38,7 @@ pub fn lfsr_feedback_init(taps: &[u8]) -> u64 {
 
 /// The probability that a threshold p-bit fires given `k` high neighbours, under a fair random
 /// bit: exact closed form for verifying fabric statistics against the ferrotherm model layer.
-pub fn pbit_fire_prob(threshold: u8, k: u8) -> f64 {
+pub fn bsn_fire_prob(threshold: u8, k: u8) -> f64 {
     // out = 1 if k + r >= threshold, r ~ Bernoulli(1/2)
     if k >= threshold {
         1.0
@@ -90,4 +90,16 @@ mod tests {
             }
         }
     }
+}
+
+/// Former name of [`bsn_threshold_init`], kept so 0.1.0 callers keep building.
+#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_threshold_init")]
+pub fn pbit_threshold_init(threshold: u8) -> u64 {
+    bsn_threshold_init(threshold)
+}
+
+/// Former name of [`bsn_fire_prob`], kept so 0.1.0 callers keep building.
+#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_fire_prob")]
+pub fn pbit_fire_prob(threshold: u8, k: u8) -> f64 {
+    bsn_fire_prob(threshold, k)
 }

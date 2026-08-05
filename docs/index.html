@@ -53,6 +53,12 @@
   th{color:var(--ink-faint);font-weight:500;text-transform:uppercase;
      letter-spacing:.08em;font-size:11px}
   td b{color:var(--gold);font-weight:600}
+  .tw{overflow-x:auto;margin:8px 0 4px}
+  .tw table{min-width:640px}
+  tr.alt td{color:var(--ink-faint);background:rgba(91,143,212,.06)}
+  .eq{font-family:var(--mono);font-size:15px;color:var(--ink);text-align:center;
+      background:#080e18;border:1px solid var(--line);border-radius:10px;
+      padding:16px 12px;margin:4px 0 16px;overflow-x:auto}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:640px){.grid2{grid-template-columns:1fr}}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
@@ -82,10 +88,14 @@
 
 <section><div class="wrap">
   <p class="eyebrow">What you are building</p>
-  <h2>A p-bit is a coin whose bias is set by its neighbours.</h2>
-  <p>An ordinary bit is 0 or 1. A probabilistic bit, or p-bit, is a coin that gets flipped over
-  and over, and the only thing you control is how the coin is weighted. Its neighbours set that
-  weight: the more of them that agree, the more strongly the coin leans one way.</p>
+  <h2>A binary stochastic neuron is a coin whose bias is set by its neighbours.</h2>
+  <p>An ordinary bit is 0 or 1. The unit here is a coin that gets flipped over and over, and the
+  only thing you control is how the coin is weighted. Its neighbours set that weight: the more of
+  them that agree, the more strongly the coin leans one way.</p>
+  <p>You may have met this unit as a <em>p-bit</em>. That name was coined in 2016 and is now
+  widespread in device physics, but the object is much older and has names in two established
+  fields. We use the literature names on this page and give the full lineage
+  <a href="#names">below</a>.</p>
   <p>Drag the field below and watch the coin's bias follow it. This one curve, the sigmoid, is the
   entire computation a thermodynamic chip performs, repeated across hundreds of thousands of
   cells.</p>
@@ -98,7 +108,7 @@
   <p class="cap">Interactive. The bar is the running fraction of samples that came up +1.</p>
 
   <h3>Half the lattice can flip at once</h3>
-  <p>If two p-bits are not connected, nothing they do can disturb each other, so they may be
+  <p>If two neurons are not connected, nothing they do can disturb each other, so they may be
   updated at the same instant. Colour the grid like a checkerboard and every square of one colour
   is independent of every other. That is why this computation suits hardware: one sweep is two
   parallel half sweeps, not thousands of sequential steps.</p>
@@ -113,11 +123,95 @@
   scripted: the pattern is the sampler settling.</p>
 </div></section>
 
+<section id="names"><div class="wrap">
+  <p class="eyebrow">What to call it</p>
+  <h2>One unit, a century of names.</h2>
+  <p>Every name in the table below denotes the same object, and every field writes the same rule.
+  Site <em>i</em> is set to +1 with probability</p>
+  <p class="eq">P(s<sub>i</sub> = +1 | rest) &nbsp;=&nbsp; &sigma;( 2&beta; ( &Sigma;<sub>j</sub>
+  J<sub>ij</sub> s<sub>j</sub> + h<sub>i</sub> ) )</p>
+  <p>which is the sigmoid you dragged above. The differences between the rows are vocabulary and
+  discipline, not mathematics.</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>Name</th><th>Field</th><th>Where it comes from</th><th>Status</th></tr></thead>
+    <tbody>
+    <tr><td>spin</td><td>statistical physics</td>
+      <td>Lenz 1920; Ising, <em>Z. Phys.</em> <b>31</b>, 253 (1925)</td><td>academic</td></tr>
+    <tr><td>Glauber dynamics, heat-bath update</td><td>statistical physics</td>
+      <td>Glauber, <em>J. Math. Phys.</em> <b>4</b>, 294 (1963)</td><td>academic</td></tr>
+    <tr><td>unit, binary unit</td><td>neural networks</td>
+      <td>Ackley, Hinton &amp; Sejnowski, <em>Cognitive Science</em> <b>9</b>, 147 (1985)</td>
+      <td>academic</td></tr>
+    <tr><td>stochastic neuron</td><td>finite-temperature Hopfield nets</td>
+      <td>Little 1974; Amit, Gutfreund &amp; Sompolinsky, <em>Phys. Rev. A</em> <b>32</b>, 1007
+      (1985)</td><td>academic</td></tr>
+    <tr><td>sigmoid unit, unit of a sigmoid belief network</td><td>machine learning</td>
+      <td>Neal, <em>Artificial Intelligence</em> <b>56</b>, 71 (1992)</td><td>academic</td></tr>
+    <tr><td><b>binary stochastic neuron</b> (BSN)</td><td>deep learning; spintronics</td>
+      <td>Bengio, L&eacute;onard &amp; Courville, arXiv:1308.3432 (2013); Camsari, Sutton &amp;
+      Datta, <em>Appl. Phys. Rev.</em> <b>6</b>, 011305 (2019)</td>
+      <td>academic</td></tr>
+    <tr><td>p-bit, probabilistic bit</td><td>device physics</td>
+      <td>Camsari, Faria, Sutton &amp; Datta, arXiv:1610.00377 &rarr; <em>Phys. Rev. X</em>
+      <b>7</b>, 031014 (2017)</td><td>academic coinage</td></tr>
+    <tr><td>pbit, thermodynamic sampling unit</td><td>company usage</td>
+      <td>Extropic Corp. (2025)</td><td><b>branded</b></td></tr>
+    <tr class="alt"><td>stochastic number, bit stream</td><td>computer arithmetic</td>
+      <td>von Neumann 1956; Gaines, <em>AFIPS SJCC</em> (1967)</td>
+      <td><b>different concept</b></td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">Bold names are the ones this project uses. The last row is a false friend, explained
+  below.</p>
+
+  <h3>How the naming went</h3>
+  <p>Lenz proposed the model in 1920 and his student Ising solved the one dimensional case in 1925,
+  but that model was static: an energy over spins, with no rule for how they change. Roy Glauber
+  supplied the dynamics in 1963, deriving the flip rate from the requirement that the chain settle
+  to thermal equilibrium. His rule and a sigmoid resample are the same rule written two ways.</p>
+  <p>The unit entered machine learning through the Boltzmann machine, where Ackley, Hinton and
+  Sejnowski called it simply a <em>unit</em>: "a unit is always in one of two states, on or off, and
+  it adopts these states as a probabilistic function of the states of its neighboring units." Their
+  own paper notes the physical parallel: such a system "in contact with a heat bath at a given
+  temperature will eventually reach thermal equilibrium."</p>
+  <p>By 1992 the operation had its modern name. Neal's section 2.2 is headed "Gibbs sampling for
+  Boltzmann machines," and his equation 5 gives the conditional as
+  &sigma;(x* &Sigma;<sub>j&ne;i</sub> s<sub>j</sub> w<sub>ij</sub>), with the note that
+  "the 'sigmoid' function, &sigma;(t), is defined as 1/(1 + exp(&minus;t))." That is the rule this
+  project implements and, word for word, the rule the current hardware papers describe.</p>
+  <p>The term <em>p-bit</em> was introduced in October 2016 by Camsari, Faria, Sutton and Datta. It
+  is a real academic term, now standard in device physics, and the same group made the identity
+  explicit in 2019: their figure 2 is captioned "p-bit: Binary Stochastic Neuron." The coining paper
+  had already said so, writing that its defining equations "are essentially the same as the defining
+  equations for Boltzmann machines introduced by Hinton and his collaborators." What was new there
+  was the hardware, a three terminal device with gain and input–output isolation, and the use of it
+  for invertible logic. The unit itself was thirty years old and the physics sixty.</p>
+  <p>Extropic's unhyphenated <em>pbit</em> is company vocabulary layered on that coinage. Their
+  peer-facing paper is the clearer guide to what they built: it does not use the word at all,
+  describing each node as "a single Bernoulli random variable" advanced by "the Gibbs sampling
+  update rule," and noting that Boltzmann machines are "also known as Ising models in physics."</p>
+
+  <h3>One false friend</h3>
+  <p><em>Stochastic computing</em>, from von Neumann in 1956 and named by Gaines in 1967, is a
+  different and older idea that the similar name invites you to conflate. There, a number is encoded
+  as the fraction of ones in a long random bit stream, so that a multiply becomes a single AND gate.
+  The randomness is a carrier you average away to recover an ordinary arithmetic answer. Here the
+  randomness is the product: the unit's job is to draw a real sample, so that a network of them
+  performs Markov chain Monte Carlo and visits states at their Boltzmann frequency. One is
+  arithmetic done with probabilities, the other is sampling done by physics.</p>
+
+  <p class="cap">A footnote for the careful reader: Ackley, Hinton and Sejnowski describe their own
+  sigmoid rule as "a form of the Metropolis algorithm." It is not. Metropolis accepts with
+  min(1, e<sup>&minus;&Delta;E/T</sup>); their rule is Glauber's. The slip has been repeated in
+  textbooks ever since.</p>
+</div></section>
+
 <section><div class="wrap">
   <p class="eyebrow">The board</p>
   <h2>Alchitry Pt V2.</h2>
   <p>An Artix-7 XC7A100T in a 484 ball package, with 63,400 six input lookup tables. Each lookup
-  table can hold one p-bit. A dual channel USB chip on the board speaks JTAG to the FPGA, which is
+  table can hold one neuron. A dual channel USB chip on the board speaks JTAG to the FPGA, which is
   the only wire you need: identify the chip, load a design, read its state back.</p>
   <canvas id="c-board" width="900" height="420"></canvas>
   <p class="cap">Diagram, not a photograph. Positions are schematic; part numbers and capacities
@@ -180,19 +274,19 @@ verdict: <span class="ok">PASS</span> - sampler reproduces the exact 2D Ising so
   <div class="step">
     <p class="n">STEP 3</p>
     <h3>Build a fabric</h3>
-    <p>Each p-bit becomes one lookup table holding a stochastic threshold, placed into a real
+    <p>Each neuron becomes one lookup table holding a stochastic threshold, placed into a real
     slice, with its couplings routed through real interconnect. The tool resolves every switch to
     physical configuration bits.</p>
-    <pre>$ cargo run --release --example pbit_fabric
+    <pre>$ cargo run --release --example bsn_fabric -- $DB/xc7a100t/tilegrid.json ...
 
-placing 8 p-bits, one LUT6 each:
-  p-bit 0: CLBLL_L_X2Y102 site SLICE_X0Y102
+placing 8 binary stochastic neurons, one LUT6 each:
+  neuron 0: CLBLL_L_X2Y102 site SLICE_X0Y102
   ...
 stochastic-threshold LUT (threshold 3): INIT = <b>0xFFFEFEE8FEE8E880</b>
 8/8 truth tables written into frames
 couplings routed: <b>7</b> (22 PIPs total), failed: 0
 bitstream: <b>11,416 bytes</b>, 26 frames, <b>398</b> configuration bits set
-verdict: <span class="ok">FABRIC EMITTED</span></pre>
+verdict: <span class="ok">FABRIC EMITTED</span> - every neuron placed, every coupling routed</pre>
   </div>
 
   <div class="step">
@@ -263,7 +357,7 @@ verdict: <span class="ok">THE DEVICE AGREES</span></pre>
     <tr><td>identify the chip</td><td>two independent paths agree</td></tr>
     <tr><td>load a design</td><td>104 KB streamed over JTAG, chip reports configured</td></tr>
     <tr><td>read configuration back</td><td><b>404/404</b> words vs a foreign bitstream</td></tr>
-    <tr><td>place and route a fabric</td><td>8 p-bits, 7 couplings, 22 PIPs, 398 bits</td></tr>
+    <tr><td>place and route a fabric</td><td>8 neurons, 7 couplings, 22 PIPs, 398 bits</td></tr>
     <tr><td>sampler correctness</td><td>Onsager to four decimals</td></tr>
     <tr><td>throughput, browser GPU</td><td>9.35e9 node updates per second</td></tr>
   </table>
@@ -273,7 +367,7 @@ verdict: <span class="ok">THE DEVICE AGREES</span></pre>
   them. Two pieces turn it into a running sampler, and both sit on layers already built.</p>
   <div class="grid2">
     <div class="card"><h4>Sequential fabric</h4>
-      <p>A flip flop per p-bit to hold state, and a clock to advance it. Needs the AFF and AFFMUX
+      <p>A flip flop per neuron to hold state, and a clock to advance it. Needs the AFF and AFFMUX
       configuration bits plus clock routing through a global buffer.</p></div>
     <div class="card"><h4>State readout</h4>
       <p>CAPTURE latches the flip flops into configuration frames, which the readback path on this
@@ -286,7 +380,7 @@ verdict: <span class="ok">THE DEVICE AGREES</span></pre>
       <p>Alchitry Cu V2 and Au V2, Kria KV260, the M.2 Artix, Alveo U55C and AWS F2. The same
       fabric compiler, different chip databases.</p></div>
     <div class="card"><h4>Scale</h4>
-      <p>Thousands of p-bits per die rather than eight, and the energy ledger reported per
+      <p>Thousands of neurons per die rather than eight, and the energy ledger reported per
       completed sample rather than per update.</p></div>
   </div>
 </div></section>
@@ -404,7 +498,7 @@ verdict: <span class="ok">THE DEVICE AGREES</span></pre>
   label(W/2,H/2+2,'63,400 LUT6','#d8e1f0',13);
   label(W/2,H/2+22,'126,800 flip flops','#a7b3c9',12);
   label(W/2,H/2+42,'4,860 Kb block RAM','#a7b3c9',12);
-  label(W/2,H/2+68,'each LUT6 = one p-bit','#cfaa5b',12);
+  label(W/2,H/2+68,'each LUT6 = one neuron','#cfaa5b',12);
   // FT2232H
   box(110,H/2-40,120,80,'rgba(91,143,212,.12)','rgba(91,143,212,.6)');
   label(170,H/2-14,'FT2232H','#5b8fd4',13);
