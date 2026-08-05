@@ -9,5 +9,10 @@ readme = "README.md"
 keywords = ["fpga", "bitstream", "thermodynamic", "pbit", "ising"]
 categories = ["embedded", "hardware-support", "science"]
 
+[features]
+flash = ["dep:nusb", "dep:pollster"]
+
 [dependencies]
 ferrotherm = { version = "0.5", path = ".." }
+nusb = { version = "0.1", optional = true }
+pollster = { version = "0.4", optional = true }

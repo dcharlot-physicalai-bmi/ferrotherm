@@ -4,3 +4,6 @@
 //! from Open Interface Engineering's openie-fpga; this crate is fully independent of it.
 
 pub mod lut;
+
+#[cfg(feature = "flash")]
+pub mod flash;
