@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.1 (2026-08-05)
+
+Deployment-ladder facts finalized at datasheet grade (verified Aug 2026).
+
+- Alchitry V2 lineup: Cu V2 $59.99 (iCE40-HX8K, the full-open-flow rung), Au V2 $149.99
+  (XC7A35T-2), Pt V2 $349.99 (XC7A100T-2, 4x GTP = PCIe Gen2 x4 capable; the vendor listings'
+  "FGG84I" package is a typo, confirmed FGG484 from the Rev A schematic).
+- Kria KV260: XCK26 exact fabric numbers; corrected the widely repeated FALSE claim that it needs
+  Vivado Enterprise (free ML Standard covers Kria, per AMD's licensing FAQ).
+- Numato Aller: XC7A200T-2 in M.2 2280 — the only first-party 2280 M.2 FPGA still manufactured
+  (LiteFury/NiteFury/Acorn dead); ~$500 quote-only.
+- AWS f2.48xlarge, architecture-critical [AWS re:Post]: NO FPGA-to-FPGA links (no P2P, no ring —
+  F1 had both). The x8 tier therefore runs replica-exchange parallel tempering (scalar energies
+  per swap fit host-mediated topology) rather than DSIM-2-style lattice partitioning.
+
 ## 0.5.0 (2026-08-05)
 
 The hardware backend and the named deployment ladder.
