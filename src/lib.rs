@@ -56,4 +56,7 @@ pub mod tempering;
 pub mod tla;
 pub mod linalg;
 pub mod het;
+pub mod lrw;
+pub mod sbm;
+pub mod dtm;
 pub mod ffi;

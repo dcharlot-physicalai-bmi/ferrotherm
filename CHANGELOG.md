@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 (2026-08-05)
+
+Wave 3 of the field ingest: the flagship architecture and two more hardware-algorithm lines.
+
+- `dtm`: Denoising Thermodynamic Models (arXiv:2510.23972) — closed-form forward jump kernels,
+  pattern grids (G8/G12/G16 with degree and bipartiteness tests), contrastive chain training with
+  latent marginalization, the TC penalty (closed form, h-component cancels exactly), the ACP
+  controller (scripted-sequence unit test), and reverse-chain sampling. THE GOLD TEST: on a fully
+  enumerable DTM the Eq.-14 gradient with exact conditional expectations matches central finite
+  differences of the exact NLL for every parameter; sampled-gradient training must reduce the
+  EXACT NLL. Recorded: the paper's printed Eq. D1 sign is wrong — the energy-form keep
+  probability test pins the negative sign and shows the printed sign yields exactly the
+  complement (indistinguishable only in the noise-saturation limit).
+- `lrw`: Lattice Random Walk SDE discretisation (arXiv:2508.20883, the algorithm behind Normal
+  Computing's CN101) — ternary increments with exact conditional moments (algebraic identity
+  test, no Monte Carlo), validity clipping, and the stability mechanism demonstrated: a cubic
+  drift that provably diverges under Euler-Maruyama from x0 = 5 stays bounded under the walk.
+- `sbm`: Simulated bifurcation (ballistic and discrete variants, Goto et al.) — symplectic
+  momentum-first updates, inelastic walls, best-so-far readout. Verified against exhaustively
+  enumerated ground states: K8, C7, Petersen exact on both variants; 20/20 and 20/20 on seeded
+  N = 16 Gaussian instances. Recorded: with x initialized exactly to zero, symmetric graphs
+  synchronize, hit the walls together, and the momentum reset erases the symmetry-breaking
+  (measured: dSB converged to the WORST K8 state); a small random x-init removes the trap.
+
 ## 0.2.0 (2026-08-05)
 
 Wave 2 of the field ingest. Breaking: `Program::run` gains a trajectory-trace parameter.
