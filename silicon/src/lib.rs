@@ -5,7 +5,9 @@
 
 pub mod bitstream;
 pub mod frame;
+pub mod json;
 pub mod segbits;
+pub mod tilegrid;
 pub mod lut;
 
 #[cfg(feature = "flash")]
