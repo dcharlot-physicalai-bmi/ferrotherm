@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench · ferrotherm</title>
+<meta name="description" content="Build an Ising model, sample it in your browser, and take the same model to the API or an agent. Runs entirely on your own device.">
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111a2e; --panel-2:#0d1526; --line:#24314d;
+    --ink:#d8e1f0; --ink-dim:#a7b3c9; --ink-faint:#7d8aa3;
+    --gold:#cfaa5b; --gold-dim:rgba(207,170,91,.55);
+    --ok:#7dd87d; --warn:#e0a458; --cool:#5b8fd4; --hot:#d4685b;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
+       display:flex;flex-direction:column}
+
+  /* ---- chrome ---- */
+  .bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+       padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+  .mark{font-family:var(--mono);color:var(--gold);letter-spacing:.14em;
+        text-transform:uppercase;font-size:11px;white-space:nowrap}
+  .mark a{color:var(--ink-faint);text-decoration:none;border:0}
+  .mark a:hover{color:var(--gold)}
+  .spacer{flex:1}
+  button{font-family:var(--mono);font-size:12px;letter-spacing:.04em;
+         background:transparent;color:var(--gold);border:1px solid var(--gold-dim);
+         border-radius:6px;padding:6px 13px;cursor:pointer;white-space:nowrap}
+  button:hover:not(:disabled){border-color:var(--gold);background:rgba(207,170,91,.08)}
+  button:disabled{opacity:.4;cursor:default}
+  button.primary{background:rgba(207,170,91,.14);border-color:var(--gold)}
+  button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{
+    outline:2px solid var(--gold);outline-offset:2px}
+  select{font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);
+         border:1px solid var(--line);border-radius:6px;padding:6px 9px}
+  label.ctl{display:flex;align-items:center;gap:7px;font-family:var(--mono);
+            font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em}
+  input[type=range]{accent-color:var(--gold);width:120px}
+  input[type=number]{font-family:var(--mono);font-size:12px;width:74px;background:var(--panel);
+    color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+
+  /* ---- workspace ---- */
+  main{flex:1;display:grid;grid-template-columns:minmax(320px,1fr) minmax(0,1.35fr);
+       min-height:0;overflow:hidden}
+  .pane{display:flex;flex-direction:column;min-height:0;min-width:0}
+  .pane + .pane{border-left:1px solid var(--line)}
+  .phead{display:flex;align-items:center;gap:10px;padding:8px 16px;
+         border-bottom:1px solid var(--line);background:var(--panel-2)}
+  .ptitle{font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+          text-transform:uppercase;color:var(--gold)}
+  .phead .hint{font-size:11px;color:var(--ink-faint);font-family:var(--mono)}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:14px 16px}
+
+  textarea{width:100%;height:100%;min-height:260px;resize:none;background:var(--panel-2);
+    color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+    font-family:var(--mono);font-size:13px;line-height:1.6;tab-size:2}
+  .editwrap{display:flex;flex-direction:column;height:100%;gap:10px}
+  .status{font-family:var(--mono);font-size:12px;padding:8px 11px;border-radius:7px;
+          border:1px solid var(--line);background:var(--panel);color:var(--ink-faint);
+          white-space:pre-wrap;word-break:break-word}
+  .status.bad{border-color:rgba(212,104,91,.5);color:#f0b9b2}
+  .status.good{border-color:rgba(125,216,125,.4);color:#bfe6bf}
+
+  canvas{display:block;width:100%;height:auto;background:#070d16;
+         border:1px solid var(--line);border-radius:8px}
+
+  .readouts{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:9px;
+            margin:12px 0 4px}
+  .ro{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  .ro .k{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+         color:var(--ink-faint)}
+  .ro .v{font-family:var(--mono);font-size:17px;color:var(--gold);
+         font-variant-numeric:tabular-nums;margin-top:2px}
+  .ro .v.small{font-size:13px;color:var(--ink)}
+
+  details{border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-top:12px}
+  summary{cursor:pointer;padding:9px 12px;font-family:var(--mono);font-size:11px;
+          letter-spacing:.1em;text-transform:uppercase;color:var(--gold)}
+  details[open] summary{border-bottom:1px solid var(--line)}
+  .dbody{padding:12px}
+  pre{font-family:var(--mono);font-size:12px;line-height:1.55;background:#070d16;
+      border:1px solid var(--line);border-radius:7px;padding:11px 13px;overflow-x:auto;
+      color:var(--ink-dim);margin:0 0 9px}
+  .dbody p{margin:0 0 10px;color:var(--ink-faint);font-size:13px}
+  .dbody p:last-child{margin-bottom:0}
+  code{font-family:var(--mono);font-size:.9em;color:var(--ink);
+       background:rgba(255,255,255,.05);padding:1px 5px;border-radius:4px}
+
+  footer{padding:8px 18px;border-top:1px solid var(--line);background:var(--panel-2);
+         font-family:var(--mono);font-size:11px;color:var(--ink-faint);
+         display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  footer a{color:var(--gold);text-decoration:none;border-bottom:1px solid var(--gold-dim)}
+
+  @media(max-width:900px){
+    main{grid-template-columns:1fr;overflow:auto}
+    .pane + .pane{border-left:0;border-top:1px solid var(--line)}
+    textarea{min-height:200px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <span class="mark">ferrotherm workbench</span>
+  <span class="mark"><a href="./">&larr; explainer</a></span>
+  <span class="spacer"></span>
+  <label class="ctl">model
+    <select id="preset">
+      <option value="lattice">2D lattice 32&times;32</option>
+      <option value="frustrated">frustrated 5-ring</option>
+      <option value="glass">spin glass 24</option>
+      <option value="maxcut">max-cut 12</option>
+      <option value="z1">Z1 grid 24&times;24</option>
+    </select>
+  </label>
+  <label class="ctl">&beta;
+    <input id="beta" type="range" min="1" max="200" value="44">
+    <span id="betaval" style="min-width:3.2em">0.44</span>
+  </label>
+  <label class="ctl">seed <input id="seed" type="number" value="1" min="0" step="1"></label>
+  <button id="run" class="primary">Run</button>
+  <button id="anneal">Anneal</button>
+  <button id="reset">Reset</button>
+</div>
+
+<main>
+  <section class="pane">
+    <div class="phead">
+      <span class="ptitle">Model</span>
+      <span class="hint">the same JSON the API and the MCP tools take</span>
+    </div>
+    <div class="pbody">
+      <div class="editwrap">
+        <textarea id="src" spellcheck="false" aria-label="Model specification"></textarea>
+        <div id="status" class="status">loading sampler&hellip;</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="pane">
+    <div class="phead">
+      <span class="ptitle">State</span>
+      <span class="hint" id="viewhint"></span>
+    </div>
+    <div class="pbody">
+      <canvas id="view" width="900" height="600"></canvas>
+      <div class="readouts">
+        <div class="ro"><div class="k">energy</div><div class="v" id="r-e">&mdash;</div></div>
+        <div class="ro"><div class="k">energy / node</div><div class="v" id="r-en">&mdash;</div></div>
+        <div class="ro"><div class="k">magnetization</div><div class="v" id="r-m">&mdash;</div></div>
+        <div class="ro"><div class="k">sweeps</div><div class="v" id="r-s">0</div></div>
+        <div class="ro"><div class="k">node updates</div><div class="v small" id="r-u">0</div></div>
+        <div class="ro"><div class="k">device joules</div><div class="v small" id="r-j">0</div></div>
+      </div>
+
+      <details>
+        <summary>Take this model to an agent</summary>
+        <div class="dbody">
+          <p>The box on the left is a request body. The same model runs three ways, and all three
+          give the same answer for the same seed.</p>
+          <pre id="curl"></pre>
+          <pre id="mcpcall"></pre>
+          <p>Install with <code>cargo install ferrotherm-serve</code>, then run
+          <code>ferrotherm-serve</code> for the HTTP endpoint or point an MCP client at
+          <code>ferrotherm-mcp</code>.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Check the sampler against exact enumeration</summary>
+        <div class="dbody">
+          <p>For a model small enough to enumerate, every state's Boltzmann weight can be computed
+          directly and compared against what the sampler actually produced. Judge the result against
+          the noise floor printed with it, not against zero.</p>
+          <button id="verify">Run verification</button>
+          <pre id="vout" style="margin-top:10px">not run</pre>
+        </div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>Runs on your own device. No request leaves this page.</span>
+  <span class="spacer"></span>
+  <span id="wasminfo">&mdash;</span>
+  <a href="https://crates.io/crates/ferrotherm">crates.io</a>
+  <a href="https://github.com/dcharlot-physicalai-bmi/ferrotherm">source</a>
+</footer>
+
+<script>
+"use strict";
+
+// ---- presets: each is a request body the HTTP API and the MCP tools accept verbatim -----------
+const PRESETS = {
+  lattice: {
+    graph: { builtin: "lattice2d", l: 32, j: 1.0 },
+    beta: 0.44, sweeps: 1, seed: 1
+  },
+  frustrated: {
+    graph: { n: 5, couplings: [[0,1,-1],[1,2,-1],[2,3,-1],[3,4,-1],[4,0,-1]] },
+    beta: 1.5, sweeps: 1, seed: 1
+  },
+  z1: {
+    graph: { builtin: "lattice2d", l: 24, j: 1.0 },
+    beta: 0.44, sweeps: 1, seed: 1
+  },
+  glass: null,   // generated below, needs randomness
+  maxcut: null
+};
+
+// A spin glass has random +/-1 couplings, which is the point: no configuration satisfies every
+// bond at once, so the energy landscape is rugged and annealing has something to do.
+(function () {
+  const n = 24, cs = [];
+  let s = 12345;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < n; i++)
+    for (let j = i + 1; j < n; j++)
+      if (rnd() < 0.35) cs.push([i, j, rnd() < 0.5 ? -1 : 1]);
+  PRESETS.glass = { graph: { n, couplings: cs }, beta: 1.2, sweeps: 1, seed: 1 };
+
+  // Max-cut as an Ising ground state: every edge wants its endpoints on opposite sides, which is
+  // exactly an antiferromagnetic coupling.
+  const m = 12, e = [];
+  let t = 99;
+  const r2 = () => (t = (t * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < m; i++)
+    for (let j = i + 1; j < m; j++)
+      if (r2() < 0.45) e.push([i, j, -1]);
+  PRESETS.maxcut = { graph: { n: m, couplings: e }, beta: 2.0, sweeps: 1, seed: 1 };
+})();
+
+// ---- wasm ------------------------------------------------------------------------------------
+let W = null, mem = null, sim = 0, running = false, raf = 0;
+let spec = null, nodes = 0, layout = null, lattice = 0;
+
+const $ = (id) => document.getElementById(id);
+const status = (msg, kind) => {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "status" + (kind ? " " + kind : "");
+};
+
+function i8view(ptr, len) {
+  // The wasm heap can be replaced when it grows, so the view is rebuilt per read rather than cached.
+  return new Int8Array(mem.buffer, ptr, len);
+}
+
+async function boot() {
+  try {
+    const r = await WebAssembly.instantiateStreaming(fetch("ferrotherm.wasm"), {});
+    W = r.instance.exports;
+    mem = W.memory;
+    $("wasminfo").textContent = "ferrotherm.wasm loaded";
+    load("lattice");
+  } catch (err) {
+    status("could not load the sampler: " + err + "\nServe this page over http rather than opening the file directly.", "bad");
+  }
+}
+
+// ---- model construction ----------------------------------------------------------------------
+
+function parseSpec(text) {
+  let v;
+  try { v = JSON.parse(text); }
+  catch (e) { throw new Error("not valid JSON: " + e.message); }
+  if (!v || typeof v !== "object") throw new Error("the model must be a JSON object");
+  if (!v.graph) throw new Error('missing "graph"');
+  return v;
+}
+
+/** Build a simulation from a spec, returning the node count. Mirrors the server's graph_from. */
+function build(v, beta, seed) {
+  const g = v.graph;
+  freeSim();
+  lattice = 0;
+
+  if (g.builtin === "lattice2d") {
+    const l = g.l | 0;
+    if (!(l >= 2)) throw new Error('"l" must be at least 2');
+    if (l * l > 1000000) throw new Error("lattice of " + (l*l) + " nodes is too large for the workbench");
+    sim = W.ft_ising2d_new(l, g.j === undefined ? 1.0 : g.j, beta, BigInt(seed));
+    lattice = l;
+    nodes = l * l;
+  } else if (g.builtin === "ring") {
+    const n = g.n | 0;
+    if (!(n >= 3)) throw new Error('a ring needs "n" of at least 3');
+    const b = W.ft_builder_new(n);
+    const j = g.j === undefined ? 1.0 : g.j, h = g.h === undefined ? 0.0 : g.h;
+    for (let i = 0; i < n; i++) W.ft_builder_couple(b, i, (i + 1) % n, j);
+    if (h !== 0) for (let i = 0; i < n; i++) W.ft_builder_bias(b, i, h);
+    sim = W.ft_builder_build(b, beta, BigInt(seed));
+    nodes = n;
+  } else if (g.builtin) {
+    throw new Error('unknown builtin "' + g.builtin + '"; use "lattice2d" or "ring", or give "n" with "couplings"');
+  } else {
+    const n = g.n | 0;
+    if (!(n >= 1)) throw new Error('"n" must be a positive integer');
+    const b = W.ft_builder_new(n);
+    let bad = 0;
+    for (const c of (g.couplings || [])) {
+      if (!Array.isArray(c) || c.length !== 3) { W.ft_builder_free(b); throw new Error("each coupling must be [i, j, J]"); }
+      if (W.ft_builder_couple(b, c[0] | 0, c[1] | 0, +c[2]) === 0) bad++;
+    }
+    for (const e of (g.biases || [])) {
+      if (!Array.isArray(e) || e.length !== 2) { W.ft_builder_free(b); throw new Error("each bias must be [i, h]"); }
+      if (W.ft_builder_bias(b, e[0] | 0, +e[1]) === 0) bad++;
+    }
+    if (bad > 0) { W.ft_builder_free(b); throw new Error(bad + " coupling(s) or bias(es) were rejected: check that every index is below n, that i differs from j, and that every weight is finite"); }
+    sim = W.ft_builder_build(b, beta, BigInt(seed));
+    nodes = n;
+  }
+  if (!sim) throw new Error("the sampler refused this model");
+  layout = lattice ? null : circleLayout(nodes, v.graph.couplings || ringEdges(v));
+  // A square lattice in a 3:2 canvas leaves a third of the width black. The drawing surface takes
+  // the shape of the thing being drawn instead.
+  cv.width = 900;
+  cv.height = lattice ? 900 : 620;
+  return nodes;
+}
+
+function ringEdges(v) {
+  if (v.graph.builtin !== "ring") return [];
+  const n = v.graph.n | 0, e = [];
+  for (let i = 0; i < n; i++) e.push([i, (i + 1) % n, 1]);
+  return e;
+}
+
+function freeSim() {
+  if (sim) { W.ft_free(sim); sim = 0; }
+}
+
+function circleLayout(n, edges) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    pts.push([Math.cos(a), Math.sin(a)]);
+  }
+  return { pts, edges: edges || [] };
+}
+
+// ---- rendering ---------------------------------------------------------------------------------
+
+const cv = $("view"), cx = cv.getContext("2d");
+
+function draw() {
+  const W_ = cv.width, H = cv.height;
+  cx.fillStyle = "#070d16";
+  cx.fillRect(0, 0, W_, H);
+  if (!sim) return;
+  const s = i8view(W.ft_spins(sim), W.ft_len(sim));
+
+  if (lattice) {
+    const cell = Math.min(W_ / lattice, H / lattice);
+    const ox = (W_ - cell * lattice) / 2, oy = (H - cell * lattice) / 2;
+    for (let y = 0; y < lattice; y++) {
+      for (let x = 0; x < lattice; x++) {
+        cx.fillStyle = s[y * lattice + x] > 0 ? "#cfaa5b" : "#20304e";
+        cx.fillRect(ox + x * cell, oy + y * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+    }
+  } else {
+    const R = Math.min(W_, H) * 0.40, cxp = W_ / 2, cyp = H / 2;
+    const P = layout.pts.map(([a, b]) => [cxp + a * R, cyp + b * R]);
+    cx.lineWidth = 1.5;
+    for (const [i, j, w] of layout.edges) {
+      if (!P[i] || !P[j]) continue;
+      const sat = s[i] * s[j] * Math.sign(w) > 0;   // a bond is satisfied when it lowers the energy
+      cx.strokeStyle = sat ? "rgba(125,216,125,.5)" : "rgba(212,104,91,.65)";
+      cx.beginPath(); cx.moveTo(P[i][0], P[i][1]); cx.lineTo(P[j][0], P[j][1]); cx.stroke();
+    }
+    const r = Math.max(4, Math.min(15, 300 / Math.sqrt(nodes)));
+    for (let i = 0; i < nodes; i++) {
+      cx.beginPath(); cx.arc(P[i][0], P[i][1], r, 0, Math.PI * 2);
+      cx.fillStyle = s[i] > 0 ? "#cfaa5b" : "#1b2740";
+      cx.fill();
+      cx.strokeStyle = "#3a4a6b";
+      cx.lineWidth = 1.5; cx.stroke();
+    }
+  }
+  readouts();
+}
+
+let sweepsDone = 0;
+function readouts() {
+  const e = W.ft_energy(sim), n = nodes;
+  $("r-e").textContent = fmt(e);
+  $("r-en").textContent = fmt(e / n);
+  $("r-m").textContent = W.ft_magnetization(sim).toFixed(3);
+  $("r-s").textContent = sweepsDone.toLocaleString();
+  $("r-u").textContent = Number(W.ft_ledger_updates(sim)).toLocaleString();
+  $("r-j").textContent = sci(W.ft_ledger_joules_z1(sim));
+}
+const fmt = (x) => (Math.abs(x) >= 1e5 ? x.toExponential(3) : x.toFixed(Math.abs(x) < 10 ? 3 : 1));
+const sci = (x) => (x === 0 ? "0" : x.toExponential(2) + " J");
+
+// ---- driving -----------------------------------------------------------------------------------
+
+function loop() {
+  if (!running) return;
+  W.ft_sweep(sim, 1);
+  sweepsDone++;
+  draw();
+  raf = requestAnimationFrame(loop);
+}
+
+function load(name) {
+  const p = PRESETS[name];
+  $("src").value = JSON.stringify(p, null, 2)
+    .replace(/\[\n\s+(-?[\d.]+),\n\s+(-?[\d.]+),\n\s+(-?[\d.]+)\n\s+\]/g, "[$1, $2, $3]");
+  $("beta").value = Math.round(p.beta * 100);
+  $("betaval").textContent = p.beta.toFixed(2);
+  $("seed").value = p.seed;
+  apply();
+}
+
+function apply() {
+  stop();
+  try {
+    spec = parseSpec($("src").value);
+    const beta = +$("beta").value / 100, seed = +$("seed").value;
+    const n = build(spec, beta, seed);
+    sweepsDone = 0;
+    $("viewhint").textContent = lattice
+      ? lattice + "×" + lattice + " lattice, gold is +1"
+      : n + " nodes, green bonds satisfied, red frustrated";
+    status("model built: " + n + " nodes. Press Run to sample, or Anneal to minimise.", "good");
+    exports_();
+    draw();
+  } catch (err) {
+    status(String(err.message || err), "bad");
+    $("viewhint").textContent = "";
+    freeSim();
+    cx.fillStyle = "#070d16"; cx.fillRect(0, 0, cv.width, cv.height);
+  }
+}
+
+function stop() {
+  running = false;
+  if (raf) cancelAnimationFrame(raf);
+  raf = 0;
+  $("run").textContent = "Run";
+  $("run").classList.add("primary");
+}
+
+$("run").onclick = () => {
+  if (!sim) return;
+  if (running) { stop(); return; }
+  running = true;
+  $("run").textContent = "Pause";
+  $("run").classList.remove("primary");
+  loop();
+};
+
+$("anneal").onclick = () => {
+  if (!sim) return;
+  stop();
+  const bmax = Math.max(4.0, +$("beta").value / 100);
+  const t0 = performance.now();
+  const e = W.ft_anneal(sim, 0.05, bmax, 60, 40);
+  const ms = performance.now() - t0;
+  sweepsDone += 60 * 40;
+  draw();
+  status("annealed to energy " + fmt(e) + " in " + ms.toFixed(0) + " ms"
+    + " (60 stages x 40 sweeps, beta 0.05 to " + bmax.toFixed(2) + ")", "good");
+};
+
+$("reset").onclick = () => apply();
+$("preset").onchange = (e) => load(e.target.value);
+$("src").addEventListener("change", apply);
+$("beta").oninput = (e) => {
+  const b = +e.target.value / 100;
+  $("betaval").textContent = b.toFixed(2);
+  if (sim) { W.ft_set_beta(sim, b); if (!running) draw(); }
+  exports_();
+};
+$("seed").onchange = apply;
+
+// ---- the bridge to the agentic tier -------------------------------------------------------------
+
+function exports_() {
+  if (!spec) return;
+  const body = JSON.parse(JSON.stringify(spec));
+  body.beta = +$("beta").value / 100;
+  body.seed = +$("seed").value;
+  body.sweeps = 200;
+  const compact = JSON.stringify(body);
+  $("curl").textContent =
+    "curl -s -X POST localhost:8479/v1/sample \\\n  -d '" + compact + "'";
+  $("mcpcall").textContent = JSON.stringify({
+    name: "ferrotherm_sample",
+    arguments: body
+  }, null, 2);
+}
+
+// ---- verification --------------------------------------------------------------------------------
+
+$("verify").onclick = () => {
+  const out = $("vout");
+  if (!sim) { out.textContent = "build a model first"; return; }
+  if (nodes > 16) {
+    out.textContent = "This model has " + nodes + " nodes. Exact enumeration is 2^n, so the\n"
+      + "workbench caps it at 16. The frustrated 5-ring and the max-cut 12 preset both fit.";
+    return;
+  }
+  out.textContent = "enumerating " + (1 << nodes) + " states…";
+  setTimeout(() => {
+    try { out.textContent = verify(); } catch (e) { out.textContent = String(e); }
+  }, 20);
+};
+
+/** Enumerate the exact Boltzmann distribution and compare the sampler's histogram against it. */
+function verify() {
+  const beta = +$("beta").value / 100;
+  const g = spec.graph;
+  const edges = g.builtin === "ring" ? ringEdges(spec) : (g.couplings || []);
+  const biases = g.biases || [];
+  const N = 1 << nodes;
+
+  const energyOf = (k) => {
+    let e = 0;
+    for (const [i, j, w] of edges) {
+      const si = (k >> i) & 1 ? 1 : -1, sj = (k >> j) & 1 ? 1 : -1;
+      e -= w * si * sj;
+    }
+    for (const [i, h] of biases) e -= h * ((k >> i) & 1 ? 1 : -1);
+    return e;
+  };
+
+  const w = new Float64Array(N);
+  let lo = Infinity;
+  for (let k = 0; k < N; k++) { const e = energyOf(k); w[k] = e; if (e < lo) lo = e; }
+  let Z = 0;
+  for (let k = 0; k < N; k++) { w[k] = Math.exp(-beta * (w[k] - lo)); Z += w[k]; }
+  for (let k = 0; k < N; k++) w[k] /= Z;
+
+  // Thinning between draws: consecutive states from one chain are correlated, and at high beta
+  // that correlation biases the histogram enough to fail a sampler that is in fact correct.
+  const draws = 40000, thin = 20;
+  const hist = new Float64Array(N);
+  W.ft_sweep(sim, 200);
+  for (let d = 0; d < draws; d++) {
+    W.ft_sweep(sim, thin);
+    const s = i8view(W.ft_spins(sim), nodes);
+    let k = 0;
+    for (let i = 0; i < nodes; i++) if (s[i] > 0) k |= 1 << i;
+    hist[k]++;
+  }
+  let tv = 0;
+  for (let k = 0; k < N; k++) tv += Math.abs(hist[k] / draws - w[k]);
+  tv *= 0.5;
+  const floor = 0.5 * Math.sqrt(N / draws);
+  sweepsDone += 200 + draws * thin;
+  draw();
+
+  const verdict = tv < floor
+    ? "AGREES  (below the noise floor, which is what agreement looks like)"
+    : "ABOVE THE FLOOR  (usually correlated draws at high beta, not a wrong sampler)";
+  return "nodes            " + nodes + "   states " + N
+    + "\ndraws            " + draws.toLocaleString() + "   thinned " + thin + " sweeps apart"
+    + "\nbeta             " + beta.toFixed(2)
+    + "\nTV distance      " + tv.toFixed(4)
+    + "\nnoise floor      " + floor.toFixed(4)
+    + "\n\n" + verdict;
+}
+
+boot();
+</script>
+</body>
+</html>

@@ -136,3 +136,155 @@ mod tests {
         ft_free(sim);
     }
 }
+
+// ---- arbitrary graphs -------------------------------------------------------------------------
+//
+// The two constructors above cover the shapes this crate ships. A workbench needs to build a model
+// the caller invented, so the builder is exposed as its own handle: create it, add couplings and
+// biases one at a time, then consume it into a simulation. Incremental calls keep the ABI free of
+// array marshalling, which is the part that goes wrong across a language boundary.
+
+use crate::graph::GraphBuilder;
+use crate::tempering::{anneal, geometric_ladder};
+
+/// New graph builder over `n` nodes. Consume it with [`ft_builder_build`] or release it with
+/// [`ft_builder_free`]; dropping the handle without either leaks it.
+#[no_mangle]
+pub extern "C" fn ft_builder_new(n: u32) -> *mut GraphBuilder {
+    if n == 0 {
+        return core::ptr::null_mut();
+    }
+    Box::into_raw(Box::new(GraphBuilder::new(n as usize)))
+}
+
+/// Add a coupling. Returns 1 on success, 0 if the handle is null, an index is out of range, `i`
+/// equals `j`, or the weight is not finite.
+#[no_mangle]
+pub extern "C" fn ft_builder_couple(b: *mut GraphBuilder, i: u32, j: u32, w: f64) -> u32 {
+    let Some(b) = (unsafe { b.as_mut() }) else { return 0 };
+    if i == j || !w.is_finite() || i as usize >= b.n() || j as usize >= b.n() {
+        return 0;
+    }
+    b.couple(i as usize, j as usize, w);
+    1
+}
+
+/// Add a bias. Returns 1 on success, 0 on a null handle, an out-of-range index, or a non-finite h.
+#[no_mangle]
+pub extern "C" fn ft_builder_bias(b: *mut GraphBuilder, i: u32, h: f64) -> u32 {
+    let Some(bb) = (unsafe { b.as_mut() }) else { return 0 };
+    if !h.is_finite() || i as usize >= bb.n() {
+        return 0;
+    }
+    bb.bias(i as usize, h);
+    1
+}
+
+/// Consume the builder into a simulation. The builder handle is invalid after this call.
+#[no_mangle]
+pub extern "C" fn ft_builder_build(b: *mut GraphBuilder, beta: f64, seed: u64) -> *mut Sim {
+    if b.is_null() {
+        return core::ptr::null_mut();
+    }
+    let b = unsafe { Box::from_raw(b) };
+    Sim::new(b.build(), beta, seed)
+}
+
+/// Release a builder that was never built.
+#[no_mangle]
+pub extern "C" fn ft_builder_free(b: *mut GraphBuilder) {
+    if !b.is_null() {
+        drop(unsafe { Box::from_raw(b) });
+    }
+}
+
+/// Anneal down a geometric ladder from `beta_min` to `beta_max`, leaving the simulation holding the
+/// lowest-energy state found and returning that energy. Returns NaN on a null handle or bad ladder.
+#[no_mangle]
+pub extern "C" fn ft_anneal(
+    sim: *mut Sim,
+    beta_min: f64,
+    beta_max: f64,
+    stages: u32,
+    sweeps_per_stage: u32,
+) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    if !(beta_min > 0.0 && beta_max > beta_min) || stages < 2 || sweeps_per_stage == 0 {
+        return f64::NAN;
+    }
+    let ladder = geometric_ladder(beta_min, beta_max, stages as usize);
+    let schedule: Vec<(f64, usize)> =
+        ladder.iter().map(|&b| (b, sweeps_per_stage as usize)).collect();
+    let seed = s.seed ^ s.sweeps_done.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let (best, e) = anneal(&s.graph, &schedule, seed, Some(&mut s.ledger));
+    s.sampler_state.copy_from_slice(&best);
+    s.sweeps_done += (stages as u64) * (sweeps_per_stage as u64);
+    s.beta = beta_max;
+    e
+}
+
+/// Node count of a simulation's graph, or 0 on null.
+#[no_mangle]
+pub extern "C" fn ft_nodes(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() } {
+        Some(s) => s.graph.n as u32,
+        None => 0,
+    }
+}
+
+/// Total node updates charged to the ledger so far, or 0 on null.
+#[no_mangle]
+pub extern "C" fn ft_ledger_updates(sim: *const Sim) -> u64 {
+    match unsafe { sim.as_ref() } {
+        Some(s) => s.ledger.samples,
+        None => 0,
+    }
+}
+
+#[cfg(test)]
+mod builder_tests {
+    use super::*;
+
+    #[test]
+    fn builds_and_samples_an_arbitrary_graph() {
+        let b = ft_builder_new(4);
+        assert!(!b.is_null());
+        assert_eq!(ft_builder_couple(b, 0, 1, 1.0), 1);
+        assert_eq!(ft_builder_couple(b, 1, 2, 1.0), 1);
+        assert_eq!(ft_builder_bias(b, 0, 0.5), 1);
+        let sim = ft_builder_build(b, 1.0, 7);
+        assert_eq!(ft_nodes(sim), 4);
+        ft_sweep(sim, 50);
+        assert!(ft_energy(sim).is_finite());
+        assert!(ft_ledger_updates(sim) >= 200);
+        ft_free(sim);
+    }
+
+    #[test]
+    fn rejects_bad_edges_without_crashing() {
+        let b = ft_builder_new(3);
+        assert_eq!(ft_builder_couple(b, 0, 9, 1.0), 0, "out of range");
+        assert_eq!(ft_builder_couple(b, 1, 1, 1.0), 0, "self coupling");
+        assert_eq!(ft_builder_couple(b, 0, 1, f64::NAN), 0, "non-finite");
+        assert_eq!(ft_builder_bias(b, 7, 1.0), 0, "out of range");
+        ft_builder_free(b);
+        // null handles are inert, not a crash
+        assert_eq!(ft_builder_couple(core::ptr::null_mut(), 0, 1, 1.0), 0);
+        assert_eq!(ft_nodes(core::ptr::null()), 0);
+        assert!(ft_anneal(core::ptr::null_mut(), 0.1, 1.0, 4, 4).is_nan());
+    }
+
+    #[test]
+    fn anneal_finds_the_frustrated_optimum() {
+        // odd antiferromagnetic ring: one bond must stay unsatisfied, so -3 is the floor
+        let b = ft_builder_new(5);
+        for i in 0..5u32 {
+            ft_builder_couple(b, i, (i + 1) % 5, -1.0);
+        }
+        let sim = ft_builder_build(b, 0.1, 1);
+        let e = ft_anneal(sim, 0.05, 6.0, 40, 30);
+        assert_eq!(e, -3.0, "frustrated 5-cycle optimum");
+        assert_eq!(ft_energy(sim), -3.0, "sim must hold the best state");
+        ft_free(sim);
+    }
+}

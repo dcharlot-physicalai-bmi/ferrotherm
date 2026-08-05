@@ -17,6 +17,11 @@ impl GraphBuilder {
         GraphBuilder { n, edges: Vec::new(), bias: vec![0.0; n] }
     }
 
+    /// Node count, so a caller across an FFI boundary can bounds-check before adding an edge.
+    pub fn n(&self) -> usize {
+        self.n
+    }
+
     /// Add an undirected coupling J_ij. Duplicate pairs are summed at build time.
     pub fn couple(&mut self, i: usize, j: usize, jij: f64) {
         assert!(i < self.n && j < self.n && i != j, "bad edge ({i},{j}) n={}", self.n);
