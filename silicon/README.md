@@ -8,6 +8,23 @@ Selected algorithms are ported, with permission, from Open Interface Engineering
 project. The port is a full re-implementation under IPAI @ BMI's control: no code path in this
 crate calls, links, or depends on any external entity's software.
 
+## Verified capability (all measured, not asserted)
+
+| capability | evidence |
+|---|---|
+| Identify a board | IDCODE 0x13631093 = XC7A100T on a live Alchitry Pt V2 |
+| Read configuration registers | STAT/BOOTSTS; IDCODE read by TWO independent paths (JTAG DR and a type-1 config read) agree exactly |
+| **Configure real silicon** | 104,140-byte bitstream loaded over JTAG; fabric cleared to 0x00000000 then came back configured |
+| Fabric map | 30,932-tile tilegrid parsed in 0.02 s; 15,850 SLICE sites x 4 = 63,400 LUT6 = the datasheet figure |
+| Address arithmetic | segbit -> (frame, word, bit), including the multi-word tiles the naive reading misplaces |
+| PIP database | 3,629/3,629 non-pseudo INT_L PIPs resolve to bits; the reversed key resolves 7 |
+| **Route a signal** | LOGIC_OUTS_L0 (INT_L_X0Y102) -> IMUX3 (INT_R_X1Y102) over an east single-length wire; both PIPs -> physical bits |
+| Assemble a bitstream | generated header word-identical to a stream produced for this exact part |
+
+Not yet done: binding a p-bit fabric's LUTs to SLICE site pins (the CLB-to-interconnect node
+model), and reading fabric state back (CAPTURE + FDRO) so a running sampler can be observed
+without I/O pins.
+
 ## Layers (build order = board-readiness order)
 
 1. `lut` — p-bit LUT truth-table generators (the compact 1-LUT popcount-threshold p-bit and the
