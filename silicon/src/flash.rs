@@ -1,13 +1,13 @@
-//! Board access over USB — pure Rust, no vendor tools, no libusb.
+//! Board access over USB — pure Rust, no vendor tools, no C libraries.
 //!
-//! FT2232H MPSSE JTAG for the Alchitry Artix boards (Au V2 / Pt V2): the FTDI vendor-request
-//! init sequence, the MPSSE JTAG TAP primitives, and IDCODE readout. Ported with permission from
-//! Open Interface Engineering's openie-fpga and re-implemented independently here; the USB
-//! transport is the pure-Rust `nusb` crate (no C library).
+//! FT2232H MPSSE JTAG for the Alchitry Artix boards (Au V2 / Pt V2): FTDI vendor-request init,
+//! a real TAP state machine, IDCODE, and the 7-series configuration port (CFG_IN / CFG_OUT).
+//! Ported with permission from Open Interface Engineering's openie-fpga and re-implemented
+//! independently here; the USB transport is the pure-Rust `nusb` crate.
 //!
 //! Pin map (FT2232H interface A): TCK=AD0, TDI=AD1, TDO=AD2 (input), TMS=AD3 (idle high).
 
-use nusb::transfer::{ControlOut, ControlType, Recipient};
+use nusb::transfer::{ControlOut, ControlType, Recipient, RequestBuffer};
 
 const FTDI_EP_OUT: u8 = 0x02;
 const FTDI_EP_IN: u8 = 0x81;
@@ -18,16 +18,31 @@ const FTDI_INDEX_A: u16 = 1;
 const BITMODE_RESET: u16 = 0x0000;
 const BITMODE_MPSSE: u16 = 0x0200;
 
+// MPSSE opcode bits: 0x01 -ve write, 0x02 bit mode, 0x04 -ve read, 0x08 LSB first,
+// 0x10 do-write, 0x20 do-read, 0x40 TMS mode.
+const CLK_BYTES_OUT: u8 = 0x19;
+const CLK_BITS_OUT: u8 = 0x1B;
+const CLK_BYTES_IO: u8 = 0x39;
+const CLK_BITS_IO: u8 = 0x3B;
+const CLK_TMS: u8 = 0x4B;
+const CLK_TMS_IO: u8 = 0x6B;
 const MPSSE_LOOPBACK_DIS: u8 = 0x85;
 const MPSSE_DIS_DIV5: u8 = 0x8A;
 const MPSSE_SET_DIVISOR: u8 = 0x86;
 const MPSSE_SET_LOW: u8 = 0x80;
 const MPSSE_SEND_IMMEDIATE: u8 = 0x87;
-const CLK_TMS: u8 = 0x4B; // clock TMS bits out, LSB first, -ve edge
-const CLK_BYTES_IN: u8 = 0x28; // clock data bytes in, +ve edge, LSB order per bit
 
 const PIN_DIR: u8 = 0x0B; // TCK, TDI, TMS out; TDO in
 const PIN_IDLE: u8 = 0x08; // TMS high
+
+// 7-series 6-bit IR opcodes (UG470).
+pub const IR_LEN: u8 = 6;
+pub const IR_IDCODE: u8 = 0x09;
+pub const IR_JPROGRAM: u8 = 0x0B;
+pub const IR_CFG_IN: u8 = 0x05;
+pub const IR_CFG_OUT: u8 = 0x04;
+pub const IR_JSTART: u8 = 0x0C;
+pub const IR_BYPASS: u8 = 0x3F;
 
 pub struct Ftdi {
     iface: nusb::Interface,
@@ -35,7 +50,6 @@ pub struct Ftdi {
 
 impl Ftdi {
     /// Find and claim an FT2232H whose product string contains `needle` (e.g. "Alchitry").
-    /// Returns the device product string alongside the handle.
     pub fn open(needle: &str) -> Result<(Ftdi, String), String> {
         let devs = nusb::list_devices().map_err(|e| format!("usb list: {e}"))?;
         for d in devs {
@@ -70,30 +84,33 @@ impl Ftdi {
         self.ctrl(FTDI_SIO_SET_BITMODE, BITMODE_RESET, FTDI_INDEX_A)?;
         self.ctrl(FTDI_SIO_SET_BITMODE, BITMODE_MPSSE, FTDI_INDEX_A)?;
         self.ctrl(FTDI_SIO_SET_LATENCY, 16, FTDI_INDEX_A)?;
-        self.ctrl(FTDI_SIO_RESET, 1, FTDI_INDEX_A)?; // purge RX
-        self.ctrl(FTDI_SIO_RESET, 2, FTDI_INDEX_A)?; // purge TX
+        self.ctrl(FTDI_SIO_RESET, 1, FTDI_INDEX_A)?;
+        self.ctrl(FTDI_SIO_RESET, 2, FTDI_INDEX_A)?;
         Ok(())
     }
 
     pub fn write(&self, data: &[u8]) -> Result<(), String> {
-        let c = pollster::block_on(self.iface.bulk_out(FTDI_EP_OUT, data.to_vec()));
-        c.status.map_err(|e| format!("bulk out: {e:?}"))
+        for chunk in data.chunks(4096) {
+            let c = pollster::block_on(self.iface.bulk_out(FTDI_EP_OUT, chunk.to_vec()));
+            c.status.map_err(|e| format!("bulk out: {e:?}"))?;
+        }
+        Ok(())
     }
 
-    /// Read exactly `n` MPSSE payload bytes (each USB packet carries a 2-byte modem status
-    /// header, stripped here).
+    /// Read exactly `n` MPSSE payload bytes (each USB packet carries a 2-byte status header).
     pub fn read(&self, n: usize) -> Result<Vec<u8>, String> {
         let mut out = Vec::with_capacity(n);
         let mut spins = 0;
         while out.len() < n {
-            let c = pollster::block_on(self.iface.bulk_in(FTDI_EP_IN, nusb::transfer::RequestBuffer::new(512)));
+            let c = pollster::block_on(
+                self.iface.bulk_in(FTDI_EP_IN, RequestBuffer::new(512)),
+            );
             c.status.map_err(|e| format!("bulk in: {e:?}"))?;
-            let data = c.data;
-            if data.len() > 2 {
-                out.extend_from_slice(&data[2..]);
+            if c.data.len() > 2 {
+                out.extend_from_slice(&c.data[2..]);
             }
             spins += 1;
-            if spins > 200 {
+            if spins > 400 {
                 return Err(format!("read timeout: got {} of {n}", out.len()));
             }
         }
@@ -102,36 +119,161 @@ impl Ftdi {
     }
 }
 
-/// Minimal JTAG TAP over MPSSE, sufficient for chain identification.
+/// Reverse the bit order of a byte — the JTAG config port shifts LSB-first while configuration
+/// packets are defined MSB-first, so every payload byte is reversed on the way out and back.
+pub fn reverse_byte(mut b: u8) -> u8 {
+    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+    b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+    (b & 0xAA) >> 1 | (b & 0x55) << 1
+}
+
+/// A JTAG TAP driver over MPSSE. Tracks nothing implicitly: every operation starts and ends in
+/// Run-Test/Idle, so sequences that must not be interrupted (CFG_IN then CFG_OUT) stay valid.
 pub struct Tap {
     pub ftdi: Ftdi,
 }
 
 impl Tap {
     pub fn new(ftdi: Ftdi) -> Result<Tap, String> {
-        // 60 MHz base, loopback off, TCK = 60/((1+14)*2) = 2 MHz, pins idle
+        // 60 MHz base clock, loopback off, TCK = 60/((1+14)*2) = 2 MHz, pins idle.
         ftdi.write(&[
             MPSSE_DIS_DIV5,
             MPSSE_LOOPBACK_DIS,
             MPSSE_SET_DIVISOR, 14, 0x00,
             MPSSE_SET_LOW, PIN_IDLE, PIN_DIR,
         ])?;
-        Ok(Tap { ftdi })
+        let mut t = Tap { ftdi };
+        t.reset()?;
+        Ok(t)
     }
 
-    /// TAP reset then read the 32-bit IDCODE (the default DR after reset on Xilinx parts).
-    pub fn idcode(&mut self) -> Result<u32, String> {
-        let mut cmds = vec![
-            CLK_TMS, 0x05, 0xFF, // 6 clocks TMS=1: Test-Logic-Reset
-            CLK_TMS, 0x00, 0x00, // 1 clock TMS=0: Run-Test/Idle
-            CLK_TMS, 0x02, 0x01, // 3 clocks TMS=1,0,0: Select-DR, Capture-DR, Shift-DR
-            CLK_BYTES_IN, 0x03, 0x00, // clock 4 bytes in
-            MPSSE_SEND_IMMEDIATE,
-        ];
+    /// Test-Logic-Reset, then Run-Test/Idle.
+    pub fn reset(&mut self) -> Result<(), String> {
+        self.ftdi.write(&[CLK_TMS, 0x05, 0xFF, CLK_TMS, 0x00, 0x00])
+    }
+
+    /// Shift an instruction (6 bits on 7-series), returning to Run-Test/Idle.
+    pub fn shift_ir(&mut self, ir: u8) -> Result<(), String> {
+        let last = (ir >> (IR_LEN - 1)) & 1;
+        self.ftdi.write(&[
+            CLK_TMS, 0x03, 0x03,                       // RTI -> Shift-IR (TMS 1,1,0,0)
+            CLK_BITS_OUT, IR_LEN - 2, ir & 0x1F,       // first 5 bits
+            CLK_TMS, 0x02, (last << 7) | 0x03,         // last bit + Exit1,Update,RTI
+        ])
+    }
+
+    /// Shift `tx` (whole bytes) through DR. When `capture`, the same number of bytes is read
+    /// back. Returns to Run-Test/Idle.
+    pub fn shift_dr(&mut self, tx: &[u8], capture: bool) -> Result<Vec<u8>, String> {
+        assert!(!tx.is_empty());
+        let n = tx.len();
+        let mut cmds = vec![CLK_TMS, 0x02, 0x01]; // RTI -> Shift-DR (TMS 1,0,0)
+        if n > 1 {
+            let len = (n - 2) as u16; // bytes except the last one, minus 1
+            cmds.push(if capture { CLK_BYTES_IO } else { CLK_BYTES_OUT });
+            cmds.push(len as u8);
+            cmds.push((len >> 8) as u8);
+            cmds.extend_from_slice(&tx[..n - 1]);
+        }
+        let last = tx[n - 1];
+        // 7 bits of the final byte, then bit 7 exits Shift-DR with TMS.
+        cmds.push(if capture { CLK_BITS_IO } else { CLK_BITS_OUT });
+        cmds.push(5);
+        cmds.push(last & 0x7F);
+        cmds.push(if capture { CLK_TMS_IO } else { CLK_TMS });
+        cmds.push(0x02);
+        cmds.push(((last >> 7) << 7) | 0x03); // last data bit + Exit1,Update,RTI
+        if capture {
+            cmds.push(MPSSE_SEND_IMMEDIATE);
+        }
         self.ftdi.write(&cmds)?;
-        let raw = self.ftdi.read(4)?;
-        cmds.clear();
-        Ok(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
+        if !capture {
+            return Ok(Vec::new());
+        }
+        // reads: (n-1) whole bytes, one 7-bit byte, one TMS byte
+        let want = if n > 1 { n - 1 } else { 0 } + 2;
+        let raw = self.ftdi.read(want)?;
+        let mut out = Vec::with_capacity(n);
+        if n > 1 {
+            out.extend_from_slice(&raw[..n - 1]);
+        }
+        let bits7 = raw[want - 2] >> 2; // 7 bits land in [7:1] for LSB-first bit reads
+        let tms_bit = (raw[want - 1] >> 7) & 1;
+        out.push((bits7 & 0x7F) | (tms_bit << 7));
+        Ok(out)
+    }
+
+    /// Read the 32-bit IDCODE (the DR selected after Test-Logic-Reset).
+    pub fn idcode(&mut self) -> Result<u32, String> {
+        self.reset()?;
+        let rx = self.shift_dr(&[0; 4], true)?;
+        Ok(u32::from_le_bytes([rx[0], rx[1], rx[2], rx[3]]))
+    }
+
+    /// Write configuration words through CFG_IN (words are sent MSB-first, bit-reversed per byte).
+    pub fn cfg_in_words(&mut self, words: &[u32]) -> Result<(), String> {
+        let mut payload = Vec::with_capacity(words.len() * 4);
+        for w in words {
+            for b in w.to_be_bytes() {
+                payload.push(reverse_byte(b));
+            }
+        }
+        self.shift_ir(IR_CFG_IN)?;
+        self.shift_dr(&payload, false)?;
+        Ok(())
+    }
+
+    /// Read one 32-bit word back through CFG_OUT.
+    pub fn cfg_out_word(&mut self) -> Result<u32, String> {
+        self.shift_ir(IR_CFG_OUT)?;
+        let rx = self.shift_dr(&[0; 4], true)?;
+        Ok(u32::from_be_bytes([
+            reverse_byte(rx[0]),
+            reverse_byte(rx[1]),
+            reverse_byte(rx[2]),
+            reverse_byte(rx[3]),
+        ]))
+    }
+
+    /// Read a 7-series configuration register (non-destructive; STAT = 7).
+    pub fn read_config_reg(&mut self, reg: u32) -> Result<u32, String> {
+        let read_cmd = 0x2800_0000 | ((reg & 0x3FFF) << 13) | 1; // type-1 read, 1 word
+        self.reset()?;
+        self.cfg_in_words(&[
+            0xFFFF_FFFF, // dummy
+            0xAA99_5566, // sync
+            0x2000_0000, // NOOP
+            read_cmd,
+            0x2000_0000,
+            0x2000_0000,
+        ])?;
+        self.cfg_out_word()
+    }
+}
+
+/// 7-series STAT register (UG470 Table 5-25) — the bits worth naming.
+pub struct Stat(pub u32);
+
+impl Stat {
+    pub fn crc_error(&self) -> bool { self.0 & 1 != 0 }
+    pub fn part_secured(&self) -> bool { self.0 >> 2 & 1 != 0 }
+    pub fn done(&self) -> bool { self.0 >> 14 & 1 != 0 }
+    pub fn release_done(&self) -> bool { self.0 >> 13 & 1 != 0 }
+    pub fn init_b(&self) -> bool { self.0 >> 12 & 1 != 0 }
+    pub fn init_complete(&self) -> bool { self.0 >> 11 & 1 != 0 }
+    pub fn mode(&self) -> u8 { (self.0 >> 8 & 0x7) as u8 }
+    pub fn eos(&self) -> bool { self.0 >> 4 & 1 != 0 }
+    pub fn describe(&self) -> String {
+        format!(
+            "STAT=0x{:08X}  DONE={} EOS={} INIT_B={} INIT_COMPLETE={} MODE={:03b} CRC_ERR={}",
+            self.0,
+            self.done() as u8,
+            self.eos() as u8,
+            self.init_b() as u8,
+            self.init_complete() as u8,
+            self.mode(),
+            self.crc_error() as u8
+        )
     }
 }
 
@@ -144,5 +286,32 @@ pub fn xc7_part(idcode: u32) -> Option<&'static str> {
         0x03622093 => Some("XC7S25"),
         0x0364C093 => Some("XC7K325T"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_reversal_is_an_involution() {
+        for b in 0..=255u8 {
+            assert_eq!(reverse_byte(reverse_byte(b)), b);
+        }
+        assert_eq!(reverse_byte(0b1000_0000), 0b0000_0001);
+        assert_eq!(reverse_byte(0xAA), 0x55);
+    }
+
+    /// The type-1 read packet for STAT must be the documented 0x2800E001.
+    #[test]
+    fn stat_read_command_word() {
+        let reg = 7u32;
+        let cmd = 0x2800_0000 | ((reg & 0x3FFF) << 13) | 1;
+        assert_eq!(cmd, 0x2800_E001);
+    }
+
+    #[test]
+    fn idcode_decode() {
+        assert_eq!(xc7_part(0x13631093), Some("XC7A100T"));
     }
 }
