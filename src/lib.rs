@@ -54,4 +54,6 @@ pub mod program;
 pub mod compile;
 pub mod tempering;
 pub mod tla;
+pub mod linalg;
+pub mod het;
 pub mod ffi;

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.0 (2026-08-05)
+
+Wave 2 of the field ingest. Breaking: `Program::run` gains a trajectory-trace parameter.
+
+- `het`: heterogeneous factor-graph Gibbs — spin and categorical nodes, energy-table factors of
+  arbitrary arity (subsumes pairwise), proper-coloring block sweeps, clamping. Verified: a mixed
+  spin+categorical model with a 3-ary factor matches exact Boltzmann enumeration (TV < 0.02); on
+  pure-spin pairwise models the het and spin engines agree to 1e-12; clamped categorical
+  conditionals match exact rows. The spin engine remains the fast path.
+- `linalg`: cyclic Jacobi eigensolver for symmetric matrices (reconstruction-verified).
+- `tla::solve_spd_exact_ou`: the bias-free exact Ornstein-Uhlenbeck transition integrator in the
+  eigenbasis. New tests pin BOTH facts: the Euler-Maruyama chain's stationary covariance is
+  biased per eigenmode by exactly 2/(2 - dt*alpha) (the test that catches silently absorbing it),
+  and the exact integrator lands on beta^-1 alpha^-1 unbiased.
+- `program::Gate::BoltzExact` + `Program::ebm_kernel_grad`: the third gradient estimator
+  (EBM-kernel decomposition: one trajectory plus one auxiliary clamped draw, arXiv:2608.01612
+  Sec III C). Cross-validated against exact-score REINFORCE and an in-test full-enumeration
+  reference. Recorded along the way: finite differences with common random numbers is NOT a
+  usable referee across a discrete re-draw (CRN decorrelates; noise floor exceeded the gradient),
+  so the test enumerates instead.
+
 ## 0.1.0 (2026-08-05)
 
 First public release. Pure Rust, zero dependencies, std-only, wasm-clean, deterministic by seed.

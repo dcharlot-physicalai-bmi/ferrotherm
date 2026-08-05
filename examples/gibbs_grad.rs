@@ -70,7 +70,7 @@ fn main() {
         let m = 50_000;
         for e in 0..m {
             let mut rng = Pcg::new(seed, e as u64);
-            let st = prog.run(&init, &mut rng, None, Force::None, h, None);
+            let st = prog.run(&init, &mut rng, None, Force::None, h, None, None);
             acc += loss(&st);
         }
         acc / m as f64
