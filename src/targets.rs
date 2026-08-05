@@ -96,6 +96,22 @@ pub const TARGETS: &[FpgaTarget] = &[
         bram_kb: 13140, dsp: 740, clock_mhz: (100, 150), power_w: (2.0, 6.0),
         price: "[EST] $300-500 part; boards $150-600", availability: "in stock", open_flow: OpenFlow::Partial,
         provenance: "[DS] 134,600 LUT6, 13.1Mb, 740 DSP. [EST] cheapest plausible 0.1 Tflips/s-class part." },
+    FpgaTarget { name: "Alchitry Au (XC7A35T)", class: Class::Edge, luts: 20800, lut6: true,
+        bram_kb: 1800, dsp: 90, clock_mhz: (100, 150), power_w: (0.5, 2.0),
+        price: "[EST] ~$99-129 board (SparkFun/Alchitry)", availability: "in stock", open_flow: OpenFlow::Partial,
+        provenance: "[DS] XC7A35T: 20,800 LUT6, 1,800Kb BRAM, 90 DSP; 100 MHz osc + 256MB DDR3 on board. Named deployment target; facts sweep pending refinement." },
+    FpgaTarget { name: "Alchitry Au+ (XC7A100T)", class: Class::Edge, luts: 63400, lut6: true,
+        bram_kb: 4860, dsp: 240, clock_mhz: (100, 150), power_w: (1.0, 3.0),
+        price: "[EST] ~$299 board", availability: "in stock", open_flow: OpenFlow::Partial,
+        provenance: "[DS] XC7A100T fabric on the Alchitry form factor with DDR3. Named deployment target." },
+    FpgaTarget { name: "AMD Kria KV260 (K26 SOM)", class: Class::Edge, luts: 117120, lut6: true,
+        bram_kb: 23616, dsp: 1248, clock_mhz: (150, 300), power_w: (5.0, 15.0),
+        price: "$249 kit [DS-class]", availability: "in stock (AMD/distributors)", open_flow: OpenFlow::VendorOnly,
+        provenance: "[DS] XCK26 Zynq US+: 117,120 LUT6, 5.1Mb BRAM + 18Mb URAM, 1,248 DSP48E2, quad-A53 PS (host-on-module: the fabric samples, the PS serves results). Vivado supports Kria at no cost. Named deployment target." },
+    FpgaTarget { name: "Numato Aller (M.2 XC7A200T)", class: Class::Edge, luts: 134600, lut6: true,
+        bram_kb: 13140, dsp: 740, clock_mhz: (100, 150), power_w: (2.0, 8.0),
+        price: "[EST] ~$250-300", availability: "in stock (Numato)", open_flow: OpenFlow::Partial,
+        provenance: "[DS] XC7A200T in M.2 2280 with PCIe and 256MB DDR3 - the largest Artix in a COMPUTE-STICK form factor: the direct open-hardware answer to the vendor's announced M.2 sampling stick, buyable today. Named deployment target; facts sweep pending." },
     FpgaTarget { name: "Salvage Kintex US+ KU3P (Alibaba AS02MC04)", class: Class::Salvage, luts: 163000, lut6: true,
         bram_kb: 26200, dsp: 1368, clock_mhz: (200, 350), power_w: (10.0, 25.0),
         price: "~$200 on eBay vs $900+ commercial boards [SWEEP]", availability: "salvage market, circulating Feb 2026",
@@ -116,6 +132,11 @@ pub const TARGETS: &[FpgaTarget] = &[
         price: "$1.98/hr on-demand, ~$0.66 spot [SWEEP, us-east-1 Aug 2026]",
         availability: "ACTIVE, 11+ regions; Vivado license included", open_flow: OpenFlow::VendorOnly,
         provenance: "[DS] VU47P + 16GiB HBM2 + 64GiB DDR4; aws-fpga f2 branch, Vivado/Vitis 2024.1-2025.1. THE cloud target. F1 retired Dec 2025." },
+    FpgaTarget { name: "AWS EC2 F2 x8 (f2.48xlarge)", class: Class::CloudInstance, luts: 1304000, lut6: true,
+        bram_kb: 349000, dsp: 9024, clock_mhz: (250, 450), power_w: (600.0, 1200.0),
+        price: "$15.84/hr on-demand [SWEEP, us-east-1 Aug 2026]",
+        availability: "ACTIVE; 8x VU47P + 192 vCPU + 2 TiB + 100 Gbps", open_flow: OpenFlow::VendorOnly,
+        provenance: "[DS] 8 FPGAs per instance - the multi-chip tier for DSIM-2-style distributed Gibbs with 1-bit boundary exchange. Named deployment target; inter-FPGA topology facts sweep pending." },
     FpgaTarget { name: "Azure NP10s (1x Alveo U250)", class: Class::CloudInstance, luts: 1728000, lut6: true,
         bram_kb: 54000, dsp: 12288, clock_mhz: (250, 400), power_w: (100.0, 225.0),
         price: "$1.65/hr on-demand, ~$0.30 spot [SWEEP]",
@@ -152,7 +173,7 @@ mod tests {
 
     #[test]
     fn database_is_coherent() {
-        assert!(TARGETS.len() >= 14);
+        assert!(TARGETS.len() >= 19);
         for t in TARGETS {
             assert!(t.luts > 0 && t.clock_mhz.0 <= t.clock_mhz.1);
             assert!(!t.provenance.is_empty() && !t.price.is_empty());

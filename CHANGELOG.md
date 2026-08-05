@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 (2026-08-05)
+
+The hardware backend and the named deployment ladder.
+
+- `hdl`: lower any bipartite sampling graph to a fixed-point p-bit fabric (Q.8 weights, 1024-entry
+  sigmoid ROM, per-node xorshift32, two-phase chromatic schedule) and emit synthesizable Verilog.
+  The contract: `FixedFabric` is a CYCLE-EXACT Rust emulator of the emitted RTL — the generated
+  self-checking testbench replays the emulator's per-sweep state trace and must match BIT-EXACTLY
+  in icarus-verilog simulation (gated in `cargo test`; CI installs iverilog). The quantized
+  fabric also re-passes the Onsager physics gate within quantization tolerance. Software model ==
+  emulator == RTL, verified.
+- `targets`: the named deployment ladder added — Alchitry Au/Au+, AMD Kria KV260 (K26 SOM),
+  Numato Aller (XC7A200T in M.2: the compute-stick class, buyable today), and AWS f2.48xlarge
+  (8x VU47P, the multi-chip tier for DSIM-2-style distributed Gibbs). 19-entry database.
+- CI: icarus-verilog installed so the RTL gate runs on every push.
+
 ## 0.4.0 (2026-08-05)
 
 The performance core, the same-machine parity measurement, and the FPGA deployment-target database.
