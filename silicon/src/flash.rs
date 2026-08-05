@@ -176,29 +176,42 @@ impl Tap {
             cmds.extend_from_slice(&tx[..n - 1]);
         }
         let last = tx[n - 1];
-        // 7 bits of the final byte, then bit 7 exits Shift-DR with TMS.
+        // Bits 0..=6 of the final byte here; bit 7 must ride the TMS clock that exits Shift-DR,
+        // because the last data bit and the Exit1 transition happen on the same edge.
+        // LENGTH FIELDS ARE (count - 1): 6 means SEVEN bits. (Writing 5 here shifted 31 bits of
+        // a 32-bit register and silently corrupted the MSB — caught by an IDCODE whose top
+        // nibble changed between runs.)
         cmds.push(if capture { CLK_BITS_IO } else { CLK_BITS_OUT });
-        cmds.push(5);
+        cmds.push(6);
         cmds.push(last & 0x7F);
-        cmds.push(if capture { CLK_TMS_IO } else { CLK_TMS });
-        cmds.push(0x02);
-        cmds.push(((last >> 7) << 7) | 0x03); // last data bit + Exit1,Update,RTI
         if capture {
+            // ONE clock, so the single TDO sample is unambiguously in bit 7 of the returned
+            // byte (FTDI left-aligns bit-mode reads: n samples occupy [7 : 8-n]).
+            cmds.push(CLK_TMS_IO);
+            cmds.push(0x00);
+            cmds.push(((last >> 7) << 7) | 0x01); // last data bit, TMS=1 -> Exit1-DR
+            cmds.push(CLK_TMS);
+            cmds.push(0x01);
+            cmds.push(0x01); // Update-DR, Run-Test/Idle
             cmds.push(MPSSE_SEND_IMMEDIATE);
+        } else {
+            cmds.push(CLK_TMS);
+            cmds.push(0x02);
+            cmds.push(((last >> 7) << 7) | 0x03); // last data bit + Exit1, Update, RTI
         }
         self.ftdi.write(&cmds)?;
         if !capture {
             return Ok(Vec::new());
         }
-        // reads: (n-1) whole bytes, one 7-bit byte, one TMS byte
+        // reads: (n-1) whole bytes, one 7-bit byte, one 1-bit TMS byte
         let want = if n > 1 { n - 1 } else { 0 } + 2;
         let raw = self.ftdi.read(want)?;
         let mut out = Vec::with_capacity(n);
         if n > 1 {
             out.extend_from_slice(&raw[..n - 1]);
         }
-        let bits7 = raw[want - 2] >> 2; // 7 bits land in [7:1] for LSB-first bit reads
-        let tms_bit = (raw[want - 1] >> 7) & 1;
+        let bits7 = raw[want - 2] >> 1; // 7 samples land in [7:1]
+        let tms_bit = (raw[want - 1] >> 7) & 1; // 1 sample lands in [7]
         out.push((bits7 & 0x7F) | (tms_bit << 7));
         Ok(out)
     }
@@ -256,13 +269,15 @@ pub struct Stat(pub u32);
 
 impl Stat {
     pub fn crc_error(&self) -> bool { self.0 & 1 != 0 }
-    pub fn part_secured(&self) -> bool { self.0 >> 2 & 1 != 0 }
-    pub fn done(&self) -> bool { self.0 >> 14 & 1 != 0 }
-    pub fn release_done(&self) -> bool { self.0 >> 13 & 1 != 0 }
-    pub fn init_b(&self) -> bool { self.0 >> 12 & 1 != 0 }
-    pub fn init_complete(&self) -> bool { self.0 >> 11 & 1 != 0 }
-    pub fn mode(&self) -> u8 { (self.0 >> 8 & 0x7) as u8 }
-    pub fn eos(&self) -> bool { self.0 >> 4 & 1 != 0 }
+    pub fn dec_error(&self) -> bool { self.0 >> 1 & 1 != 0 }
+    pub fn id_error(&self) -> bool { self.0 >> 2 & 1 != 0 }
+    pub fn done(&self) -> bool { self.0 >> 3 & 1 != 0 }
+    pub fn release_done(&self) -> bool { self.0 >> 4 & 1 != 0 }
+    pub fn init_b(&self) -> bool { self.0 >> 5 & 1 != 0 }
+    pub fn init_complete(&self) -> bool { self.0 >> 6 & 1 != 0 }
+    pub fn mode(&self) -> u8 { (self.0 >> 7 & 0x7) as u8 }
+    pub fn eos(&self) -> bool { self.0 >> 13 & 1 != 0 }
+    pub fn part_secured(&self) -> bool { self.0 >> 16 & 1 != 0 }
     pub fn describe(&self) -> String {
         format!(
             "STAT=0x{:08X}  DONE={} EOS={} INIT_B={} INIT_COMPLETE={} MODE={:03b} CRC_ERR={}",
