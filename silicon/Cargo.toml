@@ -24,3 +24,19 @@ required-features = ["flash"]
 [[example]]
 name = "probe"
 required-features = ["flash"]
+
+[[example]]
+name = "load_bit"
+required-features = ["flash"]
+
+[[example]]
+name = "config_trace"
+required-features = ["flash"]
+
+[[example]]
+name = "undo_check"
+required-features = ["flash"]
+
+[[example]]
+name = "recover"
+required-features = ["flash"]

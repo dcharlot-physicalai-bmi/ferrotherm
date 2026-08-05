@@ -7,6 +7,7 @@ pub mod bitstream;
 pub mod frame;
 pub mod framebuf;
 pub mod json;
+pub mod pips;
 pub mod segbits;
 pub mod tilegrid;
 pub mod lut;
