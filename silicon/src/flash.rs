@@ -296,6 +296,32 @@ impl Tap {
         Ok(Stat(self.read_config_reg(crate::bitstream::reg::STAT)?))
     }
 
+    /// Trigger an internal reconfiguration (IPROG): the device restarts configuration from its
+    /// boot mode — SPI flash on these boards — reloading whatever image is stored there.
+    ///
+    /// This is the REMOTE UNDO. A JTAG configuration only rewrites fabric SRAM and never touches
+    /// the boot flash, so IPROG restores the stored design without physical access. Establishing
+    /// that this works is a precondition for attempting any configuration on a board nobody can
+    /// power-cycle.
+    pub fn reboot_from_flash(&mut self) -> Result<(), String> {
+        use crate::bitstream::{cmd, reg};
+        self.reset()?;
+        self.cfg_in_words(&[
+            crate::bitstream::DUMMY,
+            crate::bitstream::SYNC,
+            crate::bitstream::NOOP,
+            crate::bitstream::type1_write(reg::WBSTAR, 1),
+            0x0000_0000, // warm-boot start address: the stored image
+            crate::bitstream::type1_write(reg::CMD, 1),
+            cmd::IPROG,
+            crate::bitstream::NOOP,
+            crate::bitstream::NOOP,
+        ])?;
+        self.shift_ir(IR_BYPASS)?;
+        self.run_clocks(20_000)?;
+        Ok(())
+    }
+
     /// Hold the TAP in Run-Test/Idle for `n` TCK cycles.
     pub fn run_clocks(&mut self, n: usize) -> Result<(), String> {
         let mut left = n;
