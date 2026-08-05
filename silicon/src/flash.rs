@@ -330,6 +330,47 @@ impl Tap {
         Ok(())
     }
 
+    /// Read `n_frames` configuration frames starting at frame address `far`.
+    ///
+    /// The device streams one DUMMY FRAME before the requested data (a pipeline artefact of the
+    /// readback path); it is discarded here. Readback is the only way to ask the silicon itself
+    /// where our bits landed — but note that comparing a readback against our OWN writes proves
+    /// nothing, since both use the same addressing. It is evidence only when checked against a
+    /// bitstream we did not generate.
+    pub fn read_frames(&mut self, far: u32, n_frames: usize) -> Result<Vec<u32>, String> {
+        use crate::bitstream::{cmd, reg, type1_read, type1_write, DUMMY, NOOP, SYNC};
+        const WORDS: usize = 101;
+        let want = (n_frames + 1) * WORDS; // +1 for the dummy frame
+        self.reset()?;
+        self.cfg_in_words(&[
+            DUMMY,
+            SYNC,
+            NOOP,
+            type1_write(reg::CMD, 1),
+            cmd::RCFG,
+            type1_write(reg::FAR, 1),
+            far,
+            type1_read(reg::FDRO, 0),
+            0x4800_0000 | (want as u32 & 0x07FF_FFFF), // type-2 read continuation
+            NOOP,
+            NOOP,
+        ])?;
+        // shift the frames out through CFG_OUT
+        self.shift_ir(IR_CFG_OUT)?;
+        let raw = self.shift_dr(&vec![0u8; want * 4], true)?;
+        let mut words = Vec::with_capacity(want);
+        for c in raw.chunks_exact(4) {
+            words.push(u32::from_be_bytes([
+                reverse_byte(c[0]),
+                reverse_byte(c[1]),
+                reverse_byte(c[2]),
+                reverse_byte(c[3]),
+            ]));
+        }
+        self.shift_ir(IR_BYPASS)?;
+        Ok(words[WORDS..].to_vec()) // drop the dummy frame
+    }
+
     /// Hold the TAP in Run-Test/Idle for `n` TCK cycles.
     ///
     /// A TMS command clocks at most 6 cycles, so long settles need many commands — but they are
