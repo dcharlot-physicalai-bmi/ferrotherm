@@ -361,6 +361,17 @@ impl Stat {
     pub fn mode(&self) -> u8 { (self.0 >> 7 & 0x7) as u8 }
     pub fn eos(&self) -> bool { self.0 >> 13 & 1 != 0 }
     pub fn part_secured(&self) -> bool { self.0 >> 16 & 1 != 0 }
+    /// Whether the fabric is configured and started.
+    ///
+    /// EMPIRICALLY established on an XC7A100T, not taken from a bit table: a cleared device
+    /// reads 0x5000190C and a configured one 0x__1079FC, and bits 13-14 are the pair that turns
+    /// on with configuration and stays on. The top nibble differs by CONFIGURATION SOURCE
+    /// (0x5 after SPI boot, 0x6 after JTAG load), so it must not be part of the test — an
+    /// exact-match check against a boot-time reference reports a successful JTAG load as failure.
+    pub fn configured(&self) -> bool {
+        (self.0 >> 13) & 0x3 == 0x3 && !self.crc_error()
+    }
+
     pub fn describe(&self) -> String {
         format!(
             "STAT=0x{:08X}  DONE={} EOS={} INIT_B={} INIT_COMPLETE={} MODE={:03b} CRC_ERR={}",

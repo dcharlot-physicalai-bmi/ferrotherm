@@ -33,12 +33,12 @@ fn main() {
             println!("after:  {}", st.describe());
             println!(
                 "\nverdict: {}",
-                if st.done() && !st.crc_error() {
-                    "CONFIGURED - DONE is high and no CRC error. The fabric is running this design."
+                if st.configured() {
+                    "CONFIGURED - the fabric is running this design."
                 } else if st.crc_error() {
                     "CRC ERROR - the stream was rejected; fabric left unconfigured."
                 } else {
-                    "DONE still low - configuration did not complete."
+                    "configuration did not complete."
                 }
             );
         }
