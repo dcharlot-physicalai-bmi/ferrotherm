@@ -79,6 +79,9 @@ pub struct Fabric<'g> {
     pub grid: &'g TileGrid,
     /// tile type -> PIPs
     pub pipdbs: HashMap<String, PipDb>,
+    /// tile type -> pseudo-PIP kinds. `always` connections are PERMANENT wiring: traversable at
+    /// zero cost and emitting no bits. `default` and `hint` are router metadata, not conductors.
+    pub ppips: HashMap<String, crate::pips::Ppips>,
     pub conns: Vec<Conn>,
     /// (grid_x, grid_y) -> tile name
     at: HashMap<(u32, u32), String>,
@@ -89,6 +92,15 @@ pub struct Fabric<'g> {
 
 impl<'g> Fabric<'g> {
     pub fn new(grid: &'g TileGrid, pipdbs: HashMap<String, PipDb>, conns: Vec<Conn>) -> Fabric<'g> {
+        Self::with_ppips(grid, pipdbs, HashMap::new(), conns)
+    }
+
+    pub fn with_ppips(
+        grid: &'g TileGrid,
+        pipdbs: HashMap<String, PipDb>,
+        ppips: HashMap<String, crate::pips::Ppips>,
+        conns: Vec<Conn>,
+    ) -> Fabric<'g> {
         let mut at = HashMap::new();
         for t in grid.tiles.values() {
             at.insert((t.grid_x, t.grid_y), t.name.clone());
@@ -99,7 +111,7 @@ impl<'g> Fabric<'g> {
             from_type.entry(c.from_type.clone()).or_default().push(i);
             to_type.entry(c.to_type.clone()).or_default().push(i);
         }
-        Fabric { grid, pipdbs, conns, at, from_type, to_type }
+        Fabric { grid, pipdbs, ppips, conns, at, from_type, to_type }
     }
 
     fn tile_type(&self, tile: &str) -> Option<&str> {
@@ -113,13 +125,25 @@ impl<'g> Fabric<'g> {
         // PIPs within this tile
         if let Some(db) = self.pipdbs.get(&tile.kind) {
             for p in db.from(&node.1) {
-                if p.pseudo {
-                    continue; // no bits, and not a switch we can prove is on
-                }
-                out.push((
-                    (tile.name.clone(), p.dst.clone()),
-                    Some(RouteStep { tile: tile.name.clone(), tile_type: tile.kind.clone(), pip: p.clone() }),
-                ));
+                let feat = p.feature(&tile.kind);
+                let kind = self.ppips.get(&tile.kind).and_then(|pp| pp.kinds.get(&feat));
+                let step = match kind.map(|s| s.as_str()) {
+                    // permanent wiring: usable, but there is nothing to configure
+                    Some("always") => None,
+                    // fallback drivers and router hints are not conductors we may rely on
+                    Some(_) => continue,
+                    None => {
+                        if p.pseudo {
+                            continue; // flagged pseudo with no ppips entry: cannot be turned on
+                        }
+                        Some(RouteStep {
+                            tile: tile.name.clone(),
+                            tile_type: tile.kind.clone(),
+                            pip: p.clone(),
+                        })
+                    }
+                };
+                out.push(((tile.name.clone(), p.dst.clone()), step));
             }
         }
         // wire continuations outward
@@ -162,7 +186,7 @@ impl<'g> Fabric<'g> {
         src: &Node,
         dst: &Node,
         max_nodes: usize,
-        allow: &dyn Fn(&str) -> bool,
+        allow: &dyn Fn(&str, &str) -> bool,
     ) -> Option<Vec<RouteStep>> {
         let mut seen: HashSet<Node> = HashSet::new();
         let mut prev: HashMap<Node, (Node, Option<RouteStep>)> = HashMap::new();
@@ -193,7 +217,7 @@ impl<'g> Fabric<'g> {
                     continue;
                 }
                 if let Some(k) = self.tile_type(&next.0) {
-                    if !allow(k) {
+                    if !allow(&next.0, k) {
                         continue;
                     }
                 }
@@ -207,8 +231,18 @@ impl<'g> Fabric<'g> {
 }
 
 /// The default expansion rule: interconnect tiles only.
-pub fn interconnect_only(kind: &str) -> bool {
+pub fn interconnect_only(_name: &str, kind: &str) -> bool {
     kind.starts_with("INT_")
+}
+
+/// Interconnect everywhere, plus two named logic tiles as ENDPOINTS. Logic tiles are never
+/// transited: a path that enters one and leaves again would be a LUT route-through, which only
+/// conducts if that unrelated LUT happens to be programmed.
+pub fn interconnect_with_endpoints<'a>(
+    src_tile: &'a str,
+    dst_tile: &'a str,
+) -> impl Fn(&str, &str) -> bool + 'a {
+    move |name: &str, kind: &str| kind.starts_with("INT_") || name == src_tile || name == dst_tile
 }
 
 #[cfg(test)]
@@ -283,9 +317,14 @@ mod tests {
     /// The search must not wander into CLE tiles, whose PIPs are LUT route-throughs.
     #[test]
     fn expansion_is_confined_to_interconnect() {
-        assert!(interconnect_only("INT_L") && interconnect_only("INT_R"));
-        assert!(!interconnect_only("CLBLL_L"));
-        assert!(!interconnect_only("CLBLM_R"));
+        assert!(interconnect_only("INT_L_X0Y0", "INT_L") && interconnect_only("t", "INT_R"));
+        assert!(!interconnect_only("CLBLL_L_X2Y0", "CLBLL_L"));
+        assert!(!interconnect_only("t", "CLBLM_R"));
+        // endpoints are reachable but never transited
+        let rule = interconnect_with_endpoints("CLBLL_L_X2Y0", "CLBLL_L_X2Y9");
+        assert!(rule("CLBLL_L_X2Y0", "CLBLL_L"), "source endpoint allowed");
+        assert!(rule("CLBLL_L_X2Y9", "CLBLL_L"), "target endpoint allowed");
+        assert!(!rule("CLBLL_L_X2Y5", "CLBLL_L"), "any other logic tile is refused");
     }
 
     #[test]

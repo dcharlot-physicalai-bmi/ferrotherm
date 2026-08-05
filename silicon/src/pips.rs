@@ -32,6 +32,15 @@ impl Pip {
     }
 }
 
+/// A site inside a tile (e.g. SLICE_X0Y0) and the tile wire each of its pins lands on.
+#[derive(Debug, Clone, Default)]
+pub struct Site {
+    /// Full site name, e.g. "SLICE_X0Y0" (the JSON stores prefix and name separately).
+    pub name: String,
+    /// pin name (A, A1..A6, AQ, AMUX, ...) -> tile wire
+    pub pins: HashMap<String, String>,
+}
+
 #[derive(Debug, Default)]
 pub struct PipDb {
     pub tile_type: String,
@@ -39,6 +48,8 @@ pub struct PipDb {
     /// wire name -> indices of PIPs driving FROM it
     pub by_src: HashMap<String, Vec<u32>>,
     pub wires: HashSet<String>,
+    /// sites in this tile type, in declaration order (X0Y0, X1Y0, ...)
+    pub sites: Vec<Site>,
 }
 
 impl PipDb {
@@ -72,7 +83,24 @@ impl PipDb {
         for (i, p) in pips.iter().enumerate() {
             by_src.entry(p.src.clone()).or_default().push(i as u32);
         }
-        Ok(PipDb { tile_type, pips, by_src, wires })
+        // sites: pins carry the tile wire they land on — the bridge from logic to interconnect
+        let mut sites = Vec::new();
+        if let Some(Json::Arr(list)) = j.get("sites") {
+            for s in list {
+                let prefix = s.get("prefix").and_then(|x| x.as_str()).unwrap_or("");
+                let sname = s.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                let mut pins = HashMap::new();
+                if let Some(Json::Obj(ps)) = s.get("site_pins") {
+                    for (pin, v) in ps {
+                        if let Some(w) = v.get("wire").and_then(|x| x.as_str()) {
+                            pins.insert(pin.to_string(), w.to_string());
+                        }
+                    }
+                }
+                sites.push(Site { name: format!("{prefix}_{sname}"), pins });
+            }
+        }
+        Ok(PipDb { tile_type, pips, by_src, wires, sites })
     }
 
     /// PIPs driven from `wire` (the routing fan-out).
@@ -140,6 +168,22 @@ mod tests {
         assert_eq!(p.feature("INT_L"), "INT_L.BYP_BOUNCE0.BYP_ALT0");
         // the source-first form is what the tile database uses, and it is NOT a segbits key
         assert_ne!(p.feature("INT_L"), "INT_L.BYP_ALT0.BYP_BOUNCE0");
+    }
+
+    /// Site pins name the tile wire they land on — this is how a LUT output reaches the
+    /// interconnect, and it is the piece that makes a logic-to-logic route possible.
+    #[test]
+    fn site_pins_map_to_tile_wires() {
+        let src = r#"{"tile_type": "CLBLL_L", "pips": {}, "wires": {},
+          "sites": [{"name": "X0Y0", "prefix": "SLICE", "site_pins": {
+            "A":  {"wire": "CLBLL_LL_A"},
+            "A1": {"wire": "CLBLL_LL_A1"},
+            "A6": {"wire": "CLBLL_LL_A6"}}}]}"#;
+        let db = PipDb::parse(src).unwrap();
+        assert_eq!(db.sites.len(), 1);
+        assert_eq!(db.sites[0].name, "SLICE_X0Y0");
+        assert_eq!(db.sites[0].pins.get("A").map(|s| s.as_str()), Some("CLBLL_LL_A"));
+        assert_eq!(db.sites[0].pins.get("A6").map(|s| s.as_str()), Some("CLBLL_LL_A6"));
     }
 
     #[test]

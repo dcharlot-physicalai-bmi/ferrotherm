@@ -58,7 +58,7 @@ fn main() {
                 if seen.contains(&next) {
                     continue;
                 }
-                if !grid.tiles.get(&next.0).map(|t| interconnect_only(&t.kind)).unwrap_or(false) {
+                if !grid.tiles.get(&next.0).map(|t| interconnect_only(&next.0, &t.kind)).unwrap_or(false) {
                     continue;
                 }
                 if next.1.starts_with("IMUX") && next.0 != src.0 && found.len() < 3 {
