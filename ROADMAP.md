@@ -319,8 +319,22 @@ miss under 2%. The Wishart landscape is dense with near-degenerate minima, so a 
 close and still misses. **Any benchmark reporting mean excess would call it easy.** Report the solve
 rate.
 
-**Still to come:** tree-decomposition and planar exact solvers, 3R3X XORSAT, and the physics oracles
-beyond Onsager — the SK transition and 3D Edwards–Anderson against OPUSLab's published files.
+**Variable elimination** (`src/exact.rs`) closes the tree-decomposition item and does more than the
+plan asked. Cost is `2^width` in the induced width rather than `2^n` in the size, so exactness
+becomes a property of a graph's *shape*: a 2,000-spin chain is instant, a 240-spin lattice strip is
+exact, and a dense graph is refused with a message saying to use a planted instance instead.
+Min-sum gives the exact ground state, sum-product the exact `log Z` — both checked against
+enumeration, and back-substitution checked separately, since a recovered state can be wrong
+independently of its energy being right.
+
+Measured rather than assumed: min-fill ordering is **optimal up to width 5** and drifts two or three
+above beyond it (8 where treewidth is 6, 11 where it is 8). At `2^width`, three over is an eightfold
+price. The docs carry the table so nobody assumes the heuristic is exact — a bad order makes this
+slow or refused, never wrong.
+
+**Still to come:** a planar exact solver (minimum-weight perfect matching), 3R3X XORSAT, and the
+physics oracles beyond Onsager — the SK transition and 3D Edwards–Anderson against OPUSLab's
+published files.
 
 ### Phase 2 — Backends and the honest benchmark
 
