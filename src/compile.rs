@@ -577,7 +577,7 @@ mod tests {
     /// The optimized one-hot path must agree with the general path exactly.
     #[test]
     fn onehot_matches_general() {
-        let mut k = tiny_kernel();
+        let k = tiny_kernel();
         let x = [1i8, -1];
         let y_star = 2usize;
         let mut onehot = vec![0.0; 4];

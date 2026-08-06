@@ -27,7 +27,6 @@
 //! Findings are a list. An empty list is the only thing that means "passed".
 
 use crate::graph::Graph;
-use crate::kernel;
 
 /// Something wrong with a run, in the sampler's own output.
 #[derive(Clone, Debug, PartialEq)]

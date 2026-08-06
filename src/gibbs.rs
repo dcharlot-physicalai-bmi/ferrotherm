@@ -9,6 +9,10 @@ use crate::graph::Graph;
 use crate::ledger::Ledger;
 use crate::rng::Pcg;
 
+// The logistic the module docs write as sigma(2 beta f_i). Only the conditional test
+// exercises it, so it is dead in a non-test build — kept because it is the executable
+// statement of the formula graph.rs and kernel.rs both cite in prose.
+#[cfg_attr(not(test), allow(dead_code))]
 #[inline]
 fn sigma(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
@@ -162,6 +166,7 @@ impl<'g> Sampler<'g> {
 
 #[cfg(test)]
 mod tests {
+    use super::sigma;
     use super::*;
     use crate::graph::GraphBuilder;
 
@@ -261,7 +266,7 @@ mod tests {
             }
         }
         // exact: P(s1=+1 | s0=+1) = sigma(2*beta*J) = sigma(3.0)
-        let want = 1.0 / (1.0 + (-3.0f64).exp());
+        let want = sigma(3.0);
         let got = up as f64 / n as f64;
         assert!((got - want).abs() < 0.01, "got {got}, want {want}");
     }

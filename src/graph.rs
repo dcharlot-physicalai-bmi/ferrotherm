@@ -5,7 +5,7 @@
 //! so positive J is ferromagnetic (alignment lowers energy) and the Gibbs conditional is
 //!     P(s_i = +1 | rest) = sigma(2 beta (sum_j J_ij s_j + h_i)).
 
-/// Builder-side edge list; finalized into CSR by [`Graph::build`].
+// Builder-side edge list; finalized into CSR by Graph::build.
 thread_local! {
     static BUILDS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
 }

@@ -117,6 +117,9 @@ const ALEV: usize = 4; // 4 action levels per joint (3 thermometer bits)
 const ACT_VALS: [f64; ALEV] = [-1.8, -0.6, 0.6, 1.8];
 const ETH: [f64; 10] = [-0.5, -0.25, -0.12, -0.06, -0.03, 0.03, 0.06, 0.12, 0.25, 0.5];
 const N_IN: usize = NJ * (QLEV - 1) + 2 * ETH.len(); // 12 + 20 = 32
+// Stated beside N_IN because the pair is the fabric's port width; the encoder below
+// derives its own output indices, so this one is documentation rather than a binding.
+#[allow(dead_code)]
 const N_OUT: usize = NJ * (ALEV - 1); // 9
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

@@ -144,7 +144,7 @@ pub fn solve_spd_exact_ou(
     let mut rng = Pcg::new(seed, 0xE0);
     // state in the eigenbasis, centered on x*
     let mut y = vec![0.0; n];
-    let mut step = |y: &mut Vec<f64>, rng: &mut Pcg| {
+    let step = |y: &mut Vec<f64>, rng: &mut Pcg| {
         for c in 0..n {
             y[c] = decay[c] * y[c] + nstd[c] * gauss(rng);
         }
