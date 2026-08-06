@@ -455,9 +455,13 @@ mod tests {
     #[test]
     fn the_convergence_check_sees_a_drifting_trace() {
         // The Geweke-style check, verified on a trace whose drift is known rather than hoped for.
-        // In practice a slow chain usually trips Undermixed first, so this pins the estimator
-        // itself: beta_eff cannot do this job, being a purely local statistic, and a chain trapped
-        // in a metastable configuration still has locally correct conditionals.
+        //
+        // It does fire on real chains, and this was written before that was demonstrated. Through
+        // the HTTP surface, a 24x24 lattice at beta 0.7 with no burn-in reports "early draws
+        // average -0.0197 and late ones -0.9846, a gap of 6.2 standard errors" -- a chain
+        // coarsening out domains and travelling from disorder to near-saturation while it is being
+        // sampled. beta_eff cannot see that, being a purely local statistic: a chain trapped in a
+        // metastable configuration still has locally correct conditionals.
         let mut rng = Pcg::new(21, 0);
         let n = 3000;
         let drifting: Vec<f64> = (0..n)

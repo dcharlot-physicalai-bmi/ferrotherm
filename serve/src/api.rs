@@ -7,6 +7,7 @@ use crate::json::{parse, Json};
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising;
+use ferrotherm::certify::{certify, Certificate};
 use ferrotherm::ledger::{Ledger, Prices, Z1_SPICE};
 use std::time::Instant;
 
@@ -14,6 +15,8 @@ use std::time::Instant;
 /// `capabilities` so a caller can size a job instead of discovering the wall by hitting it.
 pub const MAX_NODES: usize = 4_000_000;
 pub const MAX_NODE_UPDATES: u64 = 20_000_000_000;
+/// Total spins retained across all certified draws, bounding memory at about 20 MB.
+pub const RETAINED_SPIN_BUDGET: usize = 20_000_000;
 
 // ---- graph construction -----------------------------------------------------------------------
 
@@ -146,6 +149,50 @@ fn ledger_json(l: &Ledger, p: &Prices, wall_s: f64) -> Json {
     ])
 }
 
+fn certificate_json(c: &Certificate, capped: Option<usize>) -> Json {
+    let mut out = vec![
+        ("draws", Json::n(c.draws as f64)),
+        ("beta_requested", Json::n(c.beta_requested)),
+        ("beta_effective", Json::n(c.beta_eff)),
+        (
+            "beta_ci95",
+            Json::Arr(vec![Json::n(c.beta_ci.0), Json::n(c.beta_ci.1)]),
+        ),
+        ("autocorrelation_time", Json::n(c.tau_int)),
+        ("effective_sample_size", Json::n(c.ess)),
+        ("passed", Json::Bool(c.passed())),
+        (
+            "findings",
+            Json::Arr(c.findings.iter().map(|f| Json::Str(f.to_string())).collect()),
+        ),
+    ];
+    if let (Some(tv), Some(fl)) = (c.tv_exact, c.noise_floor) {
+        out.push(("total_variation", Json::n(tv)));
+        out.push(("noise_floor", Json::n(fl)));
+    }
+    if let Some(n) = capped {
+        out.push((
+            "draws_capped_to",
+            Json::n(n as f64),
+        ));
+        out.push((
+            "cap_note",
+            Json::s(
+                "retained draws were reduced to bound memory on a large graph; a thinner \
+                 certificate is reported rather than a fabricated one",
+            ),
+        ));
+    }
+    out.push((
+        "note",
+        Json::s(
+            "computed from the returned samples alone, not from the sampler's own account of \
+             itself. An empty findings list is the only thing that means passed.",
+        ),
+    ));
+    Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+}
+
 fn state_json(s: &[i8]) -> Json {
     Json::Arr(s.iter().map(|&x| Json::n(x as f64)).collect())
 }
@@ -190,11 +237,35 @@ pub fn sample(req: &Json) -> Result<Json, String> {
             smp.clamp(i, val as i8);
         }
     }
+    // `sweeps` is burn-in; then draws are recorded so the run can be certified. A sampler that
+    // returns one state cannot be checked at all, which is why this is not optional.
     if threads > 1 {
         smp.sweeps_par(sweeps, threads, Some(&mut led));
     } else {
         smp.sweeps(sweeps, Some(&mut led));
     }
+
+    let want_draws = opt_usize(req, "draws", 128).max(1);
+    let thin = opt_usize(req, "thin", 1).max(1);
+    // Retaining d draws of an n-spin graph costs d*n bytes. Rather than refuse to certify a large
+    // model or quietly allocate a gigabyte, the draw count is reduced and the reduction is reported.
+    let max_draws = (RETAINED_SPIN_BUDGET / g.n.max(1)).max(16);
+    let draws = want_draws.min(max_draws);
+    let capped = if draws < want_draws { Some(draws) } else { None };
+
+    let mut samples: Vec<Vec<i8>> = Vec::with_capacity(draws);
+    let mut trace: Vec<f64> = Vec::with_capacity(draws);
+    for _ in 0..draws {
+        if threads > 1 {
+            smp.sweeps_par(thin, threads, Some(&mut led));
+        } else {
+            smp.sweeps(thin, Some(&mut led));
+        }
+        samples.push(smp.s.clone());
+        trace.push(g.energy(&smp.s));
+    }
+    let cert = certify(&g, beta, &samples, &trace);
+
     let s = smp.read_all(Some(&mut led));
     let wall = t0.elapsed().as_secs_f64();
 
@@ -209,6 +280,7 @@ pub fn sample(req: &Json) -> Result<Json, String> {
         ("energy", Json::n(e)),
         ("magnetization", Json::n(m)),
         ("ledger", ledger_json(&led, &Z1_SPICE, wall)),
+        ("certificate", certificate_json(&cert, capped)),
     ];
     // A million-node state is not something to paste into a chat transcript; it is returned only
     // when asked for, and the summary statistics above are what a caller usually wants.
@@ -452,8 +524,15 @@ mod tests {
             .unwrap();
         assert_eq!(r.get("nodes").unwrap().as_f64(), Some(64.0));
         assert_eq!(r.get("state").unwrap().as_arr().unwrap().len(), 64);
+        // Certification is not free and the ledger says so: 50 burn-in sweeps plus 128 recorded
+        // draws at thin 1. A run that returns one state cannot be checked, so this is the price.
         let led = r.get("ledger").unwrap();
-        assert_eq!(led.get("node_updates").unwrap().as_f64(), Some(64.0 * 50.0));
+        assert_eq!(led.get("node_updates").unwrap().as_f64(), Some(64.0 * (50.0 + 128.0)));
+
+        let c = r.get("certificate").expect("every sample must carry a certificate");
+        assert_eq!(c.get("draws").unwrap().as_f64(), Some(128.0));
+        assert!(c.get("beta_effective").is_some());
+        assert!(c.get("passed").unwrap().as_bool().is_some());
     }
 
     #[test]
@@ -553,6 +632,34 @@ mod tests {
         let s = r.get("state").unwrap().as_arr().unwrap();
         assert_eq!(s[0].as_f64(), Some(1.0));
         assert_eq!(s[8].as_f64(), Some(-1.0));
+    }
+
+    #[test]
+    fn a_certificate_can_fail_through_the_api() {
+        // The whole point. A cold lattice sampled with no thinning must come back flagged, not
+        // silently blessed, or the field is decoration.
+        let r = run(
+            "sample",
+            r#"{"graph":{"builtin":"lattice2d","l":24},"beta":0.7,"sweeps":0,"draws":400,"thin":1,
+                "return_state":false}"#,
+        )
+        .unwrap();
+        let c = r.get("certificate").unwrap();
+        assert_eq!(c.get("passed").unwrap().as_bool(), Some(false));
+        assert!(!c.get("findings").unwrap().as_arr().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_large_graph_caps_its_draws_and_says_so() {
+        // Rather than allocate a gigabyte or refuse to certify, it certifies thinner and reports it.
+        let r = run(
+            "sample",
+            r#"{"graph":{"builtin":"lattice2d","l":600},"sweeps":1,"draws":1000}"#,
+        )
+        .unwrap();
+        let c = r.get("certificate").unwrap();
+        assert!(c.get("draws_capped_to").is_some(), "a 360k-spin graph must cap its draws");
+        assert!(c.get("draws").unwrap().as_f64().unwrap() < 1000.0);
     }
 
     #[test]

@@ -252,10 +252,21 @@ means a deliberately broken sampler can be handed to the same function. It is, i
 | `noise_floor` | Always beside the distance |
 | `findings` | Empty is the only thing that means passed |
 
+**Wired into every surface.** `/v1/sample` and `ferrotherm_sample` return a certificate on every
+call; it is not a separate endpoint and cannot be skipped. Sampling now runs `sweeps` as burn-in and
+then records `draws` (default 128, `thin` between them), which costs more than returning a single
+state — and the ledger says so, because a run that returns one state cannot be checked at all.
+Retained draws are capped to about 20 MB of spins on large graphs, reporting a thinner certificate
+rather than fabricating one or allocating a gigabyte.
+
 **Accepted — a certificate that cannot fail is not a certificate.** Deliberately broken samplers are
 caught in each mode: one running at β = 1.4 while claiming 0.6 (`beta_eff` recovers 1.4), an
 unburned 24×24 lattice still coarsening out domains (τ = 20 against τ = 0.8 burned in), critical
 slowing on a 12×12 lattice at β ≈ β_c, and uniform noise, which fits β ≈ 0 as it should.
+
+Live through the API, a 24×24 lattice with no burn-in comes back with both diagnostics firing:
+*"400 draws are worth about 3 independent samples"* and *"early draws average −0.0197 and late ones
+−0.9846, a gap of 6.2 standard errors"*.
 
 *Five findings from building it, each from a test that failed for a real reason:*
 

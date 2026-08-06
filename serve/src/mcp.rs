@@ -52,12 +52,19 @@ pub fn tools() -> Json {
         tool(
             "ferrotherm_sample",
             "Draw a state from the Boltzmann distribution of an Ising graph by chromatic \
-             block-Gibbs sampling. Returns the state, its energy, magnetization, and an energy \
-             ledger priced at Z1-class device figures. Deterministic given seed and thread count.",
+             block-Gibbs sampling. Returns the state, its energy, magnetization, an energy ledger \
+             priced at Z1-class device figures, and a CERTIFICATE computed from the samples \
+             themselves: the temperature actually sampled at with a confidence interval, the \
+             autocorrelation time and effective sample size, and where the model is small enough, \
+             the distance from the exact Boltzmann distribution beside the sampling-noise floor. \
+             An empty findings list is the only thing that means the run is sound. Deterministic \
+             given seed and thread count.",
             vec![
                 ("graph", schema_graph()),
                 ("beta", prop("number", "Inverse temperature, 1/T. Higher is colder and more ordered. Default 1.0.")),
-                ("sweeps", prop("integer", "Full lattice sweeps to run. Default 100.")),
+                ("sweeps", prop("integer", "Burn-in sweeps before recording. Default 100.")),
+                ("draws", prop("integer", "Samples recorded after burn-in, used to certify the run. Default 128.")),
+                ("thin", prop("integer", "Sweeps between recorded draws. Raise this if the certificate reports correlated draws. Default 1.")),
                 ("seed", prop("integer", "Random seed. Default 0.")),
                 ("threads", prop("integer", "Parallel threads. Results stay reproducible per thread count. Default 1.")),
                 ("clamp", prop("array", "Nodes held fixed, as [[index, -1 or +1], ...].")),
