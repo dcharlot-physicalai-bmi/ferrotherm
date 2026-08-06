@@ -168,13 +168,34 @@ the second erased the first, and the enumeration found one ground state where th
 Any two passes touching one node hit this, and a user bias plus a penalty bias is the ordinary case.
 `bias` now accumulates; `set_bias` replaces when that is actually wanted.
 
-**0.4 Types that make the footguns unrepresentable.** Distinct `Weight` and `Energy` newtypes; a
-constructor error for a variable repeated within a factor; padded `[n,k]` interaction storage with
-an active mask, shared by the CPU, WGSL and FPGA emitters.
-*Why:* THRML documents that a repeated variable in a factor silently breaks Boltzmann correctness
-because "this condition has not been enforced in the code." Ours will not compile.
-**Accept:** each documented incumbent footgun has a test proving it is a compile error or a
-constructor `Err`.
+**0.4 Types that make the footguns unrepresentable.** ✅ **DONE** — `src/factor.rs`, `src/dense.rs`.
+
+**The repeated variable** (`factor.rs`). THRML documents that a variable repeated in a factor
+silently breaks Boltzmann correctness because "this condition has not been enforced in the code" —
+`s_i * s_i = 1`, so an even multiplicity collapses the term to a constant and an odd one lowers its
+order, and the model quietly stops being the one that was written. `Factor::new` returns
+`Err(RepeatedVariable { var, times })`, naming *which* variable and how often, because "duplicate
+found" is not actionable in a factor of eight arguments. A test demonstrates the harm rather than
+asserting it: `[0,1,0]` is shown to be numerically identical to the order-1 factor `[1]`.
+
+**The padding sentinel** (`dense.rs`). The `[n,k]` rectangle the CPU, GPU and RTL emitters share.
+THRML pads with `INVALID_BIAS = -1e10`; a sentinel is fine until something does arithmetic on it,
+whereupon it silently dominates every real term. Padding here is an explicit `active` mask *and*
+inert twice over — padded slots carry weight `0.0` and index in range — so a kernel that forgot the
+mask still computes the correct field. A test substitutes the sentinel into the padding and confirms
+it destroys the field, so the design choice is demonstrated rather than argued.
+
+**The sign convention** is pinned by test instead of by newtype: a positive weight prefers the
+product to be +1, aligned is low energy, and arity-2 factors must agree exactly with the coupling
+they replace or the IR has two energies.
+
+*One planned item deliberately dropped.* Distinct `Weight` and `Energy` newtypes were in this plan
+and are not built. They would not catch the error that actually happens — sign inversion — since
+both sides of `E = -J s s` are `f64` either way, and the tests above pin the convention properly.
+Ceremony that looks like safety is worse than no ceremony, because it is trusted.
+
+**Accepted:** each documented incumbent footgun has a test proving it is a constructor `Err` or is
+inert by construction. 79 lib tests pass.
 
 **0.5 The `.ftp` program format.** Author the spec ourselves: spins, factors including
 higher-order, the block coloring, the schedule with β and penalty ramps, the observer set, the
