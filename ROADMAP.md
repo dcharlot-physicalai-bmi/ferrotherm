@@ -440,7 +440,7 @@ Adapters, not a DSL. The field does not need a fifth modelling language.
 |---|---|---|
 | **Rust** | Native. `Model` → lowering → `Program` → `Schedule`; traits for `Factor`/`Kernel`/`Sampler`. One variable below the lowering passes: the spin. Newtype indices, not THRML's metaclass ID hack. | now |
 | **Python** | `ferrotherm.linalg` in thermox's signatures + `estimate/stderr/certificate/ledger` on every result. A PyMC `BlockedStep` with a `Competence` rule, so a discrete-latent model gets our block-Gibbs step in one line. | now |
-| **Node graph** | The unoccupied lane. Nodes are IR objects, not widgets: variables, factors, blocks, schedule, observers, backend. Executes the same `.ftp`. Builds on the shipped workbench. | next |
+| **Node graph** | ✅ `docs/graph.html`. Nodes are IR objects, not widgets — model, schedule, run, report — and the ports carry those kinds, so a graph that type-checks is a program that compiles. Runs on the wasm module and exports `.ftp`. The survey found no node editor exists for **any** Ising or factor-graph stack anywhere; this is the first. | done |
 | **Zig** | Already binds the C ABI. Extend as the IR lands. | next |
 | **Adapters** (`dimod.Sampler`, `ommx`) | Separate, optional, deletable crates the core never names. Written when a user asks, not before. | later |
 

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graph · ferrotherm</title>
+<meta name="description" content="Build a thermodynamic program as a node graph, run it on your own device, and export it as a .ftp program.">
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111a2e; --panel-2:#0d1526; --line:#24314d;
+    --ink:#d8e1f0; --ink-dim:#a7b3c9; --ink-faint:#7d8aa3;
+    --gold:#cfaa5b; --gold-dim:rgba(207,170,91,.55);
+    --ok:#7dd87d; --model:#5b8fd4; --sched:#b07fd4; --result:#e0a458;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;
+       display:flex;flex-direction:column;overflow:hidden}
+  .bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:9px 16px;
+       border-bottom:1px solid var(--line);background:var(--panel-2)}
+  .mark{font-family:var(--mono);color:var(--gold);letter-spacing:.14em;text-transform:uppercase;
+        font-size:11px;white-space:nowrap}
+  .mark a{color:var(--ink-faint);text-decoration:none}
+  .mark a:hover{color:var(--gold)}
+  .spacer{flex:1}
+  button{font-family:var(--mono);font-size:12px;background:transparent;color:var(--gold);
+         border:1px solid var(--gold-dim);border-radius:6px;padding:6px 12px;cursor:pointer}
+  button:hover{border-color:var(--gold);background:rgba(207,170,91,.08)}
+  button.primary{background:rgba(207,170,91,.14);border-color:var(--gold)}
+  button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  main{flex:1;display:grid;grid-template-columns:170px 1fr 360px;min-height:0}
+  .rail,.side{background:var(--panel-2);overflow:auto;padding:12px}
+  .rail{border-right:1px solid var(--line)}
+  .side{border-left:1px solid var(--line)}
+  .rail h3,.side h3{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+       text-transform:uppercase;color:var(--gold);margin:0 0 8px}
+  .rail h3+h3{margin-top:18px}
+  .add{display:block;width:100%;text-align:left;margin-bottom:5px;font-size:11px;padding:6px 9px}
+  #stage{position:relative;overflow:hidden;background:
+     radial-gradient(circle at 1px 1px, rgba(255,255,255,.055) 1px, transparent 0) 0 0/22px 22px, #080e18;
+     cursor:default}
+  #wires{position:absolute;inset:0;pointer-events:none}
+  .node{position:absolute;width:186px;background:var(--panel);border:1px solid var(--line);
+        border-radius:9px;font-size:12px;user-select:none;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .node.sel{border-color:var(--gold)}
+  .node .hd{padding:6px 9px;border-bottom:1px solid var(--line);font-family:var(--mono);
+       font-size:11px;letter-spacing:.05em;cursor:grab;border-radius:8px 8px 0 0}
+  .node .hd.model{color:#bcd4f5;background:rgba(91,143,212,.16)}
+  .node .hd.sched{color:#dcc4f2;background:rgba(176,127,212,.16)}
+  .node .hd.result{color:#f2d3a8;background:rgba(224,164,88,.16)}
+  .node .bd{padding:8px 9px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:5px}
+  .row label{font-family:var(--mono);font-size:10px;color:var(--ink-faint)}
+  .row input{width:74px;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+       border-radius:4px;padding:3px 5px;font-family:var(--mono);font-size:11px}
+  .row select{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+       border-radius:4px;padding:3px 4px;font-family:var(--mono);font-size:11px}
+  .port{position:absolute;width:12px;height:12px;border-radius:50%;border:2px solid var(--line);
+        background:var(--panel-2);cursor:crosshair}
+  .port:hover{border-color:var(--gold);background:var(--gold)}
+  .port.in{left:-7px}
+  .port.out{right:-7px}
+  .port.model{border-color:var(--model)}
+  .port.sched{border-color:var(--sched)}
+  .port.result{border-color:var(--result)}
+  .del{float:right;color:var(--ink-faint);cursor:pointer;padding:0 2px}
+  .del:hover{color:#e08080}
+  pre{font-family:var(--mono);font-size:11px;line-height:1.5;background:#080e18;
+      border:1px solid var(--line);border-radius:7px;padding:10px;overflow:auto;
+      color:var(--ink-dim);margin:0 0 10px;white-space:pre-wrap;word-break:break-word}
+  .side p{font-size:12px;color:var(--ink-faint);margin:0 0 10px;line-height:1.5}
+  footer{padding:7px 16px;border-top:1px solid var(--line);background:var(--panel-2);
+         font-family:var(--mono);font-size:11px;color:var(--ink-faint);display:flex;gap:14px}
+  @media(max-width:1000px){main{grid-template-columns:140px 1fr 280px}}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <span class="mark">ferrotherm graph</span>
+  <span class="mark"><a href="./">explainer</a> &middot; <a href="./ide.html">workbench</a></span>
+  <span class="spacer"></span>
+  <button id="example">Load example</button>
+  <button id="clear">Clear</button>
+  <button id="run" class="primary">Run graph</button>
+</div>
+
+<main>
+  <div class="rail">
+    <h3>Model</h3>
+    <button class="add" data-t="lattice">Lattice 2D</button>
+    <button class="add" data-t="ring">Ring</button>
+    <button class="add" data-t="frustrated">Frustrated (planted)</button>
+    <button class="add" data-t="wishart">Wishart (planted)</button>
+    <h3>Schedule</h3>
+    <button class="add" data-t="constant">Constant &beta;</button>
+    <button class="add" data-t="ladder">Geometric ladder</button>
+    <h3>Run</h3>
+    <button class="add" data-t="sample">Sample</button>
+    <button class="add" data-t="anneal">Anneal</button>
+    <h3>Report</h3>
+    <button class="add" data-t="report">Report</button>
+  </div>
+
+  <div id="stage"><svg id="wires"></svg></div>
+
+  <div class="side">
+    <h3>Output</h3>
+    <pre id="out">Add nodes, connect them, press Run.
+
+A graph is a program: a model, a schedule, something that
+runs them, and something that reports. Drag from an output
+dot to an input dot to connect.</pre>
+    <h3>As a .ftp program</h3>
+    <p>The same text the crate, the API and the workbench read. A graph is a way of writing one.</p>
+    <pre id="ftp">&mdash;</pre>
+  </div>
+</main>
+
+<footer>
+  <span>Runs on your own device. Nothing leaves this page.</span>
+  <span class="spacer"></span>
+  <span id="status">loading&hellip;</span>
+</footer>
+
+<script>
+"use strict";
+
+// ---- node types -------------------------------------------------------------------------------
+//
+// A node is an IR object, not a widget: a model, a schedule, a run, a report. The ports carry those
+// same kinds, so a graph that type-checks is a program that compiles.
+
+const KIND = { model: "model", sched: "sched", result: "result" };
+
+const TYPES = {
+  lattice:    { title: "Lattice 2D",   kind: "model",  ins: [],
+                fields: [["l", 24, "int"], ["j", 1.0, "num"]] },
+  ring:       { title: "Ring",         kind: "model",  ins: [],
+                fields: [["n", 24, "int"], ["j", 1.0, "num"], ["h", 0.0, "num"]] },
+  frustrated: { title: "Frustrated",   kind: "model",  ins: [],
+                fields: [["l", 8, "int"], ["loops", 96, "int"], ["seed", 1, "int"]] },
+  wishart:    { title: "Wishart",      kind: "model",  ins: [],
+                fields: [["n", 40, "int"], ["alpha", 0.5, "num"], ["seed", 1, "int"]] },
+  constant:   { title: "Constant β",   kind: "sched",  ins: [],
+                fields: [["beta", 0.44, "num"], ["sweeps", 400, "int"]] },
+  ladder:     { title: "Geometric",    kind: "sched",  ins: [],
+                fields: [["beta_min", 0.05, "num"], ["beta_max", 6.0, "num"],
+                         ["stages", 80, "int"], ["per", 40, "int"]] },
+  sample:     { title: "Sample",       kind: "result", ins: [["model", "model"], ["sched", "sched"]],
+                fields: [["seed", 1, "int"]] },
+  anneal:     { title: "Anneal",       kind: "result", ins: [["model", "model"], ["sched", "sched"]],
+                fields: [["seed", 1, "int"]] },
+  report:     { title: "Report",       kind: null,     ins: [["result", "result"]], fields: [] },
+};
+
+let nodes = [], links = [], nextId = 1;
+const $ = id => document.getElementById(id);
+const stage = $("stage"), wires = $("wires");
+
+function addNode(type, x, y) {
+  const T = TYPES[type];
+  const n = { id: nextId++, type, x, y, vals: {} };
+  T.fields.forEach(([k, v]) => (n.vals[k] = v));
+  nodes.push(n);
+  draw();
+  return n;
+}
+
+function removeNode(id) {
+  nodes = nodes.filter(n => n.id !== id);
+  links = links.filter(l => l.from !== id && l.to !== id);
+  draw();
+}
+
+// ---- rendering --------------------------------------------------------------------------------
+
+let dragging = null, linking = null;
+
+function draw() {
+  [...stage.querySelectorAll(".node")].forEach(e => e.remove());
+  for (const n of nodes) {
+    const T = TYPES[n.type];
+    const el = document.createElement("div");
+    el.className = "node";
+    el.style.left = n.x + "px";
+    el.style.top = n.y + "px";
+    el.dataset.id = n.id;
+
+    const hd = document.createElement("div");
+    hd.className = "hd " + (T.kind || "result");
+    hd.textContent = T.title;
+    const del = document.createElement("span");
+    del.className = "del";
+    del.textContent = "×";
+    del.title = "remove";
+    del.onclick = e => { e.stopPropagation(); removeNode(n.id); };
+    hd.appendChild(del);
+    hd.onmousedown = e => {
+      dragging = { id: n.id, dx: e.clientX - n.x, dy: e.clientY - n.y };
+      e.preventDefault();
+    };
+    el.appendChild(hd);
+
+    const bd = document.createElement("div");
+    bd.className = "bd";
+    for (const [k, , kind] of T.fields) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const lab = document.createElement("label");
+      lab.textContent = k;
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.step = kind === "int" ? "1" : "any";
+      inp.value = n.vals[k];
+      inp.oninput = () => { n.vals[k] = +inp.value; };
+      row.appendChild(lab); row.appendChild(inp);
+      bd.appendChild(row);
+    }
+    if (!T.fields.length && !T.ins.length) bd.textContent = "—";
+    el.appendChild(bd);
+
+    // ports
+    T.ins.forEach(([name, kind], i) => {
+      const p = document.createElement("div");
+      p.className = "port in " + kind;
+      p.style.top = (34 + i * 20) + "px";
+      p.title = name + " : " + kind;
+      p.onmouseup = () => {
+        if (linking && linking.kind === kind && linking.from !== n.id) {
+          links = links.filter(l => !(l.to === n.id && l.port === name));
+          links.push({ from: linking.from, to: n.id, port: name, kind });
+        }
+        linking = null; draw();
+      };
+      el.appendChild(p);
+    });
+    if (T.kind) {
+      const p = document.createElement("div");
+      p.className = "port out " + T.kind;
+      p.style.top = "34px";
+      p.title = "out : " + T.kind;
+      p.onmousedown = e => { linking = { from: n.id, kind: T.kind }; e.stopPropagation(); e.preventDefault(); };
+      el.appendChild(p);
+    }
+    stage.appendChild(el);
+  }
+  drawWires();
+}
+
+function portPos(id, side, port) {
+  const n = nodes.find(x => x.id === id);
+  if (!n) return null;
+  const T = TYPES[n.type];
+  if (side === "out") return { x: n.x + 186, y: n.y + 40 };
+  const i = T.ins.findIndex(([nm]) => nm === port);
+  return { x: n.x, y: n.y + 40 + Math.max(0, i) * 20 };
+}
+
+function drawWires() {
+  wires.innerHTML = "";
+  wires.setAttribute("width", stage.clientWidth);
+  wires.setAttribute("height", stage.clientHeight);
+  for (const l of links) {
+    const a = portPos(l.from, "out"), b = portPos(l.to, "in", l.port);
+    if (!a || !b) continue;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const mid = (a.x + b.x) / 2;
+    path.setAttribute("d", `M${a.x},${a.y} C${mid},${a.y} ${mid},${b.y} ${b.x},${b.y}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", getComputedStyle(document.documentElement)
+      .getPropertyValue("--" + l.kind).trim() || "#5b8fd4");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("opacity", ".8");
+    wires.appendChild(path);
+  }
+}
+
+window.addEventListener("mousemove", e => {
+  if (!dragging) return;
+  const n = nodes.find(x => x.id === dragging.id);
+  n.x = Math.max(0, e.clientX - dragging.dx);
+  n.y = Math.max(0, e.clientY - dragging.dy);
+  const el = stage.querySelector(`.node[data-id="${n.id}"]`);
+  if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
+  drawWires();
+});
+window.addEventListener("mouseup", () => { dragging = null; linking = null; });
+
+document.querySelectorAll(".add").forEach(b => {
+  b.onclick = () => addNode(b.dataset.t, 40 + Math.random() * 60, 40 + Math.random() * 200);
+});
+$("clear").onclick = () => { nodes = []; links = []; draw(); $("out").textContent = "cleared"; $("ftp").textContent = "—"; };
+
+// ---- wasm -------------------------------------------------------------------------------------
+
+let W = null, mem = null;
+
+(async function boot() {
+  try {
+    const r = await WebAssembly.instantiateStreaming(fetch("ferrotherm.wasm"), {});
+    W = r.instance.exports; mem = W.memory;
+    $("status").textContent = "ferrotherm.wasm loaded";
+    loadExample();
+  } catch (e) {
+    $("status").textContent = "could not load: " + e;
+    $("out").textContent = "The sampler failed to load. Serve this page over http rather than\nopening the file directly.";
+  }
+})();
+
+// ---- evaluation -------------------------------------------------------------------------------
+//
+// Walk the graph from the Report node backwards. Each node kind becomes a call into the same crate
+// the workbench and the API use, so a graph is a different way of writing a program, not a
+// different implementation of one.
+
+function inputOf(id, port) {
+  const l = links.find(x => x.to === id && x.port === port);
+  return l ? nodes.find(n => n.id === l.from) : null;
+}
+
+function buildModel(n) {
+  const v = n.vals;
+  if (n.type === "lattice") return { sim: W.ft_ising2d_new(v.l | 0, v.j, 1.0, 1n), desc: `lattice2d l=${v.l|0}` };
+  if (n.type === "frustrated")
+    return { sim: W.ft_planted_frustrated(v.l | 0, v.loops | 0, BigInt(v.seed | 0), 1.0),
+             desc: `frustrated l=${v.l|0} loops=${v.loops|0}`, planted: true };
+  if (n.type === "wishart")
+    return { sim: W.ft_planted_wishart(v.n | 0, v.alpha, BigInt(v.seed | 0), 1.0),
+             desc: `wishart n=${v.n|0} alpha=${v.alpha}`, planted: true };
+  if (n.type === "ring") {
+    const nn = v.n | 0, b = W.ft_builder_new(nn);
+    for (let i = 0; i < nn; i++) W.ft_builder_couple(b, i, (i + 1) % nn, v.j);
+    if (v.h) for (let i = 0; i < nn; i++) W.ft_builder_bias(b, i, v.h);
+    return { sim: W.ft_builder_build(b, 1.0, 1n), desc: `ring n=${nn}` };
+  }
+  throw new Error("not a model node: " + n.type);
+}
+
+function runGraph() {
+  if (!W) return;
+  const rep = nodes.find(n => n.type === "report");
+  if (!rep) { $("out").textContent = "Add a Report node — a graph with no output computes nothing."; return; }
+  const runNode = inputOf(rep.id, "result");
+  if (!runNode) { $("out").textContent = "Connect a Sample or Anneal into the Report."; return; }
+  const modelNode = inputOf(runNode.id, "model");
+  const schedNode = inputOf(runNode.id, "sched");
+  if (!modelNode) { $("out").textContent = "The " + TYPES[runNode.type].title + " node needs a model."; return; }
+  if (!schedNode) { $("out").textContent = "The " + TYPES[runNode.type].title + " node needs a schedule."; return; }
+
+  let m = null;
+  try {
+    m = buildModel(modelNode);
+    if (!m.sim) throw new Error("the model refused those parameters");
+    const n = W.ft_len(m.sim);
+    const sv = schedNode.vals, rv = runNode.vals;
+    const t0 = performance.now();
+    let line;
+
+    if (runNode.type === "anneal") {
+      const bmin = schedNode.type === "ladder" ? sv.beta_min : Math.max(0.01, sv.beta / 10);
+      const bmax = schedNode.type === "ladder" ? sv.beta_max : sv.beta;
+      const stages = schedNode.type === "ladder" ? (sv.stages | 0) : 40;
+      const per = schedNode.type === "ladder" ? (sv.per | 0) : Math.max(1, (sv.sweeps | 0) / 40 | 0);
+      const e = W.ft_anneal(m.sim, bmin, bmax, stages, per);
+      if (Number.isNaN(e)) throw new Error("that ladder is not valid: need 0 < beta_min < beta_max");
+      line = "annealed to energy " + e.toFixed(4);
+    } else {
+      const beta = schedNode.type === "constant" ? sv.beta : sv.beta_max;
+      W.ft_set_beta(m.sim, beta);
+      const sweeps = schedNode.type === "constant" ? (sv.sweeps | 0) : (sv.stages | 0) * (sv.per | 0);
+      W.ft_sweep(m.sim, sweeps);
+      line = "sampled " + sweeps + " sweeps at beta " + beta;
+    }
+    const ms = performance.now() - t0;
+    const e = W.ft_energy(m.sim);
+    const known = W.ft_ground_energy(m.sim);
+
+    let txt = m.desc + "  (" + n + " nodes)\n" + line + "\n\n" +
+      "energy          " + e.toFixed(4) + "\n" +
+      "energy / node   " + (e / n).toFixed(4) + "\n" +
+      "magnetization   " + W.ft_magnetization(m.sim).toFixed(4) + "\n" +
+      "node updates    " + Number(W.ft_ledger_updates(m.sim)).toLocaleString() + "\n" +
+      "device joules   " + W.ft_ledger_joules_z1(m.sim).toExponential(2) + "\n" +
+      "wall            " + ms.toFixed(1) + " ms";
+
+    if (Number.isFinite(known)) {
+      const excess = Math.abs(known) > 1e-12 ? (e - known) / Math.abs(known) : e - known;
+      txt += "\n\nknown optimum   " + known.toFixed(4) + "\n" +
+             "excess          " + (excess * 100).toFixed(2) + "%   " +
+             (excess <= 1e-9 ? "SOLVED" : "not solved") +
+             "\n\nThis instance was planted, so the optimum is known rather than\n" +
+             "assumed to be the best anything has found. That is the difference\n" +
+             "between a number and a measurement.";
+    } else {
+      txt += "\n\nNo known optimum: this model was not planted, so the energy above\n" +
+             "cannot be scored against anything. Use a planted node to get one.";
+    }
+    $("out").textContent = txt;
+    $("ftp").textContent = toFtp(modelNode, schedNode, runNode);
+  } catch (err) {
+    $("out").textContent = "could not run: " + (err.message || err);
+  } finally {
+    if (m && m.sim) W.ft_free(m.sim);
+  }
+}
+
+/** The graph as a .ftp program. A model node's couplings are not expanded here; the header and the
+ *  schedule are what a graph adds over the model itself. */
+function toFtp(modelNode, schedNode, runNode) {
+  const v = modelNode.vals, sv = schedNode.vals;
+  const out = ["ftp 1", "name " + modelNode.type];
+  if (modelNode.type === "lattice") out.push("spins " + ((v.l | 0) * (v.l | 0)));
+  else if (modelNode.type === "ring") out.push("spins " + (v.n | 0));
+  else if (modelNode.type === "frustrated") out.push("spins " + ((v.l | 0) * (v.l | 0)));
+  else out.push("spins " + (v.n | 0));
+  out.push("# couplings omitted here; the graph names the family and its parameters");
+  if (schedNode.type === "constant") out.push("stage " + sv.beta + " " + (sv.sweeps | 0) + " 1 1");
+  else {
+    const st = Math.max(2, sv.stages | 0), r = Math.pow(sv.beta_max / sv.beta_min, 1 / (st - 1));
+    for (let i = 0; i < Math.min(st, 6); i++)
+      out.push("stage " + (sv.beta_min * Math.pow(r, i)).toFixed(6) + " " + (sv.per | 0) + " 1 1");
+    if (st > 6) out.push("# ... " + (st - 6) + " more stages");
+  }
+  out.push("observe energy");
+  out.push("target wasm");
+  out.push("price z1_spice");
+  return out.join("\n");
+}
+
+$("run").onclick = runGraph;
+
+function loadExample() {
+  nodes = []; links = []; nextId = 1;
+  const m = addNode("frustrated", 60, 90);
+  const s = addNode("ladder", 60, 300);
+  const a = addNode("anneal", 330, 160);
+  const r = addNode("report", 560, 170);
+  links.push({ from: m.id, to: a.id, port: "model", kind: "model" });
+  links.push({ from: s.id, to: a.id, port: "sched", kind: "sched" });
+  links.push({ from: a.id, to: r.id, port: "result", kind: "result" });
+  draw();
+  $("out").textContent = "An example graph: a planted instance whose optimum is known,\n" +
+    "annealed down a geometric ladder, reported against that optimum.\n\nPress Run graph.";
+}
+$("example").onclick = loadExample;
+window.addEventListener("resize", drawWires);
+</script>
+</body>
+</html>

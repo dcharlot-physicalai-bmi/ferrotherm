@@ -19,6 +19,8 @@ pub struct Sim {
     graph: Box<Graph>,
     /// Built on first request; a GPU model is pure derived data and most runs never ask for one.
     gpu: Option<crate::wgsl::GpuModel>,
+    /// Known optimum, when this simulation came from a planted instance.
+    ground: Option<f64>,
     sampler_state: Vec<i8>,
     beta: f64,
     seed: u64,
@@ -31,7 +33,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None }))
     }
 }
 
@@ -461,5 +463,79 @@ pub extern "C" fn ft_field(sim: *const Sim, i: u32) -> f64 {
     match unsafe { sim.as_ref() } {
         Some(s) if (i as usize) < s.graph.n => s.graph.field(i as usize, &s.sampler_state),
         _ => f64::NAN,
+    }
+}
+
+/// A planted instance whose optimum is known by construction.
+///
+/// Exposed because a node graph that reports an energy is showing a number nobody can judge. With a
+/// planted instance the same graph reports how far it is from the true optimum, which is the
+/// difference between a demo and a measurement.
+#[no_mangle]
+pub extern "C" fn ft_planted_frustrated(l: u32, loops: u32, seed: u64, beta: f64) -> *mut Sim {
+    if l < 3 || loops == 0 {
+        return core::ptr::null_mut();
+    }
+    let p = crate::planted::frustrated_loops(l as usize, loops as usize, seed);
+    let sim = Sim::new(p.graph, beta, seed);
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.ground = Some(p.ground_energy);
+    }
+    sim
+}
+
+/// The Wishart planted ensemble: dense, and genuinely hard below alpha = 1.
+#[no_mangle]
+pub extern "C" fn ft_planted_wishart(n: u32, alpha: f64, seed: u64, beta: f64) -> *mut Sim {
+    if n < 3 || !(alpha > 0.0) {
+        return core::ptr::null_mut();
+    }
+    let p = crate::planted::wishart(n as usize, alpha, seed);
+    let sim = Sim::new(p.graph, beta, seed);
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.ground = Some(p.ground_energy);
+    }
+    sim
+}
+
+/// The known optimum of a planted instance, or NaN if this simulation is not one.
+#[no_mangle]
+pub extern "C" fn ft_ground_energy(sim: *const Sim) -> f64 {
+    match unsafe { sim.as_ref() } {
+        Some(s) => s.ground.unwrap_or(f64::NAN),
+        None => f64::NAN,
+    }
+}
+
+#[cfg(test)]
+mod planted_ffi_tests {
+    use super::*;
+
+    #[test]
+    fn a_planted_instance_carries_its_optimum() {
+        let sim = ft_planted_frustrated(6, 40, 3, 1.0);
+        assert!(!sim.is_null());
+        let known = ft_ground_energy(sim);
+        assert_eq!(known, -80.0, "40 plaquettes contribute -2 each");
+        // annealing should reach it, and the FFI should agree with the crate
+        let e = ft_anneal(sim, 0.05, 6.0, 80, 40);
+        assert!(e >= known - 1e-9, "nothing can beat the planted optimum");
+        ft_free(sim);
+    }
+
+    #[test]
+    fn a_wishart_instance_is_dense_and_carries_its_optimum() {
+        let sim = ft_planted_wishart(24, 0.5, 1, 1.0);
+        assert!(ft_ground_energy(sim).is_finite());
+        assert_eq!(ft_gpu_k(sim), 23, "dense: every spin couples to every other");
+        ft_free(sim);
+    }
+
+    #[test]
+    fn an_ordinary_simulation_has_no_known_optimum() {
+        let sim = ft_ising2d_new(8, 1.0, 0.44, 1);
+        assert!(ft_ground_energy(sim).is_nan(), "only planted instances know their optimum");
+        ft_free(sim);
+        assert!(ft_planted_frustrated(2, 1, 0, 1.0).is_null(), "too small to have plaquettes");
     }
 }
