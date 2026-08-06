@@ -21,6 +21,8 @@ pub const Error = error{
     BadSchedule,
     /// The builder was already consumed by build().
     BuilderSpent,
+    /// Fewer than 16 draws; certifying that many says nothing.
+    TooFewDraws,
 };
 
 /// A graph under construction. Add couplings and biases, then `build`.
@@ -168,4 +170,161 @@ test "ledger counts what it ran" {
     try std.testing.expectEqual(@as(u64, 64 * 50), sim.nodeUpdates());
     try std.testing.expect(sim.joules() > 0);
     try std.testing.expectEqual(@as(usize, 64), sim.spins().len);
+}
+
+// ---- instances with a known optimum -------------------------------------------------------------
+
+/// An instance whose optimum was chosen before the couplings were built.
+///
+/// A result reported without one is a number nobody can judge. With one, the same run reports its
+/// distance from the truth.
+pub const Planted = struct {
+    sim: Sim,
+    optimum: f64,
+
+    /// Frustrated plaquettes on an `l` by `l` periodic lattice.
+    ///
+    /// Difficulty is not monotonic in `loops`: it peaks near four per edge and falls away at both
+    /// ends, so a very sparse or a saturated instance is easy.
+    pub fn frustrated(l: u32, loops: u32, seed: u64, beta: f64) Error!Planted {
+        const s = c.ft_planted_frustrated(l, loops, seed, beta) orelse return Error.OutOfMemory;
+        return .{ .sim = .{ .h = s }, .optimum = c.ft_ground_energy(s) };
+    }
+
+    /// The Wishart ensemble: dense, and hard below alpha of 1.
+    pub fn wishart(n: u32, alpha: f64, seed: u64, beta: f64) Error!Planted {
+        const s = c.ft_planted_wishart(n, alpha, seed, beta) orelse return Error.OutOfMemory;
+        return .{ .sim = .{ .h = s }, .optimum = c.ft_ground_energy(s) };
+    }
+
+    /// How far the current state sits above the optimum, as a fraction of it. Zero means solved.
+    pub fn excess(self: Planted) f64 {
+        const e = self.sim.energy();
+        return if (@abs(self.optimum) > 1e-12)
+            (e - self.optimum) / @abs(self.optimum)
+        else
+            e - self.optimum;
+    }
+
+    pub fn solved(self: Planted) bool {
+        return self.sim.energy() <= self.optimum + 1e-9;
+    }
+
+    pub fn deinit(self: Planted) void {
+        self.sim.deinit();
+    }
+};
+
+// ---- certificate ---------------------------------------------------------------------------------
+
+/// What a run actually did, computed from its samples rather than from its own account of itself.
+pub const Certificate = struct {
+    beta_eff: f64,
+    beta_lo: f64,
+    beta_hi: f64,
+    tau_int: f64,
+    ess: f64,
+    tv: f64,
+    noise_floor: f64,
+    findings: usize,
+
+    /// Zero findings is the only thing that means the run is sound.
+    pub fn passed(self: Certificate) bool {
+        return self.findings == 0;
+    }
+};
+
+/// Sample and certify. `draws` must be at least 16; certifying fewer says nothing.
+pub fn certify(sim: Sim, draws: u32, thin: u32) Error!Certificate {
+    if (c.ft_certify(sim.h, draws, thin) == 0) return Error.TooFewDraws;
+    return .{
+        .beta_eff = c.ft_cert_beta_eff(sim.h),
+        .beta_lo = c.ft_cert_beta_lo(sim.h),
+        .beta_hi = c.ft_cert_beta_hi(sim.h),
+        .tau_int = c.ft_cert_tau(sim.h),
+        .ess = c.ft_cert_ess(sim.h),
+        .tv = c.ft_cert_tv(sim.h),
+        .noise_floor = c.ft_cert_floor(sim.h),
+        .findings = c.ft_cert_findings(sim.h),
+    };
+}
+
+/// Copy finding `i` into `buf`, returning the slice actually written.
+pub fn finding(sim: Sim, i: u32, buf: []u8) []const u8 {
+    const n = c.ft_cert_finding(sim.h, i, buf.ptr, @intCast(buf.len));
+    return buf[0..n];
+}
+
+// ---- exact inference ------------------------------------------------------------------------------
+
+/// Exact ground energy by variable elimination, or null if the graph is too dense.
+///
+/// Cost is `2^width` in the graph's shape rather than `2^n` in its size, so a long chain is instant
+/// where a dense graph of the same node count is impossible. Check `exactWidth` first.
+pub fn exactGround(sim: Sim, max_width: u32) ?f64 {
+    const v = c.ft_exact_ground(sim.h, max_width);
+    return if (std.math.isNan(v)) null else v;
+}
+
+/// Exact log partition function at `beta`, or null if too dense.
+pub fn exactLogZ(sim: Sim, beta: f64, max_width: u32) ?f64 {
+    const v = c.ft_exact_log_z(sim.h, beta, max_width);
+    return if (std.math.isNan(v)) null else v;
+}
+
+/// Induced width of the elimination order. Exact inference costs `2^width`.
+pub fn exactWidth(sim: Sim) u32 {
+    return c.ft_exact_width(sim.h);
+}
+
+test "a planted instance knows its optimum" {
+    var p = try Planted.frustrated(8, 96, 3, 1.0);
+    defer p.deinit();
+    try std.testing.expectEqual(@as(f64, -192.0), p.optimum);
+    _ = try p.sim.anneal(0.05, 6.0, 80, 40);
+    try std.testing.expect(p.sim.energy() >= p.optimum - 1e-9); // nothing beats the plant
+    try std.testing.expect(p.excess() < 0.10);
+}
+
+test "a certificate can fail" {
+    // A cold lattice with no burn-in and no thinning must not certify clean, or the type is
+    // decoration.
+    var sim = try Sim.lattice2d(24, 1.0, 0.7, 4);
+    defer sim.deinit();
+    const cert = try certify(sim, 400, 1);
+    try std.testing.expect(!cert.passed());
+    try std.testing.expect(cert.ess < 400);
+
+    var buf: [512]u8 = undefined;
+    const msg = finding(sim, 0, &buf);
+    try std.testing.expect(msg.len > 10);
+}
+
+test "a well run chain certifies clean" {
+    var sim = try Sim.lattice2d(12, 1.0, 0.2, 1);
+    defer sim.deinit();
+    _ = sim.sweep(500);
+    const cert = try certify(sim, 800, 4);
+    try std.testing.expect(cert.passed());
+    try std.testing.expect(@abs(cert.beta_eff - 0.2) < 0.05);
+}
+
+test "exact inference matches the closed form on a chain" {
+    // Z = 2 (2 cosh beta)^(n-1) for an open 1D chain. Checking against theory reaches sizes
+    // enumeration cannot.
+    const n: u32 = 300;
+    var m = try Model.init(n);
+    defer m.deinit();
+    var i: u32 = 0;
+    while (i + 1 < n) : (i += 1) try m.couple(i, i + 1, 1.0);
+    var sim = try m.build(1.0, 0);
+    defer sim.deinit();
+
+    try std.testing.expectEqual(@as(u32, 1), exactWidth(sim));
+    try std.testing.expectEqual(@as(f64, -@as(f64, n - 1)), exactGround(sim, 20).?);
+
+    const beta: f64 = 0.5;
+    const want = @log(2.0) + @as(f64, n - 1) * @log(2.0 * std.math.cosh(beta));
+    const got = exactLogZ(sim, beta, 20).?;
+    try std.testing.expect(@abs(got - want) < 1e-6 * @abs(want));
 }

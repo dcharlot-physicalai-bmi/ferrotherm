@@ -91,6 +91,57 @@ uint64_t ft_ledger_updates(const ft_sim *sim);
  * modelled device, not the CPU actually running the sweep. */
 double ft_ledger_joules_z1(const ft_sim *sim);
 
+/* ---- instances with a known optimum ------------------------------------------------------------ */
+
+/* Plant frustrated plaquettes on an `l` by `l` periodic lattice. Each loop contributes -2 to the
+ * ground energy, so the optimum is known by construction. NULL if l < 3 or loops == 0.
+ *
+ * Difficulty is NOT monotonic in `loops`: it peaks near four loops per edge and falls away at both
+ * ends, so a very sparse or a saturated instance is easy. */
+ft_sim *ft_planted_frustrated(uint32_t l, uint32_t loops, uint64_t seed, double beta);
+
+/* The Wishart planted ensemble: dense, and hard below alpha = 1. A miss here is usually under 2%
+ * above the optimum, so report a solve rate rather than a mean excess. */
+ft_sim *ft_planted_wishart(uint32_t n, double alpha, uint64_t seed, double beta);
+
+/* The known optimum of a planted instance, or NaN if this simulation is not one. */
+double ft_ground_energy(const ft_sim *sim);
+
+/* ---- certificate ------------------------------------------------------------------------------- */
+
+/* Sample `draws` states with `thin` sweeps between them and certify the run. Returns 1 on success,
+ * 0 on NULL or fewer than 16 draws. Read the result with the accessors below. */
+uint32_t ft_certify(ft_sim *sim, uint32_t draws, uint32_t thin);
+
+double ft_cert_beta_eff(const ft_sim *sim);  /* the temperature actually sampled at */
+double ft_cert_beta_lo(const ft_sim *sim);   /* 95% interval, widened for autocorrelation */
+double ft_cert_beta_hi(const ft_sim *sim);
+double ft_cert_tau(const ft_sim *sim);       /* integrated autocorrelation time */
+double ft_cert_ess(const ft_sim *sim);       /* independent samples, not raw draws */
+double ft_cert_tv(const ft_sim *sim);        /* distance from exact, where enumerable; else NaN */
+double ft_cert_floor(const ft_sim *sim);     /* never quote a distance below this */
+
+/* 1 if the run certified clean. Zero findings is the only thing that means sound. */
+uint32_t ft_cert_passed(const ft_sim *sim);
+uint32_t ft_cert_findings(const ft_sim *sim);
+
+/* Copy finding `i` into `buf` as UTF-8. Returns bytes written, or the length needed if buf is
+ * NULL, or 0 if there is no such finding. */
+uint32_t ft_cert_finding(const ft_sim *sim, uint32_t i, uint8_t *buf, uint32_t cap);
+
+/* ---- exact inference --------------------------------------------------------------------------- */
+
+/* Exact ground energy by variable elimination, or NaN if the induced width exceeds `max_width`.
+ * Cost is 2^width in the graph's SHAPE, not 2^n in its size: a long chain is instant where a dense
+ * graph of the same node count is impossible. Check ft_exact_width first. */
+double ft_exact_ground(const ft_sim *sim, uint32_t max_width);
+
+/* Exact log partition function at `beta`, or NaN if too wide. */
+double ft_exact_log_z(const ft_sim *sim, double beta, uint32_t max_width);
+
+/* Induced width of the elimination order. */
+uint32_t ft_exact_width(const ft_sim *sim);
+
 /* ---- reference ------------------------------------------------------------------------------- */
 
 /* Onsager's exact spontaneous magnetisation for the 2D Ising model at inverse temperature `beta`.
