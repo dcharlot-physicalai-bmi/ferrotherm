@@ -138,6 +138,10 @@ end
     close!(s)
 end
 
+@testset "agreement with oracles we did not write" begin
+    include("oracles.jl")
+end
+
 @testset "QUBODrivers drivers agree with their exact sampler" begin
     include("qubodrivers.jl")
 end
