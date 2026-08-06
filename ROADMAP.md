@@ -449,18 +449,26 @@ hand-written one, and the round trip is a test.
 
 ### Phase 5 — Workloads
 
-Ship where the substrate is native and the oracle is exact.
+◐ **CATALOGUE PUBLISHED** — [`WORKLOADS.md`](WORKLOADS.md). Five entries, each naming its oracle and
+reporting what was measured against it, including where the method stops.
 
-| Workload | Why it is ours | Oracle |
+| Workload | Oracle | Measured |
 |---|---|---|
-| **EBM / DTM training** | Already at published flagship scale on real Fashion-MNIST | Held-out likelihood; per-pixel stats vs data |
-| **Spin-glass physics** | The substrate *is* the model | Onsager, SK, 3D EA reference files |
-| **Thermodynamic linear algebra** | Solve/invert/sample by equilibration | Exact `A⁻¹b`, condition-number sweep |
-| **Domain-wall categorical optimisation** | Where the type system pays | Planted instances with known optima |
-| **Sampling-based control (MPPI)** | The Institute's own centre of gravity: on-device policy sampling for embodied AI | Known-optimal trajectories |
+| **Sampling-based control** (`mppi.rs`) | closed-form LQR optimum | **7.1%** above the provable optimum |
+| **Categorical optimisation** (`categorical.rs`) | exact feasibility | domain wall needs a **3× weaker** penalty |
+| **Thermodynamic linear algebra** (`tla.rs`) | Gaussian elimination | exact-transition integrator unbiased; EM bias law confirmed |
+| **Spin-glass physics** (`ising.rs`, `planted.rs`) | Onsager; planted optima | agrees to **0.0086**, annealed in |
+| **EBM training** (`dtm.rs`) | data statistics vs noise | **72.9%** closer to data than noise, at published scale |
 
-The last row is the one no thermodynamic vendor is pursuing and the one that connects this stack to
-physical AI. It should become the flagship once Phase 2 lands.
+The last row is calibrated in the file: per-pixel marginals are a weak metric and this is not the
+published FID. Reaching that is a known and affordable run, not a research problem.
+
+Two entries shipped a first test that passed **vacuously**, and both are recorded in place rather
+than quietly fixed. That, plus "report the rate, not the mean" — earned four separate times — are
+the two rules the file opens with.
+
+**Explicitly not pursued:** routing, scheduling and portfolio optimisation. MILP in a QUBO costume,
+and they lose to Gurobi.
 
 ---
 
