@@ -413,3 +413,30 @@ mod tests {
         assert!((e.ground_energy.unwrap() - p.ground_energy).abs() < 1e-9);
     }
 }
+
+#[cfg(test)]
+mod closed_form {
+    use super::*;
+    use crate::graph::GraphBuilder;
+
+    #[test]
+    fn log_z_of_a_chain_matches_the_closed_form() {
+        // A 1D open Ising chain has Z = 2 (2 cosh beta)^(n-1) exactly. Checking against theory
+        // rather than against enumeration reaches sizes enumeration cannot, and catches an error
+        // that would scale with n instead of showing up on small cases.
+        for n in [8usize, 50, 400] {
+            for beta in [0.25f64, 0.5, 1.5] {
+                let mut b = GraphBuilder::new(n);
+                for i in 0..n - 1 {
+                    b.couple(i, i + 1, 1.0);
+                }
+                let got = Elimination::default().log_partition(&b.build(), beta).unwrap().log_z.unwrap();
+                let want = 2f64.ln() + (n - 1) as f64 * (2.0 * beta.cosh()).ln();
+                assert!(
+                    (got - want).abs() < 1e-9 * want.abs().max(1.0),
+                    "n={n} beta={beta}: {got} vs closed form {want}"
+                );
+            }
+        }
+    }
+}

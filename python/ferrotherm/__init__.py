@@ -29,8 +29,11 @@ from ctypes import c_double, c_int8, c_uint32, c_uint64, POINTER
 from typing import Any, Iterable, Sequence
 
 __all__ = [
+    "Certificate",
     "Model",
     "Sim",
+    "frustrated",
+    "wishart",
     "lattice2d",
     "ring",
     "z1_grid",
@@ -115,10 +118,51 @@ _magnetization = _sig("ft_magnetization", c_double, [_p])
 _ledger_updates = _sig("ft_ledger_updates", c_uint64, [_p])
 _ledger_joules = _sig("ft_ledger_joules_z1", c_double, [_p])
 _onsager = _sig("ft_onsager", c_double, [c_double])
+_planted_frustrated = _sig("ft_planted_frustrated", _p, [c_uint32, c_uint32, c_uint64, c_double])
+_planted_wishart = _sig("ft_planted_wishart", _p, [c_uint32, c_double, c_uint64, c_double])
+_ground_energy = _sig("ft_ground_energy", c_double, [_p])
+_certify = _sig("ft_certify", c_uint32, [_p, c_uint32, c_uint32])
+_cert_passed = _sig("ft_cert_passed", c_uint32, [_p])
+_cert_findings = _sig("ft_cert_findings", c_uint32, [_p])
+_cert_finding = _sig("ft_cert_finding", c_uint32, [_p, c_uint32, ctypes.POINTER(ctypes.c_ubyte), c_uint32])
+_cert_f = {n: _sig("ft_cert_" + n, c_double, [_p]) for n in
+           ("beta_eff", "beta_lo", "beta_hi", "tau", "ess", "tv", "floor")}
+_exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
+_exact_log_z = _sig("ft_exact_log_z", c_double, [_p, c_double, c_uint32])
+_exact_width = _sig("ft_exact_width", c_uint32, [_p])
 _free = _sig("ft_free", None, [_p])
 
 
 # ---- building -------------------------------------------------------------------------------
+
+
+class Certificate:
+    """What a run actually did, computed from its samples rather than from its own account.
+
+    ``findings`` is empty exactly when the run is sound. Read that, not ``beta_eff``, to decide
+    whether to trust a result.
+    """
+
+    __slots__ = ("draws", "beta_eff", "beta_ci", "tau_int", "ess", "tv", "noise_floor", "findings")
+
+    def __init__(self, **kw: Any) -> None:
+        for k in self.__slots__:
+            setattr(self, k, kw.get(k))
+
+    @property
+    def passed(self) -> bool:
+        return not self.findings
+
+    def __repr__(self) -> str:
+        head = (
+            f"<Certificate {'PASSED' if self.passed else 'FAILED'} "
+            f"beta={self.beta_eff:.4f} ess={self.ess:.0f}"
+        )
+        if self.tv is not None and self.tv == self.tv:
+            head += f" tv={self.tv:.4f}/floor={self.noise_floor:.4f}"
+        if self.findings:
+            head += "".join("\n  - " + f for f in self.findings)
+        return head + ">"
 
 
 class Model:
@@ -274,6 +318,76 @@ class Sim:
 
     # -- lifetime --
 
+    def certify(self, draws: int = 512, thin: int = 1) -> "Certificate":
+        """Sample and check the result.
+
+        Every commercial machine in this field returns "best found" and nothing else. This returns
+        the temperature actually sampled at, how many of the samples were independent, and where
+        the model is small enough, the distance from the exact distribution beside the sampling
+        noise floor.
+        """
+        self._live()
+        if draws < 16:
+            raise ValueError("certifying fewer than 16 draws says nothing")
+        if _certify(self._h, int(draws), int(max(1, thin))) == 0:
+            raise RuntimeError("could not certify this run")
+        n = _cert_findings(self._h)
+        findings = []
+        for i in range(n):
+            need = _cert_finding(self._h, i, None, 0)
+            buf = (ctypes.c_ubyte * (need + 1))()
+            got = _cert_finding(self._h, i, buf, need)
+            findings.append(bytes(buf[:got]).decode("utf-8", "replace"))
+        g = _cert_f
+        return Certificate(
+            draws=int(draws),
+            beta_eff=float(g["beta_eff"](self._h)),
+            beta_ci=(float(g["beta_lo"](self._h)), float(g["beta_hi"](self._h))),
+            tau_int=float(g["tau"](self._h)),
+            ess=float(g["ess"](self._h)),
+            tv=float(g["tv"](self._h)),
+            noise_floor=float(g["floor"](self._h)),
+            findings=findings,
+        )
+
+    @property
+    def known_optimum(self) -> float | None:
+        """The true ground energy, for a planted instance. ``None`` otherwise."""
+        self._live()
+        v = float(_ground_energy(self._h))
+        return None if v != v else v
+
+    def excess(self) -> float | None:
+        """How far the current state sits above a planted instance's known optimum, as a fraction."""
+        k = self.known_optimum
+        if k is None:
+            return None
+        e = self.energy
+        return (e - k) / abs(k) if abs(k) > 1e-12 else e - k
+
+    @property
+    def treewidth(self) -> int:
+        """Induced width of the elimination order. Exact inference costs ``2 ** treewidth``."""
+        self._live()
+        return int(_exact_width(self._h))
+
+    def exact_ground_energy(self, max_width: int = 22) -> float | None:
+        """Exact ground energy by variable elimination, or ``None`` if the graph is too dense.
+
+        Cost is ``2 ** width`` in the graph's shape, not ``2 ** n`` in its size, so a long chain is
+        instant where a dense graph of the same node count is impossible. Check
+        :attr:`treewidth` first.
+        """
+        self._live()
+        v = float(_exact_ground(self._h, int(max_width)))
+        return None if v != v else v
+
+    def exact_log_z(self, beta: float = 1.0, max_width: int = 22) -> float | None:
+        """Exact log partition function, or ``None`` if too dense."""
+        self._live()
+        v = float(_exact_log_z(self._h, float(beta), int(max_width)))
+        return None if v != v else v
+
     def close(self) -> None:
         if getattr(self, "_h", None):
             _free(self._h)
@@ -363,6 +477,27 @@ def from_spec(spec: dict, beta: float | None = None, seed: int | None = None) ->
             raise ValueError(f"bias {k} must be (i, h), got {len(e)} values")
         m.bias(int(e[0]), float(e[1]))
     return m.build(b, s)
+
+
+def frustrated(l: int, loops: int, seed: int = 0, beta: float = 1.0) -> Sim:
+    """A planted instance on an ``l`` by ``l`` lattice whose optimum is known by construction.
+
+    Difficulty is not monotonic in ``loops``: it peaks near four planted loops per edge and falls
+    away at both ends, so a very sparse or a saturated instance is easy.
+    """
+    return _wrap(_planted_frustrated(int(l), int(loops), int(seed), float(beta)), beta,
+                 "the planted instance")
+
+
+def wishart(n: int, alpha: float = 0.5, seed: int = 0, beta: float = 1.0) -> Sim:
+    """The Wishart planted ensemble: dense, with a known optimum, and hard below ``alpha`` of 1.
+
+    A miss here is usually under 2% above the optimum, because the landscape is dense with
+    near-degenerate minima. Report the solve rate rather than the mean excess, or this family looks
+    easy when it is not.
+    """
+    return _wrap(_planted_wishart(int(n), float(alpha), int(seed), float(beta)), beta,
+                 "the Wishart instance")
 
 
 def onsager(beta: float) -> float:

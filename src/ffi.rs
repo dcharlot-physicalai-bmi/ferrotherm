@@ -21,6 +21,8 @@ pub struct Sim {
     gpu: Option<crate::wgsl::GpuModel>,
     /// Known optimum, when this simulation came from a planted instance.
     ground: Option<f64>,
+    /// The last certificate, if `ft_certify` has been called.
+    cert: Option<crate::certify::Certificate>,
     sampler_state: Vec<i8>,
     beta: f64,
     seed: u64,
@@ -33,7 +35,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None }))
     }
 }
 
@@ -537,5 +539,125 @@ mod planted_ffi_tests {
         assert!(ft_ground_energy(sim).is_nan(), "only planted instances know their optimum");
         ft_free(sim);
         assert!(ft_planted_frustrated(2, 1, 0, 1.0).is_null(), "too small to have plaquettes");
+    }
+}
+
+// ---- certificate and exact inference -----------------------------------------------------------
+//
+// The bindings could build models and sample them, but not check the result or compare it against
+// truth -- so Python and Zig could do the easy half of what this crate is for. These close that.
+
+/// Sample `draws` states with `thin` sweeps between them and certify the run.
+///
+/// The certificate is stored on the simulation; read it with the `ft_cert_*` accessors. Returns 1
+/// on success, 0 on a null handle or a degenerate request.
+#[no_mangle]
+pub extern "C" fn ft_certify(sim: *mut Sim, draws: u32, thin: u32) -> u32 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+    if draws < 16 {
+        return 0; // certifying 15 samples is theatre; certify::TooFewSamples says so too
+    }
+    let mut smp = Sampler::new(&s.graph, s.beta, s.seed ^ s.sweeps_done.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    smp.s.copy_from_slice(&s.sampler_state);
+    let mut samples = Vec::with_capacity(draws as usize);
+    let mut trace = Vec::with_capacity(draws as usize);
+    for _ in 0..draws {
+        for _ in 0..thin.max(1) {
+            smp.sweep(Some(&mut s.ledger));
+        }
+        samples.push(smp.s.clone());
+        trace.push(s.graph.energy(&smp.s));
+    }
+    s.sampler_state.copy_from_slice(&smp.s);
+    s.sweeps_done += draws as u64 * thin.max(1) as u64;
+    s.cert = Some(crate::certify::certify(&s.graph, s.beta, &samples, &trace));
+    1
+}
+
+macro_rules! cert_field {
+    ($name:ident, $f:expr) => {
+        #[no_mangle]
+        pub extern "C" fn $name(sim: *const Sim) -> f64 {
+            match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
+                Some(c) => $f(c),
+                None => f64::NAN,
+            }
+        }
+    };
+}
+
+cert_field!(ft_cert_beta_eff, |c: &crate::certify::Certificate| c.beta_eff);
+cert_field!(ft_cert_beta_lo, |c: &crate::certify::Certificate| c.beta_ci.0);
+cert_field!(ft_cert_beta_hi, |c: &crate::certify::Certificate| c.beta_ci.1);
+cert_field!(ft_cert_tau, |c: &crate::certify::Certificate| c.tau_int);
+cert_field!(ft_cert_ess, |c: &crate::certify::Certificate| c.ess);
+cert_field!(ft_cert_tv, |c: &crate::certify::Certificate| c.tv_exact.unwrap_or(f64::NAN));
+cert_field!(ft_cert_floor, |c: &crate::certify::Certificate| c.noise_floor.unwrap_or(f64::NAN));
+
+/// 1 if the run certified clean, 0 if it has findings, and 0 with no certificate present.
+#[no_mangle]
+pub extern "C" fn ft_cert_passed(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
+        Some(c) if c.passed() => 1,
+        _ => 0,
+    }
+}
+
+/// Number of findings. Zero is the only value that means the run is sound.
+#[no_mangle]
+pub extern "C" fn ft_cert_findings(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
+        Some(c) => c.findings.len() as u32,
+        None => 0,
+    }
+}
+
+/// Copy finding `i` into `buf` as UTF-8. Returns the byte length written, or the length needed if
+/// `buf` is null, or 0 if there is no such finding.
+#[no_mangle]
+pub extern "C" fn ft_cert_finding(sim: *const Sim, i: u32, buf: *mut u8, cap: u32) -> u32 {
+    let Some(c) = unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) else { return 0 };
+    let Some(f) = c.findings.get(i as usize) else { return 0 };
+    let text = f.to_string();
+    let bytes = text.as_bytes();
+    if buf.is_null() {
+        return bytes.len() as u32;
+    }
+    let n = bytes.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, n) };
+    n as u32
+}
+
+/// Exact ground energy by variable elimination, or NaN if the induced width exceeds `max_width`.
+///
+/// This is the oracle that makes a claim checkable on graphs far too large to enumerate.
+#[no_mangle]
+pub extern "C" fn ft_exact_ground(sim: *const Sim, max_width: u32) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    crate::exact::Elimination { max_width: max_width as usize }
+        .ground_state(&s.graph)
+        .ok()
+        .and_then(|e| e.ground_energy)
+        .unwrap_or(f64::NAN)
+}
+
+/// Exact `log Z` at `beta`, or NaN if too wide.
+#[no_mangle]
+pub extern "C" fn ft_exact_log_z(sim: *const Sim, beta: f64, max_width: u32) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    crate::exact::Elimination { max_width: max_width as usize }
+        .log_partition(&s.graph, beta)
+        .ok()
+        .and_then(|e| e.log_z)
+        .unwrap_or(f64::NAN)
+}
+
+/// Induced width of the elimination order. Cost of exact inference is `2^width`, so this is the
+/// number that decides whether to ask for it at all.
+#[no_mangle]
+pub extern "C" fn ft_exact_width(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() } {
+        Some(s) => crate::exact::Elimination::default().width(&s.graph) as u32,
+        None => 0,
     }
 }
