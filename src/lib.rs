@@ -58,6 +58,7 @@ pub mod gibbs;
 pub mod ising;
 pub mod device;
 pub mod ledger;
+pub mod mppi;
 pub mod oracle;
 pub mod planted;
 pub mod program;
