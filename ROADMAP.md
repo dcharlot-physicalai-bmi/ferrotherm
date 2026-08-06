@@ -279,10 +279,36 @@ slowing on a 12×12 lattice at β ≈ β_c, and uniform noise, which fits β ≈
 
 `examples/certify_probe.rs` prints the table those decisions were made from.
 
-**1.2 The oracle set.** ◐ **PARTIAL.** Exact enumeration and the random-noise oracle are in and
-exercised. Still to come: tree-decomposition and planar exact solvers, steepest descent, planted
-instances (Wishart, 3R3X XORSAT, frustrated loops), and the physics oracles beyond Onsager — the SK
-transition and 3D Edwards–Anderson against OPUSLab's published files.
+**1.2 The oracle set.** ◐ **MOSTLY DONE** — `src/oracle.rs`, `src/planted.rs`.
+
+A `Solver` trait with `Exhaustive` (exact to 26 spins), `SteepestDescent` (restarts are a
+*parameter*, because comparing against greedy-from-one-start flatters everything), `Annealer`, and
+`RandomGuess` — which **exists to fail**. Every quality test runs against it, and any test it passes
+is a test that measures nothing.
+
+`planted.rs` gives the true optimum at any size by construction: choose the ground state first, then
+build frustrated cycles around it. The argument is in the module docs and the tests do not take it
+on trust — they enumerate small instances and confirm the planted state really is the optimum, over
+a grid of sizes, densities and seeds.
+
+*The finding worth keeping.* Difficulty on this family is **not monotonic** — it is an
+easy–hard–easy transition peaking near four planted loops per edge, where greedy solves only 4 of 16
+seed pairs against 16 of 16 at both extremes. Too few loops means no competing constraints; too many
+means the accumulated couplings concentrate toward their mean and the instance relaxes back into a
+gauged ferromagnet.
+
+Both obvious guesses were made here in turn and both were wrong: first that denser is harder, then
+that the family is uniformly easy. The second came from a probe averaging over matched seeds, which
+hid the peak completely — the shape only appears when the solve **rate** is measured across a seed
+grid rather than the mean excess. `examples/planted_probe.rs` prints the table.
+
+One caveat carried in the docs: 2D spin-glass ground states in no field are polynomial-time
+computable by minimum-weight matching, so nothing here is hard in the complexity sense. It is a
+benchmark for *heuristics*, and must be described that way.
+
+**Still to come:** tree-decomposition and planar exact solvers, the Wishart and 3R3X XORSAT
+families (which can be genuinely hard, unlike this one), and the physics oracles beyond Onsager —
+the SK transition and 3D Edwards–Anderson against OPUSLab's published files.
 
 ### Phase 2 — Backends and the honest benchmark
 
