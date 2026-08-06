@@ -6,6 +6,24 @@
 //!     P(s_i = +1 | rest) = sigma(2 beta (sum_j J_ij s_j + h_i)).
 
 /// Builder-side edge list; finalized into CSR by [`Graph::build`].
+thread_local! {
+    static BUILDS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Graphs built **on this thread**.
+///
+/// A program is a fixed thing and a schedule is a set of numbers; annealing must move the numbers,
+/// never rebuild the program. This counter is how that claim is checked rather than asserted --
+/// see the `anneal_never_rebuilds_the_program` test.
+///
+/// Deliberately per-thread rather than global: the question it answers is "did *this* run rebuild
+/// anything", and a process-wide counter answers a different question the moment two runs share a
+/// process. That is not hypothetical -- it is exactly what a parallel test runner does, and a
+/// global counter here failed for that reason before this line existed.
+pub fn graph_builds() -> u64 {
+    BUILDS.with(|b| b.get())
+}
+
 pub struct GraphBuilder {
     n: usize,
     edges: Vec<(u32, u32, f64)>,
@@ -33,6 +51,7 @@ impl GraphBuilder {
     }
 
     pub fn build(self) -> Graph {
+        BUILDS.with(|b| b.set(b.get() + 1));
         let n = self.n;
         // merge duplicates
         let mut merged: std::collections::HashMap<(u32, u32), f64> = std::collections::HashMap::new();

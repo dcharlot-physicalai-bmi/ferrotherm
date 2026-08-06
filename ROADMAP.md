@@ -106,12 +106,25 @@ including a numerical-derivative check that `score_dh` matches `p_up`, and a det
 tying `delta_e` to the acceptance ratio; wasm, Python and Zig all still green, with Python still
 reproducing Onsager (|m| 0.919 vs 0.911 exact).
 
-**0.2 Free the temperature.** β and every annealed penalty (domain-wall `P`, COPY strength `W0`)
-move out of compiled weights into `Schedule` as runtime parameters.
-*Why:* THRML rebuilds its program at each of 4,000 annealing steps because β is baked in. Annealing
-must never rebuild the program.
-**Accept:** a 4,000-stage anneal allocates zero new programs, proven by a counter in the test; a
-schedule change without a rebuild produces the same result as a rebuild.
+**0.2 Free the temperature.** ✅ **DONE** — `src/schedule.rs`.
+
+`Schedule` is an ordered list of `Stage { beta, sweeps, penalties }`, where `Penalties` carries the
+domain-wall and copy-agreement strengths that lowering passes introduce. Temperature and penalty
+ramps are specified independently (`geometric(..).ramp_domain_wall(..).ramp_copy(..)`), because they
+are separate physics: the ladder is geometric since the interesting behaviour is spread evenly in
+log β, and a penalty ramps so the sampler can move freely early and the constraint binds late.
+`total_sweeps` and `node_updates(n)` let a run be sized before it starts.
+
+**Accepted, mechanically:** `graph::graph_builds()` counts programs built, and
+`anneal_never_rebuilds_the_program` runs a **4,000-stage** ladder and asserts the counter does not
+move. Three further contract tests: a reused graph agrees with a freshly built one, a cold ladder
+cannot contaminate a later hot one, and the ledger matches what the schedule predicted.
+
+*One finding from writing it.* The counter was first a process-global `AtomicU64` and the test
+failed at 4 rebuilds — which was the test being right and the counter being wrong. `cargo test` runs
+tests in parallel within one process, so a global counter answers "did anything in this process
+build a graph", not "did this run rebuild". It is thread-local now, which is the scope the question
+actually has.
 
 **0.3 An encoding layer, not a type system.** The IR has exactly one variable: the spin, ±1. That
 is what the fabric is, and nothing else may appear below the lowering passes.
@@ -318,7 +331,7 @@ number we would rather quote.
 ## 6. Sequence
 
 ```
-v0.6  Phase 0        one IR, β freed, encoding passes, .ftp spec      breaking
+v0.6  Phase 0        one kernel ✅, β freed ✅, encoding passes, .ftp   breaking
 v0.7  Phase 1        Certificate + oracle set + planted instances
 v0.8  Phase 2.1/2.2  WebGPU backend + the honest benchmark
 v0.9  Phase 3        sparsifier, DSATUR, 2D adaptive PT, crossover

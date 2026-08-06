@@ -150,3 +150,97 @@ mod tests {
         assert!((e_sa - e0).abs() < 1e-9, "SA found {} vs exact {}", e_sa, e0);
     }
 }
+
+/// Anneal under a [`Schedule`], leaving the best state found.
+///
+/// The graph is borrowed and never rebuilt: every quantity that varies during the run comes from
+/// the schedule. That is the whole point of the type, and `anneal_never_rebuilds_the_program`
+/// below is what keeps it true.
+pub fn anneal_scheduled(
+    g: &Graph,
+    schedule: &crate::schedule::Schedule,
+    seed: u64,
+    mut ledger: Option<&mut Ledger>,
+) -> (Vec<i8>, f64) {
+    let mut smp = Sampler::new(g, schedule.stages().first().map_or(1.0, |s| s.beta), seed);
+    let mut best = smp.s.clone();
+    let mut best_e = g.energy(&best);
+    for stage in schedule.stages() {
+        smp.beta = stage.beta; // a number changes; nothing is rebuilt
+        for _ in 0..stage.sweeps {
+            smp.sweep(ledger.as_deref_mut());
+            let e = g.energy(&smp.s);
+            if e < best_e {
+                best_e = e;
+                best = smp.s.clone();
+            }
+        }
+    }
+    (best, best_e)
+}
+
+#[cfg(test)]
+mod schedule_contract {
+    use super::*;
+    use crate::graph::graph_builds;
+    use crate::schedule::Schedule;
+
+    #[test]
+    fn anneal_never_rebuilds_the_program() {
+        // THRML rebuilds its program at each of 4,000 annealing steps because beta is compiled
+        // into its weights. This is the test that stops us doing the same: the counter must not
+        // move once the graph exists, no matter how long the ladder.
+        let g = crate::ising::lattice2d(16, 1.0);
+        let schedule = Schedule::geometric(0.05, 4.0, 4000, 1);
+        assert_eq!(schedule.len(), 4000);
+
+        let before = graph_builds();
+        let (_s, e) = anneal_scheduled(&g, &schedule, 7, None);
+        let after = graph_builds();
+
+        assert_eq!(after, before, "a 4,000-stage anneal rebuilt the program {} time(s)", after - before);
+        assert!(e.is_finite());
+    }
+
+    #[test]
+    fn running_a_schedule_matches_building_fresh_for_it() {
+        // The other half of the contract: a graph carries no schedule state, so reusing one is
+        // indistinguishable from building it again for this particular ladder.
+        let schedule = Schedule::geometric(0.1, 3.0, 50, 4);
+
+        let g1 = crate::ising::lattice2d(12, 1.0);
+        let reused = anneal_scheduled(&g1, &schedule, 11, None);
+        let second = anneal_scheduled(&g1, &schedule, 11, None); // same graph, run again
+
+        let g2 = crate::ising::lattice2d(12, 1.0); // built fresh
+        let fresh = anneal_scheduled(&g2, &schedule, 11, None);
+
+        assert_eq!(reused.1, second.1, "reusing a graph changed the result");
+        assert_eq!(reused.0, fresh.0, "a reused graph disagreed with a freshly built one");
+        assert_eq!(reused.1, fresh.1);
+    }
+
+    #[test]
+    fn two_schedules_on_one_graph_are_independent() {
+        // Running a cold ladder must not leave the graph in a state that changes a later hot one.
+        let g = crate::ising::lattice2d(12, 1.0);
+        let hot = Schedule::geometric(0.05, 0.3, 20, 4);
+        let cold = Schedule::geometric(0.5, 6.0, 20, 4);
+
+        let hot_first = anneal_scheduled(&g, &hot, 3, None).1;
+        let _ = anneal_scheduled(&g, &cold, 3, None);
+        let hot_again = anneal_scheduled(&g, &hot, 3, None).1;
+
+        assert_eq!(hot_first, hot_again, "a cold run contaminated a later hot run");
+    }
+
+    #[test]
+    fn the_ledger_matches_what_the_schedule_predicted() {
+        // Sizing a run before starting it has to be right, or the energy budget is fiction.
+        let g = crate::ising::lattice2d(10, 1.0);
+        let schedule = Schedule::geometric(0.1, 2.0, 30, 7);
+        let mut led = Ledger::default();
+        anneal_scheduled(&g, &schedule, 1, Some(&mut led));
+        assert_eq!(led.samples, schedule.node_updates(g.n));
+    }
+}
