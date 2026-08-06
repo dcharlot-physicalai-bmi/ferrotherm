@@ -426,7 +426,7 @@ mod gpu_tests {
         let src = unsafe { core::slice::from_raw_parts(ft_shader(), len) };
         let s = core::str::from_utf8(src).expect("the shader must be valid UTF-8");
         assert!(s.contains("@compute"), "not a compute shader");
-        assert!(s.contains("1.0 / (1.0 + exp(-2.0 * P.beta * f))"), "the update must survive");
+        assert!(s.contains("1.0 / (1.0 + exp(-2.0 * P.ctl.x * f))"), "the update must survive");
     }
 
     #[test]
