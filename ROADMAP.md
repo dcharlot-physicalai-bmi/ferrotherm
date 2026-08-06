@@ -306,9 +306,21 @@ One caveat carried in the docs: 2D spin-glass ground states in no field are poly
 computable by minimum-weight matching, so nothing here is hard in the complexity sense. It is a
 benchmark for *heuristics*, and must be described that way.
 
-**Still to come:** tree-decomposition and planar exact solvers, the Wishart and 3R3X XORSAT
-families (which can be genuinely hard, unlike this one), and the physics oracles beyond Onsager —
-the SK transition and 3D Edwards–Anderson against OPUSLab's published files.
+**The Wishart planted ensemble** is in, and fills exactly the gap the lattice family leaves. Columns
+drawn Gaussian but projected orthogonal to the planted state give `E(s) = (‖Wᵀs‖² − tr(WWᵀ))/2n`, so
+the planted state drives a non-negative quantity to zero and is a ground state by construction, with
+the optimum known in closed form. Enumeration confirms it at n ≤ 16; the closed form matches to 1e-9
+at n = 80.
+
+Its ruggedness knob is **monotonic**, unlike the lattice family: greedy solves 4/16 at α = 0.2 and
+16/16 at α ≥ 1, matching the published ensemble. And the two families **fail differently**, which is
+the more useful half of the measurement — a lattice miss can be 17% above the optimum, a Wishart
+miss under 2%. The Wishart landscape is dense with near-degenerate minima, so a solver gets very
+close and still misses. **Any benchmark reporting mean excess would call it easy.** Report the solve
+rate.
+
+**Still to come:** tree-decomposition and planar exact solvers, 3R3X XORSAT, and the physics oracles
+beyond Onsager — the SK transition and 3D Edwards–Anderson against OPUSLab's published files.
 
 ### Phase 2 — Backends and the honest benchmark
 

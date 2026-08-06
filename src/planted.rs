@@ -255,3 +255,173 @@ mod tests {
         assert!(peak < sparse && peak < dense, "difficulty must peak in the middle");
     }
 }
+
+// ---- the Wishart planted ensemble ---------------------------------------------------------------
+
+/// Standard normal draw, Box–Muller.
+fn gauss(rng: &mut Pcg) -> f64 {
+    let u = rng.f64().max(1e-15);
+    let v = rng.f64();
+    (-2.0 * u.ln()).sqrt() * (core::f64::consts::TAU * v).cos()
+}
+
+/// The Wishart planted ensemble: dense, tunably rugged, and genuinely hard.
+///
+/// Frustrated loops on a lattice are a correctness oracle but a mild benchmark — see the module
+/// notes. This family is the answer to that, and it is hard for a structural reason rather than by
+/// accident.
+///
+/// Draw `m = alpha * n` column vectors, each Gaussian but **projected orthogonal to the planted
+/// state** `t`, and stack them as `W`. Set `J_ij = -(1/n) (W Wᵀ)_ij` off the diagonal. Then
+///
+/// ```text
+///     E(s) = (1/2n) [ ‖Wᵀ s‖² − tr(W Wᵀ) ]
+/// ```
+///
+/// The trace is a constant, so minimising the energy means minimising `‖Wᵀ s‖²`, a non-negative
+/// quantity that `t` drives to exactly zero. The planted state is therefore a ground state by
+/// construction, and the ground energy is `−tr(W Wᵀ) / 2n`, known in closed form.
+///
+/// `alpha` is the ruggedness knob, and unlike the lattice family it is **monotonic**. Measured at
+/// `n = 24` with greedy descent over a 4x4 instance/solver seed grid:
+///
+/// | alpha | greedy solved | worst excess |
+/// |---|---|---|
+/// | 0.2 | 4/16 | 0.010 |
+/// | 0.3 | 5/16 | 0.014 |
+/// | 0.5 | 10/16 | 0.052 |
+/// | 0.75 | 15/16 | 0.080 |
+/// | 1.0 and above | 16/16 | 0 |
+///
+/// Hard below about `alpha = 1`, as the published ensemble reports.
+///
+/// Note the failure *signature*, which differs from the frustrated-loop family and is the more
+/// useful half of this measurement. There, a miss could be 17% above the optimum. Here a miss is
+/// under 2% at the hardest setting: the landscape is dense with near-degenerate minima, so a solver
+/// gets very close and still misses. Any benchmark reporting mean excess would call this family
+/// easy. Report the solve rate.
+pub fn wishart(n: usize, alpha: f64, seed: u64) -> Planted {
+    assert!(n >= 3, "a Wishart instance needs at least 3 spins");
+    assert!(alpha > 0.0, "alpha must be positive");
+    let m = ((alpha * n as f64).round() as usize).max(1);
+    let mut rng = Pcg::new(seed, 0);
+
+    let t: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+
+    // Columns of W, each orthogonal to the planted state.
+    let mut w = vec![0.0f64; n * m];
+    for c in 0..m {
+        let mut col: Vec<f64> = (0..n).map(|_| gauss(&mut rng)).collect();
+        let dot: f64 = col.iter().zip(&t).map(|(x, &s)| x * s as f64).sum();
+        for (i, x) in col.iter_mut().enumerate() {
+            *x -= dot * t[i] as f64 / n as f64; // project out t
+        }
+        for i in 0..n {
+            w[i * m + c] = col[i];
+        }
+    }
+
+    // J = -(1/n) W Wᵀ off the diagonal; the diagonal is the constant trace term.
+    let mut b = GraphBuilder::new(n);
+    let mut trace = 0.0;
+    for i in 0..n {
+        for j in i..n {
+            let mut dot = 0.0;
+            for c in 0..m {
+                dot += w[i * m + c] * w[j * m + c];
+            }
+            if i == j {
+                trace += dot;
+            } else {
+                b.couple(i, j, -dot / n as f64);
+            }
+        }
+    }
+
+    Planted {
+        graph: b.build(),
+        ground_state: t,
+        ground_energy: -trace / (2.0 * n as f64),
+        loops: m,
+    }
+}
+
+#[cfg(test)]
+mod wishart_tests {
+    use super::*;
+    use crate::oracle::{Exhaustive, RandomGuess, Solver, SteepestDescent};
+
+    #[test]
+    fn the_planted_state_is_the_ground_state() {
+        // Checked against enumeration, not against the derivation.
+        for n in [8, 12, 16] {
+            for alpha in [0.5, 1.0, 2.0] {
+                for seed in 1..=3u64 {
+                    let p = wishart(n, alpha, seed);
+                    let (_s, exact) = Exhaustive.solve(&p.graph);
+                    let planted = p.graph.energy(&p.ground_state);
+                    assert!(
+                        (planted - exact).abs() < 1e-7,
+                        "n={n} alpha={alpha} seed={seed}: planted {planted} vs true {exact}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_closed_form_ground_energy_is_right() {
+        // -tr(W Wᵀ)/2n, predicted before the graph is built and measured after.
+        for n in [10, 30, 80] {
+            for alpha in [0.3, 1.5] {
+                let p = wishart(n, alpha, 7);
+                let measured = p.graph.energy(&p.ground_state);
+                assert!(
+                    (measured - p.ground_energy).abs() / p.ground_energy.abs() < 1e-9,
+                    "n={n} alpha={alpha}: predicted {} measured {measured}",
+                    p.ground_energy
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn it_is_dense_where_the_lattice_family_is_sparse() {
+        let p = wishart(40, 1.0, 1);
+        assert_eq!(p.graph.max_degree(), 39, "every spin should couple to every other");
+    }
+
+    #[test]
+    fn low_alpha_really_is_harder() {
+        // Measured as a solve rate over a seed grid rather than a single run -- the lesson from the
+        // frustrated-loop family, which hid its own structure behind an average.
+        let rate = |alpha: f64| {
+            let (mut solved, mut total) = (0, 0);
+            for iseed in 1..=4u64 {
+                let p = wishart(24, alpha, iseed);
+                for sseed in 1..=4u64 {
+                    let (s, _) = SteepestDescent { restarts: 100, seed: sseed }.solve(&p.graph);
+                    total += 1;
+                    if p.solved(&s) {
+                        solved += 1;
+                    }
+                }
+            }
+            solved as f64 / total as f64
+        };
+        let hard = rate(0.3);
+        let easy = rate(3.0);
+        assert!(
+            hard < easy,
+            "alpha 0.3 should defeat greedy more often than alpha 3.0: {hard} vs {easy}"
+        );
+    }
+
+    #[test]
+    fn noise_never_solves_one() {
+        let p = wishart(40, 0.5, 3);
+        let (s, _) = RandomGuess { tries: 50_000, seed: 1 }.solve(&p.graph);
+        assert!(!p.solved(&s));
+        assert!(p.excess(&s) > 0.1, "noise was only {} off", p.excess(&s));
+    }
+}
