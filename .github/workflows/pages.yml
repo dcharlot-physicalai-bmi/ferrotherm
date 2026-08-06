@@ -1,0 +1,42 @@
+# Deploy docs/ to GitHub Pages.
+#
+# The legacy Pages builder replaced this and gave no logs: builds came back "Page build failed"
+# with duration 0, meaning they never started, while the site quietly kept serving an older commit.
+# A workflow deploy fails loudly and says why.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the pages are intact before publishing them
+        run: |
+          test -f docs/index.html && test -f docs/ide.html && test -f docs/graph.html
+          test -f docs/ferrotherm.wasm
+          # a truncated wasm would load as a broken page rather than a failed build
+          test "$(stat -c%s docs/ferrotherm.wasm)" -gt 20000
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4
