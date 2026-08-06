@@ -63,6 +63,7 @@ pub mod planted;
 pub mod program;
 pub mod compile;
 pub mod tempering;
+pub mod wgsl;
 pub mod tla;
 pub mod linalg;
 pub mod het;
