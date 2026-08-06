@@ -85,12 +85,30 @@ must never rebuild the program.
 **Accept:** a 4,000-stage anneal allocates zero new programs, proven by a counter in the test; a
 schedule change without a rebuild produces the same result as a rebuild.
 
-**0.3 A type system above the spin.** `VarType { Spin, Bool, Cat(k), Int{lo,hi}, Real }` with
-domain-wall lowering for `Cat`, replacing one-hot and binary expansion.
-*Why:* three papers report 5–34× from removing encoding overhead alone, before any hardware. There
-is no open implementation. The multipliers are unverified and we will measure our own.
-**Accept:** a categorical problem expressed with `Cat(k)` uses strictly fewer spins than the one-hot
-encoding of the same problem, and both reach the same optimum on a case with a known answer.
+**0.3 An encoding layer, not a type system.** The IR has exactly one variable: the spin, ±1. That
+is what the fabric is, and nothing else may appear below the lowering passes.
+
+Above the IR, the modelling layer accepts a discrete variable and the compiler **eliminates** it:
+
+| Modelling variable | Encoding | Spins | Penalty needed |
+|---|---|---|---|
+| `Categorical(k)` | one-hot | k | yes, exactly-one |
+| `Categorical(k)` | binary | ⌈log₂k⌉ | no, but couplings densify |
+| `Categorical(k)` | **domain wall** | k−1 | no |
+| integer range | categorical over values, or binary expansion | same machinery | per encoding |
+
+Domain-wall encoding (Chancellor 2019) is the interesting one precisely because it needs no penalty
+term and uses one fewer spin than one-hot. The choice of encoding is a compiler decision with
+measurable consequences, which is the whole point of making it a pass rather than a type.
+
+*Why this framing:* an integer is not a thing the hardware has. Writing `Int` beside `Spin` implies
+a register that does not exist, and the p-int literature proposing such units is three papers with
+no code and no silicon. What is real is that problems have discrete variables and someone must
+choose how to spell them in spins. That someone is the compiler.
+
+**Accept:** a categorical problem compiled with domain-wall encoding uses strictly fewer spins than
+one-hot and needs no penalty term, and both reach the same optimum on a case with a known answer;
+below the lowering passes, `grep` finds no variable type but the spin.
 
 **0.4 Types that make the footguns unrepresentable.** Distinct `Weight` and `Energy` newtypes; a
 constructor error for a variable repeated within a factor; padded `[n,k]` interaction storage with
@@ -100,9 +118,10 @@ because "this condition has not been enforced in the code." Ours will not compil
 **Accept:** each documented incumbent footgun has a test proving it is a compile error or a
 constructor `Err`.
 
-**0.5 The `.ftp` program format.** Author the spec ourselves: typed variables, factors including
+**0.5 The `.ftp` program format.** Author the spec ourselves: spins, factors including
 higher-order, the block coloring, the schedule with β and penalty ramps, the observer set, the
-device topology target, and the price table used for the ledger.
+device topology target, the encoding provenance for each group of spins, and the price table used
+for the ledger.
 *Why:* the survey's sharpest finding is that `(J, h, coloring, schedule)` is the field's de facto
 interchange and **nobody has specified it** — it lives as scattered `.mat` files. That is a
 standard-shaped hole. Being the format is durable; conforming to someone else's two-year-old one is
@@ -193,7 +212,7 @@ Adapters, not a DSL. The field does not need a fifth modelling language.
 
 | Surface | Design | Priority |
 |---|---|---|
-| **Rust** | Native. `Model` → lowering → `Program` → `Schedule`; traits for `Node`/`Factor`/`Kernel`/`Sampler`. Newtype indices, not THRML's metaclass ID hack. | now |
+| **Rust** | Native. `Model` → lowering → `Program` → `Schedule`; traits for `Factor`/`Kernel`/`Sampler`. One variable below the lowering passes: the spin. Newtype indices, not THRML's metaclass ID hack. | now |
 | **Python** | `ferrotherm.linalg` in thermox's signatures + `estimate/stderr/certificate/ledger` on every result. A PyMC `BlockedStep` with a `Competence` rule, so a discrete-latent model gets our block-Gibbs step in one line. | now |
 | **Node graph** | The unoccupied lane. Nodes are IR objects, not widgets: variables, factors, blocks, schedule, observers, backend. Executes the same `.ftp`. Builds on the shipped workbench. | next |
 | **Zig** | Already binds the C ABI. Extend as the IR lands. | next |
@@ -230,7 +249,7 @@ What we port to Rust, and why each is worth owning.
 | 2D adaptive PT over (β, W0) | One MATLAB file, June 2025 | Core capability |
 | Lattice Random Walk integrator (arXiv:2508.20883) | **Paper, no code** | Binary/ternary SDE increments, no Gaussian RNG in the datapath, robust to quantisation |
 | Thermalizers KL chain-rule bound (arXiv:2608.01615) | **Published without code** | The compile-pass error bound; hardware-independent mathematics |
-| p-dit / isotropic p-dit / p-int typing | 3 papers, no code, CC BY-NC-ND | `VarType` + domain-wall lowering |
+| Domain-wall encoding (Chancellor 2019) | Published, scattered implementations | Compiler pass: k−1 spins, no penalty term |
 | Chook planted-instance generators | Python | Test fixtures with known ground truth |
 | Tree-decomposition & planar exact solvers | Scattered literature | Oracles |
 | thermox signatures (Normal) | Python, no device hook | `ferrotherm.linalg`, plus certificate and ledger |
@@ -246,7 +265,7 @@ contribution the field currently lacks.
 Normal Computing argues that building 32-bit state variables from single-bit p-bits "requires 1024×
 as many coupling terms," and that dense interaction matrices cause frustrated sampling and degrade
 sample quality. That is aimed squarely at our design centre and we answer it with measurement, not
-rhetoric: `Int{lo,hi}` with domain-wall lowering is the structural reply to the first, and the
+rhetoric: a domain-wall encoding pass is the structural reply to the first, and the
 dense-vs-sparsify crossover of Phase 3.3 is the empirical reply to the second. If they are right at
 some scale, we publish where.
 
