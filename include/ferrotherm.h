@@ -139,6 +139,11 @@ double ft_exact_ground(const ft_sim *sim, uint32_t max_width);
 /* Exact log partition function at `beta`, or NaN if too wide. */
 double ft_exact_log_z(const ft_sim *sim, double beta, uint32_t max_width);
 
+/* Exact ground STATE by variable elimination, written into `out` as -1/+1. Returns 1 on success,
+ * 0 on NULL, a wrong length, or a graph wider than max_width. A caller that must return a solution
+ * rather than a bound needs this, not just the energy. */
+uint32_t ft_exact_ground_state(const ft_sim *sim, uint32_t max_width, int8_t *out, uint32_t len);
+
 /* Induced width of the elimination order. */
 uint32_t ft_exact_width(const ft_sim *sim);
 

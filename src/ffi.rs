@@ -661,3 +661,59 @@ pub extern "C" fn ft_exact_width(sim: *const Sim) -> u32 {
         None => 0,
     }
 }
+
+/// Exact ground state by variable elimination, written into `out` as -1/+1.
+///
+/// Returns 1 on success, 0 on a null handle, a wrong length, or a graph wider than `max_width`.
+/// The energy alone is not enough for a caller that has to return a solution rather than a bound.
+#[no_mangle]
+pub extern "C" fn ft_exact_ground_state(
+    sim: *const Sim,
+    max_width: u32,
+    out: *mut i8,
+    len: u32,
+) -> u32 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+    if out.is_null() || len as usize != s.graph.n {
+        return 0;
+    }
+    let el = crate::exact::Elimination { max_width: max_width as usize };
+    match el.ground_state(&s.graph) {
+        Ok(e) => match e.ground_state {
+            Some(st) => {
+                unsafe { core::ptr::copy_nonoverlapping(st.as_ptr(), out, st.len()) };
+                1
+            }
+            None => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
+#[cfg(test)]
+mod exact_state_ffi {
+    use super::*;
+
+    #[test]
+    fn the_recovered_state_attains_the_energy() {
+        let sim = ft_planted_frustrated(4, 12, 3, 1.0);
+        let n = ft_len(sim) as usize;
+        let mut out = vec![0i8; n];
+        assert_eq!(ft_exact_ground_state(sim, 20, out.as_mut_ptr(), n as u32), 1);
+        assert!(out.iter().all(|&v| v == 1 || v == -1));
+        assert_eq!(ft_set_spins(sim, out.as_ptr(), n as u32), 1);
+        let e = ft_energy(sim);
+        assert!((e - ft_exact_ground(sim, 20)).abs() < 1e-9, "state {e} vs energy");
+        assert!((e - ft_ground_energy(sim)).abs() < 1e-9, "and it is the planted optimum");
+        ft_free(sim);
+    }
+
+    #[test]
+    fn a_wrong_length_is_refused() {
+        let sim = ft_ising2d_new(4, 1.0, 1.0, 1);
+        let mut out = vec![0i8; 3];
+        assert_eq!(ft_exact_ground_state(sim, 20, out.as_mut_ptr(), 3), 0);
+        assert_eq!(ft_exact_ground_state(sim, 20, core::ptr::null_mut(), 16), 0);
+        ft_free(sim);
+    }
+}

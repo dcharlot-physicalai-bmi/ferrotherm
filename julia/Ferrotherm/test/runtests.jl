@@ -138,6 +138,10 @@ end
     close!(s)
 end
 
+@testset "QUBODrivers drivers agree with their exact sampler" begin
+    include("qubodrivers.jl")
+end
+
 @testset "same seed reproduces" begin
     a = lattice2d(16; beta = 0.44, seed = 11); sweep!(a, 100)
     b = lattice2d(16; beta = 0.44, seed = 11); sweep!(b, 100)

@@ -58,7 +58,7 @@ export lattice2d, ring, z1_grid, frustrated, wishart
 export sweep!, anneal!, beta!, spins, energy, magnetization
 export certify, findings, passed
 export known_optimum, excess, solved
-export treewidth, exact_ground_energy, exact_logz
+export treewidth, exact_ground_energy, exact_ground_state, exact_logz
 export node_updates, joules_z1, onsager, library_path, close!
 
 # ---- finding the library -----------------------------------------------------------------------
@@ -148,6 +148,7 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_exact_ground Cdouble SimPtr Cuint
 @cfn ft_exact_log_z Cdouble SimPtr Cdouble Cuint
 @cfn ft_exact_width Cuint SimPtr
+@cfn ft_exact_ground_state Cuint SimPtr Cuint Ptr{Int8} Cuint
 @cfn ft_onsager Cdouble Cdouble
 @cfn ft_free Cvoid SimPtr
 
@@ -495,6 +496,21 @@ function exact_ground_energy(s::Simulation; max_width::Integer = 22)
     _live(s)
     v = ft_exact_ground(s.handle, Cuint(max_width))
     isnan(v) ? nothing : v
+end
+
+"""
+    exact_ground_state(s; max_width = 22) -> Union{Vector{Int8},Nothing}
+
+The exact ground state itself, not just its energy. `nothing` if the graph is too dense.
+
+A caller that must return a *solution* rather than a bound needs this.
+"""
+function exact_ground_state(s::Simulation; max_width::Integer = 22)
+    _live(s)
+    n = length(s)
+    out = Vector{Int8}(undef, n)
+    ok = ft_exact_ground_state(s.handle, Cuint(max_width), pointer(out), Cuint(n))
+    ok == 0 ? nothing : out
 end
 
 """Exact `log Z` at `beta`, or `nothing` if the graph is too dense."""
