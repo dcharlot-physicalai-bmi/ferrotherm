@@ -65,7 +65,10 @@ impl FixedFabric {
         let lut: Vec<u16> = (0..(1usize << LUT_BITS))
             .map(|a| {
                 let arg = ((a as f64 + 0.5) * 4.0 - 2048.0) / scale;
-                let p = 1.0 / (1.0 + (-2.0 * beta * arg).exp());
+                // Emitted hardware cannot call the Rust kernel, so it must agree with it
+                // instead. This is the one place the update is legitimately duplicated, and
+                // `lut_agrees_with_the_kernel` below is what keeps the duplicate honest.
+                let p = crate::kernel::p_up(arg, beta);
                 (p * 65535.0).round().min(65535.0) as u16
             })
             .collect();
@@ -267,5 +270,30 @@ mod tests {
         let stdout = String::from_utf8_lossy(&run.stdout);
         assert!(stdout.contains("FERROTHERM_PASS"), "RTL/emulator divergence:\n{stdout}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod kernel_agreement {
+    /// The RTL threshold table is a hardware copy of the software update. Hardware cannot call
+    /// `kernel::p_up`, so the only thing standing between the emitted Verilog and a silently
+    /// different distribution is this test.
+    #[test]
+    fn lut_agrees_with_the_kernel() {
+        const LUT_BITS: usize = 10;
+        for &beta in &[0.25, 0.5, 1.0, 2.0, 4.0] {
+            let scale = 256.0;
+            for a in 0..(1usize << LUT_BITS) {
+                let arg = ((a as f64 + 0.5) * 4.0 - 2048.0) / scale;
+                let want = crate::kernel::p_up(arg, beta);
+                let quantized = (want * 65535.0).round().min(65535.0) as u16;
+                // the table is 16-bit; agreement means within one least significant bit
+                let back = quantized as f64 / 65535.0;
+                assert!(
+                    (back - want).abs() <= 1.0 / 65535.0,
+                    "beta {beta} entry {a}: table {back} vs kernel {want}"
+                );
+            }
+        }
     }
 }

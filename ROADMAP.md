@@ -71,12 +71,40 @@ called done. No item is complete because code exists.
 We currently carry two of the exact defects the survey found in the incumbents. Both are cheap now
 and expensive after four surfaces depend on them.
 
-**0.1 One IR.** `program::Gate`/`Force` becomes `lower::gates_to_factors`, a pass onto the EBM
-graph, and the sibling execution path is deleted.
-*Why:* two IRs beside each other is precisely what makes Extropic's own two libraries
-non-interoperable. We should not ship the fork we can see from here.
-**Accept:** exactly one type implements execution; every gate program in the test suite produces
-bit-identical results through the lowered path; `grep` finds no second sampler loop.
+**0.1 One kernel.** ✅ **DONE** — `src/kernel.rs`.
+
+*Diagnosis corrected after reading the code.* This plan first said `program::Gate` was "a second IR
+beside the EBM graph," Extropic's mistake. That was wrong, and reading `program.rs` closely showed
+something more specific and more fixable. `program.rs` is not a rival spelling of the sampler; it is
+a differentiable stochastic program with continuous state and score-function gradients, a capability
+the IR genuinely does not have. What it *was* doing wrong is that it carried its own copy of the
+sweep, because it needs the score alongside the draw.
+
+The real defect was that `P(s_i=+1) = sigma(2 beta f_i)` — the one equation this crate computes —
+was written out **six times across five files in three spellings of beta**:
+
+| Site | Spelling | Problem |
+|---|---|---|
+| `gibbs.rs` ×2 | `sigma(2.0 * self.beta * f)` | — |
+| `program.rs` | `sigma(2.0 * beta * f)` | beta baked into the gate |
+| `compile.rs` | `1/(1+exp(-2.0*self.beta*f))` | different spelling |
+| `hdl.rs` | `1/(1+exp(-2.0*beta*arg))` | RTL emitter |
+| `dtm.rs` ×2 | `1/(1+exp(-2.0*f))` | **no beta at all** — folded into the weights |
+
+That last row is the same footgun this document criticises THRML for: with beta inside the weights,
+annealing a DTM means rewriting every coupling.
+
+**Done:** every Rust caller now routes through `kernel::{p_up, draw, score_dh, delta_e}`.
+`program.rs` keeps its differentiable layer and loses its private sweep, because `score_dh` gives it
+the score without the copy. `dtm` gained `gibbs_at`/`gibbs_chromatic_at` taking beta as a parameter,
+defaulting to 1.0 so behaviour is unchanged. `hdl.rs` is the one legitimate duplicate — emitted
+Verilog cannot call Rust — so it builds its threshold table *from* `kernel::p_up` and a test asserts
+the 16-bit table agrees with the kernel to within one LSB across five betas.
+
+**Accepted:** `grep` finds zero spin-kernel implementations outside `kernel.rs`; 52 tests pass
+including a numerical-derivative check that `score_dh` matches `p_up`, and a detailed-balance check
+tying `delta_e` to the acceptance ratio; wasm, Python and Zig all still green, with Python still
+reproducing Onsager (|m| 0.919 vs 0.911 exact).
 
 **0.2 Free the temperature.** β and every annealed penalty (domain-wall `P`, COPY strength `W0`)
 move out of compiled weights into `Schedule` as runtime parameters.

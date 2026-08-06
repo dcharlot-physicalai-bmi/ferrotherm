@@ -395,7 +395,7 @@ impl Kernel {
                 for &(j, w) in &adj[i] {
                     f += w * s[j] as f64;
                 }
-                let p_up = 1.0 / (1.0 + (-2.0 * self.beta * f).exp());
+                let p_up = crate::kernel::p_up(f, self.beta);
                 s[i] = rng.spin(p_up);
                 count += 1;
             }

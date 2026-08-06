@@ -56,7 +56,7 @@ impl<'g> Sampler<'g> {
                     continue;
                 }
                 let f = self.g.field(i, &self.s);
-                let p_up = sigma(2.0 * self.beta * f);
+                let p_up = crate::kernel::p_up(f, self.beta);
                 self.s[i] = self.rng.spin(p_up);
                 updated += 1;
             }
@@ -119,7 +119,7 @@ impl<'g> Sampler<'g> {
                             for k in g.offset[i]..g.offset[i + 1] {
                                 f += g.w[k] * unsafe { *s_ptr.add(g.nbr[k] as usize) } as f64;
                             }
-                            let p_up = sigma(2.0 * beta * f);
+                            let p_up = crate::kernel::p_up(f, beta);
                             unsafe {
                                 *s_ptr.add(i) = rng.spin(p_up);
                             }

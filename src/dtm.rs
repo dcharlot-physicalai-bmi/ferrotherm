@@ -168,24 +168,50 @@ impl Ebm {
 
     /// Gibbs sweeps over the nodes in `free`, with per-node extra external fields.
     pub fn gibbs(&self, s: &mut [i8], free: &[usize], extra: &[f64], sweeps: usize, rng: &mut Pcg) {
+        self.gibbs_at(s, free, extra, sweeps, 1.0, rng)
+    }
+
+    /// As [`Self::gibbs`], with beta as a runtime parameter.
+    pub fn gibbs_at(
+        &self,
+        s: &mut [i8],
+        free: &[usize],
+        extra: &[f64],
+        sweeps: usize,
+        beta: f64,
+        rng: &mut Pcg,
+    ) {
         for _ in 0..sweeps {
             for &i in free {
                 let f = self.field(i, s, extra);
-                let p_up = 1.0 / (1.0 + (-2.0 * f).exp());
-                s[i] = if rng.f64() < p_up { 1 } else { -1 };
+                s[i] = crate::kernel::draw(f, beta, rng);
             }
         }
     }
 
     /// Chromatic sweeps over ALL nodes: two half sweeps per sweep, the schedule hardware uses.
     pub fn gibbs_chromatic(&self, s: &mut [i8], extra: &[f64], sweeps: usize, rng: &mut Pcg) {
+        self.gibbs_chromatic_at(s, extra, sweeps, 1.0, rng)
+    }
+
+    /// As [`Self::gibbs_chromatic`], with beta as a runtime parameter.
+    ///
+    /// Beta used to live inside the weights here, which meant annealing this model required
+    /// rewriting every coupling. It is a number now.
+    pub fn gibbs_chromatic_at(
+        &self,
+        s: &mut [i8],
+        extra: &[f64],
+        sweeps: usize,
+        beta: f64,
+        rng: &mut Pcg,
+    ) {
         for _ in 0..sweeps {
             for c in 0..2 {
                 for idx in 0..self.classes[c].len() {
                     let i = self.classes[c][idx] as usize;
                     let f = self.field(i, s, extra);
-                    let p_up = 1.0 / (1.0 + (-2.0 * f).exp());
-                    s[i] = if rng.f64() < p_up { 1 } else { -1 };
+                    s[i] = crate::kernel::draw(f, beta, rng);
                 }
             }
         }

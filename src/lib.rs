@@ -46,6 +46,7 @@
 
 pub mod rng;
 pub mod graph;
+pub mod kernel;
 pub mod gibbs;
 pub mod ising;
 pub mod device;

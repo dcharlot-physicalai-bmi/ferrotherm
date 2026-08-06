@@ -148,16 +148,11 @@ impl Program {
                                 for kk in gr.offset[i]..gr.offset[i + 1] {
                                     f += gr.w[kk] * st.bits[gr.nbr[kk] as usize] as f64;
                                 }
-                                let arg = 2.0 * beta * f;
-                                let p_up = sigma(arg);
-                                let s_new: i8 = if rng.f64() < p_up { 1 } else { -1 };
+                                let s_new = crate::kernel::draw(f, beta, rng);
                                 st.bits[i] = s_new;
                                 updated += 1;
                                 if let Some(s) = score.as_deref_mut() {
-                                    // log p(s') = log sigma(2 beta f s') ;
-                                    // d/dh_i = 2 beta s' sigma(-2 beta f s')
-                                    let sp = s_new as f64;
-                                    s[p_h0 + i] += 2.0 * beta * sp * sigma(-arg * sp);
+                                    s[p_h0 + i] += crate::kernel::score_dh(f, beta, s_new);
                                 }
                             }
                         }
