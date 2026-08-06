@@ -238,31 +238,51 @@ own noise floor.
 This is the differentiator. It ships before any new surface, because everything we will later claim
 depends on it.
 
-**1.1 `Certificate`, returned from every `sample()`.** Never optional, never a separate call.
+**1.1 `Certificate`.** ✅ **DONE** — `src/certify.rs`.
 
-| Field | What it answers |
+Computed **from samples alone**, never from the sampler's own account of itself — a sampler cannot
+certify itself any more than a witness can corroborate their own testimony, and taking only samples
+means a deliberately broken sampler can be handed to the same function. It is, in the tests.
+
+| Field | How |
 |---|---|
-| `beta_eff` + CI | Did we sample at the temperature we asked for? |
-| `tau_int`, `ess` | How many *independent* samples do we actually have? |
-| `tv_exact` | On enumerable systems, distance from ground truth |
-| `bias_floor` / `burn_in_bias` | Equilibrium bias and burn-in bias, separated |
-| `copy_agreement` | Did sparsified copies agree? (mandatory) |
-| `feasible` | Constraint satisfaction |
-| `kl_bound` | Accumulated compile-pass KL, per Thermalizers Eq. 17 |
-| `noise_floor` | Below this the API refuses to quote a number |
+| `beta_eff` + CI | Pseudolikelihood MLE by **bisection**; CI widened for autocorrelation |
+| `tau_int`, `ess` | Sokal windowing over **energy *and* magnetization**, worst reported |
+| `tv_exact` | Exact enumeration where n ≤ 20 |
+| `noise_floor` | Always beside the distance |
+| `findings` | Empty is the only thing that means passed |
 
-**Accept:** `verify` on a known-good sampler reports TV under the floor; a *deliberately broken*
-sampler (wrong β, too-short burn-in, correlated draws) is caught by the certificate in each case.
-A certificate that cannot fail is not a certificate.
+**Accepted — a certificate that cannot fail is not a certificate.** Deliberately broken samplers are
+caught in each mode: one running at β = 1.4 while claiming 0.6 (`beta_eff` recovers 1.4), an
+unburned 24×24 lattice still coarsening out domains (τ = 20 against τ = 0.8 burned in), critical
+slowing on a 12×12 lattice at β ≈ β_c, and uniform noise, which fits β ≈ 0 as it should.
 
-**1.2 The oracle set**, all behind the same `Sampler` trait: exact enumeration, tree-decomposition
-exact, planar exact, steepest descent, and a literal random-noise floor. Plus planted-instance
-generators (Wishart, 3R3X XORSAT, frustrated loops) and physics oracles: Onsager magnetisation, the
-SK transition, and 3D Edwards–Anderson against OPUSLab's published result files.
-*Why:* build the oracle before the thing it judges. This is the artifact nobody in the world
-publishes and it is the spine of every claim we make.
-**Accept:** each oracle agrees with its published reference within a stated tolerance, and the
-random-noise oracle *fails* every quality test — proving the tests discriminate.
+*Five findings from building it, each from a test that failed for a real reason:*
+
+1. **Newton diverged**; uniform noise pinned at the clamp instead of reporting β ≈ 0. Far from the
+   optimum the logistic saturates and the second derivative underflows. The log-likelihood is
+   concave, so its derivative is monotone and **bisection is exact** — the robust method was also
+   the correct one.
+2. **`beta_eff` is a *local* statistic and cannot see burn-in.** A chain trapped in a metastable
+   configuration still has locally correct conditionals. That needs a separate Geweke-style
+   comparison of early against late draws.
+3. **Energy autocorrelation misses frozen configurations.** An ordered lattice sits in one basin
+   while its energy jitters quickly around a fixed value, so an energy trace reports fast mixing for
+   a chain that has not moved. Magnetization sees exactly what energy misses; both are measured.
+4. **Two break-mode tests asserted on systems that do not break.** A 12-node 1D ring has no ordered
+   phase, so it equilibrates fast at every temperature — certifying it clean was correct behaviour,
+   not a missed detection. Replaced with 2D lattices below and at criticality, chosen from measured
+   τ rather than assumed.
+5. **An `ess < 30` threshold let a genuinely undermixed run through** — τ = 43, ess = 35 out of
+   3,000 draws. Thresholds are now round numbers chosen against measured chains rather than picked
+   to make the suite pass.
+
+`examples/certify_probe.rs` prints the table those decisions were made from.
+
+**1.2 The oracle set.** ◐ **PARTIAL.** Exact enumeration and the random-noise oracle are in and
+exercised. Still to come: tree-decomposition and planar exact solvers, steepest descent, planted
+instances (Wishart, 3R3X XORSAT, frustrated loops), and the physics oracles beyond Onsager — the SK
+transition and 3D Edwards–Anderson against OPUSLab's published files.
 
 ### Phase 2 — Backends and the honest benchmark
 
