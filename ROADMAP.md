@@ -370,10 +370,31 @@ What found it was making failure loud: `createComputePipelineAsync` plus `getCom
 the workbench now always checks. Two tests pin the language rules, since compiling WGSL in the test
 suite would mean taking a dependency.
 
-**On throughput, the GPU currently loses** — about 1.5e7 node updates/s against the CPU's 8.2e7 on a
-1,024-node lattice, because two dispatches per sweep carry a fixed cost that dominates at that size.
-That is reported on the page and is **not** quoted as a benchmark anywhere. The crossover needs a
-much larger model, and finding where it lies is 2.2's job.
+**The crossover, measured** across a size sweep on one machine, in-browser:
+
+| nodes | CPU upd/s | GPU upd/s | speedup | cpu E/n | gpu E/n |
+|---|---|---|---|---|---|
+| 256 | 1.97e7 | 3.03e6 | 0.15× | −1.484 | −0.969 |
+| 1,024 | 3.20e7 | 1.77e7 | 0.55× | −1.453 | −1.258 |
+| **4,096** | 3.20e7 | 6.50e7 | **2.03×** | −1.309 | −1.418 |
+| 16,384 | 1.92e7 | 2.09e8 | 10.9× | −1.286 | −1.331 |
+| 65,536 | 1.85e7 | 6.14e8 | 33× | −1.284 | −1.285 |
+| **160,000** | 1.90e7 | **1.23e9** | **65×** | −1.254 | −1.255 |
+| 360,000 | 1.91e7 | 1.16e9 | 61× | −1.193 | −1.191 |
+| 810,000 | 1.98e7 | 1.03e9 | 52× | −1.135 | −1.138 |
+
+The GPU **loses below about 4,000 nodes**, where two dispatches per sweep are fixed cost against
+too little work. It peaks near 65× at 160k and then declines as it goes memory-bound.
+
+The right-hand columns matter more than the speedup: energy per node agrees between backends to
+three decimals at every size above the crossover, so the distributional agreement holds across the
+sweep rather than at one point.
+
+**Calibrate the headline before quoting it.** The peak is 1.23e9 node updates/s, which is
+**1.2 flips/ns** — an order of magnitude *below* the ~60 flips/ns baked-in FPGA prior art
+(arXiv:2303.10728) and two below the 185 flips/ns at 9.168 W Alveo figure. What this is, is an open
+sampler that runs at that speed **in a browser tab with no install**, which is a different claim and
+the only one we should make.
 
 **2.2 The benchmark, reported the way nobody reports it.** Port THRML notebook 02's Pegasus
 flips/ns benchmark exactly, and publish **flips/ns, joules/flip, and joules per *independent*

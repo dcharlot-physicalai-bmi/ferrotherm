@@ -813,6 +813,34 @@ function verify() {
     + "\n\n" + verdict;
 }
 
+// A hook for the benchmark driver. Building a lattice, running both backends and reporting the
+// numbers is the same code the panel above uses; exposing it keeps the measurement honest by
+// removing any chance the benchmark measures a different implementation than the page does.
+window.__bench = async function (l, sweeps) {
+  $("src").value = JSON.stringify({ graph: { builtin: "lattice2d", l, j: 1.0 }, beta: 0.44, seed: 1 });
+  apply();
+  if (!sim) throw new Error("model failed to build at l=" + l);
+  const n = W.ft_len(sim);
+  const start = i8view(W.ft_spins(sim), n).slice();
+
+  const g = await gpuSweep(sweeps);
+
+  new Int8Array(mem.buffer, W.ft_spins(sim), n).set(start);
+  const t0 = performance.now();
+  W.ft_sweep(sim, sweeps);
+  const cpuMs = performance.now() - t0;
+  const cpuE = W.ft_energy(sim) / n;
+
+  const gs = new Int8Array(n);
+  for (let i = 0; i < n; i++) gs[i] = g.state[i] > 0 ? 1 : -1;
+  new Int8Array(mem.buffer, W.ft_spins(sim), n).set(gs);
+  const gpuE = W.ft_energy(sim) / n;
+
+  const updates = n * sweeps;
+  return { n, sweeps, cpuMs, gpuMs: g.ms, cpuE, gpuE,
+           cpuRate: updates / cpuMs * 1000, gpuRate: updates / g.ms * 1000 };
+};
+
 boot();
 </script>
 </body>
