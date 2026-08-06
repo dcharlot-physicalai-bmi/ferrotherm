@@ -1,0 +1,15 @@
+# This file is machine-generated - editing it directly is not advised
+
+julia_version = "1.12.6"
+manifest_format = "2.0"
+project_hash = "ec59da105acadaa0f67fa7d9f84f8847c74bb99f"
+
+[[deps.Ferrotherm]]
+deps = ["Libdl"]
+path = "."
+uuid = "3f2a7c14-8d6b-4e39-9a5c-1b7e0d84f6a2"
+version = "0.1.0"
+
+[[deps.Libdl]]
+uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+version = "1.11.0"
