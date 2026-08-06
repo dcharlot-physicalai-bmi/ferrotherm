@@ -23,6 +23,17 @@
 //! effective temperature and the distance from exact. A backend that samples the wrong distribution
 //! cannot hide from [`crate::certify`], and bit-comparison would have told us nothing anyway.
 //!
+//! # Two WGSL rules that fail silently
+//!
+//! Both of these were shipped here and both produced *nothing*: an invalid shader module makes an
+//! invalid pipeline, and an invalid pipeline's dispatches are a no-op. The sweep appeared to run and
+//! changed no state, which reads as a sampling bug rather than a compile error. Neither is caught by
+//! any test in this crate, because compiling WGSL would mean taking a dependency; they are caught by
+//! the browser reporting `getCompilationInfo`, which the workbench now always checks.
+//!
+//! - **`class` is a reserved keyword.** The colour-class binding is named `cls`.
+//! - **Mixing `*` and `^` requires parentheses.** WGSL declines to guess a precedence, where C would.
+//!
 //! Determinism still holds *within* the GPU path: same seed and same dispatch order reproduce a run
 //! exactly, because the hash is a pure function of `(seed, node, step)` rather than of arrival
 //! order.
@@ -82,28 +93,32 @@ pub fn sweep_shader() -> String {
 // Generated. One invocation per node of the active colour class.
 // Nodes sharing a colour share no edges, so this is race-free by construction, not by locking.
 
+// vec4 members, not eight scalars. A struct of scalars has 4-byte alignment, and the uniform
+// address space requires 16. That mismatch does not fail loudly: the pipeline is simply invalid and
+// every dispatch becomes a silent no-op, so the shader appears to run and changes nothing. Vectors
+// carry 16-byte alignment by construction, which makes the layout correct rather than merely
+// accepted.
 struct Params {{
-  n: u32,
-  k: u32,
-  class_len: u32,
-  step: u32,
-  beta: f32,
-  _pad0: f32,
-  _pad1: f32,
-  _pad2: f32,
+  dims: vec4<u32>,   // n, k, class_len, step
+  ctl:  vec4<f32>,   // beta, unused, unused, unused
 }};
 
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var<storage, read>       nbr:   array<u32>;
 @group(0) @binding(2) var<storage, read>       w:     array<f32>;
 @group(0) @binding(3) var<storage, read>       h:     array<f32>;
-@group(0) @binding(4) var<storage, read>       class: array<u32>;
+// `class` is a RESERVED KEYWORD in WGSL, so this is `cls`.
+@group(0) @binding(4) var<storage, read>       cls:   array<u32>;
 @group(0) @binding(5) var<storage, read_write> spin:  array<i32>;
+// The local field each lane computed. One extra store per node, and it means the shader being
+// inspected is the shader that runs rather than a debug copy that might differ.
+@group(0) @binding(6) var<storage, read_write> dbg:   array<f32>;
 
 // Counter-based RNG. A pure function of (seed, node, step), so a lane needs no state and the run
 // reproduces regardless of the order lanes happen to execute in.
 fn hash(a0: u32, b0: u32, c0: u32) -> u32 {{
-  var x: u32 = a0 * 0x9E3779B9u ^ b0 * 0x85EBCA6Bu ^ c0 * 0xC2B2AE35u;
+  // WGSL requires parentheses when mixing * and ^; it will not guess a precedence.
+  var x: u32 = (a0 * 0x9E3779B9u) ^ (b0 * 0x85EBCA6Bu) ^ (c0 * 0xC2B2AE35u);
   x = x ^ (x >> 16u);
   x = x * 0x7FEB352Du;
   x = x ^ (x >> 15u);
@@ -120,20 +135,22 @@ fn unit(a0: u32, b0: u32, c0: u32) -> f32 {{
 @compute @workgroup_size({wg})
 fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {{
   let t = gid.x;
-  if (t >= P.class_len) {{ return; }}
-  let i = class[t];
+  if (t >= P.dims.z) {{ return; }}
+  let i = cls[t];
 
   // local field: sum_j J_ij s_j + h_i. Padded slots carry weight 0.0 and contribute nothing.
   var f: f32 = h[i];
-  let base = i * P.k;
-  for (var s: u32 = 0u; s < P.k; s = s + 1u) {{
+  let base = i * P.dims.y;
+  for (var s: u32 = 0u; s < P.dims.y; s = s + 1u) {{
     let idx = base + s;
     f = f + w[idx] * f32(spin[nbr[idx]]);
   }}
 
+  dbg[i] = f;
+
   // the one update: P(s_i = +1) = sigma(2 beta f)
-  let p = 1.0 / (1.0 + exp(-2.0 * P.beta * f));
-  if (unit(P.step, i, 0x5BF03635u) < p) {{
+  let p = 1.0 / (1.0 + exp(-2.0 * P.ctl.x * f));
+  if (unit(P.dims.w, i, 0x5BF03635u) < p) {{
     spin[i] = 1;
   }} else {{
     spin[i] = -1;
@@ -154,7 +171,7 @@ mod tests {
         // is that the expression is pinned here and in `hdl` the same way.
         let src = sweep_shader();
         assert!(
-            src.contains("1.0 / (1.0 + exp(-2.0 * P.beta * f))"),
+            src.contains("1.0 / (1.0 + exp(-2.0 * P.ctl.x * f))"),
             "the sigmoid must be sigma(2*beta*f); anything else samples a different temperature"
         );
         assert!(src.contains("spin[i] = 1;") && src.contains("spin[i] = -1;"), "states are -1/+1");
@@ -165,6 +182,7 @@ mod tests {
         let src = sweep_shader();
         assert_eq!(src.matches('{').count(), src.matches('}').count(), "unbalanced braces");
         for needed in [
+            "vec4<u32>",
             "@compute",
             "@workgroup_size(64)",
             "fn sweep(",
@@ -174,7 +192,7 @@ mod tests {
             assert!(src.contains(needed), "missing {needed}");
         }
         // every binding index used exactly once
-        for b in 0..=5 {
+        for b in 0..=6 {
             assert_eq!(
                 src.matches(&format!("@binding({b})")).count(),
                 1,
@@ -237,6 +255,50 @@ mod tests {
         for t in 0..(m.n as usize * m.k as usize) {
             if d.active[t] == 0 {
                 assert_eq!(m.w[t], 0.0);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod wgsl_language_rules {
+    use super::sweep_shader;
+
+    /// WGSL reserved words that read like ordinary identifiers. Using one produces an invalid
+    /// shader module, and an invalid module's dispatches silently do nothing rather than failing.
+    const RESERVED: [&str; 12] = [
+        "class", "enum", "typedef", "union", "template", "interface", "private", "public",
+        "shared", "namespace", "static", "match",
+    ];
+
+    #[test]
+    fn no_binding_is_named_with_a_reserved_word() {
+        let src = sweep_shader();
+        for line in src.lines().filter(|l| l.contains("@binding")) {
+            let name = line.split_whitespace().last().unwrap_or("").trim_end_matches(':');
+            let name = name.split(':').next().unwrap_or("");
+            for r in RESERVED {
+                assert_ne!(name, r, "binding named with the reserved word `{r}`: {line}");
+            }
+        }
+        // the specific one that shipped
+        assert!(!src.contains(" class:"), "`class` is reserved in WGSL");
+        assert!(src.contains("cls"), "the colour-class binding should be `cls`");
+    }
+
+    #[test]
+    fn bitwise_and_arithmetic_are_parenthesised() {
+        // WGSL refuses to guess a precedence between * and ^, where C is happy to.
+        let src = sweep_shader();
+        for line in src.lines() {
+            if line.contains('^') && line.contains('*') {
+                let body = line.split("//").next().unwrap_or("");
+                if body.contains('^') && body.contains('*') {
+                    assert!(
+                        body.contains(") ^ ("),
+                        "mixing * and ^ needs parentheses: {line}"
+                    );
+                }
             }
         }
     }

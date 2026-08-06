@@ -176,19 +176,19 @@
       </details>
 
       <details>
-        <summary>Run the same sweep on your GPU &mdash; work in progress, currently wrong</summary>
+        <summary>Run the same sweep on your GPU</summary>
         <div class="dbody">
-          <p><b>This backend does not yet agree with the CPU and is here to be measured, not
-          used.</b> On a 32&times;32 lattice at &beta;&nbsp;=&nbsp;0.44 the CPU reaches an energy per
-          node of &minus;1.45 while the GPU returns 0.004, which is what an uncorrelated state looks
-          like. The shader is producing something, and that something is not a Boltzmann sample.
-          Run it and you should see the same disagreement.</p>
           <p>The shader is emitted by the Rust crate and read out of the wasm module, so the
           arithmetic the GPU runs is the arithmetic the test suite pins. Nodes of one colour share
           no edge, so a whole colour class updates in one dispatch.</p>
-          <p>When it is right, the two backends will agree in <em>distribution</em> and not byte for
-          byte: WGSL has no 64-bit float, and every lane draws from its own counter-based stream
-          instead of one sequential one.</p>
+          <p>The check that matters is the first line of the output: the local field each GPU lane
+          computed, against the field this crate computes on the CPU for the same state. On a
+          32&times;32 lattice that agreement is <b>exact</b>. The two final states still differ, and
+          are supposed to &mdash; every lane draws from its own counter-based stream rather than one
+          sequential one, so the backends agree in distribution, not byte for byte.</p>
+          <p><b>On throughput, expect the GPU to lose here.</b> A thousand nodes is far too small:
+          two dispatches per sweep carry a fixed cost that dominates the work. The crossover needs a
+          much larger model, and quoting this figure as a GPU benchmark would be dishonest.</p>
           <button id="gpurun">Run CPU and GPU side by side</button>
           <pre id="gpuout" style="margin-top:10px">not run</pre>
         </div>
@@ -612,13 +612,26 @@ async function gpuSweep(sweeps) {
     const idx = new Uint32Array(mem.buffer, W.ft_gpu_class_ptr(sim, c), len).slice();
     classes.push({ len, buf: mk(idx, GPUBufferUsage.STORAGE) });
   }
+  const bDbg = mk(new Float32Array(n), ST);
   const bParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
   let sw = 0.0; for (let i = 0; i < wts.length; i++) sw += Math.abs(wts[i]);
   gpuDiag = "n=" + n + " k=" + k + " nc=" + nc + " classLens=" + classes.map(c => c.len).join(",") +
             " sum|w|=" + sw.toFixed(1) + " nbrMax=" + Math.max.apply(null, Array.from(nbr.slice(0, 64)));
   const module = device.createShaderModule({ code: wasmStr(W.ft_shader, W.ft_shader_len) });
-  const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "sweep" } });
+  if (module.getCompilationInfo) {
+    const info = await module.getCompilationInfo();
+    const bad = info.messages.filter(m => m.type !== "info");
+    if (bad.length) {
+      throw new Error("shader did not compile:\n" +
+        bad.map(m => "  line " + m.lineNum + ":" + m.linePos + " " + m.type + ": " + m.message).join("\n"));
+    }
+  }
+  // Async, so a layout or validation problem rejects here instead of leaving an invalid pipeline
+  // whose dispatches quietly do nothing. That silence is what hid a uniform-alignment bug.
+  device.addEventListener?.("uncapturederror", e => { gpuDiag += " | GPU ERROR: " + e.error.message; });
+  const pipeline = await device.createComputePipelineAsync({
+    layout: "auto", compute: { module, entryPoint: "sweep" } });
 
   const beta = +$("beta").value / 100;
   const t0 = performance.now();
@@ -637,6 +650,7 @@ async function gpuSweep(sweeps) {
           { binding: 3, resource: { buffer: bH } },
           { binding: 4, resource: { buffer: classes[c].buf } },
           { binding: 5, resource: { buffer: bSpin } },
+          { binding: 6, resource: { buffer: bDbg } },
         ],
       });
       const enc = device.createCommandEncoder();
@@ -649,15 +663,20 @@ async function gpuSweep(sweeps) {
     }
   }
   const readback = device.createBuffer({ size: spins.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const dbgBack = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
   const enc = device.createCommandEncoder();
   enc.copyBufferToBuffer(bSpin, 0, readback, 0, spins.byteLength);
+  enc.copyBufferToBuffer(bDbg, 0, dbgBack, 0, n * 4);
   device.queue.submit([enc.finish()]);
   await readback.mapAsync(GPUMapMode.READ);
   const out = new Int32Array(readback.getMappedRange()).slice();
   readback.unmap();
+  await dbgBack.mapAsync(GPUMapMode.READ);
+  const fields = new Float32Array(dbgBack.getMappedRange()).slice();
+  dbgBack.unmap();
   const ms = performance.now() - t0;
 
-  return { state: out, ms, adapter: adapter.info ? (adapter.info.vendor || "?") : "?" };
+  return { state: out, fields, ms, adapter: adapter.info ? (adapter.info.vendor || "?") : "?" };
 }
 
 $("gpurun").onclick = async () => {
@@ -669,7 +688,25 @@ $("gpurun").onclick = async () => {
     const n = W.ft_len(sim), sweeps = 200;
     const start = i8view(W.ft_spins(sim), n).slice();
 
-    // GPU first, from this exact starting state
+    // FIELD CHECK FIRST. Comparing the local field each lane computed against the field the CPU
+    // computes for the same state is a far sharper instrument than comparing the states that come
+    // out the other end: it isolates the arithmetic from the sampling.
+    const one = await gpuSweep(1);
+    // Only the FIRST colour class can be compared against the starting state. By the time class 1
+    // computes its fields, class 0 has already been resampled -- that is what chromatic Gibbs does,
+    // and comparing class 1 against the original state measures the schedule, not the arithmetic.
+    const c0len = W.ft_gpu_class_len(sim, 0);
+    const c0 = new Uint32Array(mem.buffer, W.ft_gpu_class_ptr(sim, 0), c0len).slice();
+    let worstF = 0, worstAt = -1;
+    for (const i of c0) {
+      const d = Math.abs(W.ft_field(sim, i) - one.fields[i]);   // sim still holds `start`
+      if (d > worstF) { worstF = d; worstAt = i; }
+    }
+    const fieldReport = "field agreement on colour class 0 (" + c0len + " nodes, f32 GPU vs f64 CPU): " +
+      "worst |delta| = " + worstF.toExponential(3) + " at node " + worstAt;
+
+    // restore and run the real comparison
+    new Int8Array(mem.buffer, W.ft_spins(sim), n).set(start);
     const g = await gpuSweep(sweeps);
 
     // then the CPU, from the same start
@@ -689,7 +726,7 @@ $("gpurun").onclick = async () => {
 
     const flips = n * sweeps;
     out.textContent =
-      gpuDiag + "\n\n" +
+      gpuDiag + "\n" + fieldReport + "\n\n" +
       "nodes " + n + ", " + sweeps + " sweeps, " + flips.toLocaleString() + " node updates each\n\n" +
       "            energy/node   magnetization        ms    updates/s\n" +
       "CPU (wasm)  " + (cpuE / n).toFixed(4).padStart(11) + (cpuM).toFixed(4).padStart(16) +

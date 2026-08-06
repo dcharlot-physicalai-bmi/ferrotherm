@@ -451,3 +451,15 @@ mod gpu_tests {
         assert_eq!(ft_set_spins(core::ptr::null_mut(), core::ptr::null(), 0), 0);
     }
 }
+
+/// Local field at node `i`: `sum_j J_ij s_j + h_i`, with beta excluded. NaN on null or out of range.
+///
+/// Exposed so a GPU result can be compared against the field the CPU computes for the same state,
+/// which is a far sharper instrument than comparing the states that come out the other end.
+#[no_mangle]
+pub extern "C" fn ft_field(sim: *const Sim, i: u32) -> f64 {
+    match unsafe { sim.as_ref() } {
+        Some(s) if (i as usize) < s.graph.n => s.graph.field(i as usize, &s.sampler_state),
+        _ => f64::NAN,
+    }
+}

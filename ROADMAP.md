@@ -349,28 +349,31 @@ published files.
 
 ### Phase 2 — Backends and the honest benchmark
 
-**2.1 Chromatic block-Gibbs on WebGPU.** ◐ **IN PROGRESS — the backend is wrong and is labelled so.**
+**2.1 Chromatic block-Gibbs on WebGPU.** ✅ **CORRECT** — `src/wgsl.rs`, dispatched from the
+workbench. Emitted from Rust the way `hdl.rs` emits Verilog, with **no new dependency**; the FFI
+hands the browser the shader text and the padded layout so there is one source of truth.
 
-The shader is emitted from Rust (`src/wgsl.rs`) the way `hdl.rs` emits Verilog, with no new
-dependency, and the FFI hands the browser the shader text and the padded layout so there is one
-source of truth. The workbench dispatches it.
+**Verified on real hardware**: the local field every GPU lane computes, against the field this crate
+computes on the CPU for the same state, agrees **exactly** across all 512 nodes of the first colour
+class. Only the first class can be compared — by the time the second computes its fields the first
+has been resampled, which is what chromatic Gibbs does, so comparing it would measure the schedule
+rather than the arithmetic.
 
-**It does not yet sample correctly.** Run on real hardware, a 32×32 lattice at β = 0.44 gives an
-energy per node of −1.45 on the CPU and **0.004** on the GPU — the signature of an uncorrelated
-state, so the shader is producing something that is not a Boltzmann sample. Magnetization ≈ 0 with
-energy ≈ 0 points at the local field arriving as ≈ 0 in the shader, which implicates the interaction
-buffers or the uniform layout rather than the RNG; that is a hypothesis, not a diagnosis.
+*Getting there took four measurements and the first three of my hypotheses were wrong.*
 
-The workbench panel says all of this on its face rather than presenting a broken backend as a
-working one. Throughput measured in that run (2.4e7 updates/s against the CPU's 8.5e7) is
-meaningless until the result is right, and is not quoted anywhere as a benchmark.
+The shader had **two WGSL compile errors**, and their symptom was nothing at all: `class` is a
+reserved keyword and WGSL refuses to guess a precedence between `*` and `^`. An invalid shader module
+makes an invalid pipeline, and an invalid pipeline's dispatches are a **silent no-op** — the sweep
+appeared to run and changed no state, which reads as a sampling bug. I diagnosed it as an RNG
+problem, then as a buffer problem, then as a uniform-alignment problem, and it was none of those.
+What found it was making failure loud: `createComputePipelineAsync` plus `getCompilationInfo`, which
+the workbench now always checks. Two tests pin the language rules, since compiling WGSL in the test
+suite would mean taking a dependency.
 
-*Original plan:* the padded-interaction + active-mask WGSL kernel behind `Backend::Wgpu`.
-*Why:* open GPU Ising sampling is an empty lane — OpenJij formally dropped GPGPU in 2023 and is
-CPU-only, while every commercial engine is GPU, FPGA or ASIC. There is no open, permissive,
-browser-capable sampler. That is our lane and it is unoccupied.
-**Accept:** bit-reproducible per seed and workgroup count; matches the CPU backend exactly on every
-oracle.
+**On throughput, the GPU currently loses** — about 1.5e7 node updates/s against the CPU's 8.2e7 on a
+1,024-node lattice, because two dispatches per sweep carry a fixed cost that dominates at that size.
+That is reported on the page and is **not** quoted as a benchmark anywhere. The crossover needs a
+much larger model, and finding where it lies is 2.2's job.
 
 **2.2 The benchmark, reported the way nobody reports it.** Port THRML notebook 02's Pegasus
 flips/ns benchmark exactly, and publish **flips/ns, joules/flip, and joules per *independent*
