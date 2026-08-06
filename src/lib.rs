@@ -46,6 +46,7 @@
 
 pub mod rng;
 pub mod graph;
+pub mod encode;
 pub mod kernel;
 pub mod schedule;
 pub mod gibbs;

@@ -131,25 +131,42 @@ is what the fabric is, and nothing else may appear below the lowering passes.
 
 Above the IR, the modelling layer accepts a discrete variable and the compiler **eliminates** it:
 
-| Modelling variable | Encoding | Spins | Penalty needed |
+| Modelling variable | Encoding | Spins | Penalty couplings |
 |---|---|---|---|
-| `Categorical(k)` | one-hot | k | yes, exactly-one |
-| `Categorical(k)` | binary | ⌈log₂k⌉ | no, but couplings densify |
-| `Categorical(k)` | **domain wall** | k−1 | no |
+| `Categorical(k)` | one-hot | k | k(k−1)/2, **quadratic** |
+| `Categorical(k)` | binary | ⌈log₂k⌉ | none, *only if k is a power of two* |
+| `Categorical(k)` | **domain wall** | k−1 | k−2, **linear**, a chain |
 | integer range | categorical over values, or binary expansion | same machinery | per encoding |
 
-Domain-wall encoding (Chancellor 2019) is the interesting one precisely because it needs no penalty
-term and uses one fewer spin than one-hot. The choice of encoding is a compiler decision with
-measurable consequences, which is the whole point of making it a pass rather than a type.
+*Claim corrected while implementing.* This table first said domain-wall encoding needs **no**
+penalty. That is the usual shorthand and it is wrong: it still needs terms to suppress states with
+more than one wall. What it actually does is replace one-hot's all-to-all penalty with a *chain*,
+taking the penalty cost from quadratic to linear in k, and save a spin. That is the honest claim and
+the one worth having.
+
+Binary is the trap: fewest spins, but it only excludes surplus codes for free when k is a power of
+two. Otherwise the leftover codes are invalid states no pairwise penalty removes in general, so
+`add_penalty` reports that it cannot be exact rather than pretending, and `decode` returns `None`
+rather than rounding to a nearest valid guess. Silently rounding is how a constraint violation
+becomes a wrong answer nobody notices.
 
 *Why this framing:* an integer is not a thing the hardware has. Writing `Int` beside `Spin` implies
 a register that does not exist, and the p-int literature proposing such units is three papers with
 no code and no silicon. What is real is that problems have discrete variables and someone must
 choose how to spell them in spins. That someone is the compiler.
 
-**Accept:** a categorical problem compiled with domain-wall encoding uses strictly fewer spins than
-one-hot and needs no penalty term, and both reach the same optimum on a case with a known answer;
-below the lowering passes, `grep` finds no variable type but the spin.
+**Accepted** — `src/encode.rs`. `Encoding::{OneHot, Binary, DomainWall}` with `Slot` placing a
+variable's spins in a graph. Domain-wall uses strictly fewer spins than one-hot for every k in
+2..=32, and its penalty is a chain of exactly k−2 couplings against one-hot's k(k−1)/2. The
+construction is proved by **exhaustive enumeration**, not algebra: for each k the penalty's ground
+states are enumerated over every spin configuration and must be exactly the k valid codewords, each
+decoding to a distinct value. Below the lowering passes there is still no variable but the spin.
+
+*A real bug fell out of that test.* `GraphBuilder::bias` **replaced** where `couple` **sums**.
+Domain-wall at k = 2 puts both boundary terms on its single spin, where they must cancel — instead
+the second erased the first, and the enumeration found one ground state where there should be two.
+Any two passes touching one node hit this, and a user bias plus a penalty bias is the ordinary case.
+`bias` now accumulates; `set_bias` replaces when that is actually wanted.
 
 **0.4 Types that make the footguns unrepresentable.** Distinct `Weight` and `Energy` newtypes; a
 constructor error for a variable repeated within a factor; padded `[n,k]` interaction storage with

@@ -46,7 +46,19 @@ impl GraphBuilder {
         self.edges.push((i as u32, j as u32, jij));
     }
 
+    /// Add bias h_i. Repeated calls on one node **accumulate**, matching `couple`.
+    ///
+    /// This replaced rather than accumulated until the domain-wall encoding caught it: with k = 2
+    /// that encoding puts both of its boundary terms on the single spin, where they must cancel,
+    /// and instead the second silently erased the first. Any two passes touching one node hit the
+    /// same bug -- a user bias plus a penalty bias is the ordinary case -- so the asymmetry with
+    /// `couple`, which has always summed duplicates, was the defect.
     pub fn bias(&mut self, i: usize, h: f64) {
+        self.bias[i] += h;
+    }
+
+    /// Replace node `i`'s bias outright, discarding anything already accumulated.
+    pub fn set_bias(&mut self, i: usize, h: f64) {
         self.bias[i] = h;
     }
 
