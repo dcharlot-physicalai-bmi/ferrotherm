@@ -17,6 +17,8 @@ use crate::ledger::{Ledger, Z1_SPICE};
 
 pub struct Sim {
     graph: Box<Graph>,
+    /// Built on first request; a GPU model is pure derived data and most runs never ask for one.
+    gpu: Option<crate::wgsl::GpuModel>,
     sampler_state: Vec<i8>,
     beta: f64,
     seed: u64,
@@ -29,7 +31,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default() }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None }))
     }
 }
 
@@ -286,5 +288,166 @@ mod builder_tests {
         assert_eq!(e, -3.0, "frustrated 5-cycle optimum");
         assert_eq!(ft_energy(sim), -3.0, "sim must hold the best state");
         ft_free(sim);
+    }
+}
+
+// ---- the GPU path ------------------------------------------------------------------------------
+//
+// A browser needs three things to run the sweep on a GPU: the shader, the padded interaction
+// rectangle, and the colour classes. All three come from here rather than being rebuilt in
+// JavaScript, so there is one source of truth and the tested Rust layout is the one that ships.
+
+use crate::wgsl::{sweep_shader, GpuModel};
+
+fn ensure_gpu(s: &mut Sim) -> &GpuModel {
+    if s.gpu.is_none() {
+        s.gpu = Some(GpuModel::from_graph(&s.graph));
+    }
+    s.gpu.as_ref().unwrap()
+}
+
+/// Row width of the padded interaction rectangle, or 0 on null.
+#[no_mangle]
+pub extern "C" fn ft_gpu_k(sim: *mut Sim) -> u32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).k,
+        None => 0,
+    }
+}
+
+/// `n * k` neighbour indices.
+#[no_mangle]
+pub extern "C" fn ft_gpu_nbr(sim: *mut Sim) -> *const u32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).nbr.as_ptr(),
+        None => core::ptr::null(),
+    }
+}
+
+/// `n * k` couplings as f32, the width a GPU actually has.
+#[no_mangle]
+pub extern "C" fn ft_gpu_w(sim: *mut Sim) -> *const f32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).w.as_ptr(),
+        None => core::ptr::null(),
+    }
+}
+
+/// `n` biases as f32.
+#[no_mangle]
+pub extern "C" fn ft_gpu_h(sim: *mut Sim) -> *const f32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).h.as_ptr(),
+        None => core::ptr::null(),
+    }
+}
+
+/// Number of colour classes. Nodes within one class share no edge and update together.
+#[no_mangle]
+pub extern "C" fn ft_gpu_classes(sim: *mut Sim) -> u32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).classes.len() as u32,
+        None => 0,
+    }
+}
+
+/// Length of colour class `c`.
+#[no_mangle]
+pub extern "C" fn ft_gpu_class_len(sim: *mut Sim, c: u32) -> u32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(0, |v| v.len() as u32),
+        None => 0,
+    }
+}
+
+/// Node indices of colour class `c`.
+#[no_mangle]
+pub extern "C" fn ft_gpu_class_ptr(sim: *mut Sim, c: u32) -> *const u32 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(core::ptr::null(), |v| v.as_ptr()),
+        None => core::ptr::null(),
+    }
+}
+
+/// Overwrite the simulation's state, so a GPU result can be read back into it and then scored,
+/// certified or annealed by exactly the same code that handles a CPU result.
+#[no_mangle]
+pub extern "C" fn ft_set_spins(sim: *mut Sim, ptr: *const i8, len: u32) -> u32 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+    if ptr.is_null() || len as usize != s.sampler_state.len() {
+        return 0;
+    }
+    let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+    if src.iter().any(|&v| v != 1 && v != -1) {
+        return 0; // states are -1/+1; refusing beats silently sampling nonsense
+    }
+    s.sampler_state.copy_from_slice(src);
+    1
+}
+
+/// Pointer to the WGSL sweep shader, NUL-free. Pair with [`ft_shader_len`].
+///
+/// The browser takes the shader from here rather than carrying its own copy, so the emitted
+/// arithmetic and the tested arithmetic cannot drift apart.
+#[no_mangle]
+pub extern "C" fn ft_shader() -> *const u8 {
+    shader_bytes().as_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn ft_shader_len() -> u32 {
+    shader_bytes().len() as u32
+}
+
+fn shader_bytes() -> &'static [u8] {
+    use std::sync::OnceLock;
+    static SRC: OnceLock<String> = OnceLock::new();
+    SRC.get_or_init(sweep_shader).as_bytes()
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::*;
+
+    #[test]
+    fn the_gpu_view_matches_the_graph() {
+        let sim = ft_ising2d_new(8, 1.0, 0.44, 1);
+        assert_eq!(ft_gpu_k(sim), 4, "a square lattice has degree 4");
+        assert_eq!(ft_gpu_classes(sim), 2, "a bipartite lattice has two colours");
+        let total: u32 = (0..ft_gpu_classes(sim)).map(|c| ft_gpu_class_len(sim, c)).sum();
+        assert_eq!(total, ft_len(sim), "every node belongs to exactly one class");
+        assert!(!ft_gpu_nbr(sim).is_null() && !ft_gpu_w(sim).is_null());
+        ft_free(sim);
+    }
+
+    #[test]
+    fn the_shader_crosses_the_boundary_intact() {
+        let len = ft_shader_len() as usize;
+        let src = unsafe { core::slice::from_raw_parts(ft_shader(), len) };
+        let s = core::str::from_utf8(src).expect("the shader must be valid UTF-8");
+        assert!(s.contains("@compute"), "not a compute shader");
+        assert!(s.contains("1.0 / (1.0 + exp(-2.0 * P.beta * f))"), "the update must survive");
+    }
+
+    #[test]
+    fn a_state_can_be_read_back_in() {
+        let sim = ft_ising2d_new(4, 1.0, 1.0, 1);
+        let n = ft_len(sim) as usize;
+        let up = vec![1i8; n];
+        assert_eq!(ft_set_spins(sim, up.as_ptr(), n as u32), 1);
+        assert_eq!(ft_energy(sim), -2.0 * n as f64, "all aligned on a degree-4 lattice");
+        // and malformed input is refused rather than absorbed
+        let bad = vec![0i8; n];
+        assert_eq!(ft_set_spins(sim, bad.as_ptr(), n as u32), 0);
+        assert_eq!(ft_set_spins(sim, up.as_ptr(), 3), 0, "wrong length");
+        ft_free(sim);
+    }
+
+    #[test]
+    fn null_handles_stay_inert() {
+        assert_eq!(ft_gpu_k(core::ptr::null_mut()), 0);
+        assert_eq!(ft_gpu_classes(core::ptr::null_mut()), 0);
+        assert!(ft_gpu_nbr(core::ptr::null_mut()).is_null());
+        assert_eq!(ft_set_spins(core::ptr::null_mut(), core::ptr::null(), 0), 0);
     }
 }

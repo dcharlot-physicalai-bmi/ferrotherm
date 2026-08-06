@@ -349,8 +349,23 @@ published files.
 
 ### Phase 2 — Backends and the honest benchmark
 
-**2.1 Chromatic block-Gibbs on WebGPU.** The padded-interaction + active-mask WGSL kernel behind
-`Backend::Wgpu`.
+**2.1 Chromatic block-Gibbs on WebGPU.** ◐ **IN PROGRESS — the backend is wrong and is labelled so.**
+
+The shader is emitted from Rust (`src/wgsl.rs`) the way `hdl.rs` emits Verilog, with no new
+dependency, and the FFI hands the browser the shader text and the padded layout so there is one
+source of truth. The workbench dispatches it.
+
+**It does not yet sample correctly.** Run on real hardware, a 32×32 lattice at β = 0.44 gives an
+energy per node of −1.45 on the CPU and **0.004** on the GPU — the signature of an uncorrelated
+state, so the shader is producing something that is not a Boltzmann sample. Magnetization ≈ 0 with
+energy ≈ 0 points at the local field arriving as ≈ 0 in the shader, which implicates the interaction
+buffers or the uniform layout rather than the RNG; that is a hypothesis, not a diagnosis.
+
+The workbench panel says all of this on its face rather than presenting a broken backend as a
+working one. Throughput measured in that run (2.4e7 updates/s against the CPU's 8.5e7) is
+meaningless until the result is right, and is not quoted anywhere as a benchmark.
+
+*Original plan:* the padded-interaction + active-mask WGSL kernel behind `Backend::Wgpu`.
 *Why:* open GPU Ising sampling is an empty lane — OpenJij formally dropped GPGPU in 2023 and is
 CPU-only, while every commercial engine is GPU, FPGA or ASIC. There is no open, permissive,
 browser-capable sampler. That is our lane and it is unoccupied.

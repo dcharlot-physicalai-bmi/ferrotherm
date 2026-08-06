@@ -176,6 +176,25 @@
       </details>
 
       <details>
+        <summary>Run the same sweep on your GPU &mdash; work in progress, currently wrong</summary>
+        <div class="dbody">
+          <p><b>This backend does not yet agree with the CPU and is here to be measured, not
+          used.</b> On a 32&times;32 lattice at &beta;&nbsp;=&nbsp;0.44 the CPU reaches an energy per
+          node of &minus;1.45 while the GPU returns 0.004, which is what an uncorrelated state looks
+          like. The shader is producing something, and that something is not a Boltzmann sample.
+          Run it and you should see the same disagreement.</p>
+          <p>The shader is emitted by the Rust crate and read out of the wasm module, so the
+          arithmetic the GPU runs is the arithmetic the test suite pins. Nodes of one colour share
+          no edge, so a whole colour class updates in one dispatch.</p>
+          <p>When it is right, the two backends will agree in <em>distribution</em> and not byte for
+          byte: WGSL has no 64-bit float, and every lane draws from its own counter-based stream
+          instead of one sequential one.</p>
+          <button id="gpurun">Run CPU and GPU side by side</button>
+          <pre id="gpuout" style="margin-top:10px">not run</pre>
+        </div>
+      </details>
+
+      <details>
         <summary>Check the sampler against exact enumeration</summary>
         <div class="dbody">
           <p>For a model small enough to enumerate, every state's Boltzmann weight can be computed
@@ -241,7 +260,7 @@ const PRESETS = {
 })();
 
 // ---- wasm ------------------------------------------------------------------------------------
-let W = null, mem = null, sim = 0, running = false, raf = 0;
+let W = null, mem = null, sim = 0, running = false, raf = 0, gpuDiag = "";
 let spec = null, nodes = 0, layout = null, lattice = 0;
 
 const $ = (id) => document.getElementById(id);
@@ -552,6 +571,139 @@ function exports_() {
     $("ftp").textContent = "could not write .ftp: " + e.message;
   }
 }
+
+// ---- the GPU path ------------------------------------------------------------------------------
+
+function wasmStr(ptrFn, lenFn) {
+  const len = lenFn();
+  const b = new Uint8Array(mem.buffer, ptrFn(), len);
+  return new TextDecoder().decode(b);
+}
+
+/** Run `sweeps` chromatic sweeps on the GPU, starting from the simulation's current state. */
+async function gpuSweep(sweeps) {
+  if (!navigator.gpu) throw new Error("this browser exposes no WebGPU");
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("no WebGPU adapter available");
+  const device = await adapter.requestDevice();
+
+  const n = W.ft_len(sim), k = W.ft_gpu_k(sim), nc = W.ft_gpu_classes(sim);
+  // Copies, not views: the wasm heap can move under us while buffers are being written.
+  const nbr = new Uint32Array(mem.buffer, W.ft_gpu_nbr(sim), n * k).slice();
+  const wts = new Float32Array(mem.buffer, W.ft_gpu_w(sim), n * k).slice();
+  const bias = new Float32Array(mem.buffer, W.ft_gpu_h(sim), n).slice();
+  const spins = new Int32Array(n);
+  { const s = i8view(W.ft_spins(sim), n); for (let i = 0; i < n; i++) spins[i] = s[i]; }
+
+  const mk = (data, usage) => {
+    const b = device.createBuffer({ size: Math.max(4, data.byteLength), usage, mappedAtCreation: true });
+    new data.constructor(b.getMappedRange()).set(data);
+    b.unmap();
+    return b;
+  };
+  const ST = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const bNbr = mk(nbr, GPUBufferUsage.STORAGE);
+  const bW = mk(wts, GPUBufferUsage.STORAGE);
+  const bH = mk(bias, GPUBufferUsage.STORAGE);
+  const bSpin = mk(spins, ST);
+  const classes = [];
+  for (let c = 0; c < nc; c++) {
+    const len = W.ft_gpu_class_len(sim, c);
+    const idx = new Uint32Array(mem.buffer, W.ft_gpu_class_ptr(sim, c), len).slice();
+    classes.push({ len, buf: mk(idx, GPUBufferUsage.STORAGE) });
+  }
+  const bParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+  let sw = 0.0; for (let i = 0; i < wts.length; i++) sw += Math.abs(wts[i]);
+  gpuDiag = "n=" + n + " k=" + k + " nc=" + nc + " classLens=" + classes.map(c => c.len).join(",") +
+            " sum|w|=" + sw.toFixed(1) + " nbrMax=" + Math.max.apply(null, Array.from(nbr.slice(0, 64)));
+  const module = device.createShaderModule({ code: wasmStr(W.ft_shader, W.ft_shader_len) });
+  const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "sweep" } });
+
+  const beta = +$("beta").value / 100;
+  const t0 = performance.now();
+  for (let s = 0; s < sweeps; s++) {
+    for (let c = 0; c < nc; c++) {
+      const p = new ArrayBuffer(32);
+      new Uint32Array(p, 0, 4).set([n, k, classes[c].len, (s * nc + c + 1) >>> 0]);
+      new Float32Array(p, 16, 1).set([beta]);
+      device.queue.writeBuffer(bParams, 0, p);
+      const bind = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: bParams } },
+          { binding: 1, resource: { buffer: bNbr } },
+          { binding: 2, resource: { buffer: bW } },
+          { binding: 3, resource: { buffer: bH } },
+          { binding: 4, resource: { buffer: classes[c].buf } },
+          { binding: 5, resource: { buffer: bSpin } },
+        ],
+      });
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(Math.ceil(classes[c].len / 64));
+      pass.end();
+      device.queue.submit([enc.finish()]);
+    }
+  }
+  const readback = device.createBuffer({ size: spins.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(bSpin, 0, readback, 0, spins.byteLength);
+  device.queue.submit([enc.finish()]);
+  await readback.mapAsync(GPUMapMode.READ);
+  const out = new Int32Array(readback.getMappedRange()).slice();
+  readback.unmap();
+  const ms = performance.now() - t0;
+
+  return { state: out, ms, adapter: adapter.info ? (adapter.info.vendor || "?") : "?" };
+}
+
+$("gpurun").onclick = async () => {
+  const out = $("gpuout");
+  if (!sim) { out.textContent = "build a model first"; return; }
+  out.textContent = "running…";
+  stop();
+  try {
+    const n = W.ft_len(sim), sweeps = 200;
+    const start = i8view(W.ft_spins(sim), n).slice();
+
+    // GPU first, from this exact starting state
+    const g = await gpuSweep(sweeps);
+
+    // then the CPU, from the same start
+    const buf = W.ft_spins(sim);
+    new Int8Array(mem.buffer, buf, n).set(start);
+    const t0 = performance.now();
+    W.ft_sweep(sim, sweeps);
+    const cpuMs = performance.now() - t0;
+    const cpuE = W.ft_energy(sim), cpuM = W.ft_magnetization(sim);
+
+    // score the GPU state with the same code that scored the CPU one
+    const gs = new Int8Array(n);
+    for (let i = 0; i < n; i++) gs[i] = g.state[i] > 0 ? 1 : -1;
+    const scratch = W.ft_spins(sim);
+    new Int8Array(mem.buffer, scratch, n).set(gs);
+    const gpuE = W.ft_energy(sim), gpuM = W.ft_magnetization(sim);
+
+    const flips = n * sweeps;
+    out.textContent =
+      gpuDiag + "\n\n" +
+      "nodes " + n + ", " + sweeps + " sweeps, " + flips.toLocaleString() + " node updates each\n\n" +
+      "            energy/node   magnetization        ms    updates/s\n" +
+      "CPU (wasm)  " + (cpuE / n).toFixed(4).padStart(11) + (cpuM).toFixed(4).padStart(16) +
+        cpuMs.toFixed(1).padStart(10) + (flips / cpuMs * 1000).toExponential(2).padStart(13) + "\n" +
+      "GPU (wgsl)  " + (gpuE / n).toFixed(4).padStart(11) + (gpuM).toFixed(4).padStart(16) +
+        g.ms.toFixed(1).padStart(10) + (flips / g.ms * 1000).toExponential(2).padStart(13) + "\n\n" +
+      "The two states differ. They are supposed to: different random streams and\n" +
+      "no f64 on the GPU. What must agree is the DISTRIBUTION, which is what the\n" +
+      "energy per node and the magnetization above are reporting.";
+  } catch (e) {
+    out.textContent = "GPU path unavailable: " + (e.message || e) +
+      "\n\nThe CPU path is unaffected. WebGPU needs a recent browser and, on some\nsystems, a flag.";
+  }
+};
 
 // ---- verification --------------------------------------------------------------------------------
 
