@@ -290,7 +290,7 @@ number we would rather quote.
 ## 6. Sequence
 
 ```
-v0.6  Phase 0        one IR, β freed, VarType, .ftp spec            breaking
+v0.6  Phase 0        one IR, β freed, encoding passes, .ftp spec      breaking
 v0.7  Phase 1        Certificate + oracle set + planted instances
 v0.8  Phase 2.1/2.2  WebGPU backend + the honest benchmark
 v0.9  Phase 3        sparsifier, DSATUR, 2D adaptive PT, crossover
