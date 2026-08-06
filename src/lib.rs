@@ -47,6 +47,7 @@
 pub mod rng;
 pub mod ftp;
 pub mod graph;
+pub mod categorical;
 pub mod certify;
 pub mod dense;
 pub mod encode;
