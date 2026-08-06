@@ -197,16 +197,41 @@ Ceremony that looks like safety is worse than no ceremony, because it is trusted
 **Accepted:** each documented incumbent footgun has a test proving it is a constructor `Err` or is
 inert by construction. 79 lib tests pass.
 
-**0.5 The `.ftp` program format.** Author the spec ourselves: spins, factors including
-higher-order, the block coloring, the schedule with β and penalty ramps, the observer set, the
-device topology target, the encoding provenance for each group of spins, and the price table used
-for the ledger.
-*Why:* the survey's sharpest finding is that `(J, h, coloring, schedule)` is the field's de facto
-interchange and **nobody has specified it** — it lives as scattered `.mat` files. That is a
-standard-shaped hole. Being the format is durable; conforming to someone else's two-year-old one is
-a bet on their survival.
-**Accept:** spec published; round-trips every model in the test suite byte-exactly; a `.ftp` written
-by the browser runs unchanged on the CPU, and its hash matches.
+**0.5 The `.ftp` program format.** ✅ **DONE** — `src/ftp.rs`, spec in the module docs.
+
+Line-oriented UTF-8 text, one directive per line, `#` comments. Directives: `ftp`, `name`, `spins`,
+`bias`, `factor` (any arity), `color`, `encode` (encoding provenance), `stage` (β, sweeps, and both
+penalty strengths), `observe`, `target`, `price`. Text rather than binary because the field this is
+meant to serve currently exchanges MATLAB files nobody outside the sending lab can read; something
+you can `grep`, `diff` and read in a terminal is worth more here than saved bytes.
+
+It describes a **program**, not a problem — which spins update together, at what temperatures, with
+which penalties ramping, what to observe, what an operation costs. That difference is the whole
+reason it exists rather than an adoption of somebody's instance format.
+
+**Accepted:**
+- Round-trips every model in the test suite **byte-exactly**, and floats survive **bit-for-bit**
+  (verified on 0.1, 1/3, 1e-300, 1e300, π and a denormal-adjacent value via `to_bits()`).
+- The worked example in the module documentation is parsed by a test *and annealed*, confirming it
+  is the frustrated 5-ring it claims to be at energy −3. Documentation that does not parse is a bug
+  report waiting to happen.
+- Nine malformed inputs produce errors carrying a line number and a fix.
+- **A `.ftp` written by the browser runs unchanged on the CPU.** `docs/ide.html` gained an
+  independent JavaScript writer; `tests/fixtures/browser-lattice32.ftp` is its real output,
+  captured from a browser run and committed verbatim. Four tests confirm the CPU parses it, agrees
+  with `ising::lattice2d(32, 1.0)` on 200 random energies and on the −2048 ground state, round-trips
+  it through the Rust writer with a stable digest, and anneals it. A format with one implementation
+  is a data structure, not a format.
+
+---
+
+### Phase 0 is complete.
+
+One kernel, β freed into a schedule, encodings as compiler passes, the footguns unrepresentable, and
+a program format with two independent implementations. Three real bugs surfaced on the way, each
+found by a test written to check a claim rather than to pass: `bias` silently replacing where
+`couple` sums, a build counter measuring the wrong scope, and a TV threshold set tighter than its
+own noise floor.
 
 ### Phase 1 — The certificate and the oracles
 
@@ -369,7 +394,7 @@ number we would rather quote.
 ## 6. Sequence
 
 ```
-v0.6  Phase 0        one kernel ✅, β freed ✅, encoding passes, .ftp   breaking
+v0.6  Phase 0 ✅     one kernel, β freed, encoding passes, .ftp format  breaking
 v0.7  Phase 1        Certificate + oracle set + planted instances
 v0.8  Phase 2.1/2.2  WebGPU backend + the honest benchmark
 v0.9  Phase 3        sparsifier, DSATUR, 2D adaptive PT, crossover

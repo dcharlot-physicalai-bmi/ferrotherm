@@ -45,6 +45,7 @@
 //! linear-algebra module ([`tla`]); the compiler ([`compile`]) targets device topologies.
 
 pub mod rng;
+pub mod ftp;
 pub mod graph;
 pub mod dense;
 pub mod encode;

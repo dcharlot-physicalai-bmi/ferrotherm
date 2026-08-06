@@ -166,6 +166,9 @@
           give the same answer for the same seed.</p>
           <pre id="curl"></pre>
           <pre id="mcpcall"></pre>
+          <p>Or as a <code>.ftp</code> program, which carries the schedule and the coloring as well
+          as the model. This is written here in the browser and parses unchanged on the CPU.</p>
+          <pre id="ftp"></pre>
           <p>Install with <code>cargo install ferrotherm-serve</code>, then run
           <code>ferrotherm-serve</code> for the HTTP endpoint or point an MCP client at
           <code>ferrotherm-mcp</code>.</p>
@@ -485,6 +488,44 @@ $("seed").onchange = apply;
 
 // ---- the bridge to the agentic tier -------------------------------------------------------------
 
+/** Expand whatever is in the editor into explicit couplings and biases. */
+function explicit(g) {
+  const cs = [], bs = [];
+  if (g.builtin === "lattice2d") {
+    const l = g.l | 0, j = g.j === undefined ? 1.0 : g.j;
+    for (let y = 0; y < l; y++)
+      for (let x = 0; x < l; x++) {
+        const i = y * l + x;
+        cs.push([i, y * l + ((x + 1) % l), j]);
+        cs.push([((y + 1) % l) * l + x, i, j]);
+      }
+    return { n: l * l, couplings: cs, biases: bs };
+  }
+  if (g.builtin === "ring") {
+    const n = g.n | 0, j = g.j === undefined ? 1.0 : g.j, h = g.h || 0;
+    for (let i = 0; i < n; i++) cs.push([i, (i + 1) % n, j]);
+    if (h) for (let i = 0; i < n; i++) bs.push([i, h]);
+    return { n, couplings: cs, biases: bs };
+  }
+  return { n: g.n | 0, couplings: g.couplings || [], biases: g.biases || [] };
+}
+
+/** Serialise to the .ftp format. Independent of the Rust writer, on purpose: a format with one
+ *  implementation is a data structure, not a format. */
+function toFtp(v, beta, seed) {
+  const g = explicit(v.graph);
+  const out = ["ftp 1"];
+  if (v.graph.builtin) out.push("name " + v.graph.builtin);
+  out.push("spins " + g.n);
+  for (const [i, h] of g.biases) out.push("bias " + i + " " + h);
+  for (const [i, j, w] of g.couplings) out.push("factor " + w + " " + i + " " + j);
+  out.push("stage " + beta + " 200 1 1");
+  out.push("observe energy");
+  out.push("target wasm");
+  out.push("price z1_spice");
+  return out.join("\n") + "\n";
+}
+
 function exports_() {
   if (!spec) return;
   const body = JSON.parse(JSON.stringify(spec));
@@ -498,6 +539,18 @@ function exports_() {
     name: "ferrotherm_sample",
     arguments: body
   }, null, 2);
+  try {
+    const f = toFtp(spec, body.beta, body.seed);
+    const lines = f.split("\n");
+    // a 4,096-spin lattice is 8,192 factors; show the shape, not the whole file
+    $("ftp").textContent = lines.length > 24
+      ? lines.slice(0, 14).join("\n") + "\n... " + (lines.length - 18) + " more lines ...\n"
+        + lines.slice(-4).join("\n")
+      : f;
+    $("ftp").dataset.full = f;
+  } catch (e) {
+    $("ftp").textContent = "could not write .ftp: " + e.message;
+  }
 }
 
 // ---- verification --------------------------------------------------------------------------------
