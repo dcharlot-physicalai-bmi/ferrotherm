@@ -1,0 +1,396 @@
+//! What a fabric can do, declared — and checked before a program reaches it.
+//!
+//! Every open repository in this field is a simulator. Grep `thrml`, `torx`, `thermox`,
+//! `posteriors`, `kaiwu-pytorch-plugin`, `SANTA` or `AOCoptimizer.jl` for
+//! `pcie|usb|/dev|ioctl|fpga|driver|firmware` and you get nothing; the only open stack that drives
+//! real sampling silicon belongs to D-Wave. This module is the seam that fixes that: one trait every
+//! backend implements, from a CPU to a GPU to an FPGA to somebody's cloud annealer.
+//!
+//! # Capabilities are declared, and precision is first-class
+//!
+//! The motivating failure is real and recent. QBoson's coupling weights are int8, that limit is the
+//! binding constraint on their entire platform, it appears nowhere in their documentation, and a
+//! third party had to discover it by running experiments. A model quantised from `f64` to `int8`
+//! still runs; it just answers a different question, and nothing tells you.
+//!
+//! So a [`Fabric`] states its limits up front — size, degree, topology, coupling and field
+//! precision, whether it can hold an external field at all — and [`Fabric::check`] refuses a program
+//! that exceeds them, naming the limit. Where quantisation is wanted rather than refusal,
+//! [`Fabric::requantize`] performs it and **returns the error it introduced**, so the loss is a
+//! number the caller has to look at rather than a silence.
+
+use crate::ftp::Program;
+use crate::ledger::Prices;
+
+/// How a fabric's spins are wired.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Topology {
+    /// Every spin may couple to every other. Rare, and the reason it is rare is cost.
+    AllToAll,
+    /// A fixed maximum degree with no further structure assumed.
+    Degree(usize),
+    /// A named hardware graph whose structure the caller is expected to know.
+    Named(&'static str),
+    /// Arbitrary: a simulator, which is any backend that is not silicon.
+    Unconstrained,
+}
+
+/// What a backend can actually do. Declared by the backend, checked by [`Fabric::check`].
+#[derive(Clone, Debug)]
+pub struct Fabric {
+    pub name: &'static str,
+    pub topology: Topology,
+    /// Maximum spins, or `None` for "whatever fits in memory".
+    pub max_spins: Option<usize>,
+    /// Maximum degree, or `None` if unconstrained.
+    pub max_degree: Option<usize>,
+    /// Bits of coupling precision, or `None` for full `f64`.
+    ///
+    /// State it even when it is generous. An undeclared precision is the defect this whole module
+    /// exists to prevent.
+    pub coupling_bits: Option<u32>,
+    /// Bits of field precision, or `None` for full `f64`.
+    pub field_bits: Option<u32>,
+    /// Whether an external field can be applied at all. Some fabrics cannot hold one.
+    pub supports_field: bool,
+    /// Maximum factor arity. Two means pairwise only, which is most hardware.
+    pub max_arity: usize,
+    /// Energy prices for the ledger.
+    pub prices: Prices,
+}
+
+/// Why a program cannot run on a fabric.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Unsupported {
+    TooManySpins { need: usize, limit: usize },
+    TooHighDegree { node: usize, degree: usize, limit: usize },
+    ArityTooHigh { arity: usize, limit: usize },
+    NoFieldSupport { nodes: usize },
+    /// The program's dynamic range cannot survive the fabric's coupling precision.
+    CouplingPrecision { bits: u32, worst_relative_error: f64 },
+}
+
+impl core::fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Unsupported::TooManySpins { need, limit } => {
+                write!(f, "the program needs {need} spins and this fabric has {limit}")
+            }
+            Unsupported::TooHighDegree { node, degree, limit } => write!(
+                f,
+                "spin {node} has degree {degree} and this fabric allows {limit}; sparsify the \
+                 model or embed it before submitting"
+            ),
+            Unsupported::ArityTooHigh { arity, limit } => write!(
+                f,
+                "a factor of arity {arity} cannot run on a fabric limited to {limit}; lower it to \
+                 pairwise first"
+            ),
+            Unsupported::NoFieldSupport { nodes } => write!(
+                f,
+                "{nodes} spins carry an external field and this fabric cannot apply one"
+            ),
+            Unsupported::CouplingPrecision { bits, worst_relative_error } => write!(
+                f,
+                "this fabric stores couplings in {bits} bits, which would change one of them by \
+                 {:.1}% -- requantize explicitly if that is acceptable, rather than discovering it \
+                 from the answers",
+                worst_relative_error * 100.0
+            ),
+        }
+    }
+}
+
+impl Fabric {
+    /// A simulator: no limits, full precision.
+    pub fn unconstrained(name: &'static str, prices: Prices) -> Fabric {
+        Fabric {
+            name,
+            topology: Topology::Unconstrained,
+            max_spins: None,
+            max_degree: None,
+            coupling_bits: None,
+            field_bits: None,
+            supports_field: true,
+            max_arity: usize::MAX,
+            prices,
+        }
+    }
+
+    /// Can this program run here as written?
+    ///
+    /// Returns every violation rather than the first, because a caller deciding whether to embed a
+    /// model wants the whole picture in one pass.
+    pub fn check(&self, p: &Program) -> Vec<Unsupported> {
+        let mut out = Vec::new();
+
+        if let Some(limit) = self.max_spins {
+            if p.spins > limit {
+                out.push(Unsupported::TooManySpins { need: p.spins, limit });
+            }
+        }
+
+        let mut worst_arity = 0;
+        let mut degree = vec![0usize; p.spins];
+        for f in &p.factors {
+            worst_arity = worst_arity.max(f.arity());
+            if f.arity() == 2 {
+                for v in f.vars() {
+                    if v < p.spins {
+                        degree[v] += 1;
+                    }
+                }
+            }
+        }
+        if worst_arity > self.max_arity {
+            out.push(Unsupported::ArityTooHigh { arity: worst_arity, limit: self.max_arity });
+        }
+
+        let deg_limit = match (&self.topology, self.max_degree) {
+            (Topology::Degree(d), _) => Some(*d),
+            (_, Some(d)) => Some(d),
+            _ => None,
+        };
+        if let Some(limit) = deg_limit {
+            if let Some((node, &d)) = degree.iter().enumerate().max_by_key(|(_, &d)| d) {
+                if d > limit {
+                    out.push(Unsupported::TooHighDegree { node, degree: d, limit });
+                }
+            }
+        }
+
+        if !self.supports_field && !p.bias.is_empty() {
+            out.push(Unsupported::NoFieldSupport { nodes: p.bias.len() });
+        }
+
+        if let Some(bits) = self.coupling_bits {
+            let err = Self::quantization_error(p, bits);
+            // A tenth of a percent is the line: below it the model is the model, above it the
+            // caller is answering a different question and should say so out loud.
+            if err > 1e-3 {
+                out.push(Unsupported::CouplingPrecision { bits, worst_relative_error: err });
+            }
+        }
+
+        out
+    }
+
+    /// Worst relative error that quantising this program's couplings to `bits` would introduce.
+    pub fn quantization_error(p: &Program, bits: u32) -> f64 {
+        let max = p.factors.iter().map(|f| f.weight().abs()).fold(0.0f64, f64::max);
+        if max == 0.0 || bits == 0 {
+            return 0.0;
+        }
+        // signed, so one bit is the sign
+        let levels = ((1u64 << (bits - 1)) - 1) as f64;
+        let step = max / levels;
+        p.factors
+            .iter()
+            .map(|f| {
+                let w = f.weight();
+                if w == 0.0 {
+                    0.0
+                } else {
+                    ((w / step).round() * step - w).abs() / w.abs()
+                }
+            })
+            .fold(0.0f64, f64::max)
+    }
+
+    /// Quantise a program's couplings to this fabric's precision, returning the worst relative
+    /// error introduced.
+    ///
+    /// Explicit by design. A fabric that quantises silently is answering a different question than
+    /// the one it was asked, and the caller is the last to find out.
+    pub fn requantize(&self, p: &mut Program) -> f64 {
+        let Some(bits) = self.coupling_bits else { return 0.0 };
+        let err = Self::quantization_error(p, bits);
+        let max = p.factors.iter().map(|f| f.weight().abs()).fold(0.0f64, f64::max);
+        if max == 0.0 || bits == 0 {
+            return 0.0;
+        }
+        let levels = ((1u64 << (bits - 1)) - 1) as f64;
+        let step = max / levels;
+        for f in &mut p.factors {
+            let vars: Vec<usize> = f.vars().collect();
+            let w = (f.weight() / step).round() * step;
+            *f = crate::factor::Factor::new(&vars, w, p.spins).expect("requantised in place");
+        }
+        err
+    }
+}
+
+/// A backend that can run a program.
+///
+/// The one seam through which every execution passes, so that adding a fabric is an implementation
+/// rather than a fork.
+pub trait Device {
+    /// What this backend can do. Callers check against it before submitting.
+    fn fabric(&self) -> Fabric;
+
+    /// Load a program. Returns every reason it cannot run, empty on success.
+    fn program(&mut self, p: &Program) -> Vec<Unsupported>;
+
+    /// Run a schedule and return the final state.
+    fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String>;
+
+    /// Operations charged so far, for the ledger.
+    fn ledger(&self) -> crate::ledger::Ledger;
+}
+
+/// The reference backend: this crate's own sampler on the local CPU.
+pub struct Cpu {
+    graph: Option<crate::graph::Graph>,
+    state: Vec<i8>,
+    ledger: crate::ledger::Ledger,
+}
+
+impl Default for Cpu {
+    fn default() -> Self {
+        Cpu { graph: None, state: Vec::new(), ledger: crate::ledger::Ledger::default() }
+    }
+}
+
+impl Device for Cpu {
+    fn fabric(&self) -> Fabric {
+        Fabric::unconstrained("cpu", crate::ledger::Z1_SPICE)
+    }
+
+    fn program(&mut self, p: &Program) -> Vec<Unsupported> {
+        let bad = self.fabric().check(p);
+        if bad.is_empty() {
+            match p.to_graph() {
+                Ok(g) => {
+                    self.state = vec![-1; g.n];
+                    self.graph = Some(g);
+                }
+                Err(_) => return vec![Unsupported::ArityTooHigh { arity: 3, limit: 2 }],
+            }
+        }
+        bad
+    }
+
+    fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String> {
+        let g = self.graph.as_ref().ok_or("no program loaded")?;
+        let (best, _) = crate::tempering::anneal_scheduled(g, schedule, seed, Some(&mut self.ledger));
+        self.state = best.clone();
+        Ok(best)
+    }
+
+    fn ledger(&self) -> crate::ledger::Ledger {
+        self.ledger
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Z1_SPICE;
+    use crate::schedule::Schedule;
+
+    fn prog(src: &str) -> Program {
+        Program::from_ftp(src).unwrap()
+    }
+
+    /// A fabric shaped like a real one: sparse, pairwise, int8 couplings, no field.
+    fn constrained() -> Fabric {
+        Fabric {
+            name: "test-fabric",
+            topology: Topology::Degree(4),
+            max_spins: Some(64),
+            max_degree: Some(4),
+            coupling_bits: Some(8),
+            field_bits: Some(8),
+            supports_field: false,
+            max_arity: 2,
+            prices: Z1_SPICE,
+        }
+    }
+
+    #[test]
+    fn a_simulator_accepts_anything() {
+        let p = prog("ftp 1\nspins 5\nfactor 1 0 1 2 3 4\nbias 0 0.5\n");
+        assert!(Fabric::unconstrained("sim", Z1_SPICE).check(&p).is_empty());
+    }
+
+    #[test]
+    fn every_limit_is_reported_and_names_itself() {
+        let mut src = String::from("ftp 1\nspins 100\n");
+        for j in 1..=8 {
+            src.push_str(&format!("factor 1 0 {j}\n")); // degree 8 on node 0
+        }
+        src.push_str("factor 1 10 11 12\n"); // arity 3
+        src.push_str("bias 5 0.5\n"); // a field
+        let bad = constrained().check(&prog(&src));
+
+        assert!(bad.iter().any(|u| matches!(u, Unsupported::TooManySpins { .. })));
+        assert!(bad.iter().any(|u| matches!(u, Unsupported::TooHighDegree { .. })));
+        assert!(bad.iter().any(|u| matches!(u, Unsupported::ArityTooHigh { .. })));
+        assert!(bad.iter().any(|u| matches!(u, Unsupported::NoFieldSupport { .. })));
+        assert_eq!(bad.len(), 4, "every violation at once, not just the first: {bad:?}");
+
+        // and each says what to do about it
+        let text = bad.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(" | ");
+        assert!(text.contains("sparsify"), "the degree error should suggest a fix: {text}");
+        assert!(text.contains("pairwise"), "the arity error should suggest a fix: {text}");
+    }
+
+    #[test]
+    fn int8_precision_is_caught_before_it_changes_the_answer() {
+        // The QBoson case: couplings spanning a wide dynamic range cannot survive 8 bits, and
+        // nothing about running the model would tell you.
+        let p = prog("ftp 1\nspins 3\nfactor 1000 0 1\nfactor 0.5 1 2\n");
+        let bad = constrained().check(&p);
+        let prec = bad.iter().find(|u| matches!(u, Unsupported::CouplingPrecision { .. }));
+        assert!(prec.is_some(), "a 2000:1 range in 8 bits must be refused: {bad:?}");
+        assert!(prec.unwrap().to_string().contains("requantize"));
+    }
+
+    #[test]
+    fn a_narrow_range_survives_int8_and_is_not_refused() {
+        // The check must not fire on models that are fine, or callers will learn to ignore it.
+        let p = prog("ftp 1\nspins 4\nfactor 1 0 1\nfactor -1 1 2\nfactor 1 2 3\n");
+        assert!(!constrained()
+            .check(&p)
+            .iter()
+            .any(|u| matches!(u, Unsupported::CouplingPrecision { .. })));
+    }
+
+    #[test]
+    fn requantizing_reports_the_damage_it_did() {
+        let mut p = prog("ftp 1\nspins 3\nfactor 1000 0 1\nfactor 0.5 1 2\n");
+        let before: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let err = constrained().requantize(&mut p);
+        let after: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        assert!(err > 1e-3, "it should admit a real loss, got {err}");
+        assert_ne!(before, after, "and it should actually have changed the weights");
+        // afterwards the program fits the fabric it was quantised for
+        assert!(!constrained()
+            .check(&p)
+            .iter()
+            .any(|u| matches!(u, Unsupported::CouplingPrecision { .. })));
+    }
+
+    #[test]
+    fn the_cpu_backend_runs_a_program_through_the_trait() {
+        let mut d = Cpu::default();
+        let p = prog("ftp 1\nspins 5\nfactor -1 0 1\nfactor -1 1 2\nfactor -1 2 3\n\
+                      factor -1 3 4\nfactor -1 4 0\n");
+        assert!(d.program(&p).is_empty());
+        let s = d.run(&Schedule::geometric(0.05, 6.0, 60, 40), 1).unwrap();
+        assert_eq!(s.len(), 5);
+        let g = p.to_graph().unwrap();
+        assert_eq!(g.energy(&s), -3.0, "the frustrated 5-cycle optimum, through the Device seam");
+        assert!(d.ledger().samples > 0, "the ledger must be charged");
+    }
+
+    #[test]
+    fn a_backend_that_cannot_run_it_says_so_before_running() {
+        let mut d = Cpu::default();
+        // arity 3 cannot become a graph; the refusal must come from `program`, not from `run`
+        let p = prog("ftp 1\nspins 4\nfactor 1 0 1 2\n");
+        let bad = d.program(&p);
+        assert!(!bad.is_empty(), "a program it cannot lower must be refused up front");
+        assert!(d.run(&Schedule::constant(1.0, 10), 1).is_err());
+    }
+}

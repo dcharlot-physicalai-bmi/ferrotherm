@@ -52,6 +52,7 @@ pub mod certify;
 pub mod dense;
 pub mod encode;
 pub mod exact;
+pub mod fabric;
 pub mod factor;
 pub mod kernel;
 pub mod schedule;
