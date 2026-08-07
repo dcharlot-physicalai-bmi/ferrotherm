@@ -124,7 +124,7 @@ pub fn tools() -> Json {
              not that the problem is unsolvable.",
             vec![
                 ("variables", prop("array", "Each is {\"name\": \"x\", \"values\": 3} for a categorical, or {\"name\": \"t\", \"lo\": 0, \"hi\": 9} for an integer. Values decode back into the variable's own units.")),
-                ("constraints", prop("array", "Each is {\"type\": \"not_equal\"|\"equal\", \"a\": name, \"b\": name}, {\"type\": \"fix\", \"var\": name, \"value\": v}, or {\"type\": \"cardinality\", \"k\": n, \"of\": [{\"var\": name, \"value\": v}, ...]} for exactly-k selection.")),
+                ("constraints", prop("array", "Each is {\"type\": \"not_equal\"|\"equal\", \"a\": name, \"b\": name}, {\"type\": \"fix\", \"var\": name, \"value\": v}, or {\"type\": \"cardinality\"|\"at_most\"|\"at_least\", \"k\": n, \"of\": [{\"var\": name, \"value\": v}, ...]}. Cardinality is exactly k; at_most and at_least are inequalities and cost extra spins, because an inequality needs a slack variable to become an equality the sampler can square.")),
                 ("objective", prop("object", "{\"maximize\": true, \"terms\": [{\"var\": name, \"value\": v, \"weight\": w}]}. A term with \"and_var\"/\"and_value\" rewards two variables taking values together.")),
                 ("tries", prop("integer", "Independent annealing restarts; the best feasible answer wins. Default 16.")),
                 ("penalty", prop("number", "Constraint strength. Omit it: by default it scales to twice the largest objective weight, because a constraint that ties with an objective gets traded away.")),

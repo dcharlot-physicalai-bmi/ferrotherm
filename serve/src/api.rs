@@ -567,6 +567,23 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     let val = c.get("value").and_then(|x| x.as_usize()).unwrap_or(0);
                     m.fix(handles[v], val);
                 }
+                "at_most" | "at_least" => {
+                    let k = c.get("k").and_then(|x| x.as_usize())
+                        .ok_or_else(|| format!("{kind} needs \"k\""))?;
+                    let items = c.get("of").and_then(|x| x.as_arr())
+                        .ok_or_else(|| format!("{kind} needs \"of\""))?;
+                    let mut lits = Vec::new();
+                    for it in items {
+                        let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
+                        let vv = it.get("value").and_then(|x| x.as_usize()).unwrap_or(1);
+                        lits.push(Lit::Is(handles[find(vn)?], vv));
+                    }
+                    if kind == "at_most" {
+                        m.at_most(lits, k);
+                    } else {
+                        m.at_least(lits, k);
+                    }
+                }
                 "cardinality" => {
                     let k = c.get("k").and_then(|x| x.as_usize()).ok_or("cardinality needs \"k\"")?;
                     let items = c.get("of").and_then(|x| x.as_arr()).ok_or("cardinality needs \"of\"")?;
@@ -580,7 +597,8 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 }
                 other => {
                     return Err(format!(
-                        "unknown constraint {other:?}; known: not_equal, equal, fix, cardinality"
+                        "unknown constraint {other:?}; known: not_equal, equal, fix, \
+                         cardinality, at_most, at_least"
                     ))
                 }
             }
@@ -917,5 +935,75 @@ mod solve_tests {
             let e = go(body).unwrap_err();
             assert!(e.contains(needle), "{body}\n  said: {e}\n  wanted: {needle}");
         }
+    }
+}
+
+#[cfg(test)]
+mod inequality_tests {
+    use super::*;
+    use crate::json::parse;
+
+    fn go(body: &str) -> Result<Json, String> {
+        dispatch("solve", &parse(body).unwrap())
+    }
+
+    #[test]
+    fn at_most_caps_a_rewarded_selection() {
+        // Everything is worth taking, so only the constraint stops it.
+        let r = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
+                       {"name":"c","values":2},{"name":"d","values":2}],
+                       "constraints":[{"type":"at_most","k":2,"of":[
+                         {"var":"a","value":1},{"var":"b","value":1},
+                         {"var":"c","value":1},{"var":"d","value":1}]}],
+                       "objective":{"maximize":true,"terms":[
+                         {"var":"a","value":1},{"var":"b","value":1},
+                         {"var":"c","value":1},{"var":"d","value":1}]},"tries":60}"#)
+            .unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+        let v = r.get("values").unwrap();
+        let on = ["a", "b", "c", "d"]
+            .iter()
+            .filter(|n| v.get(n).unwrap().as_f64() == Some(1.0))
+            .count();
+        assert_eq!(on, 2, "as many as allowed, no more");
+    }
+
+    #[test]
+    fn at_least_forces_a_floor() {
+        let r = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
+                       {"name":"c","values":2},{"name":"d","values":2}],
+                       "constraints":[{"type":"at_least","k":3,"of":[
+                         {"var":"a","value":1},{"var":"b","value":1},
+                         {"var":"c","value":1},{"var":"d","value":1}]}],
+                       "objective":{"maximize":true,"terms":[
+                         {"var":"a","value":0},{"var":"b","value":0},
+                         {"var":"c","value":0},{"var":"d","value":0}]},"tries":60}"#)
+            .unwrap();
+        let v = r.get("values").unwrap();
+        let on = ["a", "b", "c", "d"]
+            .iter()
+            .filter(|n| v.get(n).unwrap().as_f64() == Some(1.0))
+            .count();
+        assert!(on >= 3, "the floor must hold against an objective pushing the other way, got {on}");
+    }
+
+    #[test]
+    fn the_slack_costs_spins_and_says_nothing() {
+        // A caller should see the price in `spins` and never see the slack among the values.
+        let plain = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],"tries":4}"#)
+            .unwrap();
+        let ineq = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],
+                          "constraints":[{"type":"at_most","k":1,"of":[
+                            {"var":"a","value":1},{"var":"b","value":1}]}],"tries":4}"#)
+            .unwrap();
+        assert!(
+            ineq.get("spins").unwrap().as_f64() > plain.get("spins").unwrap().as_f64(),
+            "an inequality costs spins"
+        );
+        let keys: Vec<&String> = match ineq.get("values").unwrap() {
+            Json::Obj(m) => m.iter().map(|(k, _)| k).collect(),
+            _ => Vec::new(),
+        };
+        assert_eq!(keys.len(), 2, "and reports only the caller's variables: {keys:?}");
     }
 }

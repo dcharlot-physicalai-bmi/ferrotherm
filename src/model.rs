@@ -153,6 +153,15 @@ pub enum Constraint {
     /// The penalty is `(Σ lits − k)²`, which is quadratic in the spins and needs no ancillas.
     /// Cardinality is the workhorse of assignment, scheduling and selection problems.
     Cardinality { lits: Vec<Lit>, k: usize },
+    /// At most `k` of these literals are true.
+    ///
+    /// An inequality cannot be a squared penalty on its own — `(Σ − k)²` would punish *under* the
+    /// limit as hard as over it, which is the wrong problem. So the compiler introduces a **slack
+    /// variable** ranging over `0..=k` and constrains `Σ lits + slack = k`, turning the inequality
+    /// into an equality it can square. The slack costs spins and is invisible in the answer.
+    AtMost { lits: Vec<Lit>, k: usize },
+    /// At least `k` of these literals are true. Slack as above, on the other side.
+    AtLeast { lits: Vec<Lit>, k: usize },
 }
 
 struct Decl {
@@ -356,6 +365,16 @@ impl Model {
         self.constrain(Constraint::Cardinality { lits, k })
     }
 
+    /// At most `k` of these literals may be true. Introduces a slack variable.
+    pub fn at_most(&mut self, lits: Vec<Lit>, k: usize) -> &mut Self {
+        self.constrain(Constraint::AtMost { lits, k })
+    }
+
+    /// At least `k` of these literals must be true. Introduces a slack variable.
+    pub fn at_least(&mut self, lits: Vec<Lit>, k: usize) -> &mut Self {
+        self.constrain(Constraint::AtLeast { lits, k })
+    }
+
     // ---- compiling ------------------------------------------------------------------------------
 
     /// Lower to a program and a decoder.
@@ -373,12 +392,38 @@ impl Model {
             return Err(CompileError::Empty);
         }
 
+        // Inequalities need slack, so the compiler declares variables of its own. They are laid out
+        // after the user's, and the decoder never reports them: a slack variable is an artefact of
+        // the lowering, not part of the answer.
+        let user_count = self.decls.len();
+        let mut extra: Vec<Domain> = Vec::new();
+        let mut slack_for: BTreeMap<usize, usize> = BTreeMap::new();
+        for (ci, (c, _)) in self.constraints.iter().enumerate() {
+            let range = match c {
+                Constraint::AtMost { k, .. } => Some(*k + 1),
+                Constraint::AtLeast { lits, k } => Some(lits.len().saturating_sub(*k) + 1),
+                _ => None,
+            };
+            if let Some(size) = range {
+                if size >= 2 {
+                    slack_for.insert(ci, user_count + extra.len());
+                    extra.push(Domain::Categorical(size));
+                }
+            }
+        }
+
         // Lay every variable out, in declaration order, so the layout is stable and inspectable.
-        let mut slots = Vec::with_capacity(self.decls.len());
+        let all: Vec<(Domain, Encoding)> = self
+            .decls
+            .iter()
+            .map(|d| (d.domain, d.encoding))
+            .chain(extra.iter().map(|d| (*d, Encoding::OneHot)))
+            .collect();
+        let mut slots = Vec::with_capacity(all.len());
         let mut base = 0usize;
-        for d in &self.decls {
-            let k = d.domain.size();
-            let s = Slot::new(base, k, d.encoding);
+        for (domain, encoding) in &all {
+            let k = domain.size();
+            let s = Slot::new(base, k, *encoding);
             base += s.width();
             slots.push(s);
         }
@@ -393,9 +438,9 @@ impl Model {
         }
 
         // Constraints. A NaN strength means "use the model's, after scaling".
-        for (c, p) in &self.constraints {
+        for (ci, (c, p)) in self.constraints.iter().enumerate() {
             let p = if p.is_nan() { penalty } else { *p };
-            self.apply_constraint(&mut b, &slots, c, p)?;
+            self.apply_constraint(&mut b, &slots, c, p, slack_for.get(&ci).copied())?;
         }
 
         // Objective. Maximising is minimising the negation; do it once, here.
@@ -424,7 +469,9 @@ impl Model {
         Ok(Compiled {
             program,
             graph,
-            slots,
+            // only the user's variables are reported; slack is an artefact of the lowering
+            slots: slots[..user_count].to_vec(),
+            all_slots: slots,
             names: self.decls.iter().map(|d| d.name.clone()).collect(),
             domains: self.decls.iter().map(|d| d.domain).collect(),
         })
@@ -467,6 +514,7 @@ impl Model {
         slots: &[Slot],
         c: &Constraint,
         p: f64,
+        slack: Option<usize>,
     ) -> Result<(), CompileError> {
         match c {
             Constraint::NotEqual(a, x) => {
@@ -489,6 +537,24 @@ impl Model {
             Constraint::Fix(v, value) => {
                 let l = self.linearise(slots, Lit::Is(*v, *value))?;
                 add_linear(b, &l, -p); // reward taking it
+            }
+            Constraint::AtMost { lits, k } | Constraint::AtLeast { lits, k } => {
+                // Σ lits ± slack = k, squared. `sum` collects every weighted indicator on the left.
+                let Some(sv) = slack else { return Ok(()) };  // a degenerate range needs no slack
+                let sign = if matches!(c, Constraint::AtMost { .. }) { 1.0 } else { -1.0 };
+                let mut sum: Vec<(LinSpin, f64)> = Vec::new();
+                for l in lits {
+                    sum.push((self.linearise(slots, *l)?, 1.0));
+                }
+                let s = slots[sv];
+                for v in 0..s.k {
+                    // the slack's value v enters with weight v, via its one-hot indicator
+                    sum.push((
+                        LinSpin { offset: 0.5, terms: vec![(s.base + v, 0.5)] },
+                        sign * v as f64,
+                    ));
+                }
+                add_squared(&mut b_ref(b), &sum, *k as f64, p);
             }
             Constraint::Cardinality { lits, k } => {
                 // p·(Σ xᵢ − k)² = p·(Σ xᵢxⱼ over ordered pairs − 2k·Σ xᵢ + k²); the constant drops.
@@ -527,6 +593,25 @@ struct LinSpin {
     terms: Vec<(usize, f64)>,
 }
 
+/// Add `p·(Σ wᵢ·lᵢ − target)²` for linear-in-spin pieces.
+///
+/// Expanding the square gives the cross terms, the diagonal (which is linear because a 0/1
+/// indicator squares to itself) and a constant that is dropped.
+fn add_squared(b: &mut GraphBuilder, parts: &[(LinSpin, f64)], target: f64, p: f64) {
+    for i in 0..parts.len() {
+        let (li, wi) = (&parts[i].0, parts[i].1);
+        add_linear(b, li, p * wi * (wi - 2.0 * target));
+        for j in (i + 1)..parts.len() {
+            let (lj, wj) = (&parts[j].0, parts[j].1);
+            add_product(b, li, lj, 2.0 * p * wi * wj);
+        }
+    }
+}
+
+fn b_ref(b: &mut GraphBuilder) -> &mut GraphBuilder {
+    b
+}
+
 fn add_linear(b: &mut GraphBuilder, l: &LinSpin, w: f64) {
     // w · (offset + Σ cᵢ sᵢ); the constant is dropped, energies here are relative
     for (i, c) in &l.terms {
@@ -559,6 +644,8 @@ pub struct Compiled {
     pub program: Program,
     pub graph: crate::graph::Graph,
     slots: Vec<Slot>,
+    /// Including the compiler's own slack variables, for anyone inspecting the lowering.
+    pub all_slots: Vec<Slot>,
     names: Vec<String>,
     domains: Vec<Domain>,
 }
@@ -906,6 +993,70 @@ mod tests {
         assert!(s.feasible(), "{s}");
         let on: Vec<usize> = (0..5).filter(|i| s.value(&format!("b{i}")) == 1).collect();
         assert_eq!(on, vec![3, 4], "the two most valuable, and only two: {s}");
+    }
+
+    #[test]
+    fn at_most_allows_fewer_but_not_more() {
+        // The point of slack: an inequality must not punish being under the limit. A squared
+        // penalty on (sum - k) alone would, which is a different problem.
+        let mut m = Model::new();
+        let bits: Vec<Var> = (0..6).map(|i| m.binary(&format!("b{i}"))).collect();
+        let lits: Vec<Lit> = bits.iter().map(|&v| Lit::Is(v, 1)).collect();
+        m.at_most(lits.clone(), 2);
+        // reward turning things on, so the constraint has something to push against
+        let mut e = Expr::zero();
+        for &v in &bits {
+            e = e.plus(Expr::lit(1.0, Lit::Is(v, 1)));
+        }
+        m.objective(Sense::Maximize, e);
+        let s = m.compile().unwrap().solve_best_of(40);
+        assert!(s.feasible(), "{s}");
+        let on = (0..6).filter(|i| s.value(&format!("b{i}")) == 1).count();
+        assert_eq!(on, 2, "it should take as many as allowed and no more: {s}");
+    }
+
+    #[test]
+    fn at_most_is_satisfied_by_taking_none() {
+        // With nothing rewarding them, zero is feasible under "at most 3" -- and would be punished
+        // by a naive equality.
+        let mut m = Model::new();
+        let bits: Vec<Var> = (0..5).map(|i| m.binary(&format!("b{i}"))).collect();
+        m.at_most(bits.iter().map(|&v| Lit::Is(v, 1)).collect(), 3);
+        let s = m.compile().unwrap().solve_best_of(20);
+        assert!(s.feasible(), "{s}");
+        let on = (0..5).filter(|i| s.value(&format!("b{i}")) == 1).count();
+        assert!(on <= 3, "at most three: {s}");
+    }
+
+    #[test]
+    fn at_least_forces_a_minimum() {
+        let mut m = Model::new();
+        let bits: Vec<Var> = (0..6).map(|i| m.binary(&format!("b{i}"))).collect();
+        let lits: Vec<Lit> = bits.iter().map(|&v| Lit::Is(v, 1)).collect();
+        m.at_least(lits, 4);
+        // reward turning things OFF, so the constraint has to fight for its minimum
+        let mut e = Expr::zero();
+        for &v in &bits {
+            e = e.plus(Expr::lit(1.0, Lit::Is(v, 0)));
+        }
+        m.objective(Sense::Maximize, e);
+        let s = m.compile().unwrap().solve_best_of(40);
+        assert!(s.feasible(), "{s}");
+        let on = (0..6).filter(|i| s.value(&format!("b{i}")) == 1).count();
+        assert_eq!(on, 4, "the minimum, and no more than it has to: {s}");
+    }
+
+    #[test]
+    fn slack_is_invisible_in_the_answer() {
+        // It costs spins and must not appear as a variable; a solver artefact is not a result.
+        let mut m = Model::new();
+        let bits: Vec<Var> = (0..4).map(|i| m.binary(&format!("b{i}"))).collect();
+        m.at_most(bits.iter().map(|&v| Lit::Is(v, 1)).collect(), 2);
+        let c = m.compile().unwrap();
+        assert_eq!(c.all_slots.len(), 5, "four variables plus one slack");
+        let s = c.solve_best_of(10);
+        assert_eq!(s.iter().count(), 4, "only the user's four are reported: {s}");
+        assert!(c.spins() > 8, "and the slack really is laid out");
     }
 
     #[test]
