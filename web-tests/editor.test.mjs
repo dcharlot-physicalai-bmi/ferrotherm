@@ -193,6 +193,48 @@ const counting = (kind, k, reward = "up") => page.evaluate(([kind, k, reward]) =
   check("an unknown field names the real ones", /has no field/.test(errors[3] ?? ""), errors[3] ?? "accepted!");
 }
 
+// --- a node the library refuses is reported, not dropped ---------------------------------------------
+{
+  // The return code of every ft_model_* call used to be summed and never looked at, so a constraint
+  // the library rejected vanished from the model and the editor answered a different problem.
+  const msg = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const t = F.add("integer", 40, 40, { name: "temperature", lo: 10, hi: 20 });
+    const other = F.add("integer", 40, 200, { name: "other", lo: 10, hi: 20 });
+    const fix = F.add("fix", 300, 60, { value: 3 });   // 3 is a slot, not a temperature in 10..=20
+    F.connect(t, fix, "var");
+    const ne = F.add("notequal", 300, 200);
+    F.connect(t, ne, "a"); F.connect(other, ne, "b");
+    const s = F.add("solve", 600, 120);
+    F.connect(fix, s); F.connect(ne, s);
+    F.connect(s, F.add("report", 860, 120), "result");
+    return F.run();
+  });
+  check("a refused constraint is reported by name and reason",
+        /refused/.test(msg) && /10\.\.=20/.test(msg),
+        msg.split("\n")[0].slice(0, 96));
+  check("and the editor does not report an answer instead",
+        !/feasible {2}yes/.test(msg));
+}
+
+// --- a spin variable speaks in -1 and +1 -------------------------------------------------------------
+{
+  const txt = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const a = F.add("integer", 40, 40, { name: "a", lo: -1, hi: 1 });
+    const fix = F.add("fix", 300, 40, { value: -1 });
+    F.connect(a, fix, "var");
+    const s = F.add("solve", 600, 40);
+    F.connect(fix, s);
+    F.connect(s, F.add("report", 860, 40), "result");
+    return F.run();
+  });
+  check("a negative value survives the wasm boundary", /a = -1/.test(txt),
+        txt.split("\n").find(l => l.includes("a =")) ?? txt.slice(0, 60));
+}
+
 // --- nothing threw along the way ---------------------------------------------------------------------
 check("no page errors", errs.length === 0, errs.join(" | "));
 

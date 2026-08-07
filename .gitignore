@@ -7,3 +7,10 @@ Cargo.lock
 .env
 *.token
 acw_token*
+
+# scratch probes: a subagent auditing this repo writes throwaway examples to check a claim, and
+# they must never reach a commit. Named so they cannot be confused with the real probe examples
+# (certify_probe, encoding_probe, ...) which are checked in on purpose.
+zz_*
+**/audit_*.rs
+**/*_audit_*.rs

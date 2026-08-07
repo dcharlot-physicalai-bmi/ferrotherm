@@ -731,8 +731,6 @@ pub struct ModelHandle {
     model: Model,
     compiled: Option<Compiled>,
     solution: Option<Solution>,
-    objective: Expr,
-    sense: Sense,
     last_error: String,
     cert: Option<crate::certify::Certificate>,
 }
@@ -743,8 +741,6 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
         model: Model::new(),
         compiled: None,
         solution: None,
-        objective: Expr::zero(),
-        sense: Sense::Minimize,
         last_error: String::new(),
         cert: None,
     }))
@@ -847,14 +843,11 @@ pub extern "C" fn ft_model_objective_term(
     if !coeff.is_finite() || !check_value(h, x, value) {
         return 0;
     }
-    h.sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
-    let e = core::mem::take(&mut h.objective);
-    h.objective = e.plus(Expr::lit(coeff, Lit::Is(x, value)));
-    // Push it into the model as we go, so `ft_model_penalty` answers correctly at any point rather
-    // than only after compiling. An editor showing a penalty that is about to change is worse than
-    // showing none.
-    let (obj, sense) = (h.objective.clone(), h.sense);
-    h.model.objective(sense, obj);
+    // Straight into the model, which accumulates and folds the sense in per term. This used to keep
+    // a second copy here and re-push the whole thing under the latest call's sense, so a minimising
+    // term arriving after maximising ones re-interpreted every one of them.
+    let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
+    h.model.objective(sense, Expr::lit(coeff, Lit::Is(x, value)));
     1
 }
 
@@ -874,12 +867,8 @@ pub extern "C" fn ft_model_objective_pair(
     if !coeff.is_finite() || a == b || !check_value(h, x, av) || !check_value(h, y, bv) {
         return 0;
     }
-    h.sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
-    let e = core::mem::take(&mut h.objective);
-    h.objective =
-        e.plus(Expr::pair(coeff, Lit::Is(x, av), Lit::Is(y, bv)));
-    let (obj, sense) = (h.objective.clone(), h.sense);
-    h.model.objective(sense, obj);
+    let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
+    h.model.objective(sense, Expr::pair(coeff, Lit::Is(x, av), Lit::Is(y, bv)));
     1
 }
 
@@ -888,8 +877,8 @@ pub extern "C" fn ft_model_objective_pair(
 #[no_mangle]
 pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    let obj = h.objective.clone();
-    h.model.objective(h.sense, obj);
+    // Nothing to push: every objective term went straight into the model as it arrived, which is
+    // also why `ft_model_penalty` answers correctly before compiling rather than only after.
     match h.model.compile() {
         Ok(c) => {
             let n = c.spins() as u32;
@@ -1269,6 +1258,41 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 1);
         let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
         assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn objective_terms_accumulate_and_a_later_sense_does_not_rewrite_earlier_ones() {
+        // The C ABI takes a maximize flag PER CALL. It used to write that flag onto the whole
+        // accumulated objective and re-push it, so one minimising term arriving after three
+        // maximising ones inverted all four -- silently, with feasible still true.
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..4).map(|_| ft_model_binary(m)).collect();
+        for &i in &v[..3] {
+            assert_eq!(ft_model_objective_term(m, 1, 1.0, i, 1), 1); // maximise: want these ON
+        }
+        assert_eq!(ft_model_objective_term(m, 0, 1.0, v[3], 1), 1); // minimise: want this OFF
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve(m, 16), 1);
+        let on: Vec<usize> = (0..4).filter(|&i| ft_model_value(m, v[i]) == 1).collect();
+        assert_eq!(on, vec![0, 1, 2], "three rewarded, one penalised, and no flipping");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn every_objective_term_survives_to_the_answer() {
+        // And each term counts once. Three separate calls used to be pushed into the model three
+        // times over, each call re-adding everything before it.
+        let m = ft_model_new();
+        let x = ft_model_categorical(m, 4);
+        // 1 to value 1, 2 to value 2, 3 to value 3: the largest must win, and would not if the
+        // earlier terms were re-added on top of it.
+        for value in 1..4i64 {
+            assert_eq!(ft_model_objective_term(m, 1, value as f64, x, value), 1);
+        }
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve(m, 16), 1);
+        assert_eq!(ft_model_value(m, x), 3);
         ft_model_free(m);
     }
 

@@ -501,8 +501,20 @@ function runGraph() {
       }
     }
 
-    // 2. constraints and objective terms
+    // 2. constraints and objective terms.
+    //
+    // Every ft_model_* call here returns 0 on refusal and leaves a sentence behind. Adding those
+    // returns up without looking at them -- which is what this did -- meant a node the library had
+    // rejected simply vanished from the model, and the editor reported a confident answer to a
+    // problem missing one of its constraints.
     let cons = 0, obj = 0;
+    const refused = n => {
+      $("out").textContent = "'" + label(n) + "' was refused: " + (readText(W.ft_model_error, m) ||
+        "the library gave no reason, which is itself a bug worth reporting.");
+      return false;
+    };
+    /** Run a library call for node `n`, showing its refusal instead of dropping it. */
+    const did = (n, ok) => (ok ? true : refused(n));
     for (const n of nodes) {
       if (!reach.has(n.id)) continue;
       const k = TYPES[n.type].kind;
@@ -522,23 +534,34 @@ function runGraph() {
         const fn = { cardinality: W.ft_model_cardinality,
                      atmost: W.ft_model_at_most,
                      atleast: W.ft_model_at_least }[n.type];
-        cons += fn(m, vs.length, n.vals.k | 0, BigInt(n.vals.value | 0),
-                   vs[0], vs[1], vs[2] ?? 0xFFFFFFFF, vs[3] ?? 0xFFFFFFFF);
+        if (!did(n, fn(m, vs.length, n.vals.k | 0, BigInt(n.vals.value | 0),
+                       vs[0], vs[1], vs[2] ?? 0xFFFFFFFF, vs[3] ?? 0xFFFFFFFF))) return;
+        cons++;
       }
-      else if (n.type === "notequal") { if (!need2(ia, ib)) return; cons += W.ft_model_not_equal(m, ia, ib); }
-      else if (n.type === "equal") { if (!need2(ia, ib)) return; cons += W.ft_model_equal(m, ia, ib); }
+      else if (n.type === "notequal") {
+        if (!need2(ia, ib)) return;
+        if (!did(n, W.ft_model_not_equal(m, ia, ib))) return;
+        cons++;
+      } else if (n.type === "equal") {
+        if (!need2(ia, ib)) return;
+        if (!did(n, W.ft_model_equal(m, ia, ib))) return;
+        cons++;
+      }
       else if (n.type === "fix") {
         if (iv === undefined) { $("out").textContent = "'Fix value' needs a variable."; return; }
-        cons += W.ft_model_fix(m, iv, BigInt(n.vals.value | 0));
+        if (!did(n, W.ft_model_fix(m, iv, BigInt(n.vals.value | 0)))) return;
+        cons++;
       } else if (n.type === "prefer") {
         if (iv === undefined) { $("out").textContent = "'Prefer value' needs a variable."; return; }
-        obj += W.ft_model_objective_term(m, n.vals.maximize ? 1 : 0, +n.vals.weight, iv,
-                                        BigInt(n.vals.value | 0));
+        if (!did(n, W.ft_model_objective_term(m, n.vals.maximize ? 1 : 0, +n.vals.weight, iv,
+                                             BigInt(n.vals.value | 0)))) return;
+        obj++;
       } else if (n.type === "agree") {
         if (!need2(ia, ib)) return;
-        obj += W.ft_model_objective_pair(m, n.vals.maximize ? 1 : 0, +n.vals.weight,
-                                         ia, BigInt(n.vals.value | 0),
-                                         ib, BigInt(n.vals.value | 0));
+        if (!did(n, W.ft_model_objective_pair(m, n.vals.maximize ? 1 : 0, +n.vals.weight,
+                                             ia, BigInt(n.vals.value | 0),
+                                             ib, BigInt(n.vals.value | 0)))) return;
+        obj++;
       }
     }
 

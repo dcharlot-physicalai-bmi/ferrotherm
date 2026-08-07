@@ -59,6 +59,11 @@ impl Json {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Json::Bool(b) => Some(*b),
+            // 1 and 0 as well. Plenty of clients -- shell scripts, older serialisers, agents
+            // writing JSON by hand -- send the integer form, and a flag that silently reads as
+            // FALSE inverts the caller's whole objective without a word. Anything that is neither
+            // a boolean nor a number is still None, so a typo is still refused.
+            Json::Num(n) if n.fract() == 0.0 => Some(*n != 0.0),
             _ => None,
         }
     }

@@ -70,21 +70,33 @@ impl Domain {
     /// distinction never surfaces. An integer over `5..=20` takes the values 5 through 20, and
     /// conflating those with slots 0 through 15 is the bug this exists to prevent.
     pub fn values(&self) -> impl Iterator<Item = i64> + '_ {
-        let (lo, n) = match self {
-            Domain::Integer { lo, .. } => (*lo, self.size()),
-            _ => (0, self.size()),
-        };
-        (0..n).map(move |i| lo + i as i64)
+        // Every domain is a contiguous run from `lo`, and the ONLY thing that differs is where it
+        // starts. Spin starts at -1 and steps by two, which is why it gets its own arm rather than
+        // sharing a catch-all: folded into the default it reported values 0 and 1, while the
+        // decoder was handing back -1 and +1 for those same slots.
+        let lo = self.lo();
+        let step = if matches!(self, Domain::Spin) { 2 } else { 1 };
+        (0..self.size()).map(move |i| lo + (i as i64) * step)
     }
 
     /// Which one-hot slot holds `value`, or `None` if the domain does not contain it.
     pub fn index_of(&self, value: i64) -> Option<usize> {
-        let lo = match self {
+        let step = if matches!(self, Domain::Spin) { 2 } else { 1 };
+        let off = value.checked_sub(self.lo())?;
+        if off < 0 || off % step != 0 {
+            return None;
+        }
+        let i = off / step;
+        ((i as u128) < self.size() as u128).then_some(i as usize)
+    }
+
+    /// The smallest value this domain can take.
+    fn lo(&self) -> i64 {
+        match self {
+            Domain::Spin => -1,
+            Domain::Binary | Domain::Categorical(_) => 0,
             Domain::Integer { lo, .. } => *lo,
-            _ => 0,
-        };
-        let i = value.checked_sub(lo)?;
-        (i >= 0 && (i as u128) < self.size() as u128).then_some(i as usize)
+        }
     }
 
     /// How a domain reads in an error message.
@@ -337,7 +349,6 @@ struct Decl {
 pub struct Model {
     decls: Vec<Decl>,
     objective: Expr,
-    sense: Sense,
     constraints: Vec<(Constraint, f64)>,
     /// Penalty strength applied to encodings and to constraints without their own.
     ///
@@ -394,7 +405,6 @@ impl Model {
         Model {
             decls: Vec::new(),
             objective: Expr::zero(),
-            sense: Sense::Minimize,
             constraints: Vec::new(),
             penalty: 2.0,
             auto_penalty: true,
@@ -474,9 +484,27 @@ impl Model {
 
     /// Set the objective.
     pub fn objective(&mut self, sense: Sense, e: Expr) -> &mut Self {
-        self.sense = sense;
-        self.objective = e;
+        // ACCUMULATES, and normalises the sense away as it goes.
+        //
+        // Two bugs lived in the old "set the sense, replace the expression" form. Calling this in a
+        // loop -- which is how an objective with one term per option actually gets written -- kept
+        // only the LAST term and silently dropped the rest. And a second call with a different
+        // sense re-interpreted every term already accumulated, so adding one thing to minimise
+        // flipped an entire objective that was being maximised.
+        //
+        // Storing it as "minimise this" removes both. Maximising e is minimising -e; a model has no
+        // global sense left to flip, and terms in opposite directions compose the way arithmetic
+        // says they should.
+        let signed = if sense == Sense::Maximize { e.scaled(-1.0) } else { e };
+        let acc = core::mem::take(&mut self.objective);
+        self.objective = acc.plus(signed);
         self
+    }
+
+    /// Discard everything accumulated so far and use exactly this objective.
+    pub fn set_objective(&mut self, sense: Sense, e: Expr) -> &mut Self {
+        self.objective = Expr::zero();
+        self.objective(sense, e)
     }
 
     /// Use exactly this penalty, disabling the automatic scaling described on [`Model::compile`].
@@ -616,8 +644,8 @@ impl Model {
             self.apply_constraint(&mut b, &slots, c, p, slack_for.get(&ci).copied())?;
         }
 
-        // Objective. Maximising is minimising the negation; do it once, here.
-        let sign = if self.sense == Sense::Maximize { -1.0 } else { 1.0 };
+        // The objective is already stored as "minimise this": `Model::objective` folded the sense
+        // in when each term arrived, so there is nothing left to decide here.
         if self.objective.max_degree() > 2 {
             return Err(CompileError::DegreeTooHigh { degree: self.objective.max_degree() });
         }
@@ -626,8 +654,8 @@ impl Model {
                 t.lits.iter().map(|l| self.linearise(&slots, *l)).collect();
             let parts = parts?;
             match parts.len() {
-                1 => add_linear(&mut b, &parts[0], sign * t.coeff),
-                2 => add_product(&mut b, &parts[0], &parts[1], sign * t.coeff),
+                1 => add_linear(&mut b, &parts[0], t.coeff),
+                2 => add_product(&mut b, &parts[0], &parts[1], t.coeff),
                 d => return Err(CompileError::DegreeTooHigh { degree: d }),
             }
         }
@@ -714,19 +742,25 @@ impl Model {
             }
             Constraint::AtMost { lits, k } | Constraint::AtLeast { lits, k } => {
                 // Σ lits ± slack = k, squared. `sum` collects every weighted indicator on the left.
-                let Some(sv) = slack else { return Ok(()) };  // a degenerate range needs no slack
                 let sign = if matches!(c, Constraint::AtMost { .. }) { 1.0 } else { -1.0 };
                 let mut sum: Vec<(LinSpin, f64)> = Vec::new();
                 for l in lits {
                     sum.push((self.linearise(slots, *l)?, 1.0));
                 }
-                let s = slots[sv];
-                for v in 0..s.k {
-                    // the slack's value v enters with weight v, via its one-hot indicator
-                    sum.push((
-                        LinSpin { offset: 0.5, terms: vec![(s.base + v, 0.5)] },
-                        sign * v as f64,
-                    ));
+                // No slack means the inequality has no room in it: `at most 0` and `at least all`
+                // each admit exactly one count, so the equality Σ lits = k IS the constraint and it
+                // is applied with no slack term. Returning early here instead -- which is what this
+                // did -- dropped the constraint entirely, and `at most 0 of these` compiled to
+                // nothing at all while reporting feasible.
+                if let Some(sv) = slack {
+                    let s = slots[sv];
+                    for v in 0..s.k {
+                        // the slack's value v enters with weight v, via its one-hot indicator
+                        sum.push((
+                            LinSpin { offset: 0.5, terms: vec![(s.base + v, 0.5)] },
+                            sign * v as f64,
+                        ));
+                    }
                 }
                 add_squared(&mut b_ref(b), &sum, *k as f64, p);
             }
@@ -1001,6 +1035,56 @@ mod tests {
     }
 
     #[test]
+    fn a_spin_variable_speaks_in_minus_one_and_plus_one() {
+        // Spin was the one domain nothing tested, and it was the one domain where the value/slot
+        // distinction was still wrong: the decoder handed back -1 and +1 while the literal reader
+        // folded Spin into the same arm as a categorical and called its values 0 and 1. So
+        // `x.is(0)` secretly meant -1, and `x.is(-1)` was rejected as out of domain.
+        let mut m = Model::new();
+        let x = m.spin("x");
+        m.fix(x, -1);
+        let s = m.compile().unwrap().solve_best_of(8);
+        assert!(s.feasible(), "{s}");
+        assert_eq!(s.value("x"), -1, "a spin fixed to -1 reads back as -1: {s}");
+
+        let mut m = Model::new();
+        let x = m.spin("x");
+        m.objective(Sense::Maximize, 3.0 * x.is(1));
+        assert_eq!(m.compile().unwrap().solve_best_of(8).value("x"), 1);
+
+        // and the values BETWEEN them are not values it can take
+        let mut m = Model::new();
+        let x = m.spin("x");
+        m.fix(x, 0);
+        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("0 is not a spin") };
+        assert!(e.contains("-1 and +1"), "{e}");
+    }
+
+    #[test]
+    fn a_spin_and_an_integer_compare_by_value() {
+        // The failure the audit found: `not_equal(spin, integer)` compared slot 0 of each. Slot 0
+        // of a spin is -1 and slot 0 of an integer over -1..=1 is also -1, so the pair was reported
+        // as DIFFERING while both held -1.
+        let mut m = Model::new();
+        let a = m.spin("a");
+        let b = m.integer("b", -1, 1);
+        m.not_equal(a, b);
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert!(s.feasible(), "{s}");
+        assert_ne!(s.value("a"), s.value("b"), "a spin and an integer must really differ: {s}");
+
+        // and forced together they land on a value both domains contain
+        let mut m = Model::new();
+        let a = m.spin("a");
+        let b = m.integer("b", -1, 1);
+        m.equal(a, b);
+        m.objective(Sense::Maximize, 5.0 * b.is(1));
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert!(s.feasible(), "{s}");
+        assert_eq!((s.value("a"), s.value("b")), (1, 1), "{s}");
+    }
+
+    #[test]
     fn equality_compares_values_across_different_ranges() {
         // Two integers whose ranges overlap in exactly one place. Comparing them slot by slot
         // would have them agree in six places and disagree in none of the right ones.
@@ -1230,6 +1314,100 @@ mod tests {
         assert!(s.feasible(), "{s}");
         let on: Vec<usize> = (0..5).filter(|i| s.value(&format!("b{i}")) == 1).collect();
         assert_eq!(on, vec![3, 4], "the two most valuable, and only two: {s}");
+    }
+
+    #[test]
+    fn a_boundary_inequality_still_constrains() {
+        // `at most 0` and `at least all` need no slack -- there is only one admissible count -- and
+        // the compiler used to take "needs no slack" as "needs no constraint". Both then compiled
+        // to NOTHING and reported feasible while violating the request.
+        let none = {
+            let mut m = Model::new();
+            let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+            m.at_most(vs.iter().map(|&v| Lit::Is(v, 1)).collect(), 0);
+            for &v in &vs {
+                m.objective(Sense::Maximize, 1.0 * v.is(1)); // push every one of them ON
+            }
+            let s = m.compile().unwrap().solve_best_of(16);
+            (s.feasible(), vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(), s)
+        };
+        assert!(none.0, "{}", none.2);
+        assert_eq!(none.1, 0, "at most 0 means none, against a reward on every one: {}", none.2);
+
+        let all = {
+            let mut m = Model::new();
+            let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+            m.at_least(vs.iter().map(|&v| Lit::Is(v, 1)).collect(), 4);
+            for &v in &vs {
+                m.objective(Sense::Minimize, 1.0 * v.is(1)); // push every one of them OFF
+            }
+            let s = m.compile().unwrap().solve_best_of(16);
+            (s.feasible(), vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(), s)
+        };
+        assert!(all.0, "{}", all.2);
+        assert_eq!(all.1, 4, "at least 4 of 4 means all, against a penalty on every one: {}", all.2);
+    }
+
+    #[test]
+    fn an_objective_accumulates_and_mixed_senses_compose() {
+        // Written in a loop, which is how an objective with one term per option gets written. The
+        // old form kept only the LAST call, so this returned v3 alone.
+        let mut m = Model::new();
+        let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+        for &v in &vs {
+            m.objective(Sense::Maximize, 1.0 * v.is(1));
+        }
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert_eq!(vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(), 4,
+                   "every term counts, not just the last: {s}");
+
+        // And a term in the other direction changes only that term. The old form re-read the whole
+        // accumulated objective under the new sense, flipping everything already asked for.
+        let mut m = Model::new();
+        let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+        for &v in &vs[..3] {
+            m.objective(Sense::Maximize, 1.0 * v.is(1));
+        }
+        m.objective(Sense::Minimize, 1.0 * vs[3].is(1));
+        let s = m.compile().unwrap().solve_best_of(16);
+        let on: Vec<usize> = (0..4).filter(|&i| s.value(m.name_of(vs[i])) == 1).collect();
+        assert_eq!(on, vec![0, 1, 2], "the first three rewarded, the last penalised: {s}");
+    }
+
+    #[test]
+    fn set_objective_discards_what_came_before() {
+        // The discarded terms have to be VISIBLE for this to test anything: a variable with no term
+        // at all lands wherever the sampler leaves it, so "it is off" would prove nothing. So the
+        // terms being discarded push every variable OFF, and the replacement pushes them all ON.
+        // If any of the old terms survived they would fight the new ones.
+        let mut m = Model::new();
+        let vs: Vec<Var> = (0..3).map(|i| m.binary(&format!("v{i}"))).collect();
+        for &v in &vs {
+            m.objective(Sense::Minimize, 10.0 * v.is(1));
+        }
+        let e = vs.iter().fold(Expr::zero(), |a, &v| a.plus(1.0 * v.is(1)));
+        m.set_objective(Sense::Maximize, e);
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert_eq!((0..3).filter(|&i| s.value(m.name_of(vs[i])) == 1).count(), 3,
+                   "the minimising terms are gone, so all three come on: {s}");
+    }
+
+    #[test]
+    fn a_vacuous_inequality_costs_nothing_and_forbids_nothing() {
+        // The other two boundaries: `at most all` and `at least 0` are true of every state.
+        for (kind, k) in [("at_most", 4usize), ("at_least", 0usize)] {
+            let mut m = Model::new();
+            let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+            let lits: Vec<Lit> = vs.iter().map(|&v| Lit::Is(v, 1)).collect();
+            if kind == "at_most" { m.at_most(lits, k); } else { m.at_least(lits, k); }
+            for &v in &vs {
+                m.objective(Sense::Maximize, 1.0 * v.is(1));
+            }
+            let s = m.compile().unwrap().solve_best_of(16);
+            assert!(s.feasible(), "{kind} {k}: {s}");
+            let on = vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count();
+            assert_eq!(on, 4, "{kind} {k} forbids nothing, so every reward is taken: {s}");
+        }
     }
 
     #[test]

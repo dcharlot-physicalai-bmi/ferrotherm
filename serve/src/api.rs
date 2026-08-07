@@ -120,6 +120,32 @@ fn opt_f64(v: &Json, key: &str, dflt: f64) -> f64 {
     v.get(key).and_then(|x| x.as_f64()).filter(|f| f.is_finite()).unwrap_or(dflt)
 }
 
+/// A modeller's value: absent means `dflt`, present-but-unreadable is an error.
+///
+/// `.and_then(as_i64).unwrap_or(dflt)` reads the two cases as one, so `"value": "13"` -- a JSON
+/// string where a number belongs, which is what a templating layer or a shell pipeline produces --
+/// became `dflt` and the caller got a confident answer to a question they did not ask.
+fn value_of(v: &Json, key: &str, dflt: i64, what: &str) -> Result<i64, String> {
+    match v.get(key) {
+        None => Ok(dflt),
+        Some(x) => x.as_i64().ok_or_else(|| {
+            format!("{what}: \"{key}\" must be a whole number, not {}", describe(x))
+        }),
+    }
+}
+
+/// What a JSON value is, for an error message that tells the caller what they actually sent.
+fn describe(v: &Json) -> &'static str {
+    match v {
+        Json::Null => "null",
+        Json::Bool(_) => "a boolean",
+        Json::Num(_) => "a fractional number",
+        Json::Str(_) => "a string",
+        Json::Arr(_) => "an array",
+        Json::Obj(_) => "an object",
+    }
+}
+
 fn opt_usize(v: &Json, key: &str, dflt: usize) -> usize {
     v.get(key).and_then(|x| x.as_usize()).unwrap_or(dflt)
 }
@@ -556,6 +582,14 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 "not_equal" | "equal" => {
                     let a = find(c.get("a").and_then(|x| x.as_str()).unwrap_or(""))?;
                     let b = find(c.get("b").and_then(|x| x.as_str()).unwrap_or(""))?;
+                    if a == b {
+                        // The C ABI refuses this; the JSON surface used to accept it and return a
+                        // confident feasible answer to an unsatisfiable request.
+                        return Err(format!(
+                            "{kind}: a variable cannot be compared with itself (both sides name \"{}\")",
+                            c.get("a").and_then(|x| x.as_str()).unwrap_or("")
+                        ));
+                    }
                     if kind == "not_equal" {
                         m.not_equal(handles[a], handles[b]);
                     } else {
@@ -564,7 +598,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 }
                 "fix" => {
                     let v = find(c.get("var").and_then(|x| x.as_str()).unwrap_or(""))?;
-                    let val = c.get("value").and_then(|x| x.as_i64()).unwrap_or(0);
+                    let val = value_of(c, "value", 0, "fix")?;
                     m.fix(handles[v], val);
                 }
                 "at_most" | "at_least" => {
@@ -575,7 +609,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     let mut lits = Vec::new();
                     for it in items {
                         let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
-                        let vv = it.get("value").and_then(|x| x.as_i64()).unwrap_or(1);
+                        let vv = value_of(it, "value", 1, kind)?;
                         lits.push(Lit::Is(handles[find(vn)?], vv));
                     }
                     if kind == "at_most" {
@@ -590,7 +624,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     let mut lits = Vec::new();
                     for it in items {
                         let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
-                        let vv = it.get("value").and_then(|x| x.as_i64()).unwrap_or(1);
+                        let vv = value_of(it, "value", 1, "cardinality")?;
                         lits.push(Lit::Is(handles[find(vn)?], vv));
                     }
                     m.cardinality(lits, k);
@@ -606,17 +640,25 @@ pub fn solve(req: &Json) -> Result<Json, String> {
     }
 
     if let Some(o) = req.get("objective") {
-        let maximize = o.get("maximize").and_then(|x| x.as_bool()).unwrap_or(false);
+        // Not `.unwrap_or(false)`. A "maximize" the reader cannot understand used to become
+        // MINIMIZE, which is not a degraded answer -- it is the opposite one, returned with
+        // feasible: true and nothing to suggest anything went wrong.
+        let maximize = match o.get("maximize") {
+            None => false,
+            Some(x) => x.as_bool().ok_or_else(|| {
+                format!("objective: \"maximize\" must be true or false, not {}", describe(x))
+            })?,
+        };
         let terms = o.get("terms").and_then(|x| x.as_arr()).ok_or("objective needs \"terms\"")?;
         let mut e = Expr::zero();
         for t in terms {
             let w = t.get("weight").and_then(|x| x.as_f64()).unwrap_or(1.0);
             let vn = t.get("var").and_then(|x| x.as_str()).unwrap_or("");
-            let vv = t.get("value").and_then(|x| x.as_i64()).unwrap_or(1);
+            let vv = value_of(t, "value", 1, "objective term")?;
             let a = Lit::Is(handles[find(vn)?], vv);
             e = match t.get("and_var").and_then(|x| x.as_str()) {
                 Some(bn) => {
-                    let bv = t.get("and_value").and_then(|x| x.as_i64()).unwrap_or(vv);
+                    let bv = value_of(t, "and_value", vv, "objective term")?;
                     e.plus(Expr::pair(w, a, Lit::Is(handles[find(bn)?], bv)))
                 }
                 None => e.plus(Expr::lit(w, a)),
@@ -1025,5 +1067,104 @@ mod inequality_tests {
             _ => Vec::new(),
         };
         assert_eq!(keys.len(), 2, "and reports only the caller's variables: {keys:?}");
+    }
+}
+
+#[cfg(test)]
+mod silent_wrongness {
+    //! Four ways this surface used to answer a different question than the one asked.
+    //!
+    //! Every one of them returned `feasible: true` with a confident answer and no error, which is
+    //! the only kind of bug a caller cannot defend against. They are grouped here because they
+    //! share a cause: a reader that could not understand its input quietly substituted a default.
+
+    use super::*;
+
+    fn go(body: &str) -> Result<Json, String> {
+        dispatch("solve", &crate::json::parse(body).unwrap())
+    }
+
+    fn value_of_x(body: &str) -> Option<f64> {
+        go(body).ok()?.get("values")?.get("x")?.as_f64()
+    }
+
+    #[test]
+    fn maximize_as_a_number_maximizes() {
+        // `as_bool` returned None for a JSON number, `unwrap_or(false)` made that Minimize, and the
+        // caller got the OPPOSITE of what they asked for. Not a degraded answer -- the other one.
+        let terms = r#"[{"var":"x","value":0,"weight":1},{"var":"x","value":4,"weight":5}]"#;
+        let req = |m: &str| format!(
+            r#"{{"variables":[{{"name":"x","values":5}}],"objective":{{"maximize":{m},"terms":{terms}}},"tries":10}}"#
+        );
+        assert_eq!(value_of_x(&req("true")), Some(4.0), "the plain form");
+        assert_eq!(value_of_x(&req("1")), Some(4.0), "and the integer form agrees with it");
+        assert_eq!(value_of_x(&req("false")), value_of_x(&req("0")), "as do both false forms");
+        assert_ne!(value_of_x(&req("true")), value_of_x(&req("false")), "and the two differ");
+
+        // anything that is neither is refused rather than read as false
+        let e = go(&req(r#""yes""#)).unwrap_err();
+        assert!(e.contains("must be true or false") && e.contains("a string"), "{e}");
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_number_is_refused() {
+        // `"13"` -- what a shell pipeline or a templating layer produces -- used to become 0.
+        let e = go(r#"{"variables":[{"name":"x","values":20}],
+                       "constraints":[{"type":"fix","var":"x","value":"13"}],"tries":4}"#).unwrap_err();
+        assert!(e.contains("whole number") && e.contains("a string"), "{e}");
+
+        // and the number still works, so the check is not just refusing everything
+        assert_eq!(value_of_x(r#"{"variables":[{"name":"x","values":20}],
+                       "constraints":[{"type":"fix","var":"x","value":13}],"tries":4}"#), Some(13.0));
+
+        // every place a value is read, not just `fix`
+        for body in [
+            r#"{"variables":[{"name":"x","values":3},{"name":"y","values":3}],
+                "constraints":[{"type":"at_most","k":1,"of":[{"var":"x","value":"1"},{"var":"y","value":1}]}]}"#,
+            r#"{"variables":[{"name":"x","values":3},{"name":"y","values":3}],
+                "constraints":[{"type":"cardinality","k":1,"of":[{"var":"x","value":1},{"var":"y","value":[]}]}]}"#,
+            r#"{"variables":[{"name":"x","values":3}],
+                "objective":{"maximize":true,"terms":[{"var":"x","value":"2","weight":1}]}}"#,
+        ] {
+            assert!(go(body).is_err(), "a string value should be refused here: {body}");
+        }
+    }
+
+    #[test]
+    fn a_variable_cannot_be_compared_with_itself() {
+        // The C ABI refuses this. The JSON surface accepted it and returned a feasible answer to a
+        // request nothing can satisfy.
+        for kind in ["not_equal", "equal"] {
+            let e = go(&format!(
+                r#"{{"variables":[{{"name":"a","values":3}}],
+                     "constraints":[{{"type":"{kind}","a":"a","b":"a"}}],"tries":4}}"#
+            ));
+            let e = e.unwrap_err();
+            assert!(e.contains("cannot be compared with itself") && e.contains('a'), "{kind}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_boundary_inequality_is_not_dropped() {
+        // `at most 0` needs no slack, and "needs no slack" was taken to mean "needs no constraint".
+        let r = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],
+             "constraints":[{"type":"at_most","k":0,"of":[{"var":"a","value":1},{"var":"b","value":1}]}],
+             "objective":{"maximize":true,
+                          "terms":[{"var":"a","value":1,"weight":1},{"var":"b","value":1,"weight":1}]},
+             "tries":12}"#).unwrap();
+        let v = r.get("values").unwrap();
+        assert_eq!(v.get("a").unwrap().as_f64(), Some(0.0), "at most 0 means none");
+        assert_eq!(v.get("b").unwrap().as_f64(), Some(0.0), "even against a reward on both");
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+
+        // the mirror boundary: at least all of them
+        let r = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],
+             "constraints":[{"type":"at_least","k":2,"of":[{"var":"a","value":1},{"var":"b","value":1}]}],
+             "objective":{"maximize":false,
+                          "terms":[{"var":"a","value":1,"weight":1},{"var":"b","value":1,"weight":1}]},
+             "tries":12}"#).unwrap();
+        let v = r.get("values").unwrap();
+        assert_eq!((v.get("a").unwrap().as_f64(), v.get("b").unwrap().as_f64()),
+                   (Some(1.0), Some(1.0)), "at least 2 of 2 means both, against a penalty on both");
     }
 }
