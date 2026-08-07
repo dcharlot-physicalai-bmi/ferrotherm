@@ -45,6 +45,13 @@
   #wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
   #hint{position:absolute;left:12px;bottom:10px;font-family:var(--mono);font-size:10.5px;
         color:var(--ink-faint);pointer-events:none;opacity:.75}
+  #palette{position:absolute;left:50%;top:70px;transform:translateX(-50%);width:280px;z-index:9;
+           background:var(--panel);border:1px solid var(--gold-dim);border-radius:9px;
+           box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden}
+  #palq{width:100%;border:0;border-bottom:1px solid var(--line);background:var(--panel-2);
+        color:var(--ink);padding:9px 11px;font-family:var(--mono);font-size:12px;outline:none}
+  #palr div{padding:6px 11px;font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);cursor:pointer}
+  #palr div.on{background:rgba(207,170,91,.16);color:var(--gold)}
   .node.bad{border-color:#d4685b}
   .node.bad .hd::after{content:" ⚠";color:#e08080}
   .node{position:absolute;width:186px;background:var(--panel);border:1px solid var(--line);
@@ -94,6 +101,8 @@
   <button id="load">Load</button>
   <button id="copy">Copy JSON</button>
   <button id="paste">Paste JSON</button>
+  <button id="undo" title="Ctrl+Z">Undo</button>
+  <button id="redo" title="Ctrl+Shift+Z">Redo</button>
   <button id="fit">Fit</button>
   <button id="clear">Clear</button>
   <button id="run" class="primary">Run graph</button>
@@ -117,10 +126,12 @@
     <h3>Solve</h3>
     <button class="add" data-t="solve">Solve</button>
     <button class="add" data-t="report">Report</button>
+    <button class="add" data-t="certify">Certificate</button>
   </div>
 
   <div id="stage"><div id="canvas"><svg id="wires"></svg></div>
-    <div id="hint">scroll to zoom · drag the background to pan · click to select · Del removes · Ctrl+D duplicates</div></div>
+    <div id="palette" hidden><input id="palq" placeholder="add a node…" autocomplete="off"><div id="palr"></div></div>
+    <div id="hint">scroll zoom · drag to pan · Ctrl+K add · Ctrl+Z undo · Ctrl+D duplicate · Del remove · Enter run</div></div>
 
   <div class="side">
     <h3>Output</h3>
@@ -181,6 +192,8 @@ const TYPES = {
   solve:      { title: "Solve",        kind: "result",
                 ins: [["model", "cons"], ["model2", "cons"], ["model3", "obj"]],
                 fields: [["tries", 12, "int"]] },
+  certify:    { title: "Certificate",  kind: null, ins: [["result", "result"]],
+                fields: [["beta", 0.5, "num"], ["draws", 800, "int"], ["thin", 4, "int"]] },
   report:     { title: "Report",       kind: null, ins: [["result", "result"]], fields: [] },
 };
 
@@ -298,6 +311,7 @@ function draw() {
       inp.type = "number";
       inp.step = kind === "int" ? "1" : "any";
       inp.value = n.vals[k];
+      inp.onfocus = () => checkpoint();
       inp.oninput = () => { n.vals[k] = +inp.value; };
       row.appendChild(lab); row.appendChild(inp);
       bd.appendChild(row);
@@ -313,6 +327,7 @@ function draw() {
       p.title = name + " : " + kind;
       p.onmouseup = () => {
         if (linking && linking.kind === kind && linking.from !== n.id) {
+          checkpoint();
           links = links.filter(l => !(l.to === n.id && l.port === name));
           links.push({ from: linking.from, to: n.id, port: name, kind });
         }
@@ -373,9 +388,9 @@ window.addEventListener("mousemove", e => {
 window.addEventListener("mouseup", () => { dragging = null; linking = null; });
 
 document.querySelectorAll(".add").forEach(b => {
-  b.onclick = () => addNode(b.dataset.t, 40 + Math.random() * 60, 40 + Math.random() * 200);
+  b.onclick = () => { checkpoint(); addNode(b.dataset.t, 40 + Math.random() * 60, 40 + Math.random() * 200); };
 });
-$("clear").onclick = () => { nodes = []; links = []; draw(); $("out").textContent = "cleared"; $("ftp").textContent = "—"; };
+$("clear").onclick = () => { checkpoint(); nodes = []; links = []; draw(); $("out").textContent = "cleared"; $("ftp").textContent = "—"; };
 
 // ---- wasm -------------------------------------------------------------------------------------
 
@@ -516,6 +531,31 @@ function runGraph() {
       txt += "\n\nEvery variable must decode to a valid codeword. When one does not, the\n" +
              "encoding penalty was traded away; raise a weight or lower the objective.";
     }
+    // A Certificate node asks the question the values cannot answer: was the machine that produced
+    // them sampling the distribution it claimed?
+    const certNode = nodes.find(n => n.type === "certify" && inputOf(n.id, "result")?.id === solveNode.id);
+    if (certNode) {
+      const ok = W.ft_model_certify(m, +certNode.vals.beta, certNode.vals.draws | 0, certNode.vals.thin | 0);
+      if (!ok) {
+        txt += "\n\ncertificate  refused: beta must be positive and draws at least 16";
+      } else {
+        const nf = W.ft_model_cert_findings(m);
+        txt += "\n\ncertificate";
+        txt += "\n  beta_eff  " + W.ft_model_cert_beta(m).toFixed(4) + "   (asked " + (+certNode.vals.beta) + ")";
+        txt += "\n  tau_int   " + W.ft_model_cert_tau(m).toFixed(2);
+        txt += "\n  ess       " + W.ft_model_cert_ess(m).toFixed(0) + " of " + (certNode.vals.draws | 0) + " draws";
+        const tv = W.ft_model_cert_tv(m), fl = W.ft_model_cert_floor(m);
+        if (!Number.isNaN(tv) && !Number.isNaN(fl)) {
+          // never the distance without its floor
+          txt += "\n  tv        " + tv.toFixed(4) + " against a " + fl.toFixed(4) + " noise floor";
+        }
+        txt += "\n  " + (nf === 0 ? "PASSED" : nf + " finding(s)");
+        for (let i = 0; i < nf; i++) {
+          txt += "\n    ! " + readTextIdx(W.ft_model_cert_finding, m, i);
+        }
+      }
+    }
+
     $("out").textContent = txt;
     $("ftp").textContent = readText(W.ft_model_ftp, m) || "—";
   } catch (e) {
@@ -589,6 +629,93 @@ function saveFile() {
   URL.revokeObjectURL(a.href);
 }
 
+// ---- history ---------------------------------------------------------------------------------
+//
+// Snapshots rather than inverse operations. A graph is small, snapshots cannot drift out of sync
+// with the thing they describe, and an undo that is subtly wrong is worse than none.
+
+const history = { past: [], future: [] };
+
+function snapshot() {
+  return JSON.stringify({ nodes, links, nextId });
+}
+/** Call BEFORE a change, so the stack holds the state to return to. */
+function checkpoint() {
+  history.past.push(snapshot());
+  if (history.past.length > 100) history.past.shift();
+  history.future.length = 0;
+  refreshHistoryButtons();
+}
+function restore(s) {
+  const d = JSON.parse(s);
+  nodes = d.nodes; links = d.links; nextId = d.nextId;
+  selected.clear();
+  draw();
+}
+function undo() {
+  if (!history.past.length) return;
+  history.future.push(snapshot());
+  restore(history.past.pop());
+  refreshHistoryButtons();
+}
+function redo() {
+  if (!history.future.length) return;
+  history.past.push(snapshot());
+  restore(history.future.pop());
+  refreshHistoryButtons();
+}
+function refreshHistoryButtons() {
+  $("undo").disabled = !history.past.length;
+  $("redo").disabled = !history.future.length;
+}
+$("undo").onclick = undo;
+$("redo").onclick = redo;
+
+// ---- quick-add palette --------------------------------------------------------------------------
+
+const pal = { open: false, items: [], sel: 0 };
+function openPalette() {
+  pal.open = true; pal.sel = 0;
+  $("palette").hidden = false;
+  $("palq").value = "";
+  filterPalette();
+  $("palq").focus();
+}
+function closePalette() { pal.open = false; $("palette").hidden = true; }
+function filterPalette() {
+  const q = $("palq").value.toLowerCase();
+  pal.items = Object.entries(TYPES)
+    .filter(([k, T]) => (k + " " + T.title).toLowerCase().includes(q))
+    .map(([k, T]) => ({ key: k, title: T.title, kind: T.kind || "out" }));
+  pal.sel = Math.min(pal.sel, Math.max(0, pal.items.length - 1));
+  $("palr").innerHTML = "";
+  pal.items.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.textContent = it.title + "   " + it.kind;
+    if (i === pal.sel) d.className = "on";
+    d.onmousedown = e => { e.preventDefault(); addFromPalette(i); };
+    $("palr").appendChild(d);
+  });
+}
+function addFromPalette(i) {
+  const it = pal.items[i];
+  if (!it) return;
+  checkpoint();
+  const r = stage.getBoundingClientRect();
+  const c = toCanvas(r.left + r.width / 2, r.top + r.height / 3);
+  const n = addNode(it.key, c.x, c.y);
+  selected.clear(); selected.add(n.id);
+  closePalette(); draw();
+}
+$("palq").addEventListener("input", filterPalette);
+$("palq").addEventListener("keydown", e => {
+  if (e.key === "Escape") { closePalette(); }
+  else if (e.key === "ArrowDown") { pal.sel = Math.min(pal.sel + 1, pal.items.length - 1); filterPalette(); }
+  else if (e.key === "ArrowUp") { pal.sel = Math.max(pal.sel - 1, 0); filterPalette(); }
+  else if (e.key === "Enter") { addFromPalette(pal.sel); }
+  e.stopPropagation();
+});
+
 $("save").onclick = saveFile;
 $("load").onclick = () => $("file").click();
 $("file").onchange = e => {
@@ -633,7 +760,17 @@ function problems(n) {
   if (n.type === "integer" && (n.vals.hi | 0) <= (n.vals.lo | 0)) return "an integer needs hi > lo";
   if (n.type === "solve" && !T.ins.some(([name]) => inputOf(n.id, name))) return "wire a constraint or objective in";
   if (n.type === "solve") return null;
+  if (n.type === "certify" && !inputOf(n.id, "result")) return "wire it to the same Solve as the Report";
   return missing.length ? `unwired input: ${missing.join(", ")}` : null;
+}
+
+/** The two-call text protocol, for getters that take an index. */
+function readTextIdx(fn, handle, i) {
+  const need = fn(handle, i, 0, 0);
+  if (!need) return "";
+  const ptr = W.ft_scratch(need);
+  const got = fn(handle, i, ptr, need);
+  return new TextDecoder().decode(new Uint8Array(mem.buffer, ptr, got));
 }
 
 $("run").onclick = runGraph;
@@ -660,6 +797,51 @@ function loadExample() {
 }
 $("example").onclick = loadExample;
 window.addEventListener("resize", drawWires);
+
+// ---- the scriptable API ---------------------------------------------------------------------------
+//
+// The editor is drivable from the console, from a test, or by an agent running in the page. These
+// are the same operations the buttons perform, so anything scripted behaves exactly as a click
+// would -- including going through the undo stack.
+window.ferrotherm = {
+  /** Node types and their ports, so a caller can discover the vocabulary rather than be told it. */
+  types: () => Object.fromEntries(Object.entries(TYPES).map(([k, T]) =>
+    [k, { title: T.title, kind: T.kind, inputs: T.ins.map(i => i[0]),
+          fields: Object.fromEntries(T.fields.map(f => [f[0], f[1]])) }])),
+  get nodes() { return nodes; },
+  get links() { return links; },
+
+  add(type, x = 60, y = 60, values = {}) {
+    if (!TYPES[type]) throw new Error(`unknown node type "${type}"; try types()`);
+    checkpoint();
+    const n = addNode(type, x, y);
+    Object.assign(n.vals, values);
+    draw();
+    return n.id;
+  },
+  remove(id) { checkpoint(); removeNode(id); },
+  /** Connect an output to a named input, refusing a kind mismatch the way the mouse would. */
+  connect(fromId, toId, port) {
+    const a = nodes.find(n => n.id === fromId), b = nodes.find(n => n.id === toId);
+    if (!a || !b) throw new Error("no such node");
+    const spec = TYPES[b.type].ins.find(([nm]) => nm === port);
+    if (!spec) throw new Error(`"${TYPES[b.type].title}" has no input "${port}"`);
+    if (TYPES[a.type].kind !== spec[1]) {
+      throw new Error(`kind mismatch: ${TYPES[a.type].kind} into ${spec[1]}`);
+    }
+    checkpoint();
+    links = links.filter(l => !(l.to === toId && l.port === port));
+    links.push({ from: fromId, to: toId, port, kind: spec[1] });
+    draw();
+  },
+  run: () => { runGraph(); return document.getElementById("out").textContent; },
+  output: () => document.getElementById("out").textContent,
+  ftp: () => document.getElementById("ftp").textContent,
+  toJson, fromJson, undo, redo, fit: fitView,
+  clear() { checkpoint(); nodes = []; links = []; draw(); },
+  /** Problems the editor can see without running anything. */
+  check: () => nodes.map(n => [n.id, TYPES[n.type].title, problems(n)]).filter(r => r[2]),
+};
 </script>
 </body>
 </html>

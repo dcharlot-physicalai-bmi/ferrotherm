@@ -734,6 +734,7 @@ pub struct ModelHandle {
     objective: Expr,
     sense: Sense,
     last_error: String,
+    cert: Option<crate::certify::Certificate>,
 }
 
 #[no_mangle]
@@ -745,6 +746,7 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
         objective: Expr::zero(),
         sense: Sense::Minimize,
         last_error: String::new(),
+        cert: None,
     }))
 }
 
@@ -1170,6 +1172,112 @@ mod cardinality_ffi {
                    "one variable is not a cardinality constraint");
         assert_eq!(ft_model_cardinality(m, 2, 5, 1, a, b, u32::MAX, u32::MAX), 0,
                    "k cannot exceed the number of variables");
+        ft_model_free(m);
+    }
+}
+
+/// Certify a compiled model: sample its energy landscape and check the run.
+///
+/// The same instrument the rest of the stack uses, reachable from a model rather than from a raw
+/// graph. A solved answer says *what*; a certificate says whether the machine that produced it was
+/// sampling the distribution it claimed. Returns 1 on success.
+#[no_mangle]
+pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, thin: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(c) = h.compiled.as_ref() else { return 0 };
+    if draws < 16 || !(beta > 0.0) {
+        return 0;
+    }
+    let g = &c.graph;
+    let mut smp = Sampler::new(g, beta, 1);
+    smp.sweeps(200, None);
+    let mut samples = Vec::with_capacity(draws as usize);
+    let mut trace = Vec::with_capacity(draws as usize);
+    for _ in 0..draws {
+        smp.sweeps(thin.max(1) as usize, None);
+        samples.push(smp.s.clone());
+        trace.push(g.energy(&smp.s));
+    }
+    h.cert = Some(crate::certify::certify(g, beta, &samples, &trace));
+    1
+}
+
+macro_rules! model_cert_field {
+    ($name:ident, $f:expr) => {
+        #[no_mangle]
+        pub extern "C" fn $name(m: *const ModelHandle) -> f64 {
+            match unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) {
+                Some(c) => $f(c),
+                None => f64::NAN,
+            }
+        }
+    };
+}
+
+model_cert_field!(ft_model_cert_beta, |c: &crate::certify::Certificate| c.beta_eff);
+model_cert_field!(ft_model_cert_ess, |c: &crate::certify::Certificate| c.ess);
+model_cert_field!(ft_model_cert_tau, |c: &crate::certify::Certificate| c.tau_int);
+model_cert_field!(ft_model_cert_tv, |c: &crate::certify::Certificate| c
+    .tv_exact
+    .unwrap_or(f64::NAN));
+model_cert_field!(ft_model_cert_floor, |c: &crate::certify::Certificate| c
+    .noise_floor
+    .unwrap_or(f64::NAN));
+
+/// Number of findings; zero is the only value meaning the run is sound.
+#[no_mangle]
+pub extern "C" fn ft_model_cert_findings(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) {
+        Some(c) => c.findings.len() as u32,
+        None => 0,
+    }
+}
+
+/// Copy finding `i` as UTF-8; same two-call protocol as the other text getters.
+#[no_mangle]
+pub extern "C" fn ft_model_cert_finding(
+    m: *const ModelHandle,
+    i: u32,
+    buf: *mut u8,
+    cap: u32,
+) -> u32 {
+    let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) else { return 0 };
+    let Some(fnd) = c.findings.get(i as usize) else { return 0 };
+    let text = fnd.to_string();
+    let b = text.as_bytes();
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
+#[cfg(test)]
+mod model_cert_tests {
+    use super::*;
+
+    #[test]
+    fn a_compiled_model_can_be_certified() {
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+        ft_model_not_equal(m, a, b);
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_certify(m, 0.5, 800, 4), 1);
+        let beta = ft_model_cert_beta(m);
+        assert!((beta - 0.5).abs() < 0.15, "beta_eff {beta} should be near the 0.5 asked for");
+        assert!(ft_model_cert_ess(m) > 0.0);
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn certifying_before_compiling_is_refused() {
+        let m = ft_model_new();
+        ft_model_categorical(m, 3);
+        assert_eq!(ft_model_certify(m, 0.5, 800, 1), 0, "nothing compiled yet");
+        assert_eq!(ft_model_certify(m, 0.5, 4, 1), 0, "and 4 draws certifies nothing");
+        assert!(ft_model_cert_beta(m).is_nan());
         ft_model_free(m);
     }
 }
