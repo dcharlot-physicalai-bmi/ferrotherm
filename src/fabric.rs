@@ -55,6 +55,12 @@ pub struct Fabric {
     pub supports_field: bool,
     /// Maximum factor arity. Two means pairwise only, which is most hardware.
     pub max_arity: usize,
+    /// Whether every coupling must have the same weight.
+    ///
+    /// Set by fabrics that *count* active neighbours rather than summing weighted ones. It is a
+    /// severe restriction — a spin glass cannot be expressed at all — and exactly the kind of limit
+    /// that goes undeclared until someone's answers come back wrong.
+    pub uniform_couplings: bool,
     /// Energy prices for the ledger.
     pub prices: Prices,
 }
@@ -68,6 +74,8 @@ pub enum Unsupported {
     NoFieldSupport { nodes: usize },
     /// The program's dynamic range cannot survive the fabric's coupling precision.
     CouplingPrecision { bits: u32, worst_relative_error: f64 },
+    /// The fabric counts neighbours rather than weighting them, so all couplings must be equal.
+    NonUniformCouplings { distinct: usize },
 }
 
 impl core::fmt::Display for Unsupported {
@@ -89,6 +97,12 @@ impl core::fmt::Display for Unsupported {
             Unsupported::NoFieldSupport { nodes } => write!(
                 f,
                 "{nodes} spins carry an external field and this fabric cannot apply one"
+            ),
+            Unsupported::NonUniformCouplings { distinct } => write!(
+                f,
+                "this fabric counts active neighbours rather than weighting them, so every coupling \
+                 must be equal; the program has {distinct} distinct weights. A spin glass cannot be \
+                 expressed here at all"
             ),
             Unsupported::CouplingPrecision { bits, worst_relative_error } => write!(
                 f,
@@ -113,6 +127,7 @@ impl Fabric {
             field_bits: None,
             supports_field: true,
             max_arity: usize::MAX,
+            uniform_couplings: false,
             prices,
         }
     }
@@ -161,6 +176,15 @@ impl Fabric {
 
         if !self.supports_field && !p.bias.is_empty() {
             out.push(Unsupported::NoFieldSupport { nodes: p.bias.len() });
+        }
+
+        if self.uniform_couplings {
+            let mut seen: Vec<u64> = p.factors.iter().map(|f| f.weight().to_bits()).collect();
+            seen.sort_unstable();
+            seen.dedup();
+            if seen.len() > 1 {
+                out.push(Unsupported::NonUniformCouplings { distinct: seen.len() });
+            }
         }
 
         if let Some(bits) = self.coupling_bits {
@@ -303,6 +327,7 @@ mod tests {
             field_bits: Some(8),
             supports_field: false,
             max_arity: 2,
+            uniform_couplings: false,
             prices: Z1_SPICE,
         }
     }
