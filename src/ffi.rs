@@ -1112,3 +1112,64 @@ mod scratch_tests {
         ft_model_free(m);
     }
 }
+
+/// Exactly `k` of the given variables take `value`.
+///
+/// Up to four variables, passed positionally with `u32::MAX` for the unused slots — a node graph
+/// has a fixed number of ports, and a variadic call across this boundary would need an allocator on
+/// the caller's side that a browser does not have.
+#[no_mangle]
+pub extern "C" fn ft_model_cardinality(
+    m: *mut ModelHandle,
+    count: u32,
+    k: u32,
+    value: u32,
+    a: u32,
+    b: u32,
+    c: u32,
+    d: u32,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let mut lits = Vec::new();
+    for v in [a, b, c, d].iter().take(count.min(4) as usize) {
+        match var_of(h, *v) {
+            Some(x) => lits.push(Lit::Is(x, value as usize)),
+            None => return 0,
+        }
+    }
+    if lits.len() < 2 || k as usize > lits.len() {
+        return 0;
+    }
+    h.model.constrain(Constraint::Cardinality { lits, k: k as usize });
+    1
+}
+
+#[cfg(test)]
+mod cardinality_ffi {
+    use super::*;
+
+    #[test]
+    fn exactly_k_crosses_the_boundary() {
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..4).map(|_| ft_model_binary(m)).collect();
+        assert_eq!(ft_model_cardinality(m, 4, 2, 1, v[0], v[1], v[2], v[3]), 1);
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 24);
+        assert_eq!(ft_model_feasible(m), 1);
+        let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
+        assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_degenerate_cardinality_is_refused() {
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        assert_eq!(ft_model_cardinality(m, 1, 1, 1, a, u32::MAX, u32::MAX, u32::MAX), 0,
+                   "one variable is not a cardinality constraint");
+        assert_eq!(ft_model_cardinality(m, 2, 5, 1, a, b, u32::MAX, u32::MAX), 0,
+                   "k cannot exceed the number of variables");
+        ft_model_free(m);
+    }
+}

@@ -41,7 +41,12 @@
   #stage{position:relative;overflow:hidden;background:
      radial-gradient(circle at 1px 1px, rgba(255,255,255,.055) 1px, transparent 0) 0 0/22px 22px, #080e18;
      cursor:default}
-  #wires{position:absolute;inset:0;pointer-events:none}
+  #canvas{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+  #wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+  #hint{position:absolute;left:12px;bottom:10px;font-family:var(--mono);font-size:10.5px;
+        color:var(--ink-faint);pointer-events:none;opacity:.75}
+  .node.bad{border-color:#d4685b}
+  .node.bad .hd::after{content:" ⚠";color:#e08080}
   .node{position:absolute;width:186px;background:var(--panel);border:1px solid var(--line);
         border-radius:9px;font-size:12px;user-select:none;box-shadow:0 6px 18px rgba(0,0,0,.35)}
   .node.sel{border-color:var(--gold)}
@@ -84,9 +89,15 @@
   <span class="mark">ferrotherm graph</span>
   <span class="mark"><a href="./">explainer</a> &middot; <a href="./ide.html">workbench</a></span>
   <span class="spacer"></span>
-  <button id="example">Load example</button>
+  <button id="example">Example</button>
+  <button id="save">Save</button>
+  <button id="load">Load</button>
+  <button id="copy">Copy JSON</button>
+  <button id="paste">Paste JSON</button>
+  <button id="fit">Fit</button>
   <button id="clear">Clear</button>
   <button id="run" class="primary">Run graph</button>
+  <input id="file" type="file" accept="application/json" hidden>
 </div>
 
 <main>
@@ -99,6 +110,7 @@
     <button class="add" data-t="notequal">a &ne; b</button>
     <button class="add" data-t="equal">a = b</button>
     <button class="add" data-t="fix">Fix value</button>
+    <button class="add" data-t="cardinality">Exactly k of</button>
     <h3>Objective</h3>
     <button class="add" data-t="prefer">Prefer value</button>
     <button class="add" data-t="agree">Prefer a = b</button>
@@ -107,7 +119,8 @@
     <button class="add" data-t="report">Report</button>
   </div>
 
-  <div id="stage"><svg id="wires"></svg></div>
+  <div id="stage"><div id="canvas"><svg id="wires"></svg></div>
+    <div id="hint">scroll to zoom · drag the background to pan · click to select · Del removes · Ctrl+D duplicates</div></div>
 
   <div class="side">
     <h3>Output</h3>
@@ -154,6 +167,9 @@ const TYPES = {
   notequal:   { title: "a ≠ b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
   equal:      { title: "a = b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
   fix:        { title: "Fix value",    kind: "cons", ins: [["var", "var"]], fields: [["value", 0, "int"]] },
+  cardinality:{ title: "Exactly k of", kind: "cons",
+                ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
+                fields: [["k", 1, "int"], ["value", 1, "int"]] },
 
   // --- objective: what to prefer ---------------------------------------------------------------
   prefer:     { title: "Prefer value", kind: "obj", ins: [["var", "var"]],
@@ -170,7 +186,52 @@ const TYPES = {
 
 let nodes = [], links = [], nextId = 1;
 const $ = id => document.getElementById(id);
-const stage = $("stage"), wires = $("wires");
+const stage = $("stage"), canvas = $("canvas"), wires = $("wires");
+
+// ---- view: pan and zoom -------------------------------------------------------------------------
+//
+// A graph that cannot be moved is a graph that fits on one screen, which stops being true about the
+// third time you use it.
+const view = { x: 40, y: 20, k: 1 };
+function applyView() {
+  canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
+}
+/** Screen coordinates to canvas coordinates. */
+function toCanvas(cx, cy) {
+  const r = stage.getBoundingClientRect();
+  return { x: (cx - r.left - view.x) / view.k, y: (cy - r.top - view.y) / view.k };
+}
+stage.addEventListener("wheel", e => {
+  e.preventDefault();
+  const before = toCanvas(e.clientX, e.clientY);
+  view.k = Math.min(2.5, Math.max(0.25, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  const after = toCanvas(e.clientX, e.clientY);
+  view.x += (after.x - before.x) * view.k;
+  view.y += (after.y - before.y) * view.k;
+  applyView();
+}, { passive: false });
+
+let panning = null;
+stage.addEventListener("mousedown", e => {
+  if (e.target === stage || e.target === canvas || e.target === wires) {
+    panning = { x: e.clientX - view.x, y: e.clientY - view.y };
+    selected.clear(); draw();
+  }
+});
+
+/** Frame everything, so a loaded graph is never off-screen. */
+function fitView() {
+  if (!nodes.length) { view.x = 40; view.y = 20; view.k = 1; return applyView(); }
+  const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+  const w = Math.max(...xs) + 200 - Math.min(...xs), h = Math.max(...ys) + 160 - Math.min(...ys);
+  const r = stage.getBoundingClientRect();
+  view.k = Math.min(1.4, Math.max(0.25, Math.min((r.width - 60) / w, (r.height - 60) / h)));
+  view.x = 30 - Math.min(...xs) * view.k;
+  view.y = 30 - Math.min(...ys) * view.k;
+  applyView();
+}
+
+const selected = new Set();
 
 function addNode(type, x, y) {
   const T = TYPES[type];
@@ -192,11 +253,18 @@ function removeNode(id) {
 let dragging = null, linking = null;
 
 function draw() {
-  [...stage.querySelectorAll(".node")].forEach(e => e.remove());
+  [...canvas.querySelectorAll(".node")].forEach(e => e.remove());
   for (const n of nodes) {
     const T = TYPES[n.type];
     const el = document.createElement("div");
-    el.className = "node";
+    el.className = "node" + (selected.has(n.id) ? " sel" : "") + (problems(n) ? " bad" : "");
+    el.title = problems(n) || "";
+    el.onmousedown = e => {
+      if (e.target.classList.contains("port")) return;
+      if (!e.shiftKey) selected.clear();
+      selected.add(n.id);
+      draw();
+    };
     el.style.left = n.x + "px";
     el.style.top = n.y + "px";
     el.dataset.id = n.id;
@@ -211,8 +279,11 @@ function draw() {
     del.onclick = e => { e.stopPropagation(); removeNode(n.id); };
     hd.appendChild(del);
     hd.onmousedown = e => {
-      dragging = { id: n.id, dx: e.clientX - n.x, dy: e.clientY - n.y };
+      if (!selected.has(n.id)) { if (!e.shiftKey) selected.clear(); selected.add(n.id); draw(); }
+      const p = toCanvas(e.clientX, e.clientY);
+      dragging = { ox: p.x, oy: p.y, start: new Map(nodes.map(m => [m.id, { x: m.x, y: m.y }])) };
       e.preventDefault();
+      e.stopPropagation();
     };
     el.appendChild(hd);
 
@@ -257,7 +328,7 @@ function draw() {
       p.onmousedown = e => { linking = { from: n.id, kind: T.kind }; e.stopPropagation(); e.preventDefault(); };
       el.appendChild(p);
     }
-    stage.appendChild(el);
+    canvas.appendChild(el);
   }
   drawWires();
 }
@@ -351,6 +422,16 @@ function runGraph() {
   const solveNode = inputOf(rep.id, "result");
   if (!solveNode) { $("out").textContent = "Connect a Solve node into the Report."; return; }
 
+  // Say what is wrong before doing any work; an editor that only complains after a failed run
+  // makes the user hunt for what it already knew.
+  const broken = nodes.map(n => [n, problems(n)]).filter(([, p]) => p);
+  if (broken.length) {
+    $("out").textContent = "fix these first:\n\n" +
+      broken.map(([n, p]) => "  " + TYPES[n.type].title + "#" + n.id + ": " + p).join("\n");
+    draw();
+    return;
+  }
+
   const reach = upstream(solveNode);
   const varNodes = nodes.filter(n => reach.has(n.id) && TYPES[n.type].kind === "var");
   if (!varNodes.length) { $("out").textContent = "Add at least one variable and wire it into Solve."; return; }
@@ -384,7 +465,14 @@ function runGraph() {
         ? ($("out").textContent = "'" + TYPES[n.type].title + "' needs both inputs wired to variables.", false)
         : true;
 
-      if (n.type === "notequal") { if (!need2(ia, ib)) return; cons += W.ft_model_not_equal(m, ia, ib); }
+      if (n.type === "cardinality") {
+        const vs = ["a", "b", "c", "d"].map(pn => inputOf(n.id, pn)).filter(Boolean)
+                     .map(x => idx.get(x.id)).filter(x => x !== undefined);
+        if (vs.length < 2) { $("out").textContent = "'Exactly k of' needs at least two variables."; return; }
+        cons += W.ft_model_cardinality(m, vs.length, n.vals.k | 0, n.vals.value | 0,
+                                       vs[0], vs[1], vs[2] ?? 0xFFFFFFFF, vs[3] ?? 0xFFFFFFFF);
+      }
+      else if (n.type === "notequal") { if (!need2(ia, ib)) return; cons += W.ft_model_not_equal(m, ia, ib); }
       else if (n.type === "equal") { if (!need2(ia, ib)) return; cons += W.ft_model_equal(m, ia, ib); }
       else if (n.type === "fix") {
         if (iv === undefined) { $("out").textContent = "'Fix value' needs a variable."; return; }
@@ -455,6 +543,97 @@ function readText(fn, handle) {
   if (!ptr) return "";
   const got = fn(handle, ptr, need);
   return new TextDecoder().decode(new Uint8Array(mem.buffer, ptr, got));
+}
+
+// ---- the graph as a document ---------------------------------------------------------------------
+//
+// A saved graph is plain JSON with the node types and fields spelled out, which makes it something a
+// person can diff and an agent can author. That is the same reason `.ftp` is text.
+
+const FORMAT = "ferrotherm-graph/1";
+
+function toJson() {
+  return JSON.stringify({
+    format: FORMAT,
+    nodes: nodes.map(n => ({ id: n.id, type: n.type, x: Math.round(n.x), y: Math.round(n.y), values: n.vals })),
+    links: links.map(l => ({ from: l.from, to: l.to, port: l.port, kind: l.kind })),
+  }, null, 2);
+}
+
+function fromJson(text) {
+  const d = JSON.parse(text);
+  if (d.format !== FORMAT) throw new Error(`not a ${FORMAT} document (found ${d.format || "no format field"})`);
+  if (!Array.isArray(d.nodes)) throw new Error("no nodes array");
+  const fresh = [];
+  for (const n of d.nodes) {
+    if (!TYPES[n.type]) throw new Error(`unknown node type "${n.type}"; known: ${Object.keys(TYPES).join(", ")}`);
+    const vals = {};
+    for (const [k, dflt] of TYPES[n.type].fields) vals[k] = n.values?.[k] ?? dflt;
+    fresh.push({ id: n.id | 0, type: n.type, x: +n.x || 0, y: +n.y || 0, vals });
+  }
+  const ids = new Set(fresh.map(n => n.id));
+  const wires = (d.links || []).filter(l => ids.has(l.from) && ids.has(l.to));
+  nodes = fresh; links = wires;
+  nextId = Math.max(0, ...fresh.map(n => n.id)) + 1;
+  selected.clear();
+  draw(); fitView();
+  return { nodes: fresh.length, links: wires.length, dropped: (d.links || []).length - wires.length };
+}
+
+function saveFile() {
+  const blob = new Blob([toJson()], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "graph.ferrotherm.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$("save").onclick = saveFile;
+$("load").onclick = () => $("file").click();
+$("file").onchange = e => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  f.text().then(txt => {
+    try {
+      const r = fromJson(txt);
+      $("out").textContent = `loaded ${r.nodes} nodes and ${r.links} wires` +
+        (r.dropped ? `\n${r.dropped} wire(s) dropped: they referred to nodes not in the file` : "");
+    } catch (err) { $("out").textContent = "could not load: " + err.message; }
+  });
+  e.target.value = "";
+};
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(toJson()); $("out").textContent = "graph copied as JSON"; }
+  catch { $("out").textContent = "clipboard blocked; here it is instead:\n\n" + toJson(); }
+};
+$("paste").onclick = async () => {
+  try {
+    const txt = await navigator.clipboard.readText();
+    const r = fromJson(txt);
+    $("out").textContent = `pasted ${r.nodes} nodes and ${r.links} wires`;
+  } catch (err) { $("out").textContent = "could not paste: " + (err.message || err); }
+};
+$("fit").onclick = fitView;
+
+// ---- validation ------------------------------------------------------------------------------------
+//
+// Shown on the node itself, while editing, rather than only when Run fails.
+
+function problems(n) {
+  const T = TYPES[n.type];
+  const missing = T.ins.filter(([name]) => !inputOf(n.id, name)).map(([name]) => name);
+  if (n.type === "cardinality") {
+    const wired = T.ins.filter(([name]) => inputOf(n.id, name)).length;
+    if (wired < 2) return "wire at least two variables into it";
+    if ((n.vals.k | 0) < 0 || (n.vals.k | 0) > wired) return `k must be between 0 and ${wired}`;
+    return null;
+  }
+  if (n.type === "categorical" && (n.vals.values | 0) < 2) return "a categorical needs at least 2 values";
+  if (n.type === "integer" && (n.vals.hi | 0) <= (n.vals.lo | 0)) return "an integer needs hi > lo";
+  if (n.type === "solve" && !T.ins.some(([name]) => inputOf(n.id, name))) return "wire a constraint or objective in";
+  if (n.type === "solve") return null;
+  return missing.length ? `unwired input: ${missing.join(", ")}` : null;
 }
 
 $("run").onclick = runGraph;
