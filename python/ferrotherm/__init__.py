@@ -29,8 +29,13 @@ from ctypes import c_double, c_int8, c_uint32, c_uint64, POINTER
 from typing import Any, Iterable, Sequence
 
 __all__ = [
+    "Answer",
     "Certificate",
+    "Literal",
     "Model",
+    "Problem",
+    "Term",
+    "Variable",
     "Sim",
     "frustrated",
     "wishart",
@@ -131,6 +136,47 @@ _exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
 _exact_log_z = _sig("ft_exact_log_z", c_double, [_p, c_double, c_uint32])
 _exact_width = _sig("ft_exact_width", c_uint32, [_p])
 _free = _sig("ft_free", None, [_p])
+
+# the modelling layer
+_u8p = ctypes.POINTER(ctypes.c_ubyte)
+_model_new = _sig("ft_model_new", _p, [])
+_model_free = _sig("ft_model_free", None, [_p])
+_model_categorical = _sig("ft_model_categorical", c_uint32, [_p, c_uint32])
+_model_integer = _sig("ft_model_integer", c_uint32, [_p, ctypes.c_int64, ctypes.c_int64])
+_model_binary = _sig("ft_model_binary", c_uint32, [_p])
+_model_not_equal = _sig("ft_model_not_equal", c_uint32, [_p, c_uint32, c_uint32])
+_model_equal = _sig("ft_model_equal", c_uint32, [_p, c_uint32, c_uint32])
+_model_fix = _sig("ft_model_fix", c_uint32, [_p, c_uint32, ctypes.c_int64])
+_counting_args = [_p, c_uint32, c_uint32, ctypes.c_int64,
+                  c_uint32, c_uint32, c_uint32, c_uint32]
+_model_cardinality = _sig("ft_model_cardinality", c_uint32, _counting_args)
+_model_at_most = _sig("ft_model_at_most", c_uint32, _counting_args)
+_model_at_least = _sig("ft_model_at_least", c_uint32, _counting_args)
+_model_objective_term = _sig("ft_model_objective_term", c_uint32,
+                             [_p, c_uint32, c_double, c_uint32, ctypes.c_int64])
+_model_objective_pair = _sig("ft_model_objective_pair", c_uint32,
+                             [_p, c_uint32, c_double, c_uint32, ctypes.c_int64,
+                              c_uint32, ctypes.c_int64])
+_model_compile = _sig("ft_model_compile", c_uint32, [_p])
+_model_solve_with = _sig("ft_model_solve_with", c_uint32,
+                         [_p, c_uint32, c_double, c_double, c_uint32, c_uint32])
+_model_value = _sig("ft_model_value", ctypes.c_int64, [_p, c_uint32])
+_model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
+_model_energy = _sig("ft_model_energy", c_double, [_p])
+_model_penalty = _sig("ft_model_penalty", c_double, [_p])
+_model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
+_model_error = _sig("ft_model_error", c_uint32, [_p, _u8p, c_uint32])
+_model_ftp = _sig("ft_model_ftp", c_uint32, [_p, _u8p, c_uint32])
+
+
+def _read_text(fn: Any, handle: Any) -> str:
+    """The two-call text protocol: ask how long it is, then ask for it."""
+    need = fn(handle, None, 0)
+    if not need:
+        return ""
+    buf = (ctypes.c_ubyte * need)()
+    got = fn(handle, buf, need)
+    return bytes(buf[:got]).decode("utf-8", "replace")
 
 
 # ---- building -------------------------------------------------------------------------------
@@ -503,3 +549,320 @@ def wishart(n: int, alpha: float = 0.5, seed: int = 0, beta: float = 1.0) -> Sim
 def onsager(beta: float) -> float:
     """Onsager's exact spontaneous magnetisation for the 2D Ising model. Ground truth."""
     return float(_onsager(float(beta)))
+
+
+# ---- modelling ------------------------------------------------------------------------------
+#
+# Everything above works in spins: couplings, biases, energies. That is the machine's language, not
+# the problem's. This layer is the problem's -- variables that hold values, constraints that say
+# what must be true, an objective that says what is better -- and it compiles down to the layer
+# above. Answers come back in the names you used.
+
+
+class Term:
+    """A piece of an objective. Build these with arithmetic, not by calling the constructor.
+
+    ``5 * shift.is_(2)`` is one term; ``a.is_(1) * b.is_(1)`` is a quadratic one; adding them makes
+    an objective. Terms are inert until handed to :meth:`Problem.maximize` or
+    :meth:`Problem.minimize`.
+    """
+
+    __slots__ = ("parts",)
+
+    def __init__(self, parts: "list[tuple[float, Any, Any]]") -> None:
+        self.parts = parts
+
+    def __add__(self, other: Any) -> "Term":
+        return Term(self.parts + _as_term(other).parts)
+
+    __radd__ = __add__
+
+    def __sub__(self, other: Any) -> "Term":
+        return self + (-_as_term(other))
+
+    def __rsub__(self, other: Any) -> "Term":
+        return _as_term(other) + (-self)
+
+    def __neg__(self) -> "Term":
+        return Term([(-c, a, b) for c, a, b in self.parts])
+
+    def __mul__(self, k: Any) -> "Term":
+        if isinstance(k, (int, float)):
+            return Term([(c * float(k), a, b) for c, a, b in self.parts])
+        return NotImplemented
+
+    __rmul__ = __mul__
+
+    def __repr__(self) -> str:
+        return "<Term %d part%s>" % (len(self.parts), "" if len(self.parts) == 1 else "s")
+
+
+class Literal:
+    """The claim that one variable takes one value. Multiply it by a number to weight it."""
+
+    __slots__ = ("var", "value")
+
+    def __init__(self, var: "Variable", value: int) -> None:
+        self.var, self.value = var, value
+
+    def __mul__(self, other: Any) -> Term:
+        if isinstance(other, (int, float)):
+            return Term([(float(other), self, None)])
+        if isinstance(other, Literal):
+            return Term([(1.0, self, other)])       # a product of two literals is quadratic
+        return NotImplemented
+
+    __rmul__ = __mul__
+
+    def __add__(self, other: Any) -> Term:
+        return Term([(1.0, self, None)]) + _as_term(other)
+
+    __radd__ = __add__
+
+    def __sub__(self, other: Any) -> Term:
+        return Term([(1.0, self, None)]) - _as_term(other)
+
+    def __neg__(self) -> Term:
+        return Term([(-1.0, self, None)])
+
+    def __repr__(self) -> str:
+        return f"<{self.var.name} is {self.value}>"
+
+
+def _as_term(x: Any) -> Term:
+    if isinstance(x, Term):
+        return x
+    if isinstance(x, Literal):
+        return Term([(1.0, x, None)])
+    # `sum()` starts from 0, and summing terms is the natural way to build an objective in a loop,
+    # so zero is the empty term. Any other bare number is a mistake: an objective is a function of
+    # the variables, and a constant added to it changes no answer.
+    if isinstance(x, (int, float)) and x == 0:
+        return Term([])
+    raise TypeError(
+        f"an objective is built from literals and terms, not {type(x).__name__}. "
+        "Write `3 * x.is_(2)`, not a bare number; a constant would change no answer."
+    )
+
+
+class Variable:
+    """A declared variable. Ask it for a literal with ``is_(value)``."""
+
+    __slots__ = ("_problem", "_index", "name", "domain")
+
+    def __init__(self, problem: "Problem", index: int, name: str, domain: str) -> None:
+        self._problem, self._index, self.name, self.domain = problem, index, name, domain
+
+    def is_(self, value: int) -> Literal:
+        """The literal "this variable takes ``value``"."""
+        return Literal(self, int(value))
+
+    def __repr__(self) -> str:
+        return f"<Variable {self.name}: {self.domain}>"
+
+
+class Answer:
+    """A solved problem, read by name.
+
+    ``answer["shift"]`` gives a value; ``answer.feasible`` says whether every constraint held. An
+    infeasible answer is still returned, because knowing *which* constraint lost to the objective is
+    more useful than a raised exception with nothing in it. A variable that failed to decode reads
+    ``None``, and it is the one that lost.
+    """
+
+    __slots__ = ("values", "feasible", "energy", "spins", "penalty")
+
+    def __init__(self, **kw: Any) -> None:
+        for k in self.__slots__:
+            setattr(self, k, kw.get(k))
+
+    def __getitem__(self, name: str) -> int:
+        try:
+            return self.values[name]
+        except KeyError:
+            raise KeyError(
+                f"no variable named {name!r}; this problem has "
+                + ", ".join(repr(k) for k in self.values)
+            ) from None
+
+    def __contains__(self, name: str) -> bool:
+        return name in self.values
+
+    def __iter__(self):
+        return iter(self.values.items())
+
+    @property
+    def undecoded(self) -> "list[str]":
+        """The variables whose encoding was violated. Empty exactly when ``feasible`` is true."""
+        return [k for k, v in self.values.items() if v is None]
+
+    def __repr__(self) -> str:
+        head = "feasible" if self.feasible else "INFEASIBLE"
+        body = ", ".join(f"{k}={'?' if v is None else v}" for k, v in self.values.items())
+        return f"<Answer {head} energy={self.energy:.4f} [{body}]>"
+
+
+class Problem:
+    """A problem stated in its own terms, compiled to spins and sampled.
+
+    >>> p = Problem()
+    >>> days = {d: p.binary(d) for d in ("mon", "tue", "wed", "thu", "fri")}
+    >>> p.at_most(list(days.values()), 3)
+    >>> p.maximize(sum(w * v.is_(1) for w, v in zip((5, 4, 3, 2, 1), days.values())))
+    >>> ans = p.solve()
+    >>> [d for d in days if ans[d]]
+    ['mon', 'tue', 'wed']
+
+    Inequalities cost extra spins: each needs a slack variable to become an equality the sampler can
+    square. The slack never appears in the answer.
+    """
+
+    def __init__(self) -> None:
+        self._h = _model_new()
+        if not self._h:
+            raise MemoryError("could not allocate a problem")
+        self._vars: "dict[str, Variable]" = {}
+
+    # -- variables ------------------------------------------------------------------------------
+
+    def categorical(self, name: str, values: int) -> Variable:
+        """A variable holding one of ``values`` distinct values, encoded one-hot."""
+        return self._declare(name, "categorical", _model_categorical(self._h, int(values)))
+
+    def integer(self, name: str, lo: int, hi: int) -> Variable:
+        """A variable over the inclusive range ``lo``..``hi``.
+
+        There is no machine integer here. This is a categorical over the range, encoded so that
+        neighbouring values differ in one spin; the name is for the modeller, not the fabric.
+        """
+        return self._declare(name, f"integer {lo}..{hi}",
+                             _model_integer(self._h, int(lo), int(hi)))
+
+    def binary(self, name: str) -> Variable:
+        """A variable that is 0 or 1."""
+        return self._declare(name, "binary", _model_binary(self._h))
+
+    def _declare(self, name: str, domain: str, index: int) -> Variable:
+        if index == 0xFFFFFFFF:
+            raise ValueError(
+                f"{domain} is not a usable domain for {name!r} "
+                "(a categorical needs at least 2 values; an integer needs hi > lo)"
+            )
+        if name in self._vars:
+            raise ValueError(f"{name!r} is already declared")
+        # Push the name down, so the library's errors name the variable the caller declared rather
+        # than the handle it was given back.
+        raw = name.encode("utf-8")
+        _model_name(self._h, index, raw, len(raw))
+        v = Variable(self, index, name, domain)
+        self._vars[name] = v
+        return v
+
+    # -- constraints ----------------------------------------------------------------------------
+
+    def not_equal(self, a: Variable, b: Variable) -> None:
+        """``a`` and ``b`` must differ."""
+        self._must(_model_not_equal(self._h, a._index, b._index), "not_equal")
+
+    def equal(self, a: Variable, b: Variable) -> None:
+        """``a`` and ``b`` must agree."""
+        self._must(_model_equal(self._h, a._index, b._index), "equal")
+
+    def fix(self, v: Variable, value: int) -> None:
+        """``v`` must take ``value``."""
+        self._must(_model_fix(self._h, v._index, int(value)), "fix")
+
+    def exactly(self, vs: "Sequence[Variable]", k: int, value: int = 1) -> None:
+        """Exactly ``k`` of ``vs`` take ``value``."""
+        self._counting(_model_cardinality, vs, k, value, "exactly")
+
+    def at_most(self, vs: "Sequence[Variable]", k: int, value: int = 1) -> None:
+        """At most ``k`` of ``vs`` take ``value``. Costs a slack variable."""
+        self._counting(_model_at_most, vs, k, value, "at_most")
+
+    def at_least(self, vs: "Sequence[Variable]", k: int, value: int = 1) -> None:
+        """At least ``k`` of ``vs`` take ``value``. Costs a slack variable."""
+        self._counting(_model_at_least, vs, k, value, "at_least")
+
+    def _counting(self, fn: Any, vs: "Sequence[Variable]", k: int, value: int, what: str) -> None:
+        vs = list(vs)
+        if not 2 <= len(vs) <= 4:
+            raise ValueError(
+                f"{what} takes between two and four variables, not {len(vs)}. "
+                "Wider counting constraints are not in the C surface yet."
+            )
+        if not 0 <= k <= len(vs):
+            raise ValueError(f"k must be between 0 and {len(vs)} for {what}, not {k}")
+        idx = [v._index for v in vs] + [0xFFFFFFFF] * (4 - len(vs))
+        self._must(fn(self._h, len(vs), int(k), int(value), *idx), what)
+
+    # -- objective ------------------------------------------------------------------------------
+
+    def maximize(self, term: Any) -> None:
+        """Prefer states where ``term`` is large."""
+        self._objective(term, maximize=True)
+
+    def minimize(self, term: Any) -> None:
+        """Prefer states where ``term`` is small."""
+        self._objective(term, maximize=False)
+
+    def _objective(self, term: Any, maximize: bool) -> None:
+        m = 1 if maximize else 0
+        for coeff, a, b in _as_term(term).parts:
+            if b is None:
+                ok = _model_objective_term(self._h, m, coeff, a.var._index, a.value)
+            else:
+                ok = _model_objective_pair(self._h, m, coeff, a.var._index, a.value,
+                                           b.var._index, b.value)
+            self._must(ok, "objective")
+
+    # -- solving --------------------------------------------------------------------------------
+
+    def solve(
+        self,
+        tries: int = 12,
+        beta_hot: float = 0.0,
+        beta_cold: float = 0.0,
+        stages: int = 0,
+        sweeps: int = 0,
+    ) -> Answer:
+        """Compile and solve, keeping the best of ``tries`` anneals.
+
+        The four ladder parameters default to the library's own; a zero means "use that default", so
+        a caller who has measured their own instance can override only what they measured.
+        """
+        spins = _model_compile(self._h)
+        if spins == 0:
+            raise ValueError(self._error() or "this problem did not compile")
+        if not _model_solve_with(self._h, max(1, int(tries)), float(beta_hot), float(beta_cold),
+                                 int(stages), int(sweeps)):
+            raise ValueError(
+                "that annealing ladder is not usable: beta_cold must exceed beta_hot, and both "
+                "must be real numbers. Pass 0 for any of the four to use the default."
+            )
+        # A variable that did not decode is reported as None rather than raised on. Its encoding was
+        # violated, which means a penalty lost to the objective -- and knowing WHICH variable lost is
+        # the whole diagnosis. An exception would throw that away and leave the caller with nothing.
+        vals = {}
+        for name, v in self._vars.items():
+            got = _model_value(self._h, v._index)
+            vals[name] = None if got == -(2 ** 63) else int(got)
+        return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
+                      energy=float(_model_energy(self._h)), spins=int(spins),
+                      penalty=float(_model_penalty(self._h)))
+
+    def ftp(self) -> str:
+        """The compiled program in ``.ftp`` form, for running on another fabric."""
+        return _read_text(_model_ftp, self._h)
+
+    def _error(self) -> str:
+        return _read_text(_model_error, self._h)
+
+    def _must(self, ok: int, what: str) -> None:
+        if not ok:
+            raise ValueError(self._error() or f"the library refused that {what}")
+
+    def __del__(self) -> None:
+        h, self._h = getattr(self, "_h", None), None
+        if h:
+            _model_free(h)

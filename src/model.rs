@@ -64,11 +64,64 @@ impl Domain {
             Domain::Integer { lo, hi } => (hi - lo + 1).max(1) as usize,
         }
     }
+
+    /// The values a modeller writes, in encoding order.
+    ///
+    /// For everything but an integer these are `0..size`, so value and slot coincide and the
+    /// distinction never surfaces. An integer over `5..=20` takes the values 5 through 20, and
+    /// conflating those with slots 0 through 15 is the bug this exists to prevent.
+    pub fn values(&self) -> impl Iterator<Item = i64> + '_ {
+        let (lo, n) = match self {
+            Domain::Integer { lo, .. } => (*lo, self.size()),
+            _ => (0, self.size()),
+        };
+        (0..n).map(move |i| lo + i as i64)
+    }
+
+    /// Which one-hot slot holds `value`, or `None` if the domain does not contain it.
+    pub fn index_of(&self, value: i64) -> Option<usize> {
+        let lo = match self {
+            Domain::Integer { lo, .. } => *lo,
+            _ => 0,
+        };
+        let i = value.checked_sub(lo)?;
+        (i >= 0 && (i as u128) < self.size() as u128).then_some(i as usize)
+    }
+
+    /// How a domain reads in an error message.
+    pub fn describe(&self) -> String {
+        match self {
+            Domain::Spin => "the spins -1 and +1".into(),
+            Domain::Binary => "0 or 1".into(),
+            Domain::Categorical(k) => format!("the {k} values 0..{}", k - 1),
+            Domain::Integer { lo, hi } => format!("the integers {lo}..={hi}"),
+        }
+    }
 }
 
 /// A handle to a declared variable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Var(usize);
+
+impl Var {
+    /// The literal "this variable takes `value`", for use in expressions.
+    ///
+    /// ```
+    /// # use ferrotherm::model::Model;
+    /// let mut m = Model::new();
+    /// let x = m.categorical("x", 3);
+    /// let e = 5.0 * x.is(2) - 1.0 * x.is(0);
+    /// # let _ = e;
+    /// ```
+    pub fn is(self, value: i64) -> Lit {
+        Lit::Is(self, value)
+    }
+
+    /// The ±1 spin value, for `Spin` and `Binary` variables.
+    pub fn spin(self) -> Lit {
+        Lit::Spin(self)
+    }
+}
 
 /// Whether an objective is being minimised or maximised.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,7 +136,7 @@ pub enum Lit {
     /// The spin value of a `Spin` or `Binary` variable, as ±1.
     Spin(Var),
     /// 1 when `var` takes `value`, 0 otherwise.
-    Is(Var, usize),
+    Is(Var, i64),
 }
 
 /// A weighted product of at most two literals.
@@ -135,6 +188,117 @@ impl Expr {
     }
 }
 
+// ---- arithmetic ---------------------------------------------------------------------------------
+//
+// An objective should read like the thing it is. `5.0 * x.is(2) + 3.0 * y.is(1)` says what it means;
+// `Expr::zero().plus(Expr::lit(5.0, Lit::Is(x, 2)))` says how it is stored. Both build the same
+// structure, and the builder methods remain for anyone assembling terms in a loop.
+
+impl core::ops::Mul<Lit> for f64 {
+    type Output = Expr;
+    fn mul(self, l: Lit) -> Expr {
+        Expr::lit(self, l)
+    }
+}
+
+impl core::ops::Mul<f64> for Lit {
+    type Output = Expr;
+    fn mul(self, c: f64) -> Expr {
+        Expr::lit(c, self)
+    }
+}
+
+/// A product of two literals, which is quadratic in the spins.
+impl core::ops::Mul<Lit> for Lit {
+    type Output = Expr;
+    fn mul(self, other: Lit) -> Expr {
+        Expr::pair(1.0, self, other)
+    }
+}
+
+/// Scaling a quadratic term: `2.0 * (a.is(1) * b.is(1))`.
+impl core::ops::Mul<Expr> for f64 {
+    type Output = Expr;
+    fn mul(self, e: Expr) -> Expr {
+        e.scaled(self)
+    }
+}
+
+impl core::ops::Mul<f64> for Expr {
+    type Output = Expr;
+    fn mul(self, c: f64) -> Expr {
+        self.scaled(c)
+    }
+}
+
+impl core::ops::Add<Expr> for Expr {
+    type Output = Expr;
+    fn add(self, other: Expr) -> Expr {
+        self.plus(other)
+    }
+}
+
+impl core::ops::Add<Lit> for Expr {
+    type Output = Expr;
+    fn add(self, l: Lit) -> Expr {
+        self.plus(Expr::lit(1.0, l))
+    }
+}
+
+impl core::ops::Add<Expr> for Lit {
+    type Output = Expr;
+    fn add(self, e: Expr) -> Expr {
+        Expr::lit(1.0, self).plus(e)
+    }
+}
+
+impl core::ops::Add<Lit> for Lit {
+    type Output = Expr;
+    fn add(self, other: Lit) -> Expr {
+        Expr::lit(1.0, self).plus(Expr::lit(1.0, other))
+    }
+}
+
+impl core::ops::Neg for Expr {
+    type Output = Expr;
+    fn neg(self) -> Expr {
+        self.scaled(-1.0)
+    }
+}
+
+impl core::ops::Neg for Lit {
+    type Output = Expr;
+    fn neg(self) -> Expr {
+        Expr::lit(-1.0, self)
+    }
+}
+
+impl core::ops::Sub<Expr> for Expr {
+    type Output = Expr;
+    fn sub(self, other: Expr) -> Expr {
+        self.plus(-other)
+    }
+}
+
+impl core::ops::Sub<Lit> for Expr {
+    type Output = Expr;
+    fn sub(self, l: Lit) -> Expr {
+        self.plus(-l)
+    }
+}
+
+/// Sum an iterator of terms, for objectives built in a loop.
+impl core::iter::Sum<Expr> for Expr {
+    fn sum<I: Iterator<Item = Expr>>(iter: I) -> Expr {
+        iter.fold(Expr::zero(), |a, b| a.plus(b))
+    }
+}
+
+/// The values two domains have in common, which is what "equal" and "not equal" are about.
+fn shared_values(a: &Domain, b: &Domain) -> Vec<i64> {
+    a.values().filter(|v| b.index_of(*v).is_some()).collect()
+}
+
 /// A statement that must hold.
 #[derive(Clone, Debug)]
 pub enum Constraint {
@@ -147,7 +311,7 @@ pub enum Constraint {
     /// At most one is true.
     AtMostOne(Vec<Lit>),
     /// This variable takes this value.
-    Fix(Var, usize),
+    Fix(Var, i64),
     /// Exactly `k` of these literals are true.
     ///
     /// The penalty is `(Σ lits − k)²`, which is quadratic in the spins and needs no ancillas.
@@ -197,7 +361,7 @@ pub enum CompileError {
     /// An expression term had degree above two.
     DegreeTooHigh { degree: usize },
     /// A value outside a variable's domain.
-    BadValue { var: String, value: usize, size: usize },
+    BadValue { var: String, value: i64, domain: Domain },
     /// A model with nothing in it.
     Empty,
 }
@@ -218,8 +382,8 @@ impl core::fmt::Display for CompileError {
                 "a term of degree {degree} needs a higher-order reduction with ancillas, which is a \
                  separate pass and is not applied silently"
             ),
-            CompileError::BadValue { var, value, size } => {
-                write!(f, "'{var}' has {size} values; {value} is not one of them")
+            CompileError::BadValue { var, value, domain } => {
+                write!(f, "'{var}' takes {}; {value} is not one of them", domain.describe())
             }
             CompileError::Empty => write!(f, "a model with no variables compiles to nothing"),
         }
@@ -286,6 +450,16 @@ impl Model {
 
     pub fn name_of(&self, v: Var) -> &str {
         &self.decls[v.0].name
+    }
+
+    /// Rename a variable after declaring it.
+    ///
+    /// A caller that declares variables through a boundary carrying no strings -- an FFI, a node
+    /// graph -- still has names on its own side. Pushing them down here is what makes an error read
+    /// "'temperature' takes the integers 10..=20" instead of naming a handle the modeller never saw.
+    pub fn rename(&mut self, v: Var, name: impl Into<String>) -> &mut Self {
+        self.decls[v.0].name = name.into();
+        self
     }
     pub fn domain_of(&self, v: Var) -> Domain {
         self.decls[v.0].domain
@@ -356,7 +530,7 @@ impl Model {
         self.constrain(Constraint::Equal(a, b))
     }
     /// Pin a variable to a value.
-    pub fn fix(&mut self, v: Var, value: usize) -> &mut Self {
+    pub fn fix(&mut self, v: Var, value: i64) -> &mut Self {
         self.constrain(Constraint::Fix(v, value))
     }
 
@@ -487,14 +661,15 @@ impl Model {
             }
             Lit::Is(v, value) => {
                 let d = &self.decls[v.0];
-                let size = d.domain.size();
-                if value >= size {
+                // The modeller writes a value; the fabric holds a slot. This is where the two meet,
+                // and it is the only place that knows the difference.
+                let Some(slot) = d.domain.index_of(value) else {
                     return Err(CompileError::BadValue {
                         var: d.name.clone(),
                         value,
-                        size,
+                        domain: d.domain,
                     });
-                }
+                };
                 if d.encoding != Encoding::OneHot {
                     return Err(CompileError::NeedsOneHot {
                         var: d.name.clone(),
@@ -503,7 +678,7 @@ impl Model {
                 }
                 // one-hot: indicator = (1 + s)/2
                 let s = slots[v.0];
-                Ok(LinSpin { offset: 0.5, terms: vec![(s.base + value, 0.5)] })
+                Ok(LinSpin { offset: 0.5, terms: vec![(s.base + slot, 0.5)] })
             }
         }
     }
@@ -518,17 +693,17 @@ impl Model {
     ) -> Result<(), CompileError> {
         match c {
             Constraint::NotEqual(a, x) => {
-                // penalise agreeing on any value: p · Σ_v [a=v][x=v]
-                let k = self.decls[a.0].domain.size().min(self.decls[x.0].domain.size());
-                for v in 0..k {
+                // Penalise agreeing on any value: p · Σ_v [a=v][x=v]. Over the values the two
+                // domains SHARE, not over slot indices -- an integer 5..=10 and an integer 0..=5
+                // agree only at 5, and comparing them slot by slot would say otherwise.
+                for v in shared_values(&self.decls[a.0].domain, &self.decls[x.0].domain) {
                     let la = self.linearise(slots, Lit::Is(*a, v))?;
                     let lb = self.linearise(slots, Lit::Is(*x, v))?;
                     add_product(b, &la, &lb, p);
                 }
             }
             Constraint::Equal(a, x) => {
-                let k = self.decls[a.0].domain.size().min(self.decls[x.0].domain.size());
-                for v in 0..k {
+                for v in shared_values(&self.decls[a.0].domain, &self.decls[x.0].domain) {
                     let la = self.linearise(slots, Lit::Is(*a, v))?;
                     let lb = self.linearise(slots, Lit::Is(*x, v))?;
                     add_product(b, &la, &lb, -p);
@@ -687,16 +862,39 @@ impl Compiled {
 
     /// Anneal and decode.
     pub fn solve_annealed(&self, seed: u64) -> Solution {
-        let sched = Schedule::geometric(0.05, 8.0, 120, 40);
-        let (best, _) = crate::tempering::anneal_scheduled(&self.graph, &sched, seed, None);
+        self.solve_with(&Self::default_schedule(), seed)
+    }
+
+    /// The ladder used when a caller does not supply one. Deliberately conservative: it is better
+    /// for a first answer to be slow and right than fast and quietly infeasible.
+    pub fn default_schedule() -> Schedule {
+        Schedule::geometric(0.05, 8.0, 120, 40)
+    }
+
+    /// Anneal on a caller's own ladder.
+    ///
+    /// A harder model wants a longer one. The default is tuned for the models people write first,
+    /// not for the largest they will eventually write, and a caller who has measured their own
+    /// instance should be able to say so.
+    pub fn solve_with(&self, sched: &Schedule, seed: u64) -> Solution {
+        let (best, _) = crate::tempering::anneal_scheduled(&self.graph, sched, seed, None);
         self.decode(&best)
+    }
+
+    /// Anneal several times on a caller's ladder and keep the best feasible answer.
+    pub fn solve_best_with(&self, sched: &Schedule, tries: u64) -> Solution {
+        self.best_of(tries, |s| self.solve_with(sched, s))
     }
 
     /// Anneal several times and keep the best feasible answer, or the best overall if none is.
     pub fn solve_best_of(&self, tries: u64) -> Solution {
+        self.best_of(tries, |s| self.solve_annealed(s))
+    }
+
+    fn best_of(&self, tries: u64, run: impl Fn(u64) -> Solution) -> Solution {
         let mut best: Option<Solution> = None;
         for s in 0..tries.max(1) {
-            let cand = self.solve_annealed(s);
+            let cand = run(s);
             let better = match &best {
                 None => true,
                 Some(b) => match (b.feasible(), cand.feasible()) {
@@ -779,11 +977,51 @@ mod tests {
     fn a_variable_comes_back_by_name_in_its_own_units() {
         let mut m = Model::new();
         let x = m.integer("temperature", 10, 20);
-        m.fix(x, 3); // the fourth value, so 13
+        m.fix(x, 13);
         let c = m.compile().unwrap();
         let s = c.solve_best_of(6);
         assert!(s.feasible(), "{s}");
         assert_eq!(s.value("temperature"), 13, "integers decode in their own range: {s}");
+    }
+
+    #[test]
+    fn an_integer_is_written_in_its_own_values_not_in_slots() {
+        // The trap this pins: an integer over 10..=20 has slot 3 holding the value 13. A literal
+        // says 13. Writing 3 used to mean 13 and now means an error, because 3 is not a temperature
+        // this variable can take.
+        let mut m = Model::new();
+        let x = m.integer("temperature", 10, 20);
+        m.objective(Sense::Maximize, 5.0 * x.is(13));
+        assert_eq!(m.compile().unwrap().solve_best_of(8).value("temperature"), 13);
+
+        let mut m = Model::new();
+        let x = m.integer("temperature", 10, 20);
+        m.fix(x, 3);
+        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("3 is not a temperature in 10..=20") };
+        assert!(e.contains("10..=20") && e.contains("3 is not"), "{e}");
+    }
+
+    #[test]
+    fn equality_compares_values_across_different_ranges() {
+        // Two integers whose ranges overlap in exactly one place. Comparing them slot by slot
+        // would have them agree in six places and disagree in none of the right ones.
+        let mut m = Model::new();
+        let a = m.integer("a", 5, 10);
+        let b = m.integer("b", 0, 5);
+        m.equal(a, b);
+        let s = m.compile().unwrap().solve_best_of(12);
+        assert!(s.feasible(), "{s}");
+        assert_eq!((s.value("a"), s.value("b")), (5, 5), "5 is the only value both can take: {s}");
+
+        // and the same pair forced apart still lands inside both ranges
+        let mut m = Model::new();
+        let a = m.integer("a", 5, 10);
+        let b = m.integer("b", 0, 5);
+        m.not_equal(a, b);
+        let s = m.compile().unwrap().solve_best_of(12);
+        assert!(s.feasible(), "{s}");
+        assert_ne!(s.value("a"), s.value("b"), "{s}");
+        assert!((5..=10).contains(&s.value("a")) && (0..=5).contains(&s.value("b")), "{s}");
     }
 
     #[test]
@@ -1057,6 +1295,63 @@ mod tests {
         let s = c.solve_best_of(10);
         assert_eq!(s.iter().count(), 4, "only the user's four are reported: {s}");
         assert!(c.spins() > 8, "and the slack really is laid out");
+    }
+
+    #[test]
+    fn an_objective_reads_like_arithmetic() {
+        // The same model twice, once in operators and once in builder calls. If these ever disagree
+        // the sugar is lying, which is worse than not having it.
+        let solve = |sugar: bool| {
+            let mut m = Model::new();
+            let x = m.categorical("x", 4);
+            let y = m.categorical("y", 4);
+            let e = if sugar {
+                5.0 * x.is(3) + 2.0 * y.is(1) - 1.0 * x.is(0)
+            } else {
+                Expr::zero()
+                    .plus(Expr::lit(5.0, Lit::Is(x, 3)))
+                    .plus(Expr::lit(2.0, Lit::Is(y, 1)))
+                    .plus(Expr::lit(-1.0, Lit::Is(x, 0)))
+            };
+            m.objective(Sense::Maximize, e);
+            let s = m.compile().unwrap().solve_best_of(20);
+            (s.value("x"), s.value("y"))
+        };
+        assert_eq!(solve(true), (3, 1), "operators should pick the rewarded values");
+        assert_eq!(solve(true), solve(false), "sugar and builder must agree exactly");
+    }
+
+    #[test]
+    fn a_product_of_literals_is_quadratic_and_works() {
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.objective(Sense::Maximize, 4.0 * (a.is(2) * b.is(2)));
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert_eq!((s.value("a"), s.value("b")), (2, 2), "{s}");
+    }
+
+    #[test]
+    fn a_loop_of_terms_sums() {
+        // The shape an objective usually has: one term per value, built in a loop.
+        let mut m = Model::new();
+        let x = m.categorical("x", 6);
+        let e: Expr = (0..6).map(|v| (v as f64) * x.is(v)).sum();
+        m.objective(Sense::Maximize, e);
+        assert_eq!(m.compile().unwrap().solve_best_of(16).value("x"), 5);
+    }
+
+    #[test]
+    fn negation_flips_the_preference() {
+        let build = |neg: bool| {
+            let mut m = Model::new();
+            let x = m.categorical("x", 4);
+            let e = 3.0 * x.is(3);
+            m.objective(Sense::Maximize, if neg { -e } else { e });
+            m.compile().unwrap().solve_best_of(16).value("x")
+        };
+        assert_eq!(build(false), 3, "rewarded");
+        assert_ne!(build(true), 3, "and penalised when negated");
     }
 
     #[test]

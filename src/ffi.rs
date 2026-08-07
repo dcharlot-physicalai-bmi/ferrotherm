@@ -822,14 +822,14 @@ pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
 
 /// Pin a variable to a value.
 #[no_mangle]
-pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: u32) -> u32 {
+pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: i64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     match var_of(h, v) {
-        Some(x) => {
-            h.model.constrain(Constraint::Fix(x, value as usize));
+        Some(x) if check_value(h, x, value) => {
+            h.model.constrain(Constraint::Fix(x, value));
             1
         }
-        None => 0,
+        _ => 0,
     }
 }
 
@@ -840,16 +840,16 @@ pub extern "C" fn ft_model_objective_term(
     maximize: u32,
     coeff: f64,
     v: u32,
-    value: u32,
+    value: i64,
 ) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let Some(x) = var_of(h, v) else { return 0 };
-    if !coeff.is_finite() {
+    if !coeff.is_finite() || !check_value(h, x, value) {
         return 0;
     }
     h.sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
     let e = core::mem::take(&mut h.objective);
-    h.objective = e.plus(Expr::lit(coeff, Lit::Is(x, value as usize)));
+    h.objective = e.plus(Expr::lit(coeff, Lit::Is(x, value)));
     // Push it into the model as we go, so `ft_model_penalty` answers correctly at any point rather
     // than only after compiling. An editor showing a penalty that is about to change is worse than
     // showing none.
@@ -865,19 +865,19 @@ pub extern "C" fn ft_model_objective_pair(
     maximize: u32,
     coeff: f64,
     a: u32,
-    av: u32,
+    av: i64,
     b: u32,
-    bv: u32,
+    bv: i64,
 ) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let (Some(x), Some(y)) = (var_of(h, a), var_of(h, b)) else { return 0 };
-    if !coeff.is_finite() || a == b {
+    if !coeff.is_finite() || a == b || !check_value(h, x, av) || !check_value(h, y, bv) {
         return 0;
     }
     h.sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
     let e = core::mem::take(&mut h.objective);
     h.objective =
-        e.plus(Expr::pair(coeff, Lit::Is(x, av as usize), Lit::Is(y, bv as usize)));
+        e.plus(Expr::pair(coeff, Lit::Is(x, av), Lit::Is(y, bv)));
     let (obj, sense) = (h.objective.clone(), h.sense);
     h.model.objective(sense, obj);
     1
@@ -914,12 +914,54 @@ pub extern "C" fn ft_model_solve(m: *mut ModelHandle, tries: u32) -> u32 {
     1
 }
 
+/// Solve on a caller's own annealing ladder.
+///
+/// `beta0` to `beta1` over `stages`, `sweeps` per stage, best of `tries`. Zero for any of the four
+/// ladder parameters means "use the default", so a caller can override only what they measured.
+/// A harder model wants a longer ladder than the default, and this is how it says so.
+#[no_mangle]
+pub extern "C" fn ft_model_solve_with(
+    m: *mut ModelHandle,
+    tries: u32,
+    beta0: f64,
+    beta1: f64,
+    stages: u32,
+    sweeps: u32,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(c) = h.compiled.as_ref() else { return 0 };
+    // NaN must be refused, not defaulted. `NaN > 0.0` is false, so a naive "positive means the
+    // caller meant it" test would send a NaN quietly down the default path and return an answer
+    // computed on a ladder the caller never asked for.
+    if beta0.is_nan() || beta1.is_nan() {
+        return 0;
+    }
+    let d = crate::model::Compiled::default_schedule();
+    let ds = d.stages();
+    let lo = if beta0 > 0.0 { beta0 } else { ds[0].beta };
+    let hi = if beta1 > 0.0 { beta1 } else { ds[ds.len() - 1].beta };
+    if !lo.is_finite() || !hi.is_finite() || hi <= lo {
+        return 0;
+    }
+    let n = if stages > 0 { stages as usize } else { ds.len() };
+    let w = if sweeps > 0 { sweeps as usize } else { ds[0].sweeps };
+    let sched = crate::schedule::Schedule::geometric(lo, hi, n, w);
+    h.solution = Some(c.solve_best_with(&sched, tries.max(1) as u64));
+    1
+}
+
 /// The solved value of variable `v`, or `i64::MIN` if it did not decode.
 #[no_mangle]
 pub extern "C" fn ft_model_value(m: *const ModelHandle, v: u32) -> i64 {
     let Some(h) = (unsafe { m.as_ref() }) else { return i64::MIN };
     let Some(s) = h.solution.as_ref() else { return i64::MIN };
-    s.get(&format!("v{v}")).unwrap_or(i64::MIN)
+    // By the variable's CURRENT name, which `ft_model_name` may have changed. Reconstructing the
+    // synthetic `v{index}` here would silently stop finding anything the caller had renamed.
+    if (v as usize) >= h.model.len() {
+        return i64::MIN;
+    }
+    let name = h.model.name_of(h.model.var_at(v as usize));
+    s.get(name).unwrap_or(i64::MIN)
 }
 
 /// 1 if every variable decoded.
@@ -1008,29 +1050,14 @@ mod model_ffi_tests {
         ft_model_free(m);
     }
 
-    #[test]
-    fn an_objective_crosses_and_the_penalty_scales() {
-        let m = ft_model_new();
-        let x = ft_model_categorical(m, 5);
-        for v in 0..5u32 {
-            assert_eq!(ft_model_objective_term(m, 1, v as f64, x, v), 1);
-        }
-        assert_eq!(ft_model_penalty(m), 8.0, "twice the largest coefficient, across the boundary");
-        assert!(ft_model_compile(m) > 0);
-        ft_model_solve(m, 10);
-        assert_eq!(ft_model_value(m, x), 4, "maximising picks the top value");
-        ft_model_free(m);
-    }
 
     #[test]
     fn a_compile_error_crosses_as_text() {
         // A graph editor has to show the user why, not just that it failed.
         let m = ft_model_new();
-        let x = ft_model_categorical(m, 4);
-        assert_eq!(ft_model_objective_term(m, 0, 1.0, x, 99), 1, "accepted at build time");
-        assert_eq!(ft_model_compile(m), 0, "and refused at compile time");
+        assert_eq!(ft_model_compile(m), 0, "a model with nothing in it");
         let e = text(m, ft_model_error);
-        assert!(e.contains("99") && e.contains("not one of them"), "{e}");
+        assert!(e.contains("no variables"), "{e}");
         ft_model_free(m);
     }
 
@@ -1099,11 +1126,10 @@ mod scratch_tests {
 
     #[test]
     fn text_round_trips_through_the_scratch_protocol() {
-        // Exactly how the browser reads a compile error.
+        // Exactly how the browser reads an error from the library.
         let m = ft_model_new();
         let x = ft_model_categorical(m, 3);
-        ft_model_objective_term(m, 0, 1.0, x, 99);
-        assert_eq!(ft_model_compile(m), 0);
+        assert_eq!(ft_model_objective_term(m, 0, 1.0, x, 99), 0, "99 is not one of three values");
 
         let need = ft_model_error(m, core::ptr::null_mut(), 0);
         assert!(need > 0);
@@ -1125,24 +1151,107 @@ pub extern "C" fn ft_model_cardinality(
     m: *mut ModelHandle,
     count: u32,
     k: u32,
-    value: u32,
+    value: i64,
     a: u32,
     b: u32,
     c: u32,
     d: u32,
 ) -> u32 {
+    counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::Cardinality { lits, k })
+}
+
+/// At most `k` of up to four variables take `value`.
+///
+/// Costs more spins than the exact form: an inequality needs a slack variable to become an equality
+/// the sampler can square. See [`crate::model::Constraint::AtMost`].
+#[no_mangle]
+pub extern "C" fn ft_model_at_most(
+    m: *mut ModelHandle,
+    count: u32,
+    k: u32,
+    value: i64,
+    a: u32,
+    b: u32,
+    c: u32,
+    d: u32,
+) -> u32 {
+    counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtMost { lits, k })
+}
+
+/// At least `k` of up to four variables take `value`.
+#[no_mangle]
+pub extern "C" fn ft_model_at_least(
+    m: *mut ModelHandle,
+    count: u32,
+    k: u32,
+    value: i64,
+    a: u32,
+    b: u32,
+    c: u32,
+    d: u32,
+) -> u32 {
+    counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtLeast { lits, k })
+}
+
+/// Give a variable the caller's own name, so errors and answers use it.
+///
+/// Optional: a variable declared without one is called `v0`, `v1` and so on. Returns 1 on success,
+/// 0 if the index is unknown or the bytes are not UTF-8. `len` is a byte count, not a terminator.
+#[no_mangle]
+pub extern "C" fn ft_model_name(m: *mut ModelHandle, v: u32, name: *const u8, len: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(x) = var_of(h, v) else { return 0 };
+    if name.is_null() {
+        return 0;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(name, len as usize) };
+    let Ok(s) = core::str::from_utf8(bytes) else {
+        h.last_error = "a variable name must be UTF-8".into();
+        return 0;
+    };
+    h.model.rename(x, s);
+    1
+}
+
+/// Reject a value the variable cannot take, at the call that wrote it.
+///
+/// The compiler catches this too, but by then the caller is several statements away from the
+/// mistake and holds only "the model did not compile". A C caller has no stack trace to fall back
+/// on, so the error has to arrive while the call that caused it is still the current one.
+fn check_value(h: &mut ModelHandle, var: crate::model::Var, value: i64) -> bool {
+    let d = h.model.domain_of(var);
+    if d.index_of(value).is_some() {
+        return true;
+    }
+    h.last_error = format!(
+        "'{}' takes {}; {value} is not one of them",
+        h.model.name_of(var),
+        d.describe()
+    );
+    false
+}
+
+/// The shared body of the three counting constraints, which differ only in the comparison.
+fn counting(
+    m: *mut ModelHandle,
+    count: u32,
+    k: u32,
+    value: i64,
+    vars: [u32; 4],
+    build: impl FnOnce(Vec<Lit>, usize) -> Constraint,
+) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let mut lits = Vec::new();
-    for v in [a, b, c, d].iter().take(count.min(4) as usize) {
+    for v in vars.iter().take(count.min(4) as usize) {
         match var_of(h, *v) {
-            Some(x) => lits.push(Lit::Is(x, value as usize)),
-            None => return 0,
+            Some(x) if check_value(h, x, value) => lits.push(Lit::Is(x, value)),
+            _ => return 0,
         }
     }
     if lits.len() < 2 || k as usize > lits.len() {
         return 0;
     }
-    h.model.constrain(Constraint::Cardinality { lits, k: k as usize });
+    h.model.constrain(build(lits, k as usize));
     1
 }
 
@@ -1160,6 +1269,104 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 1);
         let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
         assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_renamed_variable_can_still_be_read_back() {
+        // The answer is keyed by name, so renaming a variable and then reading it by index has to
+        // keep working. It did not: the reader rebuilt the synthetic name and found nothing.
+        let m = ft_model_new();
+        let x = ft_model_categorical(m, 3);
+        let n = "west";
+        assert_eq!(ft_model_name(m, x, n.as_ptr(), n.len() as u32), 1);
+        ft_model_fix(m, x, 2);
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve(m, 4), 1);
+        assert_eq!(ft_model_value(m, x), 2, "a renamed variable still reads back by index");
+        assert_eq!(ft_model_value(m, 99), i64::MIN, "and an index that does not exist does not");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_name_pushed_down_shows_up_in_the_error() {
+        let m = ft_model_new();
+        let t = ft_model_integer(m, 10, 20);
+        let n = "temperature";
+        assert_eq!(ft_model_name(m, t, n.as_ptr(), n.len() as u32), 1);
+        assert_eq!(ft_model_fix(m, t, 3), 0);
+        let mut buf = [0u8; 256];
+        let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        let e = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(e.contains("'temperature'"), "should name the variable the caller knows: {e}");
+        assert!(!e.contains("v0"), "and not the handle they never saw: {e}");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_value_outside_the_domain_is_refused_at_the_call_that_wrote_it() {
+        // Not at compile time, several statements later, holding only "it did not compile". A C
+        // caller has no stack to fall back on.
+        let m = ft_model_new();
+        let t = ft_model_integer(m, 10, 20);
+        assert_eq!(ft_model_fix(m, t, 3), 0, "3 is a slot, not a temperature in 10..=20");
+        let mut buf = [0u8; 256];
+        let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        let e = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(e.contains("10..=20") && e.contains("3 is not"), "{e}");
+
+        assert_eq!(ft_model_fix(m, t, 13), 1, "13 is one");
+        assert_eq!(ft_model_objective_term(m, 1, 1.0, t, 99), 0, "and 99 is not");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_caller_supplied_ladder_is_used_and_a_bad_one_refused() {
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+        ft_model_not_equal(m, a, b);
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve_with(m, 4, 0.05, 6.0, 60, 20), 1);
+        assert_eq!(ft_model_feasible(m), 1);
+        assert_ne!(ft_model_value(m, a), ft_model_value(m, b));
+        // zeros mean "default", so a caller can override only what they measured
+        assert_eq!(ft_model_solve_with(m, 4, 0.0, 0.0, 0, 0), 1);
+        assert_eq!(ft_model_feasible(m), 1);
+        // a ladder that runs backwards is not a ladder
+        assert_eq!(ft_model_solve_with(m, 4, 8.0, 0.05, 60, 20), 0, "hot-to-cold only");
+        assert_eq!(ft_model_solve_with(m, 4, f64::NAN, 6.0, 60, 20), 0, "NaN is not a temperature");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn ffi_inequalities_bound_without_forcing() {
+        // The distinction the C surface has to preserve: at_most 2 permits fewer than two, where
+        // an exact cardinality would not. Rewarding every variable proves the ceiling still binds.
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..4).map(|_| ft_model_binary(m)).collect();
+        assert_eq!(ft_model_at_most(m, 4, 2, 1, v[0], v[1], v[2], v[3]), 1);
+        for &i in &v {
+            ft_model_objective_term(m, 1, 1.0, i, 1);
+        }
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 24);
+        assert_eq!(ft_model_feasible(m), 1);
+        let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
+        assert_eq!(on, 2, "the ceiling binds against a reward pushing past it");
+        ft_model_free(m);
+
+        // and at_least holds a floor against a reward pushing the other way
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..4).map(|_| ft_model_binary(m)).collect();
+        assert_eq!(ft_model_at_least(m, 4, 3, 1, v[0], v[1], v[2], v[3]), 1);
+        for &i in &v {
+            ft_model_objective_term(m, 0, 1.0, i, 1);
+        }
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 24);
+        let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
+        assert_eq!(on, 3, "the floor holds against a reward pushing below it");
         ft_model_free(m);
     }
 

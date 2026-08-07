@@ -147,6 +147,94 @@ uint32_t ft_exact_ground_state(const ft_sim *sim, uint32_t max_width, int8_t *ou
 /* Induced width of the elimination order. */
 uint32_t ft_exact_width(const ft_sim *sim);
 
+/* ---- modelling ------------------------------------------------------------------------------- */
+/*
+ * Everything above works in spins. This works in problems: variables that hold values, constraints
+ * that say what must be true, an objective that says what is better. It compiles to the layer above
+ * and answers in the values the caller declared.
+ *
+ * Values are int64_t and mean what the modeller wrote. An integer variable over 10..=20 holds the
+ * value 13 in its fourth slot, and every function here takes 13. Passing 3 is an error naming the
+ * range, not an answer to a different question.
+ */
+
+typedef struct ft_model ft_model;
+
+/* A new, empty model. Free it with ft_model_free. */
+ft_model *ft_model_new(void);
+void ft_model_free(ft_model *m);
+
+/* Declare a variable, returning its index, or UINT32_MAX if the domain is unusable. */
+uint32_t ft_model_categorical(ft_model *m, uint32_t values); /* needs at least 2 */
+uint32_t ft_model_integer(ft_model *m, int64_t lo, int64_t hi); /* needs hi > lo */
+uint32_t ft_model_binary(ft_model *m);
+
+/* Give a variable the caller's own name, so errors and reports use it. Optional: an unnamed
+ * variable is called v0, v1 and so on. `len` is a byte count; the bytes need no terminator. */
+uint32_t ft_model_name(ft_model *m, uint32_t v, const uint8_t *name, uint32_t len);
+
+/* Constraints. Each returns 1 on success, 0 on refusal; ft_model_error says why. */
+uint32_t ft_model_not_equal(ft_model *m, uint32_t a, uint32_t b);
+uint32_t ft_model_equal(ft_model *m, uint32_t a, uint32_t b);
+uint32_t ft_model_fix(ft_model *m, uint32_t v, int64_t value);
+
+/* Counting constraints over two to four variables, each taking `value`. Pass UINT32_MAX for the
+ * unused slots and set `count` to how many are real.
+ *
+ * The three differ only in the comparison, and the difference is not cosmetic: an equality can be
+ * squared directly, while an inequality needs a slack variable to become one. at_most and at_least
+ * therefore cost extra spins. The slack never appears in the answer. */
+uint32_t ft_model_cardinality(ft_model *m, uint32_t count, uint32_t k, int64_t value,
+                              uint32_t a, uint32_t b, uint32_t c, uint32_t d);
+uint32_t ft_model_at_most(ft_model *m, uint32_t count, uint32_t k, int64_t value,
+                          uint32_t a, uint32_t b, uint32_t c, uint32_t d);
+uint32_t ft_model_at_least(ft_model *m, uint32_t count, uint32_t k, int64_t value,
+                           uint32_t a, uint32_t b, uint32_t c, uint32_t d);
+
+/* Objective terms. `maximize` is 1 to prefer large, 0 to prefer small. The pair form is quadratic:
+ * it rewards two variables taking their values together. */
+uint32_t ft_model_objective_term(ft_model *m, uint32_t maximize, double coeff,
+                                 uint32_t v, int64_t value);
+uint32_t ft_model_objective_pair(ft_model *m, uint32_t maximize, double coeff,
+                                 uint32_t a, int64_t av, uint32_t b, int64_t bv);
+
+/* Compile to spins, returning how many were needed, or 0 on failure (see ft_model_error).
+ * The count includes any slack an inequality required. */
+uint32_t ft_model_compile(ft_model *m);
+
+/* Solve, keeping the best of `tries` anneals. Returns 1 on success. */
+uint32_t ft_model_solve(ft_model *m, uint32_t tries);
+
+/* Solve on a caller's own annealing ladder: beta0 to beta1 over `stages` of `sweeps` each.
+ * Zero for any of the four means "use the default", so a caller can override only what they
+ * measured. Returns 0 if the ladder runs backwards or is not a real number, rather than quietly
+ * substituting the default and answering a question nobody asked. */
+uint32_t ft_model_solve_with(ft_model *m, uint32_t tries, double beta0, double beta1,
+                             uint32_t stages, uint32_t sweeps);
+
+/* The solved value of a variable, in its own units, or INT64_MIN if it did not decode. */
+int64_t ft_model_value(const ft_model *m, uint32_t v);
+
+/* 1 if every variable decoded, meaning no constraint lost to the objective. An infeasible answer is
+ * still readable: which variable failed to decode is the useful part. */
+uint32_t ft_model_feasible(const ft_model *m);
+
+double ft_model_energy(const ft_model *m);
+
+/* The penalty weight actually used, which is raised automatically above the largest objective
+ * coefficient so that a constraint cannot be outbid. */
+double ft_model_penalty(const ft_model *m);
+
+/* Two-call text protocol: call with buf NULL and cap 0 for the length, then again with a buffer.
+ * Neither writes a terminator; the return value is the byte count. */
+uint32_t ft_model_error(const ft_model *m, uint8_t *buf, uint32_t cap);
+uint32_t ft_model_ftp(const ft_model *m, uint8_t *buf, uint32_t cap);
+
+/* Certify the compiled model's sampling, the same instrument the raw graphs use. */
+uint32_t ft_model_certify(ft_model *m, double beta, uint32_t draws, uint32_t thin);
+uint32_t ft_model_cert_findings(const ft_model *m);
+uint32_t ft_model_cert_finding(const ft_model *m, uint32_t i, uint8_t *buf, uint32_t cap);
+
 /* ---- reference ------------------------------------------------------------------------------- */
 
 /* Onsager's exact spontaneous magnetisation for the 2D Ising model at inverse temperature `beta`.

@@ -36,6 +36,14 @@ impl Json {
             _ => None,
         }
     }
+    /// A signed integer, which is what a modeller's value is: an integer variable's range may
+    /// start below zero, and `as_usize` would refuse the whole lower half of it.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Json::Num(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => Some(*n as i64),
+            _ => None,
+        }
+    }
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Json::Num(n) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as u64),

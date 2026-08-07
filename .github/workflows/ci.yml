@@ -20,6 +20,21 @@ jobs:
         run: |
           cargo run --release --example ring_tv
           cargo run --release --example onsager
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the library the bindings load
+        run: cargo build --release
+      - name: Python tests
+        run: |
+          pip install pytest
+          python -m pytest python/test_model.py -q
+
   wasm:
     runs-on: ubuntu-latest
     steps:
@@ -29,3 +44,26 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: wasm cdylib builds clean
         run: cargo build --release --lib --target wasm32-unknown-unknown
+      - name: the wasm the editor ships is the wasm we just built
+        run: |
+          cp target/wasm32-unknown-unknown/release/ferrotherm.wasm docs/ferrotherm.wasm
+          git diff --exit-code --stat docs/ferrotherm.wasm || {
+            echo "docs/ferrotherm.wasm is stale. Rebuild it and commit:"
+            echo "  cargo build --release --lib --target wasm32-unknown-unknown"
+            echo "  cp target/wasm32-unknown-unknown/release/ferrotherm.wasm docs/"
+            exit 1
+          }
+
+  editor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        working-directory: web-tests
+        run: npm install && npx playwright install --with-deps chromium
+      - name: Editor tests
+        working-directory: web-tests
+        run: npm test

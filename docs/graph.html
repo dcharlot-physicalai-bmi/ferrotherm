@@ -120,6 +120,8 @@
     <button class="add" data-t="equal">a = b</button>
     <button class="add" data-t="fix">Fix value</button>
     <button class="add" data-t="cardinality">Exactly k of</button>
+    <button class="add" data-t="atmost">At most k of</button>
+    <button class="add" data-t="atleast">At least k of</button>
     <h3>Objective</h3>
     <button class="add" data-t="prefer">Prefer value</button>
     <button class="add" data-t="agree">Prefer a = b</button>
@@ -170,15 +172,23 @@ is a model that compiles.</pre>
 
 const TYPES = {
   // --- variables: what the problem is about --------------------------------------------------
-  categorical:{ title: "Categorical",  kind: "var", ins: [], fields: [["values", 3, "int"]] },
-  integer:    { title: "Integer",      kind: "var", ins: [], fields: [["lo", 0, "int"], ["hi", 5, "int"]] },
-  binary:     { title: "Binary",       kind: "var", ins: [], fields: [] },
+  categorical:{ title: "Categorical",  kind: "var", ins: [], fields: [["name", "", "text"], ["values", 3, "int"]] },
+  integer:    { title: "Integer",      kind: "var", ins: [], fields: [["name", "", "text"], ["lo", 0, "int"], ["hi", 5, "int"]] },
+  binary:     { title: "Binary",       kind: "var", ins: [], fields: [["name", "", "text"]] },
 
   // --- constraints: what must hold -------------------------------------------------------------
   notequal:   { title: "a ≠ b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
   equal:      { title: "a = b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
   fix:        { title: "Fix value",    kind: "cons", ins: [["var", "var"]], fields: [["value", 0, "int"]] },
   cardinality:{ title: "Exactly k of", kind: "cons",
+                ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
+                fields: [["k", 1, "int"], ["value", 1, "int"]] },
+  // Inequalities cost extra spins: each one needs a slack variable to become an equality the
+  // sampler can square. The slack never appears in the answer.
+  atmost:     { title: "At most k of",  kind: "cons",
+                ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
+                fields: [["k", 1, "int"], ["value", 1, "int"]] },
+  atleast:    { title: "At least k of", kind: "cons",
                 ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
                 fields: [["k", 1, "int"], ["value", 1, "int"]] },
 
@@ -189,9 +199,12 @@ const TYPES = {
                 fields: [["value", 0, "int"], ["weight", 1.0, "num"], ["maximize", 1, "int"]] },
 
   // --- solving and reading ---------------------------------------------------------------------
-  solve:      { title: "Solve",        kind: "result",
-                ins: [["model", "cons"], ["model2", "cons"], ["model3", "obj"]],
-                fields: [["tries", 12, "int"]] },
+  // Solve grows a fresh port whenever its last one is taken, so a model is never capped at some
+  // number of constraints the editor happened to draw.
+  solve:      { title: "Solve",        kind: "result", variadic: ["cons", "obj"],
+                ins: [["in 1", ["cons", "obj"]]],
+                fields: [["tries", 12, "int"], ["beta hot", 0.05, "num"], ["beta cold", 8.0, "num"],
+                         ["stages", 120, "int"], ["sweeps", 40, "int"]] },
   certify:    { title: "Certificate",  kind: null, ins: [["result", "result"]],
                 fields: [["beta", 0.5, "num"], ["draws", 800, "int"], ["thin", 4, "int"]] },
   report:     { title: "Report",       kind: null, ins: [["result", "result"]], fields: [] },
@@ -284,7 +297,8 @@ function draw() {
 
     const hd = document.createElement("div");
     hd.className = "hd " + (T.kind || "result");
-    hd.textContent = T.title;
+    // Variables wear their own name; everything else wears its type.
+    hd.append(T.kind === "var" ? label(n) : T.title);
     const del = document.createElement("span");
     del.className = "del";
     del.textContent = "×";
@@ -308,28 +322,33 @@ function draw() {
       const lab = document.createElement("label");
       lab.textContent = k;
       const inp = document.createElement("input");
-      inp.type = "number";
-      inp.step = kind === "int" ? "1" : "any";
+      const text = kind === "text";
+      inp.type = text ? "text" : "number";
+      if (!text) inp.step = kind === "int" ? "1" : "any";
+      if (text) inp.placeholder = TYPES[n.type].title.toLowerCase() + " " + n.id;
       inp.value = n.vals[k];
       inp.onfocus = () => checkpoint();
-      inp.oninput = () => { n.vals[k] = +inp.value; };
+      // A name changes what this node is called everywhere -- the title bar, the report, search --
+      // so the whole node redraws rather than only the field the caret is in.
+      inp.oninput = () => { n.vals[k] = text ? inp.value : +inp.value; if (text) redrawTitle(n); };
       row.appendChild(lab); row.appendChild(inp);
       bd.appendChild(row);
     }
-    if (!T.fields.length && !T.ins.length) bd.textContent = "—";
+    if (!T.fields.length && !insOf(n).length) bd.textContent = "—";
     el.appendChild(bd);
 
     // ports
-    T.ins.forEach(([name, kind], i) => {
+    insOf(n).forEach(([name, kind], i) => {
       const p = document.createElement("div");
-      p.className = "port in " + kind;
+      const kinds = Array.isArray(kind) ? kind : [kind];
+      p.className = "port in " + kinds.join(" ");
       p.style.top = (34 + i * 20) + "px";
-      p.title = name + " : " + kind;
+      p.title = name + " : " + kinds.join(" or ");
       p.onmouseup = () => {
-        if (linking && linking.kind === kind && linking.from !== n.id) {
+        if (linking && fits(kind, linking.kind) && linking.from !== n.id) {
           checkpoint();
           links = links.filter(l => !(l.to === n.id && l.port === name));
-          links.push({ from: linking.from, to: n.id, port: name, kind });
+          links.push({ from: linking.from, to: n.id, port: name, kind: linking.kind });
         }
         linking = null; draw();
       };
@@ -353,7 +372,7 @@ function portPos(id, side, port) {
   if (!n) return null;
   const T = TYPES[n.type];
   if (side === "out") return { x: n.x + 186, y: n.y + 40 };
-  const i = T.ins.findIndex(([nm]) => nm === port);
+  const i = insOf(n).findIndex(([nm]) => nm === port);
   return { x: n.x, y: n.y + 40 + Math.max(0, i) * 20 };
 }
 
@@ -396,13 +415,20 @@ $("clear").onclick = () => { checkpoint(); nodes = []; links = []; draw(); $("ou
 
 let W = null, mem = null;
 
+// A caller driving this page from outside -- a test, a script, an agent -- has to know when the
+// sampler is actually here. Polling for it is a guess; this is the answer.
+let bootDone, bootFailed;
+const booted = new Promise((res, rej) => { bootDone = res; bootFailed = rej; });
+
 (async function boot() {
   try {
     const r = await WebAssembly.instantiateStreaming(fetch("ferrotherm.wasm"), {});
     W = r.instance.exports; mem = W.memory;
     $("status").textContent = "ferrotherm.wasm loaded";
     loadExample();
+    bootDone();
   } catch (e) {
+    bootFailed(e);
     $("status").textContent = "could not load: " + e;
     $("out").textContent = "The sampler failed to load. Serve this page over http rather than\nopening the file directly.";
   }
@@ -466,6 +492,13 @@ function runGraph() {
         return;
       }
       idx.set(n.id, i);
+      // The library's errors should name the variable the modeller named, not a handle.
+      const nm = new TextEncoder().encode(label(n));
+      const buf = W.ft_scratch(nm.length);
+      if (buf) {
+        new Uint8Array(mem.buffer, buf, nm.length).set(nm);
+        W.ft_model_name(m, i, buf, nm.length);
+      }
     }
 
     // 2. constraints and objective terms
@@ -480,25 +513,32 @@ function runGraph() {
         ? ($("out").textContent = "'" + TYPES[n.type].title + "' needs both inputs wired to variables.", false)
         : true;
 
-      if (n.type === "cardinality") {
+      if (n.type === "cardinality" || n.type === "atmost" || n.type === "atleast") {
         const vs = ["a", "b", "c", "d"].map(pn => inputOf(n.id, pn)).filter(Boolean)
                      .map(x => idx.get(x.id)).filter(x => x !== undefined);
-        if (vs.length < 2) { $("out").textContent = "'Exactly k of' needs at least two variables."; return; }
-        cons += W.ft_model_cardinality(m, vs.length, n.vals.k | 0, n.vals.value | 0,
-                                       vs[0], vs[1], vs[2] ?? 0xFFFFFFFF, vs[3] ?? 0xFFFFFFFF);
+        if (vs.length < 2) {
+          $("out").textContent = "'" + TYPES[n.type].title + "' needs at least two variables."; return;
+        }
+        const fn = { cardinality: W.ft_model_cardinality,
+                     atmost: W.ft_model_at_most,
+                     atleast: W.ft_model_at_least }[n.type];
+        cons += fn(m, vs.length, n.vals.k | 0, BigInt(n.vals.value | 0),
+                   vs[0], vs[1], vs[2] ?? 0xFFFFFFFF, vs[3] ?? 0xFFFFFFFF);
       }
       else if (n.type === "notequal") { if (!need2(ia, ib)) return; cons += W.ft_model_not_equal(m, ia, ib); }
       else if (n.type === "equal") { if (!need2(ia, ib)) return; cons += W.ft_model_equal(m, ia, ib); }
       else if (n.type === "fix") {
         if (iv === undefined) { $("out").textContent = "'Fix value' needs a variable."; return; }
-        cons += W.ft_model_fix(m, iv, n.vals.value | 0);
+        cons += W.ft_model_fix(m, iv, BigInt(n.vals.value | 0));
       } else if (n.type === "prefer") {
         if (iv === undefined) { $("out").textContent = "'Prefer value' needs a variable."; return; }
-        obj += W.ft_model_objective_term(m, n.vals.maximize ? 1 : 0, +n.vals.weight, iv, n.vals.value | 0);
+        obj += W.ft_model_objective_term(m, n.vals.maximize ? 1 : 0, +n.vals.weight, iv,
+                                        BigInt(n.vals.value | 0));
       } else if (n.type === "agree") {
         if (!need2(ia, ib)) return;
         obj += W.ft_model_objective_pair(m, n.vals.maximize ? 1 : 0, +n.vals.weight,
-                                         ia, n.vals.value | 0, ib, n.vals.value | 0);
+                                         ia, BigInt(n.vals.value | 0),
+                                         ib, BigInt(n.vals.value | 0));
       }
     }
 
@@ -512,14 +552,24 @@ function runGraph() {
 
     // 4. solve and read values back by NAME
     const tries = Math.max(1, solveNode.vals.tries | 0);
+    const V = solveNode.vals;
     const t0 = performance.now();
-    W.ft_model_solve(m, tries);
+    // The ladder is the Solve node's own, so a hard model can be given a longer one without
+    // editing anything else. Rust refuses a ladder that runs backwards rather than silently
+    // substituting the default, and says so here.
+    if (!W.ft_model_solve_with(m, tries, +V["beta hot"], +V["beta cold"], V.stages | 0, V.sweeps | 0)) {
+      $("out").textContent = "The Solve node's ladder is not usable: beta cold must exceed beta hot, "
+        + "and both must be real numbers. Set any of the four to 0 to use the default.";
+      return;   // the `finally` below frees the model; freeing it here as well is a double free
+    }
     const ms = performance.now() - t0;
 
     const feasible = W.ft_model_feasible(m) === 1;
     let txt = varNodes.length + " variables, " + cons + " constraints, " + obj + " objective terms\n" +
               spins + " spins, penalty " + W.ft_model_penalty(m).toFixed(2) +
-              ", best of " + tries + " in " + ms.toFixed(0) + " ms\n\n";
+              ", best of " + tries + " in " + ms.toFixed(0) + " ms\n" +
+              "beta " + (+V["beta hot"] || 0.05) + " to " + (+V["beta cold"] || 8) +
+              " over " + (V.stages | 0 || 120) + " stages of " + (V.sweeps | 0 || 40) + " sweeps\n\n";
     for (const n of varNodes) {
       const v = W.ft_model_value(m, idx.get(n.id));
       const bad = v === -9223372036854775808n || v === undefined;
@@ -566,8 +616,18 @@ function runGraph() {
 }
 
 /** A node's display name, which is what the user sees instead of an index. */
+/** Update a node's visible title in place, without rebuilding the element under the caret. */
+function redrawTitle(n) {
+  const hd = document.querySelector(`.node[data-id="${n.id}"] > .hd`);
+  if (hd && hd.firstChild) hd.firstChild.nodeValue = label(n);
+}
+
 function label(n) {
   const T = TYPES[n.type];
+  // A model answers in the modeller's own words. If they named this variable, that name is what
+  // the report and the search should say; the type and id are a fallback for when they have not.
+  const given = String(n.vals.name ?? "").trim();
+  if (given) return given;
   if (n.type === "categorical") return T.title + "#" + n.id + " (" + (n.vals.values | 0) + " values)";
   if (n.type === "integer") return T.title + "#" + n.id + " [" + (n.vals.lo | 0) + ".." + (n.vals.hi | 0) + "]";
   return T.title + "#" + n.id;
@@ -613,6 +673,18 @@ function fromJson(text) {
   }
   const ids = new Set(fresh.map(n => n.id));
   const wires = (d.links || []).filter(l => ids.has(l.from) && ids.has(l.to));
+
+  // Documents written before Solve grew its ports name them "model", "model2", "model3". Renumber
+  // them onto the variadic scheme rather than dropping the links and losing somebody's graph.
+  const byId = new Map(fresh.map(n => [n.id, n]));
+  const seen = new Map();
+  for (const l of wires) {
+    const to = byId.get(l.to);
+    if (!to || !TYPES[to.type].variadic) continue;
+    const k = (seen.get(l.to) || 0) + 1;
+    seen.set(l.to, k);
+    l.port = "in " + k;
+  }
   nodes = fresh; links = wires;
   nextId = Math.max(0, ...fresh.map(n => n.id)) + 1;
   selected.clear();
@@ -683,29 +755,61 @@ function openPalette() {
 }
 function closePalette() { pal.open = false; $("palette").hidden = true; }
 function filterPalette() {
-  const q = $("palq").value.toLowerCase();
-  pal.items = Object.entries(TYPES)
+  const q = $("palq").value.toLowerCase().trim();
+
+  // Nodes already on the canvas come first when the query matches one. On a graph large enough to
+  // need searching, "where is the variable I called shift_b" is asked far more often than "add
+  // another categorical", and a palette that can only add makes the first question unanswerable.
+  const here = q
+    ? nodes.filter(n => (label(n) + " " + TYPES[n.type].title).toLowerCase().includes(q))
+           .slice(0, 8)
+           .map(n => ({ go: n.id, title: label(n), kind: TYPES[n.type].title }))
+    : [];
+  const add = Object.entries(TYPES)
     .filter(([k, T]) => (k + " " + T.title).toLowerCase().includes(q))
     .map(([k, T]) => ({ key: k, title: T.title, kind: T.kind || "out" }));
+
+  pal.items = here.concat(add);
   pal.sel = Math.min(pal.sel, Math.max(0, pal.items.length - 1));
   $("palr").innerHTML = "";
   pal.items.forEach((it, i) => {
     const d = document.createElement("div");
-    d.textContent = it.title + "   " + it.kind;
+    d.textContent = (it.go ? "\u2192 " : "+ ") + it.title + "   " + it.kind;
     if (i === pal.sel) d.className = "on";
-    d.onmousedown = e => { e.preventDefault(); addFromPalette(i); };
+    d.onmousedown = e => { e.preventDefault(); chooseFromPalette(i); };
     $("palr").appendChild(d);
   });
+  if (!pal.items.length) {
+    const d = document.createElement("div");
+    d.textContent = "nothing matches \u201c" + q + "\u201d";
+    d.style.opacity = ".55";
+    $("palr").appendChild(d);
+  }
 }
-function addFromPalette(i) {
+
+/** Either add a new node or travel to an existing one, depending on which kind of item this is. */
+function chooseFromPalette(i) {
   const it = pal.items[i];
   if (!it) return;
+  if (it.go !== undefined) { closePalette(); goTo(it.go); return; }
   checkpoint();
   const r = stage.getBoundingClientRect();
   const c = toCanvas(r.left + r.width / 2, r.top + r.height / 3);
   const n = addNode(it.key, c.x, c.y);
   selected.clear(); selected.add(n.id);
   closePalette(); draw();
+}
+const addFromPalette = chooseFromPalette;
+
+/** Centre the view on a node and select it. */
+function goTo(id) {
+  const n = nodes.find(x => x.id === id);
+  if (!n) return;
+  const r = stage.getBoundingClientRect();
+  view.x = r.width / 2 - (n.x + 93) * view.k;   // 93 = half a node, which is 186 wide
+  view.y = r.height / 2 - (n.y + 40) * view.k;
+  selected.clear(); selected.add(id);
+  draw();
 }
 $("palq").addEventListener("input", filterPalette);
 $("palq").addEventListener("keydown", e => {
@@ -743,14 +847,34 @@ $("paste").onclick = async () => {
 };
 $("fit").onclick = fitView;
 
+/**
+ * A node's input ports right now.
+ *
+ * Fixed for almost everything. A variadic node reports one more port than it has wired, so there is
+ * always somewhere to drop the next link and never a limit the modeller has to work around.
+ */
+function insOf(n) {
+  const T = TYPES[n.type];
+  if (!T.variadic) return T.ins;
+  const used = links.filter(l => l.to === n.id).length;
+  return Array.from({ length: used + 1 }, (_, i) => ["in " + (i + 1), T.variadic]);
+}
+
+/** Does a link of kind `k` fit this port? */
+function fits(spec, k) {
+  return Array.isArray(spec) ? spec.includes(k) : spec === k;
+}
+
 // ---- validation ------------------------------------------------------------------------------------
 //
 // Shown on the node itself, while editing, rather than only when Run fails.
 
 function problems(n) {
   const T = TYPES[n.type];
-  const missing = T.ins.filter(([name]) => !inputOf(n.id, name)).map(([name]) => name);
-  if (n.type === "cardinality") {
+  // A variadic node's trailing empty port is where the NEXT link goes, not a thing left undone.
+  const ports = TYPES[n.type].variadic ? insOf(n).slice(0, -1) : T.ins;
+  const missing = ports.filter(([name]) => !inputOf(n.id, name)).map(([name]) => name);
+  if (n.type === "cardinality" || n.type === "atmost" || n.type === "atleast") {
     const wired = T.ins.filter(([name]) => inputOf(n.id, name)).length;
     if (wired < 2) return "wire at least two variables into it";
     if ((n.vals.k | 0) < 0 || (n.vals.k | 0) > wired) return `k must be between 0 and ${wired}`;
@@ -758,7 +882,7 @@ function problems(n) {
   }
   if (n.type === "categorical" && (n.vals.values | 0) < 2) return "a categorical needs at least 2 values";
   if (n.type === "integer" && (n.vals.hi | 0) <= (n.vals.lo | 0)) return "an integer needs hi > lo";
-  if (n.type === "solve" && !T.ins.some(([name]) => inputOf(n.id, name))) return "wire a constraint or objective in";
+  if (n.type === "solve" && !links.some(l => l.to === n.id)) return "wire a constraint or objective in";
   if (n.type === "solve") return null;
   if (n.type === "certify" && !inputOf(n.id, "result")) return "wire it to the same Solve as the Report";
   return missing.length ? `unwired input: ${missing.join(", ")}` : null;
@@ -780,6 +904,8 @@ function loadExample() {
   const a = addNode("categorical", 50, 60);
   const b = addNode("categorical", 50, 210);
   const c = addNode("categorical", 50, 360);
+  // Named, because the answer comes back in these words rather than in node numbers.
+  a.vals.name = "west"; b.vals.name = "middle"; c.vals.name = "east";
   const ab = addNode("notequal", 300, 90);
   const bc = addNode("notequal", 300, 240);
   const ac = addNode("notequal", 300, 390);
@@ -789,11 +915,11 @@ function loadExample() {
   wire(a, ab, "a", "var"); wire(b, ab, "b", "var");
   wire(b, bc, "a", "var"); wire(c, bc, "b", "var");
   wire(a, ac, "a", "var"); wire(c, ac, "b", "var");
-  wire(ab, s, "model", "cons"); wire(bc, s, "model2", "cons"); wire(ac, s, "model3", "obj");
+  wire(ab, s, "in 1", "cons"); wire(bc, s, "in 2", "cons"); wire(ac, s, "in 3", "cons");
   wire(s, r, "result", "result");
   draw();
-  $("out").textContent = "Graph colouring, stated as itself: three variables of three values,\n" +
-    "and three constraints saying adjacent ones must differ.\n\nPress Run graph.";
+  $("out").textContent = "Graph colouring, stated as itself: three regions of three colours,\n" +
+    "and three constraints saying neighbours must differ.\n\nPress Run graph.";
 }
 $("example").onclick = loadExample;
 window.addEventListener("resize", drawWires);
@@ -804,9 +930,13 @@ window.addEventListener("resize", drawWires);
 // are the same operations the buttons perform, so anything scripted behaves exactly as a click
 // would -- including going through the undo stack.
 window.ferrotherm = {
+  /** Resolves when the sampler is loaded, rejects if it never arrives. Await this before anything. */
+  ready: booted,
+  /** True once loaded, for a caller that would rather poll than await. */
+  get loaded() { return W !== null; },
   /** Node types and their ports, so a caller can discover the vocabulary rather than be told it. */
   types: () => Object.fromEntries(Object.entries(TYPES).map(([k, T]) =>
-    [k, { title: T.title, kind: T.kind, inputs: T.ins.map(i => i[0]),
+    [k, { title: T.title, kind: T.kind, variadic: T.variadic ?? null, inputs: T.ins.map(i => i[0]),
           fields: Object.fromEntries(T.fields.map(f => [f[0], f[1]])) }])),
   get nodes() { return nodes; },
   get links() { return links; },
@@ -820,13 +950,39 @@ window.ferrotherm = {
     return n.id;
   },
   remove(id) { checkpoint(); removeNode(id); },
+  /** Set one field on one node, refusing a field the node does not have. */
+  set(id, field, value) {
+    const n = nodes.find(x => x.id === id);
+    if (!n) throw new Error("no such node");
+    if (!(field in n.vals)) {
+      throw new Error(`"${TYPES[n.type].title}" has no field "${field}"; it has ${Object.keys(n.vals).join(", ")}`);
+    }
+    checkpoint();
+    n.vals[field] = value;
+    draw();
+    return n.vals[field];
+  },
+  /** Centre the view on a node and select it, the way the palette does. */
+  goTo,
+  /** Every node whose label or type matches, for finding things on a large graph. */
+  find: q => nodes.filter(n => (label(n) + " " + TYPES[n.type].title).toLowerCase()
+                                 .includes(String(q).toLowerCase()))
+                  .map(n => ({ id: n.id, label: label(n), type: n.type })),
   /** Connect an output to a named input, refusing a kind mismatch the way the mouse would. */
   connect(fromId, toId, port) {
     const a = nodes.find(n => n.id === fromId), b = nodes.find(n => n.id === toId);
     if (!a || !b) throw new Error("no such node");
-    const spec = TYPES[b.type].ins.find(([nm]) => nm === port);
-    if (!spec) throw new Error(`"${TYPES[b.type].title}" has no input "${port}"`);
-    if (TYPES[a.type].kind !== spec[1]) {
+    // On a node that grows its ports, naming one is optional: the next free port is the answer.
+    if (port === undefined && TYPES[b.type].variadic) {
+      const ins = insOf(b);
+      port = ins[ins.length - 1][0];
+    }
+    const spec = insOf(b).find(([nm]) => nm === port);
+    if (!spec) {
+      throw new Error(`"${TYPES[b.type].title}" has no input "${port}"; it has `
+        + insOf(b).map(i => `"${i[0]}"`).join(", "));
+    }
+    if (!fits(spec[1], TYPES[a.type].kind)) {
       throw new Error(`kind mismatch: ${TYPES[a.type].kind} into ${spec[1]}`);
     }
     checkpoint();

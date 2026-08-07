@@ -564,7 +564,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 }
                 "fix" => {
                     let v = find(c.get("var").and_then(|x| x.as_str()).unwrap_or(""))?;
-                    let val = c.get("value").and_then(|x| x.as_usize()).unwrap_or(0);
+                    let val = c.get("value").and_then(|x| x.as_i64()).unwrap_or(0);
                     m.fix(handles[v], val);
                 }
                 "at_most" | "at_least" => {
@@ -575,7 +575,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     let mut lits = Vec::new();
                     for it in items {
                         let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
-                        let vv = it.get("value").and_then(|x| x.as_usize()).unwrap_or(1);
+                        let vv = it.get("value").and_then(|x| x.as_i64()).unwrap_or(1);
                         lits.push(Lit::Is(handles[find(vn)?], vv));
                     }
                     if kind == "at_most" {
@@ -590,7 +590,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     let mut lits = Vec::new();
                     for it in items {
                         let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
-                        let vv = it.get("value").and_then(|x| x.as_usize()).unwrap_or(1);
+                        let vv = it.get("value").and_then(|x| x.as_i64()).unwrap_or(1);
                         lits.push(Lit::Is(handles[find(vn)?], vv));
                     }
                     m.cardinality(lits, k);
@@ -612,11 +612,11 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         for t in terms {
             let w = t.get("weight").and_then(|x| x.as_f64()).unwrap_or(1.0);
             let vn = t.get("var").and_then(|x| x.as_str()).unwrap_or("");
-            let vv = t.get("value").and_then(|x| x.as_usize()).unwrap_or(1);
+            let vv = t.get("value").and_then(|x| x.as_i64()).unwrap_or(1);
             let a = Lit::Is(handles[find(vn)?], vv);
             e = match t.get("and_var").and_then(|x| x.as_str()) {
                 Some(bn) => {
-                    let bv = t.get("and_value").and_then(|x| x.as_usize()).unwrap_or(vv);
+                    let bv = t.get("and_value").and_then(|x| x.as_i64()).unwrap_or(vv);
                     e.plus(Expr::pair(w, a, Lit::Is(handles[find(bn)?], bv)))
                 }
                 None => e.plus(Expr::lit(w, a)),
@@ -882,9 +882,29 @@ mod solve_tests {
     #[test]
     fn an_integer_comes_back_in_its_own_units() {
         let r = go(r#"{"variables":[{"name":"t","lo":10,"hi":20}],
-                       "constraints":[{"type":"fix","var":"t","value":3}],"tries":8}"#)
+                       "constraints":[{"type":"fix","var":"t","value":13}],"tries":8}"#)
             .unwrap();
         assert_eq!(r.get("values").unwrap().get("t").unwrap().as_f64(), Some(13.0));
+    }
+
+    #[test]
+    fn a_value_outside_the_range_is_refused_by_name() {
+        // A caller who writes a slot index where a value belongs gets told which is which, rather
+        // than an answer to a question they did not ask.
+        let e = go(r#"{"variables":[{"name":"t","lo":10,"hi":20}],
+                       "constraints":[{"type":"fix","var":"t","value":3}],"tries":4}"#)
+            .unwrap_err();
+        assert!(e.contains("10..=20") && e.contains('t'), "{e}");
+    }
+
+    #[test]
+    fn a_range_below_zero_survives_json() {
+        // JSON numbers are signed and so are integer variables; the old reader could not carry a
+        // negative value at all.
+        let r = go(r#"{"variables":[{"name":"t","lo":-40,"hi":-10}],
+                       "constraints":[{"type":"fix","var":"t","value":-25}],"tries":8}"#)
+            .unwrap();
+        assert_eq!(r.get("values").unwrap().get("t").unwrap().as_f64(), Some(-25.0));
     }
 
     #[test]
