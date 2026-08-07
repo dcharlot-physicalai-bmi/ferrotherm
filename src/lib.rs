@@ -49,6 +49,7 @@ pub mod ftp;
 pub mod graph;
 pub mod categorical;
 pub mod certify;
+pub mod conform;
 pub mod dense;
 pub mod encode;
 pub mod exact;

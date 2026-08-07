@@ -200,7 +200,47 @@ checkable, and rows move only when a certified sample comes back.
 
 ---
 
-## 7. The first five things
+## 7. Progress
+
+| # | Step | State |
+|---|---|---|
+| 1 | Freeze `.ftp` v1 as a standalone spec | ✅ `spec/ftp-v1.md`, 13 test vectors, 14 conformance tests binding the implementation |
+| 2 | `Device` trait with declared capabilities and precision | ✅ `src/fabric.rs`; FPGA ported onto it |
+| 3 | Finish the Pt V2 | ◐ limits now **declared and checkable without a board**; sequential fabric blocked on hardware access |
+| 4 | Hitachi over its free public API | ⏸ **alive** (v2 API responds; operated by Fixstars) but a token requires submitting an email and agreeing to terms — a decision for the Institute, not for an agent |
+| 5 | `ferrotherm-conform`, run on ourselves first | ✅ `src/conform.rs`, 7 cases, **7/7 on our own backend** |
+
+*Porting the FPGA onto the trait immediately earned its keep.* The Pt V2 cell counts active
+neighbours rather than weighting them and spends one of its six LUT inputs on the random bit, so it
+supports **five** neighbours and **unweighted** couplings — a spin glass cannot be expressed on it at
+all. That is a property of the cell rather than the placement, no LUT budget changes it, and it was
+undeclared until the trait made declaring it mandatory. Same class of defect as QBoson's
+undocumented int8; we found ours on our own hardware first.
+
+**Our own conformance result, unedited:**
+
+```
+PASS ferromagnet          ground energy -12, exact -12
+PASS frustration          ground energy -3, exact -3 (one bond must break)
+PASS planted optimum      2.08% above a planted optimum of -192
+PASS exact agreement      -59 against variable elimination's exact -59
+PASS determinism          same seed reproduces: true
+PASS rejects a bad run    caught it: 300 draws are worth about 3 independent samples
+PASS sampling fidelity    beta_eff 0.4978 (asked 0.5), ess 2734,
+                          tv 0.1523 against a 0.3060 noise floor
+7/7 cases
+```
+
+The sixth case is the one that makes the suite mean anything. A fabric that always returns the same
+low-energy state passes every "did it find the optimum" test ever written, so the suite asks for a
+deliberately bad run and **fails the fabric if the certificate blesses it**. A test proves this
+works by handing the suite a device that answers everything with all-spins-up: it passes the
+ferromagnet, because all-up genuinely *is* that optimum, and is caught by frustration and the
+planted instance.
+
+---
+
+## 8. The first five things
 
 1. **Freeze `.ftp` v1 as a standalone spec** and get a third implementation written from it.
 2. **Land the `Device` trait** with declared capabilities and precision, and port the FPGA path onto
