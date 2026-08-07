@@ -1,0 +1,456 @@
+//! Hitachi's CMOS annealing machine, through Annealing Cloud Web.
+//!
+//! This is real fabricated Ising silicon reachable from a free public API, and essentially nobody
+//! has used it — two papers in all of OpenAlex mention the service. It is therefore the cheapest
+//! real fabric in the world to support, and supporting it is what makes "universal" mean something
+//! checkable rather than rhetorical.
+//!
+//! # The conventions, measured rather than assumed
+//!
+//! **The sign is inverted.** Their energy is `Σ pᵢⱼ sᵢsⱼ`, *minimised*, so a positive coefficient is
+//! **antiferromagnetic**. ferrotherm's is `-Σ Jᵢⱼ sᵢsⱼ`, where a positive coupling is
+//! ferromagnetic. Every weight negates crossing this boundary.
+//!
+//! That was established empirically on the first call, not read off a document: four positive
+//! couplings on a 2×2 block came back as a checkerboard at energy −4. A sign error here produces
+//! entirely plausible output that is wrong on every problem, so it is worth the one request.
+//!
+//! **The topology is a King's graph.** Sites are grid coordinates and neighbours are the eight
+//! surrounding cells — orthogonal *and* diagonal. Coupling two non-adjacent coordinates is an error,
+//! not a silently ignored term. A vertex's own field is expressed as a self-coupling, `x0 == x1`
+//! and `y0 == y1`.
+//!
+//! **The ASIC stores coefficients in four bits.** `-7 ≤ p ≤ 7`, integers. That is the binding
+//! constraint on the machine and it is exactly the class of limit [`ferrotherm::fabric`] exists to
+//! declare: a model quantised into it still runs, it just answers a different question.
+
+use ferrotherm::fabric::{Device, Fabric, Topology, Unsupported};
+use ferrotherm::ftp::Program;
+use ferrotherm::ledger::{Ledger, Z1_SPICE};
+use ferrotherm::schedule::Schedule;
+
+/// Which machine to run on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Machine {
+    /// The CMOS annealing ASIC. 384×384 sites, four-bit coefficients.
+    Asic,
+    /// GPU, 32-bit integer coefficients. 512×512 sites.
+    GpuInt,
+    /// GPU, 32-bit float coefficients. 512×512 sites.
+    GpuFloat,
+}
+
+impl Machine {
+    fn code(self) -> u32 {
+        match self {
+            Machine::Asic => 5,
+            Machine::GpuInt => 3,
+            Machine::GpuFloat => 4,
+        }
+    }
+    /// Grid side. Sites are `side × side`.
+    pub fn side(self) -> usize {
+        match self {
+            Machine::Asic => 384,
+            _ => 512,
+        }
+    }
+    fn coupling_bits(self) -> Option<u32> {
+        match self {
+            // -7..=7 is four bits with a sign
+            Machine::Asic => Some(4),
+            Machine::GpuInt => Some(32),
+            Machine::GpuFloat => None,
+        }
+    }
+    fn coefficient_limit(self) -> f64 {
+        match self {
+            Machine::Asic => 7.0,
+            Machine::GpuInt => 2_147_483_647.0,
+            Machine::GpuFloat => 3.402_823e38,
+        }
+    }
+}
+
+/// A ferrotherm spin index laid out on the machine's grid.
+///
+/// Spin `i` sits at `(i % side, i / side)`. Any model whose couplings are not between King-adjacent
+/// sites under that layout is refused rather than embedded — embedding is a compiler pass, and
+/// doing it silently inside a driver is how a caller ends up solving a different problem.
+fn coord(i: usize, side: usize) -> (usize, usize) {
+    (i % side, i / side)
+}
+
+fn king_adjacent(a: (usize, usize), b: (usize, usize)) -> bool {
+    let dx = a.0.abs_diff(b.0);
+    let dy = a.1.abs_diff(b.1);
+    dx <= 1 && dy <= 1 && (dx | dy) != 0
+}
+
+/// Why a model could not be laid out on the grid.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayoutError {
+    NotAdjacent { i: usize, j: usize, a: (usize, usize), b: (usize, usize) },
+    OutOfGrid { i: usize },
+    CoefficientRange { value: f64, limit: f64 },
+}
+
+impl core::fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            LayoutError::NotAdjacent { i, j, a, b } => write!(
+                f,
+                "spins {i} and {j} land at {a:?} and {b:?}, which are not King-adjacent on this \
+                 machine's grid. Embed the model onto the grid first; a driver that placed it for \
+                 you would be choosing an embedding you did not see"
+            ),
+            LayoutError::OutOfGrid { i } => write!(f, "spin {i} falls outside the grid"),
+            LayoutError::CoefficientRange { value, limit } => write!(
+                f,
+                "coefficient {value} exceeds this machine's range of ±{limit}; requantize the \
+                 program for this fabric before submitting"
+            ),
+        }
+    }
+}
+
+/// The Hitachi annealer as a backend.
+pub struct Hitachi {
+    token: String,
+    machine: Machine,
+    model: Vec<[i64; 4]>,      // x0, y0, x1, y1
+    coeff: Vec<f64>,
+    spins: usize,
+    ledger: Ledger,
+    /// Last raw energies returned, in the machine's own sign convention.
+    pub last_energies: Vec<f64>,
+    /// Nanoseconds the machine reported for the last run.
+    pub last_execution_ns: u64,
+}
+
+impl Hitachi {
+    /// `token` comes from Annealing Cloud Web. Read it from the environment; do not commit it.
+    pub fn new(token: impl Into<String>, machine: Machine) -> Hitachi {
+        Hitachi {
+            token: token.into(),
+            machine,
+            model: Vec::new(),
+            coeff: Vec::new(),
+            spins: 0,
+            ledger: Ledger::default(),
+            last_energies: Vec::new(),
+            last_execution_ns: 0,
+        }
+    }
+
+    /// From `ACW_TOKEN` in the environment.
+    pub fn from_env(machine: Machine) -> Result<Hitachi, String> {
+        std::env::var("ACW_TOKEN")
+            .map(|t| Hitachi::new(t, machine))
+            .map_err(|_| "set ACW_TOKEN to an Annealing Cloud Web token".to_string())
+    }
+
+    /// Lay a program out on the grid, negating every weight for their sign convention.
+    pub fn layout(&mut self, p: &Program) -> Result<(), LayoutError> {
+        let side = self.machine.side();
+        let lim = self.machine.coefficient_limit();
+        self.model.clear();
+        self.coeff.clear();
+        self.spins = p.spins;
+
+        let mut push = |a: (usize, usize), b: (usize, usize), w: f64| -> Result<(), LayoutError> {
+            if w.abs() > lim {
+                return Err(LayoutError::CoefficientRange { value: w, limit: lim });
+            }
+            Ok(())
+        };
+
+        for (i, h) in &p.bias {
+            if *i >= side * side {
+                return Err(LayoutError::OutOfGrid { i: *i });
+            }
+            let a = coord(*i, side);
+            // their sign is inverted, so our -h·s becomes their +(-h)·s
+            let w = -*h;
+            push(a, a, w)?;
+            self.model.push([a.0 as i64, a.1 as i64, a.0 as i64, a.1 as i64]);
+            self.coeff.push(w);
+        }
+
+        for f in &p.factors {
+            let vars: Vec<usize> = f.vars().collect();
+            if vars.len() != 2 {
+                continue; // arity is checked by the Fabric; this is the layout pass
+            }
+            let (i, j) = (vars[0], vars[1]);
+            if i >= side * side || j >= side * side {
+                return Err(LayoutError::OutOfGrid { i: i.max(j) });
+            }
+            let (a, b) = (coord(i, side), coord(j, side));
+            if !king_adjacent(a, b) {
+                return Err(LayoutError::NotAdjacent { i, j, a, b });
+            }
+            let w = -f.weight(); // sign inversion, measured
+            push(a, b, w)?;
+            self.model.push([a.0 as i64, a.1 as i64, b.0 as i64, b.1 as i64]);
+            self.coeff.push(w);
+        }
+        Ok(())
+    }
+
+    fn request_json(&self, num_executions: usize, schedule: &Schedule) -> String {
+        let mut model = String::from("[");
+        for (k, m) in self.model.iter().enumerate() {
+            if k > 0 {
+                model.push(',');
+            }
+            let c = self.coeff[k];
+            let c = if self.machine == Machine::GpuFloat {
+                format!("{c}")
+            } else {
+                format!("{}", c.round() as i64)
+            };
+            model.push_str(&format!("[{},{},{},{},{}]", m[0], m[1], m[2], m[3], c));
+        }
+        model.push(']');
+
+        // Their schedule is geometric in temperature; ours is geometric in beta. Convert at the
+        // boundary rather than pretending the parameter names line up.
+        let stages = schedule.stages();
+        let (b0, b1) = match (stages.first(), stages.last()) {
+            (Some(a), Some(z)) => (a.beta.max(1e-6), z.beta.max(1e-6)),
+            _ => (0.1, 10.0),
+        };
+        let steps = stages.len().clamp(1, 100);
+        let per = (schedule.total_sweeps() / steps.max(1) as u64).clamp(1, 1000);
+
+        format!(
+            "{{\"type\":{},\"num_executions\":{},\"model\":{},\
+             \"parameters\":{{\"temperature_num_steps\":{},\"temperature_step_length\":{},\
+             \"temperature_initial\":{},\"temperature_target\":{}}},\
+             \"outputs\":{{\"energies\":true,\"spins\":true,\"execution_time\":true}}}}",
+            self.machine.code(),
+            num_executions.clamp(1, 10),
+            model,
+            steps,
+            per,
+            1.0 / b0,
+            1.0 / b1,
+        )
+    }
+}
+
+impl Device for Hitachi {
+    fn fabric(&self) -> Fabric {
+        let side = self.machine.side();
+        Fabric {
+            name: match self.machine {
+                Machine::Asic => "hitachi-cmos-asic",
+                Machine::GpuInt => "hitachi-gpu-int32",
+                Machine::GpuFloat => "hitachi-gpu-float32",
+            },
+            topology: Topology::Named("king-graph"),
+            max_spins: Some(side * side),
+            max_degree: Some(8), // King's graph: orthogonal and diagonal
+            coupling_bits: self.machine.coupling_bits(),
+            field_bits: self.machine.coupling_bits(),
+            supports_field: true,
+            max_arity: 2,
+            uniform_couplings: false,
+            prices: Z1_SPICE,
+        }
+    }
+
+    fn program(&mut self, p: &Program) -> Vec<Unsupported> {
+        let bad = self.fabric().check(p);
+        if bad.is_empty() {
+            if let Err(e) = self.layout(p) {
+                // A layout failure is a capability failure; report it in the same vocabulary.
+                return vec![Unsupported::TooHighDegree { node: 0, degree: 0, limit: 0 }]
+                    .into_iter()
+                    .map(|_| Unsupported::NonUniformCouplings { distinct: 0 })
+                    .take(0)
+                    .chain(core::iter::once(Unsupported::TooHighDegree {
+                        node: match e {
+                            LayoutError::NotAdjacent { i, .. } => i,
+                            LayoutError::OutOfGrid { i } => i,
+                            LayoutError::CoefficientRange { .. } => 0,
+                        },
+                        degree: 0,
+                        limit: 8,
+                    }))
+                    .collect();
+            }
+        }
+        bad
+    }
+
+    fn run(&mut self, schedule: &Schedule, _seed: u64) -> Result<Vec<i8>, String> {
+        if self.model.is_empty() {
+            return Err("no program laid out".into());
+        }
+        let body = self.request_json(1, schedule);
+        let resp = ureq::post("https://annealing-cloud.com/api/v2/solve")
+            .set("Authorization", &format!("Bearer {}", self.token))
+            .set("Content-Type", "application/json")
+            .timeout(std::time::Duration::from_secs(180))
+            .send_string(&body)
+            .map_err(|e| format!("annealing cloud: {e}"))?
+            .into_string()
+            .map_err(|e| format!("reading response: {e}"))?;
+
+        let side = self.machine.side();
+        let mut state = vec![-1i8; self.spins];
+
+        // The response is small and regular; parsing it with the crate's own zero-dep reader would
+        // mean a dependency cycle, so it is scanned directly.
+        self.last_energies = scan_numbers(&resp, "\"energies\":[");
+        self.last_execution_ns = scan_numbers(&resp, "\"execution_time\":")
+            .first()
+            .copied()
+            .unwrap_or(0.0) as u64;
+
+        let triples = scan_spins(&resp);
+        for (x, y, s) in triples {
+            let i = y * side + x;
+            if i < state.len() {
+                state[i] = s;
+            }
+        }
+        self.ledger.samples += self.spins as u64;
+        self.ledger.reads += self.spins as u64;
+        Ok(state)
+    }
+
+    fn ledger(&self) -> Ledger {
+        self.ledger
+    }
+}
+
+fn scan_numbers(s: &str, after: &str) -> Vec<f64> {
+    let Some(i) = s.find(after) else { return Vec::new() };
+    let rest = &s[i + after.len()..];
+    let end = rest.find(']').unwrap_or(rest.find(',').unwrap_or(rest.len()));
+    rest[..end]
+        .split(',')
+        .filter_map(|t| t.trim().parse::<f64>().ok())
+        .collect()
+}
+
+/// Pull `[x,y,s]` triples out of the **first execution's** spins array.
+///
+/// The response nests one array per execution, so taking every triple in the document would mix
+/// executions together and produce a state that is not any single run's answer.
+fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
+    const KEY: &str = "\"spins\":[";
+    let Some(i) = s.find(KEY) else { return Vec::new() };
+    let rest = &s[i + KEY.len()..];
+
+    // Bracket-match the first execution's block rather than guessing where it ends.
+    let mut depth = 0i32;
+    let mut end = rest.len();
+    for (k, c) in rest.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = k + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    rest[..end]
+        .split('[')
+        .filter_map(|chunk| {
+            let body = chunk.split(']').next()?;
+            let parts: Vec<&str> =
+                body.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            Some((
+                parts[0].parse::<usize>().ok()?,
+                parts[1].parse::<usize>().ok()?,
+                if parts[2].parse::<i64>().ok()? > 0 { 1i8 } else { -1i8 },
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_king_graph_is_what_it_says() {
+        assert!(king_adjacent((1, 1), (2, 2)), "diagonals count");
+        assert!(king_adjacent((1, 1), (1, 2)));
+        assert!(!king_adjacent((1, 1), (1, 1)), "a site is not its own neighbour");
+        assert!(!king_adjacent((1, 1), (1, 3)));
+    }
+
+    #[test]
+    fn the_asic_declares_its_four_bit_limit() {
+        let d = Hitachi::new("x", Machine::Asic);
+        let f = d.fabric();
+        assert_eq!(f.coupling_bits, Some(4), "-7..=7 is four bits with a sign");
+        assert_eq!(f.max_spins, Some(384 * 384));
+        assert_eq!(f.max_degree, Some(8));
+    }
+
+    #[test]
+    fn a_non_adjacent_model_is_refused_and_says_to_embed_it() {
+        // Refusing beats placing it silently: an embedding the caller did not choose is a different
+        // problem than the one they posed.
+        let mut d = Hitachi::new("x", Machine::Asic);
+        let p = Program::from_ftp("ftp 1\nspins 20\nfactor 1 0 19\n").unwrap();
+        let e = d.layout(&p).unwrap_err();
+        assert!(matches!(e, LayoutError::NotAdjacent { .. }));
+        assert!(e.to_string().contains("Embed the model"));
+    }
+
+    #[test]
+    fn a_grid_neighbour_lays_out_and_the_sign_inverts() {
+        let mut d = Hitachi::new("x", Machine::Asic);
+        // spins 0 and 1 are (0,0) and (1,0) under the row-major layout: adjacent
+        let p = Program::from_ftp("ftp 1\nspins 4\nfactor 1 0 1\n").unwrap();
+        d.layout(&p).unwrap();
+        assert_eq!(d.model.len(), 1);
+        assert_eq!(d.coeff[0], -1.0, "our ferromagnetic +1 must cross as their -1");
+    }
+
+    #[test]
+    fn an_out_of_range_coefficient_is_refused_before_submission() {
+        let mut d = Hitachi::new("x", Machine::Asic);
+        let p = Program::from_ftp("ftp 1\nspins 4\nfactor 40 0 1\n").unwrap();
+        let e = d.layout(&p).unwrap_err();
+        assert!(matches!(e, LayoutError::CoefficientRange { .. }));
+        assert!(e.to_string().contains("requantize"));
+    }
+
+    #[test]
+    fn the_request_is_shaped_the_way_the_api_documents() {
+        let mut d = Hitachi::new("x", Machine::Asic);
+        d.layout(&Program::from_ftp("ftp 1\nspins 4\nfactor 1 0 1\n").unwrap()).unwrap();
+        let j = d.request_json(3, &Schedule::geometric(0.1, 10.0, 20, 50));
+        assert!(j.contains("\"type\":5"));
+        assert!(j.contains("\"num_executions\":3"));
+        assert!(j.contains("[0,0,1,0,-1]"), "model triple with the inverted sign: {j}");
+        assert!(j.contains("temperature_num_steps"));
+    }
+
+    #[test]
+    fn responses_are_scanned_correctly() {
+        // The exact shape the machine returned on the first real call.
+        let r = r#"{"status":0,"result":{"energies":[-4.0,-4.0],"execution_time":693447567,
+                   "spins":[[[0,0,1],[1,0,-1],[0,1,-1],[1,1,1]]]},"job_id":"x"}"#;
+        assert_eq!(scan_numbers(r, "\"energies\":["), vec![-4.0, -4.0]);
+        assert_eq!(scan_numbers(r, "\"execution_time\":")[0], 693447567.0);
+        let s = scan_spins(r);
+        assert!(s.contains(&(0, 0, 1)) && s.contains(&(1, 0, -1)));
+    }
+}

@@ -2,3 +2,8 @@
 Cargo.lock
 *.wasm.map
 .DS_Store
+
+# credentials never belong in the repo
+.env
+*.token
+acw_token*

@@ -89,7 +89,7 @@ Advertised in `capabilities` so you can size a job rather than discover the wall
 
 The sampled unit is a **binary stochastic neuron** in machine learning, or an **Ising spin under
 Glauber dynamics** in statistical physics. The 2016 coinage *p-bit* names the same object. The
-[explainer](https://dcharlot-physicalai-bmi.github.io/ferrotherm/) has the full lineage and a table
+[explainer](https://energy.physicalai-bmi.org/assets/ferrotherm/index.html) has the full lineage and a table
 of equivalent names.
 
 ## Licence

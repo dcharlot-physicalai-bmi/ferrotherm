@@ -88,7 +88,7 @@ reachable through one program.
 | **CPU** | native | ✅ shipping | done |
 | **WebGPU** | browser, no install | ✅ correct, crossover measured | done |
 | **FPGA — Alchitry Pt V2** | our own JTAG + bitstream stack | ◐ fabric emitted, sequential pending | E1 |
-| **Hitachi CMOS annealer** | **free public web API** | planned | E2 |
+| **Hitachi CMOS annealer** | free public web API | ✅ **running on the real ASIC** | E2 |
 | **D-Wave** | Ocean / Leap | planned | E2 |
 | **Fujitsu Digital Annealer** | cloud API | planned | E3 |
 | **Toshiba SQBM+** | AWS Marketplace | planned | E3 |
@@ -207,7 +207,7 @@ checkable, and rows move only when a certified sample comes back.
 | 1 | Freeze `.ftp` v1 as a standalone spec | ✅ `spec/ftp-v1.md`, 13 test vectors, 14 conformance tests binding the implementation |
 | 2 | `Device` trait with declared capabilities and precision | ✅ `src/fabric.rs`; FPGA ported onto it |
 | 3 | Finish the Pt V2 | ◐ limits now **declared and checkable without a board**; sequential fabric blocked on hardware access |
-| 4 | Hitachi over its free public API | ⏸ **alive** (v2 API responds; operated by Fixstars) but a token requires submitting an email and agreeing to terms — a decision for the Institute, not for an agent |
+| 4 | Hitachi over its free public API | ✅ **`ferrotherm-cloud`, verified on the ASIC** — see below |
 | 5 | `ferrotherm-conform`, run on ourselves first | ✅ `src/conform.rs`, 7 cases, **7/7 on our own backend** |
 
 *Porting the FPGA onto the trait immediately earned its keep.* The Pt V2 cell counts active
@@ -216,6 +216,34 @@ supports **five** neighbours and **unweighted** couplings — a spin glass canno
 all. That is a property of the cell rather than the placement, no LUT budget changes it, and it was
 undeclared until the trait made declaring it mandatory. Same class of defect as QBoson's
 undocumented int8; we found ours on our own hardware first.
+
+### The first external fabric, running
+
+`ferrotherm-cloud` drives Hitachi's CMOS annealing ASIC — real fabricated Ising silicon that two
+papers in all of OpenAlex mention — through the same `Device` trait as our CPU:
+
+```
+fabric        hitachi-cmos-asic | king-graph | 147456 sites | degree 8 | coupling 4 bits
+program       1156 spins declared, 24 couplings, digest 3a5b2d8652af72bf
+machine energy (their sign) [-24.0]
+execution     275.511 ms on the ASIC
+our energy    -24
+checkerboard  yes - every bond satisfied
+```
+
+Two conventions were **measured rather than read**, on the first call, because a mistake in either
+produces plausible output that is wrong on every problem:
+
+- **The sign is inverted.** Their energy is `Σ pᵢⱼ sᵢsⱼ` *minimised*, so a positive coefficient is
+  antiferromagnetic. Four positive couplings on a 2×2 block came back as a checkerboard at −24.
+  That the two energies now agree exactly is the proof the mapping is right; a wrong sign gives +24.
+- **The topology is a King's graph** — neighbours are orthogonal *and diagonal*, and coupling
+  non-adjacent coordinates is an error rather than an ignored term.
+
+And the ASIC stores coefficients in **four bits**, `-7 ≤ p ≤ 7`. That is the binding constraint on
+the machine, it is declared in the `Fabric`, and a program exceeding it is refused before submission
+rather than silently quantised. A model that does not fit the grid is refused too, with the reason:
+*a driver that placed it for you would be choosing an embedding you did not see.*
 
 **Our own conformance result, unedited:**
 
