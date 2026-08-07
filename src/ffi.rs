@@ -717,3 +717,398 @@ mod exact_state_ffi {
         ft_free(sim);
     }
 }
+
+// ---- the modelling layer -------------------------------------------------------------------------
+//
+// Variables are referred to by index across this boundary and names are kept by the caller. A node
+// graph already knows what it called each node, and marshalling strings both ways to tell it
+// something it knows would be work for nothing.
+
+use crate::model::{Compiled, Constraint, Expr, Lit, Model, Sense, Solution};
+
+/// A model under construction, plus whatever it last compiled and solved.
+pub struct ModelHandle {
+    model: Model,
+    compiled: Option<Compiled>,
+    solution: Option<Solution>,
+    objective: Expr,
+    sense: Sense,
+    last_error: String,
+}
+
+#[no_mangle]
+pub extern "C" fn ft_model_new() -> *mut ModelHandle {
+    Box::into_raw(Box::new(ModelHandle {
+        model: Model::new(),
+        compiled: None,
+        solution: None,
+        objective: Expr::zero(),
+        sense: Sense::Minimize,
+        last_error: String::new(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn ft_model_free(m: *mut ModelHandle) {
+    if !m.is_null() {
+        drop(unsafe { Box::from_raw(m) });
+    }
+}
+
+/// Declare a `k`-valued variable. Returns its index, or `u32::MAX` on failure.
+#[no_mangle]
+pub extern "C" fn ft_model_categorical(m: *mut ModelHandle, k: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    if k < 2 {
+        return u32::MAX;
+    }
+    let n = h.model.len();
+    h.model.categorical(&format!("v{n}"), k as usize);
+    n as u32
+}
+
+/// Declare an integer in `lo..=hi`.
+#[no_mangle]
+pub extern "C" fn ft_model_integer(m: *mut ModelHandle, lo: i64, hi: i64) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    if hi <= lo {
+        return u32::MAX;
+    }
+    let n = h.model.len();
+    h.model.integer(&format!("v{n}"), lo, hi);
+    n as u32
+}
+
+/// Declare a 0/1 variable.
+#[no_mangle]
+pub extern "C" fn ft_model_binary(m: *mut ModelHandle) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    let n = h.model.len();
+    h.model.binary(&format!("v{n}"));
+    n as u32
+}
+
+fn var_of(h: &ModelHandle, i: u32) -> Option<crate::model::Var> {
+    (( i as usize) < h.model.len()).then(|| h.model.var_at(i as usize))
+}
+
+/// `a != b`. Returns 1 on success.
+#[no_mangle]
+pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    match (var_of(h, a), var_of(h, b)) {
+        (Some(x), Some(y)) if a != b => {
+            h.model.constrain(Constraint::NotEqual(x, y));
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// `a == b`.
+#[no_mangle]
+pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    match (var_of(h, a), var_of(h, b)) {
+        (Some(x), Some(y)) if a != b => {
+            h.model.constrain(Constraint::Equal(x, y));
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Pin a variable to a value.
+#[no_mangle]
+pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    match var_of(h, v) {
+        Some(x) => {
+            h.model.constrain(Constraint::Fix(x, value as usize));
+            1
+        }
+        None => 0,
+    }
+}
+
+/// Add `coeff · [var == value]` to the objective.
+#[no_mangle]
+pub extern "C" fn ft_model_objective_term(
+    m: *mut ModelHandle,
+    maximize: u32,
+    coeff: f64,
+    v: u32,
+    value: u32,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(x) = var_of(h, v) else { return 0 };
+    if !coeff.is_finite() {
+        return 0;
+    }
+    h.sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
+    let e = core::mem::take(&mut h.objective);
+    h.objective = e.plus(Expr::lit(coeff, Lit::Is(x, value as usize)));
+    // Push it into the model as we go, so `ft_model_penalty` answers correctly at any point rather
+    // than only after compiling. An editor showing a penalty that is about to change is worse than
+    // showing none.
+    let (obj, sense) = (h.objective.clone(), h.sense);
+    h.model.objective(sense, obj);
+    1
+}
+
+/// Add `coeff · [a == av] · [b == bv]` to the objective.
+#[no_mangle]
+pub extern "C" fn ft_model_objective_pair(
+    m: *mut ModelHandle,
+    maximize: u32,
+    coeff: f64,
+    a: u32,
+    av: u32,
+    b: u32,
+    bv: u32,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let (Some(x), Some(y)) = (var_of(h, a), var_of(h, b)) else { return 0 };
+    if !coeff.is_finite() || a == b {
+        return 0;
+    }
+    h.sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
+    let e = core::mem::take(&mut h.objective);
+    h.objective =
+        e.plus(Expr::pair(coeff, Lit::Is(x, av as usize), Lit::Is(y, bv as usize)));
+    let (obj, sense) = (h.objective.clone(), h.sense);
+    h.model.objective(sense, obj);
+    1
+}
+
+/// Compile. Returns the spin count, or 0 on failure; the reason is available from
+/// [`ft_model_error`].
+#[no_mangle]
+pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let obj = h.objective.clone();
+    h.model.objective(h.sense, obj);
+    match h.model.compile() {
+        Ok(c) => {
+            let n = c.spins() as u32;
+            h.compiled = Some(c);
+            h.last_error.clear();
+            n
+        }
+        Err(e) => {
+            h.last_error = e.to_string();
+            h.compiled = None;
+            0
+        }
+    }
+}
+
+/// Anneal the compiled model, keeping the best of `tries`. Returns 1 on success.
+#[no_mangle]
+pub extern "C" fn ft_model_solve(m: *mut ModelHandle, tries: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(c) = h.compiled.as_ref() else { return 0 };
+    h.solution = Some(c.solve_best_of(tries.max(1) as u64));
+    1
+}
+
+/// The solved value of variable `v`, or `i64::MIN` if it did not decode.
+#[no_mangle]
+pub extern "C" fn ft_model_value(m: *const ModelHandle, v: u32) -> i64 {
+    let Some(h) = (unsafe { m.as_ref() }) else { return i64::MIN };
+    let Some(s) = h.solution.as_ref() else { return i64::MIN };
+    s.get(&format!("v{v}")).unwrap_or(i64::MIN)
+}
+
+/// 1 if every variable decoded.
+#[no_mangle]
+pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) if s.feasible() => 1,
+        _ => 0,
+    }
+}
+
+/// Energy of the solution.
+#[no_mangle]
+pub extern "C" fn ft_model_energy(m: *const ModelHandle) -> f64 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.energy,
+        None => f64::NAN,
+    }
+}
+
+/// The penalty actually used, after scaling against the objective.
+#[no_mangle]
+pub extern "C" fn ft_model_penalty(m: *const ModelHandle) -> f64 {
+    match unsafe { m.as_ref() } {
+        Some(h) => h.model.effective_penalty(),
+        None => f64::NAN,
+    }
+}
+
+/// Copy the last compile error into `buf`; returns bytes written, or the length needed if null.
+#[no_mangle]
+pub extern "C" fn ft_model_error(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
+    let b = h.last_error.as_bytes();
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
+/// The compiled program as `.ftp` text; same buffer protocol as [`ft_model_error`].
+#[no_mangle]
+pub extern "C" fn ft_model_ftp(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
+    let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) else { return 0 };
+    let text = c.program.to_ftp();
+    let b = text.as_bytes();
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
+#[cfg(test)]
+mod model_ffi_tests {
+    use super::*;
+
+    fn text(m: *const ModelHandle, f: unsafe extern "C" fn(*const ModelHandle, *mut u8, u32) -> u32) -> String {
+        let need = unsafe { f(m, core::ptr::null_mut(), 0) } as usize;
+        let mut buf = vec![0u8; need];
+        let got = unsafe { f(m, buf.as_mut_ptr(), need as u32) } as usize;
+        String::from_utf8_lossy(&buf[..got]).into_owned()
+    }
+
+    #[test]
+    fn a_colouring_model_goes_through_the_boundary() {
+        // The graph editor's whole vocabulary, exercised as it would drive it.
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+        let c = ft_model_categorical(m, 3);
+        assert_eq!((a, b, c), (0, 1, 2));
+        assert_eq!(ft_model_not_equal(m, a, b), 1);
+        assert_eq!(ft_model_not_equal(m, b, c), 1);
+        assert_eq!(ft_model_not_equal(m, a, c), 1);
+
+        assert_eq!(ft_model_compile(m), 9, "three one-hot variables of three values");
+        assert_eq!(ft_model_solve(m, 12), 1);
+        assert_eq!(ft_model_feasible(m), 1);
+
+        let (va, vb, vc) = (ft_model_value(m, a), ft_model_value(m, b), ft_model_value(m, c));
+        assert!(va != vb && vb != vc && va != vc, "a triangle needs three colours: {va} {vb} {vc}");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn an_objective_crosses_and_the_penalty_scales() {
+        let m = ft_model_new();
+        let x = ft_model_categorical(m, 5);
+        for v in 0..5u32 {
+            assert_eq!(ft_model_objective_term(m, 1, v as f64, x, v), 1);
+        }
+        assert_eq!(ft_model_penalty(m), 8.0, "twice the largest coefficient, across the boundary");
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 10);
+        assert_eq!(ft_model_value(m, x), 4, "maximising picks the top value");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_compile_error_crosses_as_text() {
+        // A graph editor has to show the user why, not just that it failed.
+        let m = ft_model_new();
+        let x = ft_model_categorical(m, 4);
+        assert_eq!(ft_model_objective_term(m, 0, 1.0, x, 99), 1, "accepted at build time");
+        assert_eq!(ft_model_compile(m), 0, "and refused at compile time");
+        let e = text(m, ft_model_error);
+        assert!(e.contains("99") && e.contains("not one of them"), "{e}");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn the_compiled_program_comes_back_as_ftp() {
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+        ft_model_not_equal(m, a, b);
+        ft_model_compile(m);
+        let ftp = text(m, ft_model_ftp);
+        assert!(ftp.starts_with("ftp 1"));
+        assert!(ftp.contains("encode 0 3 onehot"), "the layout travels with it: {ftp}");
+        assert!(crate::ftp::Program::from_ftp(&ftp).is_ok());
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn malformed_calls_are_inert() {
+        let m = ft_model_new();
+        assert_eq!(ft_model_categorical(m, 1), u32::MAX, "k below 2 is a constant");
+        assert_eq!(ft_model_integer(m, 5, 5), u32::MAX, "an empty range");
+        assert_eq!(ft_model_not_equal(m, 0, 0), 0, "a variable differs from nothing but itself");
+        assert_eq!(ft_model_value(m, 0), i64::MIN, "no solution yet");
+        assert_eq!(ft_model_categorical(core::ptr::null_mut(), 3), u32::MAX);
+        assert_eq!(ft_model_solve(core::ptr::null_mut(), 1), 0);
+        ft_model_free(m);
+        ft_model_free(core::ptr::null_mut());
+    }
+}
+
+/// A scratch buffer in wasm memory, for callers with no allocator of their own.
+///
+/// A browser can read wasm memory but cannot allocate in it, so the two-call text protocol —
+/// ask the length, then fill a buffer — needs somewhere to write. This grows on demand and is
+/// reused; it is single-threaded like the rest of this ABI, and the caller must copy out before the
+/// next call.
+#[no_mangle]
+pub extern "C" fn ft_scratch(len: u32) -> *mut u8 {
+    use std::cell::RefCell;
+    thread_local! {
+        static BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    }
+    BUF.with(|b| {
+        let mut b = b.borrow_mut();
+        if b.len() < len as usize {
+            b.resize(len as usize, 0);
+        }
+        b.as_mut_ptr()
+    })
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    use super::*;
+
+    #[test]
+    fn the_scratch_buffer_grows_and_is_writable() {
+        let p = ft_scratch(16);
+        assert!(!p.is_null());
+        unsafe { core::ptr::write_bytes(p, 0xAB, 16) };
+        let big = ft_scratch(4096);
+        assert!(!big.is_null());
+        unsafe { core::ptr::write_bytes(big, 0x01, 4096) };
+    }
+
+    #[test]
+    fn text_round_trips_through_the_scratch_protocol() {
+        // Exactly how the browser reads a compile error.
+        let m = ft_model_new();
+        let x = ft_model_categorical(m, 3);
+        ft_model_objective_term(m, 0, 1.0, x, 99);
+        assert_eq!(ft_model_compile(m), 0);
+
+        let need = ft_model_error(m, core::ptr::null_mut(), 0);
+        assert!(need > 0);
+        let buf = ft_scratch(need);
+        let got = ft_model_error(m, buf, need);
+        let s = unsafe { core::slice::from_raw_parts(buf, got as usize) };
+        assert!(core::str::from_utf8(s).unwrap().contains("not one of them"));
+        ft_model_free(m);
+    }
+}

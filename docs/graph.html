@@ -10,7 +10,7 @@
     --bg:#0b1220; --panel:#111a2e; --panel-2:#0d1526; --line:#24314d;
     --ink:#d8e1f0; --ink-dim:#a7b3c9; --ink-faint:#7d8aa3;
     --gold:#cfaa5b; --gold-dim:rgba(207,170,91,.55);
-    --ok:#7dd87d; --model:#5b8fd4; --sched:#b07fd4; --result:#e0a458;
+    --ok:#7dd87d; --var:#5b8fd4; --cons:#d4685b; --obj:#b07fd4; --result:#e0a458;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
   }
@@ -47,8 +47,9 @@
   .node.sel{border-color:var(--gold)}
   .node .hd{padding:6px 9px;border-bottom:1px solid var(--line);font-family:var(--mono);
        font-size:11px;letter-spacing:.05em;cursor:grab;border-radius:8px 8px 0 0}
-  .node .hd.model{color:#bcd4f5;background:rgba(91,143,212,.16)}
-  .node .hd.sched{color:#dcc4f2;background:rgba(176,127,212,.16)}
+  .node .hd.var{color:#bcd4f5;background:rgba(91,143,212,.16)}
+  .node .hd.cons{color:#f3bdb4;background:rgba(212,104,91,.16)}
+  .node .hd.obj{color:#dcc4f2;background:rgba(176,127,212,.16)}
   .node .hd.result{color:#f2d3a8;background:rgba(224,164,88,.16)}
   .node .bd{padding:8px 9px}
   .row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:5px}
@@ -62,8 +63,9 @@
   .port:hover{border-color:var(--gold);background:var(--gold)}
   .port.in{left:-7px}
   .port.out{right:-7px}
-  .port.model{border-color:var(--model)}
-  .port.sched{border-color:var(--sched)}
+  .port.var{border-color:var(--var)}
+  .port.cons{border-color:var(--cons)}
+  .port.obj{border-color:var(--obj)}
   .port.result{border-color:var(--result)}
   .del{float:right;color:var(--ink-faint);cursor:pointer;padding:0 2px}
   .del:hover{color:#e08080}
@@ -89,18 +91,19 @@
 
 <main>
   <div class="rail">
-    <h3>Model</h3>
-    <button class="add" data-t="lattice">Lattice 2D</button>
-    <button class="add" data-t="ring">Ring</button>
-    <button class="add" data-t="frustrated">Frustrated (planted)</button>
-    <button class="add" data-t="wishart">Wishart (planted)</button>
-    <h3>Schedule</h3>
-    <button class="add" data-t="constant">Constant &beta;</button>
-    <button class="add" data-t="ladder">Geometric ladder</button>
-    <h3>Run</h3>
-    <button class="add" data-t="sample">Sample</button>
-    <button class="add" data-t="anneal">Anneal</button>
-    <h3>Report</h3>
+    <h3>Variables</h3>
+    <button class="add" data-t="categorical">Categorical</button>
+    <button class="add" data-t="integer">Integer</button>
+    <button class="add" data-t="binary">Binary</button>
+    <h3>Constraints</h3>
+    <button class="add" data-t="notequal">a &ne; b</button>
+    <button class="add" data-t="equal">a = b</button>
+    <button class="add" data-t="fix">Fix value</button>
+    <h3>Objective</h3>
+    <button class="add" data-t="prefer">Prefer value</button>
+    <button class="add" data-t="agree">Prefer a = b</button>
+    <h3>Solve</h3>
+    <button class="add" data-t="solve">Solve</button>
     <button class="add" data-t="report">Report</button>
   </div>
 
@@ -110,11 +113,15 @@
     <h3>Output</h3>
     <pre id="out">Add nodes, connect them, press Run.
 
-A graph is a program: a model, a schedule, something that
-runs them, and something that reports. Drag from an output
-dot to an input dot to connect.</pre>
+State the problem, do not pick one. Declare variables with
+domains, say what must hold and what you prefer, and read
+values back by name.
+
+Drag from an output dot to an input dot to connect. A wire
+only joins ports of the same kind, so a graph that connects
+is a model that compiles.</pre>
     <h3>As a .ftp program</h3>
-    <p>The same text the crate, the API and the workbench read. A graph is a way of writing one.</p>
+    <p>The same text the crate, the API, the workbench and Hitachi's ASIC read. Everything above compiles down to this.</p>
     <pre id="ftp">&mdash;</pre>
   </div>
 </main>
@@ -130,30 +137,35 @@ dot to an input dot to connect.</pre>
 
 // ---- node types -------------------------------------------------------------------------------
 //
-// A node is an IR object, not a widget: a model, a schedule, a run, a report. The ports carry those
-// same kinds, so a graph that type-checks is a program that compiles.
+// The vocabulary mirrors ferrotherm::model exactly: variables with domains, constraints, objective
+// terms, and a solve. Nothing here is a preset -- you state the problem, not pick one.
 
-const KIND = { model: "model", sched: "sched", result: "result" };
+// Kinds: var (a thing with a value), cons (something that must hold), obj (something
+// preferred), result. A wire may only join ports of the same kind, so a graph that
+// connects is a model that compiles.
 
 const TYPES = {
-  lattice:    { title: "Lattice 2D",   kind: "model",  ins: [],
-                fields: [["l", 24, "int"], ["j", 1.0, "num"]] },
-  ring:       { title: "Ring",         kind: "model",  ins: [],
-                fields: [["n", 24, "int"], ["j", 1.0, "num"], ["h", 0.0, "num"]] },
-  frustrated: { title: "Frustrated",   kind: "model",  ins: [],
-                fields: [["l", 8, "int"], ["loops", 96, "int"], ["seed", 1, "int"]] },
-  wishart:    { title: "Wishart",      kind: "model",  ins: [],
-                fields: [["n", 40, "int"], ["alpha", 0.5, "num"], ["seed", 1, "int"]] },
-  constant:   { title: "Constant β",   kind: "sched",  ins: [],
-                fields: [["beta", 0.44, "num"], ["sweeps", 400, "int"]] },
-  ladder:     { title: "Geometric",    kind: "sched",  ins: [],
-                fields: [["beta_min", 0.05, "num"], ["beta_max", 6.0, "num"],
-                         ["stages", 80, "int"], ["per", 40, "int"]] },
-  sample:     { title: "Sample",       kind: "result", ins: [["model", "model"], ["sched", "sched"]],
-                fields: [["seed", 1, "int"]] },
-  anneal:     { title: "Anneal",       kind: "result", ins: [["model", "model"], ["sched", "sched"]],
-                fields: [["seed", 1, "int"]] },
-  report:     { title: "Report",       kind: null,     ins: [["result", "result"]], fields: [] },
+  // --- variables: what the problem is about --------------------------------------------------
+  categorical:{ title: "Categorical",  kind: "var", ins: [], fields: [["values", 3, "int"]] },
+  integer:    { title: "Integer",      kind: "var", ins: [], fields: [["lo", 0, "int"], ["hi", 5, "int"]] },
+  binary:     { title: "Binary",       kind: "var", ins: [], fields: [] },
+
+  // --- constraints: what must hold -------------------------------------------------------------
+  notequal:   { title: "a ≠ b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
+  equal:      { title: "a = b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
+  fix:        { title: "Fix value",    kind: "cons", ins: [["var", "var"]], fields: [["value", 0, "int"]] },
+
+  // --- objective: what to prefer ---------------------------------------------------------------
+  prefer:     { title: "Prefer value", kind: "obj", ins: [["var", "var"]],
+                fields: [["value", 0, "int"], ["weight", 1.0, "num"], ["maximize", 1, "int"]] },
+  agree:      { title: "Prefer a=b",   kind: "obj", ins: [["a", "var"], ["b", "var"]],
+                fields: [["value", 0, "int"], ["weight", 1.0, "num"], ["maximize", 1, "int"]] },
+
+  // --- solving and reading ---------------------------------------------------------------------
+  solve:      { title: "Solve",        kind: "result",
+                ins: [["model", "cons"], ["model2", "cons"], ["model3", "obj"]],
+                fields: [["tries", 12, "int"]] },
+  report:     { title: "Report",       kind: null, ins: [["result", "result"]], fields: [] },
 };
 
 let nodes = [], links = [], nextId = 1;
@@ -310,140 +322,162 @@ let W = null, mem = null;
   }
 })();
 
-// ---- evaluation -------------------------------------------------------------------------------
+// ---- evaluation --------------------------------------------------------------------------------
 //
-// Walk the graph from the Report node backwards. Each node kind becomes a call into the same crate
-// the workbench and the API use, so a graph is a different way of writing a program, not a
-// different implementation of one.
+// Walk the graph and build a ferrotherm::model::Model through the wasm boundary. Variables are
+// declared in node order and referred to by index; this page keeps the names, which is why none
+// cross the boundary.
 
 function inputOf(id, port) {
   const l = links.find(x => x.to === id && x.port === port);
   return l ? nodes.find(n => n.id === l.from) : null;
 }
+function allInputs(id) {
+  return links.filter(x => x.to === id).map(l => nodes.find(n => n.id === l.from)).filter(Boolean);
+}
 
-function buildModel(n) {
-  const v = n.vals;
-  if (n.type === "lattice") return { sim: W.ft_ising2d_new(v.l | 0, v.j, 1.0, 1n), desc: `lattice2d l=${v.l|0}` };
-  if (n.type === "frustrated")
-    return { sim: W.ft_planted_frustrated(v.l | 0, v.loops | 0, BigInt(v.seed | 0), 1.0),
-             desc: `frustrated l=${v.l|0} loops=${v.loops|0}`, planted: true };
-  if (n.type === "wishart")
-    return { sim: W.ft_planted_wishart(v.n | 0, v.alpha, BigInt(v.seed | 0), 1.0),
-             desc: `wishart n=${v.n|0} alpha=${v.alpha}`, planted: true };
-  if (n.type === "ring") {
-    const nn = v.n | 0, b = W.ft_builder_new(nn);
-    for (let i = 0; i < nn; i++) W.ft_builder_couple(b, i, (i + 1) % nn, v.j);
-    if (v.h) for (let i = 0; i < nn; i++) W.ft_builder_bias(b, i, v.h);
-    return { sim: W.ft_builder_build(b, 1.0, 1n), desc: `ring n=${nn}` };
-  }
-  throw new Error("not a model node: " + n.type);
+/** Everything reachable backwards from a node, so a Solve node collects its whole model. */
+function upstream(node, seen = new Set()) {
+  if (!node || seen.has(node.id)) return seen;
+  seen.add(node.id);
+  for (const p of allInputs(node.id)) upstream(p, seen);
+  return seen;
 }
 
 function runGraph() {
   if (!W) return;
   const rep = nodes.find(n => n.type === "report");
-  if (!rep) { $("out").textContent = "Add a Report node — a graph with no output computes nothing."; return; }
-  const runNode = inputOf(rep.id, "result");
-  if (!runNode) { $("out").textContent = "Connect a Sample or Anneal into the Report."; return; }
-  const modelNode = inputOf(runNode.id, "model");
-  const schedNode = inputOf(runNode.id, "sched");
-  if (!modelNode) { $("out").textContent = "The " + TYPES[runNode.type].title + " node needs a model."; return; }
-  if (!schedNode) { $("out").textContent = "The " + TYPES[runNode.type].title + " node needs a schedule."; return; }
+  if (!rep) { $("out").textContent = "Add a Report node - a graph with no output computes nothing."; return; }
+  const solveNode = inputOf(rep.id, "result");
+  if (!solveNode) { $("out").textContent = "Connect a Solve node into the Report."; return; }
 
-  let m = null;
+  const reach = upstream(solveNode);
+  const varNodes = nodes.filter(n => reach.has(n.id) && TYPES[n.type].kind === "var");
+  if (!varNodes.length) { $("out").textContent = "Add at least one variable and wire it into Solve."; return; }
+
+  const m = W.ft_model_new();
   try {
-    m = buildModel(modelNode);
-    if (!m.sim) throw new Error("the model refused those parameters");
-    const n = W.ft_len(m.sim);
-    const sv = schedNode.vals, rv = runNode.vals;
-    const t0 = performance.now();
-    let line;
-
-    if (runNode.type === "anneal") {
-      const bmin = schedNode.type === "ladder" ? sv.beta_min : Math.max(0.01, sv.beta / 10);
-      const bmax = schedNode.type === "ladder" ? sv.beta_max : sv.beta;
-      const stages = schedNode.type === "ladder" ? (sv.stages | 0) : 40;
-      const per = schedNode.type === "ladder" ? (sv.per | 0) : Math.max(1, (sv.sweeps | 0) / 40 | 0);
-      const e = W.ft_anneal(m.sim, bmin, bmax, stages, per);
-      if (Number.isNaN(e)) throw new Error("that ladder is not valid: need 0 < beta_min < beta_max");
-      line = "annealed to energy " + e.toFixed(4);
-    } else {
-      const beta = schedNode.type === "constant" ? sv.beta : sv.beta_max;
-      W.ft_set_beta(m.sim, beta);
-      const sweeps = schedNode.type === "constant" ? (sv.sweeps | 0) : (sv.stages | 0) * (sv.per | 0);
-      W.ft_sweep(m.sim, sweeps);
-      line = "sampled " + sweeps + " sweeps at beta " + beta;
+    // 1. variables, in node order, so indices are stable and inspectable
+    const idx = new Map();
+    for (const n of varNodes) {
+      let i;
+      if (n.type === "categorical") i = W.ft_model_categorical(m, n.vals.values | 0);
+      else if (n.type === "integer") i = W.ft_model_integer(m, BigInt(n.vals.lo | 0), BigInt(n.vals.hi | 0));
+      else i = W.ft_model_binary(m);
+      if (i === 0xFFFFFFFF) {
+        $("out").textContent = "'" + TYPES[n.type].title + "' has invalid parameters " +
+          "(a categorical needs at least 2 values; an integer needs hi > lo).";
+        return;
+      }
+      idx.set(n.id, i);
     }
+
+    // 2. constraints and objective terms
+    let cons = 0, obj = 0;
+    for (const n of nodes) {
+      if (!reach.has(n.id)) continue;
+      const k = TYPES[n.type].kind;
+      if (k !== "cons" && k !== "obj") continue;
+      const a = inputOf(n.id, "a"), b = inputOf(n.id, "b"), v = inputOf(n.id, "var");
+      const ia = a && idx.get(a.id), ib = b && idx.get(b.id), iv = v && idx.get(v.id);
+      const need2 = (x, y) => (x === undefined || y === undefined)
+        ? ($("out").textContent = "'" + TYPES[n.type].title + "' needs both inputs wired to variables.", false)
+        : true;
+
+      if (n.type === "notequal") { if (!need2(ia, ib)) return; cons += W.ft_model_not_equal(m, ia, ib); }
+      else if (n.type === "equal") { if (!need2(ia, ib)) return; cons += W.ft_model_equal(m, ia, ib); }
+      else if (n.type === "fix") {
+        if (iv === undefined) { $("out").textContent = "'Fix value' needs a variable."; return; }
+        cons += W.ft_model_fix(m, iv, n.vals.value | 0);
+      } else if (n.type === "prefer") {
+        if (iv === undefined) { $("out").textContent = "'Prefer value' needs a variable."; return; }
+        obj += W.ft_model_objective_term(m, n.vals.maximize ? 1 : 0, +n.vals.weight, iv, n.vals.value | 0);
+      } else if (n.type === "agree") {
+        if (!need2(ia, ib)) return;
+        obj += W.ft_model_objective_pair(m, n.vals.maximize ? 1 : 0, +n.vals.weight,
+                                         ia, n.vals.value | 0, ib, n.vals.value | 0);
+      }
+    }
+
+    // 3. compile
+    const spins = W.ft_model_compile(m);
+    if (!spins) {
+      $("out").textContent = "could not compile:\n\n" + readText(W.ft_model_error, m);
+      $("ftp").textContent = "—";
+      return;
+    }
+
+    // 4. solve and read values back by NAME
+    const tries = Math.max(1, solveNode.vals.tries | 0);
+    const t0 = performance.now();
+    W.ft_model_solve(m, tries);
     const ms = performance.now() - t0;
-    const e = W.ft_energy(m.sim);
-    const known = W.ft_ground_energy(m.sim);
 
-    let txt = m.desc + "  (" + n + " nodes)\n" + line + "\n\n" +
-      "energy          " + e.toFixed(4) + "\n" +
-      "energy / node   " + (e / n).toFixed(4) + "\n" +
-      "magnetization   " + W.ft_magnetization(m.sim).toFixed(4) + "\n" +
-      "node updates    " + Number(W.ft_ledger_updates(m.sim)).toLocaleString() + "\n" +
-      "device joules   " + W.ft_ledger_joules_z1(m.sim).toExponential(2) + "\n" +
-      "wall            " + ms.toFixed(1) + " ms";
-
-    if (Number.isFinite(known)) {
-      const excess = Math.abs(known) > 1e-12 ? (e - known) / Math.abs(known) : e - known;
-      txt += "\n\nknown optimum   " + known.toFixed(4) + "\n" +
-             "excess          " + (excess * 100).toFixed(2) + "%   " +
-             (excess <= 1e-9 ? "SOLVED" : "not solved") +
-             "\n\nThis instance was planted, so the optimum is known rather than\n" +
-             "assumed to be the best anything has found. That is the difference\n" +
-             "between a number and a measurement.";
-    } else {
-      txt += "\n\nNo known optimum: this model was not planted, so the energy above\n" +
-             "cannot be scored against anything. Use a planted node to get one.";
+    const feasible = W.ft_model_feasible(m) === 1;
+    let txt = varNodes.length + " variables, " + cons + " constraints, " + obj + " objective terms\n" +
+              spins + " spins, penalty " + W.ft_model_penalty(m).toFixed(2) +
+              ", best of " + tries + " in " + ms.toFixed(0) + " ms\n\n";
+    for (const n of varNodes) {
+      const v = W.ft_model_value(m, idx.get(n.id));
+      const bad = v === -9223372036854775808n || v === undefined;
+      txt += "  " + label(n) + " = " + (bad ? "(did not decode)" : v) + "\n";
+    }
+    txt += "\nenergy    " + W.ft_model_energy(m).toFixed(4) + "\n";
+    txt += "feasible  " + (feasible ? "yes" : "NO - a penalty lost to the objective");
+    if (!feasible) {
+      txt += "\n\nEvery variable must decode to a valid codeword. When one does not, the\n" +
+             "encoding penalty was traded away; raise a weight or lower the objective.";
     }
     $("out").textContent = txt;
-    $("ftp").textContent = toFtp(modelNode, schedNode, runNode);
-  } catch (err) {
-    $("out").textContent = "could not run: " + (err.message || err);
+    $("ftp").textContent = readText(W.ft_model_ftp, m) || "—";
+  } catch (e) {
+    $("out").textContent = "could not run: " + (e.message || e);
   } finally {
-    if (m && m.sim) W.ft_free(m.sim);
+    W.ft_model_free(m);
   }
 }
 
-/** The graph as a .ftp program. A model node's couplings are not expanded here; the header and the
- *  schedule are what a graph adds over the model itself. */
-function toFtp(modelNode, schedNode, runNode) {
-  const v = modelNode.vals, sv = schedNode.vals;
-  const out = ["ftp 1", "name " + modelNode.type];
-  if (modelNode.type === "lattice") out.push("spins " + ((v.l | 0) * (v.l | 0)));
-  else if (modelNode.type === "ring") out.push("spins " + (v.n | 0));
-  else if (modelNode.type === "frustrated") out.push("spins " + ((v.l | 0) * (v.l | 0)));
-  else out.push("spins " + (v.n | 0));
-  out.push("# couplings omitted here; the graph names the family and its parameters");
-  if (schedNode.type === "constant") out.push("stage " + sv.beta + " " + (sv.sweeps | 0) + " 1 1");
-  else {
-    const st = Math.max(2, sv.stages | 0), r = Math.pow(sv.beta_max / sv.beta_min, 1 / (st - 1));
-    for (let i = 0; i < Math.min(st, 6); i++)
-      out.push("stage " + (sv.beta_min * Math.pow(r, i)).toFixed(6) + " " + (sv.per | 0) + " 1 1");
-    if (st > 6) out.push("# ... " + (st - 6) + " more stages");
-  }
-  out.push("observe energy");
-  out.push("target wasm");
-  out.push("price z1_spice");
-  return out.join("\n");
+/** A node's display name, which is what the user sees instead of an index. */
+function label(n) {
+  const T = TYPES[n.type];
+  if (n.type === "categorical") return T.title + "#" + n.id + " (" + (n.vals.values | 0) + " values)";
+  if (n.type === "integer") return T.title + "#" + n.id + " [" + (n.vals.lo | 0) + ".." + (n.vals.hi | 0) + "]";
+  return T.title + "#" + n.id;
+}
+
+/** Read a wasm string through the two-call protocol: ask the length, then fill a buffer. */
+function readText(fn, handle) {
+  const need = fn(handle, 0, 0);
+  if (!need) return "";
+  // ft_scratch grows a buffer inside wasm memory and returns a pointer into it; the browser can
+  // read that memory but cannot allocate in it, which is why the module has to provide the space.
+  const ptr = W.ft_scratch(need);
+  if (!ptr) return "";
+  const got = fn(handle, ptr, need);
+  return new TextDecoder().decode(new Uint8Array(mem.buffer, ptr, got));
 }
 
 $("run").onclick = runGraph;
 
 function loadExample() {
   nodes = []; links = []; nextId = 1;
-  const m = addNode("frustrated", 60, 90);
-  const s = addNode("ladder", 60, 300);
-  const a = addNode("anneal", 330, 160);
-  const r = addNode("report", 560, 170);
-  links.push({ from: m.id, to: a.id, port: "model", kind: "model" });
-  links.push({ from: s.id, to: a.id, port: "sched", kind: "sched" });
-  links.push({ from: a.id, to: r.id, port: "result", kind: "result" });
+  const a = addNode("categorical", 50, 60);
+  const b = addNode("categorical", 50, 210);
+  const c = addNode("categorical", 50, 360);
+  const ab = addNode("notequal", 300, 90);
+  const bc = addNode("notequal", 300, 240);
+  const ac = addNode("notequal", 300, 390);
+  const s = addNode("solve", 540, 200);
+  const r = addNode("report", 760, 210);
+  const wire = (from, to, port, kind) => links.push({ from: from.id, to: to.id, port, kind });
+  wire(a, ab, "a", "var"); wire(b, ab, "b", "var");
+  wire(b, bc, "a", "var"); wire(c, bc, "b", "var");
+  wire(a, ac, "a", "var"); wire(c, ac, "b", "var");
+  wire(ab, s, "model", "cons"); wire(bc, s, "model2", "cons"); wire(ac, s, "model3", "obj");
+  wire(s, r, "result", "result");
   draw();
-  $("out").textContent = "An example graph: a planted instance whose optimum is known,\n" +
-    "annealed down a geometric ladder, reported against that optimum.\n\nPress Run graph.";
+  $("out").textContent = "Graph colouring, stated as itself: three variables of three values,\n" +
+    "and three constraints saying adjacent ones must differ.\n\nPress Run graph.";
 }
 $("example").onclick = loadExample;
 window.addEventListener("resize", drawWires);

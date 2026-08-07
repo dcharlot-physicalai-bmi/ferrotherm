@@ -263,6 +263,13 @@ impl Model {
         self.declare(name, Domain::Integer { lo, hi }, Encoding::OneHot)
     }
 
+    /// The handle for the `i`-th declared variable, for callers that track variables by position
+    /// rather than by handle — an FFI, or a node graph that already has its own names.
+    pub fn var_at(&self, i: usize) -> Var {
+        assert!(i < self.decls.len(), "no variable at index {i}");
+        Var(i)
+    }
+
     pub fn name_of(&self, v: Var) -> &str {
         &self.decls[v.0].name
     }
