@@ -114,6 +114,24 @@ pub fn tools() -> Json {
             vec!["graph"],
         ),
         tool(
+            "ferrotherm_solve",
+            "State a constraint or optimisation problem in its own vocabulary and get NAMED VALUES \
+             back. Prefer this over ferrotherm_anneal: that one wants a graph of spins and returns \
+             an array of +/-1, which means computing spin indices yourself to say something as \
+             simple as \"these two must differ\". Declare variables with domains, state \
+             constraints, optionally give an objective, and read the answer by name. Check \
+             `feasible` before trusting the values -- false means a penalty lost to the objective, \
+             not that the problem is unsolvable.",
+            vec![
+                ("variables", prop("array", "Each is {\"name\": \"x\", \"values\": 3} for a categorical, or {\"name\": \"t\", \"lo\": 0, \"hi\": 9} for an integer. Values decode back into the variable's own units.")),
+                ("constraints", prop("array", "Each is {\"type\": \"not_equal\"|\"equal\", \"a\": name, \"b\": name}, {\"type\": \"fix\", \"var\": name, \"value\": v}, or {\"type\": \"cardinality\", \"k\": n, \"of\": [{\"var\": name, \"value\": v}, ...]} for exactly-k selection.")),
+                ("objective", prop("object", "{\"maximize\": true, \"terms\": [{\"var\": name, \"value\": v, \"weight\": w}]}. A term with \"and_var\"/\"and_value\" rewards two variables taking values together.")),
+                ("tries", prop("integer", "Independent annealing restarts; the best feasible answer wins. Default 16.")),
+                ("penalty", prop("number", "Constraint strength. Omit it: by default it scales to twice the largest objective weight, because a constraint that ties with an objective gets traded away.")),
+            ],
+            vec!["variables"],
+        ),
+        tool(
             "ferrotherm_capabilities",
             "Describe this server: operations, graph specification, limits, and conventions.",
             vec![],
@@ -258,7 +276,7 @@ mod tests {
     fn every_tool_has_a_usable_schema() {
         let r = call(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         let ts = r.get("result").unwrap().get("tools").unwrap().as_arr().unwrap();
-        assert_eq!(ts.len(), 5);
+        assert_eq!(ts.len(), 6);
         for t in ts {
             let name = t.get("name").unwrap().as_str().unwrap();
             assert!(name.starts_with("ferrotherm_"), "{name}");

@@ -8,6 +8,7 @@ use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising;
 use ferrotherm::certify::{certify, Certificate};
+use ferrotherm::model::{Constraint, Expr, Lit, Model, Sense};
 use ferrotherm::ledger::{Ledger, Prices, Z1_SPICE};
 use std::time::Instant;
 
@@ -453,6 +454,7 @@ pub fn capabilities() -> Json {
                 op("anneal", "Minimise energy down a geometric beta ladder.", "graph, beta_min, beta_max, stages, sweeps_per_stage, seed"),
                 op("energy", "Energy and magnetization of a given state.", "graph, state"),
                 op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
+                op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty"),
             ]),
         ),
         (
@@ -487,6 +489,166 @@ fn op(name: &str, what: &str, fields: &str) -> Json {
     ])
 }
 
+/// Solve a model stated in the problem's own vocabulary.
+///
+/// This is the operation an agent should reach for. Every other endpoint takes a graph of spins and
+/// gives back an array of ±1; this one takes named variables with domains and constraints, and
+/// gives back **named values**. An agent that has to compute spin indices to express "these two
+/// must differ" is doing the compiler's job.
+pub fn solve(req: &Json) -> Result<Json, String> {
+    let vars = req
+        .get("variables")
+        .and_then(|v| v.as_arr())
+        .ok_or("missing \"variables\": an array of {name, values} or {name, lo, hi}")?;
+    if vars.is_empty() {
+        return Err("a model needs at least one variable".into());
+    }
+
+    let mut m = Model::new();
+    let mut handles = Vec::new();
+    let mut names = Vec::new();
+    for (i, v) in vars.iter().enumerate() {
+        let name = v
+            .get("name")
+            .and_then(|n| n.as_str())
+            .ok_or_else(|| format!("variable {i} needs a \"name\""))?
+            .to_string();
+        if names.contains(&name) {
+            return Err(format!("two variables are both named {name:?}"));
+        }
+        let h = match (v.get("values"), v.get("lo"), v.get("hi")) {
+            (Some(k), _, _) => {
+                let k = k.as_usize().ok_or_else(|| format!("{name}: \"values\" must be an integer"))?;
+                if k < 2 {
+                    return Err(format!("{name}: a variable with {k} values is a constant"));
+                }
+                m.categorical(&name, k)
+            }
+            (None, Some(lo), Some(hi)) => {
+                let (lo, hi) = (
+                    lo.as_f64().ok_or("\"lo\" must be a number")? as i64,
+                    hi.as_f64().ok_or("\"hi\" must be a number")? as i64,
+                );
+                if hi <= lo {
+                    return Err(format!("{name}: an integer range needs hi > lo"));
+                }
+                m.integer(&name, lo, hi)
+            }
+            _ => return Err(format!("{name}: give either \"values\" or both \"lo\" and \"hi\"")),
+        };
+        handles.push(h);
+        names.push(name);
+    }
+
+    let find = |n: &str| -> Result<usize, String> {
+        names.iter().position(|x| x == n).ok_or_else(|| {
+            format!("no variable named {n:?}; declared: {}", names.join(", "))
+        })
+    };
+
+    if let Some(cs) = req.get("constraints").and_then(|c| c.as_arr()) {
+        for (i, c) in cs.iter().enumerate() {
+            let kind = c
+                .get("type")
+                .and_then(|k| k.as_str())
+                .ok_or_else(|| format!("constraint {i} needs a \"type\""))?;
+            match kind {
+                "not_equal" | "equal" => {
+                    let a = find(c.get("a").and_then(|x| x.as_str()).unwrap_or(""))?;
+                    let b = find(c.get("b").and_then(|x| x.as_str()).unwrap_or(""))?;
+                    if kind == "not_equal" {
+                        m.not_equal(handles[a], handles[b]);
+                    } else {
+                        m.equal(handles[a], handles[b]);
+                    }
+                }
+                "fix" => {
+                    let v = find(c.get("var").and_then(|x| x.as_str()).unwrap_or(""))?;
+                    let val = c.get("value").and_then(|x| x.as_usize()).unwrap_or(0);
+                    m.fix(handles[v], val);
+                }
+                "cardinality" => {
+                    let k = c.get("k").and_then(|x| x.as_usize()).ok_or("cardinality needs \"k\"")?;
+                    let items = c.get("of").and_then(|x| x.as_arr()).ok_or("cardinality needs \"of\"")?;
+                    let mut lits = Vec::new();
+                    for it in items {
+                        let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
+                        let vv = it.get("value").and_then(|x| x.as_usize()).unwrap_or(1);
+                        lits.push(Lit::Is(handles[find(vn)?], vv));
+                    }
+                    m.cardinality(lits, k);
+                }
+                other => {
+                    return Err(format!(
+                        "unknown constraint {other:?}; known: not_equal, equal, fix, cardinality"
+                    ))
+                }
+            }
+        }
+    }
+
+    if let Some(o) = req.get("objective") {
+        let maximize = o.get("maximize").and_then(|x| x.as_bool()).unwrap_or(false);
+        let terms = o.get("terms").and_then(|x| x.as_arr()).ok_or("objective needs \"terms\"")?;
+        let mut e = Expr::zero();
+        for t in terms {
+            let w = t.get("weight").and_then(|x| x.as_f64()).unwrap_or(1.0);
+            let vn = t.get("var").and_then(|x| x.as_str()).unwrap_or("");
+            let vv = t.get("value").and_then(|x| x.as_usize()).unwrap_or(1);
+            let a = Lit::Is(handles[find(vn)?], vv);
+            e = match t.get("and_var").and_then(|x| x.as_str()) {
+                Some(bn) => {
+                    let bv = t.get("and_value").and_then(|x| x.as_usize()).unwrap_or(vv);
+                    e.plus(Expr::pair(w, a, Lit::Is(handles[find(bn)?], bv)))
+                }
+                None => e.plus(Expr::lit(w, a)),
+            };
+        }
+        m.objective(if maximize { Sense::Maximize } else { Sense::Minimize }, e);
+    }
+
+    if let Some(p) = req.get("penalty").and_then(|x| x.as_f64()) {
+        m.fixed_penalty(p);
+    }
+
+    let penalty = m.effective_penalty();
+    let compiled = m.compile().map_err(|e| e.to_string())?;
+    let tries = opt_usize(req, "tries", 16).clamp(1, 500);
+    let t0 = Instant::now();
+    let sol = compiled.solve_best_of(tries as u64);
+    let wall = t0.elapsed().as_secs_f64();
+
+    let mut values = Vec::new();
+    for n in &names {
+        if let Some(v) = sol.get(n) {
+            values.push((n.clone(), Json::n(v as f64)));
+        }
+    }
+
+    Ok(Json::obj(vec![
+        ("values", Json::Obj(values)),
+        ("feasible", Json::Bool(sol.feasible())),
+        (
+            "did_not_decode",
+            Json::Arr(sol.invalid.iter().map(|s| Json::s(s)).collect()),
+        ),
+        ("energy", Json::n(sol.energy)),
+        ("spins", Json::n(compiled.spins() as f64)),
+        ("penalty", Json::n(penalty)),
+        ("tries", Json::n(tries as f64)),
+        ("wall_seconds", Json::n(wall)),
+        ("ftp", Json::Str(compiled.program.to_ftp())),
+        (
+            "note",
+            Json::s(
+                "`feasible: false` means a penalty lost to the objective, not that the problem has \
+                 no answer. Raise \"penalty\" or lower the objective weights and try again. The \
+                 \"ftp\" field is the compiled program and runs unchanged on any backend.",
+            ),
+        ),
+    ]))
+}
+
 /// Route a named operation. Shared by both transports.
 pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
     match op {
@@ -494,6 +656,7 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
         "anneal" => anneal(req),
         "energy" => energy(req),
         "verify" => verify(req),
+        "solve" => solve(req),
         "capabilities" => Ok(capabilities()),
         other => Err(format!(
             "unknown operation {other:?}; call \"capabilities\" for the list"
@@ -667,5 +830,92 @@ mod tests {
         let r = run("sample", r#"{"graph":{"builtin":"lattice2d","l":100},"sweeps":2}"#).unwrap();
         assert!(r.get("state").is_none());
         assert!(r.get("state_omitted").is_some());
+    }
+}
+
+#[cfg(test)]
+mod solve_tests {
+    use super::*;
+    use crate::json::parse;
+
+    fn go(body: &str) -> Result<Json, String> {
+        dispatch("solve", &parse(body).unwrap())
+    }
+
+    #[test]
+    fn graph_colouring_in_the_problems_own_words() {
+        let r = go(r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3},
+                       {"name":"c","values":3}],
+                       "constraints":[{"type":"not_equal","a":"a","b":"b"},
+                                      {"type":"not_equal","a":"b","b":"c"},
+                                      {"type":"not_equal","a":"a","b":"c"}],"tries":20}"#)
+            .unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+        let v = r.get("values").unwrap();
+        let (a, b, c) = (
+            v.get("a").unwrap().as_f64().unwrap(),
+            v.get("b").unwrap().as_f64().unwrap(),
+            v.get("c").unwrap().as_f64().unwrap(),
+        );
+        assert!(a != b && b != c && a != c, "a triangle needs three colours: {a} {b} {c}");
+        assert!(r.get("ftp").unwrap().as_str().unwrap().starts_with("ftp 1"));
+    }
+
+    #[test]
+    fn an_integer_comes_back_in_its_own_units() {
+        let r = go(r#"{"variables":[{"name":"t","lo":10,"hi":20}],
+                       "constraints":[{"type":"fix","var":"t","value":3}],"tries":8}"#)
+            .unwrap();
+        assert_eq!(r.get("values").unwrap().get("t").unwrap().as_f64(), Some(13.0));
+    }
+
+    #[test]
+    fn cardinality_and_an_objective_together() {
+        // Pick exactly two of five, preferring the most valuable.
+        let r = go(r#"{"variables":[{"name":"b0","values":2},{"name":"b1","values":2},
+                       {"name":"b2","values":2},{"name":"b3","values":2},{"name":"b4","values":2}],
+                       "constraints":[{"type":"cardinality","k":2,"of":[
+                         {"var":"b0","value":1},{"var":"b1","value":1},{"var":"b2","value":1},
+                         {"var":"b3","value":1},{"var":"b4","value":1}]}],
+                       "objective":{"maximize":true,"terms":[
+                         {"var":"b3","value":1,"weight":3},{"var":"b4","value":1,"weight":4},
+                         {"var":"b0","value":1,"weight":1}]},"tries":40}"#)
+            .unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+        let v = r.get("values").unwrap();
+        let on: Vec<&str> = ["b0", "b1", "b2", "b3", "b4"]
+            .iter()
+            .filter(|n| v.get(n).unwrap().as_f64() == Some(1.0))
+            .copied()
+            .collect();
+        assert_eq!(on.len(), 2, "exactly two: {on:?}");
+        assert!(on.contains(&"b3") && on.contains(&"b4"), "the valuable two: {on:?}");
+    }
+
+    #[test]
+    fn the_penalty_scales_and_is_reported() {
+        let r = go(r#"{"variables":[{"name":"x","values":4}],
+                       "objective":{"maximize":true,"terms":[{"var":"x","value":3,"weight":9}]},
+                       "tries":10}"#)
+            .unwrap();
+        assert_eq!(r.get("penalty").unwrap().as_f64(), Some(18.0), "twice the largest weight");
+        assert_eq!(r.get("values").unwrap().get("x").unwrap().as_f64(), Some(3.0));
+    }
+
+    #[test]
+    fn every_mistake_names_itself() {
+        for (body, needle) in [
+            (r#"{}"#, "variables"),
+            (r#"{"variables":[]}"#, "at least one"),
+            (r#"{"variables":[{"values":3}]}"#, "needs a \"name\""),
+            (r#"{"variables":[{"name":"a","values":1}]}"#, "constant"),
+            (r#"{"variables":[{"name":"a","lo":5,"hi":5}]}"#, "hi > lo"),
+            (r#"{"variables":[{"name":"a","values":2},{"name":"a","values":2}]}"#, "both named"),
+            (r#"{"variables":[{"name":"a","values":2}],"constraints":[{"type":"nope"}]}"#, "unknown constraint"),
+            (r#"{"variables":[{"name":"a","values":2}],"constraints":[{"type":"equal","a":"a","b":"zz"}]}"#, "no variable named"),
+        ] {
+            let e = go(body).unwrap_err();
+            assert!(e.contains(needle), "{body}\n  said: {e}\n  wanted: {needle}");
+        }
     }
 }

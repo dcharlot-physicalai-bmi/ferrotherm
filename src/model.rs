@@ -148,6 +148,11 @@ pub enum Constraint {
     AtMostOne(Vec<Lit>),
     /// This variable takes this value.
     Fix(Var, usize),
+    /// Exactly `k` of these literals are true.
+    ///
+    /// The penalty is `(Σ lits − k)²`, which is quadratic in the spins and needs no ancillas.
+    /// Cardinality is the workhorse of assignment, scheduling and selection problems.
+    Cardinality { lits: Vec<Lit>, k: usize },
 }
 
 struct Decl {
@@ -346,6 +351,11 @@ impl Model {
         self.constrain(Constraint::Fix(v, value))
     }
 
+    /// Exactly `k` of these literals must be true.
+    pub fn cardinality(&mut self, lits: Vec<Lit>, k: usize) -> &mut Self {
+        self.constrain(Constraint::Cardinality { lits, k })
+    }
+
     // ---- compiling ------------------------------------------------------------------------------
 
     /// Lower to a program and a decoder.
@@ -479,6 +489,19 @@ impl Model {
             Constraint::Fix(v, value) => {
                 let l = self.linearise(slots, Lit::Is(*v, *value))?;
                 add_linear(b, &l, -p); // reward taking it
+            }
+            Constraint::Cardinality { lits, k } => {
+                // p·(Σ xᵢ − k)² = p·(Σ xᵢxⱼ over ordered pairs − 2k·Σ xᵢ + k²); the constant drops.
+                let lins: Result<Vec<LinSpin>, CompileError> =
+                    lits.iter().map(|l| self.linearise(slots, *l)).collect();
+                let lins = lins?;
+                for i in 0..lins.len() {
+                    // the diagonal: xᵢ² = xᵢ for a 0/1 indicator, so it joins the linear part
+                    add_linear(b, &lins[i], p * (1.0 - 2.0 * *k as f64));
+                    for j in (i + 1)..lins.len() {
+                        add_product(b, &lins[i], &lins[j], 2.0 * p);
+                    }
+                }
             }
             Constraint::ExactlyOne(lits) | Constraint::AtMostOne(lits) => {
                 // pairwise exclusion; ExactlyOne additionally rewards being on
@@ -850,6 +873,39 @@ mod tests {
         // an unknown name is a different message
         let ok = Model::new();
         let _ = ok;
+    }
+
+    #[test]
+    fn cardinality_selects_exactly_k() {
+        // The workhorse of assignment and selection: choose exactly three of eight.
+        let mut m = Model::new();
+        let bits: Vec<Var> = (0..8).map(|i| m.binary(&format!("b{i}"))).collect();
+        let lits: Vec<Lit> = bits.iter().map(|&v| Lit::Is(v, 1)).collect();
+        m.cardinality(lits, 3);
+        let c = m.compile().unwrap();
+        let s = c.solve_best_of(20);
+        assert!(s.feasible(), "{s}");
+        let on = (0..8).filter(|i| s.value(&format!("b{i}")) == 1).count();
+        assert_eq!(on, 3, "exactly three should be selected: {s}");
+    }
+
+    #[test]
+    fn cardinality_works_against_an_objective() {
+        // Choose exactly two, and prefer the two with the highest reward. Both the constraint and
+        // the objective must be respected, which is where a mis-scaled penalty shows up.
+        let mut m = Model::new();
+        let bits: Vec<Var> = (0..5).map(|i| m.binary(&format!("b{i}"))).collect();
+        let lits: Vec<Lit> = bits.iter().map(|&v| Lit::Is(v, 1)).collect();
+        m.cardinality(lits, 2);
+        let mut e = Expr::zero();
+        for (i, &v) in bits.iter().enumerate() {
+            e = e.plus(Expr::lit(i as f64, Lit::Is(v, 1)));   // b4 worth most
+        }
+        m.objective(Sense::Maximize, e);
+        let s = m.compile().unwrap().solve_best_of(24);
+        assert!(s.feasible(), "{s}");
+        let on: Vec<usize> = (0..5).filter(|i| s.value(&format!("b{i}")) == 1).collect();
+        assert_eq!(on, vec![3, 4], "the two most valuable, and only two: {s}");
     }
 
     #[test]
