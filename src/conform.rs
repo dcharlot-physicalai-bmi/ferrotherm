@@ -1,10 +1,10 @@
 //! A conformance suite any fabric can run.
 //!
-//! Nothing in this field reports sampling fidelity. Statistical physics reports autocorrelation
-//! time and no effective sample size; the Bayesian stack reports ESS and has no Ising model; the
-//! optimisation stack reports success rates and has no notion of a target distribution at all.
-//! Nobody anywhere reports the inverse temperature a machine actually achieved, and nobody reports
-//! a sampling-noise floor.
+//! This review did not locate anything in this field that reports sampling fidelity. Statistical
+//! physics reports autocorrelation time and no effective sample size; the Bayesian stack reports
+//! ESS and has no Ising model; the optimisation stack reports success rates and has no notion of a
+//! target distribution at all. We did not find a machine that reports the inverse temperature it
+//! actually achieved, nor one that reports a sampling-noise floor.
 //!
 //! This is the suite that asks. It runs against anything implementing [`crate::fabric::Device`], so
 //! a CPU, a GPU, an FPGA and somebody's cloud annealer are all scored the same way, on problems

@@ -36,7 +36,6 @@
 //! is linear rather than quadratic in `k` and it tolerates a penalty roughly three times weaker.
 
 use crate::encode::{Encoding, Slot};
-use crate::factor::Factor;
 use crate::ftp::{EncodedVar, Program};
 use crate::graph::GraphBuilder;
 use crate::schedule::Schedule;
