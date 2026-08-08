@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "Thermodynamic computing in pure Rust: sparse energy-based models, chromatic block-Gibbs, parallel tempering, thermodynamic linear algebra, stochastic differentiable programs, a variational compiler onto device topologies, exact inference by variable elimination, planted instances with known optima, sampler certificates, and a first-class joules ledger. std-only, zero dependencies, wasm-clean, deterministic by seed."
 license = "Apache-2.0"
@@ -10,7 +10,19 @@ documentation = "https://docs.rs/ferrotherm"
 readme = "README.md"
 keywords = ["thermodynamic", "ising", "gibbs-sampling", "energy-based-models", "probabilistic"]
 categories = ["science", "algorithms", "simulation", "wasm", "mathematics"]
-exclude = ["web/", "target/"]
+# Not source. web-tests/node_modules alone is 15 MB of Playwright, and a crate that ships its own
+# test runner's dependencies is asking every downstream build to download them.
+# What a crate consumer needs is source. The browser pages are excluded along with their compiled
+# wasm: a binary artefact inside a source crate goes stale the moment the library changes, and a
+# stale surface that still LOADS is the failure mode this project spent a week learning to fear.
+# The pages live in the repository and on the Institute site, both of which are rebuilt from source.
+exclude = [
+    "web/",
+    "target/",
+    "web-tests/",              # 15 MB of Playwright, and a test runner is not a dependency
+    "julia/Ferrotherm/Manifest.toml",
+    "docs/",                   # the browser pages and their compiled wasm
+]
 
 [lib]
 crate-type = ["rlib", "cdylib"]

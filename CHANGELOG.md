@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.7.0 (2026-08-08)
+
+**The modelling layer, on every surface.** And an ABI break to make it honest: a `value` is now
+`int64_t` everywhere and means the modeller's own value, never a slot index.
+
+### The layer
+
+`model` states a problem in its own vocabulary — variables with domains, constraints that must
+hold, an objective — and compiles to spins, answering in the names you gave.
+
+- Variables: `categorical`, `integer`, `binary`, `spin`. Constraints: `not_equal`, `equal`, `fix`,
+  `cardinality`, `at_most`, `at_least`, `exactly_one`, `at_most_one`. Objectives read like
+  arithmetic: `5.0 * x.is(2) + 2.0 * y.is(1) - a.is(1) * b.is(1)`.
+- Inequalities compile through a **slack variable**, because squaring "at most three" would punish
+  choosing two exactly as hard as choosing four. The slack costs spins and never appears in the
+  answer: a solver artefact is not a result.
+- Counting constraints take **any number of literals**, each naming its own variable and its own
+  value. "At most two of these nine shifts" and "at most one of a = 3, b = 17" are both sayable.
+- Reachable from Rust, C, Python, Zig, Julia, wasm, the node editor, HTTP and MCP. Every one
+  compiles through the same code.
+
+### Breaking
+
+- **Every `value` widened from `uint32_t` to `int64_t`** and carries the modeller's own value. An
+  integer over `10..=20` takes 13; passing 3 is an error naming the range. It used to be a slot
+  index, so `x.is(13)` rewarded **18** — and `not_equal` compared two variables slot by slot, so an
+  integer over `5..=10` and one over `0..=5` were held to agree in six places when they share one.
+- **`feasible` now means the constraints hold**, not merely that every variable decoded into a
+  valid codeword. A penalty makes a constraint expensive, not impossible; a sampler whose objective
+  outbids it returns an answer that reads perfectly and breaks the request, and that reported as
+  feasible. `violated` describes each broken constraint in the caller's own names.
+- `Model::objective` **accumulates** rather than replaces, and folds its sense in per term. Writing
+  one term per option in a loop kept only the last; a minimising term after maximising ones
+  re-interpreted all of them. `set_objective` replaces.
+- `Domain::Spin` speaks in −1 and +1. It reported 0 and 1 to the literal reader while the decoder
+  handed back −1 and +1, because both folded Spin into a `_ =>` catch-all.
+- Two variables may not share a name. An answer is keyed by name, so the second did not shadow the
+  first — it replaced it, and one of the two vanished from the result.
+
+### Fixed, all of them silent
+
+Each returned a plausible answer with `feasible: true` and no error.
+
+- `"maximize": 1` **minimized**. `as_bool` returned `None` for a JSON number and `unwrap_or(false)`
+  made that `Minimize` — not a degraded answer, the opposite one.
+- A `"value"` the reader could not parse became 0, or 1. `"13"` as a string pinned a variable to 0.
+- `at most 0 of these` compiled to **nothing**. Slack is only allocated when the range has room in
+  it, and "needs no slack" was taken to mean "needs no constraint".
+- The node-update ceiling counted burn-in only. A request declaring 1,024 node updates did 262
+  million, because every handler runs `draws × thin` further sweeps afterwards. `verify` had no
+  ceiling at all.
+- The node editor discarded every refusal code, so a constraint the library rejected vanished from
+  the model and the editor answered a different problem.
+
+### Added
+
+- `ft_model_*`: the whole modelling layer over the C ABI, declared in `include/ferrotherm.h`.
+- `ft_model_fixed_penalty`, the remedy every error message recommends and no surface could perform.
+- `ft_model_solve_with` and a `schedule` on HTTP/MCP: a caller who measured their instance can say
+  so. A ladder that runs backwards is refused rather than substituted.
+- `ft_model_violations` / `ft_model_violation`, and `violated` on every surface.
+- Certification of a compiled model from Python and Julia, and the five `ft_model_cert_*`
+  accessors declared at last.
+- `exactly_one` / `at_most_one` on every surface. They lower pairwise with no slack, so they are
+  measurably cheaper than `k = 1`.
+
+### Verification
+
+- `include/check.c` compiles against the header and links against the library, because nothing was
+  checking that the header describes the ABI. It found a defect on its first run.
+- `web-tests/`: 24 browser tests driving `window.ferrotherm`, the same surface an agent uses.
+  `npm run live` drives the deployed copy rather than a local build — a stale deploy served a build
+  missing a full day of exports while the page still loaded and still answered questions.
+- `scripts/check-wasm-exports.sh` derives its requirement from the pages themselves, every
+  `W.ft_...` in `docs/*.html`, rather than a list kept by hand beside them.
+- The agent harness drives `ferrotherm_solve`, which nothing had, which is how a whole family of
+  defects on it lived behind a green suite.
+
+355 Rust, 18 Python, 17 Zig, 117 Julia, 24 browser, 18 C.
+
 ## 0.5.1 (2026-08-05)
 
 Deployment-ladder facts finalized at datasheet grade (verified Aug 2026).

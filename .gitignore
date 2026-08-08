@@ -14,3 +14,7 @@ acw_token*
 zz_*
 **/audit_*.rs
 **/*_audit_*.rs
+
+# npm's install tree for the browser tests. `npm install` recreates it from package-lock.json, and
+# committing it once put 181 files and 15 MB into both the repository and the published crate.
+node_modules/
