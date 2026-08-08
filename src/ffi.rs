@@ -925,15 +925,14 @@ pub extern "C" fn ft_model_solve_with(
     if beta0.is_nan() || beta1.is_nan() {
         return 0;
     }
-    let d = crate::model::Compiled::default_schedule();
-    let ds = d.stages();
-    let lo = if beta0 > 0.0 { beta0 } else { ds[0].beta };
-    let hi = if beta1 > 0.0 { beta1 } else { ds[ds.len() - 1].beta };
+    let (dlo, dhi, dn, dw) = crate::model::Compiled::DEFAULT_LADDER;
+    let lo = if beta0 > 0.0 { beta0 } else { dlo };
+    let hi = if beta1 > 0.0 { beta1 } else { dhi };
     if !lo.is_finite() || !hi.is_finite() || hi <= lo {
         return 0;
     }
-    let n = if stages > 0 { stages as usize } else { ds.len() };
-    let w = if sweeps > 0 { sweeps as usize } else { ds[0].sweeps };
+    let n = if stages > 0 { stages as usize } else { dn };
+    let w = if sweeps > 0 { sweeps as usize } else { dw };
     let sched = crate::schedule::Schedule::geometric(lo, hi, n, w);
     h.solution = Some(c.solve_best_with(&sched, tries.max(1) as u64));
     1

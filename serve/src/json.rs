@@ -67,6 +67,13 @@ impl Json {
             _ => None,
         }
     }
+    /// An object's key-value pairs, for a caller enumerating a schema it did not write.
+    pub fn as_obj(&self) -> Option<&[(String, Json)]> {
+        match self {
+            Json::Obj(m) => Some(m),
+            _ => None,
+        }
+    }
     pub fn as_arr(&self) -> Option<&[Json]> {
         match self {
             Json::Arr(a) => Some(a),

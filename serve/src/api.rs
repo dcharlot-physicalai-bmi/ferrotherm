@@ -120,6 +120,25 @@ fn opt_f64(v: &Json, key: &str, dflt: f64) -> f64 {
     v.get(key).and_then(|x| x.as_f64()).filter(|f| f.is_finite()).unwrap_or(dflt)
 }
 
+/// Refuse a run whose TOTAL cost exceeds the ceiling.
+///
+/// The whole cost, which is the part that was wrong: the check counted burn-in and stopped there,
+/// while every one of these handlers then runs `draws x thin` further sweeps to have something to
+/// certify. `{"sweeps": 1, "draws": 128, "thin": 2000}` declared 1,024 node updates at the gate and
+/// did a quarter of a billion. A ceiling that only looks at the cheap half is not a ceiling.
+fn bound_updates(n: usize, sweeps: usize, draws: usize, thin: usize) -> Result<(), String> {
+    let recorded = (draws as u64).saturating_mul(thin as u64);
+    let total = (n as u64).saturating_mul((sweeps as u64).saturating_add(recorded));
+    if total > MAX_NODE_UPDATES {
+        return Err(format!(
+            "{n} nodes x ({sweeps} burn-in + {draws} draws x {thin} thin) = {total} node updates, \
+             over the {MAX_NODE_UPDATES} ceiling; lower \"sweeps\", \"draws\" or \"thin\", or \
+             split the run"
+        ));
+    }
+    Ok(())
+}
+
 /// A modeller's value: absent means `dflt`, present-but-unreadable is an error.
 ///
 /// `.and_then(as_i64).unwrap_or(dflt)` reads the two cases as one, so `"value": "13"` -- a JSON
@@ -238,14 +257,15 @@ pub fn sample(req: &Json) -> Result<Json, String> {
     let seed = req.get("seed").and_then(|s| s.as_u64()).unwrap_or(0);
     let threads = opt_usize(req, "threads", 1).max(1);
 
-    let budget = (g.n as u64).saturating_mul(sweeps as u64);
-    if budget > MAX_NODE_UPDATES {
-        return Err(format!(
-            "{} nodes x {sweeps} sweeps = {budget} node updates, over the {MAX_NODE_UPDATES} \
-             ceiling; lower \"sweeps\" or split the run",
-            g.n
-        ));
-    }
+    // Read the recording parameters BEFORE the ceiling, because they are most of the cost.
+    let want_draws = opt_usize(req, "draws", 128).max(1);
+    let thin = opt_usize(req, "thin", 1).max(1);
+    // Retaining d draws of an n-spin graph costs d*n bytes. Rather than refuse to certify a large
+    // model or quietly allocate a gigabyte, the draw count is reduced and the reduction is reported.
+    let max_draws = (RETAINED_SPIN_BUDGET / g.n.max(1)).max(16);
+    let draws = want_draws.min(max_draws);
+    let capped = if draws < want_draws { Some(draws) } else { None };
+    bound_updates(g.n, sweeps, draws, thin)?;
 
     let t0 = Instant::now();
     let mut led = Ledger::default();
@@ -271,14 +291,6 @@ pub fn sample(req: &Json) -> Result<Json, String> {
     } else {
         smp.sweeps(sweeps, Some(&mut led));
     }
-
-    let want_draws = opt_usize(req, "draws", 128).max(1);
-    let thin = opt_usize(req, "thin", 1).max(1);
-    // Retaining d draws of an n-spin graph costs d*n bytes. Rather than refuse to certify a large
-    // model or quietly allocate a gigabyte, the draw count is reduced and the reduction is reported.
-    let max_draws = (RETAINED_SPIN_BUDGET / g.n.max(1)).max(16);
-    let draws = want_draws.min(max_draws);
-    let capped = if draws < want_draws { Some(draws) } else { None };
 
     let mut samples: Vec<Vec<i8>> = Vec::with_capacity(draws);
     let mut trace: Vec<f64> = Vec::with_capacity(draws);
@@ -407,6 +419,9 @@ pub fn verify(req: &Json) -> Result<Json, String> {
     // that is in fact correct. Thinning is the cure; the autocorrelation is the disease.
     let thin = opt_usize(req, "thin", 1).max(1);
     let seed = req.get("seed").and_then(|s| s.as_u64()).unwrap_or(0);
+    // Capped at 20 nodes, so the graph is small -- but `draws` defaults to 20,000 and `thin` is a
+    // caller's number, so the sweep count is not bounded by the node count.
+    bound_updates(g.n, sweeps, draws, thin)?;
 
     let t0 = Instant::now();
     let exact = ising::exact_boltzmann(&g, beta);
@@ -480,7 +495,7 @@ pub fn capabilities() -> Json {
                 op("anneal", "Minimise energy down a geometric beta ladder.", "graph, beta_min, beta_max, stages, sweeps_per_stage, seed"),
                 op("energy", "Energy and magnetization of a given state.", "graph, state"),
                 op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
-                op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty"),
+                op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
             ]),
         ),
         (
@@ -674,8 +689,36 @@ pub fn solve(req: &Json) -> Result<Json, String> {
     let penalty = m.effective_penalty();
     let compiled = m.compile().map_err(|e| e.to_string())?;
     let tries = opt_usize(req, "tries", 16).clamp(1, 500);
+
+    // The annealing ladder, which the default handles for the models people write first and not for
+    // the largest they will write. Every other surface lets a caller who measured their instance say
+    // so; this one did not, and the only advice on an infeasible answer was to raise the penalty --
+    // which does nothing for a model that is simply not being annealed long enough.
+    let d = ferrotherm::model::Compiled::DEFAULT_LADDER;
+    let ladder = req.get("schedule");
+    let sched = match ladder {
+        None => None,
+        Some(s) => {
+            let hot = s.get("beta_hot").and_then(|x| x.as_f64()).unwrap_or(d.0);
+            let cold = s.get("beta_cold").and_then(|x| x.as_f64()).unwrap_or(d.1);
+            let stages = opt_usize(s, "stages", d.2).clamp(2, 10_000);
+            let per = opt_usize(s, "sweeps", d.3).clamp(1, 100_000);
+            if !hot.is_finite() || !cold.is_finite() || cold <= hot {
+                return Err(format!(
+                    "schedule: \"beta_cold\" ({cold}) must exceed \"beta_hot\" ({hot}), and both \
+                     must be real numbers. Annealing runs hot to cold."
+                ));
+            }
+            bound_updates(compiled.spins(), stages * per * tries, 0, 1)?;
+            Some(ferrotherm::schedule::Schedule::geometric(hot, cold, stages, per))
+        }
+    };
+
     let t0 = Instant::now();
-    let sol = compiled.solve_best_of(tries as u64);
+    let sol = match &sched {
+        Some(s) => compiled.solve_best_with(s, tries as u64),
+        None => compiled.solve_best_of(tries as u64),
+    };
     let wall = t0.elapsed().as_secs_f64();
 
     let mut values = Vec::new();
@@ -1096,6 +1139,64 @@ mod silent_wrongness {
 
     fn value_of_x(body: &str) -> Option<f64> {
         go(body).ok()?.get("values")?.get("x")?.as_f64()
+    }
+
+    #[test]
+    fn a_caller_can_lengthen_the_annealing_ladder() {
+        let body = |sched: &str| format!(
+            r#"{{"variables":[{{"name":"a","values":3}},{{"name":"b","values":3}}],
+                 "constraints":[{{"type":"not_equal","a":"a","b":"a2"}}],"tries":4{sched}}}"#
+        ).replace("\"a2\"", "\"b\"");
+
+        // the default ladder still works with no schedule given
+        let r = dispatch("solve", &crate::json::parse(&body("")).unwrap()).unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+
+        // and a caller's own ladder is accepted
+        let r = dispatch("solve", &crate::json::parse(
+            &body(r#","schedule":{"beta_hot":0.05,"beta_cold":6.0,"stages":60,"sweeps":20}"#)
+        ).unwrap()).unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+
+        // partially given: the rest come from the default
+        assert!(dispatch("solve", &crate::json::parse(
+            &body(r#","schedule":{"stages":40}"#)
+        ).unwrap()).is_ok());
+
+        // a ladder that runs backwards is refused rather than silently substituted
+        let e = dispatch("solve", &crate::json::parse(
+            &body(r#","schedule":{"beta_hot":8.0,"beta_cold":0.05}"#)
+        ).unwrap()).unwrap_err();
+        assert!(e.contains("must exceed") && e.contains("hot to cold"), "{e}");
+    }
+
+    #[test]
+    fn the_ceiling_counts_the_whole_run_not_just_the_burn_in() {
+        // A ceiling that only looks at burn-in is not a ceiling. This request declared 1,024 node
+        // updates at the gate and then did a quarter of a billion in the recording loop.
+        let sneaky = r#"{"graph":{"builtin":"lattice2d","l":32},"sweeps":1,"draws":128,"thin":2000}"#;
+        let cheap = r#"{"graph":{"builtin":"lattice2d","l":32},"sweeps":1,"draws":8,"thin":2}"#;
+
+        // it is under the real ceiling, so it must still be ACCEPTED -- the point is the accounting
+        let r = dispatch("sample", &crate::json::parse(sneaky).unwrap()).unwrap();
+        let updates = r.get("ledger").and_then(|l| l.get("node_updates")).and_then(|x| x.as_f64());
+        assert!(updates.unwrap() > 2.0e8, "the run really is that large: {updates:?}");
+
+        // and a request past the ceiling is refused on the recording loop alone
+        let over = format!(
+            r#"{{"graph":{{"builtin":"lattice2d","l":64}},"sweeps":1,"draws":100000,"thin":100000}}"#
+        );
+        let e = dispatch("sample", &crate::json::parse(&over).unwrap()).unwrap_err();
+        assert!(e.contains("draws") && e.contains("thin") && e.contains("ceiling"), "{e}");
+
+        // the cheap one is unaffected
+        assert!(dispatch("sample", &crate::json::parse(cheap).unwrap()).is_ok());
+
+        // verify had no ceiling at all
+        let e = dispatch("verify", &crate::json::parse(
+            r#"{"graph":{"builtin":"ring","n":20},"draws":100000000,"thin":100000}"#
+        ).unwrap()).unwrap_err();
+        assert!(e.contains("ceiling"), "{e}");
     }
 
     #[test]

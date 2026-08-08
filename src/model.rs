@@ -964,8 +964,16 @@ impl Compiled {
     /// The ladder used when a caller does not supply one. Deliberately conservative: it is better
     /// for a first answer to be slow and right than fast and quietly infeasible.
     pub fn default_schedule() -> Schedule {
-        Schedule::geometric(0.05, 8.0, 120, 40)
+        let (hot, cold, stages, per) = Self::DEFAULT_LADDER;
+        Schedule::geometric(hot, cold, stages, per)
     }
+
+    /// The default ladder's parameters, for a caller that wants to vary one of them.
+    ///
+    /// `(beta_hot, beta_cold, stages, sweeps_per_stage)`. Exposed because every surface that lets a
+    /// caller override the ladder needs to say what it is overriding, and each of them writing the
+    /// numbers out again is four places for them to drift apart.
+    pub const DEFAULT_LADDER: (f64, f64, usize, usize) = (0.05, 8.0, 120, 40);
 
     /// Anneal on a caller's own ladder.
     ///

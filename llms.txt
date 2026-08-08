@@ -15,8 +15,31 @@ Install: `cargo add ferrotherm` (or git: https://github.com/dcharlot-physicalai-
 - [AGENTS.md](https://github.com/dcharlot-physicalai-bmi/ferrotherm/blob/main/AGENTS.md): invariants, task recipes, contribution rules for AI agents
 - [API docs](https://docs.rs/ferrotherm): module-level docs carry the math and its sources
 
+## Start here if you are solving a problem, not studying a sampler
+
+`model` is the layer most callers want. State a problem as variables with domains, constraints that
+must hold, and an objective; it compiles to spins and answers in your own names. Everything below it
+works in couplings and biases, which is the machine's language rather than the problem's.
+
+Values are the modeller's own values everywhere, never slot indices: an integer over 10..=20 takes
+the value 13, and 3 is an error naming the range. `feasible` means every variable decoded AND every
+constraint held; when it is false, `violated` names what was broken and `did_not_decode` names the
+variables whose encoding lost. A penalty makes a constraint expensive, not impossible.
+
+Reachable from Rust, C (include/ferrotherm.h), Python (python/ferrotherm), wasm, the node editor,
+an HTTP API and an MCP server. Zig and Julia currently bind the spin layer only.
+
 ## Key modules
 
+- model: variables, constraints (not_equal, equal, fix, cardinality, at_most, at_least, exactly-one,
+  at-most-one), linear and quadratic objectives; compiles to spins, decodes by name, checks itself
+- encode: one-hot, binary and domain-wall encodings of a categorical variable
+- certify: what a run ACTUALLY did, computed from its samples -- effective beta, ESS, integrated
+  autocorrelation time, TV from the exact distribution beside the sampling noise floor
+- ftp: the portable program format every backend reads (spec/ftp-v1.md is normative)
+- exact, planted, oracle: answers known before the machine is asked -- variable elimination, planted
+  ground states, and a solver trait including one that exists to fail
+- fabric, conform: what a device can do, and a conformance suite that can reject a machine
 - graph, gibbs: sparse pairwise EBMs, chromatic block-Gibbs with clamping
 - device: published degree-16 grid topology of Z1-class thermodynamic chips
 - ledger: joules accounting (samples/reads/writes x device Prices; Z1_SPICE = vendor pre-silicon estimates)
@@ -24,7 +47,7 @@ Install: `cargo add ferrotherm` (or git: https://github.com/dcharlot-physicalai-
 - tla: thermodynamic linear algebra (OU network solves SPD systems, samples N(A^-1 b, A^-1/beta))
 - program: stochastic differentiable circuits; REINFORCE + parameter-shift + FD-referee gradients
 - compile: variational compilation of conditionals onto device patches; chain-rule KL error bound
-- ffi: C ABI (ft_*) for wasm and host languages
+- ffi: C ABI (ft_*) for wasm and host languages, including the whole modelling layer (ft_model_*)
 
 ## Examples (each is a verification gate, exit code = pass/fail)
 
@@ -34,6 +57,16 @@ Install: `cargo add ferrotherm` (or git: https://github.com/dcharlot-physicalai-
 - compile_chain, reach_on_z1: compilation error bound verified exactly; the control-workload boundary
 - flips_bench: CPU throughput anchor
 
+## Servers, for an agent
+
+- `ferrotherm-serve`: an HTTP API and an MCP server over the same operations. Six MCP tools; reach
+  for `ferrotherm_solve` first, since every other tool wants a graph of spins and returns an array
+  of +/-1. `GET /v1/capabilities` describes the HTTP side.
+- The node editor exposes `window.ferrotherm` for scripted use: `ready`, `types()`, `add`, `set`,
+  `connect`, `find`, `run()`, `toJson`/`fromJson`, `check()`. See web-tests/editor.test.mjs, which
+  drives exactly that surface.
+
 ## Live
 
 - In-browser instrument (verifies vs Onsager on YOUR GPU, then measures): https://energy.physicalai-bmi.org/thermo
+- Node editor: https://energy.physicalai-bmi.org/assets/ferrotherm/graph.html
