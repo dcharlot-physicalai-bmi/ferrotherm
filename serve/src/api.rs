@@ -633,6 +633,26 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                         m.at_least(lits, k);
                     }
                 }
+                "exactly_one" | "at_most_one" => {
+                    let items = c.get("of").and_then(|x| x.as_arr())
+                        .ok_or_else(|| format!("{kind} needs \"of\""))?;
+                    let mut lits = Vec::new();
+                    for it in items {
+                        let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
+                        let vv = value_of(it, "value", 1, kind)?;
+                        lits.push(Lit::Is(handles[find(vn)?], vv));
+                    }
+                    if lits.len() < 2 {
+                        return Err(format!("{kind} needs at least two things to count"));
+                    }
+                    // Pairwise exclusion rather than a squared count: no slack variable, and it is
+                    // the cheaper lowering whenever k is one.
+                    m.constrain(if kind == "exactly_one" {
+                        Constraint::ExactlyOne(lits)
+                    } else {
+                        Constraint::AtMostOne(lits)
+                    });
+                }
                 "cardinality" => {
                     let k = c.get("k").and_then(|x| x.as_usize()).ok_or("cardinality needs \"k\"")?;
                     let items = c.get("of").and_then(|x| x.as_arr()).ok_or("cardinality needs \"of\"")?;
@@ -647,7 +667,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 other => {
                     return Err(format!(
                         "unknown constraint {other:?}; known: not_equal, equal, fix, \
-                         cardinality, at_most, at_least"
+                         cardinality, at_most, at_least, exactly_one, at_most_one"
                     ))
                 }
             }
@@ -1139,6 +1159,65 @@ mod silent_wrongness {
 
     fn value_of_x(body: &str) -> Option<f64> {
         go(body).ok()?.get("values")?.get("x")?.as_f64()
+    }
+
+    #[test]
+    fn counting_constraints_take_any_number_of_entries() {
+        // Nine of them, which the positional C form cannot express. The JSON surface always could;
+        // this pins that it stays true.
+        let vars: String = (0..9).map(|i| format!(r#"{{"name":"s{i}","values":2}}"#))
+            .collect::<Vec<_>>().join(",");
+        let of: String = (0..9).map(|i| format!(r#"{{"var":"s{i}","value":1}}"#))
+            .collect::<Vec<_>>().join(",");
+        let terms: String = (0..9).map(|i| format!(r#"{{"var":"s{i}","value":1,"weight":{}}}"#, 9 - i))
+            .collect::<Vec<_>>().join(",");
+        let r = dispatch("solve", &crate::json::parse(&format!(
+            r#"{{"variables":[{vars}],
+                 "constraints":[{{"type":"at_most","k":2,"of":[{of}]}}],
+                 "objective":{{"maximize":true,"terms":[{terms}]}},"tries":16}}"#
+        )).unwrap()).unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+        let v = r.get("values").unwrap();
+        let on = (0..9).filter(|i| v.get(&format!("s{i}")).unwrap().as_f64() == Some(1.0)).count();
+        assert_eq!(on, 2, "at most 2 of nine");
+    }
+
+    #[test]
+    fn exactly_one_and_at_most_one_are_reachable_and_cheaper() {
+        let body = |kind: &str| format!(
+            r#"{{"variables":[{{"name":"a","values":2}},{{"name":"b","values":2}},
+                              {{"name":"c","values":2}}],
+                 "constraints":[{{"type":"{kind}","of":[{{"var":"a","value":1}},
+                                                        {{"var":"b","value":1}},
+                                                        {{"var":"c","value":1}}]}}],
+                 "objective":{{"maximize":false,
+                               "terms":[{{"var":"a","value":1,"weight":1}},
+                                        {{"var":"b","value":1,"weight":1}},
+                                        {{"var":"c","value":1,"weight":1}}]}},"tries":16}}"#
+        );
+        let count = |kind: &str| {
+            let r = dispatch("solve", &crate::json::parse(&body(kind)).unwrap()).unwrap();
+            let v = r.get("values").unwrap();
+            let n = ["a", "b", "c"].iter()
+                .filter(|k| v.get(k).unwrap().as_f64() == Some(1.0)).count();
+            (n, r.get("spins").unwrap().as_f64().unwrap(),
+             r.get("feasible").unwrap().as_bool() == Some(true))
+        };
+        // pushed off, at-most-one takes none and exactly-one still takes one
+        assert_eq!(count("exactly_one"), (1, 6.0, true));
+        assert_eq!(count("at_most_one"), (0, 6.0, true));
+
+        // and neither costs a slack variable, where the inequality form does
+        let r = dispatch("solve", &crate::json::parse(&body("at_most").replace(
+            r#""type":"at_most""#, r#""type":"at_most","k":1"#)).unwrap()).unwrap();
+        assert!(r.get("spins").unwrap().as_f64().unwrap() > 6.0,
+                "at_most k=1 pays for a slack variable that at_most_one does not");
+
+        let e = dispatch("solve", &crate::json::parse(
+            r#"{"variables":[{"name":"a","values":2}],
+                "constraints":[{"type":"nonsense","of":[]}]}"#).unwrap()).unwrap_err();
+        assert!(e.contains("exactly_one") && e.contains("at_most_one"),
+                "the known list must include them: {e}");
     }
 
     #[test]

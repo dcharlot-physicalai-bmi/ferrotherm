@@ -20,6 +20,18 @@ jobs:
         run: |
           cargo run --release --example ring_tv
           cargo run --release --example onsager
+  c-abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the library the header describes
+        run: cargo build --release
+      - name: The header compiles and links against it
+        run: |
+          cc -I include include/check.c -L target/release -lferrotherm -o /tmp/check
+          LD_LIBRARY_PATH=target/release /tmp/check
+
   python:
     runs-on: ubuntu-latest
     steps:

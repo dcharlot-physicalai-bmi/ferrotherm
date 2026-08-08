@@ -71,6 +71,62 @@ def test_at_most_is_a_ceiling_and_at_least_is_a_floor():
     assert run("at_least", -1) == 2, "and holds against a reward pushing below it"
 
 
+def test_a_counting_constraint_can_be_any_length():
+    """Nine shifts, at most two taken. The old binding capped this at four."""
+    p = ft.Problem()
+    sh = [p.binary(f"s{i}") for i in range(9)]
+    p.at_most(sh, 2)
+    p.maximize(sum((9 - i) * s.is_(1) for i, s in enumerate(sh)))
+    a = p.solve()
+    assert a.feasible, a
+    assert sum(1 for s in sh if a[s.name]) == 2, a
+
+
+def test_literals_in_one_constraint_may_name_different_values():
+    """"At most one of a=3 and b=17" is not sayable with a single shared value."""
+    p = ft.Problem()
+    x = p.categorical("x", 4)
+    y = p.integer("y", 10, 20)
+    p.at_most([x.is_(3), y.is_(17)], 1)
+    p.maximize(5 * x.is_(3) + 4 * y.is_(17))
+    a = p.solve()
+    assert a.feasible, a
+    assert (a["x"] == 3) + (a["y"] == 17) <= 1, a
+    assert a["x"] == 3, "and it keeps the more valuable of the two"
+
+
+def test_exactly_one_and_at_most_one():
+    def run(method, sign):
+        p = ft.Problem()
+        v = [p.binary(f"v{i}") for i in range(5)]
+        getattr(p, method)(v)
+        p.maximize(sum(sign * s.is_(1) for s in v))
+        a = p.solve()
+        assert a.feasible, a
+        return sum(1 for s in v if a[s.name]), a.spins
+
+    assert run("exactly_one", -1)[0] == 1, "one, even pushed off"
+    assert run("at_most_one", -1)[0] == 0, "none, when pushed off"
+    assert run("at_most_one", +1)[0] == 1, "and one when pulled on"
+
+    # neither pays for a slack variable
+    p = ft.Problem()
+    v = [p.binary(f"v{i}") for i in range(5)]
+    p.at_most(v, 1)
+    assert p.solve().spins > run("at_most_one", -1)[1], "at_most k=1 costs slack; at_most_one does not"
+
+
+def test_a_counting_constraint_refuses_what_it_cannot_count():
+    p = ft.Problem()
+    x = p.categorical("x", 3)
+    with pytest.raises(ValueError, match="at least two"):
+        p.at_most([x], 1)
+    with pytest.raises(ValueError, match="k must be"):
+        p.at_most([x, p.categorical("y", 3)], 9)
+    with pytest.raises(TypeError, match="variables or literals"):
+        p.at_most([x, "y"], 1)
+
+
 def test_slack_costs_spins_but_never_appears_in_the_answer():
     def spins(kind):
         p = ft.Problem()
@@ -164,7 +220,7 @@ def test_errors_name_what_the_caller_wrote():
         p.categorical("colour", 3)
     with pytest.raises(ValueError, match="colour"):
         p.fix(x, 9)
-    with pytest.raises(ValueError, match="two and four"):
+    with pytest.raises(ValueError, match="at least two"):
         p.at_most([x], 1)
     with pytest.raises(TypeError, match="not a bare number"):
         p.maximize(5)

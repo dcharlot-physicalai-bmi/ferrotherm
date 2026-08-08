@@ -165,6 +165,9 @@ _model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
 _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
+_model_lit = _sig("ft_model_lit", c_uint32, [_p, c_uint32, ctypes.c_int64])
+_model_lits_clear = _sig("ft_model_lits_clear", c_uint32, [_p])
+_model_close = _sig("ft_model_close", c_uint32, [_p, c_uint32, c_uint32])
 _model_fixed_penalty = _sig("ft_model_fixed_penalty", c_uint32, [_p, c_double])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
 _model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
@@ -794,29 +797,48 @@ class Problem:
         """``v`` must take ``value``."""
         self._must(_model_fix(self._h, v._index, int(value)), "fix")
 
-    def exactly(self, vs: "Sequence[Variable]", k: int, value: int = 1) -> None:
-        """Exactly ``k`` of ``vs`` take ``value``."""
-        self._counting(_model_cardinality, vs, k, value, "exactly")
+    def exactly(self, of: "Sequence[Any]", k: int, value: int = 1) -> None:
+        """Exactly ``k`` of them hold."""
+        self._counting(0, of, k, value, "exactly")
 
-    def at_most(self, vs: "Sequence[Variable]", k: int, value: int = 1) -> None:
-        """At most ``k`` of ``vs`` take ``value``. Costs a slack variable."""
-        self._counting(_model_at_most, vs, k, value, "at_most")
+    def at_most(self, of: "Sequence[Any]", k: int, value: int = 1) -> None:
+        """At most ``k`` of them hold. Costs a slack variable."""
+        self._counting(1, of, k, value, "at_most")
 
-    def at_least(self, vs: "Sequence[Variable]", k: int, value: int = 1) -> None:
-        """At least ``k`` of ``vs`` take ``value``. Costs a slack variable."""
-        self._counting(_model_at_least, vs, k, value, "at_least")
+    def at_least(self, of: "Sequence[Any]", k: int, value: int = 1) -> None:
+        """At least ``k`` of them hold. Costs a slack variable."""
+        self._counting(2, of, k, value, "at_least")
 
-    def _counting(self, fn: Any, vs: "Sequence[Variable]", k: int, value: int, what: str) -> None:
-        vs = list(vs)
-        if not 2 <= len(vs) <= 4:
-            raise ValueError(
-                f"{what} takes between two and four variables, not {len(vs)}. "
-                "Wider counting constraints are not in the C surface yet."
-            )
-        if not 0 <= k <= len(vs):
-            raise ValueError(f"k must be between 0 and {len(vs)} for {what}, not {k}")
-        idx = [v._index for v in vs] + [0xFFFFFFFF] * (4 - len(vs))
-        self._must(fn(self._h, len(vs), int(k), int(value), *idx), what)
+    def exactly_one(self, of: "Sequence[Any]") -> None:
+        """Exactly one of them holds. Cheaper than ``exactly(of, 1)``: pairwise, with no slack."""
+        self._counting(3, of, 0, 1, "exactly_one")
+
+    def at_most_one(self, of: "Sequence[Any]") -> None:
+        """At most one of them holds."""
+        self._counting(4, of, 0, 1, "at_most_one")
+
+    def _counting(self, kind: int, of: "Sequence[Any]", k: int, value: int, what: str) -> None:
+        """Any number of literals, each naming its own value.
+
+        ``of`` takes variables -- in which case ``value`` applies to all of them, which is the common
+        case -- or literals, which each carry their own. "at most two of these nine shifts" and "no
+        more than one of a=3, b=17, c=0" are both sayable.
+        """
+        items = list(of)
+        if len(items) < 2:
+            raise ValueError(f"{what} needs at least two things to count, not {len(items)}")
+        if kind <= 2 and not 0 <= k <= len(items):
+            raise ValueError(f"k must be between 0 and {len(items)} for {what}, not {k}")
+        _model_lits_clear(self._h)
+        for it in items:
+            lit = it if isinstance(it, Literal) else Literal(it, int(value))
+            if not isinstance(lit.var, Variable):
+                raise TypeError(
+                    f"{what} counts variables or literals, not {type(it).__name__}. "
+                    "Write `p.at_most([a, b, c], 2)` or `p.at_most([a.is_(3), b.is_(17)], 1)`."
+                )
+            self._must(_model_lit(self._h, lit.var._index, lit.value), what)
+        self._must(_model_close(self._h, kind, int(k)), what)
 
     # -- objective ------------------------------------------------------------------------------
 

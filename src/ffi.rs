@@ -732,6 +732,8 @@ pub struct ModelHandle {
     compiled: Option<Compiled>,
     solution: Option<Solution>,
     last_error: String,
+    /// Literals accumulating for the next variable-length counting constraint.
+    lits: Vec<Lit>,
     cert: Option<crate::certify::Certificate>,
 }
 
@@ -742,6 +744,7 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
         compiled: None,
         solution: None,
         last_error: String::new(),
+        lits: Vec::new(),
         cert: None,
     }))
 }
@@ -1213,6 +1216,85 @@ pub extern "C" fn ft_model_at_least(
     counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtLeast { lits, k })
 }
 
+/// Start a fresh list of literals for a counting constraint.
+///
+/// The positional forms below take four variables and one shared value, which is what a node graph
+/// with a fixed number of ports needs and what a scheduling problem does not: "at most two of these
+/// nine shifts", or a list whose literals name DIFFERENT values, cannot be said that way at all.
+/// Build the list with `ft_model_lit`, then close it with one of the `_n` forms.
+///
+/// The list lives on the model and is cleared by every `_n` call, so two constraints cannot bleed
+/// into each other.
+#[no_mangle]
+pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    h.lits.clear();
+    1
+}
+
+/// Append "`var` takes `value`" to the pending list. Refuses a value the variable cannot take.
+#[no_mangle]
+pub extern "C" fn ft_model_lit(m: *mut ModelHandle, var: u32, value: i64) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    match var_of(h, var) {
+        Some(x) if check_value(h, x, value) => {
+            h.lits.push(Lit::Is(x, value));
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// How many literals are pending, so a caller can check its own bookkeeping.
+#[no_mangle]
+pub extern "C" fn ft_model_lits(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() } {
+        Some(h) => h.lits.len() as u32,
+        None => 0,
+    }
+}
+
+/// Close the pending list as a counting constraint. See [`ft_model_cardinality`] for the meanings.
+///
+/// `kind` is 0 for exactly, 1 for at-most, 2 for at-least, 3 for exactly-one, 4 for at-most-one.
+/// The last two ignore `k`. Clears the pending list whether it succeeds or not, so a refused
+/// constraint cannot silently join the next one.
+#[no_mangle]
+pub extern "C" fn ft_model_close(m: *mut ModelHandle, kind: u32, k: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let lits = core::mem::take(&mut h.lits);
+    if lits.len() < 2 {
+        h.last_error = format!(
+            "a counting constraint needs at least two literals; {} were given",
+            lits.len()
+        );
+        return 0;
+    }
+    if kind <= 2 && k as usize > lits.len() {
+        h.last_error = format!(
+            "k is {k} and only {} literals were given, so the constraint cannot be met",
+            lits.len()
+        );
+        return 0;
+    }
+    let c = match kind {
+        0 => Constraint::Cardinality { lits, k: k as usize },
+        1 => Constraint::AtMost { lits, k: k as usize },
+        2 => Constraint::AtLeast { lits, k: k as usize },
+        3 => Constraint::ExactlyOne(lits),
+        4 => Constraint::AtMostOne(lits),
+        other => {
+            h.last_error = format!(
+                "unknown counting kind {other}; 0 exactly, 1 at-most, 2 at-least, \
+                 3 exactly-one, 4 at-most-one"
+            );
+            return 0;
+        }
+    };
+    h.model.constrain(c);
+    1
+}
+
 /// Use exactly this penalty, disabling the automatic scaling.
 ///
 /// By default the penalty rises to twice the largest objective coefficient, because a constraint
@@ -1306,6 +1388,80 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 1);
         let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
         assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_counting_constraint_can_be_any_length_and_name_different_values() {
+        // Nine shifts, at most two of them taken. The positional form tops out at four, so this
+        // could not be said through the C ABI at all.
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..9).map(|_| ft_model_binary(m)).collect();
+        for &i in &v {
+            assert_eq!(ft_model_lit(m, i, 1), 1);
+            ft_model_objective_term(m, 1, 1.0, i, 1); // reward taking every one
+        }
+        assert_eq!(ft_model_lits(m), 9);
+        assert_eq!(ft_model_close(m, 1, 2), 1, "at most 2 of nine");
+        assert_eq!(ft_model_lits(m), 0, "closing clears the list");
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve(m, 24), 1);
+        assert_eq!(ft_model_feasible(m), 1);
+        assert_eq!(v.iter().filter(|&&i| ft_model_value(m, i) == 1).count(), 2);
+        ft_model_free(m);
+
+        // and the literals may name DIFFERENT values, which the shared-value form cannot express
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 4);
+        let b = ft_model_integer(m, 10, 20);
+        ft_model_lit(m, a, 3);
+        ft_model_lit(m, b, 17);
+        assert_eq!(ft_model_close(m, 0, 2), 1, "exactly both");
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve(m, 16), 1);
+        assert_eq!((ft_model_value(m, a), ft_model_value(m, b)), (3, 17));
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn exactly_one_and_at_most_one_are_reachable() {
+        for (kind, want) in [(3u32, 1usize), (4u32, 0usize)] {
+            let m = ft_model_new();
+            let v: Vec<u32> = (0..5).map(|_| ft_model_binary(m)).collect();
+            for &i in &v {
+                ft_model_lit(m, i, 1);
+                // push everything OFF, so at-most-one takes none and exactly-one still takes one
+                ft_model_objective_term(m, 0, 1.0, i, 1);
+            }
+            assert_eq!(ft_model_close(m, kind, 0), 1);
+            assert!(ft_model_compile(m) > 0);
+            assert_eq!(ft_model_solve(m, 24), 1);
+            let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
+            assert_eq!(on, want, "kind {kind}");
+            assert_eq!(ft_model_feasible(m), 1);
+            ft_model_free(m);
+        }
+    }
+
+    #[test]
+    fn a_refused_counting_constraint_does_not_bleed_into_the_next() {
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        ft_model_lit(m, a, 1);
+        assert_eq!(ft_model_close(m, 1, 1), 0, "one literal is not a counting constraint");
+        assert_eq!(ft_model_lits(m), 0, "and the list is cleared even so");
+
+        ft_model_lit(m, a, 1);
+        ft_model_lit(m, b, 1);
+        assert_eq!(ft_model_close(m, 0, 5), 0, "k cannot exceed the literal count");
+        assert_eq!(ft_model_lits(m), 0);
+        assert_eq!(ft_model_close(m, 9, 1), 0, "and an unknown kind is refused by name");
+
+        // a bad literal is refused at the push, not silently carried
+        assert_eq!(ft_model_lit(m, 99, 1), 0, "no such variable");
+        let t = ft_model_integer(m, 10, 20);
+        assert_eq!(ft_model_lit(m, t, 3), 0, "3 is not a temperature in 10..=20");
         ft_model_free(m);
     }
 

@@ -191,6 +191,22 @@ uint32_t ft_model_at_most(ft_model *m, uint32_t count, uint32_t k, int64_t value
 uint32_t ft_model_at_least(ft_model *m, uint32_t count, uint32_t k, int64_t value,
                            uint32_t a, uint32_t b, uint32_t c, uint32_t d);
 
+/* Counting constraints of ANY length, whose literals may each name a different value.
+ *
+ * The positional forms above take four variables and one shared value, which is what a node graph
+ * with a fixed number of ports needs and what a scheduling problem does not: "at most two of these
+ * nine shifts" cannot be said that way at all. Build a list with ft_model_lit, then close it.
+ *
+ * The list lives on the model. ft_model_close clears it whether it succeeds or not, so a refused
+ * constraint cannot bleed into the next one. */
+uint32_t ft_model_lits_clear(ft_model *m);
+uint32_t ft_model_lit(ft_model *m, uint32_t var, int64_t value);
+uint32_t ft_model_lits(const ft_model *m);   /* how many are pending */
+
+/* kind: 0 exactly k, 1 at most k, 2 at least k, 3 exactly one, 4 at most one.
+ * The last two ignore k and lower pairwise, with no slack variable -- prefer them over k = 1. */
+uint32_t ft_model_close(ft_model *m, uint32_t kind, uint32_t k);
+
 /* Objective terms. `maximize` is 1 to prefer large, 0 to prefer small. The pair form is quadratic:
  * it rewards two variables taking their values together. */
 uint32_t ft_model_objective_term(ft_model *m, uint32_t maximize, double coeff,
@@ -215,9 +231,20 @@ uint32_t ft_model_solve_with(ft_model *m, uint32_t tries, double beta0, double b
 /* The solved value of a variable, in its own units, or INT64_MIN if it did not decode. */
 int64_t ft_model_value(const ft_model *m, uint32_t v);
 
-/* 1 if every variable decoded, meaning no constraint lost to the objective. An infeasible answer is
- * still readable: which variable failed to decode is the useful part. */
+/* 1 when every variable decoded AND every constraint holds.
+ *
+ * Both halves matter and they fail differently. A variable that did not decode cannot be read at
+ * all -- its spins are not a valid codeword. A violated constraint means every value read cleanly
+ * and one of them is not what was asked for, which nothing in the values themselves reveals. A
+ * penalty makes a constraint expensive, not impossible, so a sampler whose objective outbids it
+ * will return exactly that. */
 uint32_t ft_model_feasible(const ft_model *m);
+
+/* How many constraints the answer breaks; zero when it keeps everything it was asked to. Read each
+ * with ft_model_violation, which describes it in the caller's own names: "a and b must differ, and
+ * both are 1". Same two-call text protocol as the other string getters. */
+uint32_t ft_model_violations(const ft_model *m);
+uint32_t ft_model_violation(const ft_model *m, uint32_t i, uint8_t *buf, uint32_t cap);
 
 double ft_model_energy(const ft_model *m);
 
