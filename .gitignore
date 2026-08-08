@@ -18,3 +18,13 @@ zz_*
 # npm's install tree for the browser tests. `npm install` recreates it from package-lock.json, and
 # committing it once put 181 files and 15 MB into both the repository and the published crate.
 node_modules/
+
+# The Python build tree and the staged native library. build-python-wheel.sh copies the cdylib into
+# the package to build a wheel and removes it afterwards; if a build is interrupted it must not be
+# committed, because a checkout carrying a stale binary behaves differently from a fresh clone.
+python/build/
+python/dist/
+python/*.egg-info/
+python/ferrotherm/*.so
+python/ferrotherm/*.dylib
+python/ferrotherm/*.dll
