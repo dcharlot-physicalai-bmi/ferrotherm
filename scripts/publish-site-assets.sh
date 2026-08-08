@@ -45,6 +45,7 @@ required_exports=(
   ft_model_compile ft_model_solve ft_model_solve_with
   ft_model_value ft_model_feasible ft_model_energy ft_model_penalty
   ft_model_error ft_model_ftp ft_scratch
+  ft_model_violations ft_model_violation
 )
 
 stale=0

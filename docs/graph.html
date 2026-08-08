@@ -599,7 +599,17 @@ function runGraph() {
       txt += "  " + label(n) + " = " + (bad ? "(did not decode)" : v) + "\n";
     }
     txt += "\nenergy    " + W.ft_model_energy(m).toFixed(4) + "\n";
-    txt += "feasible  " + (feasible ? "yes" : "NO - a penalty lost to the objective");
+    txt += "feasible  " + (feasible ? "yes" : "NO");
+    // Which part was not delivered. "NO" on its own leaves the modeller to work out whether an
+    // encoding broke or a constraint was outbid, and those want different remedies.
+    const nbroken = W.ft_model_violations(m);
+    for (let i = 0; i < nbroken; i++) {
+      txt += "\n  broken: " + readTextIdx(W.ft_model_violation, m, i);
+    }
+    if (!feasible) {
+      txt += "\n\nA penalty makes a constraint expensive, not impossible, and this objective\n"
+           + "outbid it. Lower the objective weights, or split the problem.";
+    }
     if (!feasible) {
       txt += "\n\nEvery variable must decode to a valid codeword. When one does not, the\n" +
              "encoding penalty was traded away; raise a weight or lower the objective.";

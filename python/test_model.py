@@ -103,6 +103,60 @@ def test_a_constraint_cannot_be_outbid_by_the_objective():
     assert p.solve().penalty >= 100, "the penalty must outrank the objective"
 
 
+def test_feasible_means_the_constraints_hold():
+    """A penalty makes a constraint expensive, not impossible.
+
+    Pin it below the objective and the sampler pays it: every variable decodes cleanly and the
+    constraint is broken. `feasible` used to be true for exactly that answer.
+    """
+    p = ft.Problem()
+    a, b = p.categorical("a", 3), p.categorical("b", 3)
+    p.not_equal(a, b)
+    p.penalty(1.0)
+    p.maximize(40 * a.is_(1) + 40 * b.is_(1))
+    ans = p.solve()
+    assert (ans["a"], ans["b"]) == (1, 1), ans
+    assert ans.undecoded == [], "every variable decoded perfectly"
+    assert not ans.feasible, "and it is still not feasible"
+    assert len(ans.violated) == 1, ans.violated
+    assert "must differ" in ans.violated[0], ans.violated[0]
+
+
+def test_raising_the_penalty_wins_a_constraint_back():
+    def run(pin):
+        p = ft.Problem()
+        a, b = p.categorical("a", 3), p.categorical("b", 3)
+        p.not_equal(a, b)
+        if pin:
+            p.penalty(pin)
+        p.maximize(40 * a.is_(1) + 40 * b.is_(1))
+        return p.solve()
+
+    assert not run(1.0).feasible, "outbid"
+    assert run(200.0).feasible, "and won back by raising it"
+    assert run(None).feasible, "the automatic scaling already handles this one"
+
+    for bad in (0.0, -1.0, float("nan")):
+        p = ft.Problem()
+        p.categorical("x", 3)
+        with pytest.raises(ValueError, match="positive number"):
+            p.penalty(bad)
+
+
+def test_a_certificate_reports_on_the_sampler_not_the_answer():
+    p = ft.Problem()
+    x = p.categorical("x", 4)
+    p.fix(x, 2)
+    p.solve()
+    c = p.certify(beta=1.0, draws=512)
+    assert c.beta_eff == c.beta_eff, "beta_eff is a real number"
+    assert c.ess > 0, c
+    assert isinstance(c.findings, list)
+    assert c.passed == (not c.findings), "passed is exactly an empty findings list"
+    if c.tv is not None:
+        assert c.noise_floor is not None, "a TV without its floor is not a measurement"
+
+
 def test_errors_name_what_the_caller_wrote():
     p = ft.Problem()
     x = p.categorical("colour", 3)

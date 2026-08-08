@@ -109,6 +109,7 @@ pub fn tools() -> Json {
                 ("beta", prop("number", "Inverse temperature. Default 1.0.")),
                 ("draws", prop("integer", "Samples to histogram. Default 20000.")),
                 ("sweeps", prop("integer", "Burn-in sweeps before sampling. Default 200.")),
+                ("thin", prop("integer", "Sweeps between recorded draws. Default 1. Raise this when the reported TV sits above the noise floor: consecutive sweeps are correlated, and thinning is what buys independent draws.")),
                 ("seed", prop("integer", "Random seed. Default 0.")),
             ],
             vec!["graph"],
@@ -120,12 +121,15 @@ pub fn tools() -> Json {
              an array of +/-1, which means computing spin indices yourself to say something as \
              simple as \"these two must differ\". Declare variables with domains, state \
              constraints, optionally give an objective, and read the answer by name. Check \
-             `feasible` before trusting the values -- false means a penalty lost to the objective, \
-             not that the problem is unsolvable.",
+             `feasible` before trusting the values. False means the answer breaks something you \
+             asked for, and the reply says which: a variable in \"did_not_decode\", or a \
+             constraint in \"violated\" that the objective outbid. A penalty makes a constraint \
+             expensive, not impossible -- so raise \"penalty\" and try again, and only conclude \
+             the problem has no answer if it stays infeasible at a large one.",
             vec![
-                ("variables", prop("array", "Each is {\"name\": \"x\", \"values\": 3} for a categorical, or {\"name\": \"t\", \"lo\": 0, \"hi\": 9} for an integer. Values decode back into the variable's own units.")),
+                ("variables", prop("array", "Each is {\"name\": \"x\", \"values\": 3} for a categorical, or {\"name\": \"t\", \"lo\": 0, \"hi\": 9} for an integer. Everywhere a \"value\" appears below it is the variable's OWN value, never a slot index: for an integer over 10..20, write 13 to mean 13. A value outside the range is an error naming the range, not a silent reinterpretation.")),
                 ("constraints", prop("array", "Each is {\"type\": \"not_equal\"|\"equal\", \"a\": name, \"b\": name}, {\"type\": \"fix\", \"var\": name, \"value\": v}, or {\"type\": \"cardinality\"|\"at_most\"|\"at_least\", \"k\": n, \"of\": [{\"var\": name, \"value\": v}, ...]}. Cardinality is exactly k; at_most and at_least are inequalities and cost extra spins, because an inequality needs a slack variable to become an equality the sampler can square.")),
-                ("objective", prop("object", "{\"maximize\": true, \"terms\": [{\"var\": name, \"value\": v, \"weight\": w}]}. A term with \"and_var\"/\"and_value\" rewards two variables taking values together.")),
+                ("objective", prop("object", "{\"maximize\": true, \"terms\": [{\"var\": name, \"value\": v, \"weight\": w}]}. A term with \"and_var\"/\"and_value\" rewards two variables taking values together. \"maximize\" takes true/false or 1/0; anything else is refused rather than read as false.")),
                 ("tries", prop("integer", "Independent annealing restarts; the best feasible answer wins. Default 16.")),
                 ("penalty", prop("number", "Constraint strength. Omit it: by default it scales to twice the largest objective weight, because a constraint that ties with an objective gets traded away.")),
             ],
@@ -198,10 +202,15 @@ pub fn handle(line: &str) -> Option<String> {
                     (
                         "instructions",
                         Json::s(
-                            "Thermodynamic sampling over Ising graphs. Use ferrotherm_anneal for \
-                             optimisation, ferrotherm_sample to draw from a distribution, and \
-                             ferrotherm_verify to check the sampler against exact enumeration on \
-                             small graphs before trusting it on large ones.",
+                            "Thermodynamic sampling over Ising graphs, and a modelling layer above \
+                             it. Reach for ferrotherm_solve first: state a problem as variables, \
+                             constraints and an objective, and read the answer back in your own \
+                             names. The others work in spins -- ferrotherm_anneal to optimise a \
+                             graph you have already encoded, ferrotherm_sample to draw from a \
+                             distribution, ferrotherm_verify to check the sampler against exact \
+                             enumeration on small graphs before trusting it on large ones. \
+                             Whatever you call, check the result's own verdict field before \
+                             trusting its numbers: `feasible` on a solve, `findings` on a verify.",
                         ),
                     ),
                 ]),

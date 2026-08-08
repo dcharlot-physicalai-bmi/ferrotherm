@@ -675,6 +675,7 @@ impl Model {
             all_slots: slots,
             names: self.decls.iter().map(|d| d.name.clone()).collect(),
             domains: self.decls.iter().map(|d| d.domain).collect(),
+            constraints: self.constraints.iter().map(|(c, _)| c.clone()).collect(),
         })
     }
 
@@ -856,6 +857,13 @@ pub struct Compiled {
     pub all_slots: Vec<Slot>,
     names: Vec<String>,
     domains: Vec<Domain>,
+    /// Kept so a decoded answer can be CHECKED, not just read.
+    ///
+    /// A penalty makes a constraint expensive, not impossible. The sampler is free to pay it, and
+    /// when the objective outbids the penalty that is exactly what it does -- returning a state
+    /// that decodes perfectly and violates the request. Reading the answer cannot detect that; only
+    /// re-checking each constraint against the decoded values can.
+    constraints: Vec<Constraint>,
 }
 
 impl Compiled {
@@ -875,7 +883,62 @@ impl Compiled {
                 None => invalid.push(self.names[i].clone()),
             }
         }
-        Solution { values, invalid, energy: self.graph.energy(state) }
+        // Then check what was asked for. A decoded answer is a readable one, not a correct one.
+        let violated = if invalid.is_empty() { self.check(&values) } else { Vec::new() };
+        Solution { values, invalid, violated, energy: self.graph.energy(state) }
+    }
+
+    /// Which constraints the decoded values break, each described in the caller's own names.
+    fn check(&self, values: &BTreeMap<String, i64>) -> Vec<String> {
+        let get = |v: &Var| values.get(&self.names[v.0]).copied();
+        let holds = |l: &Lit| match l {
+            Lit::Spin(v) => get(v) == Some(1),
+            Lit::Is(v, want) => get(v) == Some(*want),
+        };
+        let count = |lits: &[Lit]| lits.iter().filter(|l| holds(l)).count();
+        let name = |v: &Var| self.names[v.0].as_str();
+
+        let mut out = Vec::new();
+        for c in &self.constraints {
+            let broken = match c {
+                Constraint::NotEqual(a, b) => (get(a) == get(b)).then(|| {
+                    format!("{} and {} must differ, and both are {}",
+                            name(a), name(b), get(a).unwrap_or_default())
+                }),
+                Constraint::Equal(a, b) => (get(a) != get(b)).then(|| {
+                    format!("{} and {} must agree, and they are {} and {}",
+                            name(a), name(b),
+                            get(a).unwrap_or_default(), get(b).unwrap_or_default())
+                }),
+                Constraint::Fix(v, want) => (get(v) != Some(*want)).then(|| {
+                    format!("{} must be {want}, and it is {}", name(v), get(v).unwrap_or_default())
+                }),
+                Constraint::Cardinality { lits, k } => {
+                    let n = count(lits);
+                    (n != *k).then(|| format!("exactly {k} of {} must hold, and {n} do", lits.len()))
+                }
+                Constraint::AtMost { lits, k } => {
+                    let n = count(lits);
+                    (n > *k).then(|| format!("at most {k} of {} may hold, and {n} do", lits.len()))
+                }
+                Constraint::AtLeast { lits, k } => {
+                    let n = count(lits);
+                    (n < *k).then(|| format!("at least {k} of {} must hold, and {n} do", lits.len()))
+                }
+                Constraint::ExactlyOne(lits) => {
+                    let n = count(lits);
+                    (n != 1).then(|| format!("exactly one of {} must hold, and {n} do", lits.len()))
+                }
+                Constraint::AtMostOne(lits) => {
+                    let n = count(lits);
+                    (n > 1).then(|| format!("at most one of {} may hold, and {n} do", lits.len()))
+                }
+            };
+            if let Some(b) = broken {
+                out.push(b);
+            }
+        }
+        out
     }
 
     /// Turn a slot index back into the domain's own units.
@@ -950,6 +1013,12 @@ pub struct Solution {
     values: BTreeMap<String, i64>,
     /// Variables whose spins did not form a valid codeword.
     pub invalid: Vec<String>,
+    /// Constraints the decoded values break, each in the caller's own names.
+    ///
+    /// Distinct from `invalid`, and the distinction matters: an invalid variable cannot be read at
+    /// all, while a violated constraint means every value read cleanly and one of them is not what
+    /// was asked for. Both mean the penalty lost, and both need a larger one.
+    pub violated: Vec<String>,
     pub energy: f64,
 }
 
@@ -980,8 +1049,14 @@ impl Solution {
     ///
     /// A false here means a penalty was too weak, not that the problem is infeasible — and the two
     /// are worth distinguishing before concluding anything.
+    /// True when every variable decoded AND every constraint holds.
+    ///
+    /// It used to mean only the first, which is a much weaker claim than the name makes. A penalty
+    /// makes a constraint expensive rather than impossible, so a sampler whose objective outbids it
+    /// returns a state that decodes perfectly and breaks the request -- and this reported it as
+    /// feasible, which is the answer to a question nobody asked.
     pub fn feasible(&self) -> bool {
-        self.invalid.is_empty()
+        self.invalid.is_empty() && self.violated.is_empty()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &i64)> {
@@ -993,10 +1068,18 @@ impl core::fmt::Display for Solution {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "energy {:.4}", self.energy)?;
         if !self.feasible() {
-            write!(f, "  INFEASIBLE ({} did not decode)", self.invalid.len())?;
+            write!(f, "  INFEASIBLE")?;
         }
         for (k, v) in &self.values {
             write!(f, "\n  {k} = {v}")?;
+        }
+        for n in &self.invalid {
+            write!(f, "\n  {n} = (did not decode)")?;
+        }
+        // The reason, not just the verdict. "INFEASIBLE" alone leaves a caller to work out which of
+        // the things they asked for was not delivered.
+        for v in &self.violated {
+            write!(f, "\n  broken: {v}")?;
         }
         Ok(())
     }
@@ -1032,6 +1115,52 @@ mod tests {
         m.fix(x, 3);
         let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("3 is not a temperature in 10..=20") };
         assert!(e.contains("10..=20") && e.contains("3 is not"), "{e}");
+    }
+
+    #[test]
+    fn feasible_means_the_constraints_hold_not_merely_that_it_decoded() {
+        // A penalty makes a constraint EXPENSIVE, not impossible. Pin it below the objective and
+        // the sampler will happily pay it -- returning a state whose variables all decode cleanly
+        // and whose constraint is broken. That used to report feasible: true.
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.not_equal(a, b);
+        m.fixed_penalty(1.0);
+        m.objective(Sense::Maximize, 40.0 * a.is(1) + 40.0 * b.is(1)); // both want the same value
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert_eq!((s.value("a"), s.value("b")), (1, 1), "the objective outbids a penalty of 1");
+        assert!(s.invalid.is_empty(), "and every variable decoded perfectly: {s}");
+        assert!(!s.feasible(), "so this is the whole point: it is NOT feasible: {s}");
+        assert_eq!(s.violated.len(), 1, "{s}");
+        assert!(s.violated[0].contains("must differ") && s.violated[0].contains('a'),
+                "and it names the constraint in the caller's words: {}", s.violated[0]);
+
+        // raised, the same model is feasible
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.not_equal(a, b);
+        m.fixed_penalty(200.0);
+        m.objective(Sense::Maximize, 40.0 * a.is(1) + 40.0 * b.is(1));
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert!(s.feasible(), "{s}");
+        assert_ne!(s.value("a"), s.value("b"), "{s}");
+    }
+
+    #[test]
+    fn a_violated_counting_constraint_says_how_far_off_it_is() {
+        let mut m = Model::new();
+        let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+        m.at_most(vs.iter().map(|&v| Lit::Is(v, 1)).collect(), 1);
+        m.fixed_penalty(0.5);
+        for &v in &vs {
+            m.objective(Sense::Maximize, 20.0 * v.is(1));
+        }
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert!(!s.feasible(), "a penalty of 0.5 against a weight of 20 loses: {s}");
+        assert!(s.violated[0].contains("at most 1") && s.violated[0].contains("4 do"),
+                "{}", s.violated[0]);
     }
 
     #[test]
@@ -1125,21 +1254,22 @@ mod tests {
 
     #[test]
     fn two_colours_cannot_colour_a_triangle_and_it_says_so() {
-        // An odd cycle is not 2-colourable, so some constraint must break. The point is that this
-        // is visible in the answer rather than silently absorbed.
+        // An odd cycle is not 2-colourable. The point is that the answer SAYS SO -- names the
+        // constraint it could not keep -- rather than handing back a colouring that looks fine.
         let mut m = Model::new();
         let a = m.categorical("a", 2);
         let b = m.categorical("b", 2);
         let cc = m.categorical("c", 2);
         m.not_equal(a, b).not_equal(b, cc).not_equal(a, cc);
-        let comp = m.compile().unwrap();
-        let s = comp.solve_best_of(12);
-        // every variable still decodes; what fails is the constraint set
-        assert!(s.feasible(), "the encoding still holds: {s}");
-        let broken = (s.value("a") == s.value("b")) as u32
-            + (s.value("b") == s.value("c")) as u32
-            + (s.value("a") == s.value("c")) as u32;
-        assert_eq!(broken, 1, "exactly one pair must agree in a 2-coloured triangle: {s}");
+        let s = m.compile().unwrap().solve_best_of(12);
+        assert!(!s.feasible(), "a triangle has no 2-colouring, so no answer is feasible: {s}");
+        assert!(!s.violated.is_empty() || !s.invalid.is_empty(),
+                "and it must say which part it could not deliver: {s}");
+        // whichever way it gives, it gives exactly one: two of the three pairs still differ
+        if s.invalid.is_empty() {
+            assert_eq!(s.violated.len(), 1, "exactly one pair agrees in a 2-coloured triangle: {s}");
+            assert!(s.violated[0].contains("must differ"), "{}", s.violated[0]);
+        }
     }
 
     #[test]

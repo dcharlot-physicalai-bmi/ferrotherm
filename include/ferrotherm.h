@@ -225,15 +225,30 @@ double ft_model_energy(const ft_model *m);
  * coefficient so that a constraint cannot be outbid. */
 double ft_model_penalty(const ft_model *m);
 
+/* Use exactly this penalty, disabling the automatic scaling. This is the remedy when
+ * ft_model_feasible returns 0: a constraint lost to the objective and needs to outrank it. Refuses
+ * anything that is not a positive number. */
+uint32_t ft_model_fixed_penalty(ft_model *m, double p);
+
 /* Two-call text protocol: call with buf NULL and cap 0 for the length, then again with a buffer.
  * Neither writes a terminator; the return value is the byte count. */
 uint32_t ft_model_error(const ft_model *m, uint8_t *buf, uint32_t cap);
 uint32_t ft_model_ftp(const ft_model *m, uint8_t *buf, uint32_t cap);
 
-/* Certify the compiled model's sampling, the same instrument the raw graphs use. */
+/* Certify the compiled model's sampling, the same instrument the raw graphs use. An answer says
+ * WHAT; a certificate says whether the machine that produced it was sampling the distribution it
+ * claimed. Read findings first: empty is the only value that means the run was sound. */
 uint32_t ft_model_certify(ft_model *m, double beta, uint32_t draws, uint32_t thin);
 uint32_t ft_model_cert_findings(const ft_model *m);
 uint32_t ft_model_cert_finding(const ft_model *m, uint32_t i, uint8_t *buf, uint32_t cap);
+
+/* What the certificate measured. NaN before a certify call, and NaN for tv/floor on a model too
+ * large to enumerate exactly. Compare tv against floor, never against zero. */
+double ft_model_cert_beta(const ft_model *m);  /* the inverse temperature actually reached */
+double ft_model_cert_ess(const ft_model *m);   /* effective sample size */
+double ft_model_cert_tau(const ft_model *m);   /* integrated autocorrelation time */
+double ft_model_cert_tv(const ft_model *m);    /* total variation from the exact distribution */
+double ft_model_cert_floor(const ft_model *m); /* the sampling noise floor tv must beat */
 
 /* ---- reference ------------------------------------------------------------------------------- */
 

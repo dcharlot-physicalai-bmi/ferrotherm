@@ -165,8 +165,26 @@ _model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
 _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
+_model_fixed_penalty = _sig("ft_model_fixed_penalty", c_uint32, [_p, c_double])
+_model_violations = _sig("ft_model_violations", c_uint32, [_p])
+_model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
+_model_certify = _sig("ft_model_certify", c_uint32, [_p, c_double, c_uint32, c_uint32])
+_model_cert_findings = _sig("ft_model_cert_findings", c_uint32, [_p])
+_model_cert_finding = _sig("ft_model_cert_finding", c_uint32, [_p, c_uint32, _u8p, c_uint32])
+_model_cert_f = {n: _sig("ft_model_cert_" + n, c_double, [_p])
+                 for n in ("beta", "ess", "tau", "tv", "floor")}
 _model_error = _sig("ft_model_error", c_uint32, [_p, _u8p, c_uint32])
 _model_ftp = _sig("ft_model_ftp", c_uint32, [_p, _u8p, c_uint32])
+
+
+def _read_text_idx(fn: Any, handle: Any, i: int) -> str:
+    """The two-call protocol for getters that also take an index."""
+    need = fn(handle, i, None, 0)
+    if not need:
+        return ""
+    buf = (ctypes.c_ubyte * need)()
+    got = fn(handle, i, buf, need)
+    return bytes(buf[:got]).decode("utf-8", "replace")
 
 
 def _read_text(fn: Any, handle: Any) -> str:
@@ -664,13 +682,14 @@ class Variable:
 class Answer:
     """A solved problem, read by name.
 
-    ``answer["shift"]`` gives a value; ``answer.feasible`` says whether every constraint held. An
-    infeasible answer is still returned, because knowing *which* constraint lost to the objective is
-    more useful than a raised exception with nothing in it. A variable that failed to decode reads
-    ``None``, and it is the one that lost.
+    ``answer["shift"]`` gives a value; ``answer.feasible`` says whether every variable decoded AND
+    every constraint held. An infeasible answer is still returned, because knowing *which* part was
+    not delivered is more useful than a raised exception with nothing in it: a variable that failed
+    to decode reads ``None`` and appears in :attr:`undecoded`, and a constraint the objective
+    outbid is described in :attr:`violated`.
     """
 
-    __slots__ = ("values", "feasible", "energy", "spins", "penalty")
+    __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -693,13 +712,16 @@ class Answer:
 
     @property
     def undecoded(self) -> "list[str]":
-        """The variables whose encoding was violated. Empty exactly when ``feasible`` is true."""
+        """The variables whose encoding was violated, which read as ``None``."""
         return [k for k, v in self.values.items() if v is None]
 
     def __repr__(self) -> str:
         head = "feasible" if self.feasible else "INFEASIBLE"
         body = ", ".join(f"{k}={'?' if v is None else v}" for k, v in self.values.items())
-        return f"<Answer {head} energy={self.energy:.4f} [{body}]>"
+        out = f"<Answer {head} energy={self.energy:.4f} [{body}]"
+        for v in self.violated or ():
+            out += f"\n  broken: {v}"
+        return out + ">"
 
 
 class Problem:
@@ -847,9 +869,44 @@ class Problem:
         for name, v in self._vars.items():
             got = _model_value(self._h, v._index)
             vals[name] = None if got == -(2 ** 63) else int(got)
+        broken = [_read_text_idx(_model_violation, self._h, i)
+                  for i in range(_model_violations(self._h))]
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
-                      energy=float(_model_energy(self._h)), spins=int(spins),
-                      penalty=float(_model_penalty(self._h)))
+                      violated=broken, energy=float(_model_energy(self._h)),
+                      spins=int(spins), penalty=float(_model_penalty(self._h)))
+
+    def penalty(self, p: float) -> None:
+        """Use exactly this penalty, disabling the automatic scaling.
+
+        The remedy when :attr:`Answer.feasible` comes back false: a constraint lost to the objective
+        and has to outrank it. By default the penalty is twice the largest objective coefficient,
+        which is enough for most models and not for all of them.
+        """
+        self._must(_model_fixed_penalty(self._h, float(p)), "penalty")
+
+    def certify(self, beta: float = 1.0, draws: int = 512, thin: int = 1) -> Certificate:
+        """Ask whether the sampler that produced the answer was sampling what it claimed.
+
+        An answer says *what*. This says whether the machine that produced it reached the
+        temperature it was asked for, how many of its draws were independent, and -- where the model
+        is small enough to enumerate -- how far its distribution sits from the exact one, beside the
+        noise floor that distance has to beat.
+
+        Read ``findings``. It is empty exactly when the run was sound.
+        """
+        if not _model_certify(self._h, float(beta), int(draws), int(thin)):
+            raise ValueError(
+                self._error()
+                or "could not certify: compile and solve the problem first, and pass a positive "
+                   "beta with at least 16 draws"
+            )
+        n = _model_cert_findings(self._h)
+        findings = [_read_text_idx(_model_cert_finding, self._h, i) for i in range(n)]
+        g = {k: fn(self._h) for k, fn in _model_cert_f.items()}
+        nan = lambda x: None if x != x else x  # noqa: E731
+        return Certificate(draws=int(draws), beta_eff=g["beta"], beta_ci=None,
+                           tau_int=g["tau"], ess=g["ess"], tv=nan(g["tv"]),
+                           noise_floor=nan(g["floor"]), findings=findings)
 
     def ftp(self) -> str:
         """The compiled program in ``.ftp`` form, for running on another fabric."""

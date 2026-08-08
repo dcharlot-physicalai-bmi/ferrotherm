@@ -58,7 +58,10 @@ Point any MCP client at the `ferrotherm-mcp` binary:
 }
 ```
 
-Five tools appear: `ferrotherm_sample`, `ferrotherm_anneal`, `ferrotherm_energy`,
+Six tools appear. `ferrotherm_solve` is the one to reach for first: it takes a problem in its own
+vocabulary — variables, constraints, an objective — and answers in the names you gave, where every
+other tool wants a graph of spins and returns an array of ±1. The rest are
+`ferrotherm_sample`, `ferrotherm_anneal`, `ferrotherm_energy`,
 `ferrotherm_verify`, `ferrotherm_capabilities`. Each carries a JSON Schema complete enough to call
 from the schema alone — there is a test that lifts an example out of a tool description and runs it
 verbatim, so that stays true.

@@ -962,6 +962,38 @@ pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
     }
 }
 
+/// How many constraints the answer breaks.
+///
+/// Zero when the answer keeps everything it was asked to. Distinct from a variable that did not
+/// decode: a broken constraint means every value read cleanly and one of them is not what was
+/// asked for, which nothing in the values themselves reveals.
+#[no_mangle]
+pub extern "C" fn ft_model_violations(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.violated.len() as u32,
+        None => 0,
+    }
+}
+
+/// Copy violation `i` as UTF-8; same two-call protocol as the other text getters.
+#[no_mangle]
+pub extern "C" fn ft_model_violation(
+    m: *const ModelHandle,
+    i: u32,
+    buf: *mut u8,
+    cap: u32,
+) -> u32 {
+    let Some(s) = unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) else { return 0 };
+    let Some(v) = s.violated.get(i as usize) else { return 0 };
+    let b = v.as_bytes();
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
 /// Energy of the solution.
 #[no_mangle]
 pub extern "C" fn ft_model_energy(m: *const ModelHandle) -> f64 {
@@ -1182,6 +1214,23 @@ pub extern "C" fn ft_model_at_least(
     counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtLeast { lits, k })
 }
 
+/// Use exactly this penalty, disabling the automatic scaling.
+///
+/// By default the penalty rises to twice the largest objective coefficient, because a constraint
+/// that merely ties with the objective gets traded away. When `feasible` comes back 0 the remedy is
+/// to raise it, and until now the C surface -- and so Python, Zig, Julia and the editor -- had no
+/// way to. A non-finite or non-positive value is refused.
+#[no_mangle]
+pub extern "C" fn ft_model_fixed_penalty(m: *mut ModelHandle, p: f64) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    if !p.is_finite() || p <= 0.0 {
+        h.last_error = format!("a penalty must be a positive number, not {p}");
+        return 0;
+    }
+    h.model.fixed_penalty(p);
+    1
+}
+
 /// Give a variable the caller's own name, so errors and answers use it.
 ///
 /// Optional: a variable declared without one is called `v0`, `v1` and so on. Returns 1 on success,
@@ -1258,6 +1307,43 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 1);
         let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
         assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_penalty_can_be_raised_when_a_constraint_loses() {
+        // The remedy the error text recommends, which the C surface could not perform. A constraint
+        // against an objective ten times its weight loses; raising the penalty wins it back.
+        let build = |p: f64| {
+            let m = ft_model_new();
+            let a = ft_model_categorical(m, 3);
+            let b = ft_model_categorical(m, 3);
+            ft_model_not_equal(m, a, b);
+            // both want value 1, hard
+            ft_model_objective_term(m, 1, 40.0, a, 1);
+            ft_model_objective_term(m, 1, 40.0, b, 1);
+            if p > 0.0 {
+                assert_eq!(ft_model_fixed_penalty(m, p), 1);
+            }
+            assert!(ft_model_compile(m) > 0);
+            ft_model_solve(m, 16);
+            let out = (ft_model_feasible(m), ft_model_value(m, a), ft_model_value(m, b));
+            ft_model_free(m);
+            out
+        };
+        // pinned low, the constraint is outbid and both take 1
+        let (_, a, b) = build(1.0);
+        assert_eq!((a, b), (1, 1), "a penalty of 1 against a weight of 40 loses, as it should");
+        // raised, it holds
+        let (feasible, a, b) = build(200.0);
+        assert_eq!(feasible, 1);
+        assert_ne!(a, b, "a raised penalty wins the constraint back");
+
+        // and a penalty that is not a positive number is refused
+        let m = ft_model_new();
+        assert_eq!(ft_model_fixed_penalty(m, 0.0), 0);
+        assert_eq!(ft_model_fixed_penalty(m, -1.0), 0);
+        assert_eq!(ft_model_fixed_penalty(m, f64::NAN), 0);
         ft_model_free(m);
     }
 

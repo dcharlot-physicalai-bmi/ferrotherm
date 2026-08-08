@@ -692,6 +692,13 @@ pub fn solve(req: &Json) -> Result<Json, String> {
             "did_not_decode",
             Json::Arr(sol.invalid.iter().map(|s| Json::s(s)).collect()),
         ),
+        (
+            // Every constraint the answer breaks, in the caller's own names. Distinct from
+            // did_not_decode: a broken constraint means every value read cleanly and one of them
+            // is not what was asked for, which is not visible from the values alone.
+            "violated",
+            Json::Arr(sol.violated.iter().map(|s| Json::s(s)).collect()),
+        ),
         ("energy", Json::n(sol.energy)),
         ("spins", Json::n(compiled.spins() as f64)),
         ("penalty", Json::n(penalty)),
@@ -701,9 +708,12 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         (
             "note",
             Json::s(
-                "`feasible: false` means a penalty lost to the objective, not that the problem has \
-                 no answer. Raise \"penalty\" or lower the objective weights and try again. The \
-                 \"ftp\" field is the compiled program and runs unchanged on any backend.",
+                "`feasible: false` means the answer breaks something you asked for: either a \
+                 variable in \"did_not_decode\" whose encoding was violated, or a constraint in \
+                 \"violated\" that the objective outbid. A penalty makes a constraint expensive, \
+                 not impossible. Raise \"penalty\" or lower the objective weights and try again; \
+                 if it stays infeasible at a large penalty, the problem itself may have no answer. \
+                 The \"ftp\" field is the compiled program and runs unchanged on any backend.",
             ),
         ),
     ]))
