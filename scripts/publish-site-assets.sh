@@ -35,19 +35,6 @@ if [[ $check_only -eq 0 ]]; then
   cp "$here/target/wasm32-unknown-unknown/release/ferrotherm.wasm" "$here/docs/ferrotherm.wasm"
 fi
 
-# Every symbol the pages call across the boundary. A page that loads but silently no-ops because an
-# export went missing is exactly the failure this catches.
-required_exports=(
-  ft_model_new ft_model_free ft_model_categorical ft_model_integer ft_model_binary
-  ft_model_name ft_model_not_equal ft_model_equal ft_model_fix
-  ft_model_cardinality ft_model_at_most ft_model_at_least
-  ft_model_objective_term ft_model_objective_pair
-  ft_model_compile ft_model_solve ft_model_solve_with
-  ft_model_value ft_model_feasible ft_model_energy ft_model_penalty
-  ft_model_error ft_model_ftp ft_scratch
-  ft_model_violations ft_model_violation
-)
-
 stale=0
 for f in graph.html ide.html index.html ferrotherm.wasm; do
   src="$here/docs/$f"
@@ -67,15 +54,9 @@ for f in graph.html ide.html index.html ferrotherm.wasm; do
   fi
 done
 
-missing=()
-for sym in "${required_exports[@]}"; do
-  grep -q "$sym" "$site/ferrotherm.wasm" 2>/dev/null || missing+=("$sym")
-done
-if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "the published wasm is missing exports the pages call: ${missing[*]}" >&2
-  exit 1
-fi
-echo "  all ${#required_exports[@]} exports the pages call are present"
+# The same check CI runs, against the copy the SITE will serve rather than the one in the repo.
+"$here/scripts/check-wasm-exports.sh" "$site/ferrotherm.wasm" | sed 's/^/  /'
+
 
 if [[ $stale -eq 1 ]]; then
   echo
