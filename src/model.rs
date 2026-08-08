@@ -374,6 +374,8 @@ pub enum CompileError {
     BadValue { var: String, value: i64, domain: Domain },
     /// A model with nothing in it.
     Empty,
+    /// Two variables sharing a name.
+    DuplicateName(String),
 }
 
 impl core::fmt::Display for CompileError {
@@ -396,6 +398,12 @@ impl core::fmt::Display for CompileError {
                 write!(f, "'{var}' takes {}; {value} is not one of them", domain.describe())
             }
             CompileError::Empty => write!(f, "a model with no variables compiles to nothing"),
+            CompileError::DuplicateName(n) => write!(
+                f,
+                "two variables are both called '{n}'. An answer is keyed by name, so a second one \
+                 does not shadow the first -- it replaces it, and one of the two silently \
+                 disappears from the result"
+            ),
         }
     }
 }
@@ -591,6 +599,16 @@ impl Model {
     pub fn compile(&self) -> Result<Compiled, CompileError> {
         if self.decls.is_empty() {
             return Err(CompileError::Empty);
+        }
+        // An answer is a map keyed by name, so two variables sharing one do not shadow each other
+        // -- the second overwrites the first and one of them vanishes from the result with nothing
+        // said. Caught here rather than at declaration because a name can also arrive later,
+        // through the FFI's rename.
+        let mut seen = BTreeMap::new();
+        for d in &self.decls {
+            if seen.insert(d.name.clone(), ()).is_some() {
+                return Err(CompileError::DuplicateName(d.name.clone()));
+            }
         }
 
         // Inequalities need slack, so the compiler declares variables of its own. They are laid out
@@ -1123,6 +1141,30 @@ mod tests {
         m.fix(x, 3);
         let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("3 is not a temperature in 10..=20") };
         assert!(e.contains("10..=20") && e.contains("3 is not"), "{e}");
+    }
+
+    #[test]
+    fn two_variables_cannot_share_a_name() {
+        // An answer is a map keyed by name. A second variable with the same name does not shadow
+        // the first, it REPLACES it -- so one of the two vanishes from the result and the caller
+        // reads a value belonging to the other. Found by writing a binding that named four
+        // variables in a loop and forgot to vary the name.
+        let mut m = Model::new();
+        let a = m.binary("v");
+        let b = m.binary("v");
+        m.fix(a, 1);
+        m.fix(b, 0);
+        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("two 'v's") };
+        assert!(e.contains("both called 'v'") && e.contains("disappears"), "{e}");
+
+        // distinct names compile, and both survive to the answer
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        m.fix(a, 1);
+        m.fix(b, 0);
+        let s = m.compile().unwrap().solve_best_of(8);
+        assert_eq!((s.value("a"), s.value("b")), (1, 0), "{s}");
     }
 
     #[test]

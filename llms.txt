@@ -26,8 +26,9 @@ the value 13, and 3 is an error naming the range. `feasible` means every variabl
 constraint held; when it is false, `violated` names what was broken and `did_not_decode` names the
 variables whose encoding lost. A penalty makes a constraint expensive, not impossible.
 
-Reachable from Rust, C (include/ferrotherm.h), Python (python/ferrotherm), wasm, the node editor,
-an HTTP API and an MCP server. Zig and Julia currently bind the spin layer only.
+Reachable from Rust, C (include/ferrotherm.h), Python (python/ferrotherm), Zig (zig/ferrotherm.zig),
+Julia (julia/Ferrotherm), wasm, the node editor, an HTTP API and an MCP server. Every one of them
+compiles through the same code, so an answer does not depend on which door you came in.
 
 ## Key modules
 

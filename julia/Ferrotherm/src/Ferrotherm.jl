@@ -17,9 +17,9 @@ this language exists to escape.
 More to the point, nothing in Julia certifies a sample. The three communities that would each care
 do not talk to each other: statistical physics reports autocorrelation time but no effective sample
 size, the Bayesian stack reports ESS but has no Ising model, and the JuMP/QUBO stack reports success
-rates but has no notion of a target distribution at all. **Nothing anywhere reports the inverse
-temperature a sampler actually achieved, and nothing anywhere reports a sampling-noise floor.**
-Those are [`certify`](@ref)'s job.
+rates but has no notion of a target distribution at all. **This review did not locate anything that
+reports the inverse temperature a sampler actually achieved, nor anything that reports a
+sampling-noise floor.** Those are [`certify`](@ref)'s job.
 
 # Getting the library
 
@@ -60,6 +60,10 @@ export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
 export node_updates, joules_z1, onsager, library_path, close!
+export Problem, Variable, Literal, Answer
+export categorical!, integer!, binary!, is
+export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
+export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
 
 # ---- finding the library -----------------------------------------------------------------------
 
@@ -151,6 +155,43 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_exact_ground_state Cuint SimPtr Cuint Ptr{Int8} Cuint
 @cfn ft_onsager Cdouble Cdouble
 @cfn ft_free Cvoid SimPtr
+
+# the modelling layer
+const ModPtr = Ptr{Cvoid}
+@cfn ft_model_new ModPtr
+@cfn ft_model_free Cvoid ModPtr
+@cfn ft_model_categorical Cuint ModPtr Cuint
+@cfn ft_model_integer Cuint ModPtr Clonglong Clonglong
+@cfn ft_model_binary Cuint ModPtr
+@cfn ft_model_name Cuint ModPtr Cuint Ptr{UInt8} Cuint
+@cfn ft_model_not_equal Cuint ModPtr Cuint Cuint
+@cfn ft_model_equal Cuint ModPtr Cuint Cuint
+@cfn ft_model_fix Cuint ModPtr Cuint Clonglong
+@cfn ft_model_lits_clear Cuint ModPtr
+@cfn ft_model_lit Cuint ModPtr Cuint Clonglong
+@cfn ft_model_close Cuint ModPtr Cuint Cuint
+@cfn ft_model_objective_term Cuint ModPtr Cuint Cdouble Cuint Clonglong
+@cfn ft_model_objective_pair Cuint ModPtr Cuint Cdouble Cuint Clonglong Cuint Clonglong
+@cfn ft_model_fixed_penalty Cuint ModPtr Cdouble
+@cfn ft_model_compile Cuint ModPtr
+@cfn ft_model_solve Cuint ModPtr Cuint
+@cfn ft_model_solve_with Cuint ModPtr Cuint Cdouble Cdouble Cuint Cuint
+@cfn ft_model_value Clonglong ModPtr Cuint
+@cfn ft_model_feasible Cuint ModPtr
+@cfn ft_model_energy Cdouble ModPtr
+@cfn ft_model_penalty Cdouble ModPtr
+@cfn ft_model_violations Cuint ModPtr
+@cfn ft_model_violation Cuint ModPtr Cuint Ptr{UInt8} Cuint
+@cfn ft_model_error Cuint ModPtr Ptr{UInt8} Cuint
+@cfn ft_model_ftp Cuint ModPtr Ptr{UInt8} Cuint
+@cfn ft_model_certify Cuint ModPtr Cdouble Cuint Cuint
+@cfn ft_model_cert_findings Cuint ModPtr
+@cfn ft_model_cert_finding Cuint ModPtr Cuint Ptr{UInt8} Cuint
+@cfn ft_model_cert_beta Cdouble ModPtr
+@cfn ft_model_cert_ess Cdouble ModPtr
+@cfn ft_model_cert_tau Cdouble ModPtr
+@cfn ft_model_cert_tv Cdouble ModPtr
+@cfn ft_model_cert_floor Cdouble ModPtr
 
 # ---- models ------------------------------------------------------------------------------------
 
@@ -527,5 +568,358 @@ onsager(beta::Real) = ft_onsager(Cdouble(beta))
 
 """The 2D square-lattice critical inverse temperature, `log(1+√2)/2`."""
 const betac = log(1 + sqrt(2)) / 2
+
+
+# ---- modelling ---------------------------------------------------------------------------------
+#
+# Everything above works in spins: couplings, biases, energies. That is the machine's language, not
+# the problem's. This is the problem's — variables that hold values, constraints that say what must
+# hold, an objective that says what is better — and it compiles down to the layer above.
+#
+# The shape a Julia user expects from JuMP, without the two-language problem: no Python, no Conda,
+# one native library that the same code reaches from Rust, C, Zig, a browser and an HTTP API.
+
+"""
+    Variable
+
+A declared variable. Ask it for a literal with [`is`](@ref).
+"""
+struct Variable
+    idx::UInt32
+    name::String
+    domain::String
+end
+
+Base.show(io::IO, v::Variable) = print(io, v.name, "::", v.domain)
+
+"""
+    Literal
+
+The claim that one variable takes one value. Build with [`is`](@ref).
+"""
+struct Literal
+    var::Variable
+    value::Int64
+end
+
+"""
+    is(v, value)
+
+The literal "`v` takes `value`", for counting constraints and objective terms.
+
+Values are the variable's own. An integer over `10:20` takes the value 13; passing 3 is an error
+naming the range, not the fourth slot.
+"""
+is(v::Variable, value::Integer) = Literal(v, Int64(value))
+
+"""
+    Answer
+
+A solved problem, read by name. `answer["shift"]` gives a value.
+
+`feasible` means every variable decoded **and** every constraint held. When it is false, `violated`
+describes each broken constraint in your own names and any variable that failed to decode reads
+`nothing`. A penalty makes a constraint expensive, not impossible.
+"""
+struct Answer
+    values::Dict{String, Union{Int64, Nothing}}
+    feasible::Bool
+    violated::Vector{String}
+    energy::Float64
+    spins::Int
+    penalty::Float64
+end
+
+Base.getindex(a::Answer, name::AbstractString) = a.values[String(name)]
+Base.haskey(a::Answer, name::AbstractString) = haskey(a.values, String(name))
+Base.keys(a::Answer) = keys(a.values)
+Base.pairs(a::Answer) = pairs(a.values)
+feasible(a::Answer) = a.feasible
+violated(a::Answer) = a.violated
+
+function Base.show(io::IO, a::Answer)
+    print(io, "Answer ", a.feasible ? "feasible" : "INFEASIBLE",
+          "  energy ", round(a.energy; digits = 4), "  ", a.spins, " spins")
+    for k in sort(collect(keys(a.values)))
+        v = a.values[k]
+        print(io, "\n  ", k, " = ", v === nothing ? "(did not decode)" : v)
+    end
+    for v in a.violated
+        print(io, "\n  broken: ", v)
+    end
+end
+
+"""
+    Problem()
+
+A problem stated in its own terms, compiled to spins and sampled.
+
+```julia
+p = Problem()
+days = [binary!(p, d) for d in ("mon", "tue", "wed", "thu", "fri")]
+at_most!(p, days, 3)
+maximize!(p, [(w, is(d, 1)) for (w, d) in zip((5, 4, 3, 2, 1), days)])
+a = solve!(p)
+[d.name for d in days if a[d.name] == 1]   # ["mon", "tue", "wed"]
+```
+
+Inequalities cost extra spins: each needs a slack variable to become an equality the sampler can
+square. The slack never appears in the answer.
+"""
+mutable struct Problem
+    handle::ModPtr
+    vars::Vector{Variable}
+    function Problem()
+        h = ft_model_new()
+        h == C_NULL && error("could not allocate a problem")
+        p = new(h, Variable[])
+        finalizer(close!, p)
+        p
+    end
+end
+
+function close!(p::Problem)
+    if p.handle != C_NULL
+        ft_model_free(p.handle)
+        p.handle = ModPtr(C_NULL)
+    end
+    nothing
+end
+
+_live(p::Problem) = p.handle == C_NULL && error("this problem has been closed")
+
+"""Why the library refused the last call."""
+function _why(p::Problem)
+    need = ft_model_error(p.handle, Ptr{UInt8}(C_NULL), Cuint(0))
+    need == 0 && return ""
+    buf = Vector{UInt8}(undef, need)
+    got = ft_model_error(p.handle, pointer(buf), Cuint(need))
+    String(buf[1:got])
+end
+
+_must(p::Problem, ok, what) =
+    ok == 0 && error(isempty(_why(p)) ? "the library refused that $what" : _why(p))
+
+function _declare(p::Problem, name::AbstractString, domain::AbstractString, idx::UInt32)
+    idx == typemax(UInt32) && error(
+        "$domain is not a usable domain for \"$name\" " *
+        "(a categorical needs at least 2 values; an integer needs hi > lo)")
+    raw = Vector{UInt8}(codeunits(String(name)))
+    # Push the name down, so a refusal names the variable you declared rather than a handle you
+    # never saw. It also refuses a name already taken: an answer is keyed by name, so a second
+    # variable with the same one would replace the first rather than shadow it.
+    _must(p, ft_model_name(p.handle, idx, pointer(raw), Cuint(length(raw))), "name")
+    v = Variable(idx, String(name), String(domain))
+    push!(p.vars, v)
+    v
+end
+
+"""    categorical!(p, name, values)
+
+A variable holding one of `values` distinct values, encoded one-hot. Needs at least two.
+"""
+function categorical!(p::Problem, name::AbstractString, values::Integer)
+    _live(p)
+    _declare(p, name, "categorical($values)", ft_model_categorical(p.handle, Cuint(values)))
+end
+
+"""    integer!(p, name, range)
+
+A variable over an inclusive integer range, written `integer!(p, "t", 10:20)`.
+
+There is no machine integer here: this is a categorical over the range, and the name is for the
+modeller rather than the fabric.
+"""
+function integer!(p::Problem, name::AbstractString, r::AbstractUnitRange{<:Integer})
+    _live(p)
+    _declare(p, name, "$(first(r)):$(last(r))",
+             ft_model_integer(p.handle, Clonglong(first(r)), Clonglong(last(r))))
+end
+integer!(p::Problem, name::AbstractString, lo::Integer, hi::Integer) = integer!(p, name, lo:hi)
+
+"""    binary!(p, name)
+
+A variable that is 0 or 1.
+"""
+function binary!(p::Problem, name::AbstractString)
+    _live(p)
+    _declare(p, name, "binary", ft_model_binary(p.handle))
+end
+
+# -- constraints ---------------------------------------------------------------------------------
+
+"""    not_equal!(p, a, b)  — `a` and `b` must differ."""
+not_equal!(p::Problem, a::Variable, b::Variable) =
+    (_live(p); _must(p, ft_model_not_equal(p.handle, a.idx, b.idx), "not_equal"); nothing)
+
+"""    equal!(p, a, b)  — `a` and `b` must agree."""
+equal!(p::Problem, a::Variable, b::Variable) =
+    (_live(p); _must(p, ft_model_equal(p.handle, a.idx, b.idx), "equal"); nothing)
+
+"""    fix!(p, v, value)  — `v` must take `value`, in its own units."""
+fix!(p::Problem, v::Variable, value::Integer) =
+    (_live(p); _must(p, ft_model_fix(p.handle, v.idx, Clonglong(value)), "fix"); nothing)
+
+"""
+Any number of literals, each naming its own variable and its own value.
+
+`of` takes variables — in which case `value` applies to all of them, the common case — or literals,
+which carry their own. "At most two of these nine shifts" and "at most one of `a = 3`, `b = 17`" are
+both sayable.
+"""
+function _counting(p::Problem, kind::Integer, of, k::Integer, value::Integer, what::AbstractString)
+    _live(p)
+    items = collect(of)
+    length(items) < 2 && error("$what needs at least two things to count, not $(length(items))")
+    if kind <= 2 && !(0 <= k <= length(items))
+        error("k must be between 0 and $(length(items)) for $what, not $k")
+    end
+    ft_model_lits_clear(p.handle)
+    for it in items
+        lit = it isa Literal ? it :
+              it isa Variable ? Literal(it, Int64(value)) :
+              error("$what counts variables or literals, not $(typeof(it))")
+        _must(p, ft_model_lit(p.handle, lit.var.idx, lit.value), what)
+    end
+    _must(p, ft_model_close(p.handle, Cuint(kind), Cuint(k)), what)
+    nothing
+end
+
+"""    exactly!(p, of, k; value = 1)  — exactly `k` of them hold."""
+exactly!(p::Problem, of, k::Integer; value::Integer = 1) = _counting(p, 0, of, k, value, "exactly")
+
+"""    at_most!(p, of, k; value = 1)  — at most `k` hold. Costs a slack variable."""
+at_most!(p::Problem, of, k::Integer; value::Integer = 1) = _counting(p, 1, of, k, value, "at_most")
+
+"""    at_least!(p, of, k; value = 1)  — at least `k` hold. Costs a slack variable."""
+at_least!(p::Problem, of, k::Integer; value::Integer = 1) = _counting(p, 2, of, k, value, "at_least")
+
+"""    exactly_one!(p, of)  — exactly one holds. Pairwise, no slack, so cheaper than `exactly!(…, 1)`."""
+exactly_one!(p::Problem, of; value::Integer = 1) = _counting(p, 3, of, 0, value, "exactly_one")
+
+"""    at_most_one!(p, of)  — at most one holds."""
+at_most_one!(p::Problem, of; value::Integer = 1) = _counting(p, 4, of, 0, value, "at_most_one")
+
+# -- objective -----------------------------------------------------------------------------------
+
+function _objective(p::Problem, maximize::Bool, terms)
+    _live(p)
+    m = Cuint(maximize ? 1 : 0)
+    for t in terms
+        w, lit = t
+        if lit isa Literal
+            _must(p, ft_model_objective_term(p.handle, m, Cdouble(w), lit.var.idx, lit.value),
+                  "objective")
+        elseif lit isa Tuple{Literal, Literal}
+            a, b = lit
+            _must(p, ft_model_objective_pair(p.handle, m, Cdouble(w), a.var.idx, a.value,
+                                             b.var.idx, b.value), "objective")
+        else
+            error("an objective term is (weight, literal) or (weight, (literal, literal)), " *
+                  "not (weight, $(typeof(lit)))")
+        end
+    end
+    nothing
+end
+
+"""
+    maximize!(p, terms)
+
+Prefer states where the terms hold. Each term is `(weight, literal)`, or `(weight, (a, b))` to
+reward two literals holding together.
+
+Terms accumulate and each carries its own direction, so a later [`minimize!`](@ref) changes only
+what it names.
+"""
+maximize!(p::Problem, terms) = _objective(p, true, terms)
+
+"""    minimize!(p, terms)  — prefer states where the terms do not hold."""
+minimize!(p::Problem, terms) = _objective(p, false, terms)
+
+"""
+    penalty!(p, value)
+
+Use exactly this penalty, disabling the automatic scaling.
+
+The remedy when an answer comes back infeasible: a constraint lost to the objective and has to
+outrank it. By default the penalty is twice the largest objective weight.
+"""
+penalty!(p::Problem, value::Real) =
+    (_live(p); _must(p, ft_model_fixed_penalty(p.handle, Cdouble(value)), "penalty"); nothing)
+
+# -- solving -------------------------------------------------------------------------------------
+
+function _text(p::Problem, fn, i)
+    need = fn(p.handle, Cuint(i), Ptr{UInt8}(C_NULL), Cuint(0))
+    need == 0 && return ""
+    buf = Vector{UInt8}(undef, need)
+    got = fn(p.handle, Cuint(i), pointer(buf), Cuint(need))
+    String(buf[1:got])
+end
+
+"""
+    solve!(p; tries = 12, beta_hot = 0, beta_cold = 0, stages = 0, sweeps = 0)
+
+Compile and solve, keeping the best of `tries` anneals.
+
+The four ladder parameters default to the library's own; a zero means "use that default", so a
+caller who measured their instance can override only what they measured. Lengthen the ladder when a
+model stays infeasible at a large penalty — that is a model not being annealed enough, and no
+penalty fixes it.
+"""
+function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::Real = 0,
+                stages::Integer = 0, sweeps::Integer = 0)
+    _live(p)
+    spins = ft_model_compile(p.handle)
+    spins == 0 && error(isempty(_why(p)) ? "this problem did not compile" : _why(p))
+    ok = ft_model_solve_with(p.handle, Cuint(max(1, tries)), Cdouble(beta_hot), Cdouble(beta_cold),
+                             Cuint(stages), Cuint(sweeps))
+    ok == 0 && error("that annealing ladder is not usable: beta_cold must exceed beta_hot, and " *
+                     "both must be real numbers. Pass 0 for any of the four to use the default.")
+
+    vals = Dict{String, Union{Int64, Nothing}}()
+    for v in p.vars
+        got = ft_model_value(p.handle, v.idx)
+        # A variable that did not decode reads `nothing` rather than raising: its encoding was
+        # violated, which means a penalty lost, and knowing WHICH one lost is the diagnosis.
+        vals[v.name] = got == typemin(Int64) ? nothing : got
+    end
+    broken = [_text(p, ft_model_violation, i) for i in 0:(ft_model_violations(p.handle) - 1)]
+    Answer(vals, ft_model_feasible(p.handle) == 1, broken,
+           ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle))
+end
+
+"""
+    certify!(p; beta = 1.0, draws = 512, thin = 1)
+
+Ask whether the sampler that produced the answer was sampling what it claimed.
+
+An answer says *what*. This says whether the machine that produced it reached the temperature it was
+asked for, how many of its draws were independent, and — where the model is small enough to
+enumerate — how far its distribution sits from the exact one, beside the noise floor that distance
+has to beat. `findings` is empty exactly when the run was sound.
+"""
+function certify!(p::Problem; beta::Real = 1.0, draws::Integer = 512, thin::Integer = 1)
+    _live(p)
+    ft_model_certify(p.handle, Cdouble(beta), Cuint(draws), Cuint(max(1, thin))) == 0 &&
+        error(isempty(_why(p)) ?
+              "could not certify: compile and solve the problem first, and pass a positive beta " *
+              "with at least 16 draws" : _why(p))
+    msgs = [_text(p, ft_model_cert_finding, i) for i in 0:(ft_model_cert_findings(p.handle) - 1)]
+    nan2n(x) = isnan(x) ? nothing : x
+    Certificate(Int(draws), ft_model_cert_beta(p.handle), (NaN, NaN),
+                ft_model_cert_tau(p.handle), ft_model_cert_ess(p.handle),
+                nan2n(ft_model_cert_tv(p.handle)), nan2n(ft_model_cert_floor(p.handle)), msgs)
+end
+
+"""    ftp(p)  — the compiled program in `.ftp` form, which runs unchanged on any backend."""
+function ftp(p::Problem)
+    _live(p)
+    need = ft_model_ftp(p.handle, Ptr{UInt8}(C_NULL), Cuint(0))
+    need == 0 && return ""
+    buf = Vector{UInt8}(undef, need)
+    got = ft_model_ftp(p.handle, pointer(buf), Cuint(need))
+    String(buf[1:got])
+end
 
 end # module

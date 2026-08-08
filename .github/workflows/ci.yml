@@ -64,6 +64,35 @@ jobs:
       - name: the committed wasm exports everything the pages call
         run: scripts/check-wasm-exports.sh
 
+  zig:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build the library the binding loads
+        run: cargo build --release
+      - name: Zig tests
+        run: zig test zig/ferrotherm.zig -I include -L target/release -lferrotherm
+
+  julia:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+      - name: Build the library the binding loads
+        run: cargo build --release
+      - name: Julia tests
+        working-directory: julia/Ferrotherm
+        env:
+          FERROTHERM_LIB: ${{ github.workspace }}/target/release/libferrotherm.so
+        run: julia --project=. -e 'using Pkg; Pkg.test()'
+
   editor:
     runs-on: ubuntu-latest
     steps:

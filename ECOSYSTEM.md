@@ -49,8 +49,9 @@ architectural role, not to the business model.
 Seven layers, all Rust, all ours.
 
 ```
-      Rust   Python   Zig   Julia   Node graph   MCP   HTTP        surfaces
-                              │
+    Rust  C  Python  Zig  Julia  Node graph  MCP  HTTP  wasm        surfaces
+                              │                                      all nine reach the modelling
+                              │                                      layer, not just the sampler
                     adapters ─┤ dimod · OMMX · QUBODrivers · MOI     (edge, deletable)
                               │
                      lowering passes                                 gates→factors, categorical→spins,
@@ -161,7 +162,9 @@ This is the phase that converts a library into a standard.
 
 ### E4 — The commons
 
-- **Package everywhere**: crates.io ✅, PyPI, Julia General, and a Zig package.
+- **Package everywhere**: crates.io ✅, PyPI, Julia General, and a Zig package. The bindings
+  themselves are complete — every surface states problems, not just spins — so what remains is
+  distribution rather than capability.
 - **Governance that survives us**: a specification repository separate from the implementation, with
   a documented process for adding a fabric. A format controlled by one implementation is a library
   with pretensions.

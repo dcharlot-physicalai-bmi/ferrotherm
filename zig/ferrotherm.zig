@@ -23,6 +23,16 @@ pub const Error = error{
     BuilderSpent,
     /// Fewer than 16 draws; certifying that many says nothing.
     TooFewDraws,
+    /// A domain with nothing in it: a categorical under two values, or an integer with hi <= lo.
+    BadDomain,
+    /// A value the variable cannot take. Call `lastError` for the range it can.
+    BadValue,
+    /// A constraint the library would not accept. `lastError` says why.
+    RejectedConstraint,
+    /// A model that does not compile. `lastError` says why.
+    WillNotCompile,
+    /// Reading an answer before solving one.
+    NotSolved,
 };
 
 /// A graph under construction. Add couplings and biases, then `build`.
@@ -327,4 +337,424 @@ test "exact inference matches the closed form on a chain" {
     const want = @log(2.0) + @as(f64, n - 1) * @log(2.0 * std.math.cosh(beta));
     const got = exactLogZ(sim, beta, 20).?;
     try std.testing.expect(@abs(got - want) < 1e-6 * @abs(want));
+}
+
+// ---- modelling ---------------------------------------------------------------------------------
+//
+// Everything above works in spins: couplings, biases, energies. That is the machine's language, not
+// the problem's. This is the problem's — variables that hold values, constraints that say what must
+// be true, an objective that says what is better — and it compiles down to the layer above.
+//
+// A value is the value you wrote. An integer over 10..=20 holds thirteen in its fourth slot, and
+// every call here takes thirteen; passing three is `BadValue` and `lastError` names the range.
+
+/// A declared variable. Ask it for a literal with `is`.
+pub const Var = struct {
+    idx: u32,
+
+    /// The claim "this variable takes `value`".
+    pub fn is(self: Var, value: i64) Lit {
+        return .{ .v = self, .value = value };
+    }
+};
+
+/// One variable taking one value, for counting constraints and objective terms.
+pub const Lit = struct {
+    v: Var,
+    value: i64,
+};
+
+/// What to count in a `count` constraint.
+pub const Counting = enum(u32) {
+    /// Exactly `k` hold.
+    exactly = 0,
+    /// At most `k` hold. Costs a slack variable.
+    at_most = 1,
+    /// At least `k` hold. Costs a slack variable.
+    at_least = 2,
+    /// Exactly one holds. Lowers pairwise with no slack, so cheaper than `exactly` with k = 1.
+    exactly_one = 3,
+    /// At most one holds.
+    at_most_one = 4,
+};
+
+/// Which direction an objective term prefers.
+pub const Sense = enum { maximize, minimize };
+
+/// A problem stated in its own terms.
+///
+///     var p = try Problem.init();
+///     defer p.deinit();
+///     const west = try p.categorical("west", 3);
+///     const east = try p.categorical("east", 3);
+///     try p.notEqual(west, east);
+///     _ = try p.compile();
+///     try p.solve(12);
+///     const c = try p.value(west);   // 0, 1 or 2 — and not whatever east got
+pub const Problem = struct {
+    h: *c.ft_model,
+
+    pub fn init() Error!Problem {
+        const h = c.ft_model_new() orelse return Error.OutOfMemory;
+        return .{ .h = h };
+    }
+
+    pub fn deinit(self: *Problem) void {
+        c.ft_model_free(self.h);
+    }
+
+    // -- variables -------------------------------------------------------------------------------
+
+    /// One of `values` unordered values, encoded one-hot. Needs at least two.
+    pub fn categorical(self: *Problem, name: []const u8, values: u32) Error!Var {
+        return self.declare(name, c.ft_model_categorical(self.h, values));
+    }
+
+    /// An integer over the inclusive range `lo..=hi`.
+    ///
+    /// There is no machine integer here: this is a categorical over the range, and the name is for
+    /// the modeller rather than the fabric. Values are the range's own, so `10..=20` takes 13.
+    pub fn integer(self: *Problem, name: []const u8, lo: i64, hi: i64) Error!Var {
+        return self.declare(name, c.ft_model_integer(self.h, lo, hi));
+    }
+
+    /// 0 or 1.
+    pub fn binary(self: *Problem, name: []const u8) Error!Var {
+        return self.declare(name, c.ft_model_binary(self.h));
+    }
+
+    fn declare(self: *Problem, name: []const u8, idx: u32) Error!Var {
+        if (idx == std.math.maxInt(u32)) return Error.BadDomain;
+        // Push the name down, so a refusal names the variable the caller declared rather than the
+        // handle they were given back.
+        _ = c.ft_model_name(self.h, idx, name.ptr, @intCast(name.len));
+        return .{ .idx = idx };
+    }
+
+    // -- constraints -----------------------------------------------------------------------------
+
+    pub fn notEqual(self: *Problem, a: Var, b: Var) Error!void {
+        if (c.ft_model_not_equal(self.h, a.idx, b.idx) == 0) return Error.RejectedConstraint;
+    }
+
+    pub fn equal(self: *Problem, a: Var, b: Var) Error!void {
+        if (c.ft_model_equal(self.h, a.idx, b.idx) == 0) return Error.RejectedConstraint;
+    }
+
+    pub fn fix(self: *Problem, v: Var, val: i64) Error!void {
+        if (c.ft_model_fix(self.h, v.idx, val) == 0) return Error.BadValue;
+    }
+
+    /// Count how many of `lits` hold, and constrain that count.
+    ///
+    /// Any number of literals, each naming its own variable and its own value: "at most two of
+    /// these nine shifts" and "at most one of a = 3, b = 17" are both sayable.
+    pub fn count(self: *Problem, kind: Counting, k: u32, lits: []const Lit) Error!void {
+        _ = c.ft_model_lits_clear(self.h);
+        for (lits) |l| {
+            if (c.ft_model_lit(self.h, l.v.idx, l.value) == 0) return Error.BadValue;
+        }
+        if (c.ft_model_close(self.h, @intFromEnum(kind), k) == 0) return Error.RejectedConstraint;
+    }
+
+    /// `count` over whole variables, each taking the same value. The common case.
+    pub fn countVars(self: *Problem, kind: Counting, k: u32, vars: []const Var, val: i64) Error!void {
+        _ = c.ft_model_lits_clear(self.h);
+        for (vars) |v| {
+            if (c.ft_model_lit(self.h, v.idx, val) == 0) return Error.BadValue;
+        }
+        if (c.ft_model_close(self.h, @intFromEnum(kind), k) == 0) return Error.RejectedConstraint;
+    }
+
+    // -- objective -------------------------------------------------------------------------------
+
+    /// Prefer states where `lit` holds, by `weight`.
+    ///
+    /// Terms ACCUMULATE, and each carries its own sense: a minimising term added after maximising
+    /// ones changes only itself.
+    pub fn prefer(self: *Problem, sense: Sense, weight: f64, lit: Lit) Error!void {
+        const max: u32 = if (sense == .maximize) 1 else 0;
+        if (c.ft_model_objective_term(self.h, max, weight, lit.v.idx, lit.value) == 0) {
+            return Error.BadValue;
+        }
+    }
+
+    /// Prefer states where two literals hold together. Quadratic in the spins.
+    pub fn preferPair(self: *Problem, sense: Sense, weight: f64, a: Lit, b: Lit) Error!void {
+        const max: u32 = if (sense == .maximize) 1 else 0;
+        if (c.ft_model_objective_pair(self.h, max, weight, a.v.idx, a.value, b.v.idx, b.value) == 0) {
+            return Error.BadValue;
+        }
+    }
+
+    /// Use exactly this penalty, disabling the automatic scaling.
+    ///
+    /// The remedy when `feasible` comes back false: a constraint lost to the objective and has to
+    /// outrank it. By default the penalty is twice the largest objective weight.
+    pub fn penalty(self: *Problem, p: f64) Error!void {
+        if (c.ft_model_fixed_penalty(self.h, p) == 0) return Error.RejectedConstraint;
+    }
+
+    // -- solving ---------------------------------------------------------------------------------
+
+    /// Compile to spins, returning how many were needed — including any slack an inequality wanted.
+    pub fn compile(self: *Problem) Error!u32 {
+        const n = c.ft_model_compile(self.h);
+        if (n == 0) return Error.WillNotCompile;
+        return n;
+    }
+
+    /// Anneal `tries` times and keep the best answer.
+    pub fn solve(self: *Problem, tries: u32) Error!void {
+        if (c.ft_model_solve(self.h, tries) == 0) return Error.NotSolved;
+    }
+
+    /// Anneal on your own ladder: `beta_hot` to `beta_cold` over `stages` of `sweeps` each.
+    ///
+    /// Zero for any of the four means the library's default, so you can override only what you
+    /// measured. A ladder that runs backwards is refused rather than quietly replaced.
+    pub fn solveWith(
+        self: *Problem,
+        tries: u32,
+        beta_hot: f64,
+        beta_cold: f64,
+        stages: u32,
+        sweeps: u32,
+    ) Error!void {
+        if (c.ft_model_solve_with(self.h, tries, beta_hot, beta_cold, stages, sweeps) == 0) {
+            return Error.BadSchedule;
+        }
+    }
+
+    /// The answer for one variable, in its own units.
+    pub fn value(self: *Problem, v: Var) Error!i64 {
+        const got = c.ft_model_value(self.h, v.idx);
+        if (got == std.math.minInt(i64)) return Error.NotSolved;
+        return got;
+    }
+
+    /// True when every variable decoded AND every constraint holds.
+    ///
+    /// Both halves matter and they fail differently. A penalty makes a constraint expensive, not
+    /// impossible, so a sampler whose objective outbids it returns an answer that reads perfectly
+    /// and breaks the request. `violations` says which.
+    pub fn feasible(self: *Problem) bool {
+        return c.ft_model_feasible(self.h) == 1;
+    }
+
+    pub fn energy(self: *Problem) f64 {
+        return c.ft_model_energy(self.h);
+    }
+
+    /// The penalty actually used, after any automatic scaling.
+    pub fn effectivePenalty(self: *Problem) f64 {
+        return c.ft_model_penalty(self.h);
+    }
+
+    /// How many constraints the answer breaks. Zero when it keeps everything it was asked to.
+    pub fn violations(self: *Problem) u32 {
+        return c.ft_model_violations(self.h);
+    }
+
+    /// Violation `i`, described in your own names, written into `buf`.
+    pub fn violation(self: *Problem, i: u32, buf: []u8) []const u8 {
+        const need = c.ft_model_violation(self.h, i, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_model_violation(self.h, i, buf.ptr, n);
+        return buf[0..got];
+    }
+
+    /// Why the last call was refused. Empty when nothing was.
+    pub fn lastError(self: *Problem, buf: []u8) []const u8 {
+        const need = c.ft_model_error(self.h, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_model_error(self.h, buf.ptr, n);
+        return buf[0..got];
+    }
+
+    /// The compiled program in `.ftp` form, which runs unchanged on any backend.
+    pub fn ftp(self: *Problem, buf: []u8) []const u8 {
+        const need = c.ft_model_ftp(self.h, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_model_ftp(self.h, buf.ptr, n);
+        return buf[0..got];
+    }
+};
+
+test "two variables cannot share a name" {
+    var p = try Problem.init();
+    defer p.deinit();
+    _ = try p.binary("shift");
+    // the C ABI refuses the second name, so declare() reports the domain as unusable
+    const second = c.ft_model_binary(p.h);
+    try std.testing.expectEqual(@as(u32, 0), c.ft_model_name(p.h, second, "shift", 5));
+    var buf: [256]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, p.lastError(&buf), "already") != null);
+}
+
+test "a triangle needs three colours" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const west = try p.categorical("west", 3);
+    const middle = try p.categorical("middle", 3);
+    const east = try p.categorical("east", 3);
+    try p.notEqual(west, middle);
+    try p.notEqual(middle, east);
+    try p.notEqual(west, east);
+
+    _ = try p.compile();
+    try p.solve(12);
+    try std.testing.expect(p.feasible());
+
+    const a = try p.value(west);
+    const b = try p.value(middle);
+    const d = try p.value(east);
+    try std.testing.expect(a != b and b != d and a != d);
+}
+
+test "an integer is written in its own values, not in slots" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const t = try p.integer("temperature", 10, 20);
+    try p.prefer(.maximize, 5.0, t.is(13));
+    _ = try p.compile();
+    try p.solve(8);
+    try std.testing.expectEqual(@as(i64, 13), try p.value(t));
+
+    // and a slot index where a value belongs is refused, naming the range
+    var q = try Problem.init();
+    defer q.deinit();
+    const u = try q.integer("temperature", 10, 20);
+    try std.testing.expectError(Error.BadValue, q.fix(u, 3));
+    var buf: [256]u8 = undefined;
+    const e = q.lastError(&buf);
+    try std.testing.expect(std.mem.indexOf(u8, e, "temperature") != null);
+    try std.testing.expect(std.mem.indexOf(u8, e, "10..=20") != null);
+}
+
+test "at most two of nine, which the positional form cannot say" {
+    var p = try Problem.init();
+    defer p.deinit();
+    var shifts: [9]Var = undefined;
+    var names: [9][3]u8 = undefined;
+    for (&shifts, 0..) |*s, i| {
+        names[i] = .{ 's', @intCast('0' + i), 0 };
+        s.* = try p.binary(names[i][0..2]);
+        try p.prefer(.maximize, @as(f64, @floatFromInt(9 - i)), s.is(1));
+    }
+    try p.countVars(.at_most, 2, &shifts, 1);
+
+    _ = try p.compile();
+    try p.solve(24);
+    try std.testing.expect(p.feasible());
+
+    var on: u32 = 0;
+    for (shifts) |s| {
+        if (try p.value(s) == 1) on += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 2), on);
+}
+
+test "literals in one constraint may name different values" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 4);
+    const b = try p.integer("b", 10, 20);
+    try p.count(.at_most, 1, &.{ a.is(3), b.is(17) });
+    try p.prefer(.maximize, 5.0, a.is(3));
+    try p.prefer(.maximize, 4.0, b.is(17));
+
+    _ = try p.compile();
+    try p.solve(16);
+    try std.testing.expect(p.feasible());
+    try std.testing.expectEqual(@as(i64, 3), try p.value(a));
+    try std.testing.expect(try p.value(b) != 17);
+}
+
+test "feasible means the constraints hold, and says which one did not" {
+    // A penalty makes a constraint expensive, not impossible. Pinned below the objective, the
+    // sampler pays it: every variable decodes and the constraint is broken.
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 3);
+    const b = try p.categorical("b", 3);
+    try p.notEqual(a, b);
+    try p.penalty(1.0);
+    try p.prefer(.maximize, 40.0, a.is(1));
+    try p.prefer(.maximize, 40.0, b.is(1));
+
+    _ = try p.compile();
+    try p.solve(16);
+    try std.testing.expectEqual(try p.value(a), try p.value(b));
+    try std.testing.expect(!p.feasible());
+    try std.testing.expectEqual(@as(u32, 1), p.violations());
+
+    var buf: [256]u8 = undefined;
+    const v = p.violation(0, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, v, "must differ") != null);
+
+    // raised, the same model is feasible
+    var q = try Problem.init();
+    defer q.deinit();
+    const x = try q.categorical("a", 3);
+    const y = try q.categorical("b", 3);
+    try q.notEqual(x, y);
+    try q.penalty(200.0);
+    try q.prefer(.maximize, 40.0, x.is(1));
+    try q.prefer(.maximize, 40.0, y.is(1));
+    _ = try q.compile();
+    try q.solve(16);
+    try std.testing.expect(q.feasible());
+    try std.testing.expect(try q.value(x) != try q.value(y));
+}
+
+test "objective terms accumulate, and a later sense does not rewrite earlier ones" {
+    var p = try Problem.init();
+    defer p.deinit();
+    var v: [4]Var = undefined;
+    var names: [4][2]u8 = undefined;
+    for (&v, 0..) |*x, i| {
+        // distinct names, because an answer is keyed by name and the library refuses a collision
+        names[i] = .{ 'v', @intCast('0' + i) };
+        x.* = try p.binary(&names[i]);
+        try p.prefer(if (i < 3) .maximize else .minimize, 1.0, x.is(1));
+    }
+    _ = try p.compile();
+    try p.solve(16);
+    for (v, 0..) |x, i| {
+        const want: i64 = if (i < 3) 1 else 0;
+        try std.testing.expectEqual(want, try p.value(x));
+    }
+}
+
+test "a caller's own ladder is used, and a backwards one refused" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 3);
+    const b = try p.categorical("b", 3);
+    try p.notEqual(a, b);
+    _ = try p.compile();
+
+    try p.solveWith(8, 0.05, 6.0, 60, 20);
+    try std.testing.expect(p.feasible());
+
+    // zeros mean the default, so only what was measured need be given
+    try p.solveWith(8, 0.0, 0.0, 0, 0);
+    try std.testing.expect(p.feasible());
+
+    try std.testing.expectError(Error.BadSchedule, p.solveWith(8, 8.0, 0.05, 60, 20));
+}
+
+test "the compiled program exports as ftp" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 3);
+    const b = try p.categorical("b", 3);
+    try p.notEqual(a, b);
+    _ = try p.compile();
+
+    var buf: [4096]u8 = undefined;
+    const text = p.ftp(&buf);
+    try std.testing.expect(std.mem.startsWith(u8, text, "ftp 1"));
+    try std.testing.expect(std.mem.indexOf(u8, text, "spins 6") != null);
 }

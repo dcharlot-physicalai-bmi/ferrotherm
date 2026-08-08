@@ -1328,6 +1328,16 @@ pub extern "C" fn ft_model_name(m: *mut ModelHandle, v: u32, name: *const u8, le
         h.last_error = "a variable name must be UTF-8".into();
         return 0;
     };
+    // Refused here rather than at compile, because a caller naming variables in a loop wants to
+    // learn about the collision at the call that caused it. An answer is keyed by name, so the
+    // second of two identical names does not shadow the first -- it replaces it.
+    let clash = (0..h.model.len())
+        .map(|i| h.model.var_at(i))
+        .any(|v| v != x && h.model.name_of(v) == s);
+    if clash {
+        h.last_error = format!("'{s}' is already the name of another variable");
+        return 0;
+    }
     h.model.rename(x, s);
     1
 }
@@ -1534,6 +1544,24 @@ mod cardinality_ffi {
         assert!(ft_model_compile(m) > 0);
         assert_eq!(ft_model_solve(m, 16), 1);
         assert_eq!(ft_model_value(m, x), 3);
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_name_already_taken_is_refused_at_the_call() {
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        let n = "shift";
+        assert_eq!(ft_model_name(m, a, n.as_ptr(), n.len() as u32), 1);
+        assert_eq!(ft_model_name(m, b, n.as_ptr(), n.len() as u32), 0, "already taken");
+        let mut buf = [0u8; 256];
+        let k = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        let e = core::str::from_utf8(&buf[..k]).unwrap();
+        assert!(e.contains("'shift' is already"), "{e}");
+
+        // renaming a variable to its OWN name is not a collision
+        assert_eq!(ft_model_name(m, a, n.as_ptr(), n.len() as u32), 1);
         ft_model_free(m);
     }
 

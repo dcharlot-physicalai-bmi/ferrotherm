@@ -154,4 +154,6 @@ end
     close!(a); close!(b)
 end
 
+include("model.jl")
+
 end
