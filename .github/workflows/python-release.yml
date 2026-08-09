@@ -129,8 +129,10 @@ jobs:
           PY=/opt/python/cp312-cp312/bin/python
           cp target/release/libferrotherm.so python/ferrotherm/libferrotherm.so
           cd python
-          "$PY" -m pip install -q --upgrade pip build auditwheel
-          "$PY" -m build --wheel --no-isolation -C--build-option=--plat-name=linux_x86_64
+          "$PY" -m pip install -q --upgrade pip build auditwheel setuptools wheel
+          # Not --no-isolation: the manylinux image's Python has no setuptools, so the backend has
+          # to come from the isolated build environment like it does on every other runner.
+          "$PY" -m build --wheel -C--build-option=--plat-name=linux_x86_64
           "$PY" -m auditwheel repair dist/*.whl -w dist/ --plat manylinux_2_28_x86_64
           rm -f dist/*-linux_x86_64.whl
           ls -la dist/
