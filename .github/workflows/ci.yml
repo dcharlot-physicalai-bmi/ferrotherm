@@ -104,6 +104,6 @@ jobs:
       - name: Install
         working-directory: web-tests
         run: npm install && npx playwright install --with-deps chromium
-      - name: Editor tests
+      - name: Browser tests
         working-directory: web-tests
         run: npm test

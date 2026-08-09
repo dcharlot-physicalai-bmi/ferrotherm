@@ -116,6 +116,7 @@
       <option value="frustrated">frustrated 5-ring</option>
       <option value="glass">spin glass 24</option>
       <option value="maxcut">max-cut 12</option>
+      <option value="solve">a problem, not a graph</option>
       <option value="z1">Z1 grid 24&times;24</option>
     </select>
   </label>
@@ -133,7 +134,7 @@
   <section class="pane">
     <div class="phead">
       <span class="ptitle">Model</span>
-      <span class="hint">the same JSON the API and the MCP tools take</span>
+      <span class="hint">the same JSON the API and the MCP tools take &mdash; a graph to sample, or a problem to solve</span>
     </div>
     <div class="pbody">
       <div class="editwrap">
@@ -257,6 +258,24 @@ const PRESETS = {
     for (let j = i + 1; j < m; j++)
       if (r2() < 0.45) e.push([i, j, -1]);
   PRESETS.maxcut = { graph: { n: m, couplings: e }, beta: 2.0, sweeps: 1, seed: 1 };
+
+  // Not a graph. Everything else on this page is a request to `sample` or `anneal`, which take
+  // spins; this is a request to `solve`, which takes a PROBLEM and answers in your own names. It is
+  // the operation the MCP server tells an agent to reach for first, and until now the workbench --
+  // whose whole claim is that its box is a request body -- could not express it.
+  PRESETS.solve = {
+    variables: [
+      { name: "west", values: 3 },
+      { name: "middle", values: 3 },
+      { name: "east", values: 3 }
+    ],
+    constraints: [
+      { type: "not_equal", a: "west", b: "middle" },
+      { type: "not_equal", a: "middle", b: "east" },
+      { type: "not_equal", a: "west", b: "east" }
+    ],
+    tries: 12
+  };
 })();
 
 // ---- wasm ------------------------------------------------------------------------------------
@@ -294,7 +313,14 @@ function parseSpec(text) {
   try { v = JSON.parse(text); }
   catch (e) { throw new Error("not valid JSON: " + e.message); }
   if (!v || typeof v !== "object") throw new Error("the model must be a JSON object");
-  if (!v.graph) throw new Error('missing "graph"');
+  // Two request shapes, and the operation is decided by which one you wrote: "variables" is a
+  // problem for `solve`, "graph" is a set of spins for `sample` and `anneal`.
+  if (!v.graph && !v.variables) {
+    throw new Error('give "graph" for a set of spins to sample, or "variables" for a problem to solve');
+  }
+  if (v.graph && v.variables) {
+    throw new Error('give "graph" or "variables", not both: they are different operations');
+  }
   return v;
 }
 
@@ -443,10 +469,187 @@ function load(name) {
   apply();
 }
 
+/**
+ * Run a `solve` request: variables, constraints, an objective, answered by name.
+ *
+ * Built straight through the same ft_model_* boundary the node editor uses, so a body that works
+ * here works against the HTTP API and the MCP tool unchanged. That is the claim this pane makes at
+ * the top of the page, and it was only half true until this existed.
+ */
+function solveProblem(v) {
+  const m = W.ft_model_new();
+  const put = (name) => {
+    const b = new TextEncoder().encode(name);
+    const p = W.ft_scratch(b.length);
+    new Uint8Array(W.memory.buffer, p, b.length).set(b);
+    return [p, b.length];
+  };
+  const readText = (fn) => {
+    const need = fn(m, null, 0);
+    if (!need) return "";
+    const p = W.ft_scratch(need);
+    const got = fn(m, p, need);
+    return new TextDecoder().decode(new Uint8Array(W.memory.buffer, p, got));
+  };
+  // Throws only. Freeing here as well as in the catch below is a double free, which in wasm is
+  // an `unreachable` trap -- a message that says nothing about what the caller got wrong.
+  const refuse = (what) => {
+    throw new Error(readText(W.ft_model_error) || ("the library refused that " + what));
+  };
+
+  try {
+    // 1. variables, by name
+    const idx = new Map();
+    for (const d of v.variables || []) {
+      const name = String(d.name ?? "");
+      if (!name) throw new Error("every variable needs a \"name\"");
+      let i;
+      if (d.values !== undefined) i = W.ft_model_categorical(m, d.values | 0);
+      else if (d.lo !== undefined && d.hi !== undefined) {
+        i = W.ft_model_integer(m, BigInt(d.lo | 0), BigInt(d.hi | 0));
+      } else {
+        throw new Error(name + ': give either "values" for a categorical or "lo" and "hi" for an integer');
+      }
+      if (i === 0xFFFFFFFF) {
+        throw new Error(name + ": a categorical needs at least 2 values; an integer needs hi > lo");
+      }
+      const [p, len] = put(name);
+      if (!W.ft_model_name(m, i, p, len)) refuse("name");
+      idx.set(name, i);
+    }
+    if (!idx.size) throw new Error('"variables" must not be empty');
+    const find = (n) => {
+      if (!idx.has(n)) throw new Error('no variable named "' + n + '"; declared: ' + [...idx.keys()].join(", "));
+      return idx.get(n);
+    };
+
+    // 2. constraints
+    for (const c of v.constraints || []) {
+      const kind = String(c.type ?? "");
+      if (kind === "not_equal" || kind === "equal") {
+        const a = find(c.a), b = find(c.b);
+        if (a === b) throw new Error(kind + ": a variable cannot be compared with itself");
+        if (!(kind === "not_equal" ? W.ft_model_not_equal(m, a, b) : W.ft_model_equal(m, a, b))) refuse(kind);
+      } else if (kind === "fix") {
+        if (!W.ft_model_fix(m, find(c.var), BigInt(c.value | 0))) refuse("fix");
+      } else if (["cardinality", "at_most", "at_least", "exactly_one", "at_most_one"].includes(kind)) {
+        W.ft_model_lits_clear(m);
+        for (const it of c.of || []) {
+          if (!W.ft_model_lit(m, find(it.var), BigInt(it.value ?? 1))) refuse(kind);
+        }
+        const code = { cardinality: 0, at_most: 1, at_least: 2, exactly_one: 3, at_most_one: 4 }[kind];
+        if (!W.ft_model_close(m, code, c.k | 0)) refuse(kind);
+      } else {
+        throw new Error('unknown constraint "' + kind + '"; known: not_equal, equal, fix, '
+          + "cardinality, at_most, at_least, exactly_one, at_most_one");
+      }
+    }
+
+    // 3. objective
+    if (v.objective) {
+      const max = v.objective.maximize ? 1 : 0;
+      for (const term of v.objective.terms || []) {
+        const w = +term.weight || 1;
+        const a = find(term.var), av = BigInt(term.value ?? 1);
+        const ok = term.and_var !== undefined
+          ? W.ft_model_objective_pair(m, max, w, a, av, find(term.and_var),
+                                      BigInt(term.and_value ?? term.value ?? 1))
+          : W.ft_model_objective_term(m, max, w, a, av);
+        if (!ok) refuse("objective");
+      }
+    }
+    if (v.penalty !== undefined && !W.ft_model_fixed_penalty(m, +v.penalty)) refuse("penalty");
+
+    // 4. solve
+    const spins = W.ft_model_compile(m);
+    if (!spins) refuse("model");
+    const tries = Math.max(1, Math.min(500, v.tries | 0 || 12));
+    const t0 = performance.now();
+    if (!W.ft_model_solve(m, tries)) refuse("solve");
+    const ms = performance.now() - t0;
+
+    const values = [];
+    for (const [name, i] of idx) {
+      const got = W.ft_model_value(m, i);
+      values.push([name, got === -9223372036854775808n ? null : got]);
+    }
+    const broken = [];
+    for (let i = 0; i < W.ft_model_violations(m); i++) {
+      const need = W.ft_model_violation(m, i, null, 0);
+      const p = W.ft_scratch(need);
+      const got = W.ft_model_violation(m, i, p, need);
+      broken.push(new TextDecoder().decode(new Uint8Array(W.memory.buffer, p, got)));
+    }
+    const out = {
+      values, spins, tries, ms,
+      feasible: W.ft_model_feasible(m) === 1,
+      energy: W.ft_model_energy(m),
+      penalty: W.ft_model_penalty(m),
+      violated: broken,
+      ftp: readText(W.ft_model_ftp)
+    };
+    W.ft_model_free(m);
+    return out;
+  } catch (e) {
+    W.ft_model_free(m);
+    throw e;
+  }
+}
+
+/** Render a solved problem where the lattice view would be, since a problem has no lattice. */
+function applySolve() {
+  freeSim();
+  lattice = 0;
+  const r = solveProblem(spec);
+
+  const pad = Math.max(...r.values.map(([n]) => n.length), 1);
+  let txt = r.values.map(([n, v]) =>
+    "  " + n.padEnd(pad) + " = " + (v === null ? "(did not decode)" : v)).join("\n");
+  txt += "\n\n  " + "spins".padEnd(pad) + " = " + r.spins
+       + "\n  " + "energy".padEnd(pad) + " = " + r.energy.toFixed(4)
+       + "\n  " + "penalty".padEnd(pad) + " = " + r.penalty.toFixed(2)
+       + "\n  " + "feasible".padEnd(pad) + " = " + (r.feasible ? "yes" : "NO");
+  for (const b of r.violated) txt += "\n  broken: " + b;
+  if (!r.feasible) {
+    txt += "\n\n  A penalty makes a constraint expensive, not impossible, and this objective"
+         + "\n  outbid it. Raise \"penalty\", or lower the objective weights.";
+  }
+
+  cx.fillStyle = "#070d16";
+  cx.fillRect(0, 0, cv.width, cv.height);
+  cx.fillStyle = "#cfe3ff";
+  cx.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace';
+  cx.textBaseline = "top";
+  txt.split("\n").forEach((line, i) => cx.fillText(line, 14, 16 + i * 18));
+
+  $("viewhint").textContent = r.values.length + " variables over " + r.spins
+    + " spins, best of " + r.tries + " in " + r.ms.toFixed(0) + " ms";
+  status(r.feasible
+    ? "solved: every constraint holds"
+    : "solved, but " + r.violated.length + " constraint(s) broke — see the answer", 
+    r.feasible ? "good" : "bad");
+  solveExports(r);
+}
+
+/** The request body and the compiled program, for a problem rather than a graph. */
+function solveExports(r) {
+  const compact = JSON.stringify(spec);
+  $("curl").textContent =
+    "curl -s -X POST localhost:8479/v1/solve \\\n  -d '" + compact + "'";
+  $("mcpcall").textContent = JSON.stringify({ name: "ferrotherm_solve", arguments: spec }, null, 2);
+  const lines = r.ftp.split("\n");
+  $("ftp").textContent = lines.length > 24
+    ? lines.slice(0, 14).join("\n") + "\n... " + (lines.length - 18) + " more lines ...\n"
+      + lines.slice(-4).join("\n")
+    : r.ftp;
+  $("ftp").dataset.full = r.ftp;
+}
+
 function apply() {
   stop();
   try {
     spec = parseSpec($("src").value);
+    if (spec.variables) return applySolve();
     const beta = +$("beta").value / 100, seed = +$("seed").value;
     const n = build(spec, beta, seed);
     sweepsDone = 0;
