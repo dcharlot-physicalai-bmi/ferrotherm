@@ -38,8 +38,8 @@ Two things the default wheel tagging gets wrong, both fixed in `python/setup.py`
 `.github/workflows/python-release.yml` builds macOS arm64 and x86_64, Linux x86_64, and Windows
 x86_64. Every wheel runs the self-containment check on the platform it targets before upload.
 
-**Verified.** A build-only run produced three of the four wheels, each carrying its library and
-tagged for exactly where it runs:
+**Verified.** A build-only run produced all three wheels, each carrying its library and tagged for
+exactly where it runs:
 
 ```
 ferrotherm-0.7.0-py3-none-macosx_11_0_arm64.whl        ferrotherm/libferrotherm.dylib
@@ -47,12 +47,9 @@ ferrotherm-0.7.0-py3-none-manylinux_2_28_x86_64.whl    ferrotherm/libferrotherm.
 ferrotherm-0.7.0-py3-none-win_amd64.whl                ferrotherm/ferrotherm.dll
 ```
 
-The fourth, `macos-x86_64`, builds on a `macos-13` runner and those are scarce — it queued for
-over twenty minutes without starting. It is not stuck and it is not broken; Intel Mac runners are
-simply in short supply, and a release triggered by a tag will wait for one. The alternative is
-cross-compiling from the arm64 runner, which would build the wheel in seconds and then be unable to
-RUN it, since GitHub's Apple Silicon runners have no Rosetta. A wheel tested on the hardware it
-targets is worth waiting for.
+macOS is Apple Silicon only. Intel Macs are outside Apple's own support window, and their runners
+are scarce enough to stall a release for the best part of an hour. Anyone still on one can build the
+library and set `FERROTHERM_LIB`, which is the documented fallback and works.
 
 Linux gets its own job, inside a `manylinux_2_28` container. A `.so` built on the ubuntu-latest
 runner links that runner's glibc, and auditwheel can only relabel a wheel **down to a policy the
