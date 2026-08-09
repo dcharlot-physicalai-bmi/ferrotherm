@@ -1,0 +1,25 @@
+0
+15719 80214139 1786185157125414995 d9699051b53bd3782015efea92baf3b1 0 /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/include/ferrotherm.h
+9240 18655466 1776106215000000000 1945702eb3e2e37e404f81edace362ea 1 compiler/aro/include/stdint.h
+27519 18656012 1776106215000000000 1bf965d23c79a082ac103b8d4944724e 1 include/stdint.h
+5556 36747886 1772095186000000000 3a1e38f930a23ca7b326c783dadd5594 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/stdint.h
+1411 36747946 1772686272000000000 2ae28f8bdea8b1eee85456fb356045bc 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types/_int8_t.h
+1417 36747943 1772686271000000000 9a6d97f375ee3a0a3c4a23272b234e09 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types/_int16_t.h
+1417 36747944 1772686271000000000 15e06bee7105411c456839ff3f84cebf 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types/_int32_t.h
+1417 36747945 1772686272000000000 ee98b602a1e490085667bd76dee7d2ff 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types/_int64_t.h
+1412 36744503 1771712646000000000 b0e46c9db815950038a411f731723ff2 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/_types/_uint8_t.h
+1417 36744500 1771712646000000000 89849ec559c50753c007c173f7ff6966 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/_types/_uint16_t.h
+1415 36744501 1771712646000000000 41a7759f3238219f831407e6173a56f0 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/_types/_uint32_t.h
+1421 36744502 1771712646000000000 864125d76952cfbc29894a849c232e1d 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/_types/_uint64_t.h
+4133 36747997 1772773685000000000 2070304390803b10f3db44778804e732 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types.h
+42609 36748006 1772686311000000000 ffae90fd0933c0460addecbc91f85958 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/cdefs.h
+43017 36747913 1776999238000000000 8b052bd82b633d02b293ee0e516df49f 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_symbol_aliasing.h
+2905 36747898 1772686311000000000 51fc551769d0c165dbafee629c983aac 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_posix_availability.h
+1370 18655459 1776106215000000000 ee9726db8e3fa782f786b291eaa923ab 1 compiler/aro/include/ptrcheck.h
+1614 36747300 1772686275000000000 90373853ed4210d7ea66c8d4d99ccbdf 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/machine/_types.h
+4470 36744761 1772770879000000000 949aced5a3cfa6f0fa96d108da8fbbcb 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/arm/_types.h
+3855 36747910 1772180865000000000 7467f0917aa71e1cac651040e542f212 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_pthread/_pthread_types.h
+1479 36747947 1772686271000000000 6899537e0b6178305cc8dcbe11818f4a 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types/_intptr_t.h
+1534 36747990 1772686270000000000 2db52f4d03b029ddabc39fb0764a4f17 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/sys/_types/_uintptr_t.h
+1579 36744497 1771712646000000000 753a1cd3d3d83456970bbda0024b8fc4 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/_types/_intmax_t.h
+1606 36744504 1771712646000000000 098b2b3553689506614b5ea7ff35f815 0 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/include/_types/_uintmax_t.h

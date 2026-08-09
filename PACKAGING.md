@@ -8,7 +8,7 @@ Where each surface is published, and what it takes.
 | Agent server | crates.io | **`ferrotherm-serve` 0.3.0** — published |
 | Python | PyPI | wheels build and pass; needs a Trusted Publisher configured once |
 | Julia | General | blocked on a `ferrotherm_jll`, see below |
-| Zig | package index | not started |
+| Zig | package index | `zig build test` builds the Rust library and runs 17 tests; not submitted |
 | Browser | Institute site | live, `scripts/publish-site-assets.sh` |
 
 ## The thing all of them share
@@ -35,9 +35,18 @@ Two things the default wheel tagging gets wrong, both fixed in `python/setup.py`
   an arm64-only dylib as `universal2` — a wheel that installs on an Intel Mac and fails at import.
   The build script reads the architecture out of the binary with `lipo` and passes `--plat-name`.
 
-`.github/workflows/python-release.yml` builds macOS arm64 and x86_64, Linux x86_64 (relabelled to
-`manylinux_2_17` by auditwheel, which has nothing to vendor because the crate has no dependencies),
-and Windows x86_64. Every wheel runs the self-containment check on its own runner before upload.
+`.github/workflows/python-release.yml` builds macOS arm64 and x86_64, Linux x86_64, and Windows
+x86_64. Every wheel runs the self-containment check on the platform it targets before upload.
+
+Linux gets its own job, inside a `manylinux_2_28` container. A `.so` built on the ubuntu-latest
+runner links that runner's glibc, and auditwheel can only relabel a wheel **down to a policy the
+binary already satisfies** — it refused ours outright:
+
+> cannot repair to `manylinux_2_17_x86_64` because of the presence of too-recent versioned
+> symbols. You'll need to compile the wheel on an older toolchain.
+
+So we compile on an older toolchain. glibc 2.28 is RHEL 8, which every current distribution
+satisfies.
 
 **To publish, once:** configure a PyPI Trusted Publisher. No API token goes in this repository —
 a token that leaks can publish anything, where a trusted publisher is bound to one workflow in one
@@ -66,6 +75,15 @@ opened.
 
 ## Zig
 
-Zig's package manager wants a `build.zig` and a `build.zig.zon` with a content hash of a release
-tarball. Not started. It has the same native-library question and the cleanest answer there is a
-`build.zig` that invokes cargo, since a Zig consumer already has a build step.
+`zig/build.zig` answers the native-library question by building it: `cargo build --release` is a
+build step, and the module links against what it produces with an rpath so the test binary starts
+without `LD_LIBRARY_PATH`. No prebuilt artefact to go stale, no environment variable, and the
+library always matches the source beside it.
+
+```
+zig build test          # builds the Rust library, then runs the binding's 17 tests
+zig build -Dcargo=false # link only, if you build the Rust side yourself
+```
+
+Not submitted anywhere. Zig's package index takes a URL and a content hash of a release tarball,
+which is a step to take once the tags settle.

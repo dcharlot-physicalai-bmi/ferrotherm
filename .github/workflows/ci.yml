@@ -72,19 +72,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - name: Build the library the binding loads
-        run: cargo build --release
+      # `zig build test` runs cargo itself and links with an rpath, so there is one command here
+      # rather than a hand-written link line that can drift from what a consumer would use.
       - name: Zig tests
-        run: |
-          set -x
-          ls -la target/release/libferrotherm.* || true
-          # Build and run as separate steps so a link-time problem is distinguishable from a
-          # runtime one: a test that segfaults at address 0 is calling through a symbol that never
-          # resolved, and `ldd` is what says so.
-          zig test zig/ferrotherm.zig -I include -L target/release -lferrotherm -lc \
-            -rpath "$PWD/target/release" -femit-bin=/tmp/zigtest --test-no-exec
-          ldd /tmp/zigtest || true
-          LD_LIBRARY_PATH="$PWD/target/release" /tmp/zigtest
+        working-directory: zig
+        run: zig build test --summary all
 
   julia:
     runs-on: ubuntu-latest
