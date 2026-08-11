@@ -69,9 +69,39 @@ export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
 
 const LIB = Ref{String}("")
 
+"""
+The artifact shipped by `ferrotherm_jll`, if that package is installed.
+
+A soft dependency on purpose. Making it a hard one would mean `Ferrotherm` could not be installed
+without a registry carrying both, and the package is useful today from a repository URL. When the
+JLL is present it is the right answer and comes first; when it is not, the search below still finds
+a library built from a checkout.
+"""
+function _jll_library()
+    id = Base.identify_package("ferrotherm_jll")
+    id === nothing && return nothing
+    m = try
+        Base.require(id)
+    catch
+        return nothing
+    end
+    p = try
+        getproperty(m, :libferrotherm)[]
+    catch
+        return nothing
+    end
+    return isempty(p) ? nothing : p
+end
+
 function _candidates()
     out = String[]
+    # An explicit override wins over everything, including the JLL: someone who set this is
+    # debugging a specific build and must get that build.
     haskey(ENV, "FERROTHERM_LIB") && push!(out, ENV["FERROTHERM_LIB"])
+    # Then the artifact, if ferrotherm_jll is installed. This is the path an ordinary install takes.
+    let jll = _jll_library()
+        jll === nothing || push!(out, jll)
+    end
     name = Sys.iswindows() ? "ferrotherm.dll" : (Sys.isapple() ? "libferrotherm.dylib" : "libferrotherm.so")
     # a checkout being developed against: julia/Ferrotherm/src -> ../../../target/release
     root = normpath(joinpath(@__DIR__, "..", "..", ".."))

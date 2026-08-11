@@ -8,7 +8,10 @@
 # Publishing uses PyPI Trusted Publishing (OIDC). There is no API token in this repository's
 # secrets and there should not be: a token that leaks can publish anything, where a trusted
 # publisher is bound to this workflow in this repository.
-name: python-release
+# The FILENAME is load-bearing: PyPI's Trusted Publisher is bound to `python-release.yml` in this
+# repository, and renaming this file would make PyPI reject the OIDC token with an error about a
+# workflow it has never heard of. It builds the Julia artifacts too, despite the name.
+name: release
 
 on:
   push:
@@ -93,6 +96,19 @@ jobs:
           PY
           python -m pytest -q test_model.py
 
+      - name: Stage the library for the Julia artifact
+        shell: bash
+        run: |
+          mkdir -p julia-staging
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin)  cp target/${{ matrix.target }}/release/libferrotherm.dylib julia-staging/ ;;
+            x86_64-pc-windows-msvc) cp target/${{ matrix.target }}/release/ferrotherm.dll julia-staging/ ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ matrix.name }}
+          path: julia-staging/*
+
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.name }}
@@ -166,6 +182,73 @@ jobs:
         with:
           name: wheel-linux-x86_64
           path: python/dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lib-linux-x86_64
+          path: target/release/libferrotherm.so
+
+  # Julia has no wheels. A package needing a native library depends on a JLL, which carries prebuilt
+  # binaries per platform. The usual route is a recipe submitted to Yggdrasil and built by other
+  # people; this builds our own, out of the same libraries the wheels above already produced.
+  #
+  # Artifacts.toml names each tarball by URL AND by hash, so Julia refuses anything that does not
+  # match. The hash lives in the package and only the bytes live on the release, which makes a
+  # self-hosted artifact exactly as trustworthy as a registry-hosted one.
+  julia-artifacts:
+    needs: [wheels, linux-wheel]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lib-*
+          path: libs
+          merge-multiple: false
+
+      - name: Build the artifacts and their manifest
+        shell: bash
+        run: |
+          ls -R libs
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "FERROTHERM_VERSION=$VERSION" >> $GITHUB_ENV
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$VERSION"
+          FERROTHERM_VERSION=$VERSION julia scripts/build-julia-artifacts.jl dist "$BASE" \
+            aarch64-apple-darwin=libs/lib-macos-arm64/libferrotherm.dylib \
+            x86_64-linux-gnu=libs/lib-linux-x86_64/libferrotherm.so \
+            x86_64-w64-mingw32=libs/lib-windows-x86_64/ferrotherm.dll
+          cp dist/Artifacts.toml julia/ferrotherm_jll/Artifacts.toml
+          ls -la dist/
+
+      - name: The JLL must load what it names
+        run: |
+          cd julia/ferrotherm_jll
+          # The URLs point at a release that does not exist until this run publishes one, so serve
+          # the tarballs locally and check the hashes and the load path against those.
+          python3 -m http.server 8791 --directory ../../dist &
+          sleep 2
+          sed -i "s|https://github.com/[^/]*/[^/]*/releases/download/v[^/]*|http://localhost:8791|" Artifacts.toml
+          julia --project=. -e '
+            using Pkg; Pkg.instantiate()
+            using ferrotherm_jll, Libdl
+            p = ferrotherm_jll.libferrotherm[]
+            isempty(p) && error("the JLL resolved no library on this platform")
+            h = Libdl.dlopen(p)
+            m = ccall(Libdl.dlsym(h, :ft_onsager), Cdouble, (Cdouble,), 0.5)
+            println("onsager(0.5) = ", m)
+            abs(m - 0.911319377877496) < 1e-12 || error("the artifact is not the library we built")
+            println("the JLL loads the library it names")'
+          git checkout Artifacts.toml 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: julia-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/Artifacts.toml
 
   publish:
     needs: [wheels, linux-wheel]

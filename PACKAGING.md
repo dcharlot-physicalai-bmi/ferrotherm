@@ -7,7 +7,7 @@ Where each surface is published, and what it takes.
 | Rust library | crates.io | **`ferrotherm` 0.7.0** — published |
 | Agent server | crates.io | **`ferrotherm-serve` 0.3.0** — published |
 | Python | PyPI | wheels build and pass; needs a Trusted Publisher configured once |
-| Julia | General | blocked on a `ferrotherm_jll`, see below |
+| Julia | our own artifacts | `ferrotherm_jll` built and loading; registry is the open question |
 | Zig | package index | `zig build test` builds the Rust library and runs 17 tests; not submitted |
 | Browser | Institute site | live, `scripts/publish-site-assets.sh` |
 
@@ -35,8 +35,11 @@ Two things the default wheel tagging gets wrong, both fixed in `python/setup.py`
   an arm64-only dylib as `universal2` — a wheel that installs on an Intel Mac and fails at import.
   The build script reads the architecture out of the binary with `lipo` and passes `--plat-name`.
 
-`.github/workflows/python-release.yml` builds macOS arm64 and x86_64, Linux x86_64, and Windows
-x86_64. Every wheel runs the self-containment check on the platform it targets before upload.
+`.github/workflows/python-release.yml` builds macOS arm64, Linux x86_64, and Windows x86_64.
+
+Its filename is load-bearing. PyPI's Trusted Publisher is bound to `python-release.yml` in this
+repository, so renaming the file makes PyPI reject the OIDC token with an error about a workflow it
+has never heard of. It builds the Julia artifacts as well, despite the name. Every wheel runs the self-containment check on the platform it targets before upload.
 
 **Verified.** A build-only run produced all three wheels, each carrying its library and tagged for
 exactly where it runs:
@@ -67,24 +70,44 @@ repository. See the checklist at the end.
 
 ## Julia
 
-Blocked, and the blocker is real rather than procedural.
+Julia has no wheels. A package needing a native library depends on a **JLL**: a package carrying
+prebuilt binaries per platform, which hands you a path.
 
-General's AutoMerge **tests that the package can be imported** on a clean machine. `Ferrotherm.jl`'s
-`__init__` searches for the native library and calls `error(...)` when it finds none, so
-`using Ferrotherm` fails there and registration is refused.
+The usual route to one is a recipe submitted to
+[Yggdrasil](https://github.com/JuliaPackaging/Yggdrasil), built and reviewed by other people. We
+build our own instead, out of the same CI job that builds the Python wheels, because the whole
+point of this stack is that we own every layer of it.
 
-The standard answer is a **JLL package**: `ferrotherm_jll`, built by
-[Yggdrasil](https://github.com/JuliaPackaging/Yggdrasil), which cross-compiles the cdylib for every
-platform Julia supports and ships it as an artifact. `Ferrotherm.jl` then depends on it and
-`using Ferrotherm` works everywhere with nothing installed by hand.
+Nothing about that requires BinaryBuilder. A `git-tree-sha1` and a `sha256` are computable with
+stock Julia, and Rust already cross-compiles, so `scripts/build-julia-artifacts.jl` takes the
+libraries the wheel jobs already produced, tars each one, hashes it, and writes the
+`Artifacts.toml` that names them.
 
-The alternative — softening `__init__` to a warning so the import succeeds — would register a
-package that installs cleanly and then fails at the first call. That is precisely the failure this
-project spent a week removing: a surface that looks fine and does nothing. Not doing that.
+**Self-hosting costs nothing in trust.** `Artifacts.toml` names each tarball by URL *and by hash*,
+and Julia refuses anything that does not match. The hash lives in the package; only the bytes live
+on the release. That is the same guarantee a registry-hosted artifact gives.
 
-Building the JLL means a pull request to Yggdrasil, a third-party repository. That is a decision
-for the Institute to make and not one to take unilaterally, so it is written down here rather than
-opened.
+The release job proves the artifact is the library it claims before publishing anything: it serves
+the tarballs locally, loads the JLL against them, and calls `ft_onsager(0.5)`, requiring
+`0.911319377877496` — Onsager's closed form, to the last digit.
+
+`Ferrotherm.jl` uses the JLL when it is installed and falls back to a checkout otherwise, in this
+order: `FERROTHERM_LIB` (an explicit override always wins — someone who set it is debugging a
+specific build), then the artifact, then `target/release`. It is a **soft** dependency on purpose:
+a hard one would mean `Ferrotherm` could not be installed without a registry carrying both, and the
+package is useful today from a repository URL.
+
+### The open question
+
+One-step install (`Pkg.add("Ferrotherm")`) needs a registry, and a Julia registry must be the root
+of its own repository — it cannot live in a subdirectory of this one. So the choice is:
+
+- **Our own registry repo.** `Pkg.Registry.add("https://github.com/.../IPAIRegistry")` once, then
+  `Pkg.add("Ferrotherm")` forever. Entirely ours, no third party, no review queue.
+- **Leave it.** Users install from the URL, which works today and needs nothing.
+
+Not General: registering there means submitting to their AutoMerge, which is the same posture we
+declined for Yggdrasil.
 
 ## Zig
 

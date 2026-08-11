@@ -1,0 +1,19 @@
+# This file is machine-generated - editing it directly is not advised
+
+julia_version = "1.12.6"
+manifest_format = "2.0"
+project_hash = "05a0a5841507f78de21f6213ba38aedc25898fdd"
+
+[[deps.Artifacts]]
+uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
+version = "1.11.0"
+
+[[deps.Libdl]]
+uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+version = "1.11.0"
+
+[[deps.ferrotherm_jll]]
+deps = ["Artifacts", "Libdl"]
+path = "."
+uuid = "5c1e9d38-7b04-4a6f-9e2d-3a8f1c60b74e"
+version = "0.7.0"
