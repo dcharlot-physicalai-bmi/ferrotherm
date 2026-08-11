@@ -64,10 +64,21 @@ impl Machine {
         }
     }
     fn coefficient_limit(self) -> f64 {
+        self.range().hi
+    }
+
+    /// What this machine can represent, in the shared vocabulary every fabric uses.
+    ///
+    /// The ASIC and the integer GPU take WHOLE NUMBERS; a bit count alone cannot say that, which is
+    /// why this is separate from `coupling_bits`. A program with `J = 0.5` is representable on
+    /// neither, and knowing that before submitting is the difference between a refused job and a
+    /// wrong answer.
+    fn range(self) -> ferrotherm::fabric::Range {
+        use ferrotherm::fabric::Range;
         match self {
-            Machine::Asic => 7.0,
-            Machine::GpuInt => 2_147_483_647.0,
-            Machine::GpuFloat => 3.402_823e38,
+            Machine::Asic => Range::integers(-7.0, 7.0),
+            Machine::GpuInt => Range::integers(-2_147_483_647.0, 2_147_483_647.0),
+            Machine::GpuFloat => Range::continuous(-3.402_823e38, 3.402_823e38),
         }
     }
 }
@@ -256,6 +267,8 @@ impl Device for Hitachi {
             field_bits: self.machine.coupling_bits(),
             supports_field: true,
             max_arity: 2,
+            coupling_range: Some(self.machine.range()),
+            field_range: Some(self.machine.range()),
             uniform_couplings: false,
             prices: Z1_SPICE,
         }

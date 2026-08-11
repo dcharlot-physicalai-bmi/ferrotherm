@@ -55,6 +55,10 @@ pub struct Fabric {
     pub supports_field: bool,
     /// Maximum factor arity. Two means pairwise only, which is most hardware.
     pub max_arity: usize,
+    /// What magnitudes a coupling may take, or `None` for unbounded.
+    pub coupling_range: Option<Range>,
+    /// What magnitudes a field may take, or `None` for unbounded.
+    pub field_range: Option<Range>,
     /// Whether every coupling must have the same weight.
     ///
     /// Set by fabrics that *count* active neighbours rather than summing weighted ones. It is a
@@ -63,6 +67,49 @@ pub struct Fabric {
     pub uniform_couplings: bool,
     /// Energy prices for the ledger.
     pub prices: Prices,
+}
+
+/// The magnitudes a coefficient may take on a fabric.
+///
+/// Every real annealer has one and they differ in kind, not just in width. D-Wave's couplings are
+/// continuous over `[-1, 1]`; Hitachi's CMOS ASIC stores four-bit integers over `-7..=7`. A program
+/// with `J = 0.5` fits the first exactly and does not fit the second at all.
+///
+/// This is separate from `coupling_bits`, which says how finely a value is stored. A bit count
+/// alone cannot distinguish `-7..=7` from a fixed-point fraction over `[-1, 1)`, and the difference
+/// decides whether a program has to be requantised or merely scaled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Range {
+    pub lo: f64,
+    pub hi: f64,
+    /// Whether only whole numbers in the range are representable.
+    pub integral: bool,
+}
+
+impl Range {
+    pub const fn continuous(lo: f64, hi: f64) -> Range {
+        Range { lo, hi, integral: false }
+    }
+    pub const fn integers(lo: f64, hi: f64) -> Range {
+        Range { lo, hi, integral: true }
+    }
+    pub fn holds(&self, v: f64) -> bool {
+        v >= self.lo && v <= self.hi && (!self.integral || v.fract() == 0.0)
+    }
+    /// The largest magnitude representable, which is what a scale factor is computed against.
+    pub fn reach(&self) -> f64 {
+        self.lo.abs().min(self.hi.abs())
+    }
+}
+
+impl core::fmt::Display for Range {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.integral {
+            write!(f, "the integers {}..={}", self.lo, self.hi)
+        } else {
+            write!(f, "[{}, {}]", self.lo, self.hi)
+        }
+    }
 }
 
 /// Why a program cannot run on a fabric.
@@ -76,6 +123,11 @@ pub enum Unsupported {
     CouplingPrecision { bits: u32, worst_relative_error: f64 },
     /// The fabric counts neighbours rather than weighting them, so all couplings must be equal.
     NonUniformCouplings { distinct: usize },
+    /// A coefficient outside what the fabric can represent.
+    ///
+    /// Often fixable: see [`Fabric::scale_to_fit`], because scaling every coefficient by one factor
+    /// leaves the ground state exactly where it was.
+    OutOfRange { what: &'static str, value: f64, range: Range },
 }
 
 impl core::fmt::Display for Unsupported {
@@ -97,6 +149,11 @@ impl core::fmt::Display for Unsupported {
             Unsupported::NoFieldSupport { nodes } => write!(
                 f,
                 "{nodes} spins carry an external field and this fabric cannot apply one"
+            ),
+            Unsupported::OutOfRange { what, value, range } => write!(
+                f,
+                "a {what} of {value} is outside this fabric's {range}; scale the program to fit \
+                 (Fabric::scale_to_fit) or requantise it"
             ),
             Unsupported::NonUniformCouplings { distinct } => write!(
                 f,
@@ -127,6 +184,120 @@ impl Fabric {
             field_bits: None,
             supports_field: true,
             max_arity: usize::MAX,
+            coupling_range: None,
+            field_range: None,
+            uniform_couplings: false,
+            prices,
+        }
+    }
+
+    /// The factor that brings a program inside this fabric's ranges, if one exists.
+    ///
+    /// Multiply every coefficient by the result and the program fits. This is free for
+    /// **optimisation**: scaling every coupling and field by one positive number leaves the energy
+    /// ordering of states untouched, so the ground state is exactly where it was.
+    ///
+    /// It is **not** free for sampling. The Boltzmann distribution depends on `β·E`, so scaling `E`
+    /// by `s` and leaving `β` alone samples a different distribution — a hotter one for `s < 1`.
+    /// Divide `β` by `s` to compensate, and check the fabric can reach that `β` at all.
+    ///
+    /// Returns `None` when scaling cannot help: an integral range cannot represent a program whose
+    /// coefficients are not in a fixed ratio to each other, and shrinking to fit would collapse
+    /// small couplings to zero.
+    pub fn scale_to_fit(&self, p: &Program) -> Option<f64> {
+        let worst = |r: Option<Range>, vals: &mut dyn Iterator<Item = f64>| -> Option<f64> {
+            let r = r?;
+            let peak = vals.map(f64::abs).fold(0.0f64, f64::max);
+            if peak == 0.0 {
+                return Some(f64::INFINITY); // nothing to constrain
+            }
+            Some(r.reach() / peak)
+        };
+        let a = worst(
+            self.coupling_range,
+            &mut p.factors.iter().map(|f| f.weight()),
+        );
+        let b = worst(self.field_range, &mut p.bias.iter().map(|(_, h)| *h));
+        let s = match (a, b) {
+            (None, None) => return None, // no ranges to satisfy
+            (Some(x), None) | (None, Some(x)) => x,
+            (Some(x), Some(y)) => x.min(y),
+        };
+        if !s.is_finite() {
+            return Some(1.0); // an empty program already fits
+        }
+        // An integral range needs every scaled value to land on a whole number, which one factor
+        // cannot generally deliver. Say so rather than returning a factor that quietly rounds.
+        let integral = self.coupling_range.map(|r| r.integral).unwrap_or(false)
+            || self.field_range.map(|r| r.integral).unwrap_or(false);
+        if integral {
+            let lands = p
+                .factors
+                .iter()
+                .map(|f| f.weight())
+                .chain(p.bias.iter().map(|(_, h)| *h))
+                .all(|v| ((v * s).round() - v * s).abs() < 1e-9);
+            if !lands {
+                return None;
+            }
+        }
+        Some(s)
+    }
+
+    // ---- declared fabrics ---------------------------------------------------------------------
+    //
+    // A fabric can be DECLARED without being reachable, and that is most of the value: a caller can
+    // ask whether their program fits a machine before buying time on it, and the conformance suite
+    // can score any backend that claims to be one. Every number below is from the vendor's own
+    // published material, cited at the line that uses it. Where a vendor does not publish a limit,
+    // the field is `None` and this file says so rather than guessing — an invented limit is worse
+    // than an absent one, because it refuses programs that would have run.
+
+    /// D-Wave Advantage2 — Zephyr-12, generally available May 2025.
+    ///
+    /// 4,400+ qubits and 40,000+ couplers at 20-way connectivity
+    /// (<https://docs.dwavequantum.com/en/latest/quantum_research/topologies.html>, and D-Wave's
+    /// general-availability announcement). Couplings are continuous over `[-1, 1]` and fields over
+    /// `[-4, 4]` (`j_range`, `h_range` in the solver properties). `extended_j_range` reaches
+    /// `[-2, 1]` but needs flux-bias calibration per chain, so it is not the default here.
+    ///
+    /// This is a quantum annealer rather than a thermodynamic sampler: it minimises an Ising energy
+    /// and does not hold a temperature you set. It reads `.ftp` because the problem is the same
+    /// shape, and `Certificate` does not apply to it — there is no β it claims to have sampled at.
+    pub fn dwave_advantage2(prices: Prices) -> Fabric {
+        Fabric {
+            name: "dwave-advantage2",
+            topology: Topology::Degree(20),
+            max_spins: Some(4_400),
+            max_degree: Some(20),
+            // Analog, not quantised. The practical limit is integrated control error rather than a
+            // bit count, and D-Wave publishes no bit count, so claiming one would be an invention.
+            coupling_bits: None,
+            field_bits: None,
+            supports_field: true,
+            max_arity: 2,
+            coupling_range: Some(Range::continuous(-1.0, 1.0)),
+            field_range: Some(Range::continuous(-4.0, 4.0)),
+            uniform_couplings: false,
+            prices,
+        }
+    }
+
+    /// D-Wave Advantage — Pegasus, 5,640 qubits and 40,484 couplers at 15-way connectivity
+    /// (<https://docs.dwavequantum.com/en/latest/quantum_research/topologies.html>). More qubits
+    /// than Advantage2 and fewer couplers each, which is the trade the newer topology reverses.
+    pub fn dwave_advantage(prices: Prices) -> Fabric {
+        Fabric {
+            name: "dwave-advantage",
+            topology: Topology::Degree(15),
+            max_spins: Some(5_640),
+            max_degree: Some(15),
+            coupling_bits: None,
+            field_bits: None,
+            supports_field: true,
+            max_arity: 2,
+            coupling_range: Some(Range::continuous(-1.0, 1.0)),
+            field_range: Some(Range::continuous(-4.0, 4.0)),
             uniform_couplings: false,
             prices,
         }
@@ -176,6 +347,20 @@ impl Fabric {
 
         if !self.supports_field && !p.bias.is_empty() {
             out.push(Unsupported::NoFieldSupport { nodes: p.bias.len() });
+        }
+
+        // Report the WORST offender rather than every one. A program built by a loop violates a
+        // range in thousands of places for one reason, and a thousand identical findings buries the
+        // ones that differ.
+        if let Some(r) = self.coupling_range {
+            if let Some(w) = p.factors.iter().map(|f| f.weight()).find(|v| !r.holds(*v)) {
+                out.push(Unsupported::OutOfRange { what: "coupling", value: w, range: r });
+            }
+        }
+        if let Some(r) = self.field_range {
+            if let Some((_, h)) = p.bias.iter().find(|(_, h)| !r.holds(*h)) {
+                out.push(Unsupported::OutOfRange { what: "field", value: *h, range: r });
+            }
         }
 
         if self.uniform_couplings {
@@ -307,6 +492,213 @@ impl Device for Cpu {
 }
 
 #[cfg(test)]
+mod range_tests {
+    use super::*;
+    use crate::ledger::Z1_SPICE;
+
+    fn program(weights: &[f64], fields: &[(usize, f64)]) -> Program {
+        let mut src = format!("ftp 1\nspins {}\n", weights.len() + 1);
+        for (i, w) in weights.iter().enumerate() {
+            src.push_str(&format!("factor {w} {i} {}\n", i + 1));
+        }
+        for (i, h) in fields {
+            src.push_str(&format!("bias {i} {h}\n"));
+        }
+        Program::from_ftp(&src).unwrap()
+    }
+
+    #[test]
+    fn a_coupling_outside_the_range_is_named_with_the_range() {
+        // D-Wave's couplings live in [-1, 1]. A program written without that in mind is the common
+        // case, and "it failed" is not a useful thing to tell its author.
+        let f = Fabric::dwave_advantage2(Z1_SPICE);
+        let bad = f.check(&program(&[0.5, 3.0, -0.2], &[]));
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        let msg = bad[0].to_string();
+        assert!(msg.contains('3') && msg.contains("[-1, 1]"), "{msg}");
+
+        assert!(f.check(&program(&[0.5, -1.0, 0.25], &[])).is_empty(), "these all fit");
+    }
+
+    #[test]
+    fn a_field_has_its_own_wider_range() {
+        // h_range is [-4, 4] where j_range is [-1, 1]; a fabric that conflated them would refuse a
+        // field of 3 that the machine accepts.
+        let f = Fabric::dwave_advantage2(Z1_SPICE);
+        assert!(f.check(&program(&[0.5], &[(0, 3.0)])).is_empty(), "a field of 3 is fine");
+        let bad = f.check(&program(&[0.5], &[(0, 9.0)]));
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(bad[0].to_string().contains("field"), "{}", bad[0]);
+    }
+
+    #[test]
+    fn an_integral_range_refuses_what_a_continuous_one_accepts() {
+        // The distinction a bit count cannot make. J = 0.5 is representable on D-Wave and on no
+        // machine that stores whole numbers, however many bits it has.
+        let half = program(&[0.5], &[]);
+        assert!(Fabric::dwave_advantage2(Z1_SPICE).check(&half).is_empty());
+
+        let mut integral = Fabric::unconstrained("integral", Z1_SPICE);
+        integral.coupling_range = Some(Range::integers(-7.0, 7.0));
+        let bad = integral.check(&half);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(bad[0].to_string().contains("integers -7..=7"), "{}", bad[0]);
+    }
+
+    #[test]
+    fn scaling_makes_a_program_fit_and_leaves_the_ground_state_where_it_was() {
+        let f = Fabric::dwave_advantage2(Z1_SPICE);
+        let p = program(&[2.0, -5.0, 1.0], &[(0, 8.0)]);
+        assert!(!f.check(&p).is_empty(), "it does not fit as written");
+
+        let s = f.scale_to_fit(&p).expect("scaling should help here");
+        // the field is 8 against a reach of 4, the worst coupling 5 against a reach of 1: the
+        // coupling binds, so 1/5
+        assert!((s - 0.2).abs() < 1e-12, "{s}");
+
+        // and the scaled program really does fit
+        let scaled = program(&[2.0 * s, -5.0 * s, 1.0 * s], &[(0, 8.0 * s)]);
+        assert!(f.check(&scaled).is_empty(), "{:?}", f.check(&scaled));
+
+        // The ground state is unchanged, which is what makes scaling free for OPTIMISATION. Every
+        // state's energy is multiplied by the same positive number, so their order is identical.
+        let exact = crate::exact::Elimination::default();
+        let a = exact.ground_state(&p.to_graph().unwrap()).unwrap();
+        let b = exact.ground_state(&scaled.to_graph().unwrap()).unwrap();
+        assert_eq!(a.ground_state, b.ground_state, "scaling must not move the optimum");
+        let (ea, eb) = (a.ground_energy.unwrap(), b.ground_energy.unwrap());
+        assert!((eb - ea * s).abs() < 1e-9, "and the energy scales exactly: {ea} {eb} {s}");
+    }
+
+    #[test]
+    fn scaling_moves_the_distribution_unless_beta_compensates() {
+        // The caveat on `scale_to_fit`, measured rather than asserted. Scaling is free for
+        // OPTIMISATION -- the previous test shows the ground state does not move -- and it is not
+        // free for SAMPLING, because the Boltzmann weight depends on the product beta*E. Scaling E
+        // by s and leaving beta alone samples a hotter distribution.
+        let mut b = crate::graph::GraphBuilder::new(6);
+        for i in 0..5 {
+            b.couple(i, i + 1, if i % 2 == 0 { 1.0 } else { -0.7 });
+        }
+        b.set_bias(0, 0.4);
+        let g = b.build();
+
+        let s = 0.25;
+        let mut sb = crate::graph::GraphBuilder::new(g.n);
+        for i in 0..g.n {
+            for k in g.offset[i]..g.offset[i + 1] {
+                let j = g.nbr[k] as usize;
+                if i < j {
+                    sb.couple(i, j, g.w[k] * s);
+                }
+            }
+            sb.set_bias(i, g.h[i] * s);
+        }
+        let scaled = sb.build();
+
+        let beta = 1.2;
+        let tv = |a: &[f64], b: &[f64]| -> f64 {
+            0.5 * a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>()
+        };
+        let want = crate::ising::exact_boltzmann(&g, beta);
+        let same_beta = crate::ising::exact_boltzmann(&scaled, beta);
+        let fixed_beta = crate::ising::exact_boltzmann(&scaled, beta / s);
+
+        let drift = tv(&want, &same_beta);
+        let corrected = tv(&want, &fixed_beta);
+        assert!(drift > 0.2, "scaling really does move the distribution: TV {drift:.4}");
+        assert!(
+            corrected < 1e-12,
+            "and dividing beta by the same factor puts it back exactly: TV {corrected:.2e}"
+        );
+    }
+
+    #[test]
+    fn scaling_is_free_for_optimisation_and_is_not_free_for_sampling() {
+        // The caveat on `scale_to_fit`, measured rather than asserted. Scaling every coefficient by
+        // s multiplies every state's energy by s, which leaves their ORDER alone -- so the optimum
+        // does not move. The Boltzmann weight is exp(-beta*E), so the same scaling at the same beta
+        // is a different distribution, and a caller who scales to fit a fabric and then samples has
+        // silently asked a different question.
+        let s = 0.25;
+        let base = crate::ising::ring(8, 1.0, 0.3);
+        let mut b = crate::graph::GraphBuilder::new(base.n);
+        for i in 0..base.n {
+            for k in base.offset[i]..base.offset[i + 1] {
+                let j = base.nbr[k] as usize;
+                if j > i {
+                    b.couple(i, j, base.w[k] * s);
+                }
+            }
+            b.set_bias(i, base.h[i] * s);
+        }
+        let scaled = b.build();
+
+        let beta = 1.0;
+        let exact_of = |g: &crate::graph::Graph, beta: f64| crate::ising::exact_boltzmann(g, beta);
+        let tv = |a: &[f64], b: &[f64]| {
+            a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>() / 2.0
+        };
+
+        let p0 = exact_of(&base, beta);
+        let same_beta = exact_of(&scaled, beta);
+        let compensated = exact_of(&scaled, beta / s);
+
+        let drift = tv(&p0, &same_beta);
+        let fixed = tv(&p0, &compensated);
+        assert!(drift > 0.1, "scaling at a fixed beta really does move the distribution: {drift}");
+        assert!(fixed < 1e-12, "and dividing beta by s puts it back exactly: {fixed}");
+
+        // The optimum, meanwhile, has not moved at all.
+        let exact = crate::exact::Elimination::default();
+        assert_eq!(
+            exact.ground_state(&base).unwrap().ground_state,
+            exact.ground_state(&scaled).unwrap().ground_state,
+            "the same state minimises both"
+        );
+    }
+
+    #[test]
+    fn scaling_is_refused_when_it_cannot_land_on_whole_numbers() {
+        // The honest failure. An integral fabric and a program whose couplings are not in a fixed
+        // ratio cannot both be satisfied by one factor, and a factor that quietly rounded would
+        // change the problem rather than move it.
+        let mut f = Fabric::unconstrained("integral", Z1_SPICE);
+        f.coupling_range = Some(Range::integers(-7.0, 7.0));
+        assert_eq!(f.scale_to_fit(&program(&[1.0, 3.7], &[])), None, "3.7 lands nowhere");
+        // but a program already on whole numbers scales cleanly
+        assert_eq!(f.scale_to_fit(&program(&[2.0, 14.0], &[])), Some(0.5));
+    }
+
+    #[test]
+    fn a_fabric_with_no_range_declares_none_rather_than_a_guess() {
+        // An invented limit is worse than an absent one: it refuses programs that would have run.
+        let f = Fabric::unconstrained("sim", Z1_SPICE);
+        assert_eq!(f.coupling_range, None);
+        assert!(f.check(&program(&[1e9], &[])).is_empty(), "a simulator has no range to violate");
+        assert_eq!(f.scale_to_fit(&program(&[1e9], &[])), None, "and nothing to scale toward");
+    }
+
+    #[test]
+    fn the_declared_fabrics_match_their_published_specifications() {
+        // These numbers come from D-Wave's own documentation and are cited at their definitions.
+        // The test exists so that changing one is a deliberate act with a diff, not a drift.
+        let a2 = Fabric::dwave_advantage2(Z1_SPICE);
+        assert_eq!(a2.max_spins, Some(4_400), "Zephyr-12, 4,400+ qubits");
+        assert_eq!(a2.max_degree, Some(20), "20-way connectivity");
+        assert_eq!(a2.coupling_range, Some(Range::continuous(-1.0, 1.0)), "j_range");
+        assert_eq!(a2.field_range, Some(Range::continuous(-4.0, 4.0)), "h_range");
+        assert_eq!(a2.coupling_bits, None, "D-Wave publishes no bit count; claiming one invents it");
+
+        let a1 = Fabric::dwave_advantage(Z1_SPICE);
+        assert_eq!(a1.max_spins, Some(5_640), "Pegasus, 5,640 qubits");
+        assert_eq!(a1.max_degree, Some(15), "15-way connectivity");
+        assert!(a1.max_spins > a2.max_spins && a1.max_degree < a2.max_degree,
+                "Advantage has more qubits and fewer couplers each; Advantage2 reverses the trade");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ledger::Z1_SPICE;
@@ -327,6 +719,8 @@ mod tests {
             field_bits: Some(8),
             supports_field: false,
             max_arity: 2,
+            coupling_range: None,
+            field_range: None,
             uniform_couplings: false,
             prices: Z1_SPICE,
         }

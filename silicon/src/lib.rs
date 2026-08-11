@@ -66,6 +66,12 @@ pub mod device {
                 field_bits: Some(3),
                 supports_field: true,
                 max_arity: 2,
+                // The fabric COUNTS active neighbours against a threshold rather than summing
+                // weighted ones, so a coupling is present or absent -- ±1 and nothing between.
+                // `uniform_couplings` says the same thing in another way; both are declared because
+                // a caller checking one should not have to know to check the other.
+                coupling_range: Some(ferrotherm::fabric::Range::integers(-1.0, 1.0)),
+                field_range: Some(ferrotherm::fabric::Range::integers(0.0, 6.0)),
                 uniform_couplings: true,
                 prices: Z1_SPICE,
             }
