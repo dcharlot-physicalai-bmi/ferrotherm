@@ -4,12 +4,28 @@ Where each surface is published, and what it takes.
 
 | surface | registry | state |
 |---|---|---|
-| Rust library | crates.io | **`ferrotherm` 0.7.0** — published |
+| Rust library | crates.io | **`ferrotherm` 0.7.0** — published; `main` is ahead, see below |
 | Agent server | crates.io | **`ferrotherm-serve` 0.3.0** — published |
 | Python | PyPI | wheels build and pass; needs a Trusted Publisher configured once |
 | Julia | our own artifacts | `ferrotherm_jll` built and loading; registry is the open question |
 | Zig | package index | `zig build test` builds the Rust library and runs 17 tests; not submitted |
 | Browser | Institute site | live, `scripts/publish-site-assets.sh` |
+
+## The registry is deliberately behind `main`
+
+`main` carries a **breaking** change to the public API since 0.7.0 — `Fabric::coupling_bits`
+(`Option<u32>`) became `coupling_precision` (`Precision`), `Fabric` gained `coupling_range`,
+`field_range` and `native_placement`, `Unsupported` gained variants, and `Fabric::verdict` is new.
+That is a 0.8.0.
+
+It is **not** cut yet, on purpose (Dean, 2026-08-11): the fabric API is still moving, and two
+breaking releases a week apart are worse for anyone depending on this than one release after it
+settles. Everything is ready when it is — versions agree across all five files, the wheel matrix
+builds, Trusted Publishing is configured, and a tag is the whole procedure.
+
+Consequence to keep in mind while it holds: `cargo add ferrotherm` gives an API that no longer
+matches this repository's source or docs.rs. Anyone told to use the crate today should be pointed
+at the git dependency instead.
 
 ## The thing all of them share
 
