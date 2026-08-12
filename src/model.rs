@@ -180,6 +180,14 @@ impl Expr {
     pub fn pair(c: f64, a: Lit, b: Lit) -> Expr {
         Expr { terms: vec![Term { coeff: c, lits: vec![a, b] }], constant: 0.0 }
     }
+    /// `c · l₁ · l₂ · … · lₖ`, for any number of literals.
+    ///
+    /// Three or more needs [`crate::reduce`], which the compiler applies for you and charges in
+    /// ancilla spins. `Compiled::ancillas` says how many; the pass's own docs say what it costs at
+    /// finite temperature.
+    pub fn product(c: f64, lits: &[Lit]) -> Expr {
+        Expr { terms: vec![Term { coeff: c, lits: lits.to_vec() }], constant: 0.0 }
+    }
     /// Add another expression.
     pub fn plus(mut self, other: Expr) -> Expr {
         self.terms.extend(other.terms);
@@ -664,22 +672,62 @@ impl Model {
 
         // The objective is already stored as "minimise this": `Model::objective` folded the sense
         // in when each term arrived, so there is nothing left to decide here.
-        if self.objective.max_degree() > 2 {
-            return Err(CompileError::DegreeTooHigh { degree: self.objective.max_degree() });
-        }
+        // A term of three or more literals does not fit a pairwise graph, so it is collected here
+        // and lowered by `crate::reduce` below. This used to refuse outright, which was right when
+        // there was no pass to apply.
+        let mut higher: Vec<(Vec<usize>, f64)> = Vec::new();
         for t in &self.objective.terms {
             let parts: Result<Vec<LinSpin>, CompileError> =
                 t.lits.iter().map(|l| self.linearise(&slots, *l)).collect();
             let parts = parts?;
             match parts.len() {
+                0 => {}
                 1 => add_linear(&mut b, &parts[0], t.coeff),
                 2 => add_product(&mut b, &parts[0], &parts[1], t.coeff),
-                d => return Err(CompileError::DegreeTooHigh { degree: d }),
+                d => {
+                    if d > crate::reduce::MAX_ARITY {
+                        return Err(CompileError::DegreeTooHigh { degree: d });
+                    }
+                    // Each literal is a linear function of spins, so their product expands into
+                    // spin monomials. Whatever lands at degree 0, 1 or 2 goes straight into the
+                    // graph; only what is genuinely wider costs an ancilla.
+                    for (vars, c) in Self::expand_product(&parts, t.coeff) {
+                        match vars.len() {
+                            0 => {}
+                            1 => b.bias(vars[0], -c),
+                            2 => b.couple(vars[0], vars[1], -c),
+                            _ => higher.push((vars, c)),
+                        }
+                    }
+                }
             }
         }
 
         let graph = b.build();
-        let mut program = Program::from_graph(&graph, &Schedule::geometric(0.05, 6.0, 80, 40));
+
+        // Lower whatever stayed wider than two, and take the reduced graph in its place.
+        let sched = Schedule::geometric(0.05, 6.0, 80, 40);
+        let (graph, ancillas) = if higher.is_empty() {
+            (graph, 0)
+        } else {
+            let mut p = Program::from_graph(&graph, &sched);
+            for (vars, c) in &higher {
+                // A Program factor contributes `-w · ∏s`, so the sign flips going in.
+                p.factors.push(
+                    crate::factor::Factor::new(vars, -c, graph.n)
+                        .map_err(|_| CompileError::DegreeTooHigh { degree: vars.len() })?,
+                );
+            }
+            let r = crate::reduce::to_pairwise(&p)
+                .map_err(|_| CompileError::DegreeTooHigh { degree: self.objective.max_degree() })?;
+            let g = r
+                .program
+                .to_graph()
+                .map_err(|_| CompileError::DegreeTooHigh { degree: 3 })?;
+            (g, r.ancillas)
+        };
+
+        let mut program = Program::from_graph(&graph, &sched);
         program.encodings = slots
             .iter()
             .map(|s| EncodedVar { base: s.base, k: s.k, encoding: s.encoding })
@@ -688,6 +736,7 @@ impl Model {
         Ok(Compiled {
             program,
             graph,
+            ancillas,
             // only the user's variables are reported; slack is an artefact of the lowering
             slots: slots[..user_count].to_vec(),
             all_slots: slots,
@@ -695,6 +744,46 @@ impl Model {
             domains: self.decls.iter().map(|d| d.domain).collect(),
             constraints: self.constraints.iter().map(|(c, _)| c.clone()).collect(),
         })
+    }
+
+    /// The product of several linear spin functions, as spin monomials.
+    ///
+    /// Each part is `offset + Σ cᵢ sᵢ`, so the product is a sum over every way of picking one piece
+    /// from each. A spin appearing an even number of times cancels — `sᵢ² = 1` — which is why the
+    /// accumulator applies a parity rule rather than keeping every occurrence.
+    fn expand_product(parts: &[LinSpin], coeff: f64) -> Vec<(Vec<usize>, f64)> {
+        let mut acc: BTreeMap<Vec<usize>, f64> = BTreeMap::new();
+        let mut stack: Vec<(usize, Vec<usize>, f64)> = vec![(0, Vec::new(), coeff)];
+        while let Some((i, vars, c)) = stack.pop() {
+            if c == 0.0 {
+                continue;
+            }
+            if i == parts.len() {
+                let mut v = vars;
+                v.sort_unstable();
+                let mut collapsed = Vec::new();
+                let mut k = 0;
+                while k < v.len() {
+                    let run = v[k..].iter().take_while(|x| **x == v[k]).count();
+                    if run % 2 == 1 {
+                        collapsed.push(v[k]);
+                    }
+                    k += run;
+                }
+                *acc.entry(collapsed).or_insert(0.0) += c;
+                continue;
+            }
+            let p = &parts[i];
+            if p.offset != 0.0 {
+                stack.push((i + 1, vars.clone(), c * p.offset));
+            }
+            for (idx, w) in &p.terms {
+                let mut next = vars.clone();
+                next.push(*idx);
+                stack.push((i + 1, next, c * w));
+            }
+        }
+        acc.into_iter().filter(|(_, c)| *c != 0.0).collect()
     }
 
     /// A literal as a linear function of spins: `offset + Σ cᵢ sᵢ`.
@@ -875,6 +964,12 @@ pub struct Compiled {
     pub all_slots: Vec<Slot>,
     names: Vec<String>,
     domains: Vec<Domain>,
+    /// Spins the higher-order reduction added, if any.
+    ///
+    /// They sit after every declared variable and after any slack, and the decoder never reports
+    /// them: an ancilla's value is an artefact of the lowering. Exposed because the count is the
+    /// price of writing a term wider than two.
+    pub ancillas: usize,
     /// Kept so a decoded answer can be CHECKED, not just read.
     ///
     /// A penalty makes a constraint expensive, not impossible. The sampler is free to pay it, and
@@ -1676,6 +1771,95 @@ mod tests {
         };
         assert_eq!(solve(true), (3, 1), "operators should pick the rewarded values");
         assert_eq!(solve(true), solve(false), "sugar and builder must agree exactly");
+    }
+
+    #[test]
+    fn a_cubic_objective_compiles_and_finds_the_right_answer() {
+        // The modelling layer refused this outright until the reduction existed. It is the shape of
+        // "these three must agree", which is not exotic.
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        let c = m.categorical("c", 3);
+        m.objective(Sense::Maximize, Expr::product(9.0, &[a.is(2), b.is(2), c.is(2)]));
+        let compiled = m.compile().unwrap();
+        assert!(compiled.ancillas > 0, "a three-body term costs ancillas");
+
+        let s = compiled.solve_best_of(24);
+        assert_eq!((s.value("a"), s.value("b"), s.value("c")), (2, 2, 2), "{s}");
+        assert!(s.feasible(), "{s}");
+    }
+
+    #[test]
+    fn the_cubic_term_itself_decides_the_answer() {
+        // Isolating the thing under test. A one-hot indicator is `0.5 + 0.5·s`, so three of them
+        // expand to eight monomials of which ONE is cubic -- and the other seven decide the answer
+        // on their own. A first version of this flipped the cubic term's sign and saw no change,
+        // which said nothing about the cubic term and everything about the remnants.
+        //
+        // A spin literal has no offset, so a product of three is exactly one cubic monomial.
+        let run = |sense: Sense| {
+            let mut m = Model::new();
+            let a = m.spin("a");
+            let b = m.spin("b");
+            let c = m.spin("c");
+            m.objective(sense, Expr::product(1.0, &[a.spin(), b.spin(), c.spin()]));
+            let comp = m.compile().unwrap();
+            assert!(comp.ancillas > 0, "a pure three-body term needs an ancilla");
+            let s = comp.solve_best_of(32);
+            s.value("a") * s.value("b") * s.value("c")
+        };
+        assert_eq!(run(Sense::Maximize), 1, "maximising the product puts it at +1");
+        assert_eq!(run(Sense::Minimize), -1, "and minimising it at -1");
+    }
+
+    #[test]
+    fn a_spin_squared_is_one_and_expresses_no_preference() {
+        // `s² = 1`, so a term over the same spin twice is a CONSTANT and says nothing about which
+        // way that spin should go. Collapsing it to `s` instead turns a constant into a preference,
+        // silently, and here strongly enough to overrule the only real one in the model.
+        let mut m = Model::new();
+        let a = m.spin("a");
+        m.objective(Sense::Maximize, Expr::product(50.0, &[a.spin(), a.spin()]));
+        m.objective(Sense::Minimize, 1.0 * a.spin());
+        let c = m.compile().unwrap();
+        assert_eq!(c.ancillas, 0, "s·s is not even a two-body term");
+        assert_eq!(c.solve_best_of(16).value("a"), -1, "the constant must not outvote it");
+    }
+
+    #[test]
+    fn an_ancilla_never_appears_in_the_answer() {
+        let mut m = Model::new();
+        let vs: Vec<Var> = (0..3).map(|i| m.binary(&format!("v{i}"))).collect();
+        m.objective(Sense::Maximize, Expr::product(5.0, &[vs[0].is(1), vs[1].is(1), vs[2].is(1)]));
+        let c = m.compile().unwrap();
+        assert!(c.ancillas > 0);
+        let s = c.solve_best_of(16);
+        let names: Vec<&String> = s.iter().map(|(k, _)| k).collect();
+        assert_eq!(names.len(), 3, "only the declared variables: {names:?}");
+    }
+
+    #[test]
+    fn a_cubic_objective_agrees_with_exhaustive_search() {
+        // Enumerate every assignment of the declared variables, score it against the objective as
+        // WRITTEN, and require the compiled model's answer to be one of the maximisers.
+        let mut m = Model::new();
+        let vs: Vec<Var> = (0..4).map(|i| m.spin(&format!("v{i}"))).collect();
+        m.objective(Sense::Maximize, Expr::product(6.0, &[vs[0].spin(), vs[1].spin(), vs[2].spin()]));
+        m.objective(Sense::Minimize, 2.0 * vs[3].spin());
+        m.objective(Sense::Minimize, 1.0 * vs[0].spin());
+        let c = m.compile().unwrap();
+        let s = c.solve_best_of(48);
+
+        let score = |x: &[i64]| 6.0 * (x[0] * x[1] * x[2]) as f64 - 2.0 * x[3] as f64 - x[0] as f64;
+        let mut best = f64::NEG_INFINITY;
+        for mask in 0..16u32 {
+            let x: Vec<i64> =
+                (0..4).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            best = best.max(score(&x));
+        }
+        let got: Vec<i64> = (0..4).map(|i| s.value(&format!("v{i}"))).collect();
+        assert_eq!(score(&got), best, "compiled answer {got:?} against exhaustive best {best}");
     }
 
     #[test]
