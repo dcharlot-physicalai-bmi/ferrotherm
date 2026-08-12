@@ -12,8 +12,11 @@ acw_token*
 # they must never reach a commit. Named so they cannot be confused with the real probe examples
 # (certify_probe, encoding_probe, ...) which are checked in on purpose.
 zz_*
+tmp_*
 **/audit_*.rs
 **/*_audit_*.rs
+**/*_probe_*.rs
+**/*_refute*.rs
 
 # npm's install tree for the browser tests. `npm install` recreates it from package-lock.json, and
 # committing it once put 181 files and 15 MB into both the repository and the published crate.

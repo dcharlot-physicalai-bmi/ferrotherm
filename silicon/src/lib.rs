@@ -70,6 +70,8 @@ pub mod device {
                 // weighted ones, so a coupling is present or absent -- ±1 and nothing between.
                 // `uniform_couplings` says the same thing in another way; both are declared because
                 // a caller checking one should not have to know to check the other.
+                // One LUT per spin, addressed directly. Nothing is embedded.
+                native_placement: true,
                 coupling_range: Some(ferrotherm::fabric::Range::integers(-1.0, 1.0)),
                 field_range: Some(ferrotherm::fabric::Range::integers(0.0, 6.0)),
                 uniform_couplings: true,

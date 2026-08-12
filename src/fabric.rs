@@ -59,6 +59,17 @@ pub struct Fabric {
     pub coupling_range: Option<Range>,
     /// What magnitudes a field may take, or `None` for unbounded.
     pub field_range: Option<Range>,
+    /// Whether a program's variables map one-to-one onto the machine's sites.
+    ///
+    /// False for every annealer whose hardware graph is not complete. There, a variable with more
+    /// neighbours than the topology allows becomes a CHAIN of physical sites held together by
+    /// strong couplings — minor embedding — and the number of sites a program needs is not its
+    /// variable count. A fully connected problem on a 5,640-qubit Pegasus reaches nowhere near
+    /// 5,640 variables.
+    ///
+    /// It changes what [`Fabric::check`] can honestly say. Passing means "nothing here rules it
+    /// out", not "this will run".
+    pub native_placement: bool,
     /// Whether every coupling must have the same weight.
     ///
     /// Set by fabrics that *count* active neighbours rather than summing weighted ones. It is a
@@ -94,11 +105,27 @@ impl Range {
         Range { lo, hi, integral: true }
     }
     pub fn holds(&self, v: f64) -> bool {
-        v >= self.lo && v <= self.hi && (!self.integral || v.fract() == 0.0)
+        v.is_finite() && v >= self.lo && v <= self.hi && (!self.integral || v.fract() == 0.0)
     }
-    /// The largest magnitude representable, which is what a scale factor is computed against.
-    pub fn reach(&self) -> f64 {
-        self.lo.abs().min(self.hi.abs())
+
+    /// The largest positive factor `s` for which `s·v` still lands in this range.
+    ///
+    /// Zero or negative when no positive factor works — a negative value cannot be scaled into a
+    /// range with a non-negative floor, however small the factor.
+    ///
+    /// A range has two sides and they are not always mirror images: D-Wave's `extended_j_range` is
+    /// `[-2, 1]` and the Pt V2's field is `[0, 6]`. A single "largest magnitude" scalar describes
+    /// neither. Taking the smaller endpoint gives 0 for the second, which scales every coefficient
+    /// in the program to zero; taking the larger gives 2 for the first, permitting a `+2` coupling
+    /// the machine cannot hold. Both were wrong here, and the first shipped.
+    pub fn headroom_for(&self, v: f64) -> f64 {
+        if v > 0.0 {
+            self.hi / v
+        } else if v < 0.0 {
+            self.lo / v // both negative, so the quotient is positive
+        } else {
+            f64::INFINITY // zero scales to zero, which every range containing zero holds
+        }
     }
 }
 
@@ -108,6 +135,38 @@ impl core::fmt::Display for Range {
             write!(f, "the integers {}..={}", self.lo, self.hi)
         } else {
             write!(f, "[{}, {}]", self.lo, self.hi)
+        }
+    }
+}
+
+/// What a fabric can say about a program that nothing rules out.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Verdict {
+    /// It will run: nothing violates a declared limit, and one variable goes to one site.
+    Runnable,
+    /// Nothing declared rules it out, and that is as far as this can honestly go.
+    ///
+    /// Variables are placed by minor embedding, so `vars` variables do not mean `vars` sites — a
+    /// fully connected problem on a 5,640-qubit machine reaches nowhere near 5,640 variables. The
+    /// real answer needs an embedder run against the machine's own working graph, which has holes,
+    /// because yield is never 100%.
+    NeedsEmbedding { vars: usize, sites: Option<usize> },
+}
+
+impl core::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Verdict::Runnable => write!(f, "nothing rules it out and placement is direct: it runs"),
+            Verdict::NeedsEmbedding { vars, sites } => write!(
+                f,
+                "nothing declared rules it out, but this fabric places variables by minor \
+                 embedding, so {vars} variables do not mean {vars} sites{}. Run an embedder \
+                 against the machine's own working graph to find out whether it fits",
+                match sites {
+                    Some(n) => format!(" out of {n}"),
+                    None => String::new(),
+                }
+            ),
         }
     }
 }
@@ -186,6 +245,7 @@ impl Fabric {
             max_arity: usize::MAX,
             coupling_range: None,
             field_range: None,
+            native_placement: true,
             uniform_couplings: false,
             prices,
         }
@@ -205,87 +265,149 @@ impl Fabric {
     /// coefficients are not in a fixed ratio to each other, and shrinking to fit would collapse
     /// small couplings to zero.
     pub fn scale_to_fit(&self, p: &Program) -> Option<f64> {
-        let worst = |r: Option<Range>, vals: &mut dyn Iterator<Item = f64>| -> Option<f64> {
-            let r = r?;
-            let peak = vals.map(f64::abs).fold(0.0f64, f64::max);
-            if peak == 0.0 {
-                return Some(f64::INFINITY); // nothing to constrain
+        let couplings: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let fields: Vec<f64> = p.bias.iter().map(|(_, h)| *h).collect();
+
+        // The tightest constraint any single coefficient imposes, over both ranges.
+        let bound = |r: Option<Range>, vals: &[f64]| -> f64 {
+            match r {
+                None => f64::INFINITY, // an undeclared range constrains nothing
+                Some(r) => vals.iter().fold(f64::INFINITY, |acc, &v| acc.min(r.headroom_for(v))),
             }
-            Some(r.reach() / peak)
         };
-        let a = worst(
-            self.coupling_range,
-            &mut p.factors.iter().map(|f| f.weight()),
-        );
-        let b = worst(self.field_range, &mut p.bias.iter().map(|(_, h)| *h));
-        let s = match (a, b) {
-            (None, None) => return None, // no ranges to satisfy
-            (Some(x), None) | (None, Some(x)) => x,
-            (Some(x), Some(y)) => x.min(y),
-        };
-        if !s.is_finite() {
-            return Some(1.0); // an empty program already fits
+        if self.coupling_range.is_none() && self.field_range.is_none() {
+            return None; // nothing to scale toward
         }
-        // An integral range needs every scaled value to land on a whole number, which one factor
-        // cannot generally deliver. Say so rather than returning a factor that quietly rounds.
-        let integral = self.coupling_range.map(|r| r.integral).unwrap_or(false)
-            || self.field_range.map(|r| r.integral).unwrap_or(false);
-        if integral {
-            let lands = p
-                .factors
+        let mut s = bound(self.coupling_range, &couplings).min(bound(self.field_range, &fields));
+
+        if s == f64::INFINITY {
+            return Some(1.0); // no coefficient constrains anything; it already fits
+        }
+        if !(s > 0.0) || !s.is_finite() {
+            // A negative coefficient against a non-negative floor, or the reverse. No positive
+            // factor helps, and returning one that "nearly" works would be worse than saying so.
+            return None;
+        }
+
+        // Integrality is per range: a fabric whose couplings are whole numbers may still take
+        // continuous fields, and requiring both to land would refuse programs that fit.
+        let lands = |s: f64| {
+            let ok = |r: Option<Range>, vals: &[f64]| match r {
+                Some(r) if r.integral => vals.iter().all(|&v| (v * s).fract() == 0.0),
+                _ => true,
+            };
+            ok(self.coupling_range, &couplings) && ok(self.field_range, &fields)
+        };
+        // The factor came from a division, so `v · s` can land one ulp outside the range it was
+        // computed to satisfy. Verify against the same predicate `check` uses — a scale_to_fit
+        // whose result does not pass check is worse than no answer at all.
+        let fits = |s: f64| {
+            self.coupling_range.map(|r| couplings.iter().all(|&v| r.holds(v * s))).unwrap_or(true)
+                && self.field_range.map(|r| fields.iter().all(|&v| r.holds(v * s))).unwrap_or(true)
+        };
+
+        if !lands(s) {
+            // An integral range wants a factor putting every value on a whole number, and the
+            // saturating one rarely does.
+            //
+            // The candidates are not arbitrary. If the smallest non-zero magnitude in the program
+            // is `v0`, then `v0·s` must itself be a non-zero integer, so `s = n/v0` for some
+            // positive integer `n` — and `s` cannot exceed the saturating factor. So walk `n` DOWN
+            // from that ceiling and take the first that lands and fits, which is the largest.
+            // Searching `s/k` instead, as this first did, misses every candidate whose numerator is
+            // not one: it could not find 3/14 for a program of 14 and 28 against ±7.
+            // Only the coefficients an INTEGRAL range governs constrain the candidate set. A
+            // fractional field under a continuous range is free to land anywhere, and letting it
+            // set `v0` yields a ceiling of zero candidates and a spurious None.
+            let integral_of = |r: Option<Range>, vals: &[f64]| -> Vec<f64> {
+                match r {
+                    Some(r) if r.integral => vals.to_vec(),
+                    _ => Vec::new(),
+                }
+            };
+            let governed = integral_of(self.coupling_range, &couplings);
+            let governed2 = integral_of(self.field_range, &fields);
+            let v0 = governed
                 .iter()
-                .map(|f| f.weight())
-                .chain(p.bias.iter().map(|(_, h)| *h))
-                .all(|v| ((v * s).round() - v * s).abs() < 1e-9);
-            if !lands {
+                .chain(governed2.iter())
+                .map(|v| v.abs())
+                .filter(|v| *v > 0.0)
+                .fold(f64::INFINITY, f64::min);
+            if !v0.is_finite() {
                 return None;
             }
+            let top = (s * v0).floor();
+            if !(top >= 1.0) || top > 1e6 {
+                return None; // no candidate, or too many to enumerate honestly
+            }
+            let mut n = top;
+            while n >= 1.0 {
+                let cand = n / v0;
+                if lands(cand) && fits(cand) {
+                    return Some(cand);
+                }
+                n -= 1.0;
+            }
+            return None;
         }
-        Some(s)
+        for _ in 0..64 {
+            if fits(s) {
+                return Some(s);
+            }
+            s = f64::from_bits(s.to_bits() - 1); // the next representable value below
+        }
+        None
     }
 
     // ---- declared fabrics ---------------------------------------------------------------------
     //
     // A fabric can be DECLARED without being reachable, and that is most of the value: a caller can
-    // ask whether their program fits a machine before buying time on it, and the conformance suite
-    // can score any backend that claims to be one. Every number below is from the vendor's own
-    // published material, cited at the line that uses it. Where a vendor does not publish a limit,
-    // the field is `None` and this file says so rather than guessing — an invented limit is worse
-    // than an absent one, because it refuses programs that would have run.
+    // ask what rules their program out before buying time on a machine. Every number below is from
+    // the vendor's own published material, cited where it is used. Where a vendor does not publish
+    // a limit, the field is `None` and this says so rather than guessing — an invented limit
+    // refuses programs that would have run.
+    //
+    // What is NOT declared here is as deliberate. This review found three incompatible figures for
+    // the Zephyr graph's size across three sources, and two different answers for the largest
+    // embeddable clique that turned out to be answers to different questions (largest at chain
+    // length 2, versus largest at any chain length). None of them is asserted.
 
-    /// D-Wave Advantage2 — Zephyr-12, generally available May 2025.
+    /// D-Wave Advantage2 — Zephyr topology, generally available May 2025.
     ///
-    /// 4,400+ qubits and 40,000+ couplers at 20-way connectivity
-    /// (<https://docs.dwavequantum.com/en/latest/quantum_research/topologies.html>, and D-Wave's
-    /// general-availability announcement). Couplings are continuous over `[-1, 1]` and fields over
-    /// `[-4, 4]` (`j_range`, `h_range` in the solver properties). `extended_j_range` reaches
-    /// `[-2, 1]` but needs flux-bias calibration per chain, so it is not the default here.
+    /// 4,400+ qubits at 20-way connectivity, from D-Wave's own topology documentation and its
+    /// general-availability announcement. Couplings are continuous over `[-1, 1]` and fields over
+    /// `[-4, 4]` (`j_range` and `h_range` in the published solver properties). `extended_j_range`
+    /// reaches `[-2, 1]` but needs per-chain flux-bias calibration, so it is not the default.
     ///
-    /// This is a quantum annealer rather than a thermodynamic sampler: it minimises an Ising energy
-    /// and does not hold a temperature you set. It reads `.ftp` because the problem is the same
-    /// shape, and `Certificate` does not apply to it — there is no β it claims to have sampled at.
+    /// Two things this is not. It is a quantum annealer rather than a thermodynamic sampler: it
+    /// minimises an Ising energy and holds no temperature you set, so a [`crate::certify`]
+    /// certificate has no β to check it against. And it does not place one variable per qubit —
+    /// see `native_placement`.
     pub fn dwave_advantage2(prices: Prices) -> Fabric {
         Fabric {
             name: "dwave-advantage2",
             topology: Topology::Degree(20),
+            // Physical qubits, not problem variables. `native_placement: false` is what stops this
+            // number being read as a variable budget.
             max_spins: Some(4_400),
             max_degree: Some(20),
-            // Analog, not quantised. The practical limit is integrated control error rather than a
-            // bit count, and D-Wave publishes no bit count, so claiming one would be an invention.
+            // Analog. The practical limit is integrated control error rather than a bit count, and
+            // D-Wave publishes no bit count, so claiming one would be an invention.
             coupling_bits: None,
             field_bits: None,
             supports_field: true,
             max_arity: 2,
             coupling_range: Some(Range::continuous(-1.0, 1.0)),
             field_range: Some(Range::continuous(-4.0, 4.0)),
+            native_placement: false,
             uniform_couplings: false,
             prices,
         }
     }
 
-    /// D-Wave Advantage — Pegasus, 5,640 qubits and 40,484 couplers at 15-way connectivity
-    /// (<https://docs.dwavequantum.com/en/latest/quantum_research/topologies.html>). More qubits
-    /// than Advantage2 and fewer couplers each, which is the trade the newer topology reverses.
+    /// D-Wave Advantage — Pegasus, 5,640 qubits at 15-way connectivity, from D-Wave's topology
+    /// documentation. More qubits than Advantage2 and fewer couplers each, which is the trade the
+    /// newer topology reverses.
     pub fn dwave_advantage(prices: Prices) -> Fabric {
         Fabric {
             name: "dwave-advantage",
@@ -298,15 +420,38 @@ impl Fabric {
             max_arity: 2,
             coupling_range: Some(Range::continuous(-1.0, 1.0)),
             field_range: Some(Range::continuous(-4.0, 4.0)),
+            native_placement: false,
             uniform_couplings: false,
             prices,
         }
     }
 
-    /// Can this program run here as written?
+    /// What an empty [`Fabric::check`] actually means here.
+    ///
+    /// `check` answers "what rules this out". That is not the same question as "will it run", and
+    /// on most annealers the second has no cheap answer: a variable with more neighbours than the
+    /// topology allows is placed as a CHAIN of physical sites, and whether such a placement exists
+    /// is minor embedding — NP-hard, and dependent on the program's structure rather than on any
+    /// number a fabric can declare. Returning an empty violation list there would be read as a yes.
+    pub fn verdict(&self, p: &Program) -> Result<Verdict, Vec<Unsupported>> {
+        let bad = self.check(p);
+        if !bad.is_empty() {
+            return Err(bad);
+        }
+        Ok(if self.native_placement {
+            Verdict::Runnable
+        } else {
+            Verdict::NeedsEmbedding { vars: p.spins, sites: self.max_spins }
+        })
+    }
+
+    /// What rules this program out on this fabric?
     ///
     /// Returns every violation rather than the first, because a caller deciding whether to embed a
     /// model wants the whole picture in one pass.
+    ///
+    /// **An empty result is not a promise that the program will run** — see [`Fabric::verdict`],
+    /// which says so in the type rather than leaving a caller to read silence as a yes.
     pub fn check(&self, p: &Program) -> Vec<Unsupported> {
         let mut out = Vec::new();
 
@@ -680,6 +825,136 @@ mod range_tests {
     }
 
     #[test]
+    fn a_one_sided_range_does_not_scale_the_program_to_nothing() {
+        // The defect this replaced. The factor was computed against min(|lo|, |hi|), which is ZERO
+        // for any range with an endpoint at zero -- and the Pt V2's field range is [0, 6]. Every
+        // coefficient scaled to zero, and a program of all zeroes "fits" every range there is.
+        let mut f = Fabric::unconstrained("one-sided", Z1_SPICE);
+        f.field_range = Some(Range::integers(0.0, 6.0));
+
+        let p = program(&[1.0], &[(0, 2.0), (1, 12.0)]);
+        let s = f.scale_to_fit(&p).expect("2 and 12 can be scaled into [0, 6]");
+        assert!(s > 0.0, "a factor of {s} annihilates the program");
+        assert!(f.check(&program(&[1.0], &[(0, 2.0 * s), (1, 12.0 * s)])).is_empty(),
+                "and the scaled program really fits");
+
+        // and a negative field genuinely cannot be scaled into [0, 6], which is a None rather than
+        // a factor that pretends
+        assert_eq!(f.scale_to_fit(&program(&[1.0], &[(0, -1.0)])), None,
+                   "no positive factor moves a negative value above zero");
+    }
+
+    #[test]
+    fn an_asymmetric_range_uses_the_side_each_value_lands_on() {
+        // D-Wave's extended_j_range is [-2, 1]. Taking the smaller endpoint magnitude would refuse
+        // a -2 the machine holds; taking the larger would permit a +2 it does not.
+        let mut f = Fabric::unconstrained("asymmetric", Z1_SPICE);
+        f.coupling_range = Some(Range::continuous(-2.0, 1.0));
+
+        assert!(f.check(&program(&[-2.0, 1.0], &[])).is_empty(), "both endpoints are representable");
+        assert_eq!(f.check(&program(&[2.0], &[])).len(), 1, "+2 is not");
+
+        // scaling respects the side each value is on: -4 needs 1/2, +4 needs 1/4, so 1/4 wins
+        let s = f.scale_to_fit(&program(&[-4.0, 4.0], &[])).unwrap();
+        assert_eq!(s, 0.25, "the positive side binds");
+        assert!(f.check(&program(&[-4.0 * s, 4.0 * s], &[])).is_empty());
+    }
+
+    #[test]
+    fn a_returned_factor_always_passes_check() {
+        // The factor comes from a division and can land one ulp outside the range it was computed
+        // to satisfy, so scale_to_fit verifies against the same predicate check uses. A
+        // scale_to_fit whose answer check then rejects is worse than no answer.
+        let f = Fabric::dwave_advantage2(Z1_SPICE);
+        let mut checked = 0;
+        for k in 1..400 {
+            let peak = k as f64 * 0.37 + 0.11; // arbitrary magnitudes, none of them round
+            let p = program(&[peak, -peak / 3.0, peak / 7.0], &[(0, peak * 2.0)]);
+            if let Some(s) = f.scale_to_fit(&p) {
+                let scaled = program(
+                    &[peak * s, -peak / 3.0 * s, peak / 7.0 * s],
+                    &[(0, peak * 2.0 * s)],
+                );
+                assert!(f.check(&scaled).is_empty(),
+                        "peak {peak} scaled by {s} still violates: {:?}", f.check(&scaled));
+                checked += 1;
+            }
+        }
+        assert!(checked > 300, "the sweep must actually exercise it: {checked}");
+    }
+
+    #[test]
+    fn integrality_is_per_range_not_shared() {
+        // A fabric whose couplings are whole numbers may still take continuous fields. Requiring
+        // both to land on integers would refuse programs the machine accepts.
+        let mut f = Fabric::unconstrained("mixed", Z1_SPICE);
+        f.coupling_range = Some(Range::integers(-7.0, 7.0));
+        f.field_range = Some(Range::continuous(-4.0, 4.0));
+
+        // couplings already whole, field fractional: this fits as written
+        assert!(f.check(&program(&[3.0, -2.0], &[(0, 1.5)])).is_empty());
+        // and a program needing scaling gets a factor that leaves the couplings whole while the
+        // field stays wherever it lands, which is exactly what a mixed fabric allows
+        let s = f.scale_to_fit(&program(&[14.0, -28.0], &[(0, 1.5)])).expect("a factor exists");
+        assert!(f.check(&program(&[14.0 * s, -28.0 * s], &[(0, 1.5 * s)])).is_empty(),
+                "scaled by {s}: {:?}", f.check(&program(&[14.0 * s, -28.0 * s], &[(0, 1.5 * s)])));
+        assert_eq!((14.0 * s).fract(), 0.0, "the couplings land on whole numbers");
+        assert_ne!((1.5 * s).fract(), 0.0, "and the field is not forced to");
+    }
+
+    #[test]
+    fn an_integral_fabric_finds_a_smaller_factor_when_the_saturating_one_does_not_land() {
+        // The saturating factor rarely puts every value on a whole number. Returning None there
+        // would refuse programs that a smaller factor fits exactly.
+        let mut f = Fabric::unconstrained("integral", Z1_SPICE);
+        f.coupling_range = Some(Range::integers(-7.0, 7.0));
+
+        // The saturating factor is 7/10, which sends 5 to 3.5 and does not land. A smaller one
+        // does. The assertion is on the PROPERTIES rather than a number copied from the
+        // implementation, which would only restate what the code already does.
+        let s = f.scale_to_fit(&program(&[10.0, 5.0], &[])).expect("a smaller factor lands");
+        assert!(s > 0.0 && s <= 0.7, "no larger than the saturating factor: {s}");
+        assert_eq!((10.0 * s).fract(), 0.0, "10 lands: {}", 10.0 * s);
+        assert_eq!((5.0 * s).fract(), 0.0, "5 lands: {}", 5.0 * s);
+        assert!(f.check(&program(&[10.0 * s, 5.0 * s], &[])).is_empty());
+        // and it is the LARGEST such factor: anything bigger either overflows or does not land
+        for bigger in [s * 1.0001, 0.7] {
+            let ok = (10.0 * bigger).fract() == 0.0
+                && (5.0 * bigger).fract() == 0.0
+                && f.check(&program(&[10.0 * bigger, 5.0 * bigger], &[])).is_empty();
+            assert!(!ok || bigger <= s, "{bigger} would have been a better answer than {s}");
+        }
+    }
+
+    #[test]
+    fn an_empty_violation_list_does_not_promise_a_run_where_embedding_is_needed() {
+        // The distinction this exists for. `check` answers "what rules this out"; on a machine that
+        // places variables by minor embedding, nothing ruling it out is not the same as it fitting,
+        // and an empty list read as a yes is how someone buys machine time for a program that
+        // cannot be placed.
+        let p = program(&[0.5, -0.5, 0.25], &[(0, 1.0)]);
+
+        let dw = Fabric::dwave_advantage2(Z1_SPICE);
+        assert!(dw.check(&p).is_empty(), "nothing declared rules it out");
+        match dw.verdict(&p) {
+            Ok(Verdict::NeedsEmbedding { vars, sites }) => {
+                assert_eq!(vars, p.spins);
+                assert_eq!(sites, Some(4_400));
+            }
+            other => panic!("a D-Wave part cannot promise a run: {other:?}"),
+        }
+        assert!(dw.verdict(&p).unwrap().to_string().contains("do not mean"));
+
+        // A fabric that places one variable per site CAN promise it.
+        let cpu = Fabric::unconstrained("sim", Z1_SPICE);
+        assert_eq!(cpu.verdict(&p), Ok(Verdict::Runnable));
+
+        // And a real violation still comes back as one, ahead of any verdict.
+        let too_big = program(&[5.0], &[]);
+        assert!(matches!(dw.verdict(&too_big), Err(v) if v.len() == 1), "{:?}", dw.verdict(&too_big));
+    }
+
+    #[test]
     fn the_declared_fabrics_match_their_published_specifications() {
         // These numbers come from D-Wave's own documentation and are cited at their definitions.
         // The test exists so that changing one is a deliberate act with a diff, not a drift.
@@ -689,6 +964,7 @@ mod range_tests {
         assert_eq!(a2.coupling_range, Some(Range::continuous(-1.0, 1.0)), "j_range");
         assert_eq!(a2.field_range, Some(Range::continuous(-4.0, 4.0)), "h_range");
         assert_eq!(a2.coupling_bits, None, "D-Wave publishes no bit count; claiming one invents it");
+        assert!(!a2.native_placement, "variables are placed by minor embedding, not one per qubit");
 
         let a1 = Fabric::dwave_advantage(Z1_SPICE);
         assert_eq!(a1.max_spins, Some(5_640), "Pegasus, 5,640 qubits");
@@ -721,6 +997,7 @@ mod tests {
             max_arity: 2,
             coupling_range: None,
             field_range: None,
+            native_placement: true,
             uniform_couplings: false,
             prices: Z1_SPICE,
         }

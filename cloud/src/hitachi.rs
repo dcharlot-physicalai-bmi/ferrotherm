@@ -267,6 +267,10 @@ impl Device for Hitachi {
             field_bits: self.machine.coupling_bits(),
             supports_field: true,
             max_arity: 2,
+            // Spin i sits at (i % side, i / side) and couplings must already be King-adjacent;
+            // the driver refuses anything else rather than embedding it, so placement is native by
+            // construction and the caller does their own embedding beforehand.
+            native_placement: true,
             coupling_range: Some(self.machine.range()),
             field_range: Some(self.machine.range()),
             uniform_couplings: false,
