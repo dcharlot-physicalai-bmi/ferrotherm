@@ -183,6 +183,13 @@ pub enum Unsupported {
     CouplingPrecision { bits: u32, worst_relative_error: f64 },
     /// The fabric counts neighbours rather than weighting them, so all couplings must be equal.
     NonUniformCouplings { distinct: usize },
+    /// The program cannot be placed on this fabric's sites as written.
+    ///
+    /// For a fabric that does its own placement check — a fixed grid, a named topology — where the
+    /// failure is specific and knowable. Distinct from [`Verdict::NeedsEmbedding`], which is the
+    /// case where placement is a question nobody cheap can answer; this is the case where the
+    /// answer is known and it is no.
+    Unplaceable { detail: String },
     /// A coefficient outside what the fabric can represent.
     ///
     /// Often fixable: see [`Fabric::scale_to_fit`], because scaling every coefficient by one factor
@@ -210,6 +217,7 @@ impl core::fmt::Display for Unsupported {
                 f,
                 "{nodes} spins carry an external field and this fabric cannot apply one"
             ),
+            Unsupported::Unplaceable { detail } => write!(f, "{detail}"),
             Unsupported::OutOfRange { what, value, range } => write!(
                 f,
                 "a {what} of {value} is outside this fabric's {range}; scale the program to fit \
@@ -545,6 +553,13 @@ impl Fabric {
             }
         }
 
+        if let Some(bits) = self.field_bits {
+            let err = Self::quantization_error_of(&fields, bits);
+            if err > 0.05 {
+                out.push(Unsupported::CouplingPrecision { bits, worst_relative_error: err });
+            }
+        }
+
         if let Some(bits) = self.coupling_bits {
             let err = Self::quantization_error(p, bits);
             // A tenth of a percent is the line: below it the model is the model, above it the
@@ -559,23 +574,28 @@ impl Fabric {
 
     /// Worst relative error that quantising this program's couplings to `bits` would introduce.
     pub fn quantization_error(p: &Program, bits: u32) -> f64 {
-        let max = p.factors.iter().map(|f| f.weight().abs()).fold(0.0f64, f64::max);
+        Self::quantization_error_of(&p.factors.iter().map(|f| f.weight()).collect::<Vec<_>>(), bits)
+    }
+
+    /// The worst relative error quantising these values to `bits` signed bits would introduce.
+    ///
+    /// Shared by the coupling and field checks. `field_bits` was declared by every fabric in this
+    /// file and read by nothing, so a fabric holding three-bit fields accepted a program with
+    /// fine-grained ones and lost them at submission.
+    pub fn quantization_error_of(vals: &[f64], bits: u32) -> f64 {
+        let max = vals.iter().map(|v| v.abs()).fold(0.0f64, f64::max);
+        // One bit is the sign, so a single bit leaves no levels at all and the shift below would
+        // be `1 << 0 - 1 == 0`, making every step infinite. Say "everything is lost" instead.
         if max == 0.0 || bits == 0 {
             return 0.0;
         }
-        // signed, so one bit is the sign
+        if bits == 1 {
+            return 1.0;
+        }
         let levels = ((1u64 << (bits - 1)) - 1) as f64;
         let step = max / levels;
-        p.factors
-            .iter()
-            .map(|f| {
-                let w = f.weight();
-                if w == 0.0 {
-                    0.0
-                } else {
-                    ((w / step).round() * step - w).abs() / w.abs()
-                }
-            })
+        vals.iter()
+            .map(|&w| if w == 0.0 { 0.0 } else { ((w / step).round() * step - w).abs() / w.abs() })
             .fold(0.0f64, f64::max)
     }
 
@@ -635,7 +655,12 @@ impl Default for Cpu {
 
 impl Device for Cpu {
     fn fabric(&self) -> Fabric {
-        Fabric::unconstrained("cpu", crate::ledger::Z1_SPICE)
+        let mut f = Fabric::unconstrained("cpu", crate::ledger::Z1_SPICE);
+        // It lowers through `Program::to_graph`, which is pairwise. `unconstrained` says
+        // `usize::MAX`, which let an arity-3 program through `check` and then failed in `program`
+        // with a hardcoded `arity: 3` -- reporting three however many the program really had.
+        f.max_arity = 2;
+        f
     }
 
     fn program(&mut self, p: &Program) -> Vec<Unsupported> {
@@ -646,7 +671,11 @@ impl Device for Cpu {
                     self.state = vec![-1; g.n];
                     self.graph = Some(g);
                 }
-                Err(_) => return vec![Unsupported::ArityTooHigh { arity: 3, limit: 2 }],
+                // `check` above declares max_arity 2, so a higher-order program is refused there
+                // and this is only reached if `to_graph` fails for some other reason.
+                Err(e) => {
+                    return vec![Unsupported::Unplaceable { detail: e.to_string() }]
+                }
             }
         }
         bad
@@ -850,6 +879,41 @@ mod range_tests {
         assert_eq!(f.coupling_range, None);
         assert!(f.check(&program(&[1e9], &[])).is_empty(), "a simulator has no range to violate");
         assert_eq!(f.scale_to_fit(&program(&[1e9], &[])), None, "and nothing to scale toward");
+    }
+
+    #[test]
+    fn field_bits_is_enforced_and_not_merely_declared() {
+        // Every fabric in this file declares it and nothing read it, so a fabric holding three-bit
+        // fields accepted a program with fine-grained ones and lost them at submission.
+        let mut f = Fabric::unconstrained("coarse-fields", Z1_SPICE);
+        f.field_bits = Some(3);
+
+        // three signed bits give three levels: a field 1/50th of the peak cannot survive
+        let fine = program(&[1.0], &[(0, 4.0), (1, 0.08)]);
+        let bad = f.check(&fine);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(matches!(bad[0], Unsupported::CouplingPrecision { bits: 3, .. }), "{:?}", bad[0]);
+
+        // and fields already on the grid survive it
+        assert!(f.check(&program(&[1.0], &[(0, 3.0), (1, 1.0)])).is_empty());
+    }
+
+    #[test]
+    fn the_cpu_refuses_a_higher_order_program_by_declaring_its_arity() {
+        // It lowers through to_graph, which is pairwise. It used to pass `check` and then fail
+        // afterwards with a HARDCODED arity of 3, reporting three however many the program had.
+        let mut cpu = Cpu::default();
+        let cubic = Program::from_ftp("ftp 1\nspins 5\nfactor 1 0 1 2 3\n").unwrap();
+        let bad = cpu.program(&cubic);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        match bad[0] {
+            Unsupported::ArityTooHigh { arity, limit } => {
+                assert_eq!(arity, 4, "the program's real arity, not a constant");
+                assert_eq!(limit, 2);
+            }
+            ref other => panic!("{other:?}"),
+        }
+        assert!(cpu.program(&program(&[1.0, 2.0], &[])).is_empty(), "pairwise still runs");
     }
 
     #[test]

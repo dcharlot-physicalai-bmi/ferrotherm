@@ -169,8 +169,12 @@ impl Hitachi {
         self.coeff.clear();
         self.spins = p.spins;
 
+        let range = self.machine.range();
         let mut push = |a: (usize, usize), b: (usize, usize), w: f64| -> Result<(), LayoutError> {
-            if w.abs() > lim {
+            // Against the same Range the fabric declares, rather than a magnitude comparison of
+            // its own. `|w| <= 7` admits 3.5, which a machine storing four-bit INTEGERS cannot
+            // hold; a second, weaker copy of a limit is how the two drift apart.
+            if !range.holds(w) {
                 return Err(LayoutError::CoefficientRange { value: w, limit: lim });
             }
             Ok(())
@@ -282,21 +286,11 @@ impl Device for Hitachi {
         let bad = self.fabric().check(p);
         if bad.is_empty() {
             if let Err(e) = self.layout(p) {
-                // A layout failure is a capability failure; report it in the same vocabulary.
-                return vec![Unsupported::TooHighDegree { node: 0, degree: 0, limit: 0 }]
-                    .into_iter()
-                    .map(|_| Unsupported::NonUniformCouplings { distinct: 0 })
-                    .take(0)
-                    .chain(core::iter::once(Unsupported::TooHighDegree {
-                        node: match e {
-                            LayoutError::NotAdjacent { i, .. } => i,
-                            LayoutError::OutOfGrid { i } => i,
-                            LayoutError::CoefficientRange { .. } => 0,
-                        },
-                        degree: 0,
-                        limit: 8,
-                    }))
-                    .collect();
+                // A layout failure is a capability failure, and it now says WHAT failed. Every one
+                // of them used to come back as `TooHighDegree { degree: 0, limit: 8 }` -- which
+                // reads as "degree 0 exceeds 8", is not true of anything, and told a caller with a
+                // non-adjacent coupling nothing about their non-adjacent coupling.
+                return vec![Unsupported::Unplaceable { detail: e.to_string() }];
             }
         }
         bad
@@ -396,6 +390,59 @@ fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
             ))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod layout_reporting_tests {
+    use super::*;
+    use ferrotherm::ftp::Program;
+
+    fn asic() -> Hitachi {
+        Hitachi::new(String::from("no-token-needed-for-a-capability-check"), Machine::Asic)
+    }
+
+    #[test]
+    fn a_layout_failure_says_what_failed() {
+        // Every one of these used to come back as TooHighDegree { degree: 0, limit: 8 }, which
+        // reads as "degree 0 exceeds 8" -- not true of anything, and silent about the actual cause.
+        // Spins 0 and 500 are nowhere near each other on a 384-wide grid.
+        let p = Program::from_ftp("ftp 1\nspins 600\nfactor 1 0 500\n").unwrap();
+        let bad = asic().program(&p);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        let msg = bad[0].to_string();
+        assert!(msg.contains("King-adjacent"), "it names the real problem: {msg}");
+        assert!(!msg.contains("degree"), "and not a degree that was never the issue: {msg}");
+    }
+
+    #[test]
+    fn a_fractional_coefficient_cannot_reach_a_machine_that_stores_integers() {
+        // |3.5| <= 7, so a magnitude comparison admits it. The ASIC stores four-bit INTEGERS.
+        //
+        // `layout` is called DIRECTLY here, and deliberately. Going through `program` would prove
+        // nothing about this: it runs `Fabric::check` first and only lays out when that comes back
+        // clean, so the fabric's range check catches 3.5 and the layout is never reached. A first
+        // version of this test did go through `program`, passed, and stayed passing when the
+        // layout check was reverted to the magnitude comparison -- which is a test of the wrong
+        // thing wearing the right name. The two checks are defence in depth and each must hold on
+        // its own.
+        let p = Program::from_ftp("ftp 1\nspins 2\nfactor 3.5 0 1\n").unwrap();
+        let e = asic().layout(&p).expect_err("3.5 is not a four-bit integer");
+        assert!(
+            matches!(e, LayoutError::CoefficientRange { .. }),
+            "and it is refused as a coefficient problem: {e}"
+        );
+
+        // a whole number in range lays out
+        let ok = Program::from_ftp("ftp 1\nspins 2\nfactor 3 0 1\n").unwrap();
+        assert!(asic().layout(&ok).is_ok());
+
+        // and the fabric-level check refuses it too, independently
+        let bad = asic().program(&p);
+        assert!(
+            bad.iter().any(|u| u.to_string().contains("integers -7..=7")),
+            "the outer gate names what it can hold: {bad:?}"
+        );
+    }
 }
 
 #[cfg(test)]
