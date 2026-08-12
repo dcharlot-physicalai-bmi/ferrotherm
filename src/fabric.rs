@@ -20,6 +20,7 @@
 //! number the caller has to look at rather than a silence.
 
 use crate::ftp::Program;
+use std::collections::BTreeSet;
 use crate::ledger::Prices;
 
 /// How a fabric's spins are wired.
@@ -461,17 +462,30 @@ impl Fabric {
             }
         }
 
+        // An arity-1 factor is a FIELD. `Program::to_graph` lowers it with `b.bias(...)`, so it is
+        // one everywhere in this crate — and checking it as a coupling here let a program whose
+        // fields were written that way past a fabric that has no field at all.
+        let (unary, pairs): (Vec<_>, Vec<_>) =
+            p.factors.iter().partition(|f| f.arity() == 1);
+
         let mut worst_arity = 0;
-        let mut degree = vec![0usize; p.spins];
+        // Degree is over EDGES, not over factor mentions. Two factors on the same pair are one
+        // edge with a summed weight once the program becomes a graph, and counting them twice
+        // refuses a program the fabric can hold.
+        let mut edges: BTreeSet<(usize, usize)> = BTreeSet::new();
         for f in &p.factors {
             worst_arity = worst_arity.max(f.arity());
             if f.arity() == 2 {
-                for v in f.vars() {
-                    if v < p.spins {
-                        degree[v] += 1;
-                    }
+                let v: Vec<usize> = f.vars().collect();
+                if v[0] < p.spins && v[1] < p.spins {
+                    edges.insert((v[0].min(v[1]), v[0].max(v[1])));
                 }
             }
+        }
+        let mut degree = vec![0usize; p.spins];
+        for (a, b) in &edges {
+            degree[*a] += 1;
+            degree[*b] += 1;
         }
         if worst_arity > self.max_arity {
             out.push(Unsupported::ArityTooHigh { arity: worst_arity, limit: self.max_arity });
@@ -490,28 +504,42 @@ impl Fabric {
             }
         }
 
-        if !self.supports_field && !p.bias.is_empty() {
-            out.push(Unsupported::NoFieldSupport { nodes: p.bias.len() });
+        // A field is a field however it was written.
+        let fields: Vec<f64> = p
+            .bias
+            .iter()
+            .map(|(_, h)| *h)
+            .chain(unary.iter().map(|f| f.weight()))
+            .collect();
+        if !self.supports_field && !fields.is_empty() {
+            out.push(Unsupported::NoFieldSupport { nodes: fields.len() });
         }
 
-        // Report the WORST offender rather than every one. A program built by a loop violates a
-        // range in thousands of places for one reason, and a thousand identical findings buries the
-        // ones that differ.
+        // The WORST offender rather than every one: a program built by a loop violates a range in
+        // thousands of places for one reason, and a thousand identical findings buries the ones
+        // that differ. Worst means largest magnitude, because that is the value setting the scale
+        // factor a caller needs. This used to take the FIRST, while saying it took the worst.
+        let worst_of = |r: Range, vals: &mut dyn Iterator<Item = f64>| -> Option<f64> {
+            vals.filter(|v| !r.holds(*v))
+                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap_or(core::cmp::Ordering::Equal))
+        };
         if let Some(r) = self.coupling_range {
-            if let Some(w) = p.factors.iter().map(|f| f.weight()).find(|v| !r.holds(*v)) {
+            if let Some(w) = worst_of(r, &mut pairs.iter().map(|f| f.weight())) {
                 out.push(Unsupported::OutOfRange { what: "coupling", value: w, range: r });
             }
         }
         if let Some(r) = self.field_range {
-            if let Some((_, h)) = p.bias.iter().find(|(_, h)| !r.holds(*h)) {
-                out.push(Unsupported::OutOfRange { what: "field", value: *h, range: r });
+            if let Some(h) = worst_of(r, &mut fields.iter().copied()) {
+                out.push(Unsupported::OutOfRange { what: "field", value: h, range: r });
             }
         }
 
         if self.uniform_couplings {
-            let mut seen: Vec<u64> = p.factors.iter().map(|f| f.weight().to_bits()).collect();
-            seen.sort_unstable();
-            seen.dedup();
+            // By VALUE, not by bit pattern. `0.0` and `-0.0` are the same coupling and have
+            // different bits, so a program mixing them was reported as having two distinct weights.
+            let mut seen: Vec<f64> = pairs.iter().map(|f| f.weight()).collect();
+            seen.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            seen.dedup_by(|a, b| a == b);
             if seen.len() > 1 {
                 out.push(Unsupported::NonUniformCouplings { distinct: seen.len() });
             }
@@ -822,6 +850,76 @@ mod range_tests {
         assert_eq!(f.coupling_range, None);
         assert!(f.check(&program(&[1e9], &[])).is_empty(), "a simulator has no range to violate");
         assert_eq!(f.scale_to_fit(&program(&[1e9], &[])), None, "and nothing to scale toward");
+    }
+
+    #[test]
+    fn a_unary_factor_is_a_field_here_as_it_is_everywhere_else() {
+        // `Program::to_graph` lowers an arity-1 factor with `b.bias(...)`, so it IS a field. This
+        // checked it against the COUPLING range and never showed it to the field checks, so a
+        // program whose fields were written that way walked past a fabric that has none.
+        let src = "ftp 1\nspins 3\nfactor 3.0 0\nfactor 0.5 0 1\n";
+        let p = Program::from_ftp(src).unwrap();
+
+        // D-Wave: couplings [-1,1], fields [-4,4]. A unary 3.0 is a legal field and an illegal
+        // coupling, so which side it is checked on decides the answer.
+        let dw = Fabric::dwave_advantage2(Z1_SPICE);
+        assert!(dw.check(&p).is_empty(), "3.0 is a field of 3, which fits [-4, 4]: {:?}", dw.check(&p));
+
+        // and a fabric with no field must see it
+        let mut fieldless = Fabric::unconstrained("fieldless", Z1_SPICE);
+        fieldless.supports_field = false;
+        let bad = fieldless.check(&p);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(matches!(bad[0], Unsupported::NoFieldSupport { nodes: 1 }), "{:?}", bad[0]);
+    }
+
+    #[test]
+    fn degree_counts_edges_rather_than_factor_mentions() {
+        // Two factors on the same pair are ONE edge with a summed weight once the program becomes
+        // a graph. Counting the mentions refuses a program the fabric can hold.
+        let src = "ftp 1\nspins 3\nfactor 1.0 0 1\nfactor 1.0 0 1\nfactor 1.0 0 2\n";
+        let p = Program::from_ftp(src).unwrap();
+        assert_eq!(p.to_graph().unwrap().n_edges, 2, "the graph really has two edges");
+
+        let mut f = Fabric::unconstrained("degree-2", Z1_SPICE);
+        f.max_degree = Some(2);
+        assert!(f.check(&p).is_empty(), "spin 0 has two neighbours, not three: {:?}", f.check(&p));
+
+        f.max_degree = Some(1);
+        assert!(!f.check(&p).is_empty(), "and a limit of one really is exceeded");
+    }
+
+    #[test]
+    fn uniform_couplings_compares_values_not_bit_patterns() {
+        // 0.0 and -0.0 are the same coupling and have different bits. Comparing bits reported two
+        // distinct weights on a fabric that permits only one.
+        let src = "ftp 1\nspins 3\nfactor 0.0 0 1\nfactor -0.0 1 2\n";
+        let p = Program::from_ftp(src).unwrap();
+        let mut f = Fabric::unconstrained("counting", Z1_SPICE);
+        f.uniform_couplings = true;
+        assert!(f.check(&p).is_empty(), "one weight, written two ways: {:?}", f.check(&p));
+
+        // and genuinely different weights are still caught
+        let two = Program::from_ftp("ftp 1\nspins 3\nfactor 1.0 0 1\nfactor 2.0 1 2\n").unwrap();
+        assert!(matches!(f.check(&two)[..], [Unsupported::NonUniformCouplings { distinct: 2 }]));
+    }
+
+    #[test]
+    fn the_worst_offender_is_reported_because_it_sets_the_scale() {
+        // The comment said WORST and the code took the FIRST. Worst is the useful one: it is the
+        // value that determines the factor a caller needs.
+        let f = Fabric::dwave_advantage2(Z1_SPICE);
+        let bad = f.check(&program(&[2.0, 9.0, 3.0], &[]));
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        match bad[0] {
+            Unsupported::OutOfRange { value, .. } => {
+                assert_eq!(value, 9.0, "9 is the worst, and 2 merely came first");
+            }
+            ref other => panic!("{other:?}"),
+        }
+        // and the factor it implies really does fix the program
+        let s = f.scale_to_fit(&program(&[2.0, 9.0, 3.0], &[])).unwrap();
+        assert!(f.check(&program(&[2.0 * s, 9.0 * s, 3.0 * s], &[])).is_empty());
     }
 
     #[test]

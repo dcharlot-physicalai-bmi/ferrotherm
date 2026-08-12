@@ -66,13 +66,20 @@ pub mod device {
                 field_bits: Some(3),
                 supports_field: true,
                 max_arity: 2,
-                // The fabric COUNTS active neighbours against a threshold rather than summing
-                // weighted ones, so a coupling is present or absent -- ±1 and nothing between.
-                // `uniform_couplings` says the same thing in another way; both are declared because
-                // a caller checking one should not have to know to check the other.
                 // One LUT per spin, addressed directly. Nothing is embedded.
                 native_placement: true,
-                coupling_range: Some(ferrotherm::fabric::Range::integers(-1.0, 1.0)),
+                // The cell computes `popcount(I0..I4)` and fires when that plus a random bit
+                // reaches the threshold. It COUNTS. A neighbour is present or absent, so the only
+                // representable weights are 1 and 0 -- there is no negative coupling. Declaring
+                // `integers(-1, 1)`, as this first did, claimed one the hardware cannot express
+                // and would have accepted an antiferromagnet it silently cannot run.
+                // `uniform_couplings` says a neighbouring part of the same fact; both are declared
+                // because a caller checking one should not have to know to check the other.
+                coupling_range: Some(ferrotherm::fabric::Range::integers(0.0, 1.0)),
+                // The threshold is the field, an integer in 0..=6, and it is in THRESHOLD units
+                // rather than the energy units the rest of the stack uses. A caller converts;
+                // passing an Ising bias straight through would be a unit error the fabric cannot
+                // see.
                 field_range: Some(ferrotherm::fabric::Range::integers(0.0, 6.0)),
                 uniform_couplings: true,
                 prices: Z1_SPICE,
@@ -184,5 +191,37 @@ pub mod device {
             let e = d.run(&Schedule::constant(1.0, 10), 1).unwrap_err();
             assert!(e.contains("board") || e.contains("sequential fabric"), "{e}");
         }
+    }
+}
+
+
+#[cfg(test)]
+mod declared_capability_tests {
+    use crate::device::PtV2;
+
+    #[test]
+    fn the_cell_cannot_express_a_negative_coupling() {
+        // It computes popcount(I0..I4) and fires when that plus a random bit reaches the threshold.
+        // It COUNTS: a neighbour is present or absent. Declaring integers(-1, 1), as this first
+        // did, claimed a coupling the hardware has no way to represent — and would have accepted
+        // an antiferromagnet it silently cannot run.
+        let f = PtV2::describe();
+        let r = f.coupling_range.expect("a counting fabric has a range");
+        assert!(r.holds(1.0), "a neighbour can be present");
+        assert!(r.holds(0.0), "or absent");
+        assert!(!r.holds(-1.0), "and it cannot be negative");
+        assert!(f.uniform_couplings, "which is the same fact said the other way");
+    }
+
+    #[test]
+    fn an_antiferromagnet_is_refused_rather_than_accepted_and_mis_run() {
+        use ferrotherm::ftp::Program;
+        let anti = Program::from_ftp("ftp 1\nspins 3\nfactor -1 0 1\nfactor -1 1 2\n").unwrap();
+        let bad = PtV2::describe().check(&anti);
+        assert!(!bad.is_empty(), "a counting cell cannot run an antiferromagnet");
+        assert!(
+            bad.iter().any(|u| u.to_string().contains("integers 0..=1")),
+            "and it says why: {bad:?}"
+        );
     }
 }
