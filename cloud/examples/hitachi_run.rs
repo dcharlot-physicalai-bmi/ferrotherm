@@ -12,8 +12,8 @@ fn main() {
         Err(e) => { eprintln!("{e}"); return; }
     };
     let f = d.fabric();
-    println!("fabric        {} | {:?} | {} sites | degree {} | coupling {:?} bits",
-             f.name, f.topology, f.max_spins.unwrap(), f.max_degree.unwrap(), f.coupling_bits.unwrap());
+    println!("fabric        {} | {:?} | {} sites | degree {} | coupling {:?}",
+             f.name, f.topology, f.max_spins.unwrap(), f.max_degree.unwrap(), f.coupling_precision);
 
     // A 4x4 antiferromagnetic block, laid out row-major so every coupling is King-adjacent.
     let side = Machine::Asic.side();

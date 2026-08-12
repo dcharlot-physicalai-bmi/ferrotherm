@@ -55,12 +55,18 @@ impl Machine {
             _ => 512,
         }
     }
-    fn coupling_bits(self) -> Option<u32> {
+    /// How this machine stores a coefficient.
+    ///
+    /// The GPU float path is float32, not full `f64`, and saying `None` for it — as this did —
+    /// claimed every `f64` arrives intact. It does not: a coefficient needing more than 24
+    /// significand bits is rounded on the way in.
+    fn precision(self) -> ferrotherm::fabric::Precision {
+        use ferrotherm::fabric::Precision;
         match self {
             // -7..=7 is four bits with a sign
-            Machine::Asic => Some(4),
-            Machine::GpuInt => Some(32),
-            Machine::GpuFloat => None,
+            Machine::Asic => Precision::Fixed { bits: 4 },
+            Machine::GpuInt => Precision::Fixed { bits: 32 },
+            Machine::GpuFloat => Precision::Float { mantissa: 24 },
         }
     }
     fn coefficient_limit(self) -> f64 {
@@ -267,8 +273,8 @@ impl Device for Hitachi {
             topology: Topology::Named("king-graph"),
             max_spins: Some(side * side),
             max_degree: Some(8), // King's graph: orthogonal and diagonal
-            coupling_bits: self.machine.coupling_bits(),
-            field_bits: self.machine.coupling_bits(),
+            coupling_precision: self.machine.precision(),
+            field_precision: self.machine.precision(),
             supports_field: true,
             max_arity: 2,
             // Spin i sits at (i % side, i / side) and couplings must already be King-adjacent;
@@ -461,7 +467,8 @@ mod tests {
     fn the_asic_declares_its_four_bit_limit() {
         let d = Hitachi::new("x", Machine::Asic);
         let f = d.fabric();
-        assert_eq!(f.coupling_bits, Some(4), "-7..=7 is four bits with a sign");
+        assert_eq!(f.coupling_precision, ferrotherm::fabric::Precision::Fixed { bits: 4 },
+                   "-7..=7 is four bits with a sign");
         assert_eq!(f.max_spins, Some(384 * 384));
         assert_eq!(f.max_degree, Some(8));
     }

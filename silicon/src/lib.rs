@@ -61,9 +61,9 @@ pub mod device {
                 max_spins: Some(LUT6_TOTAL),
                 max_degree: Some(NEIGHBOUR_INPUTS),
                 // Not a precision limit but an absence of weighting; see `uniform_couplings`.
-                coupling_bits: None,
+                coupling_precision: ferrotherm::fabric::Precision::Exact,
                 // The threshold is an integer in 0..=6, so the field carries about three bits.
-                field_bits: Some(3),
+                field_precision: ferrotherm::fabric::Precision::Fixed { bits: 3 },
                 supports_field: true,
                 max_arity: 2,
                 // One LUT per spin, addressed directly. Nothing is embedded.

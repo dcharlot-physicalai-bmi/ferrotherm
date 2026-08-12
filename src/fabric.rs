@@ -45,13 +45,13 @@ pub struct Fabric {
     pub max_spins: Option<usize>,
     /// Maximum degree, or `None` if unconstrained.
     pub max_degree: Option<usize>,
-    /// Bits of coupling precision, or `None` for full `f64`.
+    /// How a coupling is stored.
     ///
     /// State it even when it is generous. An undeclared precision is the defect this whole module
     /// exists to prevent.
-    pub coupling_bits: Option<u32>,
-    /// Bits of field precision, or `None` for full `f64`.
-    pub field_bits: Option<u32>,
+    pub coupling_precision: Precision,
+    /// How a field is stored.
+    pub field_precision: Precision,
     /// Whether an external field can be applied at all. Some fabrics cannot hold one.
     pub supports_field: bool,
     /// Maximum factor arity. Two means pairwise only, which is most hardware.
@@ -79,6 +79,66 @@ pub struct Fabric {
     pub uniform_couplings: bool,
     /// Energy prices for the ledger.
     pub prices: Prices,
+}
+
+/// How a fabric stores a coefficient.
+///
+/// The distinction is not decoration. Fixed-point spreads a uniform step across the whole range, so
+/// a coefficient a thousandth the size of the largest one is lost entirely. Floating point keeps a
+/// constant number of significant digits, so the same coefficient survives. Modelling one as the
+/// other reports an error that is wrong by orders of magnitude in whichever direction.
+///
+/// This started as a bare `Option<u32>` bit count, which could describe Hitachi's four-bit integers
+/// and could not describe Toshiba's float32 at all.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Precision {
+    /// Every `f64` arrives intact.
+    Exact,
+    /// Signed fixed-point in `bits` bits, one of them the sign, with a uniform step sized by the
+    /// largest coefficient present.
+    Fixed { bits: u32 },
+    /// IEEE binary floating point with `mantissa` significand bits — 24 for `f32`, 53 for `f64`.
+    Float { mantissa: u32 },
+}
+
+impl Precision {
+    /// The worst relative error storing these values here would introduce.
+    pub fn worst_relative_error(&self, vals: &[f64]) -> f64 {
+        match *self {
+            Precision::Exact => 0.0,
+            Precision::Float { mantissa } => {
+                if vals.iter().all(|v| *v == 0.0) {
+                    0.0
+                } else {
+                    // Rounding to nearest costs at most half an ulp, which is 2^-mantissa
+                    // RELATIVELY -- the same for every value, large or small. That is exactly the
+                    // property fixed point does not have.
+                    (2.0f64).powi(-(mantissa as i32))
+                }
+            }
+            Precision::Fixed { bits } => {
+                let max = vals.iter().map(|v| v.abs()).fold(0.0f64, f64::max);
+                if max == 0.0 || bits == 0 {
+                    return 0.0;
+                }
+                // One bit is the sign, so a single bit leaves no levels at all.
+                if bits == 1 {
+                    return 1.0;
+                }
+                let levels = ((1u64 << (bits - 1)) - 1) as f64;
+                let step = max / levels;
+                vals.iter()
+                    .map(|&w| {
+                        if w == 0.0 {
+                            0.0
+                        } else {
+                            ((w / step).round() * step - w).abs() / w.abs()
+                        }
+                    })
+                    .fold(0.0f64, f64::max)
+            }
+        }
+    }
 }
 
 /// The magnitudes a coefficient may take on a fabric.
@@ -248,8 +308,8 @@ impl Fabric {
             topology: Topology::Unconstrained,
             max_spins: None,
             max_degree: None,
-            coupling_bits: None,
-            field_bits: None,
+            coupling_precision: Precision::Exact,
+            field_precision: Precision::Exact,
             supports_field: true,
             max_arity: usize::MAX,
             coupling_range: None,
@@ -402,8 +462,8 @@ impl Fabric {
             max_degree: Some(20),
             // Analog. The practical limit is integrated control error rather than a bit count, and
             // D-Wave publishes no bit count, so claiming one would be an invention.
-            coupling_bits: None,
-            field_bits: None,
+            coupling_precision: Precision::Exact,
+            field_precision: Precision::Exact,
             supports_field: true,
             max_arity: 2,
             coupling_range: Some(Range::continuous(-1.0, 1.0)),
@@ -423,8 +483,8 @@ impl Fabric {
             topology: Topology::Degree(15),
             max_spins: Some(5_640),
             max_degree: Some(15),
-            coupling_bits: None,
-            field_bits: None,
+            coupling_precision: Precision::Exact,
+            field_precision: Precision::Exact,
             supports_field: true,
             max_arity: 2,
             coupling_range: Some(Range::continuous(-1.0, 1.0)),
@@ -434,6 +494,82 @@ impl Fabric {
             prices,
         }
     }
+
+    /// Fujitsu Digital Annealer, third generation (`FujitsuDA3Solver`).
+    ///
+    /// From Fujitsu's own API documentation: up to **100,000 bits**, a **fully connected**
+    /// architecture, quadratic coefficients as **64-bit signed integers** over `-2^63+1 ..= 2^63-1`
+    /// and linear coefficients as **76-bit signed integers**. Coefficients must be whole numbers;
+    /// the service will scale and round a submission that is not, which is a different program than
+    /// the one written and is exactly what `Range::integral` exists to catch first.
+    ///
+    /// Fully connected is the interesting part. There is no embedding here — 100,000 bits means
+    /// 100,000 variables, where 5,640 D-Wave qubits does not mean 5,640 variables. That is what
+    /// `native_placement` distinguishes, and it is the whole reason the field exists.
+    ///
+    /// Note the vendor's own marketing pages quote 8,192 bits and 64-bit gradation for an earlier
+    /// generation. The API documentation is what a submission is actually checked against, so it is
+    /// what is declared.
+    pub fn fujitsu_da3(prices: Prices) -> Fabric {
+        Fabric {
+            name: "fujitsu-da3",
+            topology: Topology::Unconstrained, // fully coupled: every bit reaches every other
+            max_spins: Some(100_000),
+            max_degree: None,
+            coupling_precision: Precision::Fixed { bits: 64 },
+            field_precision: Precision::Fixed { bits: 76 },
+            supports_field: true,
+            max_arity: 2,
+            // f64 cannot represent 2^63 exactly, and a program's coefficients are f64 here, so the
+            // integrality flag is the binding half of this in practice rather than the bound.
+            coupling_range: Some(Range::integers(-(2f64.powi(63)) + 1.0, 2f64.powi(63) - 1.0)),
+            field_range: Some(Range::integers(-(2f64.powi(75)) + 1.0, 2f64.powi(75) - 1.0)),
+            native_placement: true,
+            uniform_couplings: false,
+            prices,
+        }
+    }
+
+    /// Toshiba SQBM+, the QUBO solver.
+    ///
+    /// From Toshiba's own user manual: **up to 10,000,000 variables**, a dense QUBO coefficient
+    /// matrix, and coefficients carried as **float32** — the manual's own data arrays are
+    /// `np.float32`.
+    ///
+    /// That float32 is why [`Precision`] exists as a type rather than a bit count. Modelled as
+    /// 24-bit fixed point it would report a coefficient a millionth of the largest as totally lost;
+    /// in float32 it survives with its significant digits intact, because floating-point error is
+    /// relative. The two answers differ by orders of magnitude.
+    ///
+    /// SQBM+ also offers a PUBO solver taking terms up to **order 4**, which most fabrics cannot
+    /// express at all. This declares the QUBO solver, which is what a pairwise `.ftp` maps onto;
+    /// a higher-order fabric would be a separate declaration rather than a wider `max_arity` here.
+    pub fn toshiba_sqbm(prices: Prices) -> Fabric {
+        Fabric {
+            name: "toshiba-sqbm-qubo",
+            topology: Topology::Unconstrained,
+            max_spins: Some(10_000_000),
+            max_degree: None,
+            coupling_precision: Precision::Float { mantissa: 24 },
+            field_precision: Precision::Float { mantissa: 24 },
+            supports_field: true,
+            max_arity: 2,
+            // A coefficient beyond float32's reach does not arrive, however fine f64 held it.
+            coupling_range: Some(Range::continuous(-(f32::MAX as f64), f32::MAX as f64)),
+            field_range: Some(Range::continuous(-(f32::MAX as f64), f32::MAX as f64)),
+            native_placement: true,
+            uniform_couplings: false,
+            prices,
+        }
+    }
+
+    // NOT DECLARED: QBoson's coherent Ising machines. This review located figures only in
+    // third-party papers -- 550 qubits for a CPQC-550, 2,000 binary variables for a third-generation
+    // part -- and no vendor material stating the coefficient precision, which on an analog optical
+    // machine is the limit that decides whether a program survives at all. A fabric declared
+    // without it would pass programs it cannot hold. Also not declared: Fujitsu's earlier
+    // generations and Toshiba's order-4 PUBO solver, for the same reason in reverse -- they are
+    // real, and this has not established their numbers to the standard the two above meet.
 
     /// What an empty [`Fabric::check`] actually means here.
     ///
@@ -553,15 +689,25 @@ impl Fabric {
             }
         }
 
-        if let Some(bits) = self.field_bits {
-            let err = Self::quantization_error_of(&fields, bits);
-            if err > 0.05 {
-                out.push(Unsupported::CouplingPrecision { bits, worst_relative_error: err });
-            }
+        let field_err = self.field_precision.worst_relative_error(&fields);
+        if field_err > 0.05 {
+            out.push(Unsupported::CouplingPrecision {
+                bits: match self.field_precision {
+                    Precision::Fixed { bits } | Precision::Float { mantissa: bits } => bits,
+                    Precision::Exact => 0,
+                },
+                worst_relative_error: field_err,
+            });
         }
 
-        if let Some(bits) = self.coupling_bits {
-            let err = Self::quantization_error(p, bits);
+        {
+            let bits = match self.coupling_precision {
+                Precision::Fixed { bits } | Precision::Float { mantissa: bits } => bits,
+                Precision::Exact => 0,
+            };
+            let err = self
+                .coupling_precision
+                .worst_relative_error(&pairs.iter().map(|f| f.weight()).collect::<Vec<_>>());
             // A tenth of a percent is the line: below it the model is the model, above it the
             // caller is answering a different question and should say so out loud.
             if err > 1e-3 {
@@ -605,11 +751,18 @@ impl Fabric {
     /// Explicit by design. A fabric that quantises silently is answering a different question than
     /// the one it was asked, and the caller is the last to find out.
     pub fn requantize(&self, p: &mut Program) -> f64 {
-        let Some(bits) = self.coupling_bits else { return 0.0 };
-        let err = Self::quantization_error(p, bits);
-        let max = p.factors.iter().map(|f| f.weight().abs()).fold(0.0f64, f64::max);
-        if max == 0.0 || bits == 0 {
+        // Only fixed point actually moves a coefficient onto a grid. Floating point rounds it in
+        // the last significand bits, which is not something to do here on the caller's behalf, and
+        // Exact does nothing at all.
+        let Precision::Fixed { bits } = self.coupling_precision else { return 0.0 };
+        if bits == 0 {
             return 0.0;
+        }
+        let weights: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let err = self.coupling_precision.worst_relative_error(&weights);
+        let max = weights.iter().map(|w| w.abs()).fold(0.0f64, f64::max);
+        if max == 0.0 || bits == 1 {
+            return err;
         }
         let levels = ((1u64 << (bits - 1)) - 1) as f64;
         let step = max / levels;
@@ -882,11 +1035,66 @@ mod range_tests {
     }
 
     #[test]
+    fn fixed_point_loses_a_small_coefficient_and_floating_point_does_not() {
+        // Why Precision is a type rather than a bit count. The same 24 bits mean completely
+        // different things, and modelling Toshiba's float32 as fixed point would report a
+        // coefficient it holds perfectly well as totally lost.
+        // A ratio wide enough that fixed point cannot hold both: 24 bits give ~8.4M levels, so a
+        // step of 1e8/8.4e6 is about 12 and the 1.0 rounds to zero. A 1e6:1 ratio only costs 4.6%,
+        // which is a real effect and not a vivid one -- worth choosing deliberately rather than
+        // discovering that the chosen numbers understate the point.
+        let vals = [1e8, 1.0];
+
+        let fixed = Precision::Fixed { bits: 24 }.worst_relative_error(&vals);
+        let float = Precision::Float { mantissa: 24 }.worst_relative_error(&vals);
+
+        assert!(fixed >= 1.0, "fixed point rounds the 1.0 away entirely: {fixed}");
+        assert!(float < 1e-6, "float32 keeps 24 significant bits of each: {float}");
+        assert!(fixed / float > 1e4, "they differ by orders of magnitude, not by a little");
+
+        assert_eq!(Precision::Exact.worst_relative_error(&vals), 0.0);
+        // and a single bit is all sign and no levels, which used to divide by zero levels
+        assert_eq!(Precision::Fixed { bits: 1 }.worst_relative_error(&vals), 1.0);
+    }
+
+    #[test]
+    fn a_fully_connected_fabric_needs_no_embedding() {
+        // The distinction native_placement exists for. 100,000 Fujitsu bits ARE 100,000 variables;
+        // 5,640 D-Wave qubits are not 5,640 variables.
+        // Coefficients that fit BOTH fabrics, so the only thing separating the two answers is
+        // placement. D-Wave's couplings live in [-1, 1] and Fujitsu wants whole numbers, so 1 and
+        // -1 are the values both accept.
+        let p = program(&[1.0, -1.0, 1.0], &[(0, 1.0)]);
+        let da = Fabric::fujitsu_da3(Z1_SPICE);
+        assert!(da.native_placement, "fully coupled: every bit reaches every other");
+        assert_eq!(da.verdict(&p), Ok(Verdict::Runnable), "so it can promise a run");
+        assert!(matches!(
+            Fabric::dwave_advantage2(Z1_SPICE).verdict(&p),
+            Ok(Verdict::NeedsEmbedding { .. })
+        ), "where a sparse hardware graph cannot");
+    }
+
+    #[test]
+    fn fujitsu_takes_whole_numbers_and_toshiba_does_not_care() {
+        // Fujitsu's coefficients are signed integers; the service silently scales and rounds a
+        // submission that is not, which is a different program than the one written.
+        let fractional = program(&[1.5, 2.0], &[]);
+        let da = Fabric::fujitsu_da3(Z1_SPICE);
+        let bad = da.check(&fractional);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(bad[0].to_string().contains("integers"), "{}", bad[0]);
+        assert!(da.check(&program(&[1.0, 2.0], &[])).is_empty(), "whole numbers are fine");
+
+        // Toshiba's are float32, so 1.5 is exactly what it says
+        assert!(Fabric::toshiba_sqbm(Z1_SPICE).check(&fractional).is_empty());
+    }
+
+    #[test]
     fn field_bits_is_enforced_and_not_merely_declared() {
         // Every fabric in this file declares it and nothing read it, so a fabric holding three-bit
         // fields accepted a program with fine-grained ones and lost them at submission.
         let mut f = Fabric::unconstrained("coarse-fields", Z1_SPICE);
-        f.field_bits = Some(3);
+        f.field_precision = Precision::Fixed { bits: 3 };
 
         // three signed bits give three levels: a field 1/50th of the peak cannot survive
         let fine = program(&[1.0], &[(0, 4.0), (1, 0.08)]);
@@ -1125,7 +1333,8 @@ mod range_tests {
         assert_eq!(a2.max_degree, Some(20), "20-way connectivity");
         assert_eq!(a2.coupling_range, Some(Range::continuous(-1.0, 1.0)), "j_range");
         assert_eq!(a2.field_range, Some(Range::continuous(-4.0, 4.0)), "h_range");
-        assert_eq!(a2.coupling_bits, None, "D-Wave publishes no bit count; claiming one invents it");
+        assert_eq!(a2.coupling_precision, Precision::Exact,
+                   "D-Wave publishes no bit count; claiming one would invent it");
         assert!(!a2.native_placement, "variables are placed by minor embedding, not one per qubit");
 
         let a1 = Fabric::dwave_advantage(Z1_SPICE);
@@ -1153,8 +1362,8 @@ mod tests {
             topology: Topology::Degree(4),
             max_spins: Some(64),
             max_degree: Some(4),
-            coupling_bits: Some(8),
-            field_bits: Some(8),
+            coupling_precision: Precision::Fixed { bits: 8 },
+            field_precision: Precision::Fixed { bits: 8 },
             supports_field: false,
             max_arity: 2,
             coupling_range: None,
