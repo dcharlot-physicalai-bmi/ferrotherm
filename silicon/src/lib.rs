@@ -68,6 +68,7 @@ pub mod device {
                 max_arity: 2,
                 // One LUT per spin, addressed directly. Nothing is embedded.
                 native_placement: true,
+                unstated: &[],
                 // The cell computes `popcount(I0..I4)` and fires when that plus a random bit
                 // reaches the threshold. It COUNTS. A neighbour is present or absent, so the only
                 // representable weights are 1 and 0 -- there is no negative coupling. Declaring

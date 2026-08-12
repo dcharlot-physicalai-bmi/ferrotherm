@@ -60,6 +60,13 @@ pub struct Fabric {
     pub coupling_range: Option<Range>,
     /// What magnitudes a field may take, or `None` for unbounded.
     pub field_range: Option<Range>,
+    /// What this fabric's vendor does not publish.
+    ///
+    /// Empty for a machine whose limits are fully documented. Non-empty means [`Fabric::verdict`]
+    /// cannot promise a run however clean `check` comes back, because the check was made against an
+    /// incomplete description. Declaring the gap is what makes a partially-documented fabric usable
+    /// at all — the alternative was leaving it out entirely, which helps nobody.
+    pub unstated: &'static [&'static str],
     /// Whether a program's variables map one-to-one onto the machine's sites.
     ///
     /// False for every annealer whose hardware graph is not complete. There, a variable with more
@@ -92,8 +99,16 @@ pub struct Fabric {
 /// and could not describe Toshiba's float32 at all.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Precision {
-    /// Every `f64` arrives intact.
+    /// Every `f64` arrives intact. A simulator, not a machine.
     Exact,
+    /// The vendor does not publish it.
+    ///
+    /// Distinct from `Exact`, and the distinction is the whole point. D-Wave was declared `Exact`
+    /// here, which claims every `f64` survives — false of an analog machine whose real limit is
+    /// integrated control error. Saying "unstated" refuses to certify rather than quietly
+    /// promising the best case, and a fabric carrying one of these cannot return
+    /// [`Verdict::Runnable`].
+    Unstated,
     /// Signed fixed-point in `bits` bits, one of them the sign, with a uniform step sized by the
     /// largest coefficient present.
     Fixed { bits: u32 },
@@ -106,6 +121,10 @@ impl Precision {
     pub fn worst_relative_error(&self, vals: &[f64]) -> f64 {
         match *self {
             Precision::Exact => 0.0,
+            // Unknown is not zero. Returning 0.0 would let a caller conclude nothing is lost, which
+            // is the claim this variant exists to avoid making; `Verdict::LimitsUnstated` is where
+            // it surfaces instead.
+            Precision::Unstated => 0.0,
             Precision::Float { mantissa } => {
                 if vals.iter().all(|v| *v == 0.0) {
                     0.0
@@ -200,35 +219,76 @@ impl core::fmt::Display for Range {
     }
 }
 
-/// What a fabric can say about a program that nothing rules out.
+/// A reason a fabric cannot promise a program will run, even with nothing ruling it out.
+///
+/// There can be more than one, which is why [`Verdict`] holds a list. D-Wave has both: variables
+/// are placed by minor embedding AND the coefficient precision is unpublished. An answer that could
+/// name only one of those would drop the other, and which one it dropped would be an accident of
+/// the order they were checked in.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Verdict {
-    /// It will run: nothing violates a declared limit, and one variable goes to one site.
-    Runnable,
-    /// Nothing declared rules it out, and that is as far as this can honestly go.
+pub enum Caveat {
+    /// Variables are placed by minor embedding, so `vars` variables do not mean `vars` sites.
     ///
-    /// Variables are placed by minor embedding, so `vars` variables do not mean `vars` sites — a
-    /// fully connected problem on a 5,640-qubit machine reaches nowhere near 5,640 variables. The
-    /// real answer needs an embedder run against the machine's own working graph, which has holes,
-    /// because yield is never 100%.
+    /// A variable with more neighbours than the topology allows becomes a chain of physical sites.
+    /// Whether such a placement exists is NP-hard and depends on the program's structure, not on
+    /// any number a fabric declares. The real answer needs an embedder run against the machine's
+    /// own working graph, which has holes, because yield is never 100%.
     NeedsEmbedding { vars: usize, sites: Option<usize> },
+    /// The vendor does not publish something that would have to be checked.
+    ///
+    /// A limit nobody states cannot be checked, and `None` must not be read as "no limit".
+    LimitsUnstated { missing: &'static [&'static str] },
 }
 
-impl core::fmt::Display for Verdict {
+impl core::fmt::Display for Caveat {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Verdict::Runnable => write!(f, "nothing rules it out and placement is direct: it runs"),
-            Verdict::NeedsEmbedding { vars, sites } => write!(
+            Caveat::NeedsEmbedding { vars, sites } => write!(
                 f,
-                "nothing declared rules it out, but this fabric places variables by minor \
-                 embedding, so {vars} variables do not mean {vars} sites{}. Run an embedder \
-                 against the machine's own working graph to find out whether it fits",
+                "this fabric places variables by minor embedding, so {vars} variables do not mean \
+                 {vars} sites{}; run an embedder against the machine's own working graph",
                 match sites {
                     Some(n) => format!(" out of {n}"),
                     None => String::new(),
                 }
             ),
+            Caveat::LimitsUnstated { missing } => {
+                write!(f, "this fabric does not publish {}", missing.join(", "))
+            }
         }
+    }
+}
+
+/// What a fabric can say about a program that nothing rules out.
+///
+/// Empty caveats mean it runs. Anything else means the check was necessary and not sufficient, and
+/// says why — rather than returning silence for a caller to read as a yes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Verdict {
+    caveats: Vec<Caveat>,
+}
+
+impl Verdict {
+    /// Nothing rules it out, nothing is unpublished, and one variable goes to one site.
+    pub fn is_runnable(&self) -> bool {
+        self.caveats.is_empty()
+    }
+    /// Every reason this is not a promise.
+    pub fn caveats(&self) -> &[Caveat] {
+        &self.caveats
+    }
+}
+
+impl core::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.caveats.is_empty() {
+            return write!(f, "nothing rules it out and placement is direct: it runs");
+        }
+        write!(f, "nothing declared rules it out, but this is not a promise that it runs:")?;
+        for c in &self.caveats {
+            write!(f, "\n  - {c}")?;
+        }
+        Ok(())
     }
 }
 
@@ -316,6 +376,7 @@ impl Fabric {
             coupling_range: None,
             field_range: None,
             native_placement: true,
+            unstated: &[],
             uniform_couplings: false,
             prices,
         }
@@ -461,15 +522,18 @@ impl Fabric {
             // number being read as a variable budget.
             max_spins: Some(4_400),
             max_degree: Some(20),
-            // Analog. The practical limit is integrated control error rather than a bit count, and
-            // D-Wave publishes no bit count, so claiming one would be an invention.
-            coupling_precision: Precision::Exact,
-            field_precision: Precision::Exact,
+            // Analog. The practical limit is integrated control error rather than a bit count,
+            // and D-Wave publishes no bit count. This said `Exact`, which claims every f64 arrives
+            // intact — the opposite of true for an analog machine, and a claim invented to fill a
+            // field rather than measured.
+            coupling_precision: Precision::Unstated,
+            field_precision: Precision::Unstated,
             supports_field: true,
             max_arity: 2,
             coupling_range: Some(Range::continuous(-1.0, 1.0)),
             field_range: Some(Range::continuous(-4.0, 4.0)),
             native_placement: false,
+            unstated: &["coefficient precision (analog, bounded by integrated control error)"],
             uniform_couplings: false,
             prices,
         }
@@ -484,13 +548,14 @@ impl Fabric {
             topology: Topology::Degree(15),
             max_spins: Some(5_640),
             max_degree: Some(15),
-            coupling_precision: Precision::Exact,
-            field_precision: Precision::Exact,
+            coupling_precision: Precision::Unstated,
+            field_precision: Precision::Unstated,
             supports_field: true,
             max_arity: 2,
             coupling_range: Some(Range::continuous(-1.0, 1.0)),
             field_range: Some(Range::continuous(-4.0, 4.0)),
             native_placement: false,
+            unstated: &["coefficient precision (analog, bounded by integrated control error)"],
             uniform_couplings: false,
             prices,
         }
@@ -526,6 +591,7 @@ impl Fabric {
             coupling_range: Some(Range::integers(-(2f64.powi(63)) + 1.0, 2f64.powi(63) - 1.0)),
             field_range: Some(Range::integers(-(2f64.powi(75)) + 1.0, 2f64.powi(75) - 1.0)),
             native_placement: true,
+            unstated: &[],
             uniform_couplings: false,
             prices,
         }
@@ -559,18 +625,86 @@ impl Fabric {
             coupling_range: Some(Range::continuous(-(f32::MAX as f64), f32::MAX as f64)),
             field_range: Some(Range::continuous(-(f32::MAX as f64), f32::MAX as f64)),
             native_placement: true,
+            unstated: &[],
             uniform_couplings: false,
             prices,
         }
     }
 
-    // NOT DECLARED: QBoson's coherent Ising machines. This review located figures only in
-    // third-party papers -- 550 qubits for a CPQC-550, 2,000 binary variables for a third-generation
-    // part -- and no vendor material stating the coefficient precision, which on an analog optical
-    // machine is the limit that decides whether a program survives at all. A fabric declared
-    // without it would pass programs it cannot hold. Also not declared: Fujitsu's earlier
-    // generations and Toshiba's order-4 PUBO solver, for the same reason in reverse -- they are
-    // real, and this has not established their numbers to the standard the two above meet.
+    /// Toshiba SQBM+, the **PUBO** solver — terms up to order four.
+    ///
+    /// The same product as [`Fabric::toshiba_sqbm`] through a different API. Toshiba's manual:
+    /// "a solver that solves a problem with higher order terms up to order 4".
+    ///
+    /// Worth declaring separately rather than widening the QUBO solver's `max_arity`, because they
+    /// are different endpoints with different limits, and because this is the one fabric here where
+    /// a three- or four-body model runs **without** [`crate::reduce`] — no ancillas, no penalty, no
+    /// distribution caveat. That is a real difference to a caller and it should be visible in the
+    /// declaration rather than in a comment.
+    pub fn toshiba_sqbm_pubo(prices: Prices) -> Fabric {
+        Fabric {
+            name: "toshiba-sqbm-pubo",
+            topology: Topology::Unconstrained,
+            max_spins: Some(10_000_000),
+            max_degree: None,
+            coupling_precision: Precision::Float { mantissa: 24 },
+            field_precision: Precision::Float { mantissa: 24 },
+            supports_field: true,
+            max_arity: 4,
+            coupling_range: Some(Range::continuous(-(f32::MAX as f64), f32::MAX as f64)),
+            field_range: Some(Range::continuous(-(f32::MAX as f64), f32::MAX as f64)),
+            native_placement: true,
+            unstated: &[],
+            uniform_couplings: false,
+            prices,
+        }
+    }
+
+    /// QBoson CPQC — a coherent Ising machine, from the Kaiwu SDK's own documentation.
+    ///
+    /// An optical machine: a network of degenerate optical parametric oscillators whose steady
+    /// state encodes the Ising ground state, with the couplings applied in measurement feedback
+    /// rather than wired physically.
+    ///
+    /// **Eight-bit fixed point.** The Kaiwu documentation is explicit — "the CIM machine only
+    /// supports 8-bit INT space [-128, 127]" — and the SDK ships
+    /// `perform_precision_adaption_mutate` and `..._split` because real models do not fit it. That
+    /// is a far harder limit than anything else declared here, and it is the number that decides
+    /// whether a program survives at all.
+    ///
+    /// What the vendor does **not** publish, and this therefore does not claim: the machine's size
+    /// or its connectivity. Third-party papers give 550 qubits for a CPQC-550 and 2,000 variables
+    /// for a third-generation part; those are not the vendor's numbers and are not declared. A
+    /// caller gets [`Verdict::LimitsUnstated`] rather than a promise.
+    ///
+    /// An earlier version of this file said no vendor material gave the precision. That was wrong:
+    /// it is in the SDK documentation rather than a datasheet, which is where this review had
+    /// looked. The claim it is replacing is the reason the wording of an absence matters — "we did
+    /// not find it" would have survived being wrong; "it does not exist" did not.
+    pub fn qboson_cpqc(prices: Prices) -> Fabric {
+        Fabric {
+            name: "qboson-cpqc",
+            topology: Topology::Unconstrained,
+            // Not published. `None` here would read as "no limit", which is why `unstated` says so
+            // out loud and the verdict refuses to promise.
+            max_spins: None,
+            max_degree: None,
+            coupling_precision: Precision::Fixed { bits: 8 },
+            field_precision: Precision::Fixed { bits: 8 },
+            supports_field: true,
+            max_arity: 2,
+            coupling_range: Some(Range::integers(-128.0, 127.0)),
+            field_range: Some(Range::integers(-128.0, 127.0)),
+            native_placement: true,
+            unstated: &["maximum problem size", "coupling topology"],
+            uniform_couplings: false,
+            prices,
+        }
+    }
+
+    // Still not declared: Fujitsu's earlier Digital Annealer generations, whose marketing numbers
+    // (8,192 bits, 64-bit gradation) disagree with the API documentation used above and which this
+    // review did not separate into distinct products with confidence.
 
     /// What an empty [`Fabric::check`] actually means here.
     ///
@@ -584,11 +718,14 @@ impl Fabric {
         if !bad.is_empty() {
             return Err(bad);
         }
-        Ok(if self.native_placement {
-            Verdict::Runnable
-        } else {
-            Verdict::NeedsEmbedding { vars: p.spins, sites: self.max_spins }
-        })
+        let mut caveats = Vec::new();
+        if !self.native_placement {
+            caveats.push(Caveat::NeedsEmbedding { vars: p.spins, sites: self.max_spins });
+        }
+        if !self.unstated.is_empty() {
+            caveats.push(Caveat::LimitsUnstated { missing: self.unstated });
+        }
+        Ok(Verdict { caveats })
     }
 
     /// What rules this program out on this fabric?
@@ -690,12 +827,21 @@ impl Fabric {
             }
         }
 
-        let field_err = self.field_precision.worst_relative_error(&fields);
+        // An INTEGRAL range already says what survives: a value on the grid is stored exactly and
+        // one off it was refused above. Running the fixed-point model as well reports an error that
+        // is not there — it derives a step by rescaling the largest coefficient, which describes a
+        // fabric that normalises its input, not one whose grid is the integers. Two statements of
+        // the same limit disagreeing is worse than one, so the range wins where it is present.
+        let field_grid = self.field_range.map(|r| r.integral).unwrap_or(false);
+        let coupling_grid = self.coupling_range.map(|r| r.integral).unwrap_or(false);
+
+        let field_err =
+            if field_grid { 0.0 } else { self.field_precision.worst_relative_error(&fields) };
         if field_err > 0.05 {
             out.push(Unsupported::CouplingPrecision {
                 bits: match self.field_precision {
                     Precision::Fixed { bits } | Precision::Float { mantissa: bits } => bits,
-                    Precision::Exact => 0,
+                    Precision::Exact | Precision::Unstated => 0,
                 },
                 worst_relative_error: field_err,
             });
@@ -704,11 +850,14 @@ impl Fabric {
         {
             let bits = match self.coupling_precision {
                 Precision::Fixed { bits } | Precision::Float { mantissa: bits } => bits,
-                Precision::Exact => 0,
+                Precision::Exact | Precision::Unstated => 0,
             };
-            let err = self
-                .coupling_precision
-                .worst_relative_error(&pairs.iter().map(|f| f.weight()).collect::<Vec<_>>());
+            let err = if coupling_grid {
+                0.0
+            } else {
+                self.coupling_precision
+                    .worst_relative_error(&pairs.iter().map(|f| f.weight()).collect::<Vec<_>>())
+            };
             // A tenth of a percent is the line: below it the model is the model, above it the
             // caller is answering a different question and should say so out loud.
             if err > 1e-3 {
@@ -1059,6 +1208,71 @@ mod range_tests {
     }
 
     #[test]
+    fn an_unstated_limit_is_not_an_absent_one() {
+        // `None` meant both "no limit" and "not published", so a machine whose size the vendor does
+        // not state looked exactly like a simulator with no size at all. QBoson publishes its
+        // eight-bit precision and not its size; the verdict has to say so rather than promise.
+        let q = Fabric::qboson_cpqc(Z1_SPICE);
+        let p = program(&[3.0, -5.0], &[(0, 2.0)]);
+        assert!(q.check(&p).is_empty(), "whole numbers inside [-128, 127] fit: {:?}", q.check(&p));
+        let v = q.verdict(&p).expect("nothing rules it out");
+        assert!(!v.is_runnable(), "it cannot promise a run");
+        assert!(v.caveats().iter().any(|c| matches!(
+            c, Caveat::LimitsUnstated { missing } if missing.iter().any(|m| m.contains("size"))
+        )), "{:?}", v.caveats());
+        assert!(v.to_string().contains("not a promise"));
+
+        // and the eight-bit range it DOES publish is enforced
+        let bad = q.check(&program(&[200.0], &[]));
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(bad[0].to_string().contains("integers -128..=127"), "{}", bad[0]);
+        // fractional too: the machine stores fixed-point integers
+        assert!(!q.check(&program(&[1.5], &[])).is_empty(), "1.5 is not an 8-bit integer");
+    }
+
+    #[test]
+    fn d_wave_does_not_claim_a_precision_it_never_published() {
+        // It said `Exact` -- every f64 arrives intact -- which is the opposite of true for an
+        // analog machine whose real limit is integrated control error.
+        let dw = Fabric::dwave_advantage2(Z1_SPICE);
+        assert_eq!(dw.coupling_precision, Precision::Unstated);
+        assert!(!dw.unstated.is_empty(), "and the gap is declared rather than implied");
+        assert!(
+            !dw.verdict(&program(&[0.5], &[])).unwrap().is_runnable(),
+            "so it cannot promise a run either"
+        );
+    }
+
+    #[test]
+    fn the_pubo_solver_takes_a_four_body_term_where_everything_else_needs_reducing() {
+        // The one fabric here where a three- or four-body model runs with no ancillas, no penalty
+        // and no distribution caveat. That is a real difference and it is visible in the type.
+        let cubic = Program::from_ftp("ftp 1\nspins 5\nfactor 1.0 0 1 2\nfactor 1.0 1 2 3 4\n")
+            .unwrap();
+
+        let pubo = Fabric::toshiba_sqbm_pubo(Z1_SPICE);
+        assert_eq!(pubo.max_arity, 4);
+        assert!(pubo.check(&cubic).is_empty(), "order 4 runs as written: {:?}", pubo.check(&cubic));
+        assert!(pubo.verdict(&cubic).unwrap().is_runnable());
+
+        // every other fabric needs the reduction first
+        for f in [Fabric::toshiba_sqbm(Z1_SPICE), Fabric::fujitsu_da3(Z1_SPICE),
+                  Fabric::qboson_cpqc(Z1_SPICE)] {
+            assert!(
+                f.check(&cubic).iter().any(|u| matches!(u, Unsupported::ArityTooHigh { .. })),
+                "{} should refuse a 4-body term", f.name
+            );
+        }
+
+        // and after reducing, they take it
+        let r = crate::reduce::to_pairwise(&cubic).unwrap();
+        assert!(!Fabric::toshiba_sqbm(Z1_SPICE).check(&r.program).iter()
+                    .any(|u| matches!(u, Unsupported::ArityTooHigh { .. })));
+        // which the PUBO solver never needed
+        assert_eq!(r.ancillas > 0, true, "the reduction really did cost ancillas");
+    }
+
+    #[test]
     fn a_fully_connected_fabric_needs_no_embedding() {
         // The distinction native_placement exists for. 100,000 Fujitsu bits ARE 100,000 variables;
         // 5,640 D-Wave qubits are not 5,640 variables.
@@ -1068,11 +1282,16 @@ mod range_tests {
         let p = program(&[1.0, -1.0, 1.0], &[(0, 1.0)]);
         let da = Fabric::fujitsu_da3(Z1_SPICE);
         assert!(da.native_placement, "fully coupled: every bit reaches every other");
-        assert_eq!(da.verdict(&p), Ok(Verdict::Runnable), "so it can promise a run");
-        assert!(matches!(
-            Fabric::dwave_advantage2(Z1_SPICE).verdict(&p),
-            Ok(Verdict::NeedsEmbedding { .. })
-        ), "where a sparse hardware graph cannot");
+        assert!(da.verdict(&p).unwrap().is_runnable(), "so it can promise a run");
+        assert!(
+            Fabric::dwave_advantage2(Z1_SPICE)
+                .verdict(&p)
+                .unwrap()
+                .caveats()
+                .iter()
+                .any(|c| matches!(c, Caveat::NeedsEmbedding { .. })),
+            "where a sparse hardware graph cannot"
+        );
     }
 
     #[test]
@@ -1307,18 +1526,20 @@ mod range_tests {
 
         let dw = Fabric::dwave_advantage2(Z1_SPICE);
         assert!(dw.check(&p).is_empty(), "nothing declared rules it out");
-        match dw.verdict(&p) {
-            Ok(Verdict::NeedsEmbedding { vars, sites }) => {
-                assert_eq!(vars, p.spins);
-                assert_eq!(sites, Some(4_400));
-            }
-            other => panic!("a D-Wave part cannot promise a run: {other:?}"),
-        }
-        assert!(dw.verdict(&p).unwrap().to_string().contains("do not mean"));
+        let v = dw.verdict(&p).expect("nothing rules it out");
+        assert!(!v.is_runnable(), "a D-Wave part cannot promise a run");
+        // BOTH caveats, not whichever was checked first: it embeds AND its precision is unpublished
+        assert!(v.caveats().iter().any(|c| matches!(
+            c,
+            Caveat::NeedsEmbedding { vars, sites } if *vars == p.spins && *sites == Some(4_400)
+        )), "{:?}", v.caveats());
+        assert!(v.caveats().iter().any(|c| matches!(c, Caveat::LimitsUnstated { .. })),
+                "{:?}", v.caveats());
+        assert!(v.to_string().contains("do not mean"));
 
-        // A fabric that places one variable per site CAN promise it.
+        // A fabric that places one variable per site and publishes its limits CAN promise it.
         let cpu = Fabric::unconstrained("sim", Z1_SPICE);
-        assert_eq!(cpu.verdict(&p), Ok(Verdict::Runnable));
+        assert!(cpu.verdict(&p).unwrap().is_runnable());
 
         // And a real violation still comes back as one, ahead of any verdict.
         let too_big = program(&[5.0], &[]);
@@ -1334,8 +1555,9 @@ mod range_tests {
         assert_eq!(a2.max_degree, Some(20), "20-way connectivity");
         assert_eq!(a2.coupling_range, Some(Range::continuous(-1.0, 1.0)), "j_range");
         assert_eq!(a2.field_range, Some(Range::continuous(-4.0, 4.0)), "h_range");
-        assert_eq!(a2.coupling_precision, Precision::Exact,
-                   "D-Wave publishes no bit count; claiming one would invent it");
+        assert_eq!(a2.coupling_precision, Precision::Unstated,
+                   "analog, and D-Wave publishes no bit count -- Exact would claim every f64 \
+                    arrives intact, which is the opposite of true here");
         assert!(!a2.native_placement, "variables are placed by minor embedding, not one per qubit");
 
         let a1 = Fabric::dwave_advantage(Z1_SPICE);
@@ -1370,6 +1592,7 @@ mod tests {
             coupling_range: None,
             field_range: None,
             native_placement: true,
+            unstated: &[],
             uniform_couplings: false,
             prices: Z1_SPICE,
         }

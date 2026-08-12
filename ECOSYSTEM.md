@@ -74,11 +74,16 @@ variables place one-to-one or need minor embedding. It does not mean we drive th
 only the Hitachi part and our own FPGA are driven end to end. Declaring is most of the value on its
 own, because a caller can ask what rules their program out before buying time on a machine.
 
-QBoson is **not** declared, and the reason is worth stating rather than leaving as a gap in a
-table. This review located figures only in third-party papers and no vendor material giving the
-coefficient precision — which, on an analog optical machine, is the limit that decides whether a
-program survives at all. A fabric declared without it would pass programs it cannot hold, which is
-worse than no entry.
+QBoson is declared **partially**, which is a state this now has a way to express. Its Kaiwu SDK
+documentation gives the number that matters — *"the CIM machine only supports 8-bit INT space
+[-128, 127]"*, by far the hardest coefficient limit here — and does not give the machine's size or
+its connectivity. Those are listed in `unstated`, and `Fabric::verdict` therefore refuses to promise
+a run however cleanly a program checks.
+
+An earlier version of this file said no vendor material gave the precision. That was wrong: it is in
+the SDK documentation rather than a datasheet, which is not where this review had looked. Worth
+recording, because it is exactly why an absence is written as *"this review did not locate X"*
+rather than *"X does not exist"* — the first survives being wrong.
 
 Three of these are strategic assets rather than engineering conveniences, and they are what make
 this an ecosystem rather than a library.
@@ -105,7 +110,7 @@ reachable through one program.
 | **D-Wave** | Ocean / Leap | **declared** — Advantage, Advantage2 | E2 |
 | **Fujitsu Digital Annealer** | cloud API | **declared** — DA3 | E3 |
 | **Toshiba SQBM+** | AWS Marketplace | **declared** — QUBO solver | E3 |
-| **QBoson** | Kaiwu SDK | **not declared** — see below | — |
+| **QBoson** | Kaiwu SDK | **declared** — CPQC, precision only | — |
 | **QBoson CPQC** | cloud | planned | E3 |
 | **Extropic / Normal silicon** | no external access exists | trait ready, blocked on them | — |
 | **Oscillator / memristive** | academic only, no company | trait ready | — |

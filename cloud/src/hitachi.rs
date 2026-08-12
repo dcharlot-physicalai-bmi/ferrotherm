@@ -281,6 +281,7 @@ impl Device for Hitachi {
             // the driver refuses anything else rather than embedding it, so placement is native by
             // construction and the caller does their own embedding beforehand.
             native_placement: true,
+            unstated: &[],
             coupling_range: Some(self.machine.range()),
             field_range: Some(self.machine.range()),
             uniform_couplings: false,
