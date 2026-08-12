@@ -68,6 +68,18 @@ Seven layers, all Rust, all ours.
    CPU · WebGPU · FPGA · D-Wave · Fujitsu · Hitachi · Toshiba · QBoson · future fabric
 ```
 
+**Declared means the fabric's limits are stated in code and a program is checked against them
+before it is submitted** — topology, degree, arity, coefficient range, precision, and whether
+variables place one-to-one or need minor embedding. It does not mean we drive the silicon; today
+only the Hitachi part and our own FPGA are driven end to end. Declaring is most of the value on its
+own, because a caller can ask what rules their program out before buying time on a machine.
+
+QBoson is **not** declared, and the reason is worth stating rather than leaving as a gap in a
+table. This review located figures only in third-party papers and no vendor material giving the
+coefficient precision — which, on an analog optical machine, is the limit that decides whether a
+program survives at all. A fabric declared without it would pass programs it cannot hold, which is
+worse than no entry.
+
 Three of these are strategic assets rather than engineering conveniences, and they are what make
 this an ecosystem rather than a library.
 
@@ -90,9 +102,10 @@ reachable through one program.
 | **WebGPU** | browser, no install | ✅ correct, crossover measured | done |
 | **FPGA — Alchitry Pt V2** | our own JTAG + bitstream stack | ◐ fabric emitted, sequential pending | E1 |
 | **Hitachi CMOS annealer** | free public web API | ✅ **running on the real ASIC** | E2 |
-| **D-Wave** | Ocean / Leap | planned | E2 |
-| **Fujitsu Digital Annealer** | cloud API | planned | E3 |
-| **Toshiba SQBM+** | AWS Marketplace | planned | E3 |
+| **D-Wave** | Ocean / Leap | **declared** — Advantage, Advantage2 | E2 |
+| **Fujitsu Digital Annealer** | cloud API | **declared** — DA3 | E3 |
+| **Toshiba SQBM+** | AWS Marketplace | **declared** — QUBO solver | E3 |
+| **QBoson** | Kaiwu SDK | **not declared** — see below | — |
 | **QBoson CPQC** | cloud | planned | E3 |
 | **Extropic / Normal silicon** | no external access exists | trait ready, blocked on them | — |
 | **Oscillator / memristive** | academic only, no company | trait ready | — |
