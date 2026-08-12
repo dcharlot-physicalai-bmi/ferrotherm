@@ -65,6 +65,7 @@ pub mod model;
 pub mod mppi;
 pub mod oracle;
 pub mod planted;
+pub mod reduce;
 pub mod program;
 pub mod compile;
 pub mod tempering;

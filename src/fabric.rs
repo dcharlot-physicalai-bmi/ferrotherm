@@ -270,8 +270,9 @@ impl core::fmt::Display for Unsupported {
             ),
             Unsupported::ArityTooHigh { arity, limit } => write!(
                 f,
-                "a factor of arity {arity} cannot run on a fabric limited to {limit}; lower it to \
-                 pairwise first"
+                "a factor of arity {arity} cannot run on a fabric limited to {limit}; lower it with \
+                 `ferrotherm::reduce::to_pairwise`, which adds one ancilla spin per substituted \
+                 pair and leaves every state in the same order"
             ),
             Unsupported::NoFieldSupport { nodes } => write!(
                 f,

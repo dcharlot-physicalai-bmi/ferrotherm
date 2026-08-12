@@ -140,6 +140,37 @@ capturing structure — and this is *not* the published FID ≈ 28. Reaching tha
 
 ---
 
+## 6. Higher-order models on pairwise hardware — `src/reduce.rs`
+
+Every fabric in this repository declares `max_arity: 2`, and plenty of real problems are not
+pairwise: a three-body constraint, a parity check, a term saying *these three agree*. Toshiba's
+SQBM+ has a PUBO solver taking order 4 and it is the exception, not the rule.
+
+`reduce::to_pairwise` lowers any of it. It introduces an ancilla spin equal to the product of two
+existing ones, substitutes it wherever that pair appears, and repeats — paying for each definition
+with a penalty larger than the whole model can afford to break it. The pair chosen each round is the
+one appearing in the most wide terms, so one ancilla can serve several.
+
+It goes through binary because in spin space *"t equals s_a·s_b"* is itself a three-body statement,
+which is the problem being solved. In binary it is Rosenberg's `3y + x_a·x_b − 2x_a·y − 2x_b·y`,
+zero exactly when `y = x_a·x_b` and quadratic throughout.
+
+| model | ancillas | check |
+|---|---|---|
+| one 3-body term | 1 | every state, enumerated |
+| one 4-body term | 2 | every state, enumerated |
+| three 3-body terms sharing a pair | **1** | every state, enumerated |
+
+**The guarantee is about optimisation, and the tests are exhaustive rather than sampled.** For every
+assignment of the original spins, the reduced energy minimised over the ancillas equals the original
+plus one constant — so no state is reordered and the ground states correspond exactly. The ancillas
+add states, so the Boltzmann distribution over the original variables is *not* preserved at finite
+temperature; the penalty makes a violation expensive, not impossible.
+
+Five mutations of the pass were each required to turn the enumeration red. One appeared not to and
+was the mutation failing to apply rather than the check failing to see, which is why the mutation
+script now refuses to run when its pattern does not match.
+
 ## What we deliberately do not do
 
 **Routing, scheduling and portfolio optimisation.** They are MILP in a QUBO costume and they lose to

@@ -145,8 +145,9 @@ impl Program {
                     return err(
                         0,
                         format!(
-                            "factor of arity {n} cannot become a graph directly; lower it to \
-                             pairwise first"
+                            "factor of arity {n} cannot become a graph directly; lower it with \
+                             `ferrotherm::reduce::to_pairwise`, which adds an ancilla spin per \
+                             substituted pair and preserves every state's ordering"
                         ),
                     )
                 }
