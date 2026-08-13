@@ -1818,13 +1818,18 @@ mod tests {
         // `s² = 1`, so a term over the same spin twice is a CONSTANT and says nothing about which
         // way that spin should go. Collapsing it to `s` instead turns a constant into a preference,
         // silently, and here strongly enough to overrule the only real one in the model.
+        // THREE literals, because a two-literal term never reaches the expansion at all -- it
+        // takes the `2 =>` branch and `add_product` handles it. A first version of this used two
+        // and tested nothing: the parity rule it is named after was never executed.
         let mut m = Model::new();
         let a = m.spin("a");
-        m.objective(Sense::Maximize, Expr::product(50.0, &[a.spin(), a.spin()]));
-        m.objective(Sense::Minimize, 1.0 * a.spin());
+        let b = m.spin("b");
+        m.objective(Sense::Maximize, Expr::product(50.0, &[a.spin(), a.spin(), b.spin()]));
+        m.objective(Sense::Minimize, 1.0 * b.spin());
         let c = m.compile().unwrap();
-        assert_eq!(c.ancillas, 0, "s·s is not even a two-body term");
-        assert_eq!(c.solve_best_of(16).value("a"), -1, "the constant must not outvote it");
+        // s_a·s_a·s_b collapses to s_b: linear, so no ancilla, and nothing said about a at all
+        assert_eq!(c.ancillas, 0, "s² = 1 leaves a one-body term, not a three-body one");
+        assert_eq!(c.solve_best_of(24).value("b"), 1, "50·s_b against 1·s_b: b goes to +1");
     }
 
     #[test]
