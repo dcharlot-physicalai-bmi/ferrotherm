@@ -36,3 +36,9 @@ python/ferrotherm/*.dll
 # moment that file did: 47 MB of object files, into both the repository and the published crate.
 .zig-cache/
 zig-out/
+
+# Julia manifests. A Manifest.toml pins resolved dependency versions and belongs to an APPLICATION,
+# not to a package: shipping one from a package means every consumer inherits whatever was resolved
+# on the author's machine. A stale one here listed no LazyArtifacts and failed CI with
+# "direct dependency, but does not appear in the manifest".
+julia/*/Manifest.toml
