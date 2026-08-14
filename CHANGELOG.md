@@ -1,20 +1,90 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-08-13)
 
-- `model`: an objective term of three or more literals compiles, via `reduce`. `Expr::product`
-  writes one; `Compiled::ancillas` reports what it cost. Whatever expands to degree 0, 1 or 2 goes
-  straight into the graph, so only what is genuinely wider is charged.
-- `reduce`: higher-order models run on pairwise hardware. Verified by enumerating every state of
-  both models rather than by sampling.
-- `fabric`: six machines declared from vendor documentation — D-Wave Advantage and Advantage2,
-  Fujitsu DA3, Toshiba SQBM+ (QUBO and PUBO), QBoson CPQC. `Precision` distinguishes fixed point
-  from floating point from **unstated**; `Verdict` carries every caveat rather than the first one
-  checked; `Range` says what magnitudes a coefficient may take and whether they must be whole.
-- `scripts/mutation-check.sh`: break the code on purpose, require a named test to notice.
+**A fabric describes a real machine, and a model can be wider than pairwise.** Breaking: the
+precision field changed type, `Fabric` gained fields, `Unsupported` gained variants.
 
-**This is a breaking API change and is not released yet**, deliberately — see PACKAGING.md. The
-fabric API is still moving and two breaking releases a week apart help nobody.
+### Higher-order models
+
+- `reduce::to_pairwise` lowers a k-body model onto pairwise hardware. An ancilla spin is defined as
+  the product of two existing ones and substituted wherever that pair appears; the pair chosen each
+  round is the commonest, so three 3-body terms sharing a pair cost **one** ancilla, not three.
+  It goes through binary because in spin space *"t equals s_a·s_b"* is itself a three-body
+  statement — Rosenberg's `3y + x_a·x_b − 2x_a·y − 2x_b·y` is quadratic throughout.
+- **Verified by enumerating every state of both models.** For each assignment of the original
+  spins, the reduced energy minimised over the ancillas equals the original plus one constant, so
+  nothing is reordered and the ground states correspond exactly.
+- **The guarantee is about optimisation.** The ancillas add states, so the Boltzmann distribution
+  over the original variables is not preserved at finite temperature. Read `reduce`'s docs before
+  sampling from a reduced model.
+- `Model::compile` accepts a cubic or wider objective and applies the pass; `Compiled::ancillas`
+  reports the price. Whatever expands to degree 0, 1 or 2 goes straight into the graph, so only
+  what is genuinely wider is charged.
+- Reachable everywhere: `Expr::product` (Rust), `ft_model_objective_product` (C),
+  `a.is_(1) * b.is_(1) * c.is_(1)` (Python), `preferAll` (Zig), `(w, (l1, l2, l3))` (Julia),
+  `"of": [...]` (HTTP/MCP), and a variadic **Prefer all together** node in the editor.
+
+### Fabrics
+
+Six machines declared from vendor documentation, each number cited where it is used:
+
+| fabric | from | notable |
+|---|---|---|
+| D-Wave Advantage2 | topology docs, GA announcement | Zephyr, 20-way, `j_range [-1,1]` |
+| D-Wave Advantage | topology docs | Pegasus, 5,640 qubits, 15-way |
+| Fujitsu DA3 | Fujitsu's API documentation | 100,000 bits, **fully connected**, 64-bit integers |
+| Toshiba SQBM+ (QUBO) | Toshiba's user manual | 10M variables, **float32** |
+| Toshiba SQBM+ (PUBO) | same | **order 4 natively** — no reduction needed |
+| QBoson CPQC | Kaiwu SDK docs | **8-bit integers, [-128, 127]** — the hardest limit here |
+
+- `Range { lo, hi, integral }` says what magnitudes a coefficient may take and whether they must be
+  whole. D-Wave's couplings are continuous over `[-1, 1]`; Hitachi's are four-bit integers over
+  `-7..=7`. `J = 0.5` fits the first exactly and the second not at all, and a bit count cannot say
+  that. `Fabric::scale_to_fit` returns the factor that makes a program fit, or `None` when no
+  factor helps.
+- `Precision::{Exact, Fixed, Float, Unstated}` replaces `Option<u32>`. Fixed point spreads one step
+  across the range and loses a small coefficient; floating point keeps significant digits and does
+  not. Over `[1e8, 1.0]` the two answers are `1.0` and `6e-8`.
+- `Verdict` carries **every** caveat rather than the first one checked. D-Wave has two: it places by
+  minor embedding *and* its precision is unpublished.
+- `Fabric::unstated` names what a vendor does not publish. `None` used to mean both "no limit" and
+  "not documented", so a machine of unknown size looked exactly like a simulator with no size.
+
+### Fixed
+
+- `feasible` now means the constraints hold, not merely that every variable decoded. A penalty makes
+  a constraint expensive, not impossible; a sampler whose objective outbids it returned an answer
+  that read perfectly and broke the request, reported as feasible. `violated` names what broke.
+- Two variables may not share a name. An answer is keyed by name, so the second replaced the first
+  and one of them vanished from the result.
+- A unary factor is a **field**, as it is everywhere else in the crate. It was range-checked as a
+  coupling, so fields written that way walked past a fabric that has none.
+- Degree counts edges, not factor mentions. `uniform_couplings` compares values, not bit patterns,
+  so `0.0` and `-0.0` are one weight rather than two.
+- `check` reports the worst out-of-range coefficient, which is the one that sets the scale factor.
+  It reported the first while its comment said worst.
+- The node-update ceiling counts the whole run. A request declaring 1,024 node updates did 262
+  million, because every handler runs `draws × thin` further sweeps afterwards.
+- Every Hitachi layout failure was reported as `TooHighDegree { degree: 0, limit: 8 }`. It says what
+  failed now.
+- `field_bits` was declared by every fabric and read by nothing.
+- The Pt V2 declared a negative coupling its cell cannot express — it counts active neighbours, so a
+  coupling is present or absent.
+
+### Verification
+
+- `scripts/mutation-check.sh` breaks the code on purpose and requires a named test to notice. It
+  refuses to run on uncommitted work, calls out a mutation that did not apply, and distinguishes a
+  build failure from a genuine red — each of which had already produced a false pass here.
+- `include/check.c` compiles against the header and links against the library, so the header cannot
+  drift from the ABI. It found a missing declaration on its first run.
+- `web-tests/` drives both browser pages through the same API an agent would use, and
+  `npm run live` drives the deployed copy rather than a local build.
+
+**403 Rust, 18 Python, 19 Zig, 123 Julia, 42 browser, 18 C.**
+
+
 
 ## 0.7.0 (2026-08-08)
 
