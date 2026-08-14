@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- `model`: an objective term of three or more literals compiles, via `reduce`. `Expr::product`
+  writes one; `Compiled::ancillas` reports what it cost. Whatever expands to degree 0, 1 or 2 goes
+  straight into the graph, so only what is genuinely wider is charged.
+- `reduce`: higher-order models run on pairwise hardware. Verified by enumerating every state of
+  both models rather than by sampling.
+- `fabric`: six machines declared from vendor documentation — D-Wave Advantage and Advantage2,
+  Fujitsu DA3, Toshiba SQBM+ (QUBO and PUBO), QBoson CPQC. `Precision` distinguishes fixed point
+  from floating point from **unstated**; `Verdict` carries every caveat rather than the first one
+  checked; `Range` says what magnitudes a coefficient may take and whether they must be whole.
+- `scripts/mutation-check.sh`: break the code on purpose, require a named test to notice.
+
+**This is a breaking API change and is not released yet**, deliberately — see PACKAGING.md. The
+fabric API is still moving and two breaking releases a week apart help nobody.
+
 ## 0.7.0 (2026-08-08)
 
 **The modelling layer, on every surface.** And an ABI break to make it honest: a `value` is now

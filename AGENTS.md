@@ -77,9 +77,14 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
 
 - New algorithm modules must ship with a verification test against an exact result (enumeration,
   closed form, or an independently-computed reference) in the same PR. A benchmark is not a test.
-- A test must be able to FAIL on the bug it names. Before trusting one, break the code it covers and
-  watch it go red. Several tests here passed while the thing they described was broken, because the
-  case they chose made the right and wrong answers coincide.
+- A test must be able to FAIL on the bug it names. `scripts/mutation-check.sh` does this: it breaks
+  the code on purpose and requires a named test to notice. Several tests here passed while the thing
+  they described was broken, because the case they chose made the right and wrong answers coincide —
+  and three more were found blind because they never reached the branch they were named after.
+  - **Commit before mutating.** The script restores from git. Twice in one day an uncommitted
+    afternoon was destroyed this way, once by hand and once by the script's own cleanup.
+  - Read its verdicts literally. "MUTATION DID NOT APPLY" and "NO TEST MATCHED" are not passes;
+    they are the two ways a mutation check has silently lied here before.
 - A new capability lands on every surface it belongs on, or the gap is written down. The matrix is
   Rust / C header / Python / Zig / Julia / node editor / HTTP / MCP.
 - State provenance on every number in docs: measured / simulated / projected, and on what.
