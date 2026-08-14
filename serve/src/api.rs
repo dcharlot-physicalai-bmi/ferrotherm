@@ -777,7 +777,19 @@ pub fn solve(req: &Json) -> Result<Json, String> {
             // did_not_decode: a broken constraint means every value read cleanly and one of them
             // is not what was asked for, which is not visible from the values alone.
             "violated",
-            Json::Arr(sol.violated.iter().map(|s| Json::s(s)).collect()),
+            // Each carries how far outside it sits, not only that it broke. A caller ranking
+            // repairs, or deciding whether a larger penalty would be enough, needs the magnitude.
+            Json::Arr(
+                sol.violated
+                    .iter()
+                    .map(|v| {
+                        Json::obj(vec![
+                            ("constraint", Json::s(&v.detail)),
+                            ("by", Json::n(v.amount)),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
         ("energy", Json::n(sol.energy)),
         ("spins", Json::n(compiled.spins() as f64)),

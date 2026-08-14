@@ -1002,7 +1002,7 @@ impl Compiled {
     }
 
     /// Which constraints the decoded values break, each described in the caller's own names.
-    fn check(&self, values: &BTreeMap<String, i64>) -> Vec<String> {
+    fn check(&self, values: &BTreeMap<String, i64>) -> Vec<Violation> {
         let get = |v: &Var| values.get(&self.names[v.0]).copied();
         let holds = |l: &Lit| match l {
             Lit::Spin(v) => get(v) == Some(1),
@@ -1013,38 +1013,65 @@ impl Compiled {
 
         let mut out = Vec::new();
         for c in &self.constraints {
+            // Each arm reports BY HOW MUCH as well as what. "at most 2 of 5 and 4 hold" is a near
+            // miss; "at most 2 and 5 hold" is not, and a caller ranking repair candidates or
+            // deciding whether to raise the penalty needs to tell them apart. dimod's
+            // `iter_violations` yields a magnitude for exactly this reason.
             let broken = match c {
-                Constraint::NotEqual(a, b) => (get(a) == get(b)).then(|| {
-                    format!("{} and {} must differ, and both are {}",
-                            name(a), name(b), get(a).unwrap_or_default())
+                Constraint::NotEqual(a, b) => (get(a) == get(b)).then(|| Violation {
+                    detail: format!(
+                        "{} and {} must differ, and both are {}",
+                        name(a), name(b), get(a).unwrap_or_default()
+                    ),
+                    amount: 1.0,
                 }),
-                Constraint::Equal(a, b) => (get(a) != get(b)).then(|| {
-                    format!("{} and {} must agree, and they are {} and {}",
-                            name(a), name(b),
-                            get(a).unwrap_or_default(), get(b).unwrap_or_default())
+                Constraint::Equal(a, b) => (get(a) != get(b)).then(|| Violation {
+                    detail: format!(
+                        "{} and {} must agree, and they are {} and {}",
+                        name(a), name(b), get(a).unwrap_or_default(), get(b).unwrap_or_default()
+                    ),
+                    // How far apart they are, which for an ordered domain is a real distance and
+                    // for a categorical is just "not the same".
+                    amount: (get(a).unwrap_or_default() - get(b).unwrap_or_default()).abs() as f64,
                 }),
-                Constraint::Fix(v, want) => (get(v) != Some(*want)).then(|| {
-                    format!("{} must be {want}, and it is {}", name(v), get(v).unwrap_or_default())
+                Constraint::Fix(v, want) => (get(v) != Some(*want)).then(|| Violation {
+                    detail: format!("{} must be {want}, and it is {}", name(v), get(v).unwrap_or_default()),
+                    amount: (get(v).unwrap_or_default() - want).abs() as f64,
                 }),
                 Constraint::Cardinality { lits, k } => {
                     let n = count(lits);
-                    (n != *k).then(|| format!("exactly {k} of {} must hold, and {n} do", lits.len()))
+                    (n != *k).then(|| Violation {
+                        detail: format!("exactly {k} of {} must hold, and {n} do", lits.len()),
+                        amount: (n as f64 - *k as f64).abs(),
+                    })
                 }
                 Constraint::AtMost { lits, k } => {
                     let n = count(lits);
-                    (n > *k).then(|| format!("at most {k} of {} may hold, and {n} do", lits.len()))
+                    (n > *k).then(|| Violation {
+                        detail: format!("at most {k} of {} may hold, and {n} do", lits.len()),
+                        amount: (n - *k) as f64,
+                    })
                 }
                 Constraint::AtLeast { lits, k } => {
                     let n = count(lits);
-                    (n < *k).then(|| format!("at least {k} of {} must hold, and {n} do", lits.len()))
+                    (n < *k).then(|| Violation {
+                        detail: format!("at least {k} of {} must hold, and {n} do", lits.len()),
+                        amount: (*k - n) as f64,
+                    })
                 }
                 Constraint::ExactlyOne(lits) => {
                     let n = count(lits);
-                    (n != 1).then(|| format!("exactly one of {} must hold, and {n} do", lits.len()))
+                    (n != 1).then(|| Violation {
+                        detail: format!("exactly one of {} must hold, and {n} do", lits.len()),
+                        amount: (n as f64 - 1.0).abs(),
+                    })
                 }
                 Constraint::AtMostOne(lits) => {
                     let n = count(lits);
-                    (n > 1).then(|| format!("at most one of {} may hold, and {n} do", lits.len()))
+                    (n > 1).then(|| Violation {
+                        detail: format!("at most one of {} may hold, and {n} do", lits.len()),
+                        amount: (n - 1) as f64,
+                    })
                 }
             };
             if let Some(b) = broken {
@@ -1128,18 +1155,39 @@ impl Compiled {
     }
 }
 
+/// A constraint the answer breaks, and by how much.
+///
+/// The magnitude is what separates a near miss from a rout. "At most two of five, and three hold"
+/// is one over; "and five hold" is three over, and a caller ranking repair candidates or deciding
+/// whether raising the penalty will be enough needs to tell them apart. Reporting only the
+/// description made every violation look equally bad.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Violation {
+    /// What was asked for and what happened, in the caller's own names.
+    pub detail: String,
+    /// How far outside the constraint the answer sits, in the constraint's own units: places over a
+    /// ceiling, places under a floor, distance from a fixed value. Always positive.
+    pub amount: f64,
+}
+
+impl core::fmt::Display for Violation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} (by {})", self.detail, self.amount)
+    }
+}
+
 /// An answer, in the model's own names.
 #[derive(Clone, Debug)]
 pub struct Solution {
     values: BTreeMap<String, i64>,
     /// Variables whose spins did not form a valid codeword.
     pub invalid: Vec<String>,
-    /// Constraints the decoded values break, each in the caller's own names.
+    /// Constraints the decoded values break, each in the caller's own names and by how much.
     ///
     /// Distinct from `invalid`, and the distinction matters: an invalid variable cannot be read at
     /// all, while a violated constraint means every value read cleanly and one of them is not what
     /// was asked for. Both mean the penalty lost, and both need a larger one.
-    pub violated: Vec<String>,
+    pub violated: Vec<Violation>,
     pub energy: f64,
 }
 
@@ -1200,7 +1248,7 @@ impl core::fmt::Display for Solution {
         // The reason, not just the verdict. "INFEASIBLE" alone leaves a caller to work out which of
         // the things they asked for was not delivered.
         for v in &self.violated {
-            write!(f, "\n  broken: {v}")?;
+            write!(f, "\n  broken: {} (by {})", v.detail, v.amount)?;
         }
         Ok(())
     }
@@ -1278,7 +1326,7 @@ mod tests {
         assert!(s.invalid.is_empty(), "and every variable decoded perfectly: {s}");
         assert!(!s.feasible(), "so this is the whole point: it is NOT feasible: {s}");
         assert_eq!(s.violated.len(), 1, "{s}");
-        assert!(s.violated[0].contains("must differ") && s.violated[0].contains('a'),
+        assert!(s.violated[0].detail.contains("must differ") && s.violated[0].detail.contains('a'),
                 "and it names the constraint in the caller's words: {}", s.violated[0]);
 
         // raised, the same model is feasible
@@ -1294,6 +1342,41 @@ mod tests {
     }
 
     #[test]
+    fn a_violation_says_how_far_outside_it_sits() {
+        // Description alone makes every violation look equally bad. "At most 2 of 5, and 3 hold"
+        // is one over; "and 5 hold" is three over. A caller ranking repairs, or deciding whether a
+        // larger penalty would be enough, needs to tell them apart.
+        let over = |weight: f64| {
+            let mut m = Model::new();
+            let vs: Vec<Var> = (0..5).map(|i| m.binary(&format!("v{i}"))).collect();
+            m.at_most(vs.iter().map(|&v| Lit::Is(v, 1)).collect(), 2);
+            m.fixed_penalty(0.1);
+            for &v in &vs {
+                m.objective(Sense::Maximize, weight * v.is(1));
+            }
+            let s = m.compile().unwrap().solve_best_of(16);
+            let on = vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count();
+            (on, s.violated.first().map(|v| v.amount))
+        };
+
+        // a big reward buys every variable: five on against a ceiling of two is three over
+        let (on, by) = over(50.0);
+        assert_eq!(on, 5, "the objective outbids a penalty of 0.1");
+        assert_eq!(by, Some(3.0), "and the violation says by how much");
+
+        // the amount is in the constraint's own units and always positive
+        let mut m = Model::new();
+        let x = m.integer("t", 0, 20);
+        m.fix(x, 3);
+        m.fixed_penalty(0.01);
+        m.objective(Sense::Maximize, 40.0 * x.is(17));
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert_eq!(s.value("t"), 17, "the objective wins");
+        assert_eq!(s.violated[0].amount, 14.0, "17 is 14 away from the 3 it was fixed to");
+        assert!(s.violated[0].to_string().contains("(by 14)"), "{}", s.violated[0]);
+    }
+
+    #[test]
     fn a_violated_counting_constraint_says_how_far_off_it_is() {
         let mut m = Model::new();
         let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
@@ -1304,8 +1387,8 @@ mod tests {
         }
         let s = m.compile().unwrap().solve_best_of(16);
         assert!(!s.feasible(), "a penalty of 0.5 against a weight of 20 loses: {s}");
-        assert!(s.violated[0].contains("at most 1") && s.violated[0].contains("4 do"),
-                "{}", s.violated[0]);
+        assert!(s.violated[0].detail.contains("at most 1") && s.violated[0].detail.contains("4 do"),
+                "{}", s.violated[0].detail);
     }
 
     #[test]
@@ -1413,7 +1496,7 @@ mod tests {
         // whichever way it gives, it gives exactly one: two of the three pairs still differ
         if s.invalid.is_empty() {
             assert_eq!(s.violated.len(), 1, "exactly one pair agrees in a 2-coloured triangle: {s}");
-            assert!(s.violated[0].contains("must differ"), "{}", s.violated[0]);
+            assert!(s.violated[0].detail.contains("must differ"), "{}", s.violated[0].detail);
         }
     }
 

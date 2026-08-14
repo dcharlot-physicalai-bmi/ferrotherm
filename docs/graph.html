@@ -624,7 +624,8 @@ function runGraph() {
     // encoding broke or a constraint was outbid, and those want different remedies.
     const nbroken = W.ft_model_violations(m);
     for (let i = 0; i < nbroken; i++) {
-      txt += "\n  broken: " + readTextIdx(W.ft_model_violation, m, i);
+      txt += "\n  broken: " + readTextIdx(W.ft_model_violation, m, i)
+           + " (by " + W.ft_model_violation_amount(m, i) + ")";
     }
     if (!feasible) {
       txt += "\n\nA penalty makes a constraint expensive, not impossible, and this objective\n"

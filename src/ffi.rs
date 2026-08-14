@@ -1033,13 +1033,27 @@ pub extern "C" fn ft_model_violation(
 ) -> u32 {
     let Some(s) = unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) else { return 0 };
     let Some(v) = s.violated.get(i as usize) else { return 0 };
-    let b = v.as_bytes();
+    let b = v.detail.as_bytes();
     if buf.is_null() {
         return b.len() as u32;
     }
     let n = b.len().min(cap as usize);
     unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
     n as u32
+}
+
+/// How far outside constraint `i` the answer sits, in that constraint's own units.
+///
+/// Places over a ceiling, places under a floor, distance from a fixed value. Always positive; NaN
+/// if there is no violation `i`. A description says a constraint broke; this says whether it was a
+/// near miss or a rout, which is what a caller ranking repairs or deciding whether a larger penalty
+/// would be enough actually needs.
+#[no_mangle]
+pub extern "C" fn ft_model_violation_amount(m: *const ModelHandle, i: u32) -> f64 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.violated.get(i as usize).map(|v| v.amount).unwrap_or(f64::NAN),
+        None => f64::NAN,
+    }
 }
 
 /// Energy of the solution.

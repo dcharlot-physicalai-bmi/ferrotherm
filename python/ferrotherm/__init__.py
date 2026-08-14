@@ -36,6 +36,7 @@ __all__ = [
     "Problem",
     "Term",
     "Variable",
+    "Violation",
     "Sim",
     "frustrated",
     "wishart",
@@ -174,6 +175,7 @@ _model_close = _sig("ft_model_close", c_uint32, [_p, c_uint32, c_uint32])
 _model_fixed_penalty = _sig("ft_model_fixed_penalty", c_uint32, [_p, c_double])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
 _model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
+_model_violation_amount = _sig("ft_model_violation_amount", c_double, [_p, c_uint32])
 _model_certify = _sig("ft_model_certify", c_uint32, [_p, c_double, c_uint32, c_uint32])
 _model_cert_findings = _sig("ft_model_cert_findings", c_uint32, [_p])
 _model_cert_finding = _sig("ft_model_cert_finding", c_uint32, [_p, c_uint32, _u8p, c_uint32])
@@ -715,6 +717,25 @@ class Variable:
         return f"<Variable {self.name}: {self.domain}>"
 
 
+class Violation:
+    """A constraint the answer breaks, and by how much.
+
+    ``str(v)`` is the description; ``v.by`` is the magnitude in the constraint's own units — places
+    over a ceiling, places under a floor, distance from a fixed value. Always positive.
+    """
+
+    __slots__ = ("detail", "by")
+
+    def __init__(self, detail: str, by: float) -> None:
+        self.detail, self.by = detail, float(by)
+
+    def __str__(self) -> str:
+        return self.detail
+
+    def __repr__(self) -> str:
+        return f"<Violation by {self.by:g}: {self.detail}>"
+
+
 class Answer:
     """A solved problem, read by name.
 
@@ -756,7 +777,7 @@ class Answer:
         body = ", ".join(f"{k}={'?' if v is None else v}" for k, v in self.values.items())
         out = f"<Answer {head} energy={self.energy:.4f} [{body}]"
         for v in self.violated or ():
-            out += f"\n  broken: {v}"
+            out += f"\n  broken: {v.detail} (by {v.by:g})"
         return out + ">"
 
 
@@ -935,8 +956,13 @@ class Problem:
         for name, v in self._vars.items():
             got = _model_value(self._h, v._index)
             vals[name] = None if got == -(2 ** 63) else int(got)
-        broken = [_read_text_idx(_model_violation, self._h, i)
-                  for i in range(_model_violations(self._h))]
+        # Each carries how far outside it sits, not only that it broke. "At most 2 of 5 and 3 hold"
+        # is a near miss; "and 5 hold" is not, and only the magnitude separates them.
+        broken = [
+            Violation(_read_text_idx(_model_violation, self._h, i),
+                      _model_violation_amount(self._h, i))
+            for i in range(_model_violations(self._h))
+        ]
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
                       violated=broken, energy=float(_model_energy(self._h)),
                       spins=int(spins), penalty=float(_model_penalty(self._h)))

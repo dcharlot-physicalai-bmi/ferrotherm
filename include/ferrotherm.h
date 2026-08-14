@@ -266,6 +266,12 @@ uint32_t ft_model_ancillas(const ft_model *m);
 uint32_t ft_model_violations(const ft_model *m);
 uint32_t ft_model_violation(const ft_model *m, uint32_t i, uint8_t *buf, uint32_t cap);
 
+/* How far outside constraint `i` the answer sits, in that constraint's own units: places over a
+ * ceiling, places under a floor, distance from a fixed value. Always positive; NaN if there is no
+ * violation i. The description says a constraint broke; this says whether it was a near miss or a
+ * rout, which is what a caller ranking repairs actually needs. */
+double ft_model_violation_amount(const ft_model *m, uint32_t i);
+
 double ft_model_energy(const ft_model *m);
 
 /* The penalty weight actually used, which is raised automatically above the largest objective

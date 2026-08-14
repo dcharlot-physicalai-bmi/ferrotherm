@@ -266,10 +266,16 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
     assert_eq!(r.get("feasible").unwrap().as_bool(), Some(false), "{}", write(&r));
     let broken = r.get("violated").unwrap().as_arr().unwrap();
     assert_eq!(broken.len(), 1, "{}", write(&r));
+    // Each violation is an object now: what broke, and by how much. The magnitude is what tells a
+    // near miss from a rout, and an agent deciding whether to raise the penalty or restructure the
+    // model needs it.
+    let first = &broken[0];
+    let what = first.get("constraint").and_then(|c| c.as_str()).unwrap_or("");
+    assert!(what.contains("must differ"), "it says which: {what}");
     assert!(
-        broken[0].as_str().unwrap().contains("must differ"),
-        "and it says which: {}",
-        broken[0].as_str().unwrap()
+        first.get("by").and_then(|b| b.as_f64()).unwrap_or(0.0) > 0.0,
+        "and by how much: {}",
+        write(first)
     );
     assert!(
         r.get("note").unwrap().as_str().unwrap().contains("penalty"),
