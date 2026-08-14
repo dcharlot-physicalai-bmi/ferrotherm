@@ -673,9 +673,19 @@ impl Fabric {
     /// whether a program survives at all.
     ///
     /// What the vendor does **not** publish, and this therefore does not claim: the machine's size
-    /// or its connectivity. Third-party papers give 550 qubits for a CPQC-550 and 2,000 variables
-    /// for a third-generation part; those are not the vendor's numbers and are not declared. A
-    /// caller gets [`Verdict::LimitsUnstated`] rather than a promise.
+    /// or its connectivity. A caller gets a [`Caveat::LimitsUnstated`] rather than a promise.
+    ///
+    /// That is a searched conclusion rather than an assumption, and the search is written down so
+    /// nobody repeats it: the Kaiwu SDK's introduction, its precision page, its `cim` module
+    /// reference and its CPQC tutorial were all read, and none states a maximum matrix size, a
+    /// qubit count or a topology constraint. The papers hosted alongside the SDK are coherent-Ising
+    /// literature generally — the 100,512-spin machine in one of them is not this product. Figures
+    /// do circulate in third-party work (550 qubits for a CPQC-550, 2,000 variables for a
+    /// third-generation part) and they are not the vendor's, so they are not here.
+    ///
+    /// The Kaiwu module list does include `hobo`, "higher-order binary optimization modeling",
+    /// which suggests the platform lowers higher-order terms the way [`crate::reduce`] does. The
+    /// arity this fabric accepts natively is not stated either, so `max_arity` stays at two.
     ///
     /// An earlier version of this file said no vendor material gave the precision. That was wrong:
     /// it is in the SDK documentation rather than a datasheet, which is where this review had
