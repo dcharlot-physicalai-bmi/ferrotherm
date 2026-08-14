@@ -214,6 +214,22 @@ uint32_t ft_model_objective_term(ft_model *m, uint32_t maximize, double coeff,
 uint32_t ft_model_objective_pair(ft_model *m, uint32_t maximize, double coeff,
                                  uint32_t a, int64_t av, uint32_t b, int64_t bv);
 
+/* Add coeff * l1 * l2 * ... * lk to the objective, over the pending literal list.
+ *
+ * Build the list with ft_model_lit exactly as for a counting constraint, then close it here instead
+ * of with ft_model_close. The list is cleared either way, so a refused term cannot bleed into the
+ * next one.
+ *
+ * Three or more literals is a HIGHER-ORDER term. ft_model_compile lowers it by introducing an
+ * ancilla spin per substituted pair, so the spin count it returns exceeds what the declared
+ * variables need. The guarantee that comes with that lowering is about OPTIMISATION: ground states
+ * correspond exactly, and the Boltzmann distribution over the original variables does not survive
+ * at finite temperature.
+ *
+ * One literal is an ordinary linear term and two is ft_model_objective_pair; both are accepted here
+ * so a caller building terms in a loop needs one code path rather than three. */
+uint32_t ft_model_objective_product(ft_model *m, uint32_t maximize, double coeff);
+
 /* Compile to spins, returning how many were needed, or 0 on failure (see ft_model_error).
  * The count includes any slack an inequality required. */
 uint32_t ft_model_compile(ft_model *m);
@@ -239,6 +255,10 @@ int64_t ft_model_value(const ft_model *m, uint32_t v);
  * penalty makes a constraint expensive, not impossible, so a sampler whose objective outbids it
  * will return exactly that. */
 uint32_t ft_model_feasible(const ft_model *m);
+
+/* Spins the higher-order lowering added, or 0 if no objective term named three or more variables.
+ * Zero after a failed compile as well, so read it beside a non-zero ft_model_compile. */
+uint32_t ft_model_ancillas(const ft_model *m);
 
 /* How many constraints the answer breaks; zero when it keeps everything it was asked to. Read each
  * with ft_model_violation, which describes it in the caller's own names: "a and b must differ, and

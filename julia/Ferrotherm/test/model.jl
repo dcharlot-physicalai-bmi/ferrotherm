@@ -188,3 +188,27 @@ end
     @test startswith(text, "ftp 1")
     @test occursin("spins 6", text)
 end
+
+@testset "a higher-order objective term" begin
+    # Three literals together, which the binding could not express: it took one or two.
+    p = Problem()
+    a = categorical!(p, "a", 3); b = categorical!(p, "b", 3); c = categorical!(p, "c", 3)
+    maximize!(p, [(9.0, (is(a, 2), is(b, 2), is(c, 2)))])
+    ans = solve!(p; tries = 24)
+    @test feasible(ans)
+    @test (ans["a"], ans["b"], ans["c"]) == (2, 2, 2)
+    @test ans.spins > 9      # three categoricals are 9 spins; the ancilla makes it more
+
+    # a vector of literals works too, since that is how one gets built in a loop
+    q = Problem()
+    v = [binary!(q, "v$i") for i in 1:3]
+    maximize!(q, [(6.0, [is(x, 1) for x in v])])
+    minimize!(q, [(1.0, is(v[1], 1))])
+    a2 = solve!(q; tries = 24)
+    @test feasible(a2)
+    @test all(a2["v$i"] == 1 for i in 1:3)
+
+    # and something that is not a literal is refused by name
+    r = Problem(); x = categorical!(r, "x", 3)
+    @test_throws ErrorException maximize!(r, [(1.0, (is(x, 1), "not a literal"))])
+end

@@ -688,6 +688,23 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         let mut e = Expr::zero();
         for t in terms {
             let w = t.get("weight").and_then(|x| x.as_f64()).unwrap_or(1.0);
+
+            // A term is one variable, a pair, or a PRODUCT of any number written as "of". The pair
+            // form stays: it reads well for the common case, and removing it would break callers.
+            if let Some(items) = t.get("of").and_then(|x| x.as_arr()) {
+                if items.is_empty() {
+                    return Err("an objective term's \"of\" must not be empty".into());
+                }
+                let mut lits = Vec::new();
+                for it in items {
+                    let n = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
+                    let v = value_of(it, "value", 1, "objective term")?;
+                    lits.push(Lit::Is(handles[find(n)?], v));
+                }
+                e = e.plus(Expr::product(w, &lits));
+                continue;
+            }
+
             let vn = t.get("var").and_then(|x| x.as_str()).unwrap_or("");
             let vv = value_of(t, "value", 1, "objective term")?;
             let a = Lit::Is(handles[find(vn)?], vv);
@@ -764,6 +781,9 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         ),
         ("energy", Json::n(sol.energy)),
         ("spins", Json::n(compiled.spins() as f64)),
+        // Spins the higher-order lowering added. Non-zero means the answer solves a model with more
+        // spins than the variables required, and that the guarantee is about optima not sampling.
+        ("ancillas", Json::n(compiled.ancillas as f64)),
         ("penalty", Json::n(penalty)),
         ("tries", Json::n(tries as f64)),
         ("wall_seconds", Json::n(wall)),
@@ -1159,6 +1179,38 @@ mod silent_wrongness {
 
     fn value_of_x(body: &str) -> Option<f64> {
         go(body).ok()?.get("values")?.get("x")?.as_f64()
+    }
+
+    #[test]
+    fn an_objective_term_can_name_any_number_of_variables() {
+        // "these three together", which this surface could not say: it offered one variable or a
+        // pair and nothing wider.
+        let r = dispatch("solve", &crate::json::parse(
+            r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3},
+                             {"name":"c","values":3}],
+                 "objective":{"maximize":true,"terms":[
+                     {"weight":9,"of":[{"var":"a","value":2},{"var":"b","value":2},
+                                       {"var":"c","value":2}]}]},
+                 "tries":24}"#).unwrap()).unwrap();
+        let v = r.get("values").unwrap();
+        for k in ["a", "b", "c"] {
+            assert_eq!(v.get(k).unwrap().as_f64(), Some(2.0),
+                       "the reward is only paid when all three hold ({k})");
+        }
+        assert!(r.get("ancillas").unwrap().as_f64().unwrap() > 0.0,
+                "and the reply says what the lowering cost");
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
+
+        // a pairwise model reports none, so the field is a real signal rather than decoration
+        let flat = dispatch("solve", &crate::json::parse(
+            r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3}],
+                 "constraints":[{"type":"not_equal","a":"a","b":"b"}],"tries":8}"#).unwrap()).unwrap();
+        assert_eq!(flat.get("ancillas").unwrap().as_f64(), Some(0.0));
+
+        // and an empty product is refused rather than quietly ignored
+        assert!(dispatch("solve", &crate::json::parse(
+            r#"{"variables":[{"name":"a","values":3}],
+                 "objective":{"maximize":true,"terms":[{"weight":1,"of":[]}]}}"#).unwrap()).is_err());
     }
 
     #[test]

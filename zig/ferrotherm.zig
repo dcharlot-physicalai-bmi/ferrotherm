@@ -479,6 +479,24 @@ pub const Problem = struct {
         }
     }
 
+    /// Prefer states where every literal in `lits` holds together.
+    ///
+    /// Three or more is a higher-order term: `compile` lowers it with an ancilla spin per
+    /// substituted pair, so it costs spins the model did not declare. One or two literals are the
+    /// ordinary linear and quadratic cases and go through the same call, so a caller building
+    /// terms in a loop does not need three branches.
+    pub fn preferAll(self: *Problem, sense: Sense, weight: f64, lits: []const Lit) Error!void {
+        if (lits.len == 0) return Error.RejectedConstraint;
+        _ = c.ft_model_lits_clear(self.h);
+        for (lits) |l| {
+            if (c.ft_model_lit(self.h, l.v.idx, l.value) == 0) return Error.BadValue;
+        }
+        const max: u32 = if (sense == .maximize) 1 else 0;
+        if (c.ft_model_objective_product(self.h, max, weight) == 0) {
+            return Error.RejectedConstraint;
+        }
+    }
+
     /// Prefer states where two literals hold together. Quadratic in the spins.
     pub fn preferPair(self: *Problem, sense: Sense, weight: f64, a: Lit, b: Lit) Error!void {
         const max: u32 = if (sense == .maximize) 1 else 0;
@@ -725,6 +743,31 @@ test "objective terms accumulate, and a later sense does not rewrite earlier one
         const want: i64 = if (i < 3) 1 else 0;
         try std.testing.expectEqual(want, try p.value(x));
     }
+}
+
+test "a higher-order objective term costs ancillas and finds the right answer" {
+    // Three literals together, which the binding could not express at all: it offered one or two.
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 3);
+    const b = try p.categorical("b", 3);
+    const d = try p.categorical("d", 3);
+    try p.preferAll(.maximize, 9.0, &.{ a.is(2), b.is(2), d.is(2) });
+
+    const spins = try p.compile();
+    try std.testing.expect(spins > 9); // three categoricals are 9; the ancilla makes it more
+    try p.solve(24);
+    try std.testing.expect(p.feasible());
+    try std.testing.expectEqual(@as(i64, 2), try p.value(a));
+    try std.testing.expectEqual(@as(i64, 2), try p.value(b));
+    try std.testing.expectEqual(@as(i64, 2), try p.value(d));
+}
+
+test "an empty product is refused rather than silently ignored" {
+    var p = try Problem.init();
+    defer p.deinit();
+    _ = try p.categorical("a", 3);
+    try std.testing.expectError(Error.RejectedConstraint, p.preferAll(.maximize, 1.0, &.{}));
 }
 
 test "a caller's own ladder is used, and a backwards one refused" {

@@ -197,6 +197,11 @@ const TYPES = {
                 fields: [["value", 0, "int"], ["weight", 1.0, "num"], ["maximize", 1, "int"]] },
   agree:      { title: "Prefer a=b",   kind: "obj", ins: [["a", "var"], ["b", "var"]],
                 fields: [["value", 0, "int"], ["weight", 1.0, "num"], ["maximize", 1, "int"]] },
+  // Any number of variables holding the value TOGETHER. Three or more is a higher-order term: the
+  // compiler lowers it with an extra spin per substituted pair, and the report says how many.
+  together:   { title: "Prefer all together", kind: "obj", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["value", 1, "int"], ["weight", 1.0, "num"], ["maximize", 1, "int"]] },
 
   // --- solving and reading ---------------------------------------------------------------------
   // Solve grows a fresh port whenever its last one is taken, so a model is never capped at some
@@ -556,6 +561,16 @@ function runGraph() {
         if (!did(n, W.ft_model_objective_term(m, n.vals.maximize ? 1 : 0, +n.vals.weight, iv,
                                              BigInt(n.vals.value | 0)))) return;
         obj++;
+      } else if (n.type === "together") {
+        const vs = insOf(n).map(([pn]) => inputOf(n.id, pn)).filter(Boolean)
+                     .map(x => idx.get(x.id)).filter(x => x !== undefined);
+        if (!vs.length) { $("out").textContent = "'Prefer all together' needs a variable."; return; }
+        W.ft_model_lits_clear(m);
+        for (const v of vs) {
+          if (!did(n, W.ft_model_lit(m, v, BigInt(n.vals.value | 0)))) return;
+        }
+        if (!did(n, W.ft_model_objective_product(m, n.vals.maximize ? 1 : 0, +n.vals.weight))) return;
+        obj++;
       } else if (n.type === "agree") {
         if (!need2(ia, ib)) return;
         if (!did(n, W.ft_model_objective_pair(m, n.vals.maximize ? 1 : 0, +n.vals.weight,
@@ -599,6 +614,11 @@ function runGraph() {
       txt += "  " + label(n) + " = " + (bad ? "(did not decode)" : v) + "\n";
     }
     txt += "\nenergy    " + W.ft_model_energy(m).toFixed(4) + "\n";
+    const anc = W.ft_model_ancillas ? W.ft_model_ancillas(m) : 0;
+    if (anc) {
+      txt += "ancillas  " + anc + " (a term named three or more variables; the lowering added"
+           + "\n          these, and the guarantee is about optima rather than sampling)\n";
+    }
     txt += "feasible  " + (feasible ? "yes" : "NO");
     // Which part was not delivered. "NO" on its own leaves the modeller to work out whether an
     // encoding broke or a constraint was outbid, and those want different remedies.

@@ -875,6 +875,41 @@ pub extern "C" fn ft_model_objective_pair(
     1
 }
 
+/// Add `coeff · l₁ · l₂ · … · lₖ` to the objective, over the pending literal list.
+///
+/// Build the list with [`ft_model_lit`] exactly as for a counting constraint, then close it here
+/// instead of with [`ft_model_close`]. The list is cleared either way, so a refused term cannot
+/// bleed into the next one.
+///
+/// Three or more literals is a higher-order term. `ft_model_compile` lowers it with an ancilla spin
+/// per substituted pair — see `ferrotherm::reduce` — and the count is not reported through this
+/// ABI, so a caller who needs it should compare `ft_model_compile`'s spin count against what the
+/// declared variables require.
+///
+/// A product of one literal is an ordinary linear term and a product of two is
+/// [`ft_model_objective_pair`]; both are accepted here so a caller building terms in a loop does
+/// not need three code paths.
+#[no_mangle]
+pub extern "C" fn ft_model_objective_product(
+    m: *mut ModelHandle,
+    maximize: u32,
+    coeff: f64,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let lits = core::mem::take(&mut h.lits);
+    if lits.is_empty() {
+        h.last_error = "an objective term needs at least one literal".into();
+        return 0;
+    }
+    if !coeff.is_finite() {
+        h.last_error = format!("an objective coefficient must be a real number, not {coeff}");
+        return 0;
+    }
+    let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
+    h.model.objective(sense, Expr::product(coeff, &lits));
+    1
+}
+
 /// Compile. Returns the spin count, or 0 on failure; the reason is available from
 /// [`ft_model_error`].
 #[no_mangle]
@@ -961,6 +996,17 @@ pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) if s.feasible() => 1,
         _ => 0,
+    }
+}
+
+/// Spins the higher-order lowering added, or 0 if no term named three or more variables.
+///
+/// Zero after a failed compile too, so read it beside a non-zero `ft_model_compile`.
+#[no_mangle]
+pub extern "C" fn ft_model_ancillas(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) {
+        Some(c) => c.ancillas as u32,
+        None => 0,
     }
 }
 
@@ -1398,6 +1444,39 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 1);
         let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
         assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_higher_order_objective_term_crosses_the_c_abi() {
+        // Three literals, built with the same list machinery a counting constraint uses. The whole
+        // point is that a C caller can express "these three together" at all -- there was no way
+        // to, since the ABI offered one literal or two and nothing else.
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..3).map(|_| ft_model_categorical(m, 3)).collect();
+        for &i in &v {
+            assert_eq!(ft_model_lit(m, i, 2), 1);
+        }
+        assert_eq!(ft_model_objective_product(m, 1, 9.0), 1);
+        assert_eq!(ft_model_lits(m), 0, "closing clears the list");
+
+        let spins = ft_model_compile(m);
+        assert!(spins > 9, "three categoricals are 9 spins; the ancilla makes it more: {spins}");
+        assert_eq!(ft_model_solve(m, 24), 1);
+        for &i in &v {
+            assert_eq!(ft_model_value(m, i), 2, "the reward is only paid when all three hold");
+        }
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn an_objective_product_refuses_what_it_cannot_mean() {
+        let m = ft_model_new();
+        let x = ft_model_categorical(m, 3);
+        assert_eq!(ft_model_objective_product(m, 1, 1.0), 0, "no literals is not a term");
+        ft_model_lit(m, x, 1);
+        assert_eq!(ft_model_objective_product(m, 1, f64::NAN), 0, "NaN is not a coefficient");
+        assert_eq!(ft_model_lits(m), 0, "and a refused term does not bleed into the next");
         ft_model_free(m);
     }
 

@@ -202,6 +202,7 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_close Cuint ModPtr Cuint Cuint
 @cfn ft_model_objective_term Cuint ModPtr Cuint Cdouble Cuint Clonglong
 @cfn ft_model_objective_pair Cuint ModPtr Cuint Cdouble Cuint Clonglong Cuint Clonglong
+@cfn ft_model_objective_product Cuint ModPtr Cuint Cdouble
 @cfn ft_model_fixed_penalty Cuint ModPtr Cdouble
 @cfn ft_model_compile Cuint ModPtr
 @cfn ft_model_solve Cuint ModPtr Cuint
@@ -837,16 +838,29 @@ function _objective(p::Problem, maximize::Bool, terms)
     m = Cuint(maximize ? 1 : 0)
     for t in terms
         w, lit = t
-        if lit isa Literal
-            _must(p, ft_model_objective_term(p.handle, m, Cdouble(w), lit.var.idx, lit.value),
+        lits = lit isa Literal ? (lit,) :
+               lit isa Union{Tuple, AbstractVector} ? Tuple(lit) :
+               error("an objective term is (weight, literal) or (weight, (l1, l2, ...)), " *
+                     "not (weight, $(typeof(lit)))")
+        all(l -> l isa Literal, lits) ||
+            error("every factor in a product must be a literal; got $(typeof.(lits))")
+        if length(lits) == 1
+            a = lits[1]
+            _must(p, ft_model_objective_term(p.handle, m, Cdouble(w), a.var.idx, a.value),
                   "objective")
-        elseif lit isa Tuple{Literal, Literal}
-            a, b = lit
+        elseif length(lits) == 2
+            a, b = lits
             _must(p, ft_model_objective_pair(p.handle, m, Cdouble(w), a.var.idx, a.value,
                                              b.var.idx, b.value), "objective")
         else
-            error("an objective term is (weight, literal) or (weight, (literal, literal)), " *
-                  "not (weight, $(typeof(lit)))")
+            # Three or more: the library's literal list, closed as a product. `compile` lowers it
+            # with an ancilla spin per substituted pair, so it costs spins the model did not
+            # declare, and the guarantee is about optimisation rather than sampling.
+            ft_model_lits_clear(p.handle)
+            for l in lits
+                _must(p, ft_model_lit(p.handle, l.var.idx, l.value), "objective")
+            end
+            _must(p, ft_model_objective_product(p.handle, m, Cdouble(w)), "objective")
         end
     end
     nothing
@@ -855,8 +869,12 @@ end
 """
     maximize!(p, terms)
 
-Prefer states where the terms hold. Each term is `(weight, literal)`, or `(weight, (a, b))` to
-reward two literals holding together.
+Prefer states where the terms hold. Each term is `(weight, literal)`, or `(weight, (a, b, ...))` to
+reward several literals holding **together**.
+
+Three or more in one product is a higher-order term: it is lowered with an ancilla spin per
+substituted pair, so it costs spins the model did not declare, and the guarantee is about finding
+optima rather than about sampling.
 
 Terms accumulate and each carries its own direction, so a later [`minimize!`](@ref) changes only
 what it names.

@@ -169,6 +169,7 @@ _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
 _model_lit = _sig("ft_model_lit", c_uint32, [_p, c_uint32, ctypes.c_int64])
 _model_lits_clear = _sig("ft_model_lits_clear", c_uint32, [_p])
+_model_objective_product = _sig("ft_model_objective_product", c_uint32, [_p, c_uint32, c_double])
 _model_close = _sig("ft_model_close", c_uint32, [_p, c_uint32, c_uint32])
 _model_fixed_penalty = _sig("ft_model_fixed_penalty", c_uint32, [_p, c_double])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
@@ -585,14 +586,21 @@ def onsager(beta: float) -> float:
 class Term:
     """A piece of an objective. Build these with arithmetic, not by calling the constructor.
 
-    ``5 * shift.is_(2)`` is one term; ``a.is_(1) * b.is_(1)`` is a quadratic one; adding them makes
-    an objective. Terms are inert until handed to :meth:`Problem.maximize` or
-    :meth:`Problem.minimize`.
+    ``5 * shift.is_(2)`` is one term; ``a.is_(1) * b.is_(1)`` is quadratic; a third factor makes it
+    cubic, and so on. Adding them makes an objective. Terms are inert until handed to
+    :meth:`Problem.maximize` or :meth:`Problem.minimize`.
+
+    Three or more literals in one product is a **higher-order** term. The compiler lowers it with an
+    ancilla spin per substituted pair, so it costs spins — and the guarantee that comes with it is
+    about optimisation rather than sampling. See ``ferrotherm::reduce`` for the whole story.
+
+    Each part is ``(coefficient, [literals])``. It used to be ``(coefficient, a, b)`` with ``b``
+    optionally ``None``, which could not represent a product of three at all.
     """
 
     __slots__ = ("parts",)
 
-    def __init__(self, parts: "list[tuple[float, Any, Any]]") -> None:
+    def __init__(self, parts: "list[tuple[float, list]]") -> None:
         self.parts = parts
 
     def __add__(self, other: Any) -> "Term":
@@ -607,17 +615,35 @@ class Term:
         return _as_term(other) + (-self)
 
     def __neg__(self) -> "Term":
-        return Term([(-c, a, b) for c, a, b in self.parts])
+        return Term([(-c, lits) for c, lits in self.parts])
 
     def __mul__(self, k: Any) -> "Term":
         if isinstance(k, (int, float)):
-            return Term([(c * float(k), a, b) for c, a, b in self.parts])
+            return Term([(c * float(k), lits) for c, lits in self.parts])
+        if isinstance(k, Literal):
+            # Another factor on every part: this is what makes `a * b * c` mean a cubic term
+            # rather than a type error.
+            return Term([(c, lits + [k]) for c, lits in self.parts])
+        if isinstance(k, Term):
+            if len(self.parts) != 1 or len(k.parts) != 1:
+                raise TypeError(
+                    "multiplying sums is not supported; expand it yourself, because doing it "
+                    "silently would turn one term into many and change what the penalty scales to"
+                )
+            (c1, l1), (c2, l2) = self.parts[0], k.parts[0]
+            return Term([(c1 * c2, l1 + l2)])
         return NotImplemented
 
     __rmul__ = __mul__
 
+    @property
+    def degree(self) -> int:
+        """The widest product in this term. Three or more needs a higher-order reduction."""
+        return max((len(lits) for _, lits in self.parts), default=0)
+
     def __repr__(self) -> str:
-        return "<Term %d part%s>" % (len(self.parts), "" if len(self.parts) == 1 else "s")
+        return "<Term %d part%s, degree %d>" % (
+            len(self.parts), "" if len(self.parts) == 1 else "s", self.degree)
 
 
 class Literal:
@@ -630,23 +656,28 @@ class Literal:
 
     def __mul__(self, other: Any) -> Term:
         if isinstance(other, (int, float)):
-            return Term([(float(other), self, None)])
+            return Term([(float(other), [self])])
         if isinstance(other, Literal):
-            return Term([(1.0, self, other)])       # a product of two literals is quadratic
+            return Term([(1.0, [self, other])])     # two literals is quadratic
+        if isinstance(other, Term):
+            return Term([(1.0, [self])]) * other
         return NotImplemented
 
     __rmul__ = __mul__
 
     def __add__(self, other: Any) -> Term:
-        return Term([(1.0, self, None)]) + _as_term(other)
+        return Term([(1.0, [self])]) + _as_term(other)
 
     __radd__ = __add__
 
     def __sub__(self, other: Any) -> Term:
-        return Term([(1.0, self, None)]) - _as_term(other)
+        return Term([(1.0, [self])]) - _as_term(other)
+
+    def __rsub__(self, other: Any) -> Term:
+        return _as_term(other) - Term([(1.0, [self])])
 
     def __neg__(self) -> Term:
-        return Term([(-1.0, self, None)])
+        return Term([(-1.0, [self])])
 
     def __repr__(self) -> str:
         return f"<{self.var.name} is {self.value}>"
@@ -656,7 +687,7 @@ def _as_term(x: Any) -> Term:
     if isinstance(x, Term):
         return x
     if isinstance(x, Literal):
-        return Term([(1.0, x, None)])
+        return Term([(1.0, [x])])
     # `sum()` starts from 0, and summing terms is the natural way to build an objective in a loop,
     # so zero is the empty term. Any other bare number is a mistake: an objective is a function of
     # the variables, and a constant added to it changes no answer.
@@ -854,13 +885,24 @@ class Problem:
 
     def _objective(self, term: Any, maximize: bool) -> None:
         m = 1 if maximize else 0
-        for coeff, a, b in _as_term(term).parts:
-            if b is None:
-                ok = _model_objective_term(self._h, m, coeff, a.var._index, a.value)
+        for coeff, lits in _as_term(term).parts:
+            if not lits:
+                continue    # a constant changes no answer
+            if len(lits) == 1:
+                a = lits[0]
+                self._must(_model_objective_term(self._h, m, coeff, a.var._index, a.value),
+                           "objective")
+            elif len(lits) == 2:
+                a, b = lits
+                self._must(_model_objective_pair(self._h, m, coeff, a.var._index, a.value,
+                                                 b.var._index, b.value), "objective")
             else:
-                ok = _model_objective_pair(self._h, m, coeff, a.var._index, a.value,
-                                           b.var._index, b.value)
-            self._must(ok, "objective")
+                # Three or more: the library's literal list, then close it as a product. The
+                # compiler lowers it with ancillas.
+                _model_lits_clear(self._h)
+                for l in lits:
+                    self._must(_model_lit(self._h, l.var._index, l.value), "objective")
+                self._must(_model_objective_product(self._h, m, coeff), "objective")
 
     # -- solving --------------------------------------------------------------------------------
 

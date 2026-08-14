@@ -235,6 +235,46 @@ const counting = (kind, k, reward = "up") => page.evaluate(([kind, k, reward]) =
         txt.split("\n").find(l => l.includes("a =")) ?? txt.slice(0, 60));
 }
 
+// --- a term over three variables, which needed a whole compiler pass to be sayable -------------------
+{
+  const r = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const vs = ["a", "b", "c"].map((n, i) => F.add("categorical", 40, 40 + i * 90,
+                                                   { name: n, values: 3 }));
+    const together = F.add("together", 320, 60, { value: 2, weight: 9, maximize: 1 });
+    vs.forEach((v, i) => F.connect(v, together, `in ${i + 1}`));
+    const s = F.add("solve", 640, 120);
+    F.connect(together, s);
+    F.connect(s, F.add("report", 900, 120), "result");
+    return F.run();
+  });
+  const vals = Object.fromEntries([...r.matchAll(/(\w) = (\d)/g)].map(m => [m[1], m[2]]));
+  check("three variables can be rewarded together",
+        vals.a === "2" && vals.b === "2" && vals.c === "2",
+        JSON.stringify(vals));
+  check("and the report says what the lowering cost", /ancillas\s+[1-9]/.test(r),
+        r.split("\n").find(l => l.includes("ancillas")) ?? "no ancilla line");
+  check("with the caveat, not just the number", /optima rather than sampling/.test(r));
+}
+
+// --- a pairwise model reports none, so the number is a signal ----------------------------------------
+{
+  const r = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const a = F.add("categorical", 40, 40, { name: "a", values: 3 });
+    const b = F.add("categorical", 40, 160, { name: "b", values: 3 });
+    const ne = F.add("notequal", 300, 60);
+    F.connect(a, ne, "a"); F.connect(b, ne, "b");
+    const s = F.add("solve", 600, 60);
+    F.connect(ne, s);
+    F.connect(s, F.add("report", 860, 60), "result");
+    return F.run();
+  });
+  check("a pairwise model reports no ancillas", !/ancillas/.test(r));
+}
+
 // --- nothing threw along the way ---------------------------------------------------------------------
 check("no page errors", errs.length === 0, errs.join(" | "));
 
