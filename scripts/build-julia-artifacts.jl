@@ -70,7 +70,7 @@ for arg in ARGS[3:end]
         (o, a)
     end
 
-    push!(entries, Dict(
+    entry = Dict{String, Any}(
         "git-tree-sha1" => tree_hash,
         "arch"          => arch,
         "os"            => os,
@@ -80,7 +80,14 @@ for arg in ARGS[3:end]
         # first use, which is inside the try that handles exactly that.
         "lazy"          => true,
         "download"      => [Dict("url" => "$baseurl/$(basename(tarball))", "sha256" => sha)],
-    ))
+    )
+    # Linux platforms carry a libc, and Julia's own host platform always names one. A JLL entry
+    # that omits it is relying on missing-means-wildcard, which is not something to rely on when
+    # the failure mode is a silent "no library on this platform".
+    if os == "linux"
+        entry["libc"] = "glibc"
+    end
+    push!(entries, entry)
 end
 
 # Artifacts.toml: one [[ferrotherm]] block per platform. Julia picks the one matching the host and

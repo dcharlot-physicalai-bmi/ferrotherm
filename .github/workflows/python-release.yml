@@ -224,6 +224,12 @@ jobs:
           ls -la dist/
 
       - name: The JLL must load what it names
+        env:
+          # A FRESH DEPOT, so the artifact cannot already be present. This check passed locally for
+          # days against a warm ~/.julia/artifacts left by a non-lazy build, which meant the lazy
+          # download path -- the one that was broken -- was never taken. A cold depot is the only
+          # way this tests what it claims to.
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot-cold
         run: |
           cd julia/ferrotherm_jll
           # The URLs point at a release that does not exist until this run publishes one, so serve
@@ -235,7 +241,13 @@ jobs:
             using Pkg; Pkg.instantiate()
             using ferrotherm_jll, Libdl
             p = ferrotherm_jll.libferrotherm[]
-            isempty(p) && error("the JLL resolved no library on this platform")
+            if isempty(p)
+                # Print the reason rather than only the symptom. The first run of this said "no
+                # library on this platform" and nothing about why, which is a dead end in a log.
+                println("Artifacts.toml as tested:")
+                println(read("Artifacts.toml", String))
+                error("the JLL resolved no library. Julia said:\n" * ferrotherm_jll.why())
+            end
             h = Libdl.dlopen(p)
             m = ccall(Libdl.dlsym(h, :ft_onsager), Cdouble, (Cdouble,), 0.5)
             println("onsager(0.5) = ", m)
