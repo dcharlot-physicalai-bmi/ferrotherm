@@ -20,6 +20,8 @@ exclude = [
     "web/",
     "target/",
     "web-tests/",              # 15 MB of Playwright, and a test runner is not a dependency
+    "zig/.zig-cache/",         # 47 MB of Zig build objects
+    "zig/zig-out/",
     "julia/Ferrotherm/Manifest.toml",
     "docs/",                   # the browser pages and their compiled wasm
 ]

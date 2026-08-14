@@ -31,3 +31,8 @@ python/*.egg-info/
 python/ferrotherm/*.so
 python/ferrotherm/*.dylib
 python/ferrotherm/*.dll
+
+# Zig's build cache and output. `zig build` creates these beside build.zig, and they arrived the
+# moment that file did: 47 MB of object files, into both the repository and the published crate.
+.zig-cache/
+zig-out/
