@@ -110,6 +110,104 @@ impl Domain {
     }
 }
 
+/// A grid of variables, subscripted like an array.
+///
+/// `a[[i, j]]` is the variable at that position; out of bounds panics with the shape it was given,
+/// because a silent wrap is an off-by-one that reaches the answer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Index {
+    name: String,
+    dims: Vec<usize>,
+    vars: Vec<Var>,
+}
+
+impl Index {
+    /// The shape it was declared with.
+    pub fn dims(&self) -> &[usize] {
+        &self.dims
+    }
+    /// Every variable, in row-major order.
+    pub fn all(&self) -> &[Var] {
+        &self.vars
+    }
+    /// One row of the last dimension: `a.row(&[w])` is every shift for worker `w`.
+    ///
+    /// The shape a cardinality constraint is usually over — "exactly one shift per worker" — and
+    /// writing it by hand is where the index arithmetic goes wrong.
+    pub fn row(&self, prefix: &[usize]) -> Vec<Var> {
+        assert!(
+            prefix.len() < self.dims.len(),
+            "{}: a row needs fewer indices than the {} it has",
+            self.name,
+            self.dims.len()
+        );
+        let last = self.dims[self.dims.len() - 1];
+        let mut out = Vec::with_capacity(last);
+        let mut full: Vec<usize> = prefix.to_vec();
+        // any middle dimensions are fixed at 0 unless the caller named them
+        while full.len() < self.dims.len() - 1 {
+            full.push(0);
+        }
+        full.push(0);
+        for k in 0..last {
+            let n = full.len();
+            full[n - 1] = k;
+            out.push(self[&full[..]]);
+        }
+        out
+    }
+    /// One column of the first dimension: `a.column(&[s])` is every worker for shift `s`.
+    pub fn column(&self, suffix: &[usize]) -> Vec<Var> {
+        assert!(
+            suffix.len() < self.dims.len(),
+            "{}: a column needs fewer indices than the {} it has",
+            self.name,
+            self.dims.len()
+        );
+        let first = self.dims[0];
+        let mut out = Vec::with_capacity(first);
+        for k in 0..first {
+            let mut full = vec![k];
+            full.extend_from_slice(suffix);
+            while full.len() < self.dims.len() {
+                full.push(0);
+            }
+            out.push(self[&full[..]]);
+        }
+        out
+    }
+    fn offset(&self, sub: &[usize]) -> usize {
+        assert_eq!(
+            sub.len(),
+            self.dims.len(),
+            "{} has {} dimensions and was given {}",
+            self.name,
+            self.dims.len(),
+            sub.len()
+        );
+        let mut off = 0;
+        for (d, (&i, &n)) in sub.iter().zip(&self.dims).enumerate() {
+            assert!(i < n, "{}: index {i} is outside dimension {d}, which is {n}", self.name);
+            off = off * n + i;
+        }
+        off
+    }
+}
+
+impl<const N: usize> core::ops::Index<[usize; N]> for Index {
+    type Output = Var;
+    fn index(&self, sub: [usize; N]) -> &Var {
+        &self.vars[self.offset(&sub)]
+    }
+}
+
+impl core::ops::Index<&[usize]> for Index {
+    type Output = Var;
+    fn index(&self, sub: &[usize]) -> &Var {
+        &self.vars[self.offset(sub)]
+    }
+}
+
 /// A handle to a declared variable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Var(usize);
@@ -434,6 +532,46 @@ impl Model {
         Var(self.decls.len() - 1)
     }
 
+    /// A grid of variables, indexed and named for you.
+    ///
+    /// The shape a real model has. "One variable per worker per shift" is written
+    /// `m.grid("assign", &[workers.len(), shifts.len()], |m, n| m.binary(n))`, and the variables
+    /// come back as an [`Index`] you subscript: `a[[w, s]]`. Names are `assign[2,3]`, so an answer
+    /// still reads in the modeller's own words.
+    ///
+    /// Without this, every real model begins with a hand-rolled loop and a `format!` — which works,
+    /// and loses the shape: nothing downstream knows those variables were a grid, and an off-by-one
+    /// in the index arithmetic is silent. JijModeling's indexed variables are the idea; this is the
+    /// same idea with the bounds checked.
+    pub fn grid(
+        &mut self,
+        name: &str,
+        dims: &[usize],
+        mut declare: impl FnMut(&mut Model, &str) -> Var,
+    ) -> Index {
+        assert!(!dims.is_empty(), "a grid needs at least one dimension");
+        assert!(dims.iter().all(|d| *d > 0), "a grid dimension of zero has no variables");
+        let total: usize = dims.iter().product();
+        let mut vars = Vec::with_capacity(total);
+        let mut sub = vec![0usize; dims.len()];
+        for _ in 0..total {
+            let label = format!(
+                "{name}[{}]",
+                sub.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+            );
+            vars.push(declare(self, &label));
+            // odometer, last index fastest, so the layout matches the subscript order
+            for d in (0..dims.len()).rev() {
+                sub[d] += 1;
+                if sub[d] < dims[d] {
+                    break;
+                }
+                sub[d] = 0;
+            }
+        }
+        Index { name: name.to_string(), dims: dims.to_vec(), vars }
+    }
+
     /// A ±1 variable.
     pub fn spin(&mut self, name: &str) -> Var {
         self.declare(name, Domain::Spin, Encoding::OneHot)
@@ -590,6 +728,19 @@ impl Model {
     /// At least `k` of these literals must be true. Introduces a slack variable.
     pub fn at_least(&mut self, lits: Vec<Lit>, k: usize) -> &mut Self {
         self.constrain(Constraint::AtLeast { lits, k })
+    }
+
+    /// Exactly one of these literals is true.
+    ///
+    /// Cheaper than `cardinality(lits, 1)`: it lowers pairwise and needs no slack variable. Both
+    /// express the same requirement, and this is the one to reach for.
+    pub fn exactly_one(&mut self, lits: Vec<Lit>) -> &mut Self {
+        self.constrain(Constraint::ExactlyOne(lits))
+    }
+
+    /// At most one of these literals is true, and possibly none.
+    pub fn at_most_one(&mut self, lits: Vec<Lit>) -> &mut Self {
+        self.constrain(Constraint::AtMostOne(lits))
     }
 
     // ---- compiling ------------------------------------------------------------------------------
@@ -1854,6 +2005,82 @@ mod tests {
         };
         assert_eq!(solve(true), (3, 1), "operators should pick the rewarded values");
         assert_eq!(solve(true), solve(false), "sugar and builder must agree exactly");
+    }
+
+    #[test]
+    fn a_grid_of_variables_reads_like_the_problem_it_models() {
+        // Assignment: three workers, three shifts, one shift each, nobody doubled up. This is the
+        // shape of most real models, and writing it without an index means a hand-rolled loop, a
+        // format! and index arithmetic nobody checks.
+        let (workers, shifts) = (3, 3);
+        let mut m = Model::new();
+        let a = m.grid("assign", &[workers, shifts], |m, n| m.binary(n));
+
+        for w in 0..workers {
+            m.exactly_one(a.row(&[w]).iter().map(|&v| Lit::Is(v, 1)).collect());
+        }
+        for s in 0..shifts {
+            m.at_most_one(a.column(&[s]).iter().map(|&v| Lit::Is(v, 1)).collect());
+        }
+        // worker 0 is best at shift 2, worker 1 at shift 0
+        m.objective(Sense::Maximize, 3.0 * a[[0, 2]].is(1) + 3.0 * a[[1, 0]].is(1));
+
+        let s = m.compile().unwrap().solve_best_of(32);
+        assert!(s.feasible(), "{s}");
+        for w in 0..workers {
+            let taken: Vec<usize> =
+                (0..shifts).filter(|&sh| s.value(&format!("assign[{w},{sh}]")) == 1).collect();
+            assert_eq!(taken.len(), 1, "worker {w} takes exactly one shift: {taken:?}");
+        }
+        assert_eq!(s.value("assign[0,2]"), 1, "and the preferences are honoured: {s}");
+        assert_eq!(s.value("assign[1,0]"), 1, "{s}");
+    }
+
+    #[test]
+    fn a_grid_names_its_variables_so_the_answer_still_reads() {
+        let mut m = Model::new();
+        let a = m.grid("x", &[2, 2], |m, n| m.binary(n));
+        m.fix(a[[1, 0]], 1);
+        let s = m.compile().unwrap().solve_best_of(8);
+        assert_eq!(s.value("x[1,0]"), 1, "subscripts are part of the name: {s}");
+        assert_eq!(a.dims(), &[2, 2]);
+        assert_eq!(a.all().len(), 4);
+    }
+
+    #[test]
+    fn an_index_outside_the_shape_is_a_panic_not_a_wrap() {
+        // A silent wrap is an off-by-one that reaches the answer, and it is the exact mistake the
+        // hand-rolled version makes.
+        let mut m = Model::new();
+        let a = m.grid("x", &[2, 3], |m, n| m.binary(n));
+        assert_eq!(a.all().len(), 6, "row-major, last index fastest");
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a[[0, 3]]));
+        assert!(caught.is_err(), "index 3 of a dimension of 3 must not silently wrap");
+        let wrong_rank = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a[[1]]));
+        assert!(wrong_rank.is_err(), "one index into a two-dimensional grid is a mistake");
+    }
+
+    #[test]
+    fn rows_and_columns_pick_out_what_a_constraint_is_usually_over() {
+        let mut m = Model::new();
+        let a = m.grid("x", &[2, 3], |m, n| m.binary(n));
+        let r = a.row(&[1]);
+        assert_eq!(r.len(), 3, "a row is the last dimension");
+        assert_eq!(r[0], a[[1, 0]]);
+        assert_eq!(r[2], a[[1, 2]]);
+        let c = a.column(&[2]);
+        assert_eq!(c.len(), 2, "a column is the first");
+        assert_eq!(c[0], a[[0, 2]]);
+        assert_eq!(c[1], a[[1, 2]]);
+    }
+
+    #[test]
+    fn a_grid_works_with_any_domain() {
+        let mut m = Model::new();
+        let t = m.grid("temp", &[3], |m, n| m.integer(n, 10, 20));
+        m.fix(t[[1]], 17);
+        let s = m.compile().unwrap().solve_best_of(8);
+        assert_eq!(s.value("temp[1]"), 17, "{s}");
     }
 
     #[test]
