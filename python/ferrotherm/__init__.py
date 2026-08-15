@@ -34,6 +34,7 @@ __all__ = [
     "Literal",
     "Model",
     "Problem",
+    "Grid",
     "Term",
     "Variable",
     "Violation",
@@ -685,6 +686,13 @@ class Literal:
         return f"<{self.var.name} is {self.value}>"
 
 
+def _prod(xs: "Sequence[int]") -> int:
+    n = 1
+    for x in xs:
+        n *= x
+    return n
+
+
 def _as_term(x: Any) -> Term:
     if isinstance(x, Term):
         return x
@@ -734,6 +742,66 @@ class Violation:
 
     def __repr__(self) -> str:
         return f"<Violation by {self.by:g}: {self.detail}>"
+
+
+class Grid:
+    """A grid of variables, subscripted like an array.
+
+    ``a[w, s]`` is the variable at that position. Names are ``assign[2,3]``, so the answer still
+    reads in your own words.
+
+    Built by :meth:`Problem.grid`. The shape a real model has — one variable per worker per shift —
+    and without it every model starts with a loop, an f-string and index arithmetic nobody checks.
+    """
+
+    __slots__ = ("name", "dims", "_vars")
+
+    def __init__(self, name: str, dims: "tuple[int, ...]", vars: "list[Variable]") -> None:
+        self.name, self.dims, self._vars = name, tuple(dims), vars
+
+    def _offset(self, sub: "tuple[int, ...]") -> int:
+        if len(sub) != len(self.dims):
+            raise IndexError(
+                f"{self.name} has {len(self.dims)} dimensions and was given {len(sub)}")
+        off = 0
+        for d, (i, n) in enumerate(zip(sub, self.dims)):
+            # Negative indices are refused rather than wrapped. Python wraps, and a wrap here is an
+            # off-by-one that reaches the answer looking like a result.
+            if not 0 <= i < n:
+                raise IndexError(f"{self.name}: index {i} is outside dimension {d}, which is {n}")
+            off = off * n + i
+        return off
+
+    def __getitem__(self, sub: Any) -> "Variable":
+        return self._vars[self._offset(sub if isinstance(sub, tuple) else (sub,))]
+
+    def __len__(self) -> int:
+        return len(self._vars)
+
+    def __iter__(self):
+        return iter(self._vars)
+
+    @property
+    def all(self) -> "list[Variable]":
+        """Every variable, row-major."""
+        return list(self._vars)
+
+    def row(self, *prefix: int) -> "list[Variable]":
+        """One row of the last dimension: ``a.row(w)`` is every shift for worker ``w``."""
+        if len(prefix) >= len(self.dims):
+            raise IndexError(f"{self.name}: a row needs fewer indices than the {len(self.dims)} it has")
+        pad = tuple(prefix) + (0,) * (len(self.dims) - len(prefix) - 1)
+        return [self[pad + (k,)] for k in range(self.dims[-1])]
+
+    def column(self, *suffix: int) -> "list[Variable]":
+        """One column of the first dimension: ``a.column(s)`` is every worker for shift ``s``."""
+        if len(suffix) >= len(self.dims):
+            raise IndexError(f"{self.name}: a column needs fewer indices than the {len(self.dims)} it has")
+        pad = tuple(suffix) + (0,) * (len(self.dims) - len(suffix) - 1)
+        return [self[(k,) + pad] for k in range(self.dims[0])]
+
+    def __repr__(self) -> str:
+        return f"<Grid {self.name}{list(self.dims)}>"
 
 
 class Answer:
@@ -820,6 +888,33 @@ class Problem:
     def binary(self, name: str) -> Variable:
         """A variable that is 0 or 1."""
         return self._declare(name, "binary", _model_binary(self._h))
+
+    def grid(self, name: str, dims: "Sequence[int]", declare: Any = None) -> Grid:
+        """A grid of variables, indexed and named for you.
+
+        ``declare`` builds one variable given the problem and a name; it defaults to a binary.
+
+        >>> p = Problem()
+        >>> a = p.grid("assign", (3, 3))
+        >>> for w in range(3):
+        ...     p.exactly_one(a.row(w))
+        >>> a[0, 2].name
+        'assign[0,2]'
+        """
+        dims = tuple(int(d) for d in dims)
+        if not dims or any(d <= 0 for d in dims):
+            raise ValueError(f"a grid needs positive dimensions, got {dims}")
+        make = declare if declare is not None else (lambda p, n: p.binary(n))
+        vars = []
+        sub = [0] * len(dims)
+        for _ in range(_prod(dims)):
+            vars.append(make(self, f"{name}[{','.join(str(i) for i in sub)}]"))
+            for d in reversed(range(len(dims))):
+                sub[d] += 1
+                if sub[d] < dims[d]:
+                    break
+                sub[d] = 0
+        return Grid(name, dims, vars)
 
     def _declare(self, name: str, domain: str, index: int) -> Variable:
         if index == 0xFFFFFFFF:

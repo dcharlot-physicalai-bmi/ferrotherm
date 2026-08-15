@@ -175,7 +175,8 @@ def test_feasible_means_the_constraints_hold():
     assert ans.undecoded == [], "every variable decoded perfectly"
     assert not ans.feasible, "and it is still not feasible"
     assert len(ans.violated) == 1, ans.violated
-    assert "must differ" in ans.violated[0], ans.violated[0]
+    assert "must differ" in ans.violated[0].detail, ans.violated[0]
+    assert ans.violated[0].by > 0, "and by how much, not only that it broke"
 
 
 def test_raising_the_penalty_wins_a_constraint_back():
@@ -211,6 +212,53 @@ def test_a_certificate_reports_on_the_sampler_not_the_answer():
     assert c.passed == (not c.findings), "passed is exactly an empty findings list"
     if c.tv is not None:
         assert c.noise_floor is not None, "a TV without its floor is not a measurement"
+
+
+def test_a_grid_of_variables_models_an_assignment_problem():
+    """The shape most real models have, and the one that needs an index to write at all."""
+    workers, shifts = 3, 3
+    p = ft.Problem()
+    a = p.grid("assign", (workers, shifts))
+    for w in range(workers):
+        p.exactly_one(a.row(w))
+    for s in range(shifts):
+        p.at_most_one(a.column(s))
+    p.maximize(3 * a[0, 2].is_(1) + 3 * a[1, 0].is_(1))
+
+    ans = p.solve(tries=32)
+    assert ans.feasible, ans
+    for w in range(workers):
+        taken = [s for s in range(shifts) if ans[f"assign[{w},{s}]"]]
+        assert len(taken) == 1, f"worker {w} takes exactly one shift: {taken}"
+    assert ans["assign[0,2]"] == 1, ans
+    assert ans["assign[1,0]"] == 1, ans
+
+
+def test_a_grid_index_outside_the_shape_is_refused_not_wrapped():
+    """Python wraps a negative index. A wrap here is an off-by-one that reaches the answer."""
+    p = ft.Problem()
+    a = p.grid("x", (2, 3))
+    assert len(a) == 6
+    assert a.dims == (2, 3)
+    assert a[1, 2].name == "x[1,2]"
+
+    with pytest.raises(IndexError, match="outside dimension"):
+        a[0, 3]
+    with pytest.raises(IndexError, match="outside dimension"):
+        a[-1, 0]
+    with pytest.raises(IndexError, match="dimensions and was given"):
+        a[1]
+
+    # rows and columns pick out what a constraint is usually over
+    assert [v.name for v in a.row(1)] == ["x[1,0]", "x[1,1]", "x[1,2]"]
+    assert [v.name for v in a.column(2)] == ["x[0,2]", "x[1,2]"]
+
+
+def test_a_grid_takes_any_domain():
+    p = ft.Problem()
+    t = p.grid("temp", (3,), lambda pr, n: pr.integer(n, 10, 20))
+    p.fix(t[1], 17)
+    assert p.solve()["temp[1]"] == 17
 
 
 def test_errors_name_what_the_caller_wrote():
