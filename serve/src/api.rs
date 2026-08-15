@@ -681,6 +681,27 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                         Constraint::AtMostOne(lits)
                     });
                 }
+                "all_different" => {
+                    // Takes "of": [{"var": name}, ...] -- variables, not literals. A "value" here
+                    // would be meaningless and is ignored rather than silently constraining
+                    // something else.
+                    let items = c.get("of").and_then(|x| x.as_arr())
+                        .ok_or("all_different needs \"of\"")?;
+                    if items.len() < 2 {
+                        return Err("all_different needs at least two variables".into());
+                    }
+                    let mut vars = Vec::new();
+                    for it in items {
+                        let vn = it.get("var").and_then(|x| x.as_str()).ok_or(
+                            "each entry in all_different's \"of\" needs a \"var\"",
+                        )?;
+                        let h = handles[find(vn)?];
+                        if !vars.contains(&h) {
+                            vars.push(h);
+                        }
+                    }
+                    m.all_different(vars);
+                }
                 "cardinality" => {
                     let k = c.get("k").and_then(|x| x.as_usize()).ok_or("cardinality needs \"k\"")?;
                     let items = c.get("of").and_then(|x| x.as_arr()).ok_or("cardinality needs \"of\"")?;
@@ -695,7 +716,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 other => {
                     return Err(format!(
                         "unknown constraint {other:?}; known: not_equal, equal, fix, \
-                         cardinality, at_most, at_least, exactly_one, at_most_one"
+                         cardinality, at_most, at_least, exactly_one, at_most_one, all_different"
                     ))
                 }
             }
@@ -1546,6 +1567,69 @@ mod silent_wrongness {
             )
             .unwrap_err();
             assert!(e.contains("soft"), "{bad} should be refused by name, got: {e}");
+        }
+    }
+
+    #[test]
+    fn all_different_solves_a_latin_square_row_over_the_wire() {
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"c0","values":4},{"name":"c1","values":4},
+                                 {"name":"c2","values":4},{"name":"c3","values":4}],
+                    "constraints":[{"type":"all_different","of":[
+                       {"var":"c0"},{"var":"c1"},{"var":"c2"},{"var":"c3"}]}],
+                    "tries":60}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true), "{r:?}");
+        let vals = r.get("values").unwrap();
+        let mut got: Vec<f64> = ["c0", "c1", "c2", "c3"]
+            .iter()
+            .map(|k| vals.get(k).unwrap().as_f64().unwrap())
+            .collect();
+        got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(got, vec![0.0, 1.0, 2.0, 3.0], "a permutation, every value once: {r:?}");
+    }
+
+    #[test]
+    fn an_impossible_all_different_is_refused_by_name_not_annealed() {
+        // Five variables over three values. Annealing this returns feasible: false, which reads as
+        // "raise the penalty" -- advice that cannot work, because no penalty makes it satisfiable.
+        let e = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"x0","values":3},{"name":"x1","values":3},
+                                 {"name":"x2","values":3},{"name":"x3","values":3},
+                                 {"name":"x4","values":3}],
+                    "constraints":[{"type":"all_different","of":[
+                       {"var":"x0"},{"var":"x1"},{"var":"x2"},{"var":"x3"},{"var":"x4"}]}]}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(e.contains("No assignment can satisfy"), "must say why: {e}");
+        assert!(e.contains('5') && e.contains('3'), "and name the counts: {e}");
+    }
+
+    #[test]
+    fn all_different_needs_variables_and_says_so() {
+        for (body, want) in [
+            (r#""constraints":[{"type":"all_different","of":[{"var":"a"}]}]"#, "at least two"),
+            (r#""constraints":[{"type":"all_different"}]"#, "needs"),
+            (r#""constraints":[{"type":"all_different","of":[{"value":1},{"var":"b"}]}]"#, "\"var\""),
+        ] {
+            let e = dispatch(
+                "solve",
+                &crate::json::parse(&format!(
+                    r#"{{"variables":[{{"name":"a","values":3}},{{"name":"b","values":3}}],{body}}}"#
+                ))
+                .unwrap(),
+            )
+            .unwrap_err();
+            assert!(e.contains(want), "expected {want:?} in: {e}");
         }
     }
 }

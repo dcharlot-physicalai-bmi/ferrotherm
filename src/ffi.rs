@@ -1350,6 +1350,30 @@ pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
     1
 }
 
+/// Append a VARIABLE to the pending list, for constraints that are about variables rather than
+/// literals -- `all_different` is the only one today.
+///
+/// It picks a value from the variable's own domain, because the caller has no reason to know one
+/// and should not have to. Passing a placeholder through [`ft_model_lit`] instead is what the first
+/// version of this did, and it refused every variable whose domain did not happen to contain the
+/// placeholder -- correctly, since that function's whole job is to reject a value a variable cannot
+/// take. The fix belongs here, where the domain is already known.
+#[no_mangle]
+pub extern "C" fn ft_model_var(m: *mut ModelHandle, var: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    if var as usize >= h.model.len() {
+        h.last_error = format!("no variable {var}; {} declared", h.model.len());
+        return 0;
+    }
+    let v = h.model.var_at(var as usize);
+    let Some(value) = h.model.domain_of(v).values().next() else {
+        h.last_error = format!("variable {var} has an empty domain");
+        return 0;
+    };
+    h.lits.push(Lit::Is(v, value));
+    1
+}
+
 /// Append "`var` takes `value`" to the pending list. Refuses a value the variable cannot take.
 #[no_mangle]
 pub extern "C" fn ft_model_lit(m: *mut ModelHandle, var: u32, value: i64) -> u32 {
@@ -1412,6 +1436,24 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
         2 => Constraint::AtLeast { lits, k: k as usize },
         3 => Constraint::ExactlyOne(lits),
         4 => Constraint::AtMostOne(lits),
+        // 5 reads the VARIABLES out of the pending literals and ignores their values, so
+        // all_different needs no second list on any of the eight surfaces. A caller writes
+        // ft_model_lit(m, v, 0) per variable and closes with kind 5.
+        5 => {
+            let mut vars: Vec<crate::model::Var> = Vec::new();
+            for l in &lits {
+                // Lit::Spin carries no variable to make different from anything, so it is skipped
+                // rather than silently treated as one -- an all_different built from spin literals
+                // would otherwise constrain fewer variables than the caller listed and still
+                // report success.
+                if let crate::model::Lit::Is(v, _) = l {
+                    if !vars.contains(v) {
+                        vars.push(*v);
+                    }
+                }
+            }
+            Constraint::AllDifferent(vars)
+        }
         other => {
             h.last_error = format!(
                 "unknown counting kind {other}; 0 exactly, 1 at-most, 2 at-least, \

@@ -87,6 +87,27 @@ const run = (body) => page.evaluate((json) => {
   check("and the compiled program comes with it", r.ftp.startsWith("ftp 1"));
 }
 
+// --- all_different: the constraint no pair of variables can express ----------------------------
+{
+  const latin = JSON.stringify({
+    variables: [0,1,2,3].map(i => ({ name: `c${i}`, values: 4 })),
+    constraints: [{ type: "all_different", of: [0,1,2,3].map(i => ({ var: `c${i}` })) }],
+    tries: 60,
+  });
+  const r = await run(latin);
+  check("all_different solves a latin square row", /every constraint holds/.test(r.status), r.status.slice(0, 80));
+
+  // Five variables over three values has no answer at any penalty. Annealing it and reporting
+  // infeasible reads as "raise the penalty", which is advice that cannot work here.
+  const pigeon = JSON.stringify({
+    variables: [0,1,2,3,4].map(i => ({ name: `x${i}`, values: 3 })),
+    constraints: [{ type: "all_different", of: [0,1,2,3,4].map(i => ({ var: `x${i}` })) }],
+  });
+  const p2 = await run(pigeon);
+  check("and refuses the pigeonhole case by name rather than annealing it",
+        /No assignment can satisfy|pigeonhole/.test(p2.status), p2.status.slice(0, 110));
+}
+
 // --- the GPU readback guard, which nothing reached ----------------------------------------------
 {
   // `ft_set_spins` validates length and +/-1-ness, was written and unit-tested, and was called by

@@ -434,3 +434,32 @@ def test_the_exact_ground_state_is_readable_not_only_its_energy():
     # A ferromagnetic chain: every spin agrees, and the energy is one per bond.
     assert state is not None and len(set(state)) == 1, state
     assert sim.exact_ground_energy() == -5.0
+
+
+def test_all_different_solves_a_latin_square_row_and_names_the_clash():
+    p = ft.Problem()
+    v = [p.categorical(f"c{i}", 4) for i in range(4)]
+    p.all_different(v)
+    a = p.solve(tries=60)
+    assert a.feasible, a
+    assert sorted(a[f"c{i}"] for i in range(4)) == [0, 1, 2, 3], a
+
+
+def test_an_impossible_all_different_is_refused_rather_than_annealed():
+    # Five variables over three values. No penalty makes this satisfiable, so reporting
+    # feasible=False after a full anneal would send a modeller looking for a longer ladder that
+    # cannot help. The pigeonhole principle is countable, so it is counted.
+    p = ft.Problem()
+    xs = [p.categorical(f"x{i}", 3) for i in range(5)]
+    p.all_different(xs)
+    with pytest.raises(ValueError, match="No assignment can satisfy"):
+        p.solve(tries=8)
+
+
+def test_all_different_over_disjoint_domains_is_free():
+    # Two variables that cannot collide need no terms. Lowering per shared value notices that;
+    # a pairwise not_equal sweep would emit them anyway.
+    a = ft.Problem(); x = a.integer("a", 0, 3); y = a.integer("b", 10, 13)
+    a.all_different([x, y])
+    b = ft.Problem(); b.integer("a", 0, 3); b.integer("b", 10, 13)
+    assert a.solve(tries=4).spins == b.solve(tries=4).spins

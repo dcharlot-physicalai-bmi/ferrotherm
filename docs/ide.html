@@ -545,6 +545,22 @@ function solveProblem(v) {
         if (!(kind === "not_equal" ? W.ft_model_not_equal(m, a, b) : W.ft_model_equal(m, a, b))) refuse(kind);
       } else if (kind === "fix") {
         if (!W.ft_model_fix(m, find(c.var), BigInt(c.value | 0))) refuse("fix");
+      } else if (kind === "all_different") {
+        // Variables, not literals: the value in each entry would mean nothing here, so it is not
+        // read rather than being read and quietly ignored somewhere deeper.
+        W.ft_model_lits_clear(m);
+        const seen = new Set();
+        for (const it of c.of || []) {
+          const i = find(it.var);
+          if (seen.has(i)) continue;
+          seen.add(i);
+          // ft_model_var: the library picks a value from the variable's own domain. A placeholder
+          // is refused for any variable whose domain does not contain it, which is correct of
+          // ft_model_lit and wrong for a constraint that is about variables.
+          if (!W.ft_model_var(m, i)) refuse(kind);
+        }
+        if (seen.size < 2) throw new Error("all_different needs at least two variables");
+        if (!W.ft_model_close(m, 5, 0)) refuse(kind);
       } else if (["cardinality", "at_most", "at_least", "exactly_one", "at_most_one"].includes(kind)) {
         W.ft_model_lits_clear(m);
         for (const it of c.of || []) {
@@ -554,7 +570,7 @@ function solveProblem(v) {
         if (!W.ft_model_close(m, code, c.k | 0)) refuse(kind);
       } else {
         throw new Error('unknown constraint "' + kind + '"; known: not_equal, equal, fix, '
-          + "cardinality, at_most, at_least, exactly_one, at_most_one");
+          + "cardinality, at_most, at_least, exactly_one, at_most_one, all_different");
       }
       // Every branch above added exactly one constraint, so "the last one" is this one.
       if (soft !== null && !W.ft_model_soften_last(m, soft)) refuse(kind + " (soft)");

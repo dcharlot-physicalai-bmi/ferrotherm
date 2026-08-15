@@ -174,6 +174,7 @@ _model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
 _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
+_model_var = _sig("ft_model_var", c_uint32, [_p, c_uint32])
 _model_lit = _sig("ft_model_lit", c_uint32, [_p, c_uint32, ctypes.c_int64])
 _model_lits_clear = _sig("ft_model_lits_clear", c_uint32, [_p])
 _model_objective_product = _sig("ft_model_objective_product", c_uint32, [_p, c_uint32, c_double])
@@ -1065,6 +1066,36 @@ class Problem:
     def at_most_one(self, of: "Sequence[Any]", soft: "float | None" = None) -> None:
         """At most one of them holds."""
         self._counting(4, of, 0, 1, "at_most_one", soft)
+
+    def all_different(self, of: "Sequence[Variable]", soft: "float | None" = None) -> None:
+        """Every one of these variables takes a different value.
+
+        The workhorse of assignment, scheduling, colouring and puzzles. Lowered per shared value
+        rather than per pair, so it costs nothing where two domains do not overlap, needs no slack
+        and no ancillas, and its violation names *which* value collided and who took it.
+
+        More variables than the values they share between them is refused when the model compiles,
+        by name. That is the pigeonhole principle checked rather than annealed: such a model has no
+        answer at any penalty, and reporting ``feasible: False`` after a full anneal would send you
+        looking for a longer ladder that cannot help.
+        """
+        _model_lits_clear(self._h)
+        seen = []
+        for v in of:
+            if not isinstance(v, Variable):
+                raise TypeError(f"all_different takes variables, not {type(v).__name__}")
+            if v._index in seen:
+                continue
+            seen.append(v._index)
+            # ft_model_var, not ft_model_lit with a placeholder value: the library picks a value
+            # from the variable's OWN domain, because a caller has no reason to know one and a
+            # placeholder is refused for any variable whose domain does not contain it.
+            self._must(_model_var(self._h, v._index), "all_different")
+        if len(seen) < 2:
+            raise ValueError("all_different needs at least two variables")
+        self._must(_model_close(self._h, 5, 0), "all_different")
+        if soft is not None:
+            self.soften_last(soft)
 
     def _counting(self, kind: int, of: "Sequence[Any]", k: int, value: int, what: str,
                   soft: "float | None" = None) -> None:

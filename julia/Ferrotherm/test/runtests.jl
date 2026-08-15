@@ -250,3 +250,23 @@ end
     @test ans.spins == 7
     close!(p)
 end
+
+@testset "all_different solves a latin square row, and pigeonhole is refused not annealed" begin
+    p = Problem()
+    vs = [categorical!(p, "c$i", 4) for i in 1:4]
+    all_different!(p, vs)
+    ans = solve!(p; tries = 60)
+    @test feasible(ans)
+    @test sort([ans["c$i"] for i in 1:4]) == [0, 1, 2, 3]
+    close!(p)
+
+    # Five variables over three values has no answer at any penalty, so this is refused when the
+    # model compiles rather than annealed and reported infeasible — which reads as "raise the
+    # penalty", advice that cannot work here.
+    q = Problem()
+    ws = [categorical!(q, "x$i", 3) for i in 1:5]
+    all_different!(q, ws)
+    err = try solve!(q; tries = 8); "" catch e; sprint(showerror, e) end
+    @test occursin("No assignment can satisfy", err) || occursin("pigeonhole", err)
+    close!(q)
+end

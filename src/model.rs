@@ -443,6 +443,20 @@ pub enum Constraint {
     AtMost { lits: Vec<Lit>, k: usize },
     /// At least `k` of these literals are true. Slack as above, on the other side.
     AtLeast { lits: Vec<Lit>, k: usize },
+    /// Every one of these variables takes a DIFFERENT value.
+    ///
+    /// Lowered per value rather than per pair: for each value any two of them share, the
+    /// indicators for "this variable takes that value" are pairwise excluded. That is the
+    /// `AtMostOne` lowering repeated over the shared values, so it needs no slack and no ancillas,
+    /// and it costs nothing where the domains do not overlap — n variables over disjoint domains
+    /// compile to zero terms, which is correct and which a pairwise `not_equal` sweep would not
+    /// notice.
+    ///
+    /// Writing it as one constraint rather than n(n−1)/2 `NotEqual`s is not only shorter. It buys
+    /// two things a sweep cannot: a violation that names WHICH value collided and how many took it,
+    /// and the pigeonhole check — more variables than shared values is unsatisfiable, and the
+    /// compiler says so by name instead of annealing and returning a confident infeasible answer.
+    AllDifferent(Vec<Var>),
 }
 
 struct Decl {
@@ -483,11 +497,25 @@ pub enum CompileError {
     Empty,
     /// Two variables sharing a name.
     DuplicateName(String),
+    /// An `all_different` over more variables than there are values for them to take.
+    ///
+    /// The pigeonhole principle, checked rather than annealed. A model like this has no answer at
+    /// all, and returning `feasible: false` after a full anneal tells a modeller their penalty was
+    /// too low or their ladder too short — neither of which is true, and both of which cost an
+    /// afternoon.
+    Pigeonhole { vars: usize, values: usize },
 }
 
 impl core::fmt::Display for CompileError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            CompileError::Pigeonhole { vars, values } => write!(
+                f,
+                "all_different over {vars} variables, but between them their domains hold only \
+                 {values} distinct value(s). No assignment can satisfy that, so this is refused \
+                 rather than annealed: a model with no answer returns infeasible for a reason no \
+                 penalty and no longer ladder will fix."
+            ),
             CompileError::NeedsOneHot { var, encoding } => write!(
                 f,
                 "'{var}' is {encoding:?}-encoded and appears in an expression. A one-hot indicator \
@@ -796,6 +824,15 @@ impl Model {
         self.constrain(Constraint::AtMostOne(lits))
     }
 
+    /// Every one of `vars` takes a different value.
+    ///
+    /// The workhorse of assignment, scheduling, colouring and puzzles. See
+    /// [`Constraint::AllDifferent`] for what it costs and what it catches.
+    pub fn all_different<I: IntoIterator<Item = Var>>(&mut self, vars: I) -> &mut Self {
+        let v: Vec<Var> = vars.into_iter().collect();
+        self.constrain(Constraint::AllDifferent(v))
+    }
+
     // ---- compiling ------------------------------------------------------------------------------
 
     /// Lower to a program and a decoder.
@@ -820,6 +857,31 @@ impl Model {
         for d in &self.decls {
             if seen.insert(d.name.clone(), ()).is_some() {
                 return Err(CompileError::DuplicateName(d.name.clone()));
+            }
+        }
+
+        // The pigeonhole check, before any lowering. n variables that must all differ need at
+        // least n distinct values BETWEEN them; fewer is unsatisfiable by counting alone, and no
+        // amount of annealing discovers that in a way a modeller can act on.
+        for (c, _, hard) in &self.constraints {
+            if let Constraint::AllDifferent(vars) = c {
+                if !*hard {
+                    continue; // a soft all-different is a preference; it is allowed to be impossible
+                }
+                let mut distinct: Vec<i64> = Vec::new();
+                for &v in vars {
+                    for value in self.decls[v.0].domain.values() {
+                        if !distinct.contains(&value) {
+                            distinct.push(value);
+                        }
+                    }
+                }
+                if vars.len() > distinct.len() {
+                    return Err(CompileError::Pigeonhole {
+                        vars: vars.len(),
+                        values: distinct.len(),
+                    });
+                }
             }
         }
 
@@ -1160,6 +1222,33 @@ impl Model {
                     }
                 }
             }
+            Constraint::AllDifferent(vars) => {
+                // Per shared value, not per pair. Collect the indicator for "v takes this value"
+                // from every variable whose domain contains it, then exclude them pairwise.
+                // Every value at least two of them could both take. A value only one can take
+                // cannot collide, so it contributes nothing and is skipped rather than emitted.
+                let mut candidates: Vec<i64> = Vec::new();
+                for &v in vars {
+                    for value in self.decls[v.0].domain.values() {
+                        if !candidates.contains(&value) {
+                            candidates.push(value);
+                        }
+                    }
+                }
+                for value in candidates {
+                    let mut lins = Vec::new();
+                    for &v in vars {
+                        if self.decls[v.0].domain.index_of(value).is_some() {
+                            lins.push(self.linearise(slots, Lit::Is(v, value))?);
+                        }
+                    }
+                    for i in 0..lins.len() {
+                        for j in (i + 1)..lins.len() {
+                            add_product(b, &lins[i], &lins[j], 2.0 * p);
+                        }
+                    }
+                }
+            }
             Constraint::ExactlyOne(lits) | Constraint::AtMostOne(lits) => {
                 // pairwise exclusion; ExactlyOne additionally rewards being on
                 for i in 0..lits.len() {
@@ -1363,6 +1452,35 @@ impl Compiled {
                         cost: 0.0,
                         detail: format!("at most one of {} may hold, and {n} do", lits.len()),
                         amount: (n - 1) as f64,
+                    })
+                }
+                Constraint::AllDifferent(vars) => {
+                    // Report WHICH value collided, not merely that something did. "three of them
+                    // took 5" is a repair a modeller can act on; "all-different was violated" is
+                    // a fact they already suspected.
+                    let mut by_value: Vec<(i64, Vec<&str>)> = Vec::new();
+                    for &v in vars {
+                        let Some(&got) = values.get(&self.names[v.0]) else { continue };
+                        match by_value.iter_mut().find(|(val, _)| *val == got) {
+                            Some((_, who)) => who.push(&self.names[v.0]),
+                            None => by_value.push((got, vec![&self.names[v.0]])),
+                        }
+                    }
+                    let clashes: Vec<_> = by_value.iter().filter(|(_, w)| w.len() > 1).collect();
+                    let excess: usize = clashes.iter().map(|(_, w)| w.len() - 1).sum();
+                    (excess > 0).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
+                        detail: format!(
+                            "{} must all differ, and {}",
+                            vars.len(),
+                            clashes
+                                .iter()
+                                .map(|(val, who)| format!("{} both take {val}", who.join(" and ")))
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        ),
+                        amount: excess as f64,
                     })
                 }
             };
@@ -2568,5 +2686,80 @@ mod tests {
         assert_eq!(back.spins, c.spins());
         assert_eq!(back.encodings.len(), 2, "the layout travels with the program");
         assert_eq!(back.to_ftp(), text, "and it round-trips");
+    }
+
+    #[test]
+    fn all_different_solves_a_latin_square_row_and_names_the_clash() {
+        // Four variables over four values: the only feasible assignments are permutations, and a
+        // sampler that finds one has satisfied a constraint no pair of them could express alone.
+        let mut m = Model::new();
+        let v: Vec<_> = (0..4).map(|i| m.categorical(&format!("c{i}"), 4)).collect();
+        m.all_different(v.clone());
+        let c = m.compile().unwrap();
+        let s = c.solve_best_of(60);
+        assert!(s.feasible(), "a permutation exists and should be found: {s}");
+        let mut got: Vec<i64> = (0..4).map(|i| s.values[&format!("c{i}")]).collect();
+        got.sort();
+        assert_eq!(got, vec![0, 1, 2, 3], "every value used exactly once: {s}");
+    }
+
+    #[test]
+    fn a_broken_all_different_names_which_value_collided() {
+        // The violation has to be actionable. "all-different was violated" is something the
+        // modeller already suspects; "a and b both take 2" is a repair.
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.all_different([a, b]);
+        // Pin the penalty below an objective that wants them equal, so the constraint loses.
+        m.objective(Sense::Maximize, Expr::product(50.0, &[Lit::Is(a, 2)]));
+        m.objective(Sense::Maximize, Expr::product(50.0, &[Lit::Is(b, 2)]));
+        m.fixed_penalty(1.0);
+        let c = m.compile().unwrap();
+        let s = c.solve_best_of(40);
+        assert!(!s.feasible(), "the objective should have outbid a penalty of 1: {s}");
+        let v = &s.violated[0];
+        assert!(v.detail.contains("both take 2"), "must name the value: {}", v.detail);
+        assert!(v.detail.contains('a') && v.detail.contains('b'), "and who: {}", v.detail);
+        assert_eq!(v.amount, 1.0, "over by one");
+    }
+
+    #[test]
+    fn all_different_over_too_few_values_is_refused_rather_than_annealed() {
+        // Pigeonhole. Annealing this returns infeasible, which reads as "raise the penalty" --
+        // advice that cannot work, because the model has no answer at any penalty.
+        let mut m = Model::new();
+        let vars: Vec<_> = (0..5).map(|i| m.categorical(&format!("x{i}"), 3)).collect();
+        m.all_different(vars);
+        match m.compile() {
+            Err(CompileError::Pigeonhole { vars, values }) => {
+                assert_eq!((vars, values), (5, 3));
+                let msg = CompileError::Pigeonhole { vars, values }.to_string();
+                assert!(msg.contains("no answer"), "must say why annealing will not help: {msg}");
+            }
+            Err(e) => panic!("expected a pigeonhole refusal, got {e}"),
+            Ok(c) => panic!("expected a pigeonhole refusal, compiled to {} spins", c.spins()),
+        }
+    }
+
+    #[test]
+    fn all_different_over_disjoint_domains_costs_nothing() {
+        // Two variables that cannot collide need no terms at all. A pairwise not_equal sweep would
+        // emit them anyway; lowering per shared value notices there are none.
+        let mut m = Model::new();
+        let a = m.integer("a", 0, 3);
+        let b = m.integer("b", 10, 13);
+        m.all_different([a, b]);
+        let with = m.compile().unwrap();
+
+        let mut n = Model::new();
+        n.integer("a", 0, 3);
+        n.integer("b", 10, 13);
+        let without = n.compile().unwrap();
+        assert_eq!(
+            with.program.factors.len(),
+            without.program.factors.len(),
+            "disjoint domains cannot collide, so the constraint must add no couplings"
+        );
     }
 }

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### all-different, the constraint no pair of variables can express
+
+`Model::all_different` (Rust), `ft_model_var` + close kind 5 (C ABI and header), `all_different`
+(Python), `allDifferent` (Zig), `all_different!` (Julia), `{"type": "all_different", "of": [{"var":
+name}, ...]}` (HTTP, MCP, node editor). The last gap in the constraint vocabulary against every
+other modelling layer surveyed in `docs/LANDSCAPE.md`.
+
+- **Lowered per shared value, not per pair.** For each value two of them could both take, the
+  indicators are excluded pairwise — the `AtMostOne` lowering repeated over shared values. No slack,
+  no ancillas, and *nothing at all* where the domains do not overlap: `all_different` over `0..=3`
+  and `10..=13` adds zero couplings, which a sweep of n(n−1)/2 `not_equal`s would not notice.
+- **The violation names which value collided and who took it** — "a and b both take 2" is a repair;
+  "all-different was violated" is something the modeller already suspects.
+- **The pigeonhole case is refused at compile time, by name.** More variables than the values they
+  share between them has no answer at any penalty. Annealing it and reporting `feasible: false`
+  reads as "raise the penalty" or "lengthen the ladder", and neither can work. Counting is cheap, so
+  it is counted.
+- `ft_model_var` appends a variable rather than a literal, picking a value from the variable's own
+  domain. The first version passed a placeholder `0` through `ft_model_lit` and was correctly
+  refused for every variable whose domain did not contain 0 — that function's whole job is to reject
+  a value a variable cannot take, so the fix belonged in the library, where the domain is known.
+
+
 ## 0.9.0 (2026-08-15)
 
 **A constraint can be a price, and surface parity is checked rather than remembered.** Breaking:

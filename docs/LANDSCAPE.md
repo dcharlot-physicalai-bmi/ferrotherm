@@ -2381,7 +2381,7 @@ OpenAPI spec), fj_guide.txt, sqbm_manual.pdf + sqbm_manual.txt (2,926 lines), ne
 nec_va20.txt, nec_va_x86.pdf + nec_va_x86.txt, kaiwu_pkg/ (unpacked 1.4.1 wheel) and
 kaiwu_community-1.0.7/ (the pure-Python modelling source).
 
-## ferrotherm 0.8.0 — a pure-Rust, zero-dependency (std-only) thermodynamic/Ising computing stack: sparse pairwise EBMs, chromatic block-Gibbs, parallel tempering, a named-variable modelling layer, a `.ftp` program IR with a normative spec, a capability-declaring `Device`/`Fabric` abstraction over real and declared annealing hardware, sampler certificates, and a joules ledger. Workspace = core `.` + `silicon` (Xilinx 7-series bitstream/JTAG) + `serve` (HTTP + MCP) + `cloud` (Hitachi driver). ~15k lines in src/, ~2.7k silicon, ~2.4k serve. Apache-2.0, github.com/dcharlot-physicalai-bmi/ferrotherm.
+## ferrotherm 0.9.0 (rows marked 0.9.0 updated 2026-08-15; the rest surveyed at 0.8.0) — a pure-Rust, zero-dependency (std-only) thermodynamic/Ising computing stack: sparse pairwise EBMs, chromatic block-Gibbs, parallel tempering, a named-variable modelling layer, a `.ftp` program IR with a normative spec, a capability-declaring `Device`/`Fabric` abstraction over real and declared annealing hardware, sampler certificates, and a joules ledger. Workspace = core `.` + `silicon` (Xilinx 7-series bitstream/JTAG) + `serve` (HTTP + MCP) + `cloud` (Hitachi driver). ~15k lines in src/, ~2.7k silicon, ~2.4k serve. Apache-2.0, github.com/dcharlot-physicalai-bmi/ferrotherm.
 
 ### 1. Modelling layer (named variables, domains, constraints, objective, answers by name) — **yes**
 
@@ -2441,7 +2441,9 @@ PUBO fabric declares `max_arity: 4`; everything else is 2.
 
 > /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/src/reduce.rs (to_pairwise 132-198, penalty 150-152, tests 262-481); src/model.rs:678-728
 
-### 4. Constraint vocabulary (equality, inequality/slack, cardinality, exactly-one, all-different) — partial
+### 4. Constraint vocabulary (equality, inequality/slack, cardinality, exactly-one, all-different) — **yes** (0.9.0)
+
+**Updated 2026-08-15 (0.9.0).** ALL-DIFFERENT shipped as `Constraint::AllDifferent`, lowered per shared value rather than per pair: it emits nothing where two domains do not overlap, needs no slack and no ancillas, names WHICH value collided in its violation, and refuses the pigeonhole case (more variables than the values they share) at compile time by name rather than annealing a model that has no answer at any penalty. On all eight surfaces. This closes the last row where a surveyed competitor had a modelling capability this stack did not.
 
 `model::Constraint::{NotEqual, Equal, Fix, ExactlyOne, AtMostOne, Cardinality{lits,k},
 AtMost{lits,k}, AtLeast{lits,k}}`. Inequalities are real: `Model::compile` declares its own one-
@@ -2481,7 +2483,10 @@ report which variables broke but not which constraints. No automatic escalate-an
 
 > /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/src/model.rs (effective_penalty 536-551, decode 988-1002, check 1005-1082, Violation 1164-1177, feasible 1227-1229)
 
-### 6. Embedding / placement onto hardware topology — **not found**
+### 6. Embedding / placement onto hardware topology — **yes** (0.9.0)
+
+**Updated 2026-08-15 (0.9.0).** `src/embed.rs` implements the Cai-Macready-Roy heuristic (what minorminer implements): chains, chain strength, rip-up rounds, an identity fast path, and `Embedding::verify`. `None` means not found, never impossible.
+
 
 NOT FOUND. There is no minor-embedding pass, no clique embedder, no chain-strength calculator,
 no working-graph/yield handling anywhere in the tree — `grep -rn embed` over src/, cloud/src/,

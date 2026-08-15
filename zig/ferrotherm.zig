@@ -427,6 +427,11 @@ pub const Counting = enum(u32) {
     exactly_one = 3,
     /// At most one holds.
     at_most_one = 4,
+    /// Every VARIABLE named takes a different value; the literals' values are ignored.
+    ///
+    /// Lowered per shared value rather than per pair, so it costs nothing where two domains do not overlap, needs no slack and no ancillas, and its violation names WHICH value collided and who took it.
+    /// More variables than the values they share is refused when the model compiles, by name: the pigeonhole principle checked rather than annealed, because such a model has no answer at any penalty and a longer ladder cannot help.
+    all_different = 5,
 };
 
 /// How a variable is stored.
@@ -567,6 +572,23 @@ pub const Problem = struct {
             if (c.ft_model_lit(self.h, l.v.idx, l.value) == 0) return Error.BadValue;
         }
         if (c.ft_model_close_soft(self.h, @intFromEnum(kind), k, weight) == 0) {
+            return Error.RejectedConstraint;
+        }
+    }
+
+    /// Every one of these variables takes a different value.
+    ///
+    /// See `Counting.all_different`. `k` is ignored and the values passed are irrelevant, so this
+    /// takes variables directly rather than literals.
+    pub fn allDifferent(self: *Problem, vars: []const Var) Error!void {
+        _ = c.ft_model_lits_clear(self.h);
+        for (vars) |v| {
+            // ft_model_var, not a placeholder value: the library picks one from the variable's own
+            // domain, which a caller has no reason to know and which a placeholder gets wrong for
+            // any domain that does not contain it.
+            if (c.ft_model_var(self.h, v.idx) == 0) return Error.BadValue;
+        }
+        if (c.ft_model_close(self.h, @intFromEnum(Counting.all_different), 0) == 0) {
             return Error.RejectedConstraint;
         }
     }
@@ -1181,4 +1203,42 @@ test "a state computed elsewhere is scored by the same code, or refused" {
     try std.testing.expectError(Error.BadState, sim.setSpins(&.{ 1, 0, 1, 1 }));
     // and the refusals left the good state in place rather than half-writing over it
     try std.testing.expectEqual(@as(f64, -4.0), sim.energy());
+}
+
+test "all_different solves a latin square row, and pigeonhole is refused not annealed" {
+    var p = try Problem.init();
+    defer p.deinit();
+    var vars: [4]Var = undefined;
+    for (0..4) |i| {
+        var name: [8]u8 = undefined;
+        vars[i] = try p.categorical(std.fmt.bufPrint(&name, "c{d}", .{i}) catch unreachable, 4);
+    }
+    try p.allDifferent(&vars);
+    _ = try p.compile();
+    try p.solve(60);
+    try std.testing.expect(p.feasible());
+    var seen = [_]bool{false} ** 4;
+    for (vars) |v| {
+        const got = try p.value(v);
+        try std.testing.expect(!seen[@intCast(got)]);
+        seen[@intCast(got)] = true;
+    }
+
+    // Five variables over three values has no answer at any penalty, so the compiler refuses
+    // rather than annealing and reporting infeasible -- which would read as "raise the penalty".
+    var q = try Problem.init();
+    defer q.deinit();
+    var few: [5]Var = undefined;
+    for (0..5) |i| {
+        var name: [8]u8 = undefined;
+        few[i] = try q.categorical(std.fmt.bufPrint(&name, "x{d}", .{i}) catch unreachable, 3);
+    }
+    try q.allDifferent(&few);
+    try std.testing.expectError(error.WillNotCompile, q.compile());
+    // The error type alone says "it did not compile". What a modeller needs is WHY, and that it
+    // is not a penalty they can raise -- so the message has to carry the counting argument.
+    var buf: [512]u8 = undefined;
+    const why = q.lastError(&buf);
+    try std.testing.expect(std.mem.indexOf(u8, why, "pigeonhole") != null or
+        std.mem.indexOf(u8, why, "No assignment can satisfy") != null);
 }

@@ -63,6 +63,7 @@ export node_updates, joules_z1, onsager, library_path, close!
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
+export all_different!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
 export soften_last!, soft_cost, traded, amounts, ancillas
 
@@ -203,6 +204,7 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_fix Cuint ModPtr Cuint Clonglong
 @cfn ft_model_lits_clear Cuint ModPtr
 @cfn ft_model_lit Cuint ModPtr Cuint Clonglong
+@cfn ft_model_var Cuint ModPtr Cuint
 @cfn ft_model_close Cuint ModPtr Cuint Cuint
 @cfn ft_model_objective_term Cuint ModPtr Cuint Cdouble Cuint Clonglong
 @cfn ft_model_objective_pair Cuint ModPtr Cuint Cdouble Cuint Clonglong Cuint Clonglong
@@ -960,6 +962,32 @@ at_most!(p::Problem, of, k::Integer; value::Integer = 1, soft::Union{Real, Nothi
 """    at_least!(p, of, k; value = 1)  — at least `k` hold. Costs a slack variable."""
 at_least!(p::Problem, of, k::Integer; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =
     _counting(p, 2, of, k, value, "at_least"; soft = soft)
+
+"""
+    all_different!(p, vars)
+
+Every one of these variables takes a different value.
+
+Lowered per shared value rather than per pair, so it costs nothing where two domains do not overlap, needs no slack and no ancillas, and its violation names WHICH value collided and who took it. More variables than the values they share is refused when the model compiles, by name: the pigeonhole principle checked rather than annealed, because such a model has no answer at any penalty and a longer ladder cannot help.
+"""
+function all_different!(p::Problem, vars; soft::Union{Real, Nothing} = nothing)
+    _live(p)
+    items = collect(vars)
+    length(items) < 2 && error("all_different needs at least two variables, not $(length(items))")
+    ft_model_lits_clear(p.handle)
+    seen = Int[]
+    for v in items
+        v isa Variable || error("all_different takes variables, not $(typeof(v))")
+        Int(v.idx) in seen && continue
+        push!(seen, Int(v.idx))
+        # ft_model_var, not a placeholder value: the library picks one from the variable's own
+        # domain, which a caller has no reason to know.
+        _must(p, ft_model_var(p.handle, v.idx), "all_different")
+    end
+    _must(p, ft_model_close(p.handle, Cuint(5), Cuint(0)), "all_different")
+    soft === nothing || soften_last!(p, soft)
+    nothing
+end
 
 """    exactly_one!(p, of)  — exactly one holds. Pairwise, no slack, so cheaper than `exactly!(…, 1)`."""
 exactly_one!(p::Problem, of; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =

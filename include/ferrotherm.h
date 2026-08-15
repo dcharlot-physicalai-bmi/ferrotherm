@@ -256,10 +256,25 @@ uint32_t ft_model_at_least(ft_model *m, uint32_t count, uint32_t k, int64_t valu
  * constraint cannot bleed into the next one. */
 uint32_t ft_model_lits_clear(ft_model *m);
 uint32_t ft_model_lit(ft_model *m, uint32_t var, int64_t value);
+/* Append a VARIABLE, for constraints that are about variables rather than literals -- all_different
+ * (kind 5) is the only one today. The library picks a value from the variable's own domain, because
+ * a caller has no reason to know one and a placeholder passed through ft_model_lit is refused for
+ * any variable whose domain does not contain it. */
+uint32_t ft_model_var(ft_model *m, uint32_t var);
 uint32_t ft_model_lits(const ft_model *m);   /* how many are pending */
 
 /* kind: 0 exactly k, 1 at most k, 2 at least k, 3 exactly one, 4 at most one.
- * The last two ignore k and lower pairwise, with no slack variable -- prefer them over k = 1. */
+ * The last two ignore k and lower pairwise, with no slack variable -- prefer them over k = 1.
+ *
+ * kind 5 is ALL-DIFFERENT: it reads the VARIABLES out of the pending literals, ignores their
+ * values, and constrains every one of them to take a different value. Write ft_model_lit(m, v, 0)
+ * once per variable and close with kind 5; k is ignored.
+ *
+ * It lowers per shared value rather than per pair, so it costs nothing where two domains do not
+ * overlap, needs no slack and no ancillas, and its violation names WHICH value collided and who
+ * took it. More variables than the values they share is refused at compile time by name -- the
+ * pigeonhole principle, checked rather than annealed, because a model with no answer returns
+ * infeasible for a reason no penalty and no longer ladder will fix. */
 uint32_t ft_model_close(ft_model *m, uint32_t kind, uint32_t k);
 
 /* SOFT constraints: a preference with a price, rather than a rule.
