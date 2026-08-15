@@ -455,7 +455,8 @@ struct Decl {
 pub struct Model {
     decls: Vec<Decl>,
     objective: Expr,
-    constraints: Vec<(Constraint, f64)>,
+    /// Each constraint, its penalty (NaN for "scale it"), and whether breaking it is allowed.
+    constraints: Vec<(Constraint, f64, bool)>,
     /// Penalty strength applied to encodings and to constraints without their own.
     ///
     /// Treated as a *floor* unless [`Model::fixed_penalty`] is called. See [`Model::compile`].
@@ -704,13 +705,34 @@ impl Model {
     pub fn constrain(&mut self, c: Constraint) -> &mut Self {
         // recorded as NaN and resolved at compile time, so a constraint added before the objective
         // still gets the scaled penalty
-        self.constraints.push((c, f64::NAN));
+        self.constraints.push((c, f64::NAN, true));
+        self
+    }
+
+    /// A constraint you are willing to break, at a price.
+    ///
+    /// A **hard** constraint is a statement about which answers are admissible: breaking one means
+    /// the answer is not an answer, and [`Solution::feasible`] says so. A **soft** one is a
+    /// preference with a number on it — "prefer that these two do not clash, and if they must,
+    /// that costs `weight`" — which is a different thing, and collapsing the two is why
+    /// `feasible` used to go false for a constraint the modeller had deliberately priced low.
+    ///
+    /// Both compile the same way: a squared penalty. What differs is what the answer MEANS.
+    /// [`Solution::feasible`] ignores soft violations, [`Solution::soft_cost`] totals what they
+    /// cost, and `violated` reports both kinds, marked.
+    ///
+    /// The weight is absolute, not scaled. Automatic scaling exists to stop a hard constraint
+    /// being outbid by the objective; a soft constraint is *meant* to be traded against it, so
+    /// scaling it would defeat the point.
+    pub fn soft(&mut self, c: Constraint, weight: f64) -> &mut Self {
+        assert!(weight.is_finite() && weight > 0.0, "a soft constraint needs a positive price");
+        self.constraints.push((c, weight, false));
         self
     }
 
     /// Add a constraint at a specific penalty strength.
     pub fn constrain_at(&mut self, c: Constraint, penalty: f64) -> &mut Self {
-        self.constraints.push((c, penalty));
+        self.constraints.push((c, penalty, true));
         self
     }
 
@@ -788,7 +810,7 @@ impl Model {
         let user_count = self.decls.len();
         let mut extra: Vec<Domain> = Vec::new();
         let mut slack_for: BTreeMap<usize, usize> = BTreeMap::new();
-        for (ci, (c, _)) in self.constraints.iter().enumerate() {
+        for (ci, (c, _, _)) in self.constraints.iter().enumerate() {
             let range = match c {
                 Constraint::AtMost { k, .. } => Some(*k + 1),
                 Constraint::AtLeast { lits, k } => Some(lits.len().saturating_sub(*k) + 1),
@@ -832,7 +854,7 @@ impl Model {
         // and is lowered by `reduce` once the graph is built.
         let mut higher: Vec<(Vec<usize>, f64)> = Vec::new();
 
-        for (ci, (c, p)) in self.constraints.iter().enumerate() {
+        for (ci, (c, p, _hard)) in self.constraints.iter().enumerate() {
             let p = if p.is_nan() { penalty } else { *p };
             self.apply_constraint(&mut b, &mut higher, &slots, c, p, slack_for.get(&ci).copied())?;
         }
@@ -901,7 +923,11 @@ impl Model {
             all_slots: slots,
             names: self.decls.iter().map(|d| d.name.clone()).collect(),
             domains: self.decls.iter().map(|d| d.domain).collect(),
-            constraints: self.constraints.iter().map(|(c, _)| c.clone()).collect(),
+            constraints: self
+                .constraints
+                .iter()
+                .map(|(c, p, hard)| (c.clone(), *hard, if p.is_nan() { penalty } else { *p }))
+                .collect(),
         })
     }
 
@@ -1206,7 +1232,7 @@ pub struct Compiled {
     /// when the objective outbids the penalty that is exactly what it does -- returning a state
     /// that decodes perfectly and violates the request. Reading the answer cannot detect that; only
     /// re-checking each constraint against the decoded values can.
-    constraints: Vec<Constraint>,
+    constraints: Vec<(Constraint, bool, f64)>,
 }
 
 impl Compiled {
@@ -1242,13 +1268,16 @@ impl Compiled {
         let name = |v: &Var| self.names[v.0].as_str();
 
         let mut out = Vec::new();
-        for c in &self.constraints {
+        for (c, hard, weight) in &self.constraints {
+            let (hard, weight) = (*hard, *weight);
             // Each arm reports BY HOW MUCH as well as what. "at most 2 of 5 and 4 hold" is a near
             // miss; "at most 2 and 5 hold" is not, and a caller ranking repair candidates or
             // deciding whether to raise the penalty needs to tell them apart. dimod's
             // `iter_violations` yields a magnitude for exactly this reason.
             let broken = match c {
                 Constraint::NotEqual(a, b) => (get(a) == get(b)).then(|| Violation {
+                    hard: true,
+                    cost: 0.0,
                     detail: format!(
                         "{} and {} must differ, and both are {}",
                         name(a), name(b), get(a).unwrap_or_default()
@@ -1256,6 +1285,8 @@ impl Compiled {
                     amount: 1.0,
                 }),
                 Constraint::Equal(a, b) => (get(a) != get(b)).then(|| Violation {
+                    hard: true,
+                    cost: 0.0,
                     detail: format!(
                         "{} and {} must agree, and they are {} and {}",
                         name(a), name(b), get(a).unwrap_or_default(), get(b).unwrap_or_default()
@@ -1265,12 +1296,16 @@ impl Compiled {
                     amount: (get(a).unwrap_or_default() - get(b).unwrap_or_default()).abs() as f64,
                 }),
                 Constraint::Fix(v, want) => (get(v) != Some(*want)).then(|| Violation {
+                    hard: true,
+                    cost: 0.0,
                     detail: format!("{} must be {want}, and it is {}", name(v), get(v).unwrap_or_default()),
                     amount: (get(v).unwrap_or_default() - want).abs() as f64,
                 }),
                 Constraint::Cardinality { lits, k } => {
                     let n = count(lits);
                     (n != *k).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
                         detail: format!("exactly {k} of {} must hold, and {n} do", lits.len()),
                         amount: (n as f64 - *k as f64).abs(),
                     })
@@ -1278,6 +1313,8 @@ impl Compiled {
                 Constraint::AtMost { lits, k } => {
                     let n = count(lits);
                     (n > *k).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
                         detail: format!("at most {k} of {} may hold, and {n} do", lits.len()),
                         amount: (n - *k) as f64,
                     })
@@ -1285,6 +1322,8 @@ impl Compiled {
                 Constraint::AtLeast { lits, k } => {
                     let n = count(lits);
                     (n < *k).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
                         detail: format!("at least {k} of {} must hold, and {n} do", lits.len()),
                         amount: (*k - n) as f64,
                     })
@@ -1292,6 +1331,8 @@ impl Compiled {
                 Constraint::ExactlyOne(lits) => {
                     let n = count(lits);
                     (n != 1).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
                         detail: format!("exactly one of {} must hold, and {n} do", lits.len()),
                         amount: (n as f64 - 1.0).abs(),
                     })
@@ -1299,12 +1340,16 @@ impl Compiled {
                 Constraint::AtMostOne(lits) => {
                     let n = count(lits);
                     (n > 1).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
                         detail: format!("at most one of {} may hold, and {n} do", lits.len()),
                         amount: (n - 1) as f64,
                     })
                 }
             };
-            if let Some(b) = broken {
+            if let Some(mut b) = broken {
+                b.hard = hard;
+                b.cost = if hard { 0.0 } else { weight * b.amount };
                 out.push(b);
             }
         }
@@ -1395,6 +1440,14 @@ impl Compiled {
 pub struct Violation {
     /// What was asked for and what happened, in the caller's own names.
     pub detail: String,
+    /// Whether breaking this makes the answer inadmissible.
+    ///
+    /// A hard constraint says which answers are answers at all; a soft one is a preference with a
+    /// price. [`Solution::feasible`] counts only the hard kind, because a soft constraint the
+    /// modeller deliberately priced low is not a failure — it is the trade they asked for.
+    pub hard: bool,
+    /// What breaking this cost, for a soft constraint. Zero for a hard one, which has no price.
+    pub cost: f64,
     /// How far outside the constraint the answer sits, in the constraint's own units: places over a
     /// ceiling, places under a floor, distance from a fixed value. Always positive.
     pub amount: f64,
@@ -1402,7 +1455,11 @@ pub struct Violation {
 
 impl core::fmt::Display for Violation {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} (by {})", self.detail, self.amount)
+        if self.hard {
+            write!(f, "{} (by {})", self.detail, self.amount)
+        } else {
+            write!(f, "{} (by {}, cost {})", self.detail, self.amount, self.cost)
+        }
     }
 }
 
@@ -1455,7 +1512,18 @@ impl Solution {
     /// returns a state that decodes perfectly and breaks the request -- and this reported it as
     /// feasible, which is the answer to a question nobody asked.
     pub fn feasible(&self) -> bool {
-        self.invalid.is_empty() && self.violated.is_empty()
+        // Only the HARD violations. A soft constraint is a preference with a price, and breaking
+        // one is the trade the modeller asked for rather than a failure to answer.
+        self.invalid.is_empty() && !self.violated.iter().any(|v| v.hard)
+    }
+
+    /// What the broken soft constraints cost, in the units their weights were given in.
+    ///
+    /// Zero when none broke. Read beside `energy`: this is the part of the score that came from
+    /// preferences rather than from the objective, and separating them is the point of saying a
+    /// constraint is soft.
+    pub fn soft_cost(&self) -> f64 {
+        self.violated.iter().filter(|v| !v.hard).map(|v| v.cost).sum()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &i64)> {
@@ -1478,7 +1546,11 @@ impl core::fmt::Display for Solution {
         // The reason, not just the verdict. "INFEASIBLE" alone leaves a caller to work out which of
         // the things they asked for was not delivered.
         for v in &self.violated {
-            write!(f, "\n  broken: {} (by {})", v.detail, v.amount)?;
+            if v.hard {
+                write!(f, "\n  broken: {} (by {})", v.detail, v.amount)?;
+            } else {
+                write!(f, "\n  traded: {} (by {}, cost {})", v.detail, v.amount, v.cost)?;
+            }
         }
         Ok(())
     }
@@ -2085,6 +2157,73 @@ mod tests {
         assert_eq!(solve(true), (3, 1), "operators should pick the rewarded values");
         assert_eq!(solve(true), solve(false), "sugar and builder must agree exactly");
     }
+
+    #[test]
+    fn a_soft_constraint_is_a_price_not_a_rule() {
+        // Three people, two of whom would rather not share a shift, and one shift going spare.
+        // "Prefer they do not clash" is a preference with a number on it, not a statement about
+        // which answers are answers -- and collapsing the two is why `feasible` used to go false
+        // for a constraint the modeller had deliberately priced low.
+        let build = |price: f64| {
+            let mut m = Model::new();
+            let a = m.categorical("a", 2);
+            let b = m.categorical("b", 2);
+            m.soft(Constraint::NotEqual(a, b), price);
+            // both would rather be on shift 0, worth more than a cheap clash and less than a dear one
+            m.objective(Sense::Maximize, 5.0 * a.is(0) + 5.0 * b.is(0));
+            m.compile().unwrap().solve_best_of(24)
+        };
+
+        // priced low, the clash is worth having
+        let cheap = build(1.0);
+        assert_eq!((cheap.value("a"), cheap.value("b")), (0, 0), "{cheap}");
+        assert!(cheap.feasible(), "a soft violation is not an infeasible answer: {cheap}");
+        assert_eq!(cheap.violated.len(), 1, "and it is still REPORTED: {cheap}");
+        assert!(!cheap.violated[0].hard, "marked soft");
+        assert_eq!(cheap.soft_cost(), 1.0, "and priced: {cheap}");
+        assert!(cheap.to_string().contains("traded:"), "{cheap}");
+
+        // priced high, it is not
+        let dear = build(50.0);
+        assert_ne!(dear.value("a"), dear.value("b"), "the price now outweighs the reward: {dear}");
+        assert_eq!(dear.soft_cost(), 0.0, "nothing was traded away: {dear}");
+    }
+
+    #[test]
+    fn a_hard_constraint_still_makes_an_answer_inadmissible() {
+        // The distinction has to cut both ways, or `feasible` means nothing.
+        let mut m = Model::new();
+        let a = m.categorical("a", 2);
+        let b = m.categorical("b", 2);
+        m.not_equal(a, b);                       // hard
+        m.fixed_penalty(1.0);                    // and deliberately outbid
+        m.objective(Sense::Maximize, 40.0 * a.is(0) + 40.0 * b.is(0));
+        let s = m.compile().unwrap().solve_best_of(16);
+        assert_eq!((s.value("a"), s.value("b")), (0, 0));
+        assert!(!s.feasible(), "a broken HARD constraint is still infeasible: {s}");
+        assert!(s.violated[0].hard);
+        assert_eq!(s.soft_cost(), 0.0, "a hard constraint has no price");
+    }
+
+    #[test]
+    fn hard_and_soft_in_one_model_are_reported_apart() {
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        let c = m.categorical("c", 3);
+        m.not_equal(a, b);                                    // hard: must hold
+        m.soft(Constraint::NotEqual(b, c), 2.0);              // soft: worth 2 to keep
+        m.objective(Sense::Maximize, 9.0 * b.is(1) + 9.0 * c.is(1));
+        let s = m.compile().unwrap().solve_best_of(32);
+
+        assert!(s.feasible(), "the hard one holds: {s}");
+        assert_ne!(s.value("a"), s.value("b"), "{s}");
+        assert_eq!((s.value("b"), s.value("c")), (1, 1), "the soft one is worth trading: {s}");
+        assert_eq!(s.soft_cost(), 2.0, "{s}");
+        assert_eq!(s.violated.iter().filter(|v| v.hard).count(), 0);
+        assert_eq!(s.violated.iter().filter(|v| !v.hard).count(), 1);
+    }
+
 
     #[test]
     fn a_domain_wall_variable_can_actually_be_used() {
