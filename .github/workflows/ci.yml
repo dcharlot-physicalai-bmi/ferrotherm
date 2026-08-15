@@ -22,6 +22,10 @@ jobs:
       # catches an API break on a runner with no driver -- which is every hosted runner.
       - name: GPU backend builds, and its tests skip rather than fail without an adapter
         run: cargo test --release -p ferrotherm-gpu
+      # Same shape: no macmon on a Linux runner, so the measuring tests skip and the parsing and
+      # refusal logic -- which is most of the crate -- still runs.
+      - name: Power meter builds, and its tests skip rather than fail without a backend
+        run: cargo test --release -p ferrotherm-meter
       - name: Examples build
         run: cargo build --release --examples
       - name: Verification examples (exact-physics gates)

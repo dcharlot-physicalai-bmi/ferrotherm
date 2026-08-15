@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### `ferrotherm-meter` — measured wall power, so a joules figure describes the machine that produced it
+
+The ledger counted operations exactly and priced them against the one table in the tree: `Z1_SPICE`,
+pre-silicon estimates for an accelerator nobody has characterised. `Prices::UNSTATED` made borrowing
+it honest. This makes borrowing it unnecessary.
+
+- **Measured on an Apple M5 Max: 4.261e-7 J per node update** — whole-system wall power above idle,
+  over an 8.29 s window with 75 power readings. `Z1_SPICE` estimates 7.09e-15 J. The ratio is 6.0e7,
+  and it is *the size of the prize being claimed, not a measured speedup*: one side is a
+  general-purpose CPU at the wall, the other a per-device SPICE estimate for silicon that has not
+  been fabricated. One side is now measured.
+- Std-only, no dependencies — the backend is a subprocess (`macmon`), and one field out of a JSON
+  line does not justify a parser.
+- **Four things it refuses**, each found by it happening: a workload too short for the backend's tick
+  (a mean of two readings is not a mean); a run drawing *less* than its baseline (which means the
+  baseline was taken on a busy machine — the first version clamped this to zero and thereby reported
+  that computing is free); a delta inside the baseline's own 3σ wander (two runs of one workload
+  reported 2.34e-8 and 1.81e-7 J/update, an 8× spread, because one added ~1 W to a ~60 W baseline);
+  and a mixed workload turned into a per-sample price (three unknowns, one equation).
+- Settling is part of the protocol, measured rather than guessed: a baseline taken right after a
+  heavy run read 68.5 W while the run itself averaged 64.1 W. Fans and thermal management lag the
+  workload, so idle straight after load is systematically *higher* than idle.
+- Jetson/Linux INA3221 rails are the same measurement and are **not implemented**: that host has been
+  offline for a week, and a backend nobody can run is a backend nobody has tested.
+
+
 ### A joules figure now has to say whose machine it describes
 
 **Breaking:** `Ledger::joules` returns `Option<f64>`, and `Prices` gained a `source` field.
