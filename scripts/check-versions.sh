@@ -54,13 +54,28 @@ done
 # The server versions independently -- it is a separate crate with its own release cadence -- but
 # the ferrotherm it depends on must be the one in this repository, or `cargo publish` resolves to
 # whatever is already on crates.io and quietly ships against an older library.
-dep="$(grep -m1 '^ferrotherm = ' serve/Cargo.toml | sed -E 's/.*version = "([^"]+)".*/\1/')"
+# Every workspace member that pins the library, FOUND rather than listed. This block named only
+# serve, so bumping to 0.9.0 left cloud and silicon pinned at 0.8 and this script said "all agree"
+# -- the build was what caught it. A list of places to check is a list that goes stale the moment
+# someone adds a crate.
 major_minor="${want%.*}"
-if [[ "$dep" == "$major_minor" || "$dep" == "$want" ]]; then
-  printf '  %-36s depends on ferrotherm %s\n' "serve/Cargo.toml" "$dep"
-else
-  printf '  %-36s depends on ferrotherm %s   <- expected %s\n' "serve/Cargo.toml" "$dep" "$major_minor"
-  bad=1
+found=0
+while IFS= read -r f; do
+  dep="$(grep -m1 '^ferrotherm = ' "$f" | sed -E 's/.*version = "([^"]+)".*/\1/')"
+  [[ -n "$dep" ]] || continue
+  found=$((found + 1))
+  if [[ "$dep" == "$major_minor" || "$dep" == "$want" ]]; then
+    printf '  %-36s depends on ferrotherm %s\n' "$f" "$dep"
+  else
+    printf '  %-36s depends on ferrotherm %s   <- expected %s\n' "$f" "$dep" "$major_minor"
+    bad=1
+  fi
+done < <(grep -rl '^ferrotherm = ' --include=Cargo.toml . | grep -v '^\./target/' | sort)
+
+if [[ $found -eq 0 ]]; then
+  # A floor: if the search stops matching, this passes vacuously over nothing.
+  echo "found no crate depending on ferrotherm, which cannot be right" >&2
+  exit 2
 fi
 
 if [[ $bad -eq 1 ]]; then

@@ -28,7 +28,6 @@ cd "$here"
 EXEMPT=$(cat <<'TABLE'
 ft_free|all|Frees a string this library allocated. Every binding copies into its own memory before returning, so a caller never holds one of these; exposing it would be handing out a way to double-free.
 ft_scratch|header python zig julia|A wasm-only bump allocator for passing strings into the module. Native callers pass their own pointers, so there is nothing for it to do off the web.
-ft_abi_version|python zig julia|The header declares it so a C caller can check before linking. The bindings load the library through their own version gate instead, and calling this after a mismatched load is already too late.
 ft_model_cardinality|zig julia|A fixed-arity form taking up to four variables positionally, for the node graph: a browser has no allocator to build a variadic call across this boundary. Zig and Julia use ft_model_lit + ft_model_close, which is the same constraint with no arity ceiling.
 ft_model_at_most|zig julia|Same fixed-arity node-graph form as ft_model_cardinality; superseded by ft_model_lit + ft_model_close.
 ft_model_at_least|zig julia|Same fixed-arity node-graph form as ft_model_cardinality; superseded by ft_model_lit + ft_model_close.
@@ -92,6 +91,18 @@ pattern_for() {
   esac
 }
 
+# An exemption naming a symbol that does not exist is a lie in the table, and a table of reasons
+# nobody can check is the thing this script replaced. I wrote one on the first pass -- an entry for
+# ft_abi_version, a function that has never existed here.
+stale=0
+while IFS='|' read -r sym _ _; do
+  [[ -n "$sym" ]] || continue
+  if ! printf '%s\n' "${symbols[@]}" | grep -qx "$sym"; then
+    printf '  STALE   %-34s exempted, but src/ffi.rs exports no such symbol\n' "$sym"
+    stale=$((stale + 1))
+  fi
+done <<< "$EXEMPT"
+
 missing=0
 exempted=0
 for sym in "${symbols[@]}"; do
@@ -113,6 +124,11 @@ done
 
 echo
 echo "checked ${#symbols[@]} C ABI symbols across ${#SURFACES[@]} surfaces ($exempted documented gaps)"
+if [[ $stale -gt 0 ]]; then
+  echo
+  echo "$stale EXEMPT entries name symbols that do not exist. Remove them." >&2
+  exit 1
+fi
 if [[ $missing -gt 0 ]]; then
   echo
   echo "$missing symbol/surface pairs are unreachable." >&2

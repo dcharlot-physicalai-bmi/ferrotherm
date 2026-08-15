@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-08-15)
+
+**A constraint can be a price, and surface parity is checked rather than remembered.** Breaking:
+`Violation` gained fields, Julia's `Answer` gained three, and Zig's `Error` gained `BadState`.
 
 ### Soft constraints — a preference, priced, on every surface
 
@@ -59,6 +62,11 @@ nothing read it. It is in CI, and its first run found sixteen real ones:
 
 ### Fixed
 
+- `scripts/check-versions.sh` named `serve` as the only crate pinning the library, so this release's
+  bump left `cloud` and `silicon` at `0.8` while the script reported "all agree". It now *finds*
+  every dependent instead of listing them, with a floor so a search that stops matching fails rather
+  than passing over nothing. An exemption in `check-parity.sh` naming a symbol that does not exist
+  now fails too — a table of reasons nobody can check is the thing that script replaced.
 - `Solution::soft_cost` returned `-0.0` when nothing was traded. Rust's `Sum for f64` folds from
   `-0.0`, which is the correct additive identity and prints as a minus sign through every binding
   that formats a float. A price with a minus sign in front of it reads as a credit.
