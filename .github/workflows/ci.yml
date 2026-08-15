@@ -18,6 +18,10 @@ jobs:
         run: scripts/check-parity.sh
       - name: Unit tests
         run: cargo test --release
+      # The GPU crate builds everywhere and its tests skip where there is no adapter, so this
+      # catches an API break on a runner with no driver -- which is every hosted runner.
+      - name: GPU backend builds, and its tests skip rather than fail without an adapter
+        run: cargo test --release -p ferrotherm-gpu
       - name: Examples build
         run: cargo build --release --examples
       - name: Verification examples (exact-physics gates)

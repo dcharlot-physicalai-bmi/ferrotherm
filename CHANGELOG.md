@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Native GPU sampling — `ferrotherm-gpu`
+
+The last row in `docs/LANDSCAPE.md` where a surveyed competitor had a sampler this stack did not.
+GPU sampling existed only in the browser; the native core was CPU-only.
+
+- A **separate crate**, beside `silicon`, `serve` and `cloud`. `ferrotherm` stays std-only with zero
+  dependencies, which is what lets the same source compile to `wasm32-unknown-unknown` and to a
+  microcontroller — a property worth keeping rather than a slogan.
+- It has **no shader of its own**. The WGSL comes from `ferrotherm::wgsl::sweep_shader`, the same
+  string the browser fetches through `ft_shader`, so a native run and a browser run cannot disagree
+  about the arithmetic — only about the hardware.
+- **Measured on an Apple M5 Max (Metal), median of 5 runs, 200 sweeps:** crossover at ~4k nodes,
+  3.5× at 4,096, 14× at 16,384, 42× at 65,536, 54× at 262,144. The GPU **loses** below ~1k nodes and
+  the benchmark says so: fixed cost per run does not shrink, so the crossover is the number worth
+  quoting rather than the peak.
+- `Gpu::is_hardware()` and the benchmark refuse to quote a speedup against a software rasteriser.
+  lavapipe, SwiftShader and WARP all run this shader correctly and say nothing about a GPU.
+- A readback that is not ±1 is **refused, not coerced** — the same discipline the browser path
+  learned, where `> 0 ? 1 : -1` laundered a dropped dispatch into a believable energy.
+
+### Fixed before it shipped
+
+- **One command submit per dispatch made the GPU slower than the CPU at every size**, at a near
+  constant ~60 ms regardless of node count — constant time under a growing workload is the signature
+  of paying for driver round trips rather than arithmetic. Now one encoder, one pass and one submit
+  for the whole run, with per-dispatch parameters selected by dynamic uniform offset. 60 ms → 2.5 ms,
+  and the ratio at 65k nodes went from 0.75× to 42×.
+- `Limits::downlevel_defaults()` caps storage buffers at 4 per stage and this shader binds 6, so the
+  device compiled nothing. The WebGPU baseline is the right floor: anything that runs the page runs
+  this.
+
+
 ### all-different, the constraint no pair of variables can express
 
 `Model::all_different` (Rust), `ft_model_var` + close kind 5 (C ABI and header), `all_different`
