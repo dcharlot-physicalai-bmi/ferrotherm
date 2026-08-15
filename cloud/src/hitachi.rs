@@ -25,6 +25,7 @@
 //! declare: a model quantised into it still runs, it just answers a different question.
 
 use ferrotherm::fabric::{Device, Fabric, Topology, Unsupported};
+use ferrotherm::embed::Embedding;
 use ferrotherm::ftp::Program;
 use ferrotherm::ledger::{Ledger, Z1_SPICE};
 use ferrotherm::schedule::Schedule;
@@ -167,7 +168,52 @@ impl Hitachi {
             .map_err(|_| "set ACW_TOKEN to an Annealing Cloud Web token".to_string())
     }
 
+    /// Place a program on the grid, embedding it if it does not already fit.
+    ///
+    /// [`Hitachi::layout`] requires a program whose couplings are already King-adjacent under the
+    /// row-major layout — which is a real constraint on the caller and, until `ferrotherm::embed`
+    /// existed, one this driver could only refuse. This tries that first, and when it fails uses
+    /// minor embedding to find a placement.
+    ///
+    /// Returns the embedding, which is needed to read the answer back: a variable may now occupy
+    /// several sites, and [`ferrotherm::embed::unembed`] turns those back into one value and says
+    /// which chains broke.
+    ///
+    /// The embedded model is not the model that was written. Chains add couplings at
+    /// `chain_strength`, and a program that fitted the grid already is placed unchanged, so the
+    /// returned embedding is the identity and the distinction costs nothing.
+    pub fn place(&mut self, p: &Program) -> Result<Embedding, String> {
+        let side = self.machine.side();
+        if self.layout(p).is_ok() {
+            return Ok(Embedding {
+                chains: (0..p.spins).map(|i| vec![i]).collect(),
+                sites: side * side,
+            });
+        }
+
+        let logical = p.to_graph().map_err(|e| e.to_string())?;
+        let hardware = ferrotherm::embed::topology::king(side);
+        let e = ferrotherm::embed::embed(&logical, &hardware, 0).ok_or_else(|| {
+            format!(
+                "no King-graph placement found for {} variables on this {side}x{side} machine. \
+                 That is 'not found', not 'impossible' -- minor embedding is NP-hard and this is a \
+                 heuristic. A different seed or a smaller model may succeed",
+                p.spins
+            )
+        })?;
+
+        let placed = ferrotherm::embed::apply(&logical, &hardware, &e);
+        let program = Program::from_graph(&placed.graph, &Schedule::geometric(0.05, 6.0, 40, 20));
+        self.layout(&program).map_err(|err| {
+            format!("the embedded program still does not fit: {err}")
+        })?;
+        Ok(e)
+    }
+
     /// Lay a program out on the grid, negating every weight for their sign convention.
+    ///
+    /// Requires every coupling to be King-adjacent already. [`Hitachi::place`] embeds when it is
+    /// not, and is what a caller who has not laid their model out by hand wants.
     pub fn layout(&mut self, p: &Program) -> Result<(), LayoutError> {
         let side = self.machine.side();
         let lim = self.machine.coefficient_limit();
@@ -402,10 +448,41 @@ fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
 #[cfg(test)]
 mod layout_reporting_tests {
     use super::*;
-    use ferrotherm::ftp::Program;
+    use ferrotherm::embed::Embedding;
+use ferrotherm::ftp::Program;
 
     fn asic() -> Hitachi {
         Hitachi::new(String::from("no-token-needed-for-a-capability-check"), Machine::Asic)
+    }
+
+    #[test]
+    fn a_model_that_does_not_fit_the_grid_is_placed_rather_than_refused() {
+        // This is what the driver could not do. Spins 0 and 500 are nowhere near each other on a
+        // 384-wide grid, so `layout` refuses; `place` embeds and finds sites that ARE adjacent.
+        let p = Program::from_ftp("ftp 1\nspins 600\nfactor 1 0 500\n").unwrap();
+        let mut h = asic();
+        assert!(h.layout(&p).is_err(), "it does not fit as written");
+
+        let e = h.place(&p).expect("a King's graph has room for two coupled variables");
+        assert_eq!(e.chains.len(), 600);
+        assert!(e.chains.iter().all(|c| !c.is_empty()), "every variable got sites");
+
+        // and the placement really is one
+        let hardware = ferrotherm::embed::topology::king(384);
+        e.verify(&p.to_graph().unwrap(), &hardware).expect("place must return a valid embedding");
+    }
+
+    #[test]
+    fn a_model_already_on_the_grid_is_placed_unchanged() {
+        // The common case, and the one the driver demanded of everybody: adjacent spins on the
+        // row-major layout. It must cost nothing and change nothing.
+        let p = Program::from_ftp("ftp 1\nspins 4\nfactor 1 0 1\nfactor 1 1 2\n").unwrap();
+        let e = asic().place(&p).expect("already King-adjacent");
+        assert!(
+            e.chains.iter().enumerate().all(|(i, c)| c == &vec![i]),
+            "an identity placement, not a rearrangement: {:?}",
+            &e.chains[..4]
+        );
     }
 
     #[test]
