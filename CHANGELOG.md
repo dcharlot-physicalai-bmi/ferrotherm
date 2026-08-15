@@ -67,6 +67,15 @@ nothing read it. It is in CI, and its first run found sixteen real ones:
   every dependent instead of listing them, with a floor so a search that stops matching fails rather
   than passing over nothing. An exemption in `check-parity.sh` naming a symbol that does not exist
   now fails too — a table of reasons nobody can check is the thing that script replaced.
+- **`ferrotherm_jll` has never been installable, and its check passed anyway.** The Julia artifacts
+  were built, hashed, and uploaded to a CI artifact that expires — while the `Artifacts.toml` shipped
+  in the package named `releases/download/vX/…` URLs that no release ever carried. Every one has
+  been a 404 since 0.7.0. The verification step rewrote those URLs to a `localhost` server before
+  testing them, so it reported on the stand-in rather than on what a user would fetch. The release
+  job now creates the release and attaches the tarballs, then fetches each **published** URL and
+  checks the bytes against the hash the manifest commits them to — with a floor, so finding no URLs
+  fails instead of passing over nothing. The manifest is also committed back into the package: the
+  one in the repository sat at 0.8.0 hashes while the library moved on.
 - `Solution::soft_cost` returned `-0.0` when nothing was traded. Rust's `Sum for f64` folds from
   `-0.0`, which is the correct additive identity and prints as a minus sign through every binding
   that formats a float. A price with a minus sign in front of it reads as a credit.
