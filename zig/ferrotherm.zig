@@ -23,6 +23,8 @@ pub const Error = error{
     BuilderSpent,
     /// Fewer than 16 draws; certifying that many says nothing.
     TooFewDraws,
+    /// A state whose length does not match the graph, or that holds a value other than -1 or +1.
+    BadState,
     /// A domain with nothing in it: a categorical under two values, or an integer with hi <= lo.
     BadDomain,
     /// A value the variable cannot take. Call `lastError` for the range it can.
@@ -107,6 +109,18 @@ pub const Sim = struct {
         const n = c.ft_len(self.h);
         const p = c.ft_spins(self.h);
         return p[0..n];
+    }
+
+    /// Put a state INTO the simulation, so something computed elsewhere is scored, certified or
+    /// annealed by exactly the same code that handles a state this library produced.
+    ///
+    /// It refuses rather than adapting: the length must match the graph and every value must be -1 or +1.
+    /// A shorter state means whatever produced it did not finish, and a value that is not a spin means the
+    /// buffer is not what the caller thinks it is. Both are cheap to launder into something plausible --
+    /// pad with -1, coerce with `v > 0` -- and a laundered state is then scored with full confidence, which
+    /// is how a dropped GPU dispatch turns into a believable energy.
+    pub fn setSpins(self: Sim, state: []const i8) Error!void {
+        if (c.ft_set_spins(self.h, state.ptr, @intCast(state.len)) == 0) return Error.BadState;
     }
 
     pub fn len(self: Sim) u32 {
@@ -244,6 +258,34 @@ pub const Certificate = struct {
     }
 };
 
+/// A certificate over a solved `Problem`.
+///
+/// Separate from `Certificate` because the numbers come from a different handle and the exact
+/// bounds a simulation reports are not available here. Keeping one struct and leaving half its
+/// fields NaN would say the bounds were computed and came out unknown, which is not what happened.
+pub const ProblemCertificate = struct {
+    beta_eff: f64,
+    tau_int: f64,
+    ess: f64,
+    tv: f64,
+    noise_floor: f64,
+    findings: u32,
+    h: ?*c.ft_model,
+
+    /// Zero findings is the only thing that means the run is sound.
+    pub fn passed(self: ProblemCertificate) bool {
+        return self.findings == 0;
+    }
+
+    /// Finding `i`, written into `buf`.
+    pub fn finding(self: ProblemCertificate, i: u32, buf: []u8) []const u8 {
+        const need = c.ft_model_cert_finding(self.h, i, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_model_cert_finding(self.h, i, buf.ptr, n);
+        return buf[0..got];
+    }
+};
+
 /// Sample and certify. `draws` must be at least 16; certifying fewer says nothing.
 pub fn certify(sim: Sim, draws: u32, thin: u32) Error!Certificate {
     if (c.ft_certify(sim.h, draws, thin) == 0) return Error.TooFewDraws;
@@ -271,6 +313,15 @@ pub fn finding(sim: Sim, i: u32, buf: []u8) []const u8 {
 ///
 /// Cost is `2^width` in the graph's shape rather than `2^n` in its size, so a long chain is instant
 /// where a dense graph of the same node count is impossible. Check `exactWidth` first.
+/// The exact ground STATE, written into `out`, or false if the graph is too dense for `max_width`.
+///
+/// `exactGround` says what the best energy is; this says which assignment reaches it, which is what
+/// a caller checking a sampler against the truth actually needs to compare. `out` must be exactly
+/// the node count long -- a wrong length is refused rather than truncated.
+pub fn exactGroundState(sim: Sim, max_width: u32, out: []i8) bool {
+    return c.ft_exact_ground_state(sim.h, max_width, out.ptr, @intCast(out.len)) == 1;
+}
+
 pub fn exactGround(sim: Sim, max_width: u32) ?f64 {
     const v = c.ft_exact_ground(sim.h, max_width);
     return if (std.math.isNan(v)) null else v;
@@ -649,6 +700,16 @@ pub const Problem = struct {
         return c.ft_model_violations(self.h);
     }
 
+    /// Spins the higher-order lowering added, or zero if nothing named three or more variables.
+    ///
+    /// Non-zero means the answer solves a model with MORE spins than the variables required. The
+    /// extra states are what makes the reduction exact for OPTIMISATION and not for sampling: the
+    /// Boltzmann distribution over the original variables is not preserved. Read this before
+    /// drawing samples from a solved model, rather than only its ground state.
+    pub fn ancillas(self: *Problem) u32 {
+        return c.ft_model_ancillas(self.h);
+    }
+
     /// What the traded-away preferences cost. Zero when none broke, or before solving.
     pub fn softCost(self: *Problem) f64 {
         return c.ft_model_soft_cost(self.h);
@@ -665,6 +726,32 @@ pub const Problem = struct {
         const n = @min(need, @as(u32, @intCast(buf.len)));
         const got = c.ft_model_violation(self.h, i, buf.ptr, n);
         return buf[0..got];
+    }
+
+    /// How far outside violation `i` sits -- not merely that it broke.
+    ///
+    /// A caller ranking repairs, or deciding whether a larger penalty would be enough, needs the
+    /// magnitude: "at most two, and four hold" is over by two, and that is a different problem from
+    /// being over by one.
+    pub fn violationAmount(self: *Problem, i: u32) f64 {
+        return c.ft_model_violation_amount(self.h, i);
+    }
+
+    /// Certify the sampling behind the answer, the same way `certify` does for a simulation.
+    ///
+    /// An answer is a state the sampler reached; a certificate says whether the chain that reached
+    /// it had mixed. `draws` must be at least 16. Zero findings is the only thing that means sound.
+    pub fn certify(self: *Problem, beta: f64, draws: u32, thin: u32) Error!ProblemCertificate {
+        if (c.ft_model_certify(self.h, beta, draws, thin) == 0) return Error.TooFewDraws;
+        return .{
+            .beta_eff = c.ft_model_cert_beta(self.h),
+            .tau_int = c.ft_model_cert_tau(self.h),
+            .ess = c.ft_model_cert_ess(self.h),
+            .tv = c.ft_model_cert_tv(self.h),
+            .noise_floor = c.ft_model_cert_floor(self.h),
+            .findings = c.ft_model_cert_findings(self.h),
+            .h = self.h,
+        };
     }
 
     /// Why the last call was refused. Empty when nothing was.
@@ -864,6 +951,43 @@ test "an integer stored as a domain wall is one spin cheaper" {
     try std.testing.expectEqual(@as(i64, 17), try p.value(t));
 }
 
+test "the ancilla count is readable, because sampling from a reduced model is not sound" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.binary("a");
+    const b = try p.binary("b");
+    const d = try p.binary("c");
+    try p.preferAll(.maximize, 3.0, &.{ a.is(1), b.is(1), d.is(1) });
+    const spins = try p.compile();
+    try p.solve(8);
+    // Three variables in one term is a three-body statement, lowered with one ancilla. Without a
+    // way to READ that, a caller cannot tell a model whose Boltzmann distribution is preserved from
+    // one whose is not -- and this file had a test named for ancillas that could not see them.
+    try std.testing.expectEqual(@as(u32, 1), p.ancillas());
+    // Seven, not four: a binary is one-hot over two values, so each costs two spins, and the
+    // ancilla is the seventh. The ancilla count is what separates the two -- the spin total alone
+    // cannot say whether any of them were added by the lowering.
+    try std.testing.expectEqual(@as(u32, 7), spins);
+}
+
+test "the exact ground state is readable, not only its energy" {
+    var m = try Model.init(6);
+    var i: u32 = 0;
+    while (i < 5) : (i += 1) try m.couple(i, i + 1, 1.0);
+    var sim = try m.build(1.0, 1);
+    defer sim.deinit();
+
+    var out: [6]i8 = undefined;
+    try std.testing.expect(exactGroundState(sim, 20, &out));
+    // A ferromagnetic chain: every spin agrees, and the energy is one per bond.
+    for (out) |s| try std.testing.expectEqual(out[0], s);
+    try std.testing.expectEqual(@as(f64, -5.0), exactGround(sim, 20).?);
+    // A wrong length is refused rather than truncated: a short buffer would otherwise be filled
+    // partway and read as a whole answer.
+    var short: [4]i8 = undefined;
+    try std.testing.expect(!exactGroundState(sim, 20, &short));
+}
+
 test "a higher-order objective term costs ancillas and finds the right answer" {
     // Three literals together, which the binding could not express at all: it offered one or two.
     var p = try Problem.init();
@@ -976,4 +1100,85 @@ test "a soft counting constraint prices the overshoot, squared" {
     // All four held against a cap of one, so it is over by three -- and three squared is nine,
     // not three. Missing by two costs four times missing by one.
     try std.testing.expectEqual(@as(f64, 9.0), p.softCost());
+}
+
+test "a violation reports how far outside it sits, not only that it broke" {
+    var p = try Problem.init();
+    defer p.deinit();
+    var vars: [4]Var = undefined;
+    var lits: [4]Lit = undefined;
+    for (0..4) |i| {
+        var name: [8]u8 = undefined;
+        vars[i] = try p.binary(std.fmt.bufPrint(&name, "v{d}", .{i}) catch unreachable);
+        lits[i] = vars[i].is(1);
+        try p.prefer(.maximize, 20.0, lits[i]);
+    }
+    try p.count(.at_most, 1, &lits);
+    try p.penalty(1.0);  // pinned below the objective, so the constraint loses on purpose
+    _ = try p.compile();
+    try p.solve(24);
+    try std.testing.expect(!p.feasible());
+    try std.testing.expectEqual(@as(u32, 1), p.violations());
+    // Over by three, not merely broken. A caller deciding whether a larger penalty would be enough
+    // cannot get that from the text.
+    try std.testing.expectEqual(@as(f64, 3.0), p.violationAmount(0));
+}
+
+test "a solved problem certifies its own sampling" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 3);
+    const b = try p.categorical("b", 3);
+    try p.notEqual(a, b);
+    _ = try p.compile();
+    try p.solve(8);
+
+    // Too few draws says nothing, and the library refuses rather than returning a clean-looking
+    // certificate over four samples.
+    try std.testing.expectError(Error.TooFewDraws, p.certify(1.0, 4, 1));
+
+    const cert = try p.certify(1.0, 512, 1);
+    try std.testing.expect(cert.ess > 0);
+    // Not `tau >= 1`: tau_int here measures 0.58, and an integrated autocorrelation time below one
+    // is real for a chromatic sweep that decorrelates faster than one pass. Asserting the textbook
+    // floor would have been asserting a convention this sampler does not obey.
+    try std.testing.expect(cert.tau_int > 0);
+    try std.testing.expect(cert.ess <= 512);
+    try std.testing.expect(cert.beta_eff > 0);
+    // This model DOES report a finding at these settings -- tv 0.097 sits under a noise floor of
+    // 0.190, so the distance to the exact distribution cannot be told from sampling noise. Asserting
+    // `passed()` would have made this test a check that the certifier stays quiet, which is the
+    // opposite of what a certificate is for.
+    try std.testing.expect(cert.findings > 0);
+    var buf: [256]u8 = undefined;
+    var i: u32 = 0;
+    var saw = false;
+    while (i < cert.findings) : (i += 1) {
+        const text = cert.finding(i, &buf);
+        try std.testing.expect(text.len > 0);
+        saw = true;
+    }
+    try std.testing.expect(saw);
+}
+
+test "a state computed elsewhere is scored by the same code, or refused" {
+    // The point of putting a state in is that whatever produced it -- a GPU sweep, another solver --
+    // is then judged by the code that judges this library's own answers. That only means anything if
+    // the state arrives intact, so the refusals matter more than the success.
+    var b = try Model.init(4);
+    var i: u32 = 0;
+    while (i < 4) : (i += 1) try b.couple(i, (i + 1) % 4, 1.0);
+    var sim = try b.build(1.0, 7);
+    defer sim.deinit();
+
+    try sim.setSpins(&.{ 1, 1, 1, 1 });
+    // A ferromagnetic ring, every bond satisfied: -1 per bond over four bonds.
+    try std.testing.expectEqual(@as(f64, -4.0), sim.energy());
+
+    // Short, and a value that is not a spin. Both are trivially launderable -- pad with -1, coerce
+    // with `v > 0` -- and a laundered state is scored with full confidence.
+    try std.testing.expectError(Error.BadState, sim.setSpins(&.{ 1, 1, 1 }));
+    try std.testing.expectError(Error.BadState, sim.setSpins(&.{ 1, 0, 1, 1 }));
+    // and the refusals left the good state in place rather than half-writing over it
+    try std.testing.expectEqual(@as(f64, -4.0), sim.energy());
 }

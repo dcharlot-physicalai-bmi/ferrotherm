@@ -122,6 +122,7 @@ _anneal = _sig("ft_anneal", c_double, [_p, c_double, c_double, c_uint32, c_uint3
 _set_beta = _sig("ft_set_beta", None, [_p, c_double])
 _len = _sig("ft_len", c_uint32, [_p])
 _spins = _sig("ft_spins", POINTER(c_int8), [_p])
+_set_spins = _sig("ft_set_spins", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _energy = _sig("ft_energy", c_double, [_p])
 _magnetization = _sig("ft_magnetization", c_double, [_p])
 _ledger_updates = _sig("ft_ledger_updates", c_uint64, [_p])
@@ -139,6 +140,7 @@ _cert_f = {n: _sig("ft_cert_" + n, c_double, [_p]) for n in
 _exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
 _exact_log_z = _sig("ft_exact_log_z", c_double, [_p, c_double, c_uint32])
 _exact_width = _sig("ft_exact_width", c_uint32, [_p])
+_exact_ground_state = _sig("ft_exact_ground_state", c_uint32, [_p, c_uint32, POINTER(c_int8), c_uint32])
 _free = _sig("ft_free", None, [_p])
 
 # the modelling layer
@@ -181,6 +183,7 @@ _model_close_soft = _sig("ft_model_close_soft", c_uint32, [_p, c_uint32, c_uint3
 _model_soften_last = _sig("ft_model_soften_last", c_uint32, [_p, c_double])
 _model_soft_cost = _sig("ft_model_soft_cost", c_double, [_p])
 _model_violation_is_hard = _sig("ft_model_violation_is_hard", c_uint32, [_p, c_uint32])
+_model_ancillas = _sig("ft_model_ancillas", c_uint32, [_p])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
 _model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
 _model_violation_amount = _sig("ft_model_violation_amount", c_double, [_p, c_uint32])
@@ -359,6 +362,30 @@ class Sim:
         p = _spins(self._h)
         return [int(p[i]) for i in range(n)]
 
+    @spins.setter
+    def spins(self, state: "Sequence[int]") -> None:
+        """Put a state INTO the simulation, so something computed elsewhere is scored, certified or
+annealed by exactly the same code that handles a state this library produced.
+
+        It refuses rather than adapting: the length must match the graph and every value must be -1 or +1.
+A shorter state means whatever produced it did not finish, and a value that is not a spin means the
+buffer is not what the caller thinks it is. Both are cheap to launder into something plausible --
+pad with -1, coerce with `v > 0` -- and a laundered state is then scored with full confidence, which
+is how a dropped GPU dispatch turns into a believable energy.
+        """
+        self._live()
+        n = len(self)
+        buf = (c_int8 * len(state))()
+        for i, v in enumerate(state):
+            v = int(v)
+            if v not in (-1, 1):
+                raise ValueError(f"states are -1/+1; got {v} at index {i}")
+            buf[i] = v
+        if not _set_spins(self._h, buf, len(state)):
+            raise ValueError(
+                f"this simulation has {n} nodes and that state has {len(state)}"
+            )
+
     def numpy(self):
         """The state as a NumPy array.
 
@@ -461,6 +488,20 @@ class Sim:
         self._live()
         v = float(_exact_ground(self._h, int(max_width)))
         return None if v != v else v
+
+    def exact_ground_state(self, max_width: int = 22) -> "list[int] | None":
+        """The exact ground STATE, or ``None`` if the graph is too dense.
+
+        :meth:`exact_ground_energy` says what the best energy is; this says which assignment reaches
+        it, which is what a caller checking a sampler against the truth actually needs to compare.
+        Same elimination and same width limit.
+        """
+        self._live()
+        n = len(self)
+        out = (c_int8 * n)()
+        if not _exact_ground_state(self._h, int(max_width), out, n):
+            return None
+        return [int(v) for v in out]
 
     def exact_log_z(self, beta: float = 1.0, max_width: int = 22) -> float | None:
         """Exact log partition function, or ``None`` if too dense."""
@@ -833,9 +874,15 @@ class Answer:
     not delivered is more useful than a raised exception with nothing in it: a variable that failed
     to decode reads ``None`` and appears in :attr:`undecoded`, and a constraint the objective
     outbid is described in :attr:`violated`.
+
+    :attr:`ancillas` is non-zero when a term named three or more variables: the model that was
+    solved has more spins than the variables required. Those extra states make the lowering exact
+    for **optimisation** and not for sampling, so read it before drawing samples rather than only a
+    ground state.
     """
 
-    __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated", "soft_cost")
+    __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated", "soft_cost",
+                 "ancillas")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -1119,7 +1166,8 @@ class Problem:
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
                       violated=broken, energy=float(_model_energy(self._h)),
                       spins=int(spins), penalty=float(_model_penalty(self._h)),
-                      soft_cost=float(_model_soft_cost(self._h)))
+                      soft_cost=float(_model_soft_cost(self._h)),
+                      ancillas=int(_model_ancillas(self._h)))
 
     def soften_last(self, weight: float) -> None:
         """Make the constraint added most recently a preference, priced at ``weight``.

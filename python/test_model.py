@@ -387,3 +387,50 @@ def test_a_soft_price_is_squared_because_the_penalty_is():
     # three. Missing by two costs four times missing by one, and a linear price here would misstate
     # what the solver traded.
     assert a.soft_cost == 9.0, a
+
+
+def test_a_state_computed_elsewhere_is_scored_by_the_same_code_or_refused():
+    # The point of putting a state in is that whatever produced it -- a GPU sweep, another solver --
+    # is then judged by the code that judges this library's own answers. That only means anything if
+    # the state arrives intact, so the refusals matter more than the success.
+    m = ft.Model(4)
+    for i in range(4):
+        m.couple(i, (i + 1) % 4, 1.0)
+    sim = m.build(beta=1.0, seed=7)
+
+    sim.spins = [1, 1, 1, 1]
+    # A ferromagnetic ring, every bond satisfied: -1 per bond over four bonds.
+    assert sim.energy == -4.0
+
+    # Short, and a value that is not a spin. Both are trivially launderable -- pad with -1, coerce
+    # with `v > 0` -- and a laundered state is then scored with full confidence.
+    with pytest.raises(ValueError, match="4 nodes"):
+        sim.spins = [1, 1, 1]
+    with pytest.raises(ValueError, match=r"-1/\+1"):
+        sim.spins = [1, 0, 1, 1]
+    assert sim.energy == -4.0, "a refused write must not half-apply"
+
+
+def test_the_ancilla_count_is_readable_because_sampling_a_reduced_model_is_not_sound():
+    p = ft.Problem()
+    a, b, c = (p.binary(n) for n in "abc")
+    p.maximize(3 * a.is_(1) * b.is_(1) * c.is_(1))
+    ans = p.solve(tries=8)
+    # Three variables in one term is a three-body statement, lowered with one ancilla. Without a way
+    # to READ that, a caller cannot tell a model whose Boltzmann distribution over the original
+    # variables is preserved from one whose is not.
+    assert ans.ancillas == 1, ans
+    # Seven spins, not four: a binary is one-hot over two values, so each costs two, and the ancilla
+    # is the seventh. The spin total alone cannot say whether any were added by the lowering.
+    assert ans.spins == 7, ans
+
+
+def test_the_exact_ground_state_is_readable_not_only_its_energy():
+    m = ft.Model(6)
+    for i in range(5):
+        m.couple(i, i + 1, 1.0)
+    sim = m.build(beta=1.0, seed=1)
+    state = sim.exact_ground_state()
+    # A ferromagnetic chain: every spin agrees, and the energy is one per bond.
+    assert state is not None and len(set(state)) == 1, state
+    assert sim.exact_ground_energy() == -5.0

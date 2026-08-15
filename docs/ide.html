@@ -617,6 +617,38 @@ function solveProblem(v) {
   }
 }
 
+/** Put a GPU readback back into the simulation, THROUGH the library's own validation.
+ *
+ * Writing straight into `ft_spins(sim)` -- which every caller here used to do -- skips the two
+ * checks `ft_set_spins` exists to perform: that the length matches, and that every value is +/-1.
+ * Both were written and tested and reached by nothing.
+ *
+ * The old `g.state[i] > 0 ? 1 : -1` is what made them unreachable: it LAUNDERS whatever the device
+ * returned into a valid spin, so a dispatch that silently dropped, or a readback short of `n`,
+ * arrives as a plausible state and is then scored with confidence. The conversion below is a
+ * range assertion instead, and a mismatch refuses rather than returning a number.
+ */
+function putSpins(sim, state, n) {
+  if (state.length < n) {
+    throw new Error("the GPU returned " + state.length + " spins for a " + n
+      + "-node model; the dispatch did not complete");
+  }
+  const buf = W.ft_scratch(n);
+  const dst = new Int8Array(mem.buffer, buf, n);
+  for (let i = 0; i < n; i++) {
+    const v = state[i];
+    // Not a coercion. The shader writes +1/-1; anything else means the buffer is not the shader's
+    // output, and turning it into a spin here is how that stays invisible.
+    if (v !== 1 && v !== -1) {
+      throw new Error("the GPU returned " + v + " at spin " + i + "; states are +1/-1");
+    }
+    dst[i] = v;
+  }
+  if (!W.ft_set_spins(sim, buf, n)) {
+    throw new Error("the library refused that state: " + n + " values, each +1 or -1");
+  }
+}
+
 /** Render a solved problem where the lattice view would be, since a problem has no lattice. */
 function applySolve() {
   freeSim();
@@ -951,10 +983,7 @@ $("gpurun").onclick = async () => {
     const cpuE = W.ft_energy(sim), cpuM = W.ft_magnetization(sim);
 
     // score the GPU state with the same code that scored the CPU one
-    const gs = new Int8Array(n);
-    for (let i = 0; i < n; i++) gs[i] = g.state[i] > 0 ? 1 : -1;
-    const scratch = W.ft_spins(sim);
-    new Int8Array(mem.buffer, scratch, n).set(gs);
+    putSpins(sim, g.state, n);
     const gpuE = W.ft_energy(sim), gpuM = W.ft_magnetization(sim);
 
     const flips = n * sweeps;
@@ -1046,6 +1075,17 @@ function verify() {
     + "\n\n" + verdict;
 }
 
+// A hook for the GPU-readback guard, so it can be tested without a GPU. The guard's whole job is to
+// reject a readback that the page would otherwise launder into a plausible answer, and a headless
+// browser has no adapter to produce a real one -- so the synthetic case is the only case that can
+// be checked, and leaving it unchecked is how the function it calls became unreachable in the first
+// place. Takes the live simulation, so it exercises the same call the GPU path makes.
+window.__putSpins = function (state) {
+  if (!sim) throw new Error("no simulation");
+  putSpins(sim, state, W.ft_len(sim));
+  return W.ft_energy(sim);
+};
+
 // A hook for the benchmark driver. Building a lattice, running both backends and reporting the
 // numbers is the same code the panel above uses; exposing it keeps the measurement honest by
 // removing any chance the benchmark measures a different implementation than the page does.
@@ -1064,9 +1104,7 @@ window.__bench = async function (l, sweeps) {
   const cpuMs = performance.now() - t0;
   const cpuE = W.ft_energy(sim) / n;
 
-  const gs = new Int8Array(n);
-  for (let i = 0; i < n; i++) gs[i] = g.state[i] > 0 ? 1 : -1;
-  new Int8Array(mem.buffer, W.ft_spins(sim), n).set(gs);
+  putSpins(sim, g.state, n);
   const gpuE = W.ft_energy(sim) / n;
 
   const updates = n * sweeps;

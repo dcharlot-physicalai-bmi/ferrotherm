@@ -28,6 +28,35 @@ answer; a traded preference says the solver made the choice it was asked to pric
   gets the same verdict there as over HTTP.
 - The editor's status line no longer claims "every constraint holds" over an answer that traded one.
 
+### Parity is now checked, not remembered
+
+`scripts/check-parity.sh` asks, for each of the 84 exported C ABI symbols, whether the header
+declares it and Python, Zig and Julia call it. A gap passes only with a written reason in its EXEMPT
+table — which is what AGENTS.md has always meant by "the gap is written down", except that until now
+nothing read it. It is in CI, and its first run found sixteen real ones:
+
+- **`ft_model_ancillas` reached no binding.** It reports the spins the higher-order lowering added,
+  which is the number that says whether *sampling* from a solved model is sound at all — the
+  reduction is exact for optimisation and not for the Boltzmann distribution. Zig even had a test
+  named for ancillas that could not read the count. Now on Python (`Answer.ancillas`), Zig
+  (`Problem.ancillas`) and Julia (`ancillas(a)`).
+- **`ft_set_spins` was written, unit-tested and called by nothing.** It puts a state computed
+  elsewhere into a simulation so the same code scores it — and it refuses a wrong length or a value
+  that is not ±1. The browser's WebGPU path wrote straight into wasm memory after coercing every
+  value with `> 0 ? 1 : -1`, which launders a dropped dispatch or a short readback into a plausible
+  state that is then scored with confidence. The page now goes through the validation; `sim.spins =`
+  (Python), `setSpins` (Zig) and `spins!` (Julia) expose it.
+- **Violation magnitude never reached Zig or Julia.** `violationAmount` and `amounts(a)`: "at most
+  two, and four hold" is over by two, which is a different problem from being over by one.
+- **A solved `Problem` could not be certified from Zig.** `Problem.certify` and
+  `ProblemCertificate`, separate from the simulation certificate because the exact bounds are not
+  available there and half a struct of NaNs would claim they were computed.
+- **`exact_ground_state` was Julia-only.** Python and Zig had the ground *energy* and not the
+  assignment that reaches it, which is what checking a sampler against the truth needs.
+- The header now declares `ft_field`, `ft_shader`/`ft_shader_len` and the seven `ft_gpu_*`
+  device-buffer accessors. A header is the ABI contract; selectivity belongs in the bindings above
+  it.
+
 ### Fixed
 
 - `Solution::soft_cost` returned `-0.0` when nothing was traded. Rust's `Sum for f64` folds from

@@ -71,6 +71,40 @@ void ft_set_beta(ft_sim *sim, double beta);
 
 /* ---- reading -------------------------------------------------------------------------------- */
 
+/* Local field at node i: sum_j J_ij s_j + h_i, with beta excluded. NaN on null or out of range.
+ * Exposed so a state computed elsewhere can be checked against the field this library computes for
+ * it, one node at a time, rather than only by comparing a total. */
+double ft_field(const ft_sim *sim, uint32_t i);
+
+/* The graph in the width a GPU actually has: k neighbours per node, padded. ft_gpu_k is that width,
+ * ft_gpu_nbr and ft_gpu_w are n*k neighbour indices and f32 couplings, ft_gpu_h is n fields, and
+ * ft_gpu_classes / ft_gpu_class_ptr / ft_gpu_class_len describe the colouring that makes a sweep
+ * parallel. A caller building device buffers takes them from here so its layout and this library's
+ * cannot drift apart. */
+uint32_t ft_gpu_k(const ft_sim *sim);
+const uint32_t *ft_gpu_nbr(const ft_sim *sim);
+const float *ft_gpu_w(const ft_sim *sim);
+const float *ft_gpu_h(const ft_sim *sim);
+uint32_t ft_gpu_classes(const ft_sim *sim);
+const uint32_t *ft_gpu_class_ptr(const ft_sim *sim);
+uint32_t ft_gpu_class_len(const ft_sim *sim, uint32_t c);
+
+/* Put a state INTO the simulation, so something computed elsewhere -- a GPU sweep, another solver --
+ * is scored, certified or annealed by exactly the same code that handles a state this library
+ * produced. Returns 1 on success, 0 on refusal.
+ *
+ * It refuses rather than adapting: `len` must equal the node count and every value must be -1 or +1.
+ * A short state means whatever produced it did not finish; a value that is not a spin means the
+ * buffer is not what the caller thinks it is. Both are cheap to launder into something plausible,
+ * and a laundered state is then scored with full confidence -- which is how a dropped GPU dispatch
+ * becomes a believable energy. */
+uint32_t ft_set_spins(ft_sim *sim, const int8_t *spins, uint32_t len);
+
+/* The WGSL sweep shader, so a caller running this model on its own GPU runs the arithmetic this
+ * library tests rather than a second copy of it. NUL-free; pair the pointer with the length. */
+const uint8_t *ft_shader(void);
+uint32_t ft_shader_len(void);
+
 /* Node count. ft_len and ft_nodes agree; both are provided because callers reach for both names. */
 uint32_t ft_len(const ft_sim *sim);
 uint32_t ft_nodes(const ft_sim *sim);

@@ -14,6 +14,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y iverilog
       - name: One version across every package
         run: scripts/check-versions.sh
+      - name: Every C ABI symbol reaches every binding, or the gap is written down
+        run: scripts/check-parity.sh
       - name: Unit tests
         run: cargo test --release
       - name: Examples build

@@ -55,7 +55,7 @@ using Libdl
 export IsingModel, Simulation, Certificate
 export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
-export sweep!, anneal!, beta!, spins, energy, magnetization
+export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
@@ -64,7 +64,7 @@ export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
-export soften_last!, soft_cost, traded
+export soften_last!, soft_cost, traded, amounts, ancillas
 
 # ---- finding the library -----------------------------------------------------------------------
 
@@ -162,6 +162,7 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_set_beta Cvoid SimPtr Cdouble
 @cfn ft_len Cuint SimPtr
 @cfn ft_spins Ptr{Int8} SimPtr
+@cfn ft_set_spins Cuint SimPtr Ptr{Int8} Cuint
 @cfn ft_energy Cdouble SimPtr
 @cfn ft_magnetization Cdouble SimPtr
 @cfn ft_ledger_updates Culonglong SimPtr
@@ -211,6 +212,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_soften_last Cuint ModPtr Cdouble
 @cfn ft_model_soft_cost Cdouble ModPtr
 @cfn ft_model_violation_is_hard Cuint ModPtr Cuint
+@cfn ft_model_violation_amount Cdouble ModPtr Cuint
+@cfn ft_model_ancillas Cuint ModPtr
 @cfn ft_model_compile Cuint ModPtr
 @cfn ft_model_solve Cuint ModPtr Cuint
 @cfn ft_model_solve_with Cuint ModPtr Cuint Cdouble Cdouble Cuint Cuint
@@ -410,6 +413,30 @@ function spins(s::Simulation)
     _live(s)
     n = Int(ft_len(s.handle))
     copy(unsafe_wrap(Array, ft_spins(s.handle), n; own = false))
+end
+
+"""
+    spins!(s, state)
+
+Put a state INTO the simulation, so something computed elsewhere is scored, certified or
+annealed by exactly the same code that handles a state this library produced.
+
+It refuses rather than adapting: the length must match the graph and every value must be -1 or +1.
+A shorter state means whatever produced it did not finish, and a value that is not a spin means the
+buffer is not what the caller thinks it is. Both are cheap to launder into something plausible --
+pad with -1, coerce with `v > 0` -- and a laundered state is then scored with full confidence, which
+is how a dropped GPU dispatch turns into a believable energy.
+"""
+function spins!(s::Simulation, state::AbstractVector{<:Integer})
+    _live(s)
+    buf = Int8[]
+    for (i, v) in enumerate(state)
+        v in (-1, 1) || error("states are -1/+1; got $v at index $i")
+        push!(buf, Int8(v))
+    end
+    ft_set_spins(s.handle, buf, Cuint(length(buf))) == 0 &&
+        error("this simulation has $(Int(ft_len(s.handle))) nodes and that state has $(length(buf))")
+    nothing
 end
 
 energy(s::Simulation) = (_live(s); ft_energy(s.handle))
@@ -672,6 +699,8 @@ struct Answer
     penalty::Float64
     soft_cost::Float64
     traded::Vector{String}
+    by::Vector{Float64}
+    ancillas::Int
 end
 
 Base.getindex(a::Answer, name::AbstractString) = a.values[String(name)]
@@ -687,6 +716,24 @@ traded(a::Answer) = a.traded
 """    soft_cost(a)  — what those trades cost, in the units the weights were given in."""
 soft_cost(a::Answer) = a.soft_cost
 
+"""
+    ancillas(a)
+
+Spins the higher-order lowering added, or zero if nothing named three or more variables.
+
+Non-zero means the answer solves a model with **more** spins than the variables required. The extra
+states are what makes the reduction exact for *optimisation* and not for sampling: the Boltzmann
+distribution over the original variables is not preserved. Read this before drawing samples from a
+solved model, rather than only its ground state.
+"""
+ancillas(a::Answer) = a.ancillas
+
+"""    amounts(a)  — how far outside each broken HARD constraint sits, parallel to `violated`.
+
+"At most two, and four hold" is over by two, and that is a different problem from being over by one.
+"""
+amounts(a::Answer) = a.by
+
 function Base.show(io::IO, a::Answer)
     print(io, "Answer ", a.feasible ? "feasible" : "INFEASIBLE",
           "  energy ", round(a.energy; digits = 4), "  ", a.spins, " spins")
@@ -698,8 +745,8 @@ function Base.show(io::IO, a::Answer)
         print(io, "\n  traded: ", v)
     end
     a.soft_cost == 0 || print(io, "\n  soft cost: ", round(a.soft_cost; digits = 4))
-    for v in a.violated
-        print(io, "\n  broken: ", v)
+    for (i, v) in enumerate(a.violated)
+        print(io, "\n  broken: ", v, i <= length(a.by) ? " (by $(round(a.by[i]; digits = 4)))" : "")
     end
 end
 
@@ -1026,14 +1073,18 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
     # Hard and soft violations come back on one list and are separated here, because they answer
     # different questions: a broken rule says the answer is not an answer, a traded preference says
     # the solver made the choice it was asked to price.
-    broken, given_up = String[], String[]
+    broken, given_up, by = String[], String[], Float64[]
     for i in 0:(ft_model_violations(p.handle) - 1)
         text = _text(p, ft_model_violation, i)
-        push!(ft_model_violation_is_hard(p.handle, Cuint(i)) == 1 ? broken : given_up, text)
+        hard = ft_model_violation_is_hard(p.handle, Cuint(i)) == 1
+        push!(hard ? broken : given_up, text)
+        # How far outside it sits, not merely that it broke. A caller ranking repairs, or deciding
+        # whether a larger penalty would be enough, cannot get that from the text.
+        hard && push!(by, ft_model_violation_amount(p.handle, Cuint(i)))
     end
     Answer(vals, ft_model_feasible(p.handle) == 1, broken,
            ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle),
-           ft_model_soft_cost(p.handle), given_up)
+           ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)))
 end
 
 """

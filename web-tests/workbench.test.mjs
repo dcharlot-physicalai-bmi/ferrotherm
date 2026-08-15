@@ -87,6 +87,37 @@ const run = (body) => page.evaluate((json) => {
   check("and the compiled program comes with it", r.ftp.startsWith("ftp 1"));
 }
 
+// --- the GPU readback guard, which nothing reached ----------------------------------------------
+{
+  // `ft_set_spins` validates length and +/-1-ness, was written and unit-tested, and was called by
+  // NOTHING: the page wrote GPU results straight into wasm memory after coercing every value with
+  // `> 0 ? 1 : -1`, which launders a dropped dispatch or a short readback into a plausible state
+  // that is then scored with confidence. A headless browser has no adapter, so the synthetic cases
+  // below are what can be checked -- and they are the ones that were never checked.
+  await run(JSON.stringify({ graph: { builtin: "lattice2d", l: 4, j: 1.0 }, beta: 0.44, seed: 1 }));
+
+  const probe = (state) => page.evaluate((s) => {
+    try { return { ok: true, energy: window.__putSpins(Int32Array.from(s)) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  }, state);
+
+  const n = 16;
+  // All +1 on a ferromagnetic lattice is the ground state, so this asserts the state ARRIVED: a
+  // no-op that left the previous state in place would not land on -32, and a stripe pattern -- the
+  // first thing tried here -- scores exactly 0, which a no-op could produce too.
+  const good = await probe(Array.from({ length: n }, () => 1));
+  check("a valid readback is accepted and lands, scoring the ferromagnetic ground state",
+        good.ok && good.energy === -32, JSON.stringify(good));
+
+  const short = await probe(Array.from({ length: n - 3 }, () => 1));
+  check("a readback shorter than the model is REFUSED, not padded",
+        !short.ok && /did not complete/.test(short.message), JSON.stringify(short));
+
+  const junk = await probe(Array.from({ length: n }, (_, i) => (i === 5 ? 0 : 1)));
+  check("a value that is not a spin is refused rather than coerced",
+        !junk.ok && /\+1\/-1/.test(junk.message), JSON.stringify(junk));
+}
+
 // --- a soft constraint, which is a different ANSWER rather than a different number ---------------
 {
   // A preference the solver may trade away. The failure this guards is not an exception: it is the

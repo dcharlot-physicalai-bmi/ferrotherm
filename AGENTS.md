@@ -87,6 +87,11 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
     they are the two ways a mutation check has silently lied here before.
 - A new capability lands on every surface it belongs on, or the gap is written down. The matrix is
   Rust / C header / Python / Zig / Julia / node editor / HTTP / MCP.
+  `scripts/check-parity.sh` enforces the four that hang off the C ABI, and a gap passes only with a
+  reason in its EXEMPT table. It is in CI. Written-down means written there, not remembered here --
+  the rule was broken twice while it lived only in this file, and its first run found sixteen real
+  gaps including the ancilla count, which is the number that says whether sampling a solved model is
+  sound at all.
 - State provenance on every number in docs: measured / simulated / projected, and on what.
 - Follow the failure-analysis discipline: if a method underperforms, measure WHERE it fails
   (train vs held-out vs on-policy; per-factor vs end-to-end) before concluding anything.

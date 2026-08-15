@@ -199,3 +199,54 @@ end
     @test soft_cost(ans) == 9.0
     close!(p)
 end
+
+@testset "a violation reports how far outside it sits" begin
+    p = Problem()
+    vs = [binary!(p, "v$i") for i in 1:4]
+    at_most!(p, vs, 1)
+    maximize!(p, [(20.0, is(v, 1)) for v in vs])
+    penalty!(p, 1.0)   # pinned below the objective, so the constraint loses on purpose
+    ans = solve!(p; tries = 24)
+    @test !feasible(ans)
+    @test length(violated(ans)) == 1
+    # Over by three, not merely broken. A caller deciding whether a larger penalty would be enough
+    # cannot get that from the text.
+    @test amounts(ans) == [3.0]
+    @test occursin("by 3", string(ans))
+    close!(p)
+end
+
+@testset "a state computed elsewhere is scored by the same code, or refused" begin
+    m = IsingModel(4)
+    # Julia indexes from 1, so the ring is 1-2-3-4-1.
+    for i in 1:4
+        couple!(m, i, i % 4 + 1, 1.0)
+    end
+    s = build(m; beta = 1.0, seed = 7)
+
+    spins!(s, Int8[1, 1, 1, 1])
+    # A ferromagnetic ring, every bond satisfied: −1 per bond over four bonds.
+    @test energy(s) == -4.0
+
+    # Short, and a value that is not a spin. Both are trivially launderable — pad with −1, coerce
+    # with `v > 0` — and a laundered state is then scored with full confidence.
+    @test_throws ErrorException spins!(s, Int8[1, 1, 1])
+    @test_throws ErrorException spins!(s, Int8[1, 0, 1, 1])
+    @test energy(s) == -4.0
+    close!(s)
+end
+
+@testset "the ancilla count is readable, because sampling from a reduced model is not sound" begin
+    p = Problem()
+    a, b, c = binary!(p, "a"), binary!(p, "b"), binary!(p, "c")
+    maximize!(p, [(3.0, (is(a, 1), is(b, 1), is(c, 1)))])
+    ans = solve!(p; tries = 8)
+    # Three variables in one term is a three-body statement, lowered with one ancilla. Without a way
+    # to READ that, a caller cannot tell a model whose Boltzmann distribution over the original
+    # variables is preserved from one whose is not.
+    @test ancillas(ans) == 1
+    # Seven spins, not four: a binary is one-hot over two values, so each costs two, and the ancilla
+    # is the seventh. The spin total alone cannot say whether any were added by the lowering.
+    @test ans.spins == 7
+    close!(p)
+end
