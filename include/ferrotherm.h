@@ -173,6 +173,27 @@ uint32_t ft_model_binary(ft_model *m);
  * variable is called v0, v1 and so on. `len` is a byte count; the bytes need no terminator. */
 uint32_t ft_model_name(ft_model *m, uint32_t v, const uint8_t *name, uint32_t len);
 
+/* Declare a variable with a chosen ENCODING: 0 one-hot, 1 binary, 2 domain-wall.
+ *
+ * The trade is the difference between a model that fits a machine and one that does not:
+ *
+ *   encoding      spins for k values     usable in a constraint or objective
+ *   one-hot       k                      yes
+ *   domain-wall   k - 1                  yes
+ *   binary        ceil(log2 k)           NO
+ *
+ * Only a one-hot or domain-wall indicator has a bounded degree in the spins. A binary code's
+ * indicator is a product of every bit, so its degree grows with the domain; such a variable is
+ * cheapest to store and is refused BY NAME if it appears in a literal, rather than expanded into
+ * something nobody wants to read.
+ *
+ * Domain-wall is often the better choice for an INTEGER, which is an ordered domain: neighbouring
+ * values sit one spin flip apart where one-hot puts them two apart, and it costs one spin fewer.
+ * It is not the default only because one-hot is the safe answer for a caller who has not thought
+ * about it. Returns the variable index, or UINT32_MAX. */
+uint32_t ft_model_categorical_as(ft_model *m, uint32_t values, uint32_t encoding);
+uint32_t ft_model_integer_as(ft_model *m, int64_t lo, int64_t hi, uint32_t encoding);
+
 /* Constraints. Each returns 1 on success, 0 on refusal; ft_model_error says why. */
 uint32_t ft_model_not_equal(ft_model *m, uint32_t a, uint32_t b);
 uint32_t ft_model_equal(ft_model *m, uint32_t a, uint32_t b);

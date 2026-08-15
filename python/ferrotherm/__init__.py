@@ -146,6 +146,9 @@ _u8p = ctypes.POINTER(ctypes.c_ubyte)
 _model_new = _sig("ft_model_new", _p, [])
 _model_free = _sig("ft_model_free", None, [_p])
 _model_categorical = _sig("ft_model_categorical", c_uint32, [_p, c_uint32])
+_model_categorical_as = _sig("ft_model_categorical_as", c_uint32, [_p, c_uint32, c_uint32])
+_model_integer_as = _sig("ft_model_integer_as", c_uint32,
+                         [_p, ctypes.c_int64, ctypes.c_int64, c_uint32])
 _model_integer = _sig("ft_model_integer", c_uint32, [_p, ctypes.c_int64, ctypes.c_int64])
 _model_binary = _sig("ft_model_binary", c_uint32, [_p])
 _model_not_equal = _sig("ft_model_not_equal", c_uint32, [_p, c_uint32, c_uint32])
@@ -686,6 +689,19 @@ class Literal:
         return f"<{self.var.name} is {self.value}>"
 
 
+_ENCODINGS = {"one-hot": 0, "onehot": 0, "binary": 1, "domain-wall": 2, "domainwall": 2}
+
+
+def _encoding(name: str) -> int:
+    """An encoding name as its code, naming the alternatives when it is not one."""
+    try:
+        return _ENCODINGS[str(name).lower()]
+    except KeyError:
+        raise ValueError(
+            f"unknown encoding {name!r}; try one-hot, domain-wall or binary"
+        ) from None
+
+
 def _prod(xs: "Sequence[int]") -> int:
     n = 1
     for x in xs:
@@ -872,18 +888,36 @@ class Problem:
 
     # -- variables ------------------------------------------------------------------------------
 
-    def categorical(self, name: str, values: int) -> Variable:
-        """A variable holding one of ``values`` distinct values, encoded one-hot."""
-        return self._declare(name, "categorical", _model_categorical(self._h, int(values)))
+    def categorical(self, name: str, values: int, encoding: str = "one-hot") -> Variable:
+        """A variable holding one of ``values`` distinct values.
 
-    def integer(self, name: str, lo: int, hi: int) -> Variable:
+        ``encoding`` decides how it is stored, and the trade is the difference between a model that
+        fits a machine and one that does not:
+
+        ==============  ====================  ===================================
+        encoding        spins for *k* values  usable in a constraint or objective
+        ==============  ====================  ===================================
+        ``one-hot``     *k*                   yes
+        ``domain-wall`` *k* − 1               yes
+        ``binary``      ``ceil(log2 k)``      **no**
+        ==============  ====================  ===================================
+
+        A binary code's indicator is a product of every bit, so its degree grows with the domain.
+        It is the cheapest to store and is refused by name if it appears in a literal, rather than
+        expanded into something nobody wants to read.
+        """
+        return self._declare(
+            name, "categorical",
+            _model_categorical_as(self._h, int(values), _encoding(encoding)))
+
+    def integer(self, name: str, lo: int, hi: int, encoding: str = "one-hot") -> Variable:
         """A variable over the inclusive range ``lo``..``hi``.
 
         There is no machine integer here. This is a categorical over the range, encoded so that
         neighbouring values differ in one spin; the name is for the modeller, not the fabric.
         """
         return self._declare(name, f"integer {lo}..{hi}",
-                             _model_integer(self._h, int(lo), int(hi)))
+                             _model_integer_as(self._h, int(lo), int(hi), _encoding(encoding)))
 
     def binary(self, name: str) -> Variable:
         """A variable that is 0 or 1."""

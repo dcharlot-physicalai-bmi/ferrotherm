@@ -261,6 +261,47 @@ def test_a_grid_takes_any_domain():
     assert p.solve()["temp[1]"] == 17
 
 
+def test_an_encoding_can_be_chosen_and_costs_what_it_says():
+    """The trade is the difference between a model that fits a machine and one that does not."""
+    def spins(enc):
+        p = ft.Problem()
+        p.categorical("a", 6, encoding=enc)
+        return p.solve(tries=4).spins
+
+    assert spins("one-hot") == 6, "one spin per value"
+    assert spins("domain-wall") == 5, "one fewer"
+    assert spins("binary") == 3, "log2 of the domain, and the cheapest by far"
+
+    # the two that can carry a literal both do, and decode to what they were fixed to
+    for enc in ("one-hot", "domain-wall"):
+        p = ft.Problem()
+        a = p.categorical("a", 6, encoding=enc)
+        p.fix(a, 3)
+        ans = p.solve(tries=16)
+        assert ans.feasible, (enc, ans)
+        assert ans["a"] == 3, (enc, ans)
+
+    # an integer is an ORDERED domain, where domain-wall is often the better choice
+    p = ft.Problem()
+    t = p.integer("t", 10, 20, encoding="domain-wall")
+    p.fix(t, 17)
+    ans = p.solve(tries=16)
+    assert ans["t"] == 17, ans
+    assert ans.spins == 10, "eleven values in ten spins"
+
+    with pytest.raises(ValueError, match="unknown encoding"):
+        ft.Problem().categorical("x", 3, encoding="rot13")
+
+
+def test_a_binary_encoded_variable_cannot_carry_a_literal():
+    """Its indicator is a product of every bit, so its degree grows with the domain."""
+    p = ft.Problem()
+    a = p.categorical("a", 8, encoding="binary")
+    p.fix(a, 3)
+    with pytest.raises(ValueError, match="OneHot|one-hot"):
+        p.solve()
+
+
 def test_errors_name_what_the_caller_wrote():
     p = ft.Problem()
     x = p.categorical("colour", 3)

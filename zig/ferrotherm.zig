@@ -378,6 +378,27 @@ pub const Counting = enum(u32) {
     at_most_one = 4,
 };
 
+/// How a variable is stored.
+///
+/// The trade is the difference between a model that fits a machine and one that does not.
+///
+/// | encoding | spins for `k` values | usable in a constraint or objective |
+/// |---|---|---|
+/// | `one_hot` | `k` | yes |
+/// | `domain_wall` | `k - 1` | yes |
+/// | `binary` | `ceil(log2 k)` | **no** |
+///
+/// A binary code's indicator is a product of every bit, so its degree grows with the domain. It is
+/// the cheapest to store and is refused by name if it appears in a literal, rather than expanded
+/// into something nobody wants to read.
+pub const Encoding = enum(u32) {
+    one_hot = 0,
+    binary = 1,
+    /// Often the better choice for an INTEGER, which is an ordered domain: neighbouring values sit
+    /// one spin flip apart where one-hot puts them two apart, for one spin fewer.
+    domain_wall = 2,
+};
+
 /// Which direction an objective term prefers.
 pub const Sense = enum { maximize, minimize };
 
@@ -407,7 +428,20 @@ pub const Problem = struct {
 
     /// One of `values` unordered values, encoded one-hot. Needs at least two.
     pub fn categorical(self: *Problem, name: []const u8, values: u32) Error!Var {
-        return self.declare(name, c.ft_model_categorical(self.h, values));
+        return self.categoricalAs(name, values, .one_hot);
+    }
+
+    /// One of `values` values, stored the way you ask. See [`Encoding`] for what it costs.
+    pub fn categoricalAs(
+        self: *Problem,
+        name: []const u8,
+        values: u32,
+        encoding: Encoding,
+    ) Error!Var {
+        return self.declare(
+            name,
+            c.ft_model_categorical_as(self.h, values, @intFromEnum(encoding)),
+        );
     }
 
     /// An integer over the inclusive range `lo..=hi`.
@@ -415,7 +449,21 @@ pub const Problem = struct {
     /// There is no machine integer here: this is a categorical over the range, and the name is for
     /// the modeller rather than the fabric. Values are the range's own, so `10..=20` takes 13.
     pub fn integer(self: *Problem, name: []const u8, lo: i64, hi: i64) Error!Var {
-        return self.declare(name, c.ft_model_integer(self.h, lo, hi));
+        return self.integerAs(name, lo, hi, .one_hot);
+    }
+
+    /// An integer over `lo..=hi`, stored the way you ask.
+    ///
+    /// `.domain_wall` is often the better choice here: an integer is an ORDERED domain, so
+    /// neighbouring values sit one spin flip apart instead of two, and it costs one spin fewer.
+    pub fn integerAs(
+        self: *Problem,
+        name: []const u8,
+        lo: i64,
+        hi: i64,
+        encoding: Encoding,
+    ) Error!Var {
+        return self.declare(name, c.ft_model_integer_as(self.h, lo, hi, @intFromEnum(encoding)));
     }
 
     /// 0 or 1.
@@ -743,6 +791,40 @@ test "objective terms accumulate, and a later sense does not rewrite earlier one
         const want: i64 = if (i < 3) 1 else 0;
         try std.testing.expectEqual(want, try p.value(x));
     }
+}
+
+test "an encoding can be chosen and costs what it says" {
+    const spins = struct {
+        fn f(enc: Encoding) !u32 {
+            var p = try Problem.init();
+            defer p.deinit();
+            _ = try p.categoricalAs("a", 6, enc);
+            return p.compile();
+        }
+    }.f;
+    try std.testing.expectEqual(@as(u32, 6), try spins(.one_hot));
+    try std.testing.expectEqual(@as(u32, 5), try spins(.domain_wall));
+    try std.testing.expectEqual(@as(u32, 3), try spins(.binary));
+
+    // and a domain-wall variable really carries a constraint
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categoricalAs("a", 6, .domain_wall);
+    try p.fix(a, 3);
+    _ = try p.compile();
+    try p.solve(16);
+    try std.testing.expect(p.feasible());
+    try std.testing.expectEqual(@as(i64, 3), try p.value(a));
+}
+
+test "an integer stored as a domain wall is one spin cheaper" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const t = try p.integerAs("t", 10, 20, .domain_wall);
+    try p.fix(t, 17);
+    try std.testing.expectEqual(@as(u32, 10), try p.compile()); // eleven values, ten spins
+    try p.solve(16);
+    try std.testing.expectEqual(@as(i64, 17), try p.value(t));
 }
 
 test "a higher-order objective term costs ancillas and finds the right answer" {

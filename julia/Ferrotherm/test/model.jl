@@ -212,3 +212,34 @@ end
     r = Problem(); x = categorical!(r, "x", 3)
     @test_throws ErrorException maximize!(r, [(1.0, (is(x, 1), "not a literal"))])
 end
+
+@testset "an encoding can be chosen and costs what it says" begin
+    function spins(enc)
+        p = Problem()
+        categorical!(p, "a", 6; encoding = enc)
+        solve!(p; tries = 4).spins
+    end
+    @test spins(:onehot) == 6        # one spin per value
+    @test spins(:domainwall) == 5    # one fewer
+    @test spins(:binary) == 3        # log2 of the domain, and the cheapest by far
+
+    # the two that can carry a literal both do
+    for enc in (:onehot, :domainwall)
+        p = Problem()
+        a = categorical!(p, "a", 6; encoding = enc)
+        fix!(p, a, 3)
+        ans = solve!(p; tries = 16)
+        @test feasible(ans)
+        @test ans["a"] == 3
+    end
+
+    # an integer is an ORDERED domain, where a domain wall is often the better choice
+    p = Problem()
+    t = integer!(p, "t", 10:20; encoding = :domainwall)
+    fix!(p, t, 17)
+    ans = solve!(p; tries = 16)
+    @test ans["t"] == 17
+    @test ans.spins == 10            # eleven values in ten spins
+
+    @test_throws ErrorException categorical!(Problem(), "x", 3; encoding = :rot13)
+end

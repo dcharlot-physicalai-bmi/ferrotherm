@@ -1523,18 +1523,31 @@ mod cardinality_ffi {
     fn an_encoding_can_be_chosen_and_costs_what_it_says() {
         // The trade is the difference between a model that fits a machine and one that does not,
         // and it was reachable from Rust alone until now.
+        // No constraint on the variable: a BINARY-encoded one cannot appear in a literal at all,
+        // so fixing it -- as this first did -- measures whether it compiles rather than what it
+        // costs, and reported 0 for the encoding with the smallest cost of the three.
         let spins_for = |enc: u32| {
             let m = ft_model_new();
             let v = ft_model_categorical_as(m, 8, enc);
             assert_ne!(v, u32::MAX, "encoding {enc} should be accepted");
-            ft_model_fix(m, v, 3);
             let n = ft_model_compile(m);
             ft_model_free(m);
             n
         };
         assert_eq!(spins_for(0), 8, "one-hot: one spin per value");
         assert_eq!(spins_for(2), 7, "domain-wall: one fewer");
-        assert_eq!(spins_for(1), 3, "binary: log2 of the domain");
+        assert_eq!(spins_for(1), 3, "binary: log2 of the domain, and the cheapest by far");
+
+        // and the two that CAN carry a literal both do
+        for enc in [0u32, 2] {
+            let m = ft_model_new();
+            let v = ft_model_categorical_as(m, 8, enc);
+            assert_eq!(ft_model_fix(m, v, 3), 1);
+            assert!(ft_model_compile(m) > 0, "encoding {enc} must work in a constraint");
+            assert_eq!(ft_model_solve(m, 16), 1);
+            assert_eq!(ft_model_value(m, v), 3, "encoding {enc} decodes to what it was fixed to");
+            ft_model_free(m);
+        }
 
         let m = ft_model_new();
         assert_eq!(ft_model_categorical_as(m, 8, 9), u32::MAX, "an unknown encoding is refused");

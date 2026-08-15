@@ -191,6 +191,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_new ModPtr
 @cfn ft_model_free Cvoid ModPtr
 @cfn ft_model_categorical Cuint ModPtr Cuint
+@cfn ft_model_categorical_as Cuint ModPtr Cuint Cuint
+@cfn ft_model_integer_as Cuint ModPtr Clonglong Clonglong Cuint
 @cfn ft_model_integer Cuint ModPtr Clonglong Clonglong
 @cfn ft_model_binary Cuint ModPtr
 @cfn ft_model_name Cuint ModPtr Cuint Ptr{UInt8} Cuint
@@ -745,13 +747,39 @@ function _declare(p::Problem, name::AbstractString, domain::AbstractString, idx:
     v
 end
 
-"""    categorical!(p, name, values)
-
-A variable holding one of `values` distinct values, encoded one-hot. Needs at least two.
 """
-function categorical!(p::Problem, name::AbstractString, values::Integer)
+    categorical!(p, name, values; encoding = :onehot)
+
+A variable holding one of `values` distinct values. Needs at least two.
+
+`encoding` decides how it is stored, and the trade is the difference between a model that fits a
+machine and one that does not:
+
+| encoding | spins for `k` values | usable in a constraint or objective |
+|---|---|---|
+| `:onehot` | `k` | yes |
+| `:domainwall` | `k - 1` | yes |
+| `:binary` | `ceil(log2 k)` | **no** |
+
+A binary code's indicator is a product of every bit, so its degree grows with the domain. It is the
+cheapest to store and is refused by name if it appears in a literal, rather than expanded into
+something nobody wants to read.
+"""
+function categorical!(p::Problem, name::AbstractString, values::Integer;
+                      encoding::Symbol = :onehot)
     _live(p)
-    _declare(p, name, "categorical($values)", ft_model_categorical(p.handle, Cuint(values)))
+    _declare(p, name, "categorical($values)",
+             ft_model_categorical_as(p.handle, Cuint(values), _encoding(encoding)))
+end
+
+"""Encoding names as the codes the C ABI takes, naming the alternatives when it is not one."""
+function _encoding(name::Symbol)
+    name === :onehot && return Cuint(0)
+    name === Symbol("one-hot") && return Cuint(0)
+    name === :binary && return Cuint(1)
+    name === :domainwall && return Cuint(2)
+    name === Symbol("domain-wall") && return Cuint(2)
+    error("unknown encoding $(repr(name)); try :onehot, :domainwall or :binary")
 end
 
 """    integer!(p, name, range)
@@ -760,13 +788,19 @@ A variable over an inclusive integer range, written `integer!(p, "t", 10:20)`.
 
 There is no machine integer here: this is a categorical over the range, and the name is for the
 modeller rather than the fabric.
+
+`:domainwall` is often the better encoding for an integer, which is an ORDERED domain: neighbouring
+values sit one spin flip apart where one-hot puts them two apart, and it costs one spin fewer.
 """
-function integer!(p::Problem, name::AbstractString, r::AbstractUnitRange{<:Integer})
+function integer!(p::Problem, name::AbstractString, r::AbstractUnitRange{<:Integer};
+                  encoding::Symbol = :onehot)
     _live(p)
     _declare(p, name, "$(first(r)):$(last(r))",
-             ft_model_integer(p.handle, Clonglong(first(r)), Clonglong(last(r))))
+             ft_model_integer_as(p.handle, Clonglong(first(r)), Clonglong(last(r)),
+                                 _encoding(encoding)))
 end
-integer!(p::Problem, name::AbstractString, lo::Integer, hi::Integer) = integer!(p, name, lo:hi)
+integer!(p::Problem, name::AbstractString, lo::Integer, hi::Integer; kw...) =
+    integer!(p, name, lo:hi; kw...)
 
 """    binary!(p, name)
 
