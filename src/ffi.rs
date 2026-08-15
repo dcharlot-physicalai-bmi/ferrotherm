@@ -999,6 +999,38 @@ pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
     }
 }
 
+/// How many compile-time caveats the model carries.
+///
+/// A caveat is something the compiler KNOWS is wrong with the model and cannot fix: today, an
+/// encoding no penalty can make exact. Zero before a successful compile.
+#[no_mangle]
+pub extern "C" fn ft_model_caveats(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) {
+        Some(c) => c.caveats.len() as u32,
+        None => 0,
+    }
+}
+
+/// Copy caveat `i` as UTF-8; same two-call protocol as the other text getters.
+#[no_mangle]
+pub extern "C" fn ft_model_caveat(
+    m: *const ModelHandle,
+    i: u32,
+    buf: *mut u8,
+    cap: u32,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
+    let Some(c) = h.compiled.as_ref() else { return 0 };
+    let Some(text) = c.caveats.get(i as usize) else { return 0 };
+    let b = text.as_bytes();
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
 /// Spins the higher-order lowering added, or 0 if no term named three or more variables.
 ///
 /// Zero after a failed compile too, so read it beside a non-zero `ft_model_compile`.

@@ -185,6 +185,8 @@ _model_soften_last = _sig("ft_model_soften_last", c_uint32, [_p, c_double])
 _model_soft_cost = _sig("ft_model_soft_cost", c_double, [_p])
 _model_violation_is_hard = _sig("ft_model_violation_is_hard", c_uint32, [_p, c_uint32])
 _model_ancillas = _sig("ft_model_ancillas", c_uint32, [_p])
+_model_caveats = _sig("ft_model_caveats", c_uint32, [_p])
+_model_caveat = _sig("ft_model_caveat", c_uint32, [_p, c_uint32, _u8p, c_uint32])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
 _model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
 _model_violation_amount = _sig("ft_model_violation_amount", c_double, [_p, c_uint32])
@@ -876,6 +878,10 @@ class Answer:
     to decode reads ``None`` and appears in :attr:`undecoded`, and a constraint the objective
     outbid is described in :attr:`violated`.
 
+    :attr:`caveats` lists what the compiler knows is wrong with the model and cannot fix — today,
+    an encoding no penalty can make exact. Empty is the normal case; a non-empty one means a value
+    that reads back fine may still have come from a codeword the penalty never excluded.
+
     :attr:`ancillas` is non-zero when a term named three or more variables: the model that was
     solved has more spins than the variables required. Those extra states make the lowering exact
     for **optimisation** and not for sampling, so read it before drawing samples rather than only a
@@ -883,7 +889,7 @@ class Answer:
     """
 
     __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated", "soft_cost",
-                 "ancillas")
+                 "ancillas", "caveats")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -913,6 +919,8 @@ class Answer:
         head = "feasible" if self.feasible else "INFEASIBLE"
         body = ", ".join(f"{k}={'?' if v is None else v}" for k, v in self.values.items())
         out = f"<Answer {head} energy={self.energy:.4f} [{body}]"
+        for c in self.caveats or ():
+            out += f"\n  caveat: {c}"
         for v in self.violated or ():
             word = "broken" if v.hard else "traded"
             out += f"\n  {word}: {v.detail} (by {v.by:g})"
@@ -1198,7 +1206,9 @@ class Problem:
                       violated=broken, energy=float(_model_energy(self._h)),
                       spins=int(spins), penalty=float(_model_penalty(self._h)),
                       soft_cost=float(_model_soft_cost(self._h)),
-                      ancillas=int(_model_ancillas(self._h)))
+                      ancillas=int(_model_ancillas(self._h)),
+                      caveats=[_read_text_idx(_model_caveat, self._h, i)
+                               for i in range(_model_caveats(self._h))])
 
     def soften_last(self, weight: float) -> None:
         """Make the constraint added most recently a preference, priced at ``weight``.

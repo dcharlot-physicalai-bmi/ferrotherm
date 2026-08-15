@@ -4,6 +4,7 @@
 //! in `http` and `mcp` do nothing but move bytes and shape envelopes.
 
 use crate::json::{parse, Json};
+use ferrotherm::encode::Encoding;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising;
@@ -557,13 +558,38 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         if names.contains(&name) {
             return Err(format!("two variables are both named {name:?}"));
         }
+        // How the variable is STORED. Silently ignoring this was the bug: a caller writing
+        // "encoding": "binary" got one-hot, with a different spin count, a different penalty and no
+        // error -- the reply's `ftp` said `onehot` and nothing else did. An unknown name is refused
+        // by listing the ones that exist rather than falling back to a default.
+        let encoding = match v.get("encoding") {
+            None => Encoding::OneHot,
+            Some(e) => {
+                let s = e.as_str().ok_or_else(|| {
+                    format!("{name}: \"encoding\" must be a string, not {}", describe(e))
+                })?;
+                match s {
+                    "one-hot" | "onehot" => Encoding::OneHot,
+                    "binary" | "log" => Encoding::Binary,
+                    "domain-wall" | "domainwall" | "unary" => Encoding::DomainWall,
+                    other => {
+                        return Err(format!(
+                            "{name}: unknown encoding {other:?}; known: one-hot (exact, k spins), \
+                             domain-wall (exact, k-1 spins), binary (ceil(log2 k) spins, and NOT \
+                             exact unless k is a power of two)"
+                        ))
+                    }
+                }
+            }
+        };
+
         let h = match (v.get("values"), v.get("lo"), v.get("hi")) {
             (Some(k), _, _) => {
                 let k = k.as_usize().ok_or_else(|| format!("{name}: \"values\" must be an integer"))?;
                 if k < 2 {
                     return Err(format!("{name}: a variable with {k} values is a constant"));
                 }
-                m.categorical(&name, k)
+                m.categorical_as(&name, k, encoding)
             }
             (None, Some(lo), Some(hi)) => {
                 let (lo, hi) = (
@@ -573,7 +599,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 if hi <= lo {
                     return Err(format!("{name}: an integer range needs hi > lo"));
                 }
-                m.integer(&name, lo, hi)
+                m.integer_as(&name, lo, hi, encoding)
             }
             _ => return Err(format!("{name}: give either \"values\" or both \"lo\" and \"hi\"")),
         };
@@ -856,6 +882,13 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         // What the traded-away preferences cost, separated from the objective on purpose: telling
         // those apart is the whole point of saying a constraint is soft.
         ("soft_cost", Json::n(sol.soft_cost())),
+        // What the compiler knows is wrong with the model and cannot fix. Empty is normal; a
+        // non-empty one means a value that reads back fine may have come from a codeword the
+        // penalty never excluded.
+        (
+            "caveats",
+            Json::Arr(compiled.caveats.iter().map(|c| Json::s(c)).collect()),
+        ),
         ("spins", Json::n(compiled.spins() as f64)),
         // Spins the higher-order lowering added. Non-zero means the answer solves a model with more
         // spins than the variables required, and that the guarantee is about optima not sampling.
@@ -1631,5 +1664,35 @@ mod silent_wrongness {
             .unwrap_err();
             assert!(e.contains(want), "expected {want:?} in: {e}");
         }
+    }
+
+    #[test]
+    fn an_inexact_encoding_is_reported_over_the_wire() {
+        // A caller who picks a binary encoding for a k that is not a power of two gets an answer
+        // that looks fine. The spare codewords decode to nothing and cost exactly what a valid
+        // state costs, so the reply has to say so rather than leaving them to find out.
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"x","values":6,"encoding":"binary"},
+                                 {"name":"y","values":8,"encoding":"binary"},
+                                 {"name":"z","values":6}],
+                    "tries":4}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let cav = r.get("caveats").unwrap().as_arr().unwrap();
+        assert_eq!(cav.len(), 1, "only x is inexact: {r:?}");
+        let text = cav[0].as_str().unwrap();
+        assert!(text.contains("'x'"), "must name it: {text}");
+
+        // And an exact model says nothing, so the field is a signal rather than noise.
+        let clean = dispatch(
+            "solve",
+            &crate::json::parse(r#"{"variables":[{"name":"a","values":5}],"tries":4}"#).unwrap(),
+        )
+        .unwrap();
+        assert!(clean.get("caveats").unwrap().as_arr().unwrap().is_empty(), "{clean:?}");
     }
 }

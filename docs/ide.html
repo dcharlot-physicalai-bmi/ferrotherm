@@ -504,9 +504,23 @@ function solveProblem(v) {
       const name = String(d.name ?? "");
       if (!name) throw new Error("every variable needs a \"name\"");
       let i;
-      if (d.values !== undefined) i = W.ft_model_categorical(m, d.values | 0);
+      // How the variable is STORED. Ignoring this was the bug on the HTTP surface too: a document
+      // asking for "binary" got one-hot, with a different spin count and no error. Same document,
+      // same verdict, is what this pane promises -- so an unknown name is refused here as well.
+      const ENC = { "one-hot": 0, onehot: 0, binary: 1, log: 1,
+                    "domain-wall": 2, domainwall: 2, unary: 2 };
+      let enc = 0;
+      if (d.encoding !== undefined) {
+        if (typeof d.encoding !== "string" || !(d.encoding in ENC)) {
+          throw new Error(name + ': unknown encoding ' + JSON.stringify(d.encoding)
+            + '; known: one-hot (exact, k spins), domain-wall (exact, k-1 spins), '
+            + 'binary (ceil(log2 k) spins, and NOT exact unless k is a power of two)');
+        }
+        enc = ENC[d.encoding];
+      }
+      if (d.values !== undefined) i = W.ft_model_categorical_as(m, d.values | 0, enc);
       else if (d.lo !== undefined && d.hi !== undefined) {
-        i = W.ft_model_integer(m, BigInt(d.lo | 0), BigInt(d.hi | 0));
+        i = W.ft_model_integer_as(m, BigInt(d.lo | 0), BigInt(d.hi | 0), enc);
       } else {
         throw new Error(name + ': give either "values" for a categorical or "lo" and "hi" for an integer');
       }
@@ -621,6 +635,19 @@ function solveProblem(v) {
       energy: W.ft_model_energy(m),
       penalty: W.ft_model_penalty(m),
       violated: broken,
+      // What the compiler knows is wrong with the model and cannot fix -- an encoding no penalty
+      // can make exact. A value that reads back fine may still have come from a codeword the
+      // penalty never excluded, so this belongs beside the answer rather than in a log.
+      caveats: (() => {
+        const out = [];
+        for (let i = 0; i < W.ft_model_caveats(m); i++) {
+          const need = W.ft_model_caveat(m, i, null, 0);
+          const p = W.ft_scratch(need);
+          const got = W.ft_model_caveat(m, i, p, need);
+          out.push(new TextDecoder().decode(new Uint8Array(W.memory.buffer, p, got)));
+        }
+        return out;
+      })(),
       traded,
       softCost: W.ft_model_soft_cost(m),
       ftp: readText(W.ft_model_ftp)
@@ -680,6 +707,7 @@ function applySolve() {
        + "\n  " + "feasible".padEnd(pad) + " = " + (r.feasible ? "yes" : "NO");
   for (const b of r.violated) txt += "\n  broken: " + b;
   for (const b of r.traded) txt += "\n  traded: " + b;
+  for (const c of r.caveats) txt += "\n  caveat: " + c;
   if (r.softCost) txt += "\n  " + "soft cost".padEnd(pad) + " = " + r.softCost.toFixed(4);
   if (!r.feasible) {
     txt += "\n\n  A penalty makes a constraint expensive, not impossible, and this objective"
@@ -699,13 +727,17 @@ function applySolve() {
   // still feasible, so nothing else on the page would contradict it. A traded preference is the
   // choice the modeller asked the solver to make; the status has to name it, not hide it inside a
   // word that means something stronger.
-  status(!r.feasible
+  // A caveat outranks "every constraint holds" in the status line, because it is the case where
+  // the answer LOOKS clean and the model is not: an encoding no penalty can make exact returns a
+  // value that decoded fine and may have come from a codeword nothing excluded.
+  const base = !r.feasible
     ? "solved, but " + r.violated.length + " constraint(s) broke — see the answer"
     : r.traded.length
       ? "solved: every rule holds, " + r.traded.length + " preference(s) traded for "
         + r.softCost.toFixed(2)
-      : "solved: every constraint holds",
-    r.feasible ? "good" : "bad");
+      : "solved: every constraint holds";
+  status(r.caveats.length ? base + " — but " + r.caveats.length + " caveat(s): see the answer" : base,
+    r.feasible ? (r.caveats.length ? "warn" : "good") : "bad");
   solveExports(r);
 }
 

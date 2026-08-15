@@ -463,3 +463,25 @@ def test_all_different_over_disjoint_domains_is_free():
     a.all_different([x, y])
     b = ft.Problem(); b.integer("a", 0, 3); b.integer("b", 10, 13)
     assert a.solve(tries=4).spins == b.solve(tries=4).spins
+
+
+def test_an_encoding_that_cannot_be_exact_is_reported_not_hidden():
+    # A binary encoding of 6 values uses 3 spins, spelling 8 codewords; the 2 spare ones decode to
+    # nothing and cost exactly what a valid state costs, so nothing discourages the sampler from
+    # landing on one. The compiler knows this before any sampling happens.
+    p = ft.Problem()
+    p.categorical("x", 6, encoding="binary")
+    p.categorical("y", 8, encoding="binary")   # a power of two IS exact
+    p.categorical("z", 6)                      # one-hot is always exact
+    a = p.solve(tries=4)
+    assert len(a.caveats) == 1, a.caveats
+    assert "'x'" in a.caveats[0]
+    assert "one-hot" in a.caveats[0] or "power of two" in a.caveats[0]
+    assert "caveat:" in str(a)
+
+
+def test_an_exact_model_carries_no_caveats():
+    p = ft.Problem()
+    p.categorical("a", 5)
+    p.integer("b", 0, 7)
+    assert p.solve(tries=4).caveats == []

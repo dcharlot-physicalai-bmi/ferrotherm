@@ -270,3 +270,18 @@ end
     @test occursin("No assignment can satisfy", err) || occursin("pigeonhole", err)
     close!(q)
 end
+
+@testset "an encoding that cannot be exact is reported, not hidden" begin
+    p = Problem()
+    categorical!(p, "x", 6; encoding = :binary)   # 3 spins spell 8 codewords; 2 decode to nothing
+    categorical!(p, "y", 8; encoding = :binary)   # a power of two IS exact
+    categorical!(p, "z", 6)                       # one-hot is always exact
+    ans = solve!(p; tries = 4)
+    @test length(caveats(ans)) == 1
+    @test occursin("'x'", caveats(ans)[1])
+    close!(p)
+
+    q = Problem(); categorical!(q, "a", 5); integer!(q, "b", 0:7)
+    @test isempty(caveats(solve!(q; tries = 4)))
+    close!(q)
+end

@@ -2399,7 +2399,9 @@ or sub-models. Compare against dimod's CQM (REAL vars) or PyQUBO/Amplify.
 
 > /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/src/model.rs (lines 44-111 Domain, 419-747 Model::compile, 958-1156 Compiled, 1179-1234 Solution)
 
-### 2. Encodings (one-hot, domain-wall, binary/log; is the choice exposed?) — partial
+### 2. Encodings (one-hot, domain-wall, binary/log; is the choice exposed?) — **yes** (0.9.0)
+
+**Updated 2026-08-15.** All three findings closed. (a) The choice reaches all nine surfaces now: `categorical_as` (Rust), `ft_model_categorical_as`/`ft_model_integer_as` (C), `encoding=` (Python), `categoricalAs` (Zig), `encoding =` (Julia), and `"encoding"` on HTTP, MCP and the node editor — the last two were still hard-defaulting to one-hot and IGNORING the field, so a document asking for binary got one-hot with a different spin count and no error. An unknown name is now refused by listing the ones that exist. (b) `add_penalty`'s exactness bool is no longer discarded: `Compiled::caveats` names every variable whose encoding no penalty can make exact, and it reaches every surface. Measured, not asserted — for a k=6 binary slot the cheapest INVALID state costs exactly what the cheapest valid one does, and a test enumerates all eight codewords to keep the message true. (c) `Encoding::is_exact` is what feeds it.
 
 All three exist and are correct: `encode::Encoding::{OneHot, Binary, DomainWall}` with
 `spins(k)`, `penalty_couplings(k)` (k(k-1)/2 vs 0 vs k-2), `is_exact(k)`, and `Slot::{encode,

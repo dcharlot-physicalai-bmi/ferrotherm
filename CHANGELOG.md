@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### The compiler says what it knows
+
+`Slot::add_penalty` has always returned whether the encoding it added can be exact, and **both
+callers threw it away**. `Compiled::caveats` now carries it, on every surface.
+
+- A binary encoding of *k* values uses ⌈log₂ k⌉ spins, spelling 2^⌈log₂ k⌉ codewords. When *k* is not
+  a power of two the spare codewords decode to nothing — and **no penalty removes them**. Measured
+  on k = 6: the cheapest invalid state costs `0.00` and so does the cheapest valid one, so the
+  sampler has no reason at all to prefer an answer. A test enumerates all eight codewords, so the
+  message cannot drift from the physics it describes.
+- `ft_model_caveats`/`ft_model_caveat` (C ABI and header), `Answer.caveats` (Python),
+  `Problem.caveats`/`caveat` (Zig), `caveats(a)` (Julia), `"caveats"` (HTTP, MCP), and the editor,
+  where a caveat now outranks "every constraint holds" in the status line — that is exactly the case
+  where the answer looks clean and the model is not.
+
+### Encoding selection reaches the last two surfaces
+
+HTTP and the node editor **silently ignored `"encoding"`**: a document asking for binary got one-hot,
+with a different spin count, a different penalty and no error — the reply's own `ftp` said `onehot`
+and nothing else did. Both now honour it and refuse an unknown name by listing the ones that exist.
+
+
 ### Native GPU sampling — `ferrotherm-gpu`
 
 The last row in `docs/LANDSCAPE.md` where a surveyed competitor had a sampler this stack did not.

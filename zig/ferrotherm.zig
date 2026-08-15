@@ -722,6 +722,23 @@ pub const Problem = struct {
         return c.ft_model_violations(self.h);
     }
 
+    /// How many compile-time caveats this model carries.
+    ///
+    /// What the compiler knows is wrong with the model and cannot fix.
+    /// Today there is one kind: an encoding no penalty can make exact -- a binary encoding of k values spells 2^ceil(log2 k) codewords, and when k is not a power of two the spare ones decode to nothing while costing exactly what a valid state costs.
+    /// Read them before trusting a result; empty is the normal case.
+    pub fn caveats(self: *Problem) u32 {
+        return c.ft_model_caveats(self.h);
+    }
+
+    /// Caveat `i`, written into `buf`.
+    pub fn caveat(self: *Problem, i: u32, buf: []u8) []const u8 {
+        const need = c.ft_model_caveat(self.h, i, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_model_caveat(self.h, i, buf.ptr, n);
+        return buf[0..got];
+    }
+
     /// Spins the higher-order lowering added, or zero if nothing named three or more variables.
     ///
     /// Non-zero means the answer solves a model with MORE spins than the variables required. The

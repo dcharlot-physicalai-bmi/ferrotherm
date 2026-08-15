@@ -926,8 +926,27 @@ impl Model {
         let penalty = self.effective_penalty();
 
         // Encoding penalties: what makes a spin pattern mean a value at all.
-        for s in &slots {
-            s.add_penalty(&mut b, penalty);
+        //
+        // The returned bool is not decoration. `false` means invalid codewords remain exactly as
+        // cheap as valid ones, so the sampler is free to land on one and `decode` is the only
+        // thing between that and a wrong answer. Collected rather than discarded.
+        let mut caveats = Vec::new();
+        for (i, s) in slots.iter().enumerate() {
+            if !s.add_penalty(&mut b, penalty) {
+                let k = s.k;
+                let spins = s.width();
+                let spare = (1usize << spins) - k;
+                caveats.push(format!(
+                    "'{}' is {:?}-encoded over {k} values in {spins} spins, which spell {} \
+                     codewords. The {spare} spare one(s) decode to nothing and NO penalty removes \
+                     them -- an invalid state costs exactly what a valid one costs, so the sampler \
+                     has no reason to prefer an answer. Use one-hot or domain-wall for an exact \
+                     encoding, or a k that is a power of two.",
+                    self.decls[i].name,
+                    s.encoding,
+                    1usize << spins,
+                ));
+            }
         }
 
         // Constraints. A NaN strength means "use the model's, after scaling".
@@ -999,6 +1018,7 @@ impl Model {
             program,
             graph,
             ancillas,
+            caveats,
             // only the user's variables are reported; slack is an artefact of the lowering
             slots: slots[..user_count].to_vec(),
             all_slots: slots,
@@ -1334,6 +1354,20 @@ pub struct Compiled {
     /// them: an ancilla's value is an artefact of the lowering. Exposed because the count is the
     /// price of writing a term wider than two.
     pub ancillas: usize,
+    /// Variables whose encoding CANNOT be made exact by any penalty, described in the caller's
+    /// own names.
+    ///
+    /// A binary encoding of k values uses ceil(log2 k) spins, which spell 2^ceil(log2 k)
+    /// codewords. When k is not a power of two the extra codewords decode to nothing — and no
+    /// penalty removes them, because there is no pairwise term that separates them from the valid
+    /// ones. Measured on a k = 6 binary slot: the cheapest INVALID state costs exactly what the
+    /// cheapest valid one does, so the sampler has no reason at all to prefer an answer.
+    ///
+    /// `Slot::add_penalty` has always returned whether it could be exact, and both callers
+    /// discarded it. `Slot::decode` then catches the bad state and the variable reads as
+    /// undecoded — a correct answer to the wrong question, because what the modeller needs is to
+    /// know at COMPILE time that the encoding they picked cannot be tight. That is what this is.
+    pub caveats: Vec<String>,
     /// Kept so a decoded answer can be CHECKED, not just read.
     ///
     /// A penalty makes a constraint expensive, not impossible. The sampler is free to pay it, and
@@ -2760,6 +2794,49 @@ mod tests {
             with.program.factors.len(),
             without.program.factors.len(),
             "disjoint domains cannot collide, so the constraint must add no couplings"
+        );
+    }
+
+    #[test]
+    fn an_encoding_that_cannot_be_exact_says_so_at_compile_time() {
+        // Measured, not asserted from theory: for a k = 6 binary slot the cheapest INVALID state
+        // costs exactly what the cheapest valid one costs, so nothing in the landscape discourages
+        // the sampler from returning a codeword that decodes to nothing. `Slot::add_penalty` has
+        // always returned that fact and both callers threw it away.
+        let mut m = Model::new();
+        m.categorical_as("x", 6, Encoding::Binary);
+        m.categorical_as("y", 8, Encoding::Binary); // a power of two IS exact
+        m.categorical("z", 6); // one-hot is always exact
+        let c = m.compile().unwrap();
+
+        assert_eq!(c.caveats.len(), 1, "only 'x' is inexact: {:?}", c.caveats);
+        let w = &c.caveats[0];
+        assert!(w.contains("'x'"), "must name the variable: {w}");
+        assert!(w.contains('8') && w.contains('2'), "and the codeword arithmetic: {w}");
+        assert!(w.contains("one-hot") || w.contains("power of two"), "and the way out: {w}");
+    }
+
+    #[test]
+    fn the_caveat_is_measured_rather_than_believed() {
+        // The claim in the caveat is that an invalid state is as cheap as a valid one. Enumerate
+        // and check it, so the message cannot drift from the physics it describes.
+        use crate::encode::Slot;
+        use crate::graph::GraphBuilder;
+        let slot = Slot::new(0, 6, Encoding::Binary);
+        let w = slot.width();
+        let mut b = GraphBuilder::new(w);
+        assert!(!slot.add_penalty(&mut b, 10.0), "k=6 binary cannot be exact");
+        let g = b.build();
+        let (mut best_ok, mut best_bad) = (f64::MAX, f64::MAX);
+        for mask in 0..(1u32 << w) {
+            let s: Vec<i8> = (0..w).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let e = g.energy(&s);
+            if slot.decode(&s).is_some() { best_ok = best_ok.min(e) } else { best_bad = best_bad.min(e) }
+        }
+        assert_eq!(
+            best_bad, best_ok,
+            "the caveat says an invalid state costs what a valid one costs; if that stops being \
+             true the message is wrong"
         );
     }
 }

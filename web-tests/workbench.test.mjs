@@ -87,6 +87,32 @@ const run = (body) => page.evaluate((json) => {
   check("and the compiled program comes with it", r.ftp.startsWith("ftp 1"));
 }
 
+// --- encoding selection, and the caveat when it cannot be exact ---------------------------------
+{
+  // Ignoring "encoding" was a real bug on the HTTP surface: a document asking for binary got
+  // one-hot with a different spin count and no error. Same document, same verdict, is the promise.
+  const binary6 = JSON.stringify({
+    variables: [{ name: "x", values: 6, encoding: "binary" }], tries: 4,
+  });
+  const r = await run(binary6);
+  check("a binary encoding is honoured, not silently one-hot",
+        /1 variables over 3 spins/.test(r.hint), r.hint);
+  // Not `|| true`. A check that passes regardless of what the page did is worse than no check:
+  // it reports green forever, including after the thing it names stops working.
+  check("and the status says the encoding cannot be exact, over 'every constraint holds'",
+        /caveat/i.test(r.status), r.status.slice(0, 90));
+
+  const onehot6 = JSON.stringify({ variables: [{ name: "x", values: 6 }], tries: 4 });
+  const o = await run(onehot6);
+  check("one-hot is still the default, at k spins", /1 variables over 6 spins/.test(o.hint), o.hint);
+  check("and an exact model reports no caveat, so the signal means something",
+        !/caveat/i.test(o.status), o.status.slice(0, 70));
+
+  const bad = await run(JSON.stringify({ variables: [{ name: "x", values: 6, encoding: "gray" }] }));
+  check("an unknown encoding is refused by listing the ones that exist",
+        /unknown encoding/.test(bad.status), bad.status.slice(0, 100));
+}
+
 // --- all_different: the constraint no pair of variables can express ----------------------------
 {
   const latin = JSON.stringify({

@@ -302,6 +302,18 @@ double ft_model_soft_cost(const ft_model *m);
 /* 1 if violation i is a hard one, 0 if it is a preference that was traded away. */
 uint32_t ft_model_violation_is_hard(const ft_model *m, uint32_t i);
 
+/* Compile-time CAVEATS: what the compiler knows is wrong with the model and cannot fix.
+ *
+ * Today there is one kind: an encoding no penalty can make exact. A binary encoding of k values
+ * uses ceil(log2 k) spins, spelling 2^ceil(log2 k) codewords; when k is not a power of two the
+ * spare codewords decode to nothing and no pairwise penalty separates them from the valid ones.
+ * Measured on k = 6: the cheapest INVALID state costs exactly what the cheapest valid one does, so
+ * the sampler has no reason to prefer an answer, and ft_model_value reports "did not decode".
+ *
+ * Read these after ft_model_compile and before trusting a result. Zero is the normal case. */
+uint32_t ft_model_caveats(const ft_model *m);
+uint32_t ft_model_caveat(const ft_model *m, uint32_t i, uint8_t *buf, uint32_t cap);
+
 /* Objective terms. `maximize` is 1 to prefer large, 0 to prefer small. The pair form is quadratic:
  * it rewards two variables taking their values together. */
 uint32_t ft_model_objective_term(ft_model *m, uint32_t maximize, double coeff,

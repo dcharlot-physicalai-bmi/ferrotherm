@@ -65,7 +65,7 @@ export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export all_different!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
-export soften_last!, soft_cost, traded, amounts, ancillas
+export soften_last!, soft_cost, traded, amounts, ancillas, caveats
 
 # ---- finding the library -----------------------------------------------------------------------
 
@@ -216,6 +216,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_violation_is_hard Cuint ModPtr Cuint
 @cfn ft_model_violation_amount Cdouble ModPtr Cuint
 @cfn ft_model_ancillas Cuint ModPtr
+@cfn ft_model_caveats Cuint ModPtr
+@cfn ft_model_caveat Cuint ModPtr Cuint Ptr{UInt8} Cuint
 @cfn ft_model_compile Cuint ModPtr
 @cfn ft_model_solve Cuint ModPtr Cuint
 @cfn ft_model_solve_with Cuint ModPtr Cuint Cdouble Cdouble Cuint Cuint
@@ -703,6 +705,7 @@ struct Answer
     traded::Vector{String}
     by::Vector{Float64}
     ancillas::Int
+    caveats::Vector{String}
 end
 
 Base.getindex(a::Answer, name::AbstractString) = a.values[String(name)]
@@ -729,6 +732,12 @@ distribution over the original variables is not preserved. Read this before draw
 solved model, rather than only its ground state.
 """
 ancillas(a::Answer) = a.ancillas
+
+"""    caveats(a)
+
+What the compiler knows is wrong with the model and cannot fix. Today there is one kind: an encoding no penalty can make exact -- a binary encoding of k values spells 2^ceil(log2 k) codewords, and when k is not a power of two the spare ones decode to nothing while costing exactly what a valid state costs. Read them before trusting a result; empty is the normal case.
+"""
+caveats(a::Answer) = a.caveats
 
 """    amounts(a)  — how far outside each broken HARD constraint sits, parallel to `violated`.
 
@@ -1112,7 +1121,8 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
     end
     Answer(vals, ft_model_feasible(p.handle) == 1, broken,
            ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle),
-           ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)))
+           ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
+           [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)])
 end
 
 """
