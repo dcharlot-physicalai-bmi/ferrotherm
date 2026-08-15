@@ -598,6 +598,18 @@ impl Model {
         self.declare(name, Domain::Categorical(k), encoding)
     }
 
+    /// An integer in `lo..=hi`, as an integer with a chosen encoding.
+    ///
+    /// [`Encoding::DomainWall`] is often the better choice here and is not the default: an integer
+    /// is an ORDERED domain, and a domain wall makes neighbouring values one spin flip apart where
+    /// one-hot makes every pair two flips apart. It also costs `k-1` spins instead of `k`. The
+    /// default stays one-hot because only a one-hot indicator is linear in the spins, so only a
+    /// one-hot variable can appear in an objective — see [`CompileError::NeedsOneHot`].
+    pub fn integer_as(&mut self, name: &str, lo: i64, hi: i64, encoding: Encoding) -> Var {
+        assert!(hi > lo, "an integer range needs at least two values");
+        self.declare(name, Domain::Integer { lo, hi }, encoding)
+    }
+
     /// An integer in `lo..=hi`.
     pub fn integer(&mut self, name: &str, lo: i64, hi: i64) -> Var {
         assert!(hi > lo, "an integer range needs at least two values");
@@ -816,9 +828,13 @@ impl Model {
         }
 
         // Constraints. A NaN strength means "use the model's, after scaling".
+        // Anything wider than pairwise, from a constraint or an objective term alike, lands here
+        // and is lowered by `reduce` once the graph is built.
+        let mut higher: Vec<(Vec<usize>, f64)> = Vec::new();
+
         for (ci, (c, p)) in self.constraints.iter().enumerate() {
             let p = if p.is_nan() { penalty } else { *p };
-            self.apply_constraint(&mut b, &slots, c, p, slack_for.get(&ci).copied())?;
+            self.apply_constraint(&mut b, &mut higher, &slots, c, p, slack_for.get(&ci).copied())?;
         }
 
         // The objective is already stored as "minimise this": `Model::objective` folded the sense
@@ -826,7 +842,6 @@ impl Model {
         // A term of three or more literals does not fit a pairwise graph, so it is collected here
         // and lowered by `crate::reduce` below. This used to refuse outright, which was right when
         // there was no pass to apply.
-        let mut higher: Vec<(Vec<usize>, f64)> = Vec::new();
         for t in &self.objective.terms {
             let parts: Result<Vec<LinSpin>, CompileError> =
                 t.lits.iter().map(|l| self.linearise(&slots, *l)).collect();
@@ -842,14 +857,7 @@ impl Model {
                     // Each literal is a linear function of spins, so their product expands into
                     // spin monomials. Whatever lands at degree 0, 1 or 2 goes straight into the
                     // graph; only what is genuinely wider costs an ancilla.
-                    for (vars, c) in Self::expand_product(&parts, t.coeff) {
-                        match vars.len() {
-                            0 => {}
-                            1 => b.bias(vars[0], -c),
-                            2 => b.couple(vars[0], vars[1], -c),
-                            _ => higher.push((vars, c)),
-                        }
-                    }
+                    Self::emit(&mut b, &mut higher, &parts, t.coeff);
                 }
             }
         }
@@ -938,6 +946,75 @@ impl Model {
     }
 
     /// A literal as a linear function of spins: `offset + Σ cᵢ sᵢ`.
+    /// Add `coeff · ∏ parts` to the graph, sending anything wider than pairwise to `higher`.
+    ///
+    /// The single place a polynomial in spins becomes couplings. Every constraint and every
+    /// objective term goes through it, so the degree rule is stated once: degree 0 is a constant
+    /// and changes no answer, 1 is a field, 2 is a coupling, and 3 or more is a term
+    /// [`crate::reduce`] will lower with an ancilla.
+    fn emit(
+        b: &mut GraphBuilder,
+        higher: &mut Vec<(Vec<usize>, f64)>,
+        parts: &[LinSpin],
+        coeff: f64,
+    ) {
+        for (vars, c) in Self::expand_product(parts, coeff) {
+            match vars.len() {
+                0 => {}
+                1 => b.bias(vars[0], -c),
+                2 => b.couple(vars[0], vars[1], -c),
+                _ => higher.push((vars, c)),
+            }
+        }
+    }
+
+    /// A literal as a product of linear spin forms.
+    ///
+    /// One-hot and spin indicators are linear, so the product has one factor. A **domain-wall**
+    /// indicator is not: value `v` means the spins below it are up and the rest down, so
+    /// `[x = v]` is `(1 + s_{v-1})/2 · (1 - s_v)/2` — two factors. Returning a product rather than
+    /// a linear form is what lets a domain-wall variable be used at all; before this it was
+    /// refused everywhere, which made `categorical_as` an API that could be called and not used.
+    ///
+    /// Callers multiply these together and route the resulting monomials by degree: anything wider
+    /// than two goes through [`crate::reduce`], exactly as a cubic objective term does.
+    fn factors(&self, slots: &[Slot], l: Lit) -> Result<Vec<LinSpin>, CompileError> {
+        let d = match l {
+            Lit::Spin(v) | Lit::Is(v, _) => &self.decls[v.0],
+        };
+        if d.encoding == Encoding::Binary {
+            // A binary code's indicator is a product of every bit, so its degree grows with the
+            // domain and it stops being a thing worth writing down. Refused by name.
+            return Err(CompileError::NeedsOneHot {
+                var: d.name.clone(),
+                encoding: d.encoding,
+            });
+        }
+        if d.encoding == Encoding::DomainWall {
+            let Lit::Is(v, value) = l else {
+                return Err(CompileError::NeedsOneHot { var: d.name.clone(), encoding: d.encoding });
+            };
+            let Some(slot) = d.domain.index_of(value) else {
+                return Err(CompileError::BadValue {
+                    var: d.name.clone(),
+                    value,
+                    domain: d.domain,
+                });
+            };
+            let s = slots[v.0];
+            let w = s.width();
+            // below[i] = (1 + s_i)/2 is "the wall is above i"; above[i] = (1 - s_i)/2 its negation.
+            let up = |i: usize| LinSpin { offset: 0.5, terms: vec![(s.base + i, 0.5)] };
+            let down = |i: usize| LinSpin { offset: 0.5, terms: vec![(s.base + i, -0.5)] };
+            return Ok(match (slot, w) {
+                (0, _) => vec![down(0)],                    // the wall is at the very bottom
+                (v, w) if v == w => vec![up(w - 1)],        // and at the very top
+                (v, _) => vec![up(v - 1), down(v)],         // otherwise it sits between two spins
+            });
+        }
+        self.linearise(slots, l).map(|p| vec![p])
+    }
+
     fn linearise(&self, slots: &[Slot], l: Lit) -> Result<LinSpin, CompileError> {
         match l {
             Lit::Spin(v) => {
@@ -972,6 +1049,7 @@ impl Model {
     fn apply_constraint(
         &self,
         b: &mut GraphBuilder,
+        higher: &mut Vec<(Vec<usize>, f64)>,
         slots: &[Slot],
         c: &Constraint,
         p: f64,
@@ -983,21 +1061,22 @@ impl Model {
                 // domains SHARE, not over slot indices -- an integer 5..=10 and an integer 0..=5
                 // agree only at 5, and comparing them slot by slot would say otherwise.
                 for v in shared_values(&self.decls[a.0].domain, &self.decls[x.0].domain) {
-                    let la = self.linearise(slots, Lit::Is(*a, v))?;
-                    let lb = self.linearise(slots, Lit::Is(*x, v))?;
-                    add_product(b, &la, &lb, p);
+                    let mut parts = self.factors(slots, Lit::Is(*a, v))?;
+                    parts.extend(self.factors(slots, Lit::Is(*x, v))?);
+                    Self::emit(b, higher, &parts, p);
                 }
             }
             Constraint::Equal(a, x) => {
                 for v in shared_values(&self.decls[a.0].domain, &self.decls[x.0].domain) {
-                    let la = self.linearise(slots, Lit::Is(*a, v))?;
-                    let lb = self.linearise(slots, Lit::Is(*x, v))?;
-                    add_product(b, &la, &lb, -p);
+                    let mut parts = self.factors(slots, Lit::Is(*a, v))?;
+                    parts.extend(self.factors(slots, Lit::Is(*x, v))?);
+                    Self::emit(b, higher, &parts, -p);
                 }
             }
             Constraint::Fix(v, value) => {
-                let l = self.linearise(slots, Lit::Is(*v, *value))?;
-                add_linear(b, &l, -p); // reward taking it
+                // reward taking it
+                let parts = self.factors(slots, Lit::Is(*v, *value))?;
+                Self::emit(b, higher, &parts, -p);
             }
             Constraint::AtMost { lits, k } | Constraint::AtLeast { lits, k } => {
                 // Σ lits ± slack = k, squared. `sum` collects every weighted indicator on the left.
@@ -2006,6 +2085,63 @@ mod tests {
         assert_eq!(solve(true), (3, 1), "operators should pick the rewarded values");
         assert_eq!(solve(true), solve(false), "sugar and builder must agree exactly");
     }
+
+    #[test]
+    fn a_domain_wall_variable_can_actually_be_used() {
+        // `categorical_as` existed and could not be used: a domain-wall indicator is a PRODUCT of
+        // two spins, `linearise` refused anything that was not linear, and every constraint went
+        // through it. An API that compiles and cannot be called is worse than an absent one --
+        // the absent one does not cost an afternoon finding out.
+        let mut m = Model::new();
+        let a = m.categorical_as("a", 4, Encoding::DomainWall);
+        m.fix(a, 2);
+        let c = m.compile().expect("a domain-wall variable must compile");
+        assert_eq!(c.spins(), 3, "k-1 spins, where one-hot would take 4");
+        let s = c.solve_best_of(16);
+        assert!(s.feasible(), "{s}");
+        assert_eq!(s.value("a"), 2, "{s}");
+    }
+
+    #[test]
+    fn a_domain_wall_variable_works_beside_a_one_hot_one() {
+        // Mixed encodings in one model, which is the case that breaks if `factors` and `linearise`
+        // disagree about what a literal means.
+        let mut m = Model::new();
+        let a = m.categorical_as("a", 4, Encoding::DomainWall);
+        let b = m.categorical("b", 4);
+        m.not_equal(a, b);
+        m.fix(b, 2);
+        let s = m.compile().unwrap().solve_best_of(32);
+        assert!(s.feasible(), "{s}");
+        assert_eq!(s.value("b"), 2, "{s}");
+        assert_ne!(s.value("a"), 2, "and a really differs from it: {s}");
+    }
+
+    #[test]
+    fn domain_wall_costs_one_spin_fewer_than_one_hot() {
+        // The reason to choose it, measured rather than asserted.
+        let spins = |enc: Encoding| {
+            let mut m = Model::new();
+            let v = m.categorical_as("x", 6, enc);
+            m.fix(v, 3);
+            m.compile().unwrap().spins()
+        };
+        assert_eq!(spins(Encoding::OneHot), 6);
+        assert_eq!(spins(Encoding::DomainWall), 5);
+    }
+
+    #[test]
+    fn a_binary_encoded_variable_is_refused_by_name() {
+        // Its indicator is a product of every bit, so its degree grows with the domain. Refused
+        // rather than expanded into something nobody wants to read.
+        let mut m = Model::new();
+        let v = m.categorical_as("x", 8, Encoding::Binary);
+        m.fix(v, 3);
+        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("binary in a literal") };
+        assert!(e.contains("'x'"), "{e}");
+        assert!(e.contains("OneHot") || e.contains("one-hot"), "{e}");
+    }
+
 
     #[test]
     fn a_grid_of_variables_reads_like_the_problem_it_models() {

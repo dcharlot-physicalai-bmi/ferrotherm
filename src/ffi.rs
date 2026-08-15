@@ -1276,6 +1276,64 @@ pub extern "C" fn ft_model_at_least(
     counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtLeast { lits, k })
 }
 
+/// Declare a categorical with a chosen encoding.
+///
+/// `encoding` is 0 for one-hot, 1 for binary, 2 for domain-wall. The trade is real and worth
+/// stating, because it is the difference between a model that fits a machine and one that does not:
+///
+/// | encoding | spins for `k` values | usable in an objective |
+/// |---|---|---|
+/// | one-hot | `k` | yes |
+/// | domain-wall | `k - 1` | yes |
+/// | binary | `ceil(log2 k)` | **no** |
+///
+/// Only a one-hot or domain-wall indicator is linear in the spins. A binary-encoded variable is
+/// cheapest and can appear in constraints alone; putting it in an objective is refused at compile
+/// time rather than approximated.
+#[no_mangle]
+pub extern "C" fn ft_model_categorical_as(m: *mut ModelHandle, k: u32, encoding: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    let Some(enc) = encoding_of(encoding, h) else { return u32::MAX };
+    if k < 2 {
+        return u32::MAX;
+    }
+    let n = h.model.len();
+    h.model.categorical_as(&format!("v{n}"), k as usize, enc);
+    n as u32
+}
+
+/// Declare an integer with a chosen encoding. See [`ft_model_categorical_as`] for the codes.
+#[no_mangle]
+pub extern "C" fn ft_model_integer_as(
+    m: *mut ModelHandle,
+    lo: i64,
+    hi: i64,
+    encoding: u32,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    let Some(enc) = encoding_of(encoding, h) else { return u32::MAX };
+    if hi <= lo {
+        return u32::MAX;
+    }
+    let n = h.model.len();
+    h.model.integer_as(&format!("v{n}"), lo, hi, enc);
+    n as u32
+}
+
+fn encoding_of(code: u32, h: &mut ModelHandle) -> Option<crate::encode::Encoding> {
+    use crate::encode::Encoding;
+    match code {
+        0 => Some(Encoding::OneHot),
+        1 => Some(Encoding::Binary),
+        2 => Some(Encoding::DomainWall),
+        other => {
+            h.last_error =
+                format!("unknown encoding {other}; 0 one-hot, 1 binary, 2 domain-wall");
+            None
+        }
+    }
+}
+
 /// Start a fresh list of literals for a counting constraint.
 ///
 /// The positional forms below take four variables and one shared value, which is what a node graph
@@ -1458,6 +1516,47 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 1);
         let on = v.iter().filter(|&&i| ft_model_value(m, i) == 1).count();
         assert_eq!(on, 2, "exactly two should be on");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn an_encoding_can_be_chosen_and_costs_what_it_says() {
+        // The trade is the difference between a model that fits a machine and one that does not,
+        // and it was reachable from Rust alone until now.
+        let spins_for = |enc: u32| {
+            let m = ft_model_new();
+            let v = ft_model_categorical_as(m, 8, enc);
+            assert_ne!(v, u32::MAX, "encoding {enc} should be accepted");
+            ft_model_fix(m, v, 3);
+            let n = ft_model_compile(m);
+            ft_model_free(m);
+            n
+        };
+        assert_eq!(spins_for(0), 8, "one-hot: one spin per value");
+        assert_eq!(spins_for(2), 7, "domain-wall: one fewer");
+        assert_eq!(spins_for(1), 3, "binary: log2 of the domain");
+
+        let m = ft_model_new();
+        assert_eq!(ft_model_categorical_as(m, 8, 9), u32::MAX, "an unknown encoding is refused");
+        let mut buf = [0u8; 256];
+        let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        let e = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(e.contains("domain-wall"), "and lists the ones it knows: {e}");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_binary_encoded_variable_cannot_appear_in_an_objective() {
+        // Only a one-hot or domain-wall indicator is linear in the spins. A binary one is not, and
+        // approximating it would answer a different question -- so it is refused at compile time.
+        let m = ft_model_new();
+        let v = ft_model_categorical_as(m, 8, 1);
+        ft_model_objective_term(m, 1, 1.0, v, 3);
+        assert_eq!(ft_model_compile(m), 0, "a binary variable in an objective must not compile");
+        let mut buf = [0u8; 512];
+        let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        let e = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(e.contains("OneHot") || e.contains("one-hot"), "{e}");
         ft_model_free(m);
     }
 
