@@ -64,6 +64,7 @@ export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
+export soften_last!, soft_cost, traded
 
 # ---- finding the library -----------------------------------------------------------------------
 
@@ -206,6 +207,10 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_objective_pair Cuint ModPtr Cuint Cdouble Cuint Clonglong Cuint Clonglong
 @cfn ft_model_objective_product Cuint ModPtr Cuint Cdouble
 @cfn ft_model_fixed_penalty Cuint ModPtr Cdouble
+@cfn ft_model_close_soft Cuint ModPtr Cuint Cuint Cdouble
+@cfn ft_model_soften_last Cuint ModPtr Cdouble
+@cfn ft_model_soft_cost Cdouble ModPtr
+@cfn ft_model_violation_is_hard Cuint ModPtr Cuint
 @cfn ft_model_compile Cuint ModPtr
 @cfn ft_model_solve Cuint ModPtr Cuint
 @cfn ft_model_solve_with Cuint ModPtr Cuint Cdouble Cdouble Cuint Cuint
@@ -650,9 +655,13 @@ is(v::Variable, value::Integer) = Literal(v, Int64(value))
 
 A solved problem, read by name. `answer["shift"]` gives a value.
 
-`feasible` means every variable decoded **and** every constraint held. When it is false, `violated`
-describes each broken constraint in your own names and any variable that failed to decode reads
-`nothing`. A penalty makes a constraint expensive, not impossible.
+`feasible` means every variable decoded **and** every HARD constraint held. When it is false,
+`violated` describes each broken constraint in your own names and any variable that failed to decode
+reads `nothing`. A penalty makes a constraint expensive, not impossible.
+
+Soft constraints are separate: `traded` lists the preferences the solver chose to break and
+`soft_cost` totals what they cost. Those do not make the answer infeasible — being traded away is
+what asking for a preference means.
 """
 struct Answer
     values::Dict{String, Union{Int64, Nothing}}
@@ -661,6 +670,8 @@ struct Answer
     energy::Float64
     spins::Int
     penalty::Float64
+    soft_cost::Float64
+    traded::Vector{String}
 end
 
 Base.getindex(a::Answer, name::AbstractString) = a.values[String(name)]
@@ -670,6 +681,12 @@ Base.pairs(a::Answer) = pairs(a.values)
 feasible(a::Answer) = a.feasible
 violated(a::Answer) = a.violated
 
+"""    traded(a)  — the soft constraints the solver chose to break, in your own names."""
+traded(a::Answer) = a.traded
+
+"""    soft_cost(a)  — what those trades cost, in the units the weights were given in."""
+soft_cost(a::Answer) = a.soft_cost
+
 function Base.show(io::IO, a::Answer)
     print(io, "Answer ", a.feasible ? "feasible" : "INFEASIBLE",
           "  energy ", round(a.energy; digits = 4), "  ", a.spins, " spins")
@@ -677,6 +694,10 @@ function Base.show(io::IO, a::Answer)
         v = a.values[k]
         print(io, "\n  ", k, " = ", v === nothing ? "(did not decode)" : v)
     end
+    for v in a.traded
+        print(io, "\n  traded: ", v)
+    end
+    a.soft_cost == 0 || print(io, "\n  soft cost: ", round(a.soft_cost; digits = 4))
     for v in a.violated
         print(io, "\n  broken: ", v)
     end
@@ -813,17 +834,43 @@ end
 
 # -- constraints ---------------------------------------------------------------------------------
 
-"""    not_equal!(p, a, b)  — `a` and `b` must differ."""
-not_equal!(p::Problem, a::Variable, b::Variable) =
-    (_live(p); _must(p, ft_model_not_equal(p.handle, a.idx, b.idx), "not_equal"); nothing)
+"""
+    soften_last!(p, weight)
 
-"""    equal!(p, a, b)  — `a` and `b` must agree."""
-equal!(p::Problem, a::Variable, b::Variable) =
-    (_live(p); _must(p, ft_model_equal(p.handle, a.idx, b.idx), "equal"); nothing)
+Make the constraint added most recently a **preference**, priced at `weight`.
 
-"""    fix!(p, v, value)  — `v` must take `value`, in its own units."""
-fix!(p::Problem, v::Variable, value::Integer) =
-    (_live(p); _must(p, ft_model_fix(p.handle, v.idx, Clonglong(value)), "fix"); nothing)
+A hard constraint says which answers are answers at all. A soft one is a preference the solver may
+trade away: breaking it costs `weight × amount²` and leaves the answer feasible. The square is not a
+detail — a constraint becomes an energy term by squaring how far outside it sits, so missing by two
+costs four times missing by one, and pricing a preference chooses that curve as well as its scale.
+
+The weight is absolute rather than scaled. Automatic scaling exists to stop a hard constraint being
+outbid by the objective, and a soft one is meant to be traded against it.
+
+Every constraint here takes `soft = weight` as a shorthand for the same thing.
+"""
+soften_last!(p::Problem, weight::Real) =
+    (_live(p); _must(p, ft_model_soften_last(p.handle, Cdouble(weight)), "soft constraint"); nothing)
+
+_maybe_soft(p::Problem, soft) = soft === nothing ? nothing : soften_last!(p, soft)
+
+"""    not_equal!(p, a, b; soft = nothing)  — `a` and `b` must differ, or had better."""
+function not_equal!(p::Problem, a::Variable, b::Variable; soft::Union{Real, Nothing} = nothing)
+    _live(p); _must(p, ft_model_not_equal(p.handle, a.idx, b.idx), "not_equal")
+    _maybe_soft(p, soft); nothing
+end
+
+"""    equal!(p, a, b; soft = nothing)  — `a` and `b` must agree, or had better."""
+function equal!(p::Problem, a::Variable, b::Variable; soft::Union{Real, Nothing} = nothing)
+    _live(p); _must(p, ft_model_equal(p.handle, a.idx, b.idx), "equal")
+    _maybe_soft(p, soft); nothing
+end
+
+"""    fix!(p, v, value; soft = nothing)  — `v` must take `value`, in its own units."""
+function fix!(p::Problem, v::Variable, value::Integer; soft::Union{Real, Nothing} = nothing)
+    _live(p); _must(p, ft_model_fix(p.handle, v.idx, Clonglong(value)), "fix")
+    _maybe_soft(p, soft); nothing
+end
 
 """
 Any number of literals, each naming its own variable and its own value.
@@ -832,7 +879,8 @@ Any number of literals, each naming its own variable and its own value.
 which carry their own. "At most two of these nine shifts" and "at most one of `a = 3`, `b = 17`" are
 both sayable.
 """
-function _counting(p::Problem, kind::Integer, of, k::Integer, value::Integer, what::AbstractString)
+function _counting(p::Problem, kind::Integer, of, k::Integer, value::Integer, what::AbstractString;
+                   soft::Union{Real, Nothing} = nothing)
     _live(p)
     items = collect(of)
     length(items) < 2 && error("$what needs at least two things to count, not $(length(items))")
@@ -846,24 +894,33 @@ function _counting(p::Problem, kind::Integer, of, k::Integer, value::Integer, wh
               error("$what counts variables or literals, not $(typeof(it))")
         _must(p, ft_model_lit(p.handle, lit.var.idx, lit.value), what)
     end
-    _must(p, ft_model_close(p.handle, Cuint(kind), Cuint(k)), what)
+    if soft === nothing
+        _must(p, ft_model_close(p.handle, Cuint(kind), Cuint(k)), what)
+    else
+        _must(p, ft_model_close_soft(p.handle, Cuint(kind), Cuint(k), Cdouble(soft)), what)
+    end
     nothing
 end
 
 """    exactly!(p, of, k; value = 1)  — exactly `k` of them hold."""
-exactly!(p::Problem, of, k::Integer; value::Integer = 1) = _counting(p, 0, of, k, value, "exactly")
+exactly!(p::Problem, of, k::Integer; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =
+    _counting(p, 0, of, k, value, "exactly"; soft = soft)
 
 """    at_most!(p, of, k; value = 1)  — at most `k` hold. Costs a slack variable."""
-at_most!(p::Problem, of, k::Integer; value::Integer = 1) = _counting(p, 1, of, k, value, "at_most")
+at_most!(p::Problem, of, k::Integer; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =
+    _counting(p, 1, of, k, value, "at_most"; soft = soft)
 
 """    at_least!(p, of, k; value = 1)  — at least `k` hold. Costs a slack variable."""
-at_least!(p::Problem, of, k::Integer; value::Integer = 1) = _counting(p, 2, of, k, value, "at_least")
+at_least!(p::Problem, of, k::Integer; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =
+    _counting(p, 2, of, k, value, "at_least"; soft = soft)
 
 """    exactly_one!(p, of)  — exactly one holds. Pairwise, no slack, so cheaper than `exactly!(…, 1)`."""
-exactly_one!(p::Problem, of; value::Integer = 1) = _counting(p, 3, of, 0, value, "exactly_one")
+exactly_one!(p::Problem, of; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =
+    _counting(p, 3, of, 0, value, "exactly_one"; soft = soft)
 
 """    at_most_one!(p, of)  — at most one holds."""
-at_most_one!(p::Problem, of; value::Integer = 1) = _counting(p, 4, of, 0, value, "at_most_one")
+at_most_one!(p::Problem, of; value::Integer = 1, soft::Union{Real, Nothing} = nothing) =
+    _counting(p, 4, of, 0, value, "at_most_one"; soft = soft)
 
 # -- objective -----------------------------------------------------------------------------------
 
@@ -966,9 +1023,17 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
         # violated, which means a penalty lost, and knowing WHICH one lost is the diagnosis.
         vals[v.name] = got == typemin(Int64) ? nothing : got
     end
-    broken = [_text(p, ft_model_violation, i) for i in 0:(ft_model_violations(p.handle) - 1)]
+    # Hard and soft violations come back on one list and are separated here, because they answer
+    # different questions: a broken rule says the answer is not an answer, a traded preference says
+    # the solver made the choice it was asked to price.
+    broken, given_up = String[], String[]
+    for i in 0:(ft_model_violations(p.handle) - 1)
+        text = _text(p, ft_model_violation, i)
+        push!(ft_model_violation_is_hard(p.handle, Cuint(i)) == 1 ? broken : given_up, text)
+    end
     Answer(vals, ft_model_feasible(p.handle) == 1, broken,
-           ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle))
+           ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle),
+           ft_model_soft_cost(p.handle), given_up)
 end
 
 """

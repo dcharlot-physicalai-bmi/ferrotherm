@@ -730,6 +730,25 @@ impl Model {
         self
     }
 
+    /// Make the constraint added most recently a soft one, at `weight`.
+    ///
+    /// For a caller who adds a constraint through one of the convenience builders and then decides
+    /// it is a preference — and for the C ABI, where the pairwise constraints take their arguments
+    /// directly rather than through a literal list. False when there is nothing to soften.
+    pub fn soften_last(&mut self, weight: f64) -> bool {
+        if !(weight > 0.0) || !weight.is_finite() {
+            return false;
+        }
+        match self.constraints.last_mut() {
+            Some(entry) => {
+                entry.1 = weight;
+                entry.2 = false;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Add a constraint at a specific penalty strength.
     pub fn constrain_at(&mut self, c: Constraint, penalty: f64) -> &mut Self {
         self.constraints.push((c, penalty, true));
@@ -1349,7 +1368,7 @@ impl Compiled {
             };
             if let Some(mut b) = broken {
                 b.hard = hard;
-                b.cost = if hard { 0.0 } else { weight * b.amount };
+                b.cost = if hard { 0.0 } else { weight * b.amount * b.amount };
                 out.push(b);
             }
         }
@@ -1447,6 +1466,11 @@ pub struct Violation {
     /// modeller deliberately priced low is not a failure — it is the trade they asked for.
     pub hard: bool,
     /// What breaking this cost, for a soft constraint. Zero for a hard one, which has no price.
+    ///
+    /// `weight × amount²`, and the square is not a detail. A constraint becomes an energy term by
+    /// squaring how far outside it sits, so missing by two costs FOUR times missing by one, not
+    /// twice. A modeller pricing a preference is choosing that curve as well as its scale, and
+    /// reporting a linear price here would misstate what the solver actually traded.
     pub cost: f64,
     /// How far outside the constraint the answer sits, in the constraint's own units: places over a
     /// ceiling, places under a floor, distance from a fixed value. Always positive.
@@ -1523,7 +1547,11 @@ impl Solution {
     /// preferences rather than from the objective, and separating them is the point of saying a
     /// constraint is soft.
     pub fn soft_cost(&self) -> f64 {
-        self.violated.iter().filter(|v| !v.hard).map(|v| v.cost).sum()
+        // `+ 0.0` is not redundant: `Sum for f64` folds from -0.0, which is the correct additive
+        // identity but prints as "-0" through every binding that formats a float. A price with a
+        // minus sign in front of it reads as a credit. Adding zero normalises the sign and
+        // changes nothing else.
+        self.violated.iter().filter(|v| !v.hard).map(|v| v.cost).sum::<f64>() + 0.0
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &i64)> {
@@ -2180,14 +2208,51 @@ mod tests {
         assert!(cheap.feasible(), "a soft violation is not an infeasible answer: {cheap}");
         assert_eq!(cheap.violated.len(), 1, "and it is still REPORTED: {cheap}");
         assert!(!cheap.violated[0].hard, "marked soft");
-        assert_eq!(cheap.soft_cost(), 1.0, "and priced: {cheap}");
+        assert_eq!(cheap.soft_cost(), 1.0, "and priced: {cheap}");   // 1 × 1², missed by one
         assert!(cheap.to_string().contains("traded:"), "{cheap}");
 
         // priced high, it is not
         let dear = build(50.0);
         assert_ne!(dear.value("a"), dear.value("b"), "the price now outweighs the reward: {dear}");
         assert_eq!(dear.soft_cost(), 0.0, "nothing was traded away: {dear}");
+        assert!(
+            !dear.soft_cost().is_sign_negative(),
+            "a price of nothing must not print as -0: every binding formats this number and a \
+             leading minus reads as a credit"
+        );
     }
+
+    #[test]
+    fn a_soft_price_is_squared_because_the_penalty_is() {
+        // Not a detail. A constraint becomes an energy term by squaring how far outside it sits, so
+        // missing by two costs FOUR times missing by one. A modeller pricing a preference is
+        // choosing that curve as well as its scale, and a linear report would misstate the trade.
+        let over_by = |reward: f64| {
+            let mut m = Model::new();
+            let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+            m.soft(
+                Constraint::AtMost { lits: vs.iter().map(|&v| Lit::Is(v, 1)).collect(), k: 1 },
+                1.0,
+            );
+            for &v in &vs {
+                m.objective(Sense::Maximize, reward * v.is(1));
+            }
+            let s = m.compile().unwrap().solve_best_of(32);
+            let on = vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count();
+            (on, s.soft_cost())
+        };
+
+        // a small reward buys one extra: over by 1 costs 1
+        let (on, cost) = over_by(1.5);
+        assert_eq!(on, 2, "one over the ceiling");
+        assert_eq!(cost, 1.0, "1 × 1²");
+
+        // a large one buys all four: over by 3 costs NINE, not three
+        let (on, cost) = over_by(20.0);
+        assert_eq!(on, 4, "three over the ceiling");
+        assert_eq!(cost, 9.0, "1 × 3², which is why the curve matters");
+    }
+
 
     #[test]
     fn a_hard_constraint_still_makes_an_answer_inadmissible() {

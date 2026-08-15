@@ -87,6 +87,38 @@ const run = (body) => page.evaluate((json) => {
   check("and the compiled program comes with it", r.ftp.startsWith("ftp 1"));
 }
 
+// --- a soft constraint, which is a different ANSWER rather than a different number ---------------
+{
+  // A preference the solver may trade away. The failure this guards is not an exception: it is the
+  // page reporting "every constraint holds" over an answer that broke one, which nothing else on
+  // the screen contradicts. The status line has to distinguish a rule from a price.
+  const body = (extra) => JSON.stringify({
+    variables: [{ name: "a", values: 2 }, { name: "b", values: 2 }],
+    constraints: [{ type: "not_equal", a: "a", b: "b", ...extra }],
+    objective: { maximize: true, terms: [
+      { var: "a", value: 0, weight: 5 }, { var: "b", value: 0, weight: 5 }] },
+    tries: 24,
+  });
+
+  const cheap = await run(body({ soft: 1 }));
+  check("a cheap preference is traded, and the status says so, not \"every constraint holds\"",
+        /1 preference\(s\) traded for 1\.00/.test(cheap.status), cheap.status.slice(0, 90));
+  check("and the answer is still feasible, because a traded preference is not a broken rule",
+        !/broke/.test(cheap.status), cheap.status.slice(0, 90));
+
+  const dear = await run(body({ soft: 50 }));
+  check("priced above the objective the same preference is KEPT",
+        /every constraint holds/.test(dear.status), dear.status.slice(0, 90));
+
+  const hard = await run(body({}));
+  check("and with no price at all it is a rule, kept as before",
+        /every constraint holds/.test(hard.status), hard.status.slice(0, 90));
+
+  const bad = await run(body({ soft: "5" }));
+  check("a price that is not a number is refused by name, not read as a hard constraint",
+        /soft/.test(bad.status), bad.status.slice(0, 110));
+}
+
 // --- an inequality, with the answer visible ------------------------------------------------------
 {
   const r = await run(JSON.stringify({

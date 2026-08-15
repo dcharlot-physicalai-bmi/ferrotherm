@@ -526,6 +526,19 @@ function solveProblem(v) {
     // 2. constraints
     for (const c of v.constraints || []) {
       const kind = String(c.type ?? "");
+      // A "soft" price turns any constraint into a preference the solver may trade away. Read once,
+      // before the branch, so every kind gets it -- including ones added later.
+      let soft = null;
+      if (c.soft !== undefined) {
+        // `typeof`, not `+c.soft`: JavaScript would coerce "5" to 5 and true to 1, so a price
+        // written as a string would be accepted here and REFUSED by the HTTP surface, which takes
+        // the same document. Same JSON, same verdict, is the promise this pane makes.
+        if (typeof c.soft !== "number" || !Number.isFinite(c.soft) || c.soft <= 0) {
+          throw new Error(kind + ': "soft" is a price and must be a positive, finite number, not ' +
+                          JSON.stringify(c.soft) + '. Omit it for a hard constraint.');
+        }
+        soft = c.soft;
+      }
       if (kind === "not_equal" || kind === "equal") {
         const a = find(c.a), b = find(c.b);
         if (a === b) throw new Error(kind + ": a variable cannot be compared with itself");
@@ -543,6 +556,8 @@ function solveProblem(v) {
         throw new Error('unknown constraint "' + kind + '"; known: not_equal, equal, fix, '
           + "cardinality, at_most, at_least, exactly_one, at_most_one");
       }
+      // Every branch above added exactly one constraint, so "the last one" is this one.
+      if (soft !== null && !W.ft_model_soften_last(m, soft)) refuse(kind + " (soft)");
     }
 
     // 3. objective
@@ -573,12 +588,16 @@ function solveProblem(v) {
       const got = W.ft_model_value(m, i);
       values.push([name, got === -9223372036854775808n ? null : got]);
     }
-    const broken = [];
+    // Hard and soft violations arrive on one list and are split here: a broken rule says the
+    // answer is not an answer, a traded preference says the solver made the choice it was priced to
+    // make. Showing them under one heading would say the wrong thing about both.
+    const broken = [], traded = [];
     for (let i = 0; i < W.ft_model_violations(m); i++) {
       const need = W.ft_model_violation(m, i, null, 0);
       const p = W.ft_scratch(need);
       const got = W.ft_model_violation(m, i, p, need);
-      broken.push(new TextDecoder().decode(new Uint8Array(W.memory.buffer, p, got)));
+      const text = new TextDecoder().decode(new Uint8Array(W.memory.buffer, p, got));
+      (W.ft_model_violation_is_hard(m, i) === 1 ? broken : traded).push(text);
     }
     const out = {
       values, spins, tries, ms,
@@ -586,6 +605,8 @@ function solveProblem(v) {
       energy: W.ft_model_energy(m),
       penalty: W.ft_model_penalty(m),
       violated: broken,
+      traded,
+      softCost: W.ft_model_soft_cost(m),
       ftp: readText(W.ft_model_ftp)
     };
     W.ft_model_free(m);
@@ -610,6 +631,8 @@ function applySolve() {
        + "\n  " + "penalty".padEnd(pad) + " = " + r.penalty.toFixed(2)
        + "\n  " + "feasible".padEnd(pad) + " = " + (r.feasible ? "yes" : "NO");
   for (const b of r.violated) txt += "\n  broken: " + b;
+  for (const b of r.traded) txt += "\n  traded: " + b;
+  if (r.softCost) txt += "\n  " + "soft cost".padEnd(pad) + " = " + r.softCost.toFixed(4);
   if (!r.feasible) {
     txt += "\n\n  A penalty makes a constraint expensive, not impossible, and this objective"
          + "\n  outbid it. Raise \"penalty\", or lower the objective weights.";
@@ -624,9 +647,16 @@ function applySolve() {
 
   $("viewhint").textContent = r.values.length + " variables over " + r.spins
     + " spins, best of " + r.tries + " in " + r.ms.toFixed(0) + " ms";
-  status(r.feasible
-    ? "solved: every constraint holds"
-    : "solved, but " + r.violated.length + " constraint(s) broke — see the answer", 
+  // "every constraint holds" would be FALSE with a preference traded away, and the answer is
+  // still feasible, so nothing else on the page would contradict it. A traded preference is the
+  // choice the modeller asked the solver to make; the status has to name it, not hide it inside a
+  // word that means something stronger.
+  status(!r.feasible
+    ? "solved, but " + r.violated.length + " constraint(s) broke — see the answer"
+    : r.traded.length
+      ? "solved: every rule holds, " + r.traded.length + " preference(s) traded for "
+        + r.softCost.toFixed(2)
+      : "solved: every constraint holds",
     r.feasible ? "good" : "bad");
   solveExports(r);
 }

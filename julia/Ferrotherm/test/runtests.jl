@@ -157,3 +157,45 @@ end
 include("model.jl")
 
 end
+
+@testset "a preference is traded, a rule is not" begin
+    # The same constraint twice over, once as a rule and once as a price. What changes is not
+    # whether the solver can break it — a penalty was always breakable — but what the answer MEANS
+    # when it does. A broken rule makes the answer no answer; a traded preference is the choice the
+    # modeller asked the solver to make, and the answer stays feasible.
+    p = Problem()
+    a = categorical!(p, "a", 2); b = categorical!(p, "b", 2)
+    not_equal!(p, a, b; soft = 1.0)
+    maximize!(p, [(5.0, is(a, 0)), (5.0, is(b, 0))])
+    ans = solve!(p; tries = 24)
+    @test feasible(ans)
+    @test length(traded(ans)) == 1
+    @test isempty(violated(ans))
+    @test soft_cost(ans) == 1.0
+    close!(p)
+
+    q = Problem()
+    c = categorical!(q, "a", 2); d = categorical!(q, "b", 2)
+    not_equal!(q, c, d; soft = 50.0)
+    maximize!(q, [(5.0, is(c, 0)), (5.0, is(d, 0))])
+    kept = solve!(q; tries = 24)
+    @test feasible(kept)
+    @test isempty(traded(kept))
+    @test soft_cost(kept) == 0.0
+    # A price of nothing must not print with a minus sign in front of it.
+    @test !signbit(soft_cost(kept))
+    close!(q)
+end
+
+@testset "a soft counting constraint prices the overshoot, squared" begin
+    p = Problem()
+    vs = [binary!(p, "v$i") for i in 1:4]
+    at_most!(p, vs, 1; soft = 1.0)
+    maximize!(p, [(20.0, is(v, 1)) for v in vs])
+    ans = solve!(p; tries = 24)
+    @test feasible(ans)
+    # All four held against a cap of one, so it is over by three — and three squared is nine, not
+    # three. Missing by two costs four times missing by one.
+    @test soft_cost(ans) == 9.0
+    close!(p)
+end

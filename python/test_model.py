@@ -9,6 +9,7 @@ nothing here asserts on a particular random draw: every assertion is about a pro
 must have for any correct solver.
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -343,3 +344,46 @@ def test_the_compiled_program_is_readable():
     text = p.ftp()
     assert text.startswith("ftp 1"), text[:40]
     assert "spins 6" in text, text[:80]
+
+
+def test_a_preference_is_traded_and_a_rule_is_not():
+    # The same model twice, differing only in whether the constraint is a rule or a price. What
+    # changes is not whether the solver CAN break it -- a penalty was always breakable -- but what
+    # the answer MEANS when it does. A broken rule makes the answer no answer; a traded preference
+    # is the choice the modeller asked the solver to price, and the answer stays feasible.
+    def build(**kw):
+        p = ft.Problem()
+        a, b = p.categorical("a", 2), p.categorical("b", 2)
+        p.not_equal(a, b, **kw)
+        p.maximize(5 * a.is_(0) + 5 * b.is_(0))
+        return p.solve(tries=24)
+
+    cheap = build(soft=1.0)
+    assert cheap.feasible, cheap
+    assert len(cheap.violated) == 1 and not cheap.violated[0].hard, cheap
+    assert cheap.soft_cost == 1.0, cheap
+    assert "traded" in str(cheap), str(cheap)
+
+    dear = build(soft=50.0)
+    assert dear.violated == [], dear
+    assert dear.soft_cost == 0.0
+    # A price of nothing must not print with a minus sign in front of it: Rust's f64 sum folds from
+    # -0.0, and "-0" as a cost reads as a credit.
+    assert not math.copysign(1.0, dear.soft_cost) < 0, repr(dear.soft_cost)
+
+    rule = build()
+    assert rule.feasible and rule.violated == [], rule
+    assert rule.soft_cost == 0.0
+
+
+def test_a_soft_price_is_squared_because_the_penalty_is():
+    p = ft.Problem()
+    vs = [p.binary(f"v{i}") for i in range(4)]
+    p.at_most(vs, 1, soft=1.0)
+    p.maximize(sum(20 * v.is_(1) for v in vs))
+    a = p.solve(tries=24)
+    assert a.feasible, a
+    # All four held against a cap of one, so it is over by three -- and three squared is nine, not
+    # three. Missing by two costs four times missing by one, and a linear price here would misstate
+    # what the solver traded.
+    assert a.soft_cost == 9.0, a

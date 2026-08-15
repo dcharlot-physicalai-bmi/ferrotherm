@@ -34,7 +34,7 @@
 //! and returned as itself.
 
 use crate::graph::{Graph, GraphBuilder};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 /// A placement of logical variables onto hardware sites.
 #[derive(Clone, Debug, PartialEq)]

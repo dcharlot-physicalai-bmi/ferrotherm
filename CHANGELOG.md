@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Soft constraints — a preference, priced, on every surface
+
+A constraint has always been either a rule or nothing. A soft one is a **preference the solver may
+trade away**: breaking it costs, and the answer stays feasible. The distinction is not a shade of
+penalty strength — it changes what the answer *means*. A broken rule says the answer is not an
+answer; a traded preference says the solver made the choice it was asked to price.
+
+- `Model::soft(c, weight)` and `Model::soften_last(weight)` (Rust), `ft_model_close_soft` /
+  `ft_model_soften_last` / `ft_model_soft_cost` / `ft_model_violation_is_hard` (C ABI and header),
+  `soft=` on every constraint plus `soften_last` (Python), `countSoft` / `softenLast` / `softCost` /
+  `violationIsHard` (Zig), `soft =` keyword plus `soften_last!` / `soft_cost` / `traded` (Julia),
+  `"soft": w` on any constraint (HTTP, MCP and the node editor). Eight surfaces, one release.
+- `Solution::feasible` ignores soft violations by design; `Solution::soft_cost` totals what the
+  trades cost, and each `Violation` carries `hard` and `cost` so the two are never confused.
+- **The price is `weight × amount²`.** A constraint becomes an energy term by squaring how far
+  outside it sits, so missing by two costs *four* times missing by one. Pricing a preference chooses
+  that curve as well as its scale, and reporting a linear price would misstate what was traded.
+- The weight is **absolute, not scaled**. Automatic penalty scaling exists to stop a hard constraint
+  being outbid by the objective; a soft one is meant to be traded against it.
+- A `"soft"` that is not a positive finite number is refused **by name** on every JSON surface
+  rather than falling back to a hard constraint — the same shape as five earlier silent-wrongness
+  bugs, where an unreadable field became the opposite instruction with `feasible: true` and nothing
+  to suggest anything had gone wrong. The editor checks `typeof`, not coercion, so the same document
+  gets the same verdict there as over HTTP.
+- The editor's status line no longer claims "every constraint holds" over an answer that traded one.
+
+### Fixed
+
+- `Solution::soft_cost` returned `-0.0` when nothing was traded. Rust's `Sum for f64` folds from
+  `-0.0`, which is the correct additive identity and prints as a minus sign through every binding
+  that formats a float. A price with a minus sign in front of it reads as a credit.
+
 ## 0.8.0 (2026-08-13)
 
 **A fabric describes a real machine, and a model can be wider than pairwise.** Breaking: the

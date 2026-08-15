@@ -505,6 +505,21 @@ pub const Problem = struct {
         if (c.ft_model_close(self.h, @intFromEnum(kind), k) == 0) return Error.RejectedConstraint;
     }
 
+    /// `count`, but as a PREFERENCE priced at `weight` rather than a rule.
+    ///
+    /// A hard constraint says which answers are answers at all, so breaking one makes `feasible`
+    /// false. A soft one may be traded away: breaking it costs and the answer stays feasible.
+    /// `softCost` totals what was traded. See `softenLast` for the shape of the price.
+    pub fn countSoft(self: *Problem, kind: Counting, k: u32, lits: []const Lit, weight: f64) Error!void {
+        _ = c.ft_model_lits_clear(self.h);
+        for (lits) |l| {
+            if (c.ft_model_lit(self.h, l.v.idx, l.value) == 0) return Error.BadValue;
+        }
+        if (c.ft_model_close_soft(self.h, @intFromEnum(kind), k, weight) == 0) {
+            return Error.RejectedConstraint;
+        }
+    }
+
     /// `count` over whole variables, each taking the same value. The common case.
     pub fn countVars(self: *Problem, kind: Counting, k: u32, vars: []const Var, val: i64) Error!void {
         _ = c.ft_model_lits_clear(self.h);
@@ -551,6 +566,18 @@ pub const Problem = struct {
         if (c.ft_model_objective_pair(self.h, max, weight, a.v.idx, a.value, b.v.idx, b.value) == 0) {
             return Error.BadValue;
         }
+    }
+
+    /// Make the constraint added most recently a preference, priced at `weight`.
+    ///
+    /// The price is `weight × amount²`, and the square is not a detail: a constraint becomes an
+    /// energy term by squaring how far outside it sits, so missing by two costs FOUR times missing
+    /// by one. Pricing a preference chooses that curve as well as its scale.
+    ///
+    /// The weight is absolute rather than scaled. Automatic scaling exists to stop a hard
+    /// constraint being outbid by the objective; a soft one is meant to be traded against it.
+    pub fn softenLast(self: *Problem, weight: f64) Error!void {
+        if (c.ft_model_soften_last(self.h, weight) == 0) return Error.RejectedConstraint;
     }
 
     /// Use exactly this penalty, disabling the automatic scaling.
@@ -620,6 +647,16 @@ pub const Problem = struct {
     /// How many constraints the answer breaks. Zero when it keeps everything it was asked to.
     pub fn violations(self: *Problem) u32 {
         return c.ft_model_violations(self.h);
+    }
+
+    /// What the traded-away preferences cost. Zero when none broke, or before solving.
+    pub fn softCost(self: *Problem) f64 {
+        return c.ft_model_soft_cost(self.h);
+    }
+
+    /// Whether violation `i` is a hard one, or a preference the solver traded away.
+    pub fn violationIsHard(self: *Problem, i: u32) bool {
+        return c.ft_model_violation_is_hard(self.h, i) == 1;
     }
 
     /// Violation `i`, described in your own names, written into `buf`.
@@ -882,4 +919,61 @@ test "the compiled program exports as ftp" {
     const text = p.ftp(&buf);
     try std.testing.expect(std.mem.startsWith(u8, text, "ftp 1"));
     try std.testing.expect(std.mem.indexOf(u8, text, "spins 6") != null);
+}
+
+test "a preference is traded, a rule is not" {
+    // The same constraint twice over, once as a rule and once as a price. What changes is not
+    // whether the solver can break it -- a penalty was always breakable -- but what the answer
+    // MEANS when it does. A broken rule makes the answer no answer; a traded preference is the
+    // choice the modeller asked the solver to make, and it stays feasible.
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.categorical("a", 2);
+    const b = try p.categorical("b", 2);
+    try p.notEqual(a, b);
+    try p.softenLast(1.0);
+    try p.prefer(.maximize, 5.0, a.is(0));
+    try p.prefer(.maximize, 5.0, b.is(0));
+    _ = try p.compile();
+    try p.solve(24);
+    try std.testing.expect(p.feasible());
+    try std.testing.expectEqual(@as(u32, 1), p.violations());
+    try std.testing.expect(!p.violationIsHard(0));
+    try std.testing.expectEqual(@as(f64, 1.0), p.softCost());
+
+    // The identical model with the preference priced above the objective keeps it instead, and
+    // costs nothing. Same code path, opposite trade.
+    var q = try Problem.init();
+    defer q.deinit();
+    const c2 = try q.categorical("a", 2);
+    const d = try q.categorical("b", 2);
+    try q.notEqual(c2, d);
+    try q.softenLast(50.0);
+    try q.prefer(.maximize, 5.0, c2.is(0));
+    try q.prefer(.maximize, 5.0, d.is(0));
+    _ = try q.compile();
+    try q.solve(24);
+    try std.testing.expect(q.feasible());
+    try std.testing.expectEqual(@as(u32, 0), q.violations());
+    try std.testing.expectEqual(@as(f64, 0.0), q.softCost());
+}
+
+test "a soft counting constraint prices the overshoot, squared" {
+    var p = try Problem.init();
+    defer p.deinit();
+    var vars: [4]Var = undefined;
+    var lits: [4]Lit = undefined;
+    for (0..4) |i| {
+        var name: [8]u8 = undefined;
+        vars[i] = try p.binary(std.fmt.bufPrint(&name, "v{d}", .{i}) catch unreachable);
+        lits[i] = vars[i].is(1);
+        try p.prefer(.maximize, 20.0, lits[i]);
+    }
+    try p.countSoft(.at_most, 1, &lits, 1.0);
+    _ = try p.compile();
+    try p.solve(24);
+    try std.testing.expect(p.feasible());
+    // All four held against a cap of one, so it is over by three -- and three squared is nine,
+    // not three. Missing by two costs four times missing by one.
+    try std.testing.expectEqual(@as(f64, 9.0), p.softCost());
 }

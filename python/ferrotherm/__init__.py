@@ -177,6 +177,10 @@ _model_lits_clear = _sig("ft_model_lits_clear", c_uint32, [_p])
 _model_objective_product = _sig("ft_model_objective_product", c_uint32, [_p, c_uint32, c_double])
 _model_close = _sig("ft_model_close", c_uint32, [_p, c_uint32, c_uint32])
 _model_fixed_penalty = _sig("ft_model_fixed_penalty", c_uint32, [_p, c_double])
+_model_close_soft = _sig("ft_model_close_soft", c_uint32, [_p, c_uint32, c_uint32, c_double])
+_model_soften_last = _sig("ft_model_soften_last", c_uint32, [_p, c_double])
+_model_soft_cost = _sig("ft_model_soft_cost", c_double, [_p])
+_model_violation_is_hard = _sig("ft_model_violation_is_hard", c_uint32, [_p, c_uint32])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
 _model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
 _model_violation_amount = _sig("ft_model_violation_amount", c_double, [_p, c_uint32])
@@ -748,16 +752,17 @@ class Violation:
     over a ceiling, places under a floor, distance from a fixed value. Always positive.
     """
 
-    __slots__ = ("detail", "by")
+    __slots__ = ("detail", "by", "hard")
 
-    def __init__(self, detail: str, by: float) -> None:
-        self.detail, self.by = detail, float(by)
+    def __init__(self, detail: str, by: float, hard: bool = True) -> None:
+        self.detail, self.by, self.hard = detail, float(by), bool(hard)
 
     def __str__(self) -> str:
         return self.detail
 
     def __repr__(self) -> str:
-        return f"<Violation by {self.by:g}: {self.detail}>"
+        kind = "Violation" if self.hard else "Traded"
+        return f"<{kind} by {self.by:g}: {self.detail}>"
 
 
 class Grid:
@@ -830,7 +835,7 @@ class Answer:
     outbid is described in :attr:`violated`.
     """
 
-    __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated")
+    __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated", "soft_cost")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -861,7 +866,10 @@ class Answer:
         body = ", ".join(f"{k}={'?' if v is None else v}" for k, v in self.values.items())
         out = f"<Answer {head} energy={self.energy:.4f} [{body}]"
         for v in self.violated or ():
-            out += f"\n  broken: {v.detail} (by {v.by:g})"
+            word = "broken" if v.hard else "traded"
+            out += f"\n  {word}: {v.detail} (by {v.by:g})"
+        if self.soft_cost:
+            out += f"\n  soft cost: {self.soft_cost:g}"
         return out + ">"
 
 
@@ -968,39 +976,51 @@ class Problem:
 
     # -- constraints ----------------------------------------------------------------------------
 
-    def not_equal(self, a: Variable, b: Variable) -> None:
-        """``a`` and ``b`` must differ."""
-        self._must(_model_not_equal(self._h, a._index, b._index), "not_equal")
+    def not_equal(self, a: Variable, b: Variable, soft: "float | None" = None) -> None:
+        """``a`` and ``b`` must differ, or — with ``soft`` — had better.
 
-    def equal(self, a: Variable, b: Variable) -> None:
-        """``a`` and ``b`` must agree."""
+        A ``soft`` price makes this a preference the solver may trade away: breaking it costs and
+        the answer stays feasible. See :meth:`soften_last`.
+        """
+        self._must(_model_not_equal(self._h, a._index, b._index), "not_equal")
+        if soft is not None:
+            self.soften_last(soft)
+
+    def equal(self, a: Variable, b: Variable, soft: "float | None" = None) -> None:
+        """``a`` and ``b`` must agree, or — with ``soft`` — had better."""
         self._must(_model_equal(self._h, a._index, b._index), "equal")
+        if soft is not None:
+            self.soften_last(soft)
 
     def fix(self, v: Variable, value: int) -> None:
         """``v`` must take ``value``."""
         self._must(_model_fix(self._h, v._index, int(value)), "fix")
 
-    def exactly(self, of: "Sequence[Any]", k: int, value: int = 1) -> None:
+    def exactly(self, of: "Sequence[Any]", k: int, value: int = 1,
+                    soft: "float | None" = None) -> None:
         """Exactly ``k`` of them hold."""
-        self._counting(0, of, k, value, "exactly")
+        self._counting(0, of, k, value, "exactly", soft)
 
-    def at_most(self, of: "Sequence[Any]", k: int, value: int = 1) -> None:
+    def at_most(self, of: "Sequence[Any]", k: int, value: int = 1,
+                    soft: "float | None" = None) -> None:
         """At most ``k`` of them hold. Costs a slack variable."""
-        self._counting(1, of, k, value, "at_most")
+        self._counting(1, of, k, value, "at_most", soft)
 
-    def at_least(self, of: "Sequence[Any]", k: int, value: int = 1) -> None:
+    def at_least(self, of: "Sequence[Any]", k: int, value: int = 1,
+                     soft: "float | None" = None) -> None:
         """At least ``k`` of them hold. Costs a slack variable."""
-        self._counting(2, of, k, value, "at_least")
+        self._counting(2, of, k, value, "at_least", soft)
 
-    def exactly_one(self, of: "Sequence[Any]") -> None:
+    def exactly_one(self, of: "Sequence[Any]", soft: "float | None" = None) -> None:
         """Exactly one of them holds. Cheaper than ``exactly(of, 1)``: pairwise, with no slack."""
-        self._counting(3, of, 0, 1, "exactly_one")
+        self._counting(3, of, 0, 1, "exactly_one", soft)
 
-    def at_most_one(self, of: "Sequence[Any]") -> None:
+    def at_most_one(self, of: "Sequence[Any]", soft: "float | None" = None) -> None:
         """At most one of them holds."""
-        self._counting(4, of, 0, 1, "at_most_one")
+        self._counting(4, of, 0, 1, "at_most_one", soft)
 
-    def _counting(self, kind: int, of: "Sequence[Any]", k: int, value: int, what: str) -> None:
+    def _counting(self, kind: int, of: "Sequence[Any]", k: int, value: int, what: str,
+                  soft: "float | None" = None) -> None:
         """Any number of literals, each naming its own value.
 
         ``of`` takes variables -- in which case ``value`` applies to all of them, which is the common
@@ -1021,7 +1041,10 @@ class Problem:
                     "Write `p.at_most([a, b, c], 2)` or `p.at_most([a.is_(3), b.is_(17)], 1)`."
                 )
             self._must(_model_lit(self._h, lit.var._index, lit.value), what)
-        self._must(_model_close(self._h, kind, int(k)), what)
+        if soft is None:
+            self._must(_model_close(self._h, kind, int(k)), what)
+        else:
+            self._must(_model_close_soft(self._h, kind, int(k), float(soft)), what)
 
     # -- objective ------------------------------------------------------------------------------
 
@@ -1089,12 +1112,27 @@ class Problem:
         # is a near miss; "and 5 hold" is not, and only the magnitude separates them.
         broken = [
             Violation(_read_text_idx(_model_violation, self._h, i),
-                      _model_violation_amount(self._h, i))
+                      _model_violation_amount(self._h, i),
+                      _model_violation_is_hard(self._h, i) == 1)
             for i in range(_model_violations(self._h))
         ]
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
                       violated=broken, energy=float(_model_energy(self._h)),
-                      spins=int(spins), penalty=float(_model_penalty(self._h)))
+                      spins=int(spins), penalty=float(_model_penalty(self._h)),
+                      soft_cost=float(_model_soft_cost(self._h)))
+
+    def soften_last(self, weight: float) -> None:
+        """Make the constraint added most recently a preference, priced at ``weight``.
+
+        A hard constraint says which answers are answers at all. A soft one is a preference the
+        solver may trade away: breaking it costs ``weight × amount²`` and leaves the answer
+        feasible. The square is not a detail — a constraint becomes an energy term by squaring how
+        far outside it sits, so missing by two costs four times missing by one.
+
+        The weight is absolute rather than scaled: automatic scaling exists to stop a hard
+        constraint being outbid by the objective, and a soft one is meant to be traded against it.
+        """
+        self._must(_model_soften_last(self._h, float(weight)), "soft constraint")
 
     def penalty(self, p: float) -> None:
         """Use exactly this penalty, disabling the automatic scaling.

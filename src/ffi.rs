@@ -1379,7 +1379,18 @@ pub extern "C" fn ft_model_lits(m: *const ModelHandle) -> u32 {
 /// constraint cannot silently join the next one.
 #[no_mangle]
 pub extern "C" fn ft_model_close(m: *mut ModelHandle, kind: u32, k: u32) -> u32 {
+    close_counting(m, kind, k, None)
+}
+
+fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    if let Some(w) = soft {
+        if !(w > 0.0) || !w.is_finite() {
+            h.last_error = format!("a soft constraint needs a positive price, not {w}");
+            h.lits.clear();
+            return 0;
+        }
+    }
     let lits = core::mem::take(&mut h.lits);
     if lits.len() < 2 {
         h.last_error = format!(
@@ -1409,8 +1420,67 @@ pub extern "C" fn ft_model_close(m: *mut ModelHandle, kind: u32, k: u32) -> u32 
             return 0;
         }
     };
-    h.model.constrain(c);
+    match soft {
+        Some(w) => h.model.soft(c, w),
+        None => h.model.constrain(c),
+    };
     1
+}
+
+/// Close the pending literal list as a SOFT counting constraint, at a price.
+///
+/// Same `kind` codes as [`ft_model_close`]. The difference is what breaking it means: a hard
+/// constraint says which answers are answers at all, so breaking one makes
+/// [`ft_model_feasible`] zero; a soft one is a preference with a number on it, and breaking it
+/// costs `weight` and leaves the answer feasible. [`ft_model_soft_cost`] totals what was traded.
+///
+/// The weight is absolute, not scaled. Automatic scaling exists to stop a hard constraint being
+/// outbid by the objective; a soft one is meant to be traded against it.
+#[no_mangle]
+pub extern "C" fn ft_model_close_soft(
+    m: *mut ModelHandle,
+    kind: u32,
+    k: u32,
+    weight: f64,
+) -> u32 {
+    close_counting(m, kind, k, Some(weight))
+}
+
+/// Make the last constraint added a soft one, at `weight`.
+///
+/// For the pairwise constraints — `not_equal`, `equal`, `fix` — which take their arguments
+/// directly rather than through the literal list. Returns 0 if no constraint has been added or the
+/// weight is not a positive number.
+#[no_mangle]
+pub extern "C" fn ft_model_soften_last(m: *mut ModelHandle, weight: f64) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    if !(weight > 0.0) || !weight.is_finite() {
+        h.last_error = format!("a soft constraint needs a positive price, not {weight}");
+        return 0;
+    }
+    if !h.model.soften_last(weight) {
+        h.last_error = "there is no constraint to soften yet".into();
+        return 0;
+    }
+    1
+}
+
+/// What the broken soft constraints cost. Zero when none broke, or before solving.
+#[no_mangle]
+pub extern "C" fn ft_model_soft_cost(m: *const ModelHandle) -> f64 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.soft_cost(),
+        None => 0.0,
+    }
+}
+
+/// 1 if violation `i` is a hard one, 0 if it is a preference that was traded away.
+#[no_mangle]
+pub extern "C" fn ft_model_violation_is_hard(m: *const ModelHandle, i: u32) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.violated.get(i as usize).map(|v| v.hard as u32).unwrap_or(1),
+        None => 1,
+    }
 }
 
 /// Use exactly this penalty, disabling the automatic scaling.
@@ -1572,6 +1642,92 @@ mod cardinality_ffi {
         assert!(e.contains("OneHot") || e.contains("one-hot"), "{e}");
         ft_model_free(m);
     }
+
+    #[test]
+    fn a_soft_constraint_crosses_the_c_abi_as_a_price() {
+        // Both would rather be on shift 0; the clash is priced. Cheap, they take it and the answer
+        // is still feasible; dear, they do not.
+        let run = |price: f64| {
+            let m = ft_model_new();
+            let a = ft_model_categorical(m, 2);
+            let b = ft_model_categorical(m, 2);
+            ft_model_not_equal(m, a, b);
+            assert_eq!(ft_model_soften_last(m, price), 1);
+            ft_model_objective_term(m, 1, 5.0, a, 0);
+            ft_model_objective_term(m, 1, 5.0, b, 0);
+            assert!(ft_model_compile(m) > 0);
+            assert_eq!(ft_model_solve(m, 24), 1);
+            let out = (
+                ft_model_value(m, a),
+                ft_model_value(m, b),
+                ft_model_feasible(m),
+                ft_model_soft_cost(m),
+                ft_model_violations(m),
+            );
+            ft_model_free(m);
+            out
+        };
+
+        let (a, b, feasible, cost, n) = run(1.0);
+        assert_eq!((a, b), (0, 0), "a cheap clash is worth having");
+        assert_eq!(feasible, 1, "and a soft violation is not an infeasible answer");
+        assert_eq!(cost, 1.0);
+        assert_eq!(n, 1, "it is still reported");
+
+        let (a, b, _, cost, _) = run(50.0);
+        assert_ne!(a, b, "a dear one is not");
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn hard_and_soft_are_distinguishable_over_the_abi() {
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 2);
+        let b = ft_model_categorical(m, 2);
+        ft_model_not_equal(m, a, b);
+        ft_model_fixed_penalty(m, 1.0);            // hard, and deliberately outbid
+        ft_model_objective_term(m, 1, 40.0, a, 0);
+        ft_model_objective_term(m, 1, 40.0, b, 0);
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 16);
+        assert_eq!(ft_model_feasible(m), 0, "a broken hard constraint is infeasible");
+        assert_eq!(ft_model_violation_is_hard(m, 0), 1);
+        assert_eq!(ft_model_soft_cost(m), 0.0, "a hard constraint has no price");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn a_soft_counting_constraint_and_a_bad_price_are_both_handled() {
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..4).map(|_| ft_model_binary(m)).collect();
+        for &i in &v {
+            ft_model_lit(m, i, 1);
+            // Worth more than the clash costs. The penalty is SQUARED, so taking all four is
+            // priced at 1·(4-2)² = 4 against 1·(3-2)² = 1 for taking three: a reward of 3 apiece
+            // makes those exactly equal, which is a tie rather than a test.
+            ft_model_objective_term(m, 1, 4.0, i, 1);
+        }
+        // "prefer at most two", priced below what taking the other two is worth
+        assert_eq!(ft_model_close_soft(m, 1, 2, 1.0), 1);
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 24);
+        assert_eq!(v.iter().filter(|&&i| ft_model_value(m, i) == 1).count(), 4, "all four taken");
+        assert_eq!(ft_model_feasible(m), 1, "and the answer is still an answer");
+        assert_eq!(ft_model_violation_is_hard(m, 0), 0, "the violation is a traded preference");
+        assert!(ft_model_soft_cost(m) > 0.0);
+        ft_model_free(m);
+
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        ft_model_lit(m, a, 1);
+        ft_model_lit(m, b, 1);
+        assert_eq!(ft_model_close_soft(m, 1, 1, 0.0), 0, "a price must be positive");
+        assert_eq!(ft_model_lits(m), 0, "and a refused constraint clears the list");
+        assert_eq!(ft_model_soften_last(m, 1.0), 0, "with nothing to soften");
+        ft_model_free(m);
+    }
+
 
     #[test]
     fn a_higher_order_objective_term_crosses_the_c_abi() {

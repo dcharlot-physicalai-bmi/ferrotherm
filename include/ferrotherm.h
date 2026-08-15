@@ -228,6 +228,31 @@ uint32_t ft_model_lits(const ft_model *m);   /* how many are pending */
  * The last two ignore k and lower pairwise, with no slack variable -- prefer them over k = 1. */
 uint32_t ft_model_close(ft_model *m, uint32_t kind, uint32_t k);
 
+/* SOFT constraints: a preference with a price, rather than a rule.
+ *
+ * A hard constraint says which answers are answers at all, so breaking one makes ft_model_feasible
+ * zero. A soft one is a preference the solver may trade away: breaking it costs, and the answer
+ * stays feasible. Both compile to the same squared penalty; what differs is what the answer means.
+ *
+ * ft_model_close_soft closes the pending literal list as a soft counting constraint (same kind
+ * codes as ft_model_close). ft_model_soften_last makes the constraint added most recently soft,
+ * for the pairwise ones that take their arguments directly.
+ *
+ * The weight is ABSOLUTE, not scaled. Automatic scaling exists to stop a hard constraint being
+ * outbid by the objective; a soft one is meant to be traded against it.
+ *
+ * The price is weight * amount SQUARED, and the square is not a detail: a constraint becomes an
+ * energy term by squaring how far outside it sits, so missing by two costs four times missing by
+ * one. Pricing a preference chooses that curve as well as its scale. */
+uint32_t ft_model_close_soft(ft_model *m, uint32_t kind, uint32_t k, double weight);
+uint32_t ft_model_soften_last(ft_model *m, double weight);
+
+/* What the broken soft constraints cost. Zero when none broke, or before solving. */
+double ft_model_soft_cost(const ft_model *m);
+
+/* 1 if violation i is a hard one, 0 if it is a preference that was traded away. */
+uint32_t ft_model_violation_is_hard(const ft_model *m, uint32_t i);
+
 /* Objective terms. `maximize` is 1 to prefer large, 0 to prefer small. The pair form is quadratic:
  * it rewards two variables taking their values together. */
 uint32_t ft_model_objective_term(ft_model *m, uint32_t maximize, double coeff,

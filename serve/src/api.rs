@@ -593,6 +593,34 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 .get("type")
                 .and_then(|k| k.as_str())
                 .ok_or_else(|| format!("constraint {i} needs a \"type\""))?;
+
+            // A "soft" price turns any constraint into a preference the solver may trade away. It
+            // is read here rather than in each arm so that every constraint kind gets it, including
+            // ones added later -- the parity rule this surface has broken before.
+            //
+            // Not `.and_then(as_f64)`: a "soft" the reader cannot understand would silently become
+            // a HARD constraint, which is the opposite of what was asked for, returned with no
+            // error. A string "5" is a modelling mistake and says so.
+            let soft = match c.get("soft") {
+                None => None,
+                Some(x) => Some(x.as_f64().ok_or_else(|| {
+                    format!(
+                        "constraint {i} ({kind}): \"soft\" is a price and must be a number, not {}. \
+                         Omit it for a hard constraint.",
+                        describe(x)
+                    )
+                })?),
+            };
+            if let Some(w) = soft {
+                if !w.is_finite() || w <= 0.0 {
+                    return Err(format!(
+                        "constraint {i} ({kind}): \"soft\" must be a positive, finite price, not \
+                         {w}. A price of zero or less is not a preference -- omit the field to make \
+                         the constraint hard."
+                    ));
+                }
+            }
+
             match kind {
                 "not_equal" | "equal" => {
                     let a = find(c.get("a").and_then(|x| x.as_str()).unwrap_or(""))?;
@@ -669,6 +697,13 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                         "unknown constraint {other:?}; known: not_equal, equal, fix, \
                          cardinality, at_most, at_least, exactly_one, at_most_one"
                     ))
+                }
+            }
+
+            if let Some(w) = soft {
+                // Every arm above added exactly one constraint, so "the last one" is this one.
+                if !m.soften_last(w) {
+                    return Err(format!("constraint {i} ({kind}) could not be made soft"));
                 }
             }
         }
@@ -786,12 +821,20 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                         Json::obj(vec![
                             ("constraint", Json::s(&v.detail)),
                             ("by", Json::n(v.amount)),
+                            // A hard one means the answer is not an answer. A soft one means the
+                            // solver made the trade it was asked to price, and the answer stands.
+                            // Both appear here; only the hard ones move "feasible".
+                            ("hard", Json::Bool(v.hard)),
+                            ("cost", Json::n(v.cost)),
                         ])
                     })
                     .collect(),
             ),
         ),
         ("energy", Json::n(sol.energy)),
+        // What the traded-away preferences cost, separated from the objective on purpose: telling
+        // those apart is the whole point of saying a constraint is soft.
+        ("soft_cost", Json::n(sol.soft_cost())),
         ("spins", Json::n(compiled.spins() as f64)),
         // Spins the higher-order lowering added. Non-zero means the answer solves a model with more
         // spins than the variables required, and that the guarantee is about optima not sampling.
@@ -804,10 +847,13 @@ pub fn solve(req: &Json) -> Result<Json, String> {
             "note",
             Json::s(
                 "`feasible: false` means the answer breaks something you asked for: either a \
-                 variable in \"did_not_decode\" whose encoding was violated, or a constraint in \
-                 \"violated\" that the objective outbid. A penalty makes a constraint expensive, \
+                 variable in \"did_not_decode\" whose encoding was violated, or a HARD constraint \
+                 in \"violated\" that the objective outbid. A penalty makes a constraint expensive, \
                  not impossible. Raise \"penalty\" or lower the objective weights and try again; \
                  if it stays infeasible at a large penalty, the problem itself may have no answer. \
+                 Entries with \"hard\": false are preferences you priced with \"soft\", and the \
+                 solver trading one away leaves the answer feasible -- \"soft_cost\" totals what \
+                 those trades cost, at weight x amount SQUARED. \
                  The \"ftp\" field is the compiled program and runs unchanged on any backend.",
             ),
         ),
@@ -1420,5 +1466,86 @@ mod silent_wrongness {
         let v = r.get("values").unwrap();
         assert_eq!((v.get("a").unwrap().as_f64(), v.get("b").unwrap().as_f64()),
                    (Some(1.0), Some(1.0)), "at least 2 of 2 means both, against a penalty on both");
+    }
+
+    #[test]
+    fn a_soft_constraint_is_traded_and_priced_while_a_hard_one_is_not() {
+        // The same model twice, differing only in whether the constraint is a rule or a price.
+        // What changes is not whether the solver CAN break it -- a penalty was always breakable --
+        // but what the answer means when it does, and the reply has to say which happened.
+        let body = |c: &str| {
+            format!(
+                r#"{{"variables":[{{"name":"a","values":2}},{{"name":"b","values":2}}],
+                    "constraints":[{{"type":"not_equal","a":"a","b":"b"{c}}}],
+                    "objective":{{"maximize":true,"terms":[
+                       {{"var":"a","value":0,"weight":5}},{{"var":"b","value":0,"weight":5}}]}},
+                    "tries":24}}"#
+            )
+        };
+
+        let soft = dispatch("solve", &crate::json::parse(&body(r#","soft":1"#)).unwrap()).unwrap();
+        assert_eq!(soft.get("feasible").unwrap().as_bool(), Some(true), "{soft:?}");
+        let broke = soft.get("violated").unwrap().as_arr().unwrap();
+        assert_eq!(broke.len(), 1, "the cheap preference should have been traded: {soft:?}");
+        assert_eq!(broke[0].get("hard").unwrap().as_bool(), Some(false));
+        assert_eq!(broke[0].get("cost").unwrap().as_f64(), Some(1.0));
+        assert_eq!(soft.get("soft_cost").unwrap().as_f64(), Some(1.0));
+
+        // The identical constraint as a rule: the solver keeps it and gives up the objective.
+        let hard = dispatch("solve", &crate::json::parse(&body("")).unwrap()).unwrap();
+        assert_eq!(hard.get("feasible").unwrap().as_bool(), Some(true), "{hard:?}");
+        assert!(hard.get("violated").unwrap().as_arr().unwrap().is_empty(), "{hard:?}");
+        assert_eq!(hard.get("soft_cost").unwrap().as_f64(), Some(0.0));
+
+        // And priced above the objective, the preference is kept rather than traded. Same field,
+        // opposite outcome: this is the knob doing what it says.
+        let dear = dispatch("solve", &crate::json::parse(&body(r#","soft":50"#)).unwrap()).unwrap();
+        assert!(dear.get("violated").unwrap().as_arr().unwrap().is_empty(), "{dear:?}");
+        assert_eq!(dear.get("soft_cost").unwrap().as_f64(), Some(0.0));
+    }
+
+    #[test]
+    fn a_soft_price_is_squared_over_the_wire() {
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"v0","values":2},{"name":"v1","values":2},
+                                 {"name":"v2","values":2},{"name":"v3","values":2}],
+                    "constraints":[{"type":"at_most","k":1,"soft":1,"of":[
+                       {"var":"v0","value":1},{"var":"v1","value":1},
+                       {"var":"v2","value":1},{"var":"v3","value":1}]}],
+                    "objective":{"maximize":true,"terms":[
+                       {"var":"v0","value":1,"weight":20},{"var":"v1","value":1,"weight":20},
+                       {"var":"v2","value":1,"weight":20},{"var":"v3","value":1,"weight":20}]},
+                    "tries":24}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true), "{r:?}");
+        // All four held against a cap of one, so it is over by three -- and three squared is nine,
+        // not three. A caller pricing a preference is choosing that curve as well as its scale, and
+        // reporting a linear price here would misstate what the solver actually traded.
+        assert_eq!(r.get("soft_cost").unwrap().as_f64(), Some(9.0), "{r:?}");
+    }
+
+    #[test]
+    fn a_soft_price_that_is_not_a_number_is_refused_rather_than_ignored() {
+        // The failure this guards is silent: an unreadable "soft" that falls back to None leaves a
+        // HARD constraint where a preference was asked for, which is the opposite instruction,
+        // returned with feasible: true and nothing to suggest anything went wrong. Five bugs of
+        // exactly this shape have already been found on this surface.
+        for bad in [r#""soft":"5""#, r#""soft":true"#, r#""soft":0"#, r#""soft":-3"#] {
+            let e = dispatch(
+                "solve",
+                &crate::json::parse(&format!(
+                    r#"{{"variables":[{{"name":"a","values":2}},{{"name":"b","values":2}}],
+                        "constraints":[{{"type":"not_equal","a":"a","b":"b",{bad}}}]}}"#
+                ))
+                .unwrap(),
+            )
+            .unwrap_err();
+            assert!(e.contains("soft"), "{bad} should be refused by name, got: {e}");
+        }
     }
 }

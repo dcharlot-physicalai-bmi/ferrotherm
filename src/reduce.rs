@@ -38,7 +38,7 @@
 //! assignments expensive rather than impossible. Use this to find ground states, and read
 //! [`Reduction::penalty`] before sampling from one.
 
-use crate::factor::Factor;
+
 use crate::ftp::Program;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
