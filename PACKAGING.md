@@ -91,6 +91,20 @@ The release job proves the artifact is the library it claims before publishing a
 the tarballs locally, loads the JLL against them, and calls `ft_onsager(0.5)`, requiring
 `0.911319377877496` — Onsager's closed form, to the last digit.
 
+**And then it checks the published URL, which is a different claim.** That local test passed for
+three releases while every URL in the shipped `Artifacts.toml` was a 404: the tarballs went to a CI
+artifact, which expires and lives at another address, and the check rewrote the URLs to `localhost`
+before testing them. A gate that substitutes a working stand-in for the thing under test reports on
+the stand-in. The job now creates the release, attaches the tarballs, fetches each **published** URL
+and compares the bytes to the hash the manifest commits them to — then commits that manifest back
+into the package, because the one in the repository had been sitting at the previous release's
+hashes.
+
+A cold `Pkg.add` prints `Failure artifact: ferrotherm` once before succeeding. **That is expected.**
+Julia asks `pkg.julialang.org` for the tree hash first, and a self-hosted artifact is not in the
+General registry, so it 404s and Julia falls back to the URL in `Artifacts.toml`. Nothing is wrong;
+it is what self-hosting looks like from the inside.
+
 `Ferrotherm.jl` uses the JLL when it is installed and falls back to a checkout otherwise, in this
 order: `FERROTHERM_LIB` (an explicit override always wins — someone who set it is debugging a
 specific build), then the artifact, then `target/release`. It is a **soft** dependency on purpose:
