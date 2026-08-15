@@ -2589,7 +2589,9 @@ R-hat; and there is no optimality certificate (no dual bound) on the optimisatio
 
 > /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/src/certify.rs (Finding 31-44, fit_beta 128-182, tau_int 189-213, certify 219-345); src/conform.rs (run 78-, AlwaysUp 250, Narrow 279); src/exact.rs; src/planted.rs; spec/ftp-v1.md; tests/spec_conformance.rs
 
-### 10. Energy / cost accounting (joules or price per operation) — partial
+### 10. Energy / cost accounting (joules or price per operation) — **yes** (0.9.0)
+
+**Updated 2026-08-15.** All three findings closed, and the first was worse than reported. (a) `writes` is charged: `Device::program` IS the write, the trait now says so, and both the CPU and Hitachi implementations charge one per node. A demonstration run shows the write at 100% of the projected energy, which is the module's own thesis and was invisible while the term sat at zero. (b) `Prices` carries a `source` naming what the numbers describe, and `Prices::UNSTATED` exists: Hitachi and the CPU declare it rather than borrowing Z1's SPICE estimates, and `Ledger::joules` returns `Option<f64>` — `None`, not zero, because a device nobody has characterised does not cost nothing. The HTTP surface reported Z1 joules for every run including a plain CPU sample; it now reports exact COUNTS always, joules as null when unpriced, and a `priced_as` field generated from the prices rather than hardcoded. (c) `reflash_hz_cap` feeds `Ledger::reflash_seconds`: a workload that reflashes faster than the device sustains is unphysical, and pricing it describes a run that could not have happened. Still open: no wall-clock power measurement (a measured-energy API needs platform-specific counters and would belong in a sibling crate, like the GPU backend).
 
 `ledger::Ledger{samples, reads, writes}` with `joules(&Prices)` and `shares()`, and
 `Prices{e_sample, e_read, e_write, reflash_hz_cap}`. Every sampler takes `Option<&mut Ledger>`

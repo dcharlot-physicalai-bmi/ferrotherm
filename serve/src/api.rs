@@ -171,27 +171,38 @@ fn opt_usize(v: &Json, key: &str, dflt: usize) -> usize {
 }
 
 fn ledger_json(l: &Ledger, p: &Prices, wall_s: f64) -> Json {
+    // Counts are exact and always reported: they are what this run actually did. Joules are a
+    // PROJECTION onto a device model, so they are reported only when that model states prices, and
+    // the note is generated from the prices rather than written here -- a hardcoded note is how a
+    // figure ends up labelled with the wrong machine when the prices change underneath it.
     let (fs, fr, fw) = l.shares(p);
+    let num = |v: f64| if v.is_finite() { Json::n(v) } else { Json::Null };
     Json::obj(vec![
         ("node_updates", Json::n(l.samples as f64)),
         ("reads", Json::n(l.reads as f64)),
         ("writes", Json::n(l.writes as f64)),
-        ("joules_z1_spice", Json::n(l.joules(p))),
+        // Named for what it is: a projection onto a named device, null when that device has none.
+        (
+            "joules",
+            match l.joules(p) {
+                Some(j) => Json::n(j),
+                None => Json::Null,
+            },
+        ),
+        ("priced_as", Json::s(p.source)),
         (
             "share",
-            Json::obj(vec![
-                ("sample", Json::n(fs)),
-                ("read", Json::n(fr)),
-                ("write", Json::n(fw)),
-            ]),
+            Json::obj(vec![("sample", num(fs)), ("read", num(fr)), ("write", num(fw))]),
         ),
         ("wall_seconds", Json::n(wall_s)),
         (
             "note",
-            Json::s(
-                "joules are Z1-class SPICE prices from arXiv:2608.01615 Table IV, applied to \
-                 counted operations. They price the modelled device, not this CPU.",
-            ),
+            Json::s(&format!(
+                "Counts are what this run did and are exact. \"joules\" is a projection of those \
+                 counts onto a device model, null when the model publishes no per-operation \
+                 energy; \"priced_as\" says whose numbers they are. {}",
+                p.source
+            )),
         ),
     ])
 }

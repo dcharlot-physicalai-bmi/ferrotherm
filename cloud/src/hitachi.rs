@@ -27,7 +27,7 @@
 use ferrotherm::fabric::{Device, Fabric, Topology, Unsupported};
 use ferrotherm::embed::Embedding;
 use ferrotherm::ftp::Program;
-use ferrotherm::ledger::{Ledger, Z1_SPICE};
+use ferrotherm::ledger::{Ledger, Prices};
 use ferrotherm::schedule::Schedule;
 
 /// Which machine to run on.
@@ -331,13 +331,23 @@ impl Device for Hitachi {
             coupling_range: Some(self.machine.range()),
             field_range: Some(self.machine.range()),
             uniform_couplings: false,
-            prices: Z1_SPICE,
+            // NOT Z1_SPICE. This is Hitachi's CMOS annealing ASIC; Z1 is Extropic's, and it has
+            // not been characterised. Declaring one vendor's pre-silicon SPICE estimates as
+            // another vendor's measured cost produced a joules figure that looked exactly like a
+            // real one -- which is the whole failure mode the ledger exists to prevent.
+            //
+            // This review did not locate published per-operation energy for Annealing Cloud Web's
+            // hardware. `unstated` is what that fact looks like in the type system.
+            prices: Prices::UNSTATED,
         }
     }
 
     fn program(&mut self, p: &Program) -> Vec<Unsupported> {
         let bad = self.fabric().check(p);
         if bad.is_empty() {
+            // A successful load flashes every node onto the device: the write the ledger
+            // is built to account for, and the one it was never charged.
+            self.ledger.writes += p.spins as u64;
             if let Err(e) = self.layout(p) {
                 // A layout failure is a capability failure, and it now says WHAT failed. Every one
                 // of them used to come back as `TooHighDegree { degree: 0, limit: 8 }` -- which

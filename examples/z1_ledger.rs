@@ -54,7 +54,7 @@ fn main() {
         let (s, r, wr) = led.shares(&p);
         println!("A. GENERATIVE, model resident, 64 samples x {k_mix} sweeps, read 834 data nodes/sample:");
         println!("   total {}   shares: sampling {:.0}%  read {:.0}%  write {:.0}% (one-time program)",
-                 joules_fmt(led.joules(&p)), s * 100.0, r * 100.0, wr * 100.0);
+                 joules_fmt(led.joules(&p).expect("these examples price against stated prices")), s * 100.0, r * 100.0, wr * 100.0);
         println!("   -> their favorable regime, reproduced: local updates dominate, I/O amortized.\n");
     }
 
@@ -79,7 +79,7 @@ fn main() {
             let _ = smp.read_subset(&act_idx, Some(&mut led));
         }
         let (s, r, wr) = led.shares(&p);
-        let per_tick = led.joules(&p) / ticks as f64;
+        let per_tick = led.joules(&p).expect("these examples price against stated prices") / ticks as f64;
         println!("B1. CONTROL 100 Hz, clamping BILLED AS WRITE (Table IV literal), {obs_bits} obs + {act_bits} act bits/tick:");
         println!("    per tick {}   shares: sampling {:.0}%  read {:.0}%  write {:.0}%",
                  joules_fmt(per_tick), s * 100.0, r * 100.0, wr * 100.0);
@@ -102,8 +102,8 @@ fn main() {
             let _ = smp.read_subset(&act_idx, Some(&mut led));
         }
         let (s, r, wr) = led.shares(&p);
-        let per_tick = led.joules(&p) / ticks as f64;
-        let per_tick_no_program = (led.joules(&p) - n as f64 * p.e_write) / ticks as f64;
+        let per_tick = led.joules(&p).expect("these examples price against stated prices") / ticks as f64;
+        let per_tick_no_program = (led.joules(&p).expect("these examples price against stated prices") - n as f64 * p.e_write) / ticks as f64;
         println!("\nB2. CONTROL 100 Hz, clamping priced READ-CLASS (optimistic, unpublished):");
         println!("    per tick {} ({} excluding one-time program)   shares: sampling {:.0}%  read {:.0}%  write {:.0}%",
                  joules_fmt(per_tick), joules_fmt(per_tick_no_program), s * 100.0, r * 100.0, wr * 100.0);

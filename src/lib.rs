@@ -36,8 +36,11 @@
 //!
 //! let m = (smp.s.iter().map(|&v| v as i64).sum::<i64>().abs() as f64) / g.n as f64;
 //! assert!(m > 0.9, "ordered phase: |M| = {m}");
-//! // what those sweeps WOULD cost on a Z1-class device (pre-silicon vendor prices)
-//! assert!(led.joules(&Z1_SPICE) > 0.0);
+//! // What those sweeps WOULD cost on a Z1-class device. `joules` returns an Option because a
+//! // device whose per-operation energy nobody has published has no answer here -- and borrowing
+//! // another device's prices produces a figure indistinguishable from a measured one.
+//! assert!(led.joules(&Z1_SPICE).unwrap() > 0.0);
+//! assert_eq!(led.joules(&ferrotherm::ledger::Prices::UNSTATED), None);
 //! ```
 //!
 //! Scope note: binary (pbit) nodes with pairwise couplings are the sampling core. Categorical

@@ -102,7 +102,9 @@ pub extern "C" fn ft_energy(sim: *const Sim) -> f64 {
 /// Joules this simulation WOULD have cost on a Z1-class device (vendor SPICE prices, pre-silicon).
 #[no_mangle]
 pub extern "C" fn ft_ledger_joules_z1(sim: *const Sim) -> f64 {
-    unsafe { sim.as_ref() }.map_or(0.0, |s| s.ledger.joules(&Z1_SPICE))
+    // Z1_SPICE always states prices, so the NaN branch is unreachable -- but joules()
+    // returns Option now precisely so a caller cannot forget that some devices have none.
+    unsafe { sim.as_ref() }.map_or(0.0, |s| s.ledger.joules(&Z1_SPICE).unwrap_or(f64::NAN))
 }
 
 /// Onsager's exact spontaneous magnetization for the 2D lattice at this beta (J = 1).

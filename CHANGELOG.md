@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### A joules figure now has to say whose machine it describes
+
+**Breaking:** `Ledger::joules` returns `Option<f64>`, and `Prices` gained a `source` field.
+
+Every fabric in the tree declared `Z1_SPICE`. So a Hitachi CMOS annealing ASIC and a laptop CPU both
+reported Extropic's pre-silicon SPICE estimates as their own energy, and the HTTP surface reported
+them for every run including a plain CPU sample. Nothing was lying — nothing had been asked to say
+whose numbers these were.
+
+- `Prices::source` travels with the numbers. `Prices::UNSTATED` is what "nobody has published this"
+  looks like in the type system; Hitachi and the CPU device declare it.
+- `joules` returns `None` rather than zero for an uncharacterised device. Zero is a claim that it
+  costs nothing.
+- HTTP reports exact **counts** always, `joules` as null when unpriced, and `priced_as` generated
+  from the prices — a hardcoded note is how a figure ends up labelled with the wrong machine.
+
+### The write is charged
+
+`Ledger::writes` was incremented by **nothing** in the library, so every figure the stack produced
+was a sample-and-read story with the expensive term silently zero — on this hardware class a write
+costs roughly 21,700 samples, which is the module's entire thesis. `Device::program` *is* the write;
+the trait says so now, and the CPU and Hitachi implementations charge one per node. A demonstration
+run reports the write at **100%** of the projected energy.
+
+### `reflash_hz_cap` is read
+
+It was declared and consulted by nothing. `Ledger::reflash_seconds` turns it into a wall-clock floor:
+a workload that reflashes the whole graph faster than the device sustains is not fast, it is
+unphysical, and pricing it describes a run that could not have happened.
+
+
 ### The compiler says what it knows
 
 `Slot::add_penalty` has always returned whether the encoding it added can be exact, and **both

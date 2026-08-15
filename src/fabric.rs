@@ -944,6 +944,14 @@ pub trait Device {
     fn fabric(&self) -> Fabric;
 
     /// Load a program. Returns every reason it cannot run, empty on success.
+    ///
+    /// **A successful load is a WRITE and must be charged as one** —
+    /// `ledger.writes += p.spins as u64`. On this hardware class a write costs roughly 21,700
+    /// samples, so it is the term the ledger's whole thesis rests on: the architecture wins where
+    /// many local updates happen between infrequent I/O. Until this was written down, no
+    /// implementation charged it, `Ledger::writes` was incremented by nothing in the library, and
+    /// every joules figure the stack produced was a sample-and-read story with the expensive term
+    /// silently zero.
     fn program(&mut self, p: &Program) -> Vec<Unsupported>;
 
     /// Run a schedule and return the final state.
@@ -968,7 +976,11 @@ impl Default for Cpu {
 
 impl Device for Cpu {
     fn fabric(&self) -> Fabric {
-        let mut f = Fabric::unconstrained("cpu", crate::ledger::Z1_SPICE);
+        // NOT Z1_SPICE. This is whatever CPU the caller is running on, and Z1 is a specific
+        // unfabricated accelerator; pricing a laptop's Gibbs sweeps with another company's SPICE
+        // estimates produces a figure indistinguishable from a real measurement. The ledger's
+        // COUNTS are exact either way -- what is unstated is the joules per count.
+        let mut f = Fabric::unconstrained("cpu", crate::ledger::Prices::UNSTATED);
         // It lowers through `Program::to_graph`, which is pairwise. `unconstrained` says
         // `usize::MAX`, which let an arity-3 program through `check` and then failed in `program`
         // with a hardcoded `arity: 3` -- reporting three however many the program really had.
@@ -982,6 +994,8 @@ impl Device for Cpu {
             match p.to_graph() {
                 Ok(g) => {
                     self.state = vec![-1; g.n];
+                    // The write, charged. One node's couplings, bias and clamp state flashed.
+                    self.ledger.writes += g.n as u64;
                     self.graph = Some(g);
                 }
                 // `check` above declares max_arity 2, so a higher-order program is refused there
