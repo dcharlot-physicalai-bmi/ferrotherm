@@ -122,11 +122,70 @@ for sym in "${symbols[@]}"; do
   done
 done
 
+# ---- and the gap this check could not see -------------------------------------------------------
+#
+# Everything above asks whether the core's C ABI reaches the bindings. It has nothing to say about a
+# capability that never entered the core at all -- which is how the OMMX bridge shipped as a sibling
+# crate, reachable from Rust and from none of the other eight surfaces, past a check written
+# precisely to stop that.
+#
+# A sibling exists because the core cannot hold it. Every one of them can say why:
+#
+#   silicon  nusb, pollster            an external dependency
+#   cloud    ureq                      an external dependency
+#   gpu      wgpu, pollster            an external dependency
+#   serve    two [[bin]] targets       an application, not a library capability
+#   meter    std::process              an API the core's wasm target does not have
+#
+# A sibling with none of those is a sibling with no reason to be one, and being out there costs it
+# eight surfaces. `ommx` had zero external dependencies, zero binaries and no wasm-hostile API; it
+# is now src/ommx.rs beside ftp.rs and lp.rs.
+echo
+echo "── sibling crates: what keeps each one out of the core ─────────────────────"
+orphans=0
+# `set -euo pipefail` is on, and a grep that matches nothing returns 1 -- which under pipefail kills
+# the whole substitution and, with -e, the script. The first version of this block printed its
+# heading and silently stopped. Counting through a function that always succeeds is the fix.
+# `grep -c` PRINTS a count and RETURNS 1 when that count is zero, so `|| echo 0` appended a second
+# zero and the integer test below silently failed on "0\n0". Take grep's own number and only
+# default when there is none.
+count_matches() { local n; n=$(grep -cE "$1" "$2" 2>/dev/null || true); echo "${n:-0}"; }
+for c in $(ls -d */ 2>/dev/null | tr -d /); do
+  [[ -f "$c/Cargo.toml" ]] || continue
+  grep -q '^\[package\]' "$c/Cargo.toml" || continue
+  deps_block=$(sed -n '/^\[dependencies\]/,/^\[/p' "$c/Cargo.toml" 2>/dev/null || true)
+  ext=$(printf '%s\n' "$deps_block" | grep -E '^[a-z0-9_-]+ *=' 2>/dev/null | { grep -vc '^ferrotherm' 2>/dev/null || true; })
+  ext=${ext:-0}
+  bins=$(count_matches '^\[\[bin\]\]' "$c/Cargo.toml")
+  # Third instance of the same trap in one block, so it is worth naming: under `set -euo pipefail`
+  # a grep that matches nothing returns 1, pipefail propagates that through the pipeline, and -e
+  # kills the script AFTER the assignment has already succeeded. Every one of these needs its own
+  # `|| true`, and the symptom is a heading printed with nothing under it.
+  hostile=$( { grep -rl 'std::process\|std::net\|std::thread' "$c/src" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  if [[ "${ext:-0}" -gt 0 ]]; then
+    printf '  %-10s %s external dependenc(ies)\n' "$c" "$ext"
+  elif [[ "${bins:-0}" -gt 0 ]]; then
+    printf '  %-10s an application (%s binary target(s))\n' "$c" "$bins"
+  elif [[ "${hostile:-0}" -gt 0 ]]; then
+    printf '  %-10s uses std APIs the core wasm target does not have\n' "$c"
+  else
+    printf '  %-10s NOTHING KEEPS IT OUT -- it belongs in the core\n' "$c"
+    orphans=$((orphans + 1))
+  fi
+done
+
 echo
 echo "checked ${#symbols[@]} C ABI symbols across ${#SURFACES[@]} surfaces ($exempted documented gaps)"
 if [[ $stale -gt 0 ]]; then
   echo
   echo "$stale EXEMPT entries name symbols that do not exist. Remove them." >&2
+  exit 1
+fi
+if [[ $orphans -gt 0 ]]; then
+  echo
+  echo "$orphans sibling crate(s) have no reason to be siblings." >&2
+  echo "A crate outside the core cannot be reached by the C ABI, so it reaches Rust and none of the" >&2
+  echo "other eight surfaces. Move it into the core, or give it the dependency that justifies it." >&2
   exit 1
 fi
 if [[ $missing -gt 0 ]]; then

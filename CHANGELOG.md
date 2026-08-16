@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### `check-parity.sh` now sees the gap it could not
+
+Everything that check did asked whether the core's C ABI reaches the bindings. It had nothing to say
+about a capability that never entered the core at all — which is how the OMMX bridge shipped as a
+sibling crate, reachable from Rust and none of the other eight surfaces, **past the check written
+precisely to stop that**.
+
+A sibling exists because the core cannot hold it, and every real one can say why:
+
+| | why it is out |
+|---|---|
+| `silicon`, `cloud`, `gpu` | an external dependency |
+| `serve` | an application — two binary targets |
+| `meter` | `std::process`, which the core's wasm target does not have |
+
+A sibling with none of the three has no reason to be one, and being out there costs it eight
+surfaces. `ommx` had zero external dependencies, zero binaries and no wasm-hostile API. The check now
+fails on that shape; mutation-tested by recreating the crate exactly as it first shipped.
+
+Three bugs in writing it, all the same one: under `set -euo pipefail` a `grep` that matches nothing
+returns 1, pipefail propagates it, and `-e` kills the script *after* the assignment has succeeded.
+The symptom is a heading printed with nothing beneath it — a check that looks like it ran.
+
+
 ### OMMX on all nine surfaces — and moved into the core, where format bridges live
 
 The bridge shipped as a sibling crate, which was inconsistent with this codebase's own structure:
