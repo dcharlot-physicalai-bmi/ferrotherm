@@ -50,12 +50,18 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # The range we CLAIM, not one point in it. requires-python said >=3.9 while CI tested a
+          # single version, so the floor was a claim nobody had ever run.
+          python-version: "${{ matrix.python }}"
       - name: Build the library the bindings load
         run: cargo build --release
       - name: Python tests

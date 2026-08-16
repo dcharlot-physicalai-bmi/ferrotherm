@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Python floor raised to 3.11, and why it matters beyond packaging
+
+`requires-python` said `>=3.9` while CI tested exactly one version. The floor was a claim nobody had
+ever run — and 3.9.6 is what macOS ships and nobody chooses. Now `>=3.11`, tested on 3.11, 3.12 and
+3.13 in a CI matrix rather than at one point.
+
+This was not a packaging detail. **The landscape survey was run on 3.9.6**, and three of the packages
+it assessed cannot install their current versions there: `jijmodeling 2.7.1` needs ≥3.11, `amplify`
+and `ommx` need ≥3.10. pip resolved the newest 3.9-compatible release and the survey recorded those
+as the state of the art. An obsolete interpreter turned into a wrong competitive assessment.
+
+### Landscape re-survey on 3.13 — two real gaps found
+
+8 of 8 spot-checked packages had moved, one by a major version. Two findings change our position:
+
+- **jijmodeling 2.x detects constraint patterns and we do not.** `ConstraintDetectionConfig` /
+  `ConstraintHintName` (`OneHot`, `Sos1`) recognise that a set of constraints forms a one-hot
+  pattern and hint the solver. Ferrotherm requires the modeller to write `exactly_one` and rewards
+  them with a cheaper lowering — but writing the pattern longhand gets the expensive lowering and no
+  warning. A real gap in the modelling row.
+- **Amplify ships 16 vendor clients to our 7 fabrics.** Broader vendor reach than ours. Checked by
+  introspection rather than assumed: it has no energy, joule, watt or power surface, and no
+  certificate surface. Those rows still stand.
+
+Also: jijmodeling 2.x compiles to **OMMX** and round-trips protobuf. Jij has committed to OMMX as the
+shared IR, which is the context `.ftp` sits in and worth a deliberate decision.
+
+
 ### Semantic parity: seven surfaces, one model, one hash
 
 `check-parity.sh` proves every C ABI symbol reaches every binding. It says nothing about whether

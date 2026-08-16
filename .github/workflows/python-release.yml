@@ -42,7 +42,9 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Any interpreter in the supported range builds the same wheel: the package is ctypes,
+          # not a C extension, so this is a build host rather than a compatibility axis.
+          python-version: "3.13"
 
       - name: Build the library
         run: cargo build --release --target ${{ matrix.target }}

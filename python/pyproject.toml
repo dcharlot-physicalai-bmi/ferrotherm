@@ -7,7 +7,12 @@ name = "ferrotherm"
 version = "0.10.0"
 description = "Thermodynamic computing in pure Rust, from Python: state a problem, get named values back"
 readme = "README.md"
-requires-python = ">=3.9"
+# 3.11, not 3.9. macOS ships 3.9.6 and nobody chooses it; declaring support for it meant claiming a
+# floor CI never tested, on an interpreter the surrounding ecosystem has left behind -- jijmodeling
+# needs >=3.11, amplify and ommx need >=3.10. This project surveyed those three ON 3.9 and recorded
+# the versions pip could still resolve there as though they were current, which is how an outdated
+# interpreter turns into a wrong competitive assessment. Tested on 3.11, 3.12 and 3.13.
+requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Institute for Physical AI @ BMI" }]
 keywords = ["ising", "boltzmann", "sampling", "optimisation", "thermodynamic-computing", "qubo"]
@@ -15,6 +20,9 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Scientific/Engineering :: Mathematics",

@@ -1,5 +1,52 @@
 # Where this stack sits, layer by layer
 
+## Re-survey, 2026-08-16 — and a defect in how the first one was run
+
+**The original survey ran on Python 3.9.6**, the interpreter macOS ships. Three of the packages it
+assessed could not install their current versions there: `jijmodeling 2.7.1` needs >=3.11,
+`amplify 1.6.2` and `ommx 2.6.2` need >=3.10. So pip resolved the newest 3.9-compatible release and
+the survey recorded those as the state of the art. They were not. An outdated interpreter turns
+into a wrong competitive assessment, quietly, and every "surveyed from a live install" line below
+inherits that caveat until re-checked.
+
+Re-run on Python 3.13, 8 of 8 spot-checked packages had moved, one by a major version:
+
+| | surveyed | actual |
+|---|---|---|
+| jijmodeling | 1.14.2 | **2.7.1** |
+| amplify | 1.3.1 | 1.6.2 |
+| ommx | 2.0.12 | 2.6.2 |
+| openjij | 0.11.6 | 0.12.1 |
+| dwave-ocean-sdk | 9.0.0 | 9.4.0 |
+| dimod / minorminer / dwave-system | 0.12.21 / 0.2.19 / 1.33.0 | 0.12.22 / 0.2.22 / 1.35.0 |
+
+### Two things this changes
+
+**1. jijmodeling 2.x detects constraint patterns; ferrotherm does not.** `ConstraintDetectionConfig`
+and `ConstraintHintName` (`OneHot`, `Sos1`) let it RECOGNISE that a set of constraints forms a
+one-hot pattern and hint the solver accordingly. Ferrotherm requires the modeller to say
+`exactly_one`, and rewards them for it with a cheaper lowering — but a modeller who writes the
+pattern out longhand gets the expensive lowering and no warning. **This is a real gap in the
+modelling row**, which this document previously scored as ours. `grep -c detect src/model.rs` = 1.
+
+**2. Amplify ships 16 vendor clients; ferrotherm declares 7 fabrics.** D-Wave (three), Fujitsu DA3c
+and DA4, Gurobi, Hitachi, NEC VA2, Toshiba SQBM2, Fixstars AE, plus a `CustomClientProtocol` for
+user backends. That is broader vendor reach than ours (`dwave_advantage`, `dwave_advantage2`,
+`fujitsu_da3`, `toshiba_sqbm`, `toshiba_sqbm_pubo`, `qboson_cpqc`, `unconstrained`, plus CPU, GPU
+and the Hitachi driver). **They win on breadth.**
+
+What they do not have, checked by introspection rather than assumed: no energy, joule, watt or
+power surface anywhere in `amplify`, and no certificate or sampling-fidelity surface. Those rows
+stand.
+
+### And a strategic fact
+
+jijmodeling 2.x's `Compiler` converts problems into **OMMX** instances, and it round-trips through
+protobuf. Jij has committed to OMMX as the shared IR. The field converging on a program IR is the
+context `.ftp` sits in, and it is worth deciding deliberately whether `.ftp` should read and write
+OMMX rather than only its own text.
+
+
 Surveyed 2026-08-14 by installing each stack and interrogating the shipped API — not by
 reading marketing. Every claim below carries the source the surveying agent used. Six stacks:
 Extropic (THRML + Torx), D-Wave Ocean 9.0.0, the Japanese cluster (Amplify, Jij, PyQUBO,
