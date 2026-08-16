@@ -46,6 +46,33 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### Two ways to overload the server from a tiny request
+
+- **`/v1/anneal` wrapped its own budget.** `(stages * per) as u64` multiplies in `usize` *before*
+  the cast, so `"stages": 9223372036854775808` produced a small number, sailed past the node-update
+  ceiling, and aborted the process in `raw_vec` with a capacity overflow — an empty reply, no 400,
+  and the server gone. It saturates in `u64` throughout now, and the ladder is clamped the way
+  `/v1/solve`'s already was.
+- **`/v1/solve` measured the wrong dimension.** Its update bound sat *inside* the schedule arm, so a
+  request naming no schedule had none at all. But the deeper problem was that no ceiling measured
+  what actually grows: `{"variables":[{"name":"x","values":1000}],"tries":1}` is **46 bytes**, and
+  compiles to only 1000 spins — far under `MAX_NODES` — while a one-hot over k values carries
+  k(k−1)/2 **couplings**. That is 499,500 of them: 6.7 s and a **17 MB** reply.
+
+  So there is a `MAX_COUPLINGS`, and its value is measured rather than guessed — cost is linear in
+  couplings at ~34 bytes and ~13 µs each:
+
+  | one-hot k | couplings | reply | wall |
+  |---|---|---|---|
+  | 100 | 4,950 | 161 KB | 0.08 s |
+  | 300 | 44,850 | 1.5 MB | 0.58 s |
+  | 600 | 179,700 | 6.2 MB | 2.38 s |
+  | 1000 | 499,500 | 17 MB | 6.73 s |
+
+  100,000 holds a request to ~3.4 MB and ~1.3 s and still admits a one-hot over 447 values. The
+  refusal names the dimension that grew and points at `Encoding::DomainWall`, which is linear.
+
+
 ### Thirteen claims that were not true, including the first line anyone copies
 
 The audit's last lens read every README and module doc against what the code actually does. The

@@ -16,6 +16,27 @@ use std::time::Instant;
 /// Ceilings that keep one request from monopolising the process. They are advertised in
 /// `capabilities` so a caller can size a job instead of discovering the wall by hitting it.
 pub const MAX_NODES: usize = 4_000_000;
+
+/// Couplings a single request may compile to.
+///
+/// Separate from [`MAX_NODES`] because they are different dimensions and only one of them bounded
+/// anything: a one-hot variable over k values is k spins and k(k-1)/2 couplings, so a request can
+/// sit far under the node ceiling while the coupling count grows as the square of a number in the
+/// request body.
+///
+/// The number is measured, not guessed. Cost is linear in couplings at about 34 bytes of reply and
+/// 13 microseconds each on this machine:
+///
+/// | one-hot k | couplings | reply | wall |
+/// |---|---|---|---|
+/// | 100 | 4,950 | 161 KB | 0.08 s |
+/// | 300 | 44,850 | 1.5 MB | 0.58 s |
+/// | 600 | 179,700 | 6.2 MB | 2.38 s |
+/// | 1000 | 499,500 | **17 MB** | **6.73 s** |
+///
+/// 100,000 holds one request to roughly 3.4 MB and 1.3 s, and still admits a one-hot over 447
+/// values -- far past any model anyone writes by hand.
+pub const MAX_COUPLINGS: usize = 100_000;
 pub const MAX_NODE_UPDATES: u64 = 20_000_000_000;
 /// Total spins retained across all certified draws, bounding memory at about 20 MB.
 pub const RETAINED_SPIN_BUDGET: usize = 20_000_000;
@@ -364,13 +385,21 @@ pub fn anneal(req: &Json) -> Result<Json, String> {
     let g = graph_from(gv)?;
     let beta_min = opt_f64(req, "beta_min", 0.1);
     let beta_max = opt_f64(req, "beta_max", 3.0);
-    let stages = opt_usize(req, "stages", 24).max(2);
-    let per = opt_usize(req, "sweeps_per_stage", 20).max(1);
+    // Clamped, matching what /v1/solve's schedule arm already does. Unbounded, `stages` came
+    // straight from the request body into an allocation.
+    let stages = opt_usize(req, "stages", 24).clamp(2, 10_000);
+    let per = opt_usize(req, "sweeps_per_stage", 20).clamp(1, 100_000);
     let seed = req.get("seed").and_then(|s| s.as_u64()).unwrap_or(0);
     if !(beta_min > 0.0 && beta_max > beta_min) {
         return Err("need 0 < beta_min < beta_max".into());
     }
-    let budget = (g.n as u64).saturating_mul((stages * per) as u64);
+    // Saturating in u64 the whole way. `(stages * per) as u64` multiplies in USIZE first, so it
+    // wrapped before the cast ever happened: `stages = 2^63` gave a small budget, passed this
+    // ceiling, and aborted the server in `raw_vec` with a capacity overflow -- an empty reply
+    // rather than a 400, and the process gone.
+    let budget = (g.n as u64)
+        .saturating_mul(stages as u64)
+        .saturating_mul(per as u64);
     if budget > MAX_NODE_UPDATES {
         return Err(format!(
             "{budget} node updates requested, over the {MAX_NODE_UPDATES} ceiling"
@@ -854,10 +883,43 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                      must be real numbers. Annealing runs hot to cold."
                 ));
             }
-            bound_updates(compiled.spins(), stages * per * tries, 0, 1)?;
             Some(ferrotherm::schedule::Schedule::geometric(hot, cold, stages, per))
         }
     };
+
+    // Outside the match, so the DEFAULT path is bounded by the same rule as the schedule one.
+    // This check used to sit inside the schedule arm, so a request that named no schedule had no
+    // ceiling at all: `{"variables":[{"name":"x","values":1000}],"tries":1}` -- 46 bytes -- built a
+    // quadratically large graph, took 11.9 s and returned a 17 MB reply. Cost quadratic in a number
+    // the caller types, with nothing between the two.
+    if compiled.spins() > MAX_NODES {
+        return Err(format!(
+            "this model compiles to {} spins, over the {MAX_NODES} ceiling for one request",
+            compiled.spins()
+        ));
+    }
+    // The ceiling that actually binds here is COUPLINGS, not spins.
+    //
+    // `{"variables":[{"name":"x","values":1000}],"tries":1}` is 46 bytes and compiles to only 1000
+    // spins -- comfortably under MAX_NODES, and one sweep, so no node-update bound fires either.
+    // But a one-hot of k values carries k(k-1)/2 penalty couplings: 499,500 of them, which is what
+    // made that request take 11.9 s and return a 17 MB reply. Cost quadratic in a number the caller
+    // types, bounded by nothing, because every existing ceiling measured the wrong dimension.
+    let couplings = compiled.program.factors.len();
+    if couplings > MAX_COUPLINGS {
+        return Err(format!(
+            "this model compiles to {couplings} couplings, over the {MAX_COUPLINGS} ceiling for \
+             one request. A one-hot variable over k values costs k(k-1)/2 couplings on its own, so \
+             this grows as the square of a value you typed: use a smaller domain, or \
+             Encoding::DomainWall, which is linear"
+        ));
+    }
+    let sweeps_total = match &sched {
+        // Sum the stages' own sweep counts rather than assuming a uniform ladder.
+        Some(s) => s.stages().iter().fold(0usize, |a, st| a.saturating_add(st.sweeps)),
+        None => 1,
+    };
+    bound_updates(compiled.spins(), sweeps_total.saturating_mul(tries), 0, 1)?;
 
     let t0 = Instant::now();
     let sol = match &sched {
@@ -973,6 +1035,40 @@ pub fn parse_body(body: &str) -> Result<Json, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_quadratic_model_is_refused_by_coupling_count_not_node_count() {
+        // 46 bytes: {"variables":[{"name":"x","values":1000}],"tries":1}. It compiles to 1000
+        // spins -- comfortably under MAX_NODES -- and one sweep, so no node-update bound fires
+        // either. But a one-hot over k values carries k(k-1)/2 couplings: 499,500 of them, which
+        // took 6.7 s and returned a 17 MB reply. Every existing ceiling measured a dimension that
+        // was not the one growing.
+        let req = crate::json::parse(r#"{"variables":[{"name":"x","values":1000}],"tries":1}"#).unwrap();
+        let Err(e) = solve(&req) else { panic!("499,500 couplings from 46 bytes must be refused") };
+        assert!(e.contains("couplings"), "names the dimension that grew: {e}");
+        assert!(e.contains("DomainWall"), "and the encoding that is linear: {e}");
+
+        // Well under the ceiling, and still served.
+        let ok = crate::json::parse(r#"{"variables":[{"name":"x","values":60}],"tries":1}"#).unwrap();
+        assert!(solve(&ok).is_ok(), "1,770 couplings is an ordinary model");
+    }
+
+    #[test]
+    fn an_enormous_stage_count_saturates_rather_than_wrapping() {
+        // `(stages * per) as u64` multiplies in USIZE first, so it wrapped BEFORE the cast: a
+        // stage count of 2^63 produced a small budget, sailed past the node-update ceiling, and
+        // aborted the server in raw_vec with a capacity overflow -- an empty reply, no 400, and
+        // the process gone.
+        let req = crate::json::parse(
+            r#"{"graph":{"builtin":"ring","n":8},"stages":9223372036854775808,"sweeps_per_stage":2}"#,
+        )
+        .unwrap();
+        // Either bounded and served, or refused -- never a panic, and never a wrapped budget.
+        match anneal(&req) {
+            Ok(_) => {}
+            Err(e) => assert!(!e.is_empty(), "a refusal must say something"),
+        }
+    }
     use crate::json::parse;
 
     fn run(op: &str, body: &str) -> Result<Json, String> {
