@@ -31,6 +31,24 @@ println!("device-model cost: {:.2e} J", led.joules(&Z1_SPICE));  // pre-silicon 
 `AGENTS.md` carries the invariants and task recipes for AI agents; `llms.txt` is the machine
 summary. Every example doubles as a verification gate with a meaningful exit code.
 
+## The crates
+
+The core is std-only with **zero dependencies**, and stays that way. Anything needing a dependency —
+a GPU driver, a TLS client, a power sensor — is a sibling crate you opt into, and deleting any of
+them leaves `ferrotherm` intact.
+
+| crate | what it adds | why it is separate |
+|---|---|---|
+| [`ferrotherm`](https://crates.io/crates/ferrotherm) | the physics, the compiler, the ledger, the C ABI | — |
+| [`ferrotherm-gpu`](https://crates.io/crates/ferrotherm-gpu) | the same WGSL sweep the browser runs, natively | needs `wgpu` |
+| [`ferrotherm-meter`](https://crates.io/crates/ferrotherm-meter) | joules **measured on the machine that ran it**, not borrowed from a vendor datasheet | needs a power sensor |
+| [`ferrotherm-cloud`](https://crates.io/crates/ferrotherm-cloud) | real fabricated Ising silicon: Hitachi's CMOS annealing ASIC | needs a TLS client |
+| [`ferrotherm-silicon`](https://crates.io/crates/ferrotherm-silicon) | FPGA fabrics — stochastic-neuron LUTs, chip databases, bitstream emission | needs the FPGA toolchain |
+| [`ferrotherm-serve`](https://crates.io/crates/ferrotherm-serve) | an HTTP sampling API and an MCP server | it is a binary, not a library |
+
+Every one of them reaches the hardware through the same [`fabric::Device`] trait, which is what
+makes "runs on any fabric" a thing you can check rather than a thing we say.
+
 ## Field map
 
 | Thermodynamic-computing field | ferrotherm module | status |
@@ -45,7 +63,8 @@ summary. Every example doubles as a verification gate with a meaningful exit cod
 | DTM — denoising thermodynamic models (Extropic's flagship architecture) | `dtm` — forward kernels, pattern grids, contrastive chain training, ACP, TC penalty | **shipped, verified** |
 | Lattice Random Walk (Normal Computing CN101 algorithm) | `lrw` — ternary-increment SDE integration, exact-moment identities | **shipped, verified** |
 | Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
-| Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped, verified on Metal** |
+| Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped, verified on Metal, Vulkan and DX12** |
+| **Fabricated CMOS annealing silicon (Hitachi)** | `ferrotherm-cloud::hitachi` — 384×384 King's graph, four-bit coefficients, over a free public API | **shipped, conventions measured** |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
 
 Focus: **embodied and Physical AI** — sampling-based control (MPPI needs thousands of samples per
@@ -91,6 +110,13 @@ thermodynamic-computing corpus currently leaves empty.
   random frustrated 16-spin glass (and its ladder diagnostics catch dead replica pairs); `tla`
   matches **Gaussian elimination** on SPD solves and recovers A⁻¹ from sample covariance; the
   `ffi` path re-reproduces Onsager end to end through the C ABI.
+- `cargo test -p ferrotherm-gpu` — the native WGSL sampler, 6/6 on **three graphics APIs**: Apple
+  M5 Max (Metal), NVIDIA L4 (Vulkan 1.4), and DX12. All three reproduce the exact mean energy from
+  variable elimination — a shader can pass on Metal and fail on Vulkan, whose validation is stricter
+  and whose f32 behaviour differs, so this was worth checking rather than assuming. **The DX12 run
+  was WARP, a software rasteriser**: it establishes that the shader compiles under DX12 and that the
+  physics is right, and says nothing about DX12 on hardware. `Gpu::is_hardware()` reported `Cpu` and
+  the benchmark declined to quote a speedup on its own.
 - `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
   the cdylib is a **44 KB .wasm** exposing the `ft_*` C ABI: the run-everywhere claim is a build,
   not a slogan.

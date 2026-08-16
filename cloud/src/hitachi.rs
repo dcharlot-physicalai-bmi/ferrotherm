@@ -222,7 +222,10 @@ impl Hitachi {
         self.spins = p.spins;
 
         let range = self.machine.range();
-        let mut push = |a: (usize, usize), b: (usize, usize), w: f64| -> Result<(), LayoutError> {
+        // Named for what it does. It was called `push` and took both coordinates, neither of
+        // which it used -- the actual pushing happens at each call site -- so every reader had to
+        // check whether a coupling was being written twice. It was not.
+        let check_range = |w: f64| -> Result<(), LayoutError> {
             // Against the same Range the fabric declares, rather than a magnitude comparison of
             // its own. `|w| <= 7` admits 3.5, which a machine storing four-bit INTEGERS cannot
             // hold; a second, weaker copy of a limit is how the two drift apart.
@@ -239,7 +242,7 @@ impl Hitachi {
             let a = coord(*i, side);
             // their sign is inverted, so our -h·s becomes their +(-h)·s
             let w = -*h;
-            push(a, a, w)?;
+            check_range(w)?;
             self.model.push([a.0 as i64, a.1 as i64, a.0 as i64, a.1 as i64]);
             self.coeff.push(w);
         }
@@ -258,7 +261,7 @@ impl Hitachi {
                 return Err(LayoutError::NotAdjacent { i, j, a, b });
             }
             let w = -f.weight(); // sign inversion, measured
-            push(a, b, w)?;
+            check_range(w)?;
             self.model.push([a.0 as i64, a.1 as i64, b.0 as i64, b.1 as i64]);
             self.coeff.push(w);
         }
@@ -458,8 +461,6 @@ fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
 #[cfg(test)]
 mod layout_reporting_tests {
     use super::*;
-    use ferrotherm::embed::Embedding;
-use ferrotherm::ftp::Program;
 
     fn asic() -> Hitachi {
         Hitachi::new(String::from("no-token-needed-for-a-capability-check"), Machine::Asic)

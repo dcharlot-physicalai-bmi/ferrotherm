@@ -23,10 +23,10 @@
 //!
 //! Everything else is **refused by name with its line number** rather than approximated: a
 //! continuous variable has no encoding here, a quadratic term in an LP file means something this
-//! parser does not read, and a range constraint (`1 <= x + y <= 3`) is two constraints written as
-//! one. Silently dropping any of them would return a confident answer to a different problem, and
-//! the whole point of reading someone else's file is that you did not write it and cannot check it
-//! by eye.
+//! parser does not read, a range constraint (`1 <= x + y <= 3`) is two constraints written as one,
+//! and a one-sided `x >= 3` has no upper end to compile into a finite spin domain. Silently
+//! dropping any of them would return a confident answer to a different problem, and the whole point
+//! of reading someone else's file is that you did not write it and cannot check it by eye.
 
 use crate::model::{Expr, Lit, Model, Sense, Var};
 use std::collections::BTreeMap;
@@ -310,8 +310,26 @@ fn bound(s: &str, line: usize) -> Result<(i64, String, i64), LpError> {
     };
     match parts.as_slice() {
         [lo, "<=", name, "<=", hi] => Ok((num(lo)?, name.to_string(), num(hi)?)),
+        // LP format's default LOWER bound is 0, so `x <= 5` is genuinely `0 <= x <= 5`.
         [name, "<=", hi] => Ok((0, name.to_string(), num(hi)?)),
-        [name, ">=", lo] => Ok((num(lo)?, name.to_string(), i64::MAX.min(num(lo)? + 1))),
+        // Its default UPPER bound is +infinity, and there is no such spin domain.
+        //
+        // This used to return `lo + 1` as the upper bound, wrapped in an `i64::MAX.min(..)` that
+        // reads like an overflow guard and is not one -- the addition happens first, so it guards
+        // nothing, and clippy calling it dead code is what exposed the line. The effect was that
+        // `t >= 10` became the domain 10..=11: `Maximize t` subject to `t >= 10` returned 11, a
+        // confident optimum to a problem that is unbounded above.
+        //
+        // Refusing is the only honest answer. A finite default would be a different fabrication,
+        // just one that takes longer to notice.
+        [name, ">=", _] => err(
+            line,
+            format!(
+                "{name:?} is bounded below but not above, and a spin domain must be finite. \
+                 Write both ends, as in `{} <= {name} <= <upper>`.",
+                parts[2]
+            ),
+        ),
         _ => err(line, format!("{s:?} is not a bound this reads")),
     }
 }
@@ -416,6 +434,23 @@ End
         assert!(on <= 2, "at most two: {s}");
         assert!(s.value("a") + s.value("b") >= 1, "at least one of a, b: {s}");
         assert_eq!(s.value("c"), 0, "c is fixed off: {s}");
+    }
+
+    #[test]
+    fn a_bound_with_no_upper_end_is_refused_rather_than_invented() {
+        // `t >= 10` compiled to the domain 10..=11, so `Maximize t` answered 11 -- an optimum
+        // reported with full confidence for a problem that has none. Every bound test used the
+        // two-sided form, so nothing looked here.
+        let src = "Maximize\n  obj: t\nBounds\n  t >= 10\nGeneral\n  t\nEnd\n";
+        // `expect_err` needs `Model: Debug`, which it deliberately is not.
+        let Err(e) = parse(src) else { panic!("an unbounded-above variable has no spin domain") };
+        assert!(e.message.contains("not above"), "says what is wrong: {e}");
+        assert!(e.message.contains("10 <= t <= "), "and shows the fix: {e}");
+
+        // The one-sided `<=` form stays legal: LP format's default LOWER bound really is 0.
+        let ok = parse("Maximize\n  obj: t\nBounds\n  t <= 20\nGeneral\n  t\nEnd\n")
+            .expect("`t <= 20` means 0 <= t <= 20");
+        assert_eq!(ok.compile().unwrap().solve_best_of(16).value("t"), 20);
     }
 
     #[test]

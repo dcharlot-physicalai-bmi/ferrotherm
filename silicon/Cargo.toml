@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-silicon"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "The IPAI-owned path to metal for ferrotherm: pure-Rust FPGA silicon layer — binary-stochastic-neuron LUT fabrics, chip databases, and bitstream emission for the ferrotherm deployment ladder (Alchitry V2, Kria KV260, M.2 Artix, Alveo, AWS F2). Zero dependencies. Selected algorithms ported with permission from Open Interface Engineering's openie-fpga; this crate is fully independent of it."
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ categories = ["embedded", "hardware-support", "science"]
 flash = ["dep:nusb", "dep:pollster"]
 
 [dependencies]
-ferrotherm = { version = "0.11", path = ".." }
+ferrotherm = { version = "0.12", path = ".." }
 nusb = { version = "0.1", optional = true }
 pollster = { version = "0.4", optional = true }
 

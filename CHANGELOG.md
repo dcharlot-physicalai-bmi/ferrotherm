@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.12.0
+
+### `x >= 3` returned a confident optimum to an unbounded problem
+
+Found by clippy, of all things: `i64::MAX.min(num(lo)? + 1)` in the LP bound parser, flagged as an
+expression with no effect. It reads like an overflow guard and is not one — the addition happens
+first — and what it actually did was give every one-sided lower bound an **invented upper bound of
+`lo + 1`**. So `t >= 10` compiled to the domain `10..=11`, and
+
+```text
+Maximize
+  obj: t
+Bounds
+  t >= 10
+General
+  t
+End
+```
+
+answered **11**. Not an error, not a warning: a confident optimum, for a problem that has none.
+
+LP format's default upper bound is `+infinity` and there is no such spin domain, so this is now
+refused by name with its line number, the way every other unrepresentable input already was. The
+one-sided `x <= 5` form stays legal, because LP's default *lower* bound really is 0.
+
+Every bound test used the two-sided `10 <= t <= 20` form, which is why nothing looked here for as
+long as the parser has existed.
+
+### `ferrotherm-cloud` and `ferrotherm-gpu` are on crates.io
+
+`ferrotherm-gpu` had been at 0.2.0 in the tree and 0.1.0 on crates.io. `ferrotherm-cloud` — the
+Hitachi CMOS annealing driver, 615 lines, 11 tests, API conventions established empirically rather
+than read off a document — had never been published at all, and was named in no README. Both are out
+now, both are in the README's crate table, and `RELEASING.md` writes down the publish order that
+previously lived in nobody's head. See the Unreleased notes below for the gate that found them.
+
+### Also
+
+- The Hitachi fabric is in the field map, where it belonged from the day it was written: real
+  fabricated Ising silicon, 384×384 King's graph, four-bit coefficients, over a free public API.
+- A layout closure in `ferrotherm-cloud` was named `push`, pushed nothing, and took two coordinates
+  it never used — so every reader had to check whether couplings were being written twice.
+- Zero warnings across the workspace.
+
 ## Unreleased
 
 ### check-versions now looks outside the directory
