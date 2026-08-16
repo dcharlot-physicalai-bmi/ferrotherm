@@ -324,6 +324,12 @@ jobs:
           git add julia/ferrotherm_jll/Artifacts.toml
           git commit -m "ferrotherm_jll: the manifest for ${GITHUB_REF_NAME}" \
             -m "The hashes and URLs come from the release this tag published, so the package names bytes that exist at the address it names them at."
+          # This runs on a DETACHED checkout of the tag, and main moves -- a commit pushed after the
+          # tag, or the previous release's own manifest commit, both leave HEAD behind. Pushing
+          # straight to main then fails non-fast-forward, which is how v0.11.1 shipped its wheels,
+          # its artifacts and its crates while leaving the JLL manifest pointing at v0.11.0.
+          git fetch origin main
+          git rebase origin/main || { echo "manifest rebase conflicted; commit it by hand" >&2; exit 1; }
           git push origin HEAD:main
 
   publish:
