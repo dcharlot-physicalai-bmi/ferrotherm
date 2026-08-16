@@ -80,7 +80,7 @@ impl Ledger {
     /// published does not cost nothing, and a caller that has to unwrap this cannot accidentally
     /// print a figure for a device that has none.
     pub fn joules(&self, p: &Prices) -> Option<f64> {
-        p.is_stated().then(|| {
+        p.is_stated().then_some({
             self.samples as f64 * p.e_sample
                 + self.reads as f64 * p.e_read
                 + self.writes as f64 * p.e_write

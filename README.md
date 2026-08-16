@@ -25,11 +25,13 @@ let mut led = Ledger::default();
 let mut smp = Sampler::new(&g, 0.6, 42);
 smp.sweeps(500, Some(&mut led));               // sample it, and meter it
 println!("|M| = {:.3}", smp.s.iter().map(|&v| v as f64).sum::<f64>().abs() / g.n as f64);
-println!("device-model cost: {:.2e} J", led.joules(&Z1_SPICE));  // pre-silicon vendor prices, labelled
+let j = led.joules(&Z1_SPICE).expect("Z1_SPICE states its prices; Prices::UNSTATED would not");
+println!("device-model cost: {j:.2e} J");     // pre-silicon vendor prices, labelled
 ```
 
 `AGENTS.md` carries the invariants and task recipes for AI agents; `llms.txt` is the machine
-summary. Every example doubles as a verification gate with a meaningful exit code.
+summary. Seven of the twenty examples are verification gates that exit non-zero when their check
+fails; the rest are probes that print what they measured and always exit 0.
 
 ## The crates
 
@@ -46,8 +48,9 @@ them leaves `ferrotherm` intact.
 | [`ferrotherm-silicon`](https://crates.io/crates/ferrotherm-silicon) | FPGA fabrics — stochastic-neuron LUTs, chip databases, bitstream emission | needs the FPGA toolchain |
 | [`ferrotherm-serve`](https://crates.io/crates/ferrotherm-serve) | an HTTP sampling API and an MCP server | it is a binary, not a library |
 
-Every one of them reaches the hardware through the same [`fabric::Device`] trait, which is what
-makes "runs on any fabric" a thing you can check rather than a thing we say.
+The two that drive *someone else's* hardware — `-cloud` and `-silicon` — reach it through the same
+[`fabric::Device`] trait, which is what makes "runs on any fabric" a thing you can check rather than
+a thing we say. `-gpu` is a sampler rather than a fabric and implements no `Device`.
 
 ## Field map
 
@@ -73,7 +76,8 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test` — 6/6: exact-Boltzmann TV on an enumerable system, clamped-conditional exactness,
+- `cargo test --workspace` — 506 tests across the six crates, including: exact-Boltzmann TV on an
+  enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
   noise floor 0.0057 at 100k samples. Residual is sampling noise, not bias.
@@ -92,16 +96,18 @@ thermodynamic-computing corpus currently leaves empty.
   descent lands on the provable optimum: k = 1.996 vs exact k* = 1.997, expected-cost excess 0.00%.
   Control effort (R·E[Σu²]) is the actuation-proxy term — the E_task frame at the program level.
 - `cargo run --release --example compile_chain` — the compilation error bound (arXiv:2608.01615
-  Eq. 17, the chain rule of KL) verified **exactly**: readout KL 0.0057 ≤ Σε = 1.42 nats on a
+  Eq. 17, the chain rule of KL) verified **exactly**: readout KL 0.0054 ≤ Σε = 1.42 nats on a
   3-stage compiled program, and context-matched compilation beats uniform-input compilation on the
-  inputs the program actually feeds it (ε 0.721 vs 0.754).
+  inputs the program actually feeds it (ε 0.721 vs 0.750).
 - `cargo run --release --example reach_on_z1` — the flagship, and **the boundary is the result**:
   a coherent quantized reach target exists (gate 90%, reached only after applying our
   capacity-vs-basis lesson — raw-angle bins gate-fail at 32%, error-vector log-bins pass), but the
   capacity ladder plateaus far below it: single patch kernel 15–30% closed-loop, per-joint
-  factorization 35–45%, trajectory-level post-training +3 pts. The reach law is J(q)ᵀe — products
+  factorization 32–35%, and trajectory-level post-training added ~3 points in an earlier run that
+  this example does not re-measure. The reach law is J(q)ᵀe — products
   of state bits that sparse local pairwise energies with a few hidden spins cannot route. A control
-  workload does **not yet** map onto the degree-16 fabric at patch scale; nobody has published
+  workload does **not yet** map onto the degree-16 fabric at patch scale; this review did not locate
+  published work demonstrating
   otherwise. The ledger stands regardless: at gate quality the device's compute would sit ~7 orders
   below Jetson watts×time and E_task becomes actuation-dominated, while 9,600 clamp ops/s against
   the ≤1/s reflash cap remains the unpriced feasibility wall.
@@ -118,7 +124,8 @@ thermodynamic-computing corpus currently leaves empty.
   physics is right, and says nothing about DX12 on hardware. `Gpu::is_hardware()` reported `Cpu` and
   the benchmark declined to quote a speedup on its own.
 - `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
-  the cdylib is a **44 KB .wasm** exposing the `ft_*` C ABI: the run-everywhere claim is a build,
+  the cdylib is a **356 KB .wasm** (128 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
+  claim is a build,
   not a slogan.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against
   Onsager on the visitor's GPU before reporting throughput** (measured here: |M| 0.9143 vs 0.9113,

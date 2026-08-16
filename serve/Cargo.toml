@@ -21,3 +21,6 @@ path = "src/bin/serve.rs"
 [[bin]]
 name = "ferrotherm-mcp"
 path = "src/bin/mcp.rs"
+
+[lints]
+workspace = true

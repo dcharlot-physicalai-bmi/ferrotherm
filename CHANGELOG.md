@@ -46,6 +46,61 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### Thirteen claims that were not true, including the first line anyone copies
+
+The audit's last lens read every README and module doc against what the code actually does. The
+headline is the smallest: **the README's "Use it" snippet did not compile.** `Ledger::joules` returns
+`Option<f64>` and the snippet formatted it with `{:.2e}`, which `Option` does not implement — so the
+first thing a new user pastes fails, and nothing was checking it. The README is now included as a
+`#[cfg(doctest)]` carrier, so `cargo test` compiles it; reverting the fix makes that test fail with
+the original `LowerExp` error.
+
+Measured and corrected:
+
+| claim | was | is |
+|---|---|---|
+| wasm size | 44 KB | **356 KB** (128 KB gzipped) |
+| `cargo test` | "6/6" | **507 tests** across six crates |
+| `compile_chain` readout KL | 0.0057 | 0.0054 |
+| `compile_chain` ε comparison | 0.721 vs 0.754 | 0.721 vs 0.750 |
+| `reach_on_z1` per-joint factorization | 35–45% | **32–35%** |
+| examples that are gates | "every example" | **7 of 20** |
+
+Three were not arithmetic:
+
+- **"Every one of them reaches the hardware through the same `fabric::Device` trait"** — `-gpu`,
+  `-meter` and `-serve` implement no `Device`. Only `-cloud` and `-silicon` do, which is now what it
+  says.
+- **`reach_on_z1` was not reproducible.** `HashMap` iteration order plus a sort with no tiebreak
+  meant four runs gave three different answers, and the figure the README quoted appeared in none of
+  them. It is `BTreeMap` with a total order on `Key` now: three runs, byte-identical output. An
+  example cited as evidence has to be reproducible or it is not evidence.
+- **`reach_on_z1` printed "+3 points" inside its own READING block** as though the run had measured
+  it. Post-training here reports NLL and never evaluates a success-rate delta. It is labelled as a
+  prior result now.
+
+Also: two bare absence claims became "this review did not locate"; `serve/README`'s two TV figures
+said they "are asserted in the test suite" when only their *direction* is; and `meter/README` still
+said the INA3221 backend was "Not implemented" hours after it shipped — while `Meter::detect()`
+genuinely could not reach it. `detect()` is `macmon().or_else(ina3221)` now, because a backend
+nothing routes to is a backend nobody runs.
+
+### Clippy runs in CI, and the workspace is clean at `-D warnings`
+
+The tool that found the 0.12.0 headline defect ran in no job and no script. It now runs over the
+whole workspace with warnings denied, and the count is **zero**. Three lints are allowed in
+`[workspace.lints.clippy]`, each with its reason recorded there rather than as scattered
+`#[allow]`s: `needless_range_loop` (the index is a spin, a site, a colour class), `too_many_arguments`
+(a physics kernel takes the parameters the physics has), and `neg_cmp_op_on_partial_ord` — where
+following the advice would have been a **bug**, since `!(w > 0.0)` rejects NaN and `w <= 0.0` accepts
+it.
+
+One test made honest rather than tolerant: the meter's real-workload test panicked when a concurrent
+build contaminated its baseline. That is the meter's refusal working, not a code defect, so it skips
+with the reason — the same treatment its `measure` call already had, applied to the `idle` line that
+was missed.
+
+
 ### Four gates that were not gating
 
 The same audit turned its lens on the checks themselves. Every one of these read, in a workflow, as

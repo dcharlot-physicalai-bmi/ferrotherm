@@ -134,7 +134,7 @@ mod tests {
         for mask in 0..16usize {
             let s: Vec<i8> = (0..4).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
             // s0 * s1 * s0 == s1
-            let would_have_been = -1.0 * (s[0] as f64 * s[1] as f64 * s[0] as f64);
+            let would_have_been = -(s[0] as f64 * s[1] as f64 * s[0] as f64);
             assert_eq!(would_have_been, honest.energy(&s));
         }
     }

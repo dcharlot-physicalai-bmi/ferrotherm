@@ -22,7 +22,7 @@
 use ferrotherm::compile::{patch_kernel, Kernel};
 use ferrotherm::ledger::Z1_SPICE;
 use ferrotherm::rng::Pcg;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 // ---- arm (identical constants to total_task_energy.rs) ----
 const NJ: usize = 3;
@@ -122,7 +122,7 @@ const N_IN: usize = NJ * (QLEV - 1) + 2 * ETH.len(); // 12 + 20 = 32
 #[allow(dead_code)]
 const N_OUT: usize = NJ * (ALEV - 1); // 9
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct Key {
     q: [u8; NJ],
     ex: u8, // error-bin index, 0..=ETH.len()
@@ -337,7 +337,12 @@ fn main() {
     println!("       gate passed: the compilation target is achievable.\n");
 
     // ---- training set: context-matched (the states the closed loop actually visits) ----
-    let mut visits: HashMap<Key, u64> = HashMap::new();
+    // BTreeMap, and the sort below breaks ties by Key. HashMap iteration order is randomised
+    // per run, and `sort_by(|a, b| b.1.cmp(&a.1))` leaves equal counts in whatever order they
+    // arrived -- so four runs of this example produced three different answers, and the figure the
+    // README quotes appeared in none of them. An example that is cited as evidence has to be
+    // reproducible or it is not evidence.
+    let mut visits: BTreeMap<Key, u64> = BTreeMap::new();
     for i in 0..240u64 {
         let mut rr = Pcg::new(0x77417 ^ i, 1);
         let tgt = rand_target(&mut rr);
@@ -347,7 +352,7 @@ fn main() {
         });
     }
     let mut pats: Vec<(Key, u64)> = visits.into_iter().collect();
-    pats.sort_by(|a, b| b.1.cmp(&a.1));
+    pats.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let total_mass: u64 = pats.iter().map(|p| p.1).sum();
     let kcap = 600.min(pats.len());
     let train_mass: u64 = pats[..kcap].iter().map(|p| p.1).sum();
@@ -426,7 +431,7 @@ fn main() {
     // ---- trajectory-level post-training (the Thermalizers refinement = DAgger, measured this
     // morning to be the fix for exactly this failure): roll the COMPILED policy, label the states
     // IT visits with the programmatic expert, aggregate, retrain. ----
-    let mut agg: HashMap<Key, u64> = pats[..kcap].iter().cloned().collect();
+    let mut agg: BTreeMap<Key, u64> = pats[..kcap].iter().cloned().collect();
     for round in 0..2 {
         for i in 0..80u64 {
             let mut rr = Pcg::new(0xDA66E ^ (round as u64 * 1000 + i), 1);
@@ -444,7 +449,7 @@ fn main() {
             });
         }
         let mut pats2: Vec<(Key, u64)> = agg.iter().map(|(k, c)| (*k, *c)).collect();
-        pats2.sort_by(|a, b| b.1.cmp(&a.1));
+        pats2.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let cap2 = 900.min(pats2.len());
         let mass2: u64 = pats2[..cap2].iter().map(|p| p.1).sum();
         let train2: Vec<(Vec<i8>, usize, f64)> = pats2[..cap2]
@@ -566,7 +571,12 @@ fn main() {
     println!("\nREADING — the boundary is the result. A coherent quantized reach target exists (gate {:.0}%), and", gs);
     println!("the capacity ladder climbs but plateaus far below it: single 13-spin patch kernel 15-30% closed-loop;");
     println!("per-joint factorization (exact for a deterministic target) {:.0}-{:.0}%; trajectory-level post-training", s1.min(s2), s1.max(s2));
-    println!("(the Thermalizers refinement, i.e. DAgger) adds ~3 points. What is missing is MULTIPLICATIVE structure:");
+    // "~3 points" is a PRIOR measurement, not something this run computes -- post-training here
+    // reports NLL, and no success-rate delta is evaluated before and after. Printing it inside the
+    // run's own READING block made a remembered number look like an output of the program.
+    println!("(the Thermalizers refinement, i.e. DAgger) added ~3 points in an earlier run -- this run");
+    println!("reports post-training NLL only and does not measure that delta. What is missing is");
+    println!("MULTIPLICATIVE structure:");
     println!("the reach law is J(q)^T e — products of state bits — and sparse local pairwise energies with a few");
     println!("hidden spins cannot route them at this scale. So the answer to 'does a control workload map onto the");
     println!("degree-16 fabric today' is NOT YET at patch scale, and no published work anywhere has demonstrated");

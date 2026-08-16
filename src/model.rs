@@ -1370,7 +1370,7 @@ impl Model {
                         ));
                     }
                 }
-                add_squared(&mut b_ref(b), &sum, *k as f64, p);
+                add_squared(b_ref(b), &sum, *k as f64, p);
             }
             Constraint::Cardinality { lits, k } => {
                 // p·(Σ xᵢ − k)² = p·(Σ xᵢxⱼ over ordered pairs − 2k·Σ xᵢ + k²); the constant drops.

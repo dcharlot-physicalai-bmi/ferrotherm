@@ -35,5 +35,27 @@ crate-type = ["rlib", "cdylib"]
 opt-level = 3
 lto = true
 
+# Three lints this codebase deliberately does not follow, each with the reason it does not.
+#
+# Recorded here rather than sprinkled as `#[allow]`, so the reasoning exists once and a reader can
+# weigh it. Everything NOT listed is denied in CI: `cargo clippy --workspace --all-targets
+# -D warnings`, which before this existed had never linted five of the six crates.
+[workspace.lints.clippy]
+# `for i in 0..n { s[i] }` where `i` is a SPIN INDEX, a lattice site, a colour class or a LUT entry.
+# The index is the physical identity, it is usually also used to reach a neighbour or a second
+# array, and `enumerate()` renames it to something less meaningful. 72 sites; the 20 highest-risk
+# were read individually and every one was correct.
+needless_range_loop = "allow"
+# `!(w > 0.0)` is NOT `w <= 0.0`, and the difference is NaN: the first REJECTS it, the second
+# ACCEPTS it. Demonstrated, not assumed -- and taking clippy's advice at these 7 sites would have
+# admitted NaN weights, which is precisely the defect fixed in 0.12.0's successor.
+neg_cmp_op_on_partial_ord = "allow"
+# A physics kernel takes the parameters the physics has. Bundling beta, seed, sweeps, stages and a
+# ledger into a struct to satisfy a count of seven moves the arity, it does not reduce it.
+too_many_arguments = "allow"
+
 [workspace]
 members = [".", "silicon", "serve", "cloud", "gpu", "meter"]
+
+[lints]
+workspace = true

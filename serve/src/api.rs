@@ -1459,9 +1459,7 @@ mod silent_wrongness {
         assert!(updates.unwrap() > 2.0e8, "the run really is that large: {updates:?}");
 
         // and a request past the ceiling is refused on the recording loop alone
-        let over = format!(
-            r#"{{"graph":{{"builtin":"lattice2d","l":64}},"sweeps":1,"draws":100000,"thin":100000}}"#
-        );
+        let over = r#"{"graph":{"builtin":"lattice2d","l":64},"sweeps":1,"draws":100000,"thin":100000}"#.to_string();
         let e = dispatch("sample", &crate::json::parse(&over).unwrap()).unwrap_err();
         assert!(e.contains("draws") && e.contains("thin") && e.contains("ceiling"), "{e}");
 

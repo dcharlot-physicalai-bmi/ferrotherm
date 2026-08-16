@@ -182,9 +182,7 @@ pub fn handle(line: &str) -> Option<String> {
     let params = msg.get("params").cloned().unwrap_or(Json::Obj(Vec::new()));
 
     // Notifications carry no id and must not be answered.
-    if msg.get("id").is_none() {
-        return None;
-    }
+    msg.get("id")?;
 
     let resp = match method {
         "initialize" => {

@@ -751,7 +751,7 @@ mod tests {
         let ne = edges.len();
         for t in 0..2usize {
             let mut g_j = vec![0.0; ne];
-            let mut g_h = vec![0.0; 5];
+            let mut g_h = [0.0; 5];
             for b_mask in 0..8usize {
                 let mut qb = 0.0;
                 for a_mask in 0..8usize {

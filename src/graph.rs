@@ -90,7 +90,7 @@ impl GraphBuilder {
         }
         // CSR over both directions
         let mut deg = vec![0usize; n];
-        for (&(a, b), _) in merged.iter() {
+        for &(a, b) in merged.keys() {
             deg[a as usize] += 1;
             deg[b as usize] += 1;
         }

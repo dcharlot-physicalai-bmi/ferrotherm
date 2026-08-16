@@ -987,17 +987,13 @@ pub trait Device {
 }
 
 /// The reference backend: this crate's own sampler on the local CPU.
+#[derive(Default)]
 pub struct Cpu {
     graph: Option<crate::graph::Graph>,
     state: Vec<i8>,
     ledger: crate::ledger::Ledger,
 }
 
-impl Default for Cpu {
-    fn default() -> Self {
-        Cpu { graph: None, state: Vec::new(), ledger: crate::ledger::Ledger::default() }
-    }
-}
 
 impl Device for Cpu {
     fn fabric(&self) -> Fabric {
@@ -1342,7 +1338,7 @@ mod range_tests {
         assert!(!Fabric::toshiba_sqbm(Z1_SPICE).check(&r.program).iter()
                     .any(|u| matches!(u, Unsupported::ArityTooHigh { .. })));
         // which the PUBO solver never needed
-        assert_eq!(r.ancillas > 0, true, "the reduction really did cost ancillas");
+        assert!(r.ancillas > 0, "the reduction really did cost ancillas");
     }
 
     #[test]

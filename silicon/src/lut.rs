@@ -49,6 +49,18 @@ pub fn bsn_fire_prob(threshold: u8, k: u8) -> f64 {
     }
 }
 
+/// Former name of [`bsn_threshold_init`], kept so 0.1.0 callers keep building.
+#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_threshold_init")]
+pub fn pbit_threshold_init(threshold: u8) -> u64 {
+    bsn_threshold_init(threshold)
+}
+
+/// Former name of [`bsn_fire_prob`], kept so 0.1.0 callers keep building.
+#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_fire_prob")]
+pub fn pbit_fire_prob(threshold: u8, k: u8) -> f64 {
+    bsn_fire_prob(threshold, k)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,16 +118,4 @@ mod tests {
             }
         }
     }
-}
-
-/// Former name of [`bsn_threshold_init`], kept so 0.1.0 callers keep building.
-#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_threshold_init")]
-pub fn pbit_threshold_init(threshold: u8) -> u64 {
-    bsn_threshold_init(threshold)
-}
-
-/// Former name of [`bsn_fire_prob`], kept so 0.1.0 callers keep building.
-#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_fire_prob")]
-pub fn pbit_fire_prob(threshold: u8, k: u8) -> f64 {
-    bsn_fire_prob(threshold, k)
 }

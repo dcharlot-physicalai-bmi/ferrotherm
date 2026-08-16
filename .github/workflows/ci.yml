@@ -28,6 +28,12 @@ jobs:
         # and tests only `ferrotherm` -- so ferrotherm-serve, ferrotherm-cloud and
         # ferrotherm-silicon were never compiled by CI at all, and their tests never ran.
         run: cargo test --release --workspace
+      # The tool that found the 0.12.0 headline defect ran in no job and no script. It aborted on
+      # ffi.rs's deny-by-default lint, so five of the six crates and all 21 examples had never been
+      # linted at all. The three lints this codebase deliberately does not follow are recorded in
+      # Cargo.toml's [workspace.lints.clippy] with the reason for each; everything else is denied.
+      - name: Clippy, across the whole workspace
+        run: cargo clippy --release --workspace --all-targets -- -D warnings
       # The GPU crate builds everywhere and its tests skip where there is no adapter, so this
       # catches an API break on a runner with no driver -- which is every hosted runner.
       - name: GPU backend builds, and its tests skip rather than fail without an adapter

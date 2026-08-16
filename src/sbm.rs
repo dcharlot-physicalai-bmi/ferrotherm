@@ -91,7 +91,7 @@ pub fn run_restarts(
     let mut best: Option<(Vec<i8>, f64)> = None;
     for r in 0..restarts {
         let (s, e) = run(g, variant, n_steps, dt, seed ^ (r as u64).wrapping_mul(0x9E3779B97F4A7C15));
-        if best.as_ref().map_or(true, |(_, be)| e < *be) {
+        if best.as_ref().is_none_or(|(_, be)| e < *be) {
             best = Some((s, e));
         }
     }

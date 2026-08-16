@@ -14,3 +14,6 @@ ferrotherm = { version = "0.12", path = ".." }
 ureq = "2"
 
 [dev-dependencies]
+
+[lints]
+workspace = true

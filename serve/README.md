@@ -78,8 +78,10 @@ you can quote.
 
 If TV comes in above the floor at high beta, the usual cause is correlated draws rather than a
 broken sampler — raise `thin`. On an 8-node ring at β = 1.6, back-to-back draws land at TV 0.051
-against a 0.040 floor; thinning to 40 sweeps between draws brings it to well under. Both numbers
-are asserted in the test suite.
+against a 0.040 floor; thinning to 40 sweeps between draws brings it to well under. The **direction**
+of both is asserted in the test suite — that back-to-back draws exceed the floor and thinned ones do
+not. The two decimal figures are measurements from one run, quoted to show the size of the effect,
+and no test pins them to those literals.
 
 ## Limits
 

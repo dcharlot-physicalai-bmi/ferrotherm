@@ -503,9 +503,7 @@ impl<'a> Iterator for Fields<'a> {
                 // bounds check below and panics in the slice -- which, reached through
                 // `ft_ommx_read`, is a non-unwinding panic that aborts the caller's process.
                 // Eleven bytes did it: 0x0A then ten 0xFF/0x01 varint bytes.
-                let Some(end) = self.i.checked_add(len as usize) else {
-                    return None;
-                };
+                let end = self.i.checked_add(len as usize)?;
                 if end > self.b.len() {
                     return None;
                 }

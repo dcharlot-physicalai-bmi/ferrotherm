@@ -149,7 +149,7 @@ fn main() {
             lay.h[i] += lr * (pos_si[i] - neg_si[i]) / m;
         }
         steps += 1;
-        if steps % 40 == 0 {
+        if steps.is_multiple_of(40) {
             println!("  step {steps:5}  layer {t}  |J| mean {:.4}  elapsed {:.0} s",
                      lay.j.iter().map(|v| v.abs()).sum::<f64>() / lay.j.len() as f64,
                      start.elapsed().as_secs_f64());

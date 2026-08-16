@@ -325,7 +325,7 @@ fn plant_variant(kind: &str, n: usize) -> Plant {
 /// is passive or a contact is unactuated, and it is where the claim is most likely to break.
 fn underactuated(n: usize) -> Plant {
     let mut p = plant_variant("circulant", n);
-    let m = (n + 1) / 2;
+    let m = n.div_ceil(2);
     let mut b = vec![0.0; n*n];
     for i in 0..m { b[i*n+i] = 1.0; }
     p.b = b;

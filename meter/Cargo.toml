@@ -13,3 +13,6 @@ categories = ["science", "hardware-support"]
 # nothing to depend on -- and one field out of a JSON line does not justify a parser.
 [dependencies]
 ferrotherm = { version = "0.12", path = ".." }
+
+[lints]
+workspace = true

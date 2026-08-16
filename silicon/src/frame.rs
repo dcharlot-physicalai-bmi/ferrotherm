@@ -166,9 +166,8 @@ fn frame_write_payload(words: &[u32]) -> Vec<u32> {
 mod tests {
     use super::*;
 
-    /// The published CRC-32C check value: CRC32C("123456789") = 0xE3069283. An independent
-    /// anchor — if the polynomial or reflection were wrong, this would not land.
-
+    // The published CRC-32C check value: CRC32C("123456789") = 0xE3069283. An independent
+    // anchor — if the polynomial or reflection were wrong, this would not land.
     /// THE WITNESS TEST: the 34 configuration words after the sync word, as they appear in a
     /// bitstream real XC7A100T silicon accepted. These are not values we chose — they were read
     /// off a working stream, and our assembler must reproduce them exactly. If a future change

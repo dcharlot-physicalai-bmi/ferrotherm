@@ -30,7 +30,7 @@ fn exact_cost(k: f64) -> f64 {
         let ex2 = m * m + v;
         cost += Q * ex2 + R * (k * k * ex2 + SG * SG);
         let c = A - B * k;
-        m = c * m;
+        m *= c;
         v = c * c * v + B * B * SG * SG;
     }
     cost

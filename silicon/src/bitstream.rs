@@ -227,8 +227,7 @@ mod tests {
         assert_eq!(parsed.config, &raw[..]);
     }
 
-    /// Packet encodings against the values documented in UG470.
-
+    // Packet encodings against the values documented in UG470.
     /// Our own encoders must decode back to themselves — and the decoder must agree with the
     /// packet layout the device actually accepts (see examples/decode_bit.rs, run against a
     /// real generated bitstream).

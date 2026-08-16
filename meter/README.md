@@ -40,8 +40,17 @@ number, not an error.
 ## Backends
 
 - **macOS** — `macmon pipe`, reading the SoC's own power counters. Detected on `PATH`.
-- **Jetson / Linux** — the INA3221 rails under `/sys/bus/i2c/.../in_power*_input` are the
-  equivalent. **Not implemented.** The Jetson on our tailnet has been offline, and a backend nobody
-  can run is a backend nobody has tested. The trait is the seam it slots into.
+- **Jetson / Linux** — `ina3221`, the shunt monitors on the board. `Meter::detect()` tries macmon
+  first and falls back to this.
+
+  Rail discovery, label matching, both driver layouts and both unit conversions are covered by seven
+  tests against fixture directories the tests build themselves. **No reading from it has been taken
+  on real hardware**, because the Jetson on our tailnet is offline — so the arithmetic that was going
+  to be wrong is tested and the hardware path is not, and saying which is which is the point.
+
+  The trap it exists to avoid: on a Jetson the three channels are **nested**, not disjoint. `VDD_IN`
+  is the whole board and `VDD_CPU_GPU_CV` and `VDD_SOC` are parts of what it already counts, so
+  summing them — the obvious move — roughly doubles the answer and does it silently. It reads the
+  labels and uses one rail, and refuses when no label says which is the total.
 
 Apache-2.0. From the Institute for Physical AI @ BMI.

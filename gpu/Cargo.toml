@@ -23,3 +23,6 @@ pollster = "0.4"
 # asked without both, and it is the question the whole stack exists to answer.
 [dev-dependencies]
 ferrotherm-meter = { version = "0.2", path = "../meter" }
+
+[lints]
+workspace = true

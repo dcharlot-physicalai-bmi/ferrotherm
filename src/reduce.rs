@@ -210,7 +210,7 @@ fn expand_spin_product(poly: &mut Poly, vars: &[usize], c: f64) {
             }
         }
         // 2^taken from the chosen x's, (−1) for each factor that contributed its −1
-        let sign = if (k - taken) % 2 == 0 { 1.0 } else { -1.0 };
+        let sign = if (k - taken).is_multiple_of(2) { 1.0 } else { -1.0 };
         add(poly, mono, c * sign * (1u64 << taken) as f64);
     }
 }

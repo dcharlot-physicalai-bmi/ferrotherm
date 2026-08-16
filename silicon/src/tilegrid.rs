@@ -273,7 +273,7 @@ mod tests {
     fn far_round_trip() {
         let f = Far::decode(0x0042_0100);
         assert_eq!(f.block_type, 0);
-        assert_eq!(f.bottom_half, true);
+        assert!(f.bottom_half);
         assert_eq!(f.row, 1);
         assert_eq!(f.column, 2);
         assert_eq!(f.minor, 0);

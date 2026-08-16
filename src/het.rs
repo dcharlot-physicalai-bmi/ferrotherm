@@ -169,7 +169,7 @@ impl<'g> HetSampler<'g> {
     }
 
     /// One full chromatic sweep: every free node resampled from its exact conditional once.
-    pub fn sweep(&mut self, mut ledger: Option<&mut crate::ledger::Ledger>) {
+    pub fn sweep(&mut self, ledger: Option<&mut crate::ledger::Ledger>) {
         let mut probs: Vec<f64> = Vec::with_capacity(8);
         let mut updated = 0u64;
         for class in &self.g.classes {
@@ -206,7 +206,7 @@ impl<'g> HetSampler<'g> {
                 updated += 1;
             }
         }
-        if let Some(l) = ledger.as_deref_mut() {
+        if let Some(l) = ledger {
             l.samples += updated;
         }
     }

@@ -113,3 +113,13 @@ pub mod dtm;
 pub mod targets;
 pub mod hdl;
 pub mod ffi;
+
+/// The README's own code blocks, compiled by `cargo test`.
+///
+/// Its headline "Use it" snippet did not compile: `Ledger::joules` returns `Option<f64>` and the
+/// snippet formatted it with `{:.2e}`, which `Option` does not implement. That is the first thing
+/// anyone copies, and nothing was checking it -- a README is documentation the compiler can read,
+/// so it should.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoc;

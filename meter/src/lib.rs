@@ -73,7 +73,9 @@ pub mod ina3221;
 
 /// A source of wall-power readings, in watts.
 pub struct Meter {
-    child: Child,
+    /// The backend subprocess, when the backend IS one. `ina3221` reads sysfs from a thread and
+    /// has none -- so this became an Option rather than forcing a fake child to exist.
+    child: Option<Child>,
     /// Readings with the instant they ARRIVED, filled by a reader thread.
     ///
     /// A thread rather than reading inline, because the backend ticks on its own clock and a read
@@ -132,7 +134,35 @@ impl Meter {
     /// `None` means **not found here**, never "impossible" — a Linux box with INA3221 rails has the
     /// same counters and no backend yet.
     pub fn detect() -> Option<Meter> {
-        Meter::macmon()
+        // Both, in order. `ina3221` shipped with its own tests and `detect` still returned only
+        // macmon -- so on the one class of machine the new backend exists for, the normal entry
+        // point could not reach it. A backend nothing routes to is a backend nobody runs.
+        Meter::macmon().or_else(Meter::ina3221)
+    }
+
+    /// The INA3221 backend: shunt monitors on the board, polled from sysfs.
+    ///
+    /// `None` when no INA3221 is present or readable. See [`ina3221`] for what is tested and what
+    /// is not -- no reading from this path has come from real hardware.
+    pub fn ina3221() -> Option<Meter> {
+        let rails = ina3221::Rails::detect().ok()?;
+        let machine = format!("INA3221 rail {}", rails.total().label);
+        let readings: Arc<Mutex<Vec<(Instant, f64)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&readings);
+        std::thread::spawn(move || loop {
+            let Ok(w) = rails.watts() else { return };
+            {
+                let mut v = sink.lock().unwrap();
+                v.push((Instant::now(), w));
+                if v.len() > 4096 {
+                    v.drain(..2048);
+                }
+            }
+            std::thread::sleep(ina3221::POLL);
+        });
+        let m = Meter { child: None, readings, machine, backend: "ina3221" };
+        m.wait_for_first(Duration::from_secs(4))?;
+        Some(m)
     }
 
     /// The macOS backend: `macmon pipe`, reading the SoC's own counters.
@@ -166,7 +196,7 @@ impl Meter {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "unknown Apple silicon".into());
-        let m = Meter { child, readings, machine, backend: "macmon" };
+        let m = Meter { child: Some(child), readings, machine, backend: "macmon" };
         // macmon does not produce its first reading for over a second. Waiting for it here means a
         // caller's measurement window covers their workload rather than the backend's warm-up --
         // which is what made a 1.2 s idle window collect exactly one sample.
@@ -302,8 +332,10 @@ impl Meter {
 
 impl Drop for Meter {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(c) = self.child.as_mut() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
     }
 }
 
@@ -429,7 +461,17 @@ mod tests {
     fn a_real_workload_measures_above_idle_and_derives_a_price() {
         use ferrotherm::{gibbs::Sampler, ising::lattice2d, ledger::Ledger};
         let (mut m, _own) = meter_or_skip!();
-        let idle = m.idle(Duration::from_millis(1200)).unwrap();
+        // The same treatment the `measure` call below already had, applied to the line that
+        // panicked instead: a contaminated BASELINE is as much "your laptop was compiling" as a
+        // contaminated run, and this `.unwrap()` is what went red while a concurrent clippy build
+        // was running. The refusal firing is the meter working, not the code being wrong.
+        let idle = match m.idle(Duration::from_millis(1200)) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("machine was not quiet enough to take a baseline; skipping: {e}");
+                return;
+            }
+        };
         assert!(idle.watts > 0.0, "a running machine draws power");
 
         // Big enough to be measurable, and sized from what the guard demands rather than guessed:
