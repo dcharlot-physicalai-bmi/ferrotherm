@@ -46,6 +46,22 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### CI had been red for weeks, and the gate was hiding why
+
+`check-semantics.sh` reported `python PRODUCED NOTHING -- its toolchain is present, so it broke` on
+every CI run going back weeks, and every run of it by hand passed. Both were correct.
+
+`cargo run --example`, which the script uses to build its reference, links the library as an **rlib**
+— it does not emit the **cdylib**. On any developer machine one is already sitting in
+`target/release` from an earlier `cargo build`, so the two bindings that `dlopen` the shared library
+found it. On a clean runner nothing had built it, because this script never did.
+
+The discarded stderr said, in full: *"could not load the ferrotherm shared library. Build it with
+`cargo build --release`."* The fix was in the message, and `2>/dev/null` threw it away on all four
+bindings. A gate that prints a verdict without the reason is a gate you cannot act on, so it now
+builds the cdylib first, and prints whatever a failing binding wrote to stderr.
+
+
 ### check-versions now looks outside the directory
 
 Every gate in this repository compared the repository against itself, which is why all of them were

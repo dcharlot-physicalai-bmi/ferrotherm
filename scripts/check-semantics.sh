@@ -30,8 +30,19 @@ out=$(mktemp -d)
 cleanup() { rm -rf "$out"; pkill -f 'target/release/ferrotherm-serve' 2>/dev/null; }
 trap cleanup EXIT
 
+# Build the cdylib the bindings dlopen. NOTHING DID.
+#
+# `cargo run --example` below builds the library as an rlib for the example to link; it does not
+# emit the cdylib. On a developer machine one is always lying in target/release from some earlier
+# `cargo build`, so this passed everywhere it was run by hand -- and on a clean runner python and
+# julia, the two bindings that load the shared library, could never find it. CI was red for weeks
+# with "PRODUCED NOTHING" and the cause was that this script never built what it needs.
+cargo build --release --quiet --lib 2>/dev/null || {
+  echo "the library itself did not build" >&2; exit 2; }
+
 LIB="$here/target/release/libferrotherm.dylib"
 [ -f "$LIB" ] || LIB="$here/target/release/libferrotherm.so"
+[ -f "$LIB" ] || { echo "no cdylib at target/release after building it" >&2; exit 2; }
 say() { printf '  %-14s %s\n' "$1" "$2"; }
 skip() { printf '  %-14s skipped: %s\n' "$1" "$2"; }
 
@@ -84,7 +95,7 @@ say "rust" "$(shasum -a 256 < "$out/rust.ftp" | cut -c1-16)  reference, $(wc -c 
 
 # ---- python ------------------------------------------------------------------------------------
 attempt python
-python3 - "$out" <<'PY' 2>/dev/null
+python3 - "$out" 2> "$out/python.err" <<'PY'
 import sys, os
 sys.path.insert(0, "python")
 import ferrotherm as ft
@@ -104,7 +115,7 @@ if command -v julia >/dev/null 2>&1; then
     a = categorical!(p, "a", 3); b = categorical!(p, "b", 3); t = integer!(p, "t", 10:13)
     not_equal!(p, a, b); at_most!(p, [is(a,0), is(b,0)], 1); fix!(p, t, 12)
     maximize!(p, [(3.0, is(a,1)), (4.0, is(b,2))]); solve!(p; tries = 1)
-    print(ftp(p))' > "$out/julia.ftp" 2>/dev/null
+    print(ftp(p))' > "$out/julia.ftp" 2> "$out/julia.err"
 else skip julia "no julia on PATH"; fi
 
 # ---- zig ---------------------------------------------------------------------------------------
@@ -142,8 +153,8 @@ if cargo build --release --quiet -p ferrotherm-serve 2>/dev/null; then
   (./target/release/ferrotherm-serve >/dev/null 2>&1 &)
   for _ in $(seq 1 40); do curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null && break; sleep 0.25; done
   curl -s -X POST localhost:8479/v1/solve -d @"$out/model.json" 2>/dev/null \
-    | python3 -c "import json,sys;print(json.load(sys.stdin)['ftp'],end='')" > "$out/http.ftp" 2>/dev/null
-  python3 - "$out" <<'PY' 2>/dev/null
+    | python3 -c "import json,sys;print(json.load(sys.stdin)['ftp'],end='')" > "$out/http.ftp" 2> "$out/http.err"
+  python3 - "$out" 2> "$out/mcp.err" <<'PY'
 import json, subprocess, sys, os
 args = json.load(open(os.path.join(sys.argv[1], "model.json")))
 reqs = [{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"parity","version":"1"}}},
@@ -174,6 +185,14 @@ for name in $attempted; do
   f="$out/$name.ftp"
   if [ ! -s "$f" ]; then
     say "$name" "PRODUCED NOTHING -- its toolchain is present, so it broke"
+    # And say HOW. This printed the verdict and swallowed the cause on every binding, so weeks of
+    # red CI showed "it broke" while the discarded stderr read "could not load the ferrotherm
+    # shared library. Build it with cargo build --release" -- the fix, in the message, thrown away.
+    if [ -s "$out/$name.err" ]; then
+      sed 's/^/      /' "$out/$name.err" | tail -6
+    else
+      echo "      (it wrote nothing to stderr either)"
+    fi
     bad=$((bad + 1)); n=$((n + 1)); continue
   fi
   n=$((n + 1))
