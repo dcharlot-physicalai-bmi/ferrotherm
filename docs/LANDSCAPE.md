@@ -25,9 +25,15 @@ Re-run on Python 3.13, 8 of 8 spot-checked packages had moved, one by a major ve
 **1. jijmodeling 2.x detects constraint patterns; ferrotherm does not.** `ConstraintDetectionConfig`
 and `ConstraintHintName` (`OneHot`, `Sos1`) let it RECOGNISE that a set of constraints forms a
 one-hot pattern and hint the solver accordingly. Ferrotherm requires the modeller to say
-`exactly_one`, and rewards them for it with a cheaper lowering — but a modeller who writes the
-pattern out longhand gets the expensive lowering and no warning. **This is a real gap in the
-modelling row**, which this document previously scored as ours. `grep -c detect src/model.rs` = 1.
+`exactly_one`. **Corrected 2026-08-16 by measuring rather than inferring:** the gap is far smaller
+than it first looked. `cardinality(lits, 1)` and `exactly_one` compile to *identical* graphs here
+(10 spins, 15 factors on five literals), and so do six pairwise `not_equal`s and one `all_different`
+(16 spins, 48 factors). The only longhand form that measures more expensive is `at_most(lits, 1)` —
+12 spins and 26 factors against `at_most_one`'s 10 and 15, because an inequality needs a slack
+variable. Ferrotherm now detects that one, plus constraints that constrain nothing, and **reports
+them as caveats rather than rewriting the model**: silently compiling something other than what was
+written is the opposite of this compiler's discipline. The remaining difference is that Jij hints a
+*solver* while we advise a *modeller*.
 
 **2. Amplify ships 16 vendor clients; ferrotherm declares 7 fabrics.** D-Wave (three), Fujitsu DA3c
 and DA4, Gurobi, Hitachi, NEC VA2, Toshiba SQBM2, Fixstars AE, plus a `CustomClientProtocol` for

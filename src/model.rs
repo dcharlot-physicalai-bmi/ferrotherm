@@ -932,6 +932,46 @@ impl Model {
         // cheap as valid ones, so the sampler is free to land on one and `decode` is the only
         // thing between that and a wrong answer. Collected rather than discarded.
         let mut caveats = Vec::new();
+        // Patterns the modeller wrote longhand that have a cheaper form, and constraints that
+        // constrain nothing. Reported, never rewritten: silently compiling something other than
+        // what was written is the opposite of this compiler's discipline, and a modeller who meant
+        // the expensive form is entitled to it.
+        //
+        // Only what MEASURES cheaper is reported. `cardinality(lits, 1)` and `exactly_one` compile
+        // to identical graphs here (10 spins, 15 factors on a five-literal test), and so do six
+        // pairwise `not_equal`s and one `all_different` (16 spins, 48 factors) -- so neither earns a
+        // caveat, and saying otherwise would be advice that costs the reader time and saves nothing.
+        for (c, _, hard) in &self.constraints {
+            match c {
+                Constraint::AtMost { lits, k } if *k == 1 && lits.len() >= 2 && *hard => {
+                    caveats.push(format!(
+                        "at_most over {} literals with k = 1 costs a slack variable: measured at 12 \
+                         spins and 26 factors where at_most_one is 10 and 15. An inequality has to \
+                         become an equality the sampler can square, and at k = 1 the pairwise \
+                         exclusion says the same thing for free. Use at_most_one.",
+                        lits.len()
+                    ));
+                }
+                Constraint::AtMost { lits, k } if *k >= lits.len() && *hard => {
+                    caveats.push(format!(
+                        "at_most over {} literals with k = {k} constrains nothing -- {k} of {} can \
+                         always hold -- and still pays for a slack variable and its factors. This is \
+                         usually a k that was meant to be smaller.",
+                        lits.len(),
+                        lits.len()
+                    ));
+                }
+                Constraint::AtLeast { lits, k } if *k == 0 && *hard => {
+                    caveats.push(format!(
+                        "at_least over {} literals with k = 0 constrains nothing -- zero of them \
+                         holding already satisfies it -- and still pays for a slack variable.",
+                        lits.len()
+                    ));
+                }
+                _ => {}
+            }
+        }
+
         for (i, s) in slots.iter().enumerate() {
             if !s.add_penalty(&mut b, penalty) {
                 let k = s.k;
@@ -2840,5 +2880,50 @@ mod tests {
             "the caveat says an invalid state costs what a valid one costs; if that stops being \
              true the message is wrong"
         );
+    }
+
+    #[test]
+    fn a_constraint_with_a_cheaper_form_is_named_but_not_rewritten() {
+        // jijmodeling 2.x detects one-hot patterns and hints the solver. This is the same idea with
+        // a different verdict: report, never rewrite. Silently compiling something other than what
+        // was written is the opposite of this compiler's discipline, and a modeller who meant the
+        // expensive form is entitled to it.
+        //
+        // Only what MEASURES cheaper is reported. cardinality(lits, 1) and exactly_one compile to
+        // identical graphs here, and so do six pairwise not_equals and one all_different -- so
+        // neither earns a caveat. Advice that costs the reader time and saves no spins is noise,
+        // and a checker people learn to ignore catches nothing.
+        let mut m = Model::new();
+        let v: Vec<_> = (0..5).map(|i| m.binary(&format!("v{i}"))).collect();
+        let lits: Vec<Lit> = v.iter().map(|&x| Lit::Is(x, 1)).collect();
+        m.at_most(lits.clone(), 1);
+        let c = m.compile().unwrap();
+        assert_eq!(c.caveats.len(), 1, "{:?}", c.caveats);
+        assert!(c.caveats[0].contains("at_most_one"), "must name the cheaper form: {}", c.caveats[0]);
+
+        // And the model is UNCHANGED: the expensive lowering is still what was asked for.
+        let mut n = Model::new();
+        let w: Vec<_> = (0..5).map(|i| n.binary(&format!("v{i}"))).collect();
+        n.at_most_one(w.iter().map(|&x| Lit::Is(x, 1)).collect::<Vec<_>>());
+        let cheap = n.compile().unwrap();
+        assert!(cheap.caveats.is_empty(), "the cheap form must not be flagged: {:?}", cheap.caveats);
+        assert!(
+            c.spins() > cheap.spins(),
+            "the caveat claims a saving; if the two compile the same the message is wrong"
+        );
+    }
+
+    #[test]
+    fn a_constraint_that_constrains_nothing_says_so() {
+        // at_most(n of n) and at_least(0 of n) are satisfied by every assignment and still pay for a
+        // slack variable and its factors. Almost always a k that was meant to be different.
+        let mut m = Model::new();
+        let v: Vec<_> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
+        let lits: Vec<Lit> = v.iter().map(|&x| Lit::Is(x, 1)).collect();
+        m.at_most(lits.clone(), 4);
+        m.at_least(lits, 0);
+        let c = m.compile().unwrap();
+        assert_eq!(c.caveats.len(), 2, "{:?}", c.caveats);
+        assert!(c.caveats.iter().all(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
     }
 }

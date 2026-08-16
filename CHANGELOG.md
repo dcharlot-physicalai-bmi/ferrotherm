@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Constraint detection — reported, never rewritten
+
+jijmodeling 2.x recognises one-hot patterns and hints the solver. Same idea, different verdict:
+`Compiled::caveats` now names a constraint written in a form that measures more expensive, and
+**leaves the model alone**. Silently compiling something other than what was written is the opposite
+of this compiler's discipline, and a modeller who meant the expensive form is entitled to it.
+
+**The gap turned out to be much smaller than inferring suggested**, which is why it was measured:
+
+| longhand | direct | verdict |
+|---|---|---|
+| `cardinality(lits, 1)` — 10 spins, 15 factors | `exactly_one` — 10, 15 | identical, no caveat |
+| 6× `not_equal` — 16 spins, 48 factors | `all_different` — 16, 48 | identical, no caveat |
+| `at_most(lits, 1)` — **12 spins, 26 factors** | `at_most_one` — **10, 15** | a real saving |
+
+Only the last earns a caveat: an inequality has to become an equality the sampler can square, and at
+k = 1 the pairwise exclusion says the same thing for free. Advice that costs a reader time and saves
+no spins is noise, and a checker people learn to ignore catches nothing.
+
+Also detected: constraints that constrain nothing — `at_most(n of n)` and `at_least(0 of n)` are
+satisfied by every assignment and still pay for a slack variable and its factors. Almost always a
+`k` that was meant to be different.
+
+`docs/LANDSCAPE.md` is corrected accordingly: yesterday's entry said a longhand modeller "gets the
+expensive lowering and no warning", which was inference. Measured, it is true of one form out of
+three.
+
+
 ### Python floor raised to 3.11, and why it matters beyond packaging
 
 `requires-python` said `>=3.9` while CI tested exactly one version. The floor was a claim nobody had
