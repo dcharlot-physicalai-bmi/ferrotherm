@@ -27,9 +27,18 @@ exporter that skipped it would produce a file that parses cleanly and describes 
 The constant is carried in the `Linear` message so the OMMX objective equals ferrotherm's energy
 exactly rather than up to an offset a reader has to know about.
 
-Import (OMMX → ferrotherm) is not implemented. It is only possible for the subset ferrotherm can
-sample — binary or bounded-integer variables, degree ≤ 2 — and refusing the rest by name is the
-shape `src/lp.rs` already uses for LP files.
+**Import works too**, which is what makes this a bridge rather than an exporter: ferrotherm reads an
+instance the reference stack built end to end, and scores all 16 states of it identically. What it
+cannot sample is refused **by name** — a continuous variable ("no spin encoding at any width"), a
+non-[0,1] bound, an objective of degree ≥ 3 (pointed at `ferrotherm::reduce`, so the ancilla count
+is visible rather than paid silently). Repeated scalar fields are accepted packed *or* unpacked;
+the reference packs, and this crate's own encoder did not until it was checked against real output.
+
+**Reading a real file found a bug my own round-trip could not.** proto3 omits a field at its default
+value, so `Term { id: 0, coefficient: c }` serialises the coefficient alone — and the reader used a
+sentinel for "no id seen", turning variable 0 into "not declared". This crate's encoder writes id 0
+explicitly, so its reader and writer agreed with each other and were both wrong about the format.
+Only somebody else's encoder could show that.
 
 
 ### Constraint detection — reported, never rewritten

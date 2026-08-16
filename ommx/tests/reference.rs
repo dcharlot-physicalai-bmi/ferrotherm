@@ -77,3 +77,70 @@ print(f"{n} {bad}")
         1u32 << g.n
     );
 }
+
+#[test]
+fn we_can_read_an_instance_the_reference_built() {
+    // The direction that makes this a BRIDGE rather than an exporter: an instance the reference
+    // stack produced end to end, which this crate never wrote a byte of.
+    //
+    // This is what caught the proto3 trap. A field at its default value is not serialised, so
+    // `Term { id: 0, coefficient: c }` writes the coefficient alone -- and this crate's reader used
+    // a sentinel for "no id seen", turning variable 0 into "not declared". Its own encoder writes
+    // id 0 explicitly, so reader and writer agreed with each other and were both wrong about the
+    // format. Only a file from somebody else's encoder could show that.
+    let py = std::env::var("OMMX_PYTHON").unwrap_or_else(|_| "python3".into());
+    let has = Command::new(&py)
+        .args(["-c", "import ommx.v1"])
+        .stdout(Stdio::null()).stderr(Stdio::null()).status()
+        .map(|s| s.success()).unwrap_or(false);
+    if !has {
+        eprintln!("no `ommx` for {py}; skipping");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join("ferrotherm-ommx-theirs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let inst = dir.join("theirs.ommx");
+    let table = dir.join("theirs.txt");
+
+    // Deliberately includes a term on variable 0, a negative coefficient, and a constant -- the
+    // three things whose omission or sign a hand-rolled reader is most likely to get wrong.
+    let build = format!(
+        r#"
+from ommx.v1 import Instance, DecisionVariable, State
+x = [DecisionVariable.binary(i, name=f"q{{i}}") for i in range(4)]
+inst = Instance.from_components(decision_variables=x,
+    objective=2.0*x[0]*x[1] - 3.0*x[1]*x[2] + 1.5*x[2]*x[3] + 0.5*x[0] - 2.0*x[3] + 7.0,
+    constraints=[], sense=Instance.MINIMIZE)
+open(r"{}", "wb").write(inst.to_bytes())
+rows = []
+for m in range(16):
+    xs = {{i: float((m >> i) & 1) for i in range(4)}}
+    rows.append(f"{{m}} {{inst.evaluate(State(entries=xs)).objective}}")
+open(r"{}", "w").write("\n".join(rows))
+"#,
+        inst.display(), table.display()
+    );
+    let ok = Command::new(&py).args(["-c", &build]).status().map(|s| s.success()).unwrap_or(false);
+    assert!(ok, "the reference failed to build its own instance");
+
+    let (g, constant) = ferrotherm_ommx::import(&std::fs::read(&inst).unwrap())
+        .expect("must read what the reference writes");
+    assert_eq!(g.n, 4);
+
+    let want = std::fs::read_to_string(&table).unwrap();
+    let mut checked = 0;
+    for line in want.lines().filter(|l| !l.trim().is_empty()) {
+        let mut it = line.split_whitespace();
+        let mask: u32 = it.next().unwrap().parse().unwrap();
+        let theirs: f64 = it.next().unwrap().parse().unwrap();
+        let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+        let ours = g.energy(&s) + constant;
+        assert!(
+            (ours - theirs).abs() < 1e-9,
+            "state {mask:04b}: the reference says {theirs}, we say {ours}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 16, "every state has to be compared, not some of them");
+}

@@ -132,15 +132,20 @@ pub fn export(g: &Graph) -> Export {
         double_field(&mut linear, schema::LINEAR_CONSTANT, constant);
     }
 
+    // PACKED, which is proto3's default for repeated scalars and what the reference emits. The
+    // first version wrote them unpacked, one key per element -- also valid, and the reference read
+    // it, but emitting the canonical form keeps the bytes comparable with everyone else's.
     let mut quadratic = Vec::new();
-    for (r, _, _) in &quad {
-        varint_field(&mut quadratic, schema::QUAD_ROWS, *r);
-    }
-    for (_, c, _) in &quad {
-        varint_field(&mut quadratic, schema::QUAD_COLUMNS, *c);
-    }
-    for (_, _, v) in &quad {
-        double_field(&mut quadratic, schema::QUAD_VALUES, *v);
+    if !quad.is_empty() {
+        let mut rows = Vec::new();
+        for (r, _, _) in &quad { varint(&mut rows, *r); }
+        len_field(&mut quadratic, schema::QUAD_ROWS, &rows);
+        let mut cols = Vec::new();
+        for (_, c, _) in &quad { varint(&mut cols, *c); }
+        len_field(&mut quadratic, schema::QUAD_COLUMNS, &cols);
+        let mut vals = Vec::new();
+        for (_, _, v) in &quad { vals.extend_from_slice(&v.to_le_bytes()); }
+        len_field(&mut quadratic, schema::QUAD_VALUES, &vals);
     }
     len_field(&mut quadratic, schema::QUAD_LINEAR, &linear);
 
@@ -198,6 +203,328 @@ fn len_field(buf: &mut Vec<u8>, field: u32, body: &[u8]) {
 }
 fn str_field(buf: &mut Vec<u8>, field: u32, s: &str) {
     len_field(buf, field, s.as_bytes());
+}
+
+/// Why an OMMX instance could not be read as a ferrotherm model.
+///
+/// Refused by name, the way `src/lp.rs` refuses an LP file it cannot express. A bridge that
+/// silently dropped what it could not represent would hand back a model that solves a different
+/// problem, which is worse than not reading the file at all.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportError {
+    /// A variable this sampler cannot represent.
+    ///
+    /// Ferrotherm samples spins. A continuous variable has no spin encoding at any width, and a
+    /// bounded integer needs one the caller has to choose, so neither is silently guessed at.
+    UnsupportedKind { id: u64, name: String, kind: u64 },
+    /// A variable whose bounds are not 0/1.
+    NotBinary { id: u64, name: String, lower: f64, upper: f64 },
+    /// An objective of degree three or higher.
+    ///
+    /// `ferrotherm::reduce` lowers those onto pairwise hardware with ancillas, so this is a
+    /// deliberate boundary rather than a limit: read the model, then reduce it, so the caller sees
+    /// what the reduction cost.
+    TooHighDegree,
+    /// The bytes are not a well-formed instance.
+    Malformed(String),
+    /// An empty instance.
+    NoVariables,
+}
+
+impl core::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ImportError::UnsupportedKind { id, name, kind } => write!(
+                f,
+                "decision variable {id} ('{name}') has kind {kind}; ferrotherm samples spins, so \
+                 only KIND_BINARY (1) can be read directly. A continuous variable has no spin \
+                 encoding at any width; a general integer needs one the caller must choose, and \
+                 guessing it would silently change the problem."
+            ),
+            ImportError::NotBinary { id, name, lower, upper } => write!(
+                f,
+                "decision variable {id} ('{name}') is bounded [{lower}, {upper}] rather than \
+                 [0, 1]. A binary variable with other bounds is a different variable."
+            ),
+            ImportError::TooHighDegree => write!(
+                f,
+                "this objective has degree three or higher. ferrotherm::reduce lowers such a model \
+                 onto pairwise hardware with one ancilla per substituted pair -- run it explicitly, \
+                 so the ancilla count is visible rather than paid silently here."
+            ),
+            ImportError::Malformed(why) => write!(f, "not a well-formed ommx.v1.Instance: {why}"),
+            ImportError::NoVariables => write!(f, "this instance declares no decision variables"),
+        }
+    }
+}
+
+/// Read an `ommx.v1.Instance` as a ferrotherm graph.
+///
+/// The inverse of [`export`], and the direction that lets ferrotherm consume what the rest of the
+/// ecosystem emits -- a jijmodeling problem compiled to OMMX, for instance.
+///
+/// **The substitution runs the other way.** OMMX binaries are 0/1 and ferrotherm spins are ±1, so
+/// `x = (s + 1) / 2` is applied on the way in. As on the way out it changes every coefficient, and
+/// the constant it produces is returned rather than dropped, so a caller can reconstruct the OMMX
+/// objective from a ferrotherm energy exactly.
+///
+/// Repeated scalar fields are accepted **packed or unpacked**. The reference implementation packs;
+/// this crate's own encoder did not until it was checked. A decoder that handled only one of them
+/// would read half the files it is given.
+pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
+    let mut vars: Vec<(u64, String, u64, f64, f64)> = Vec::new();
+    let mut objective: Option<&[u8]> = None;
+    let mut sense = schema::SENSE_MINIMIZE;
+
+    for (field, body) in Fields::new(bytes) {
+        match (field, body) {
+            (schema::INSTANCE_DECISION_VARIABLES, Body::Bytes(b)) => {
+                // Same proto3 rule throughout: absent means the default. A bound is [0, 1] here
+                // because that is what a binary variable's is, and an omitted `lower` is 0.0
+                // rather than missing.
+                let (mut id, mut name, mut kind, mut lo, mut hi) = (0u64, String::new(), 0u64, 0.0, 1.0);
+                for (f2, b2) in Fields::new(b) {
+                    match (f2, b2) {
+                        (schema::DV_ID, Body::Varint(v)) => id = v,
+                        (schema::DV_KIND, Body::Varint(v)) => kind = v,
+                        (schema::DV_NAME, Body::Bytes(s)) => name = String::from_utf8_lossy(s).into(),
+                        (schema::DV_BOUND, Body::Bytes(bb)) => {
+                            for (f3, b3) in Fields::new(bb) {
+                                match (f3, b3) {
+                                    (schema::BOUND_LOWER, Body::Fixed64(v)) => lo = f64::from_bits(v),
+                                    (schema::BOUND_UPPER, Body::Fixed64(v)) => hi = f64::from_bits(v),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                vars.push((id, name, kind, lo, hi));
+            }
+            (schema::INSTANCE_OBJECTIVE, Body::Bytes(b)) => objective = Some(b),
+            (schema::INSTANCE_SENSE, Body::Varint(v)) => sense = v,
+            _ => {}
+        }
+    }
+
+    if vars.is_empty() {
+        return Err(ImportError::NoVariables);
+    }
+    for (id, name, kind, lo, hi) in &vars {
+        if *kind != schema::KIND_BINARY {
+            return Err(ImportError::UnsupportedKind { id: *id, name: name.clone(), kind: *kind });
+        }
+        if *lo != 0.0 || *hi != 1.0 {
+            return Err(ImportError::NotBinary { id: *id, name: name.clone(), lower: *lo, upper: *hi });
+        }
+    }
+    // Ids are the caller's; index by position after sorting so a sparse or shuffled id space maps
+    // onto a dense spin space without silently renumbering anything the caller can see.
+    let mut ids: Vec<u64> = vars.iter().map(|v| v.0).collect();
+    ids.sort_unstable();
+    let index = |id: u64| ids.binary_search(&id).ok();
+    let n = ids.len();
+
+    let mut lin = vec![0.0f64; n];
+    let mut quad: Vec<(usize, usize, f64)> = Vec::new();
+    let mut constant = 0.0f64;
+
+    if let Some(obj) = objective {
+        let mut linear_body: Option<&[u8]> = None;
+        for (f, b) in Fields::new(obj) {
+            match (f, b) {
+                (1, Body::Fixed64(v)) => constant += f64::from_bits(v),
+                (2, Body::Bytes(bb)) => linear_body = Some(bb),
+                (schema::FUNCTION_QUADRATIC, Body::Bytes(q)) => {
+                    let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
+                    for (fq, bq) in Fields::new(q) {
+                        match (fq, bq) {
+                            (schema::QUAD_ROWS, Body::Varint(v)) => rows.push(v),
+                            (schema::QUAD_ROWS, Body::Bytes(p)) => packed_varints(p, &mut rows),
+                            (schema::QUAD_COLUMNS, Body::Varint(v)) => cols.push(v),
+                            (schema::QUAD_COLUMNS, Body::Bytes(p)) => packed_varints(p, &mut cols),
+                            (schema::QUAD_VALUES, Body::Fixed64(v)) => vals.push(f64::from_bits(v)),
+                            (schema::QUAD_VALUES, Body::Bytes(p)) => packed_doubles(p, &mut vals),
+                            (schema::QUAD_LINEAR, Body::Bytes(l)) => linear_body = Some(l),
+                            _ => {}
+                        }
+                    }
+                    if rows.len() != cols.len() || rows.len() != vals.len() {
+                        return Err(ImportError::Malformed(format!(
+                            "quadratic has {} rows, {} columns and {} values",
+                            rows.len(), cols.len(), vals.len()
+                        )));
+                    }
+                    for k in 0..rows.len() {
+                        let (Some(i), Some(j)) = (index(rows[k]), index(cols[k])) else {
+                            return Err(ImportError::Malformed(format!(
+                                "quadratic term names variable {} or {}, which is not declared",
+                                rows[k], cols[k]
+                            )));
+                        };
+                        quad.push((i, j, vals[k]));
+                    }
+                }
+                (4, Body::Bytes(_)) => return Err(ImportError::TooHighDegree),
+                _ => {}
+            }
+        }
+        if let Some(l) = linear_body {
+            for (f, b) in Fields::new(l) {
+                match (f, b) {
+                    (schema::LINEAR_TERMS, Body::Bytes(tb)) => {
+                        // Default 0, NOT a sentinel. proto3 omits a field at its default value,
+                        // so `Term { id: 0, coefficient: c }` serialises the coefficient alone --
+                        // and a sentinel turns the commonest variable in the file into "not
+                        // declared". This crate's own encoder writes id 0 explicitly, so its reader
+                        // and writer agreed with each other and were both wrong about the format;
+                        // it took reading a file the reference produced to see it.
+                        let (mut id, mut c) = (0u64, 0.0f64);
+                        for (ft, bt) in Fields::new(tb) {
+                            match (ft, bt) {
+                                (schema::TERM_ID, Body::Varint(v)) => id = v,
+                                (schema::TERM_COEFFICIENT, Body::Fixed64(v)) => c = f64::from_bits(v),
+                                _ => {}
+                            }
+                        }
+                        let Some(i) = index(id) else {
+                            return Err(ImportError::Malformed(format!(
+                                "linear term names variable {id}, which is not declared"
+                            )));
+                        };
+                        lin[i] += c;
+                    }
+                    (schema::LINEAR_CONSTANT, Body::Fixed64(v)) => constant += f64::from_bits(v),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // MAXIMIZE is MINIMIZE of the negation. Ferrotherm minimises energy, so flip once here rather
+    // than carrying a sense through everything downstream.
+    let flip = if sense == 2 { -1.0 } else { 1.0 };
+
+    // x = (s+1)/2. A quadratic c*x_i*x_j becomes c/4 * (s_i s_j + s_i + s_j + 1); a linear a*x_i
+    // becomes a/2 * s_i + a/2. Ferrotherm's energy is -J s_i s_j - h_i s_i, so the signs invert.
+    let mut b = ferrotherm::graph::GraphBuilder::new(n);
+    let mut h = vec![0.0f64; n];
+    let mut out_const = constant * flip;
+    for (i, j, c) in &quad {
+        let c = c * flip;
+        b.couple(*i, *j, -c / 4.0);
+        h[*i] -= c / 4.0;
+        h[*j] -= c / 4.0;
+        out_const += c / 4.0;
+    }
+    for i in 0..n {
+        let a = lin[i] * flip;
+        h[i] -= a / 2.0;
+        out_const += a / 2.0;
+    }
+    for (i, v) in h.iter().enumerate() {
+        b.bias(i, *v);
+    }
+    Ok((b.build(), out_const))
+}
+
+/// One protobuf field: its number and its payload.
+enum Body<'a> {
+    Varint(u64),
+    Fixed64(u64),
+    Bytes(&'a [u8]),
+}
+
+/// Walk the fields of a protobuf message, skipping anything unrecognised.
+///
+/// Forward compatibility is the point: OMMX has grown fields between 2.0 and 2.6 and will grow more,
+/// and a reader that choked on one it did not know would break on the next release.
+struct Fields<'a> {
+    b: &'a [u8],
+    i: usize,
+}
+
+impl<'a> Fields<'a> {
+    fn new(b: &'a [u8]) -> Self {
+        Fields { b, i: 0 }
+    }
+}
+
+impl<'a> Iterator for Fields<'a> {
+    type Item = (u32, Body<'a>);
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i >= self.b.len() {
+            return None;
+        }
+        let (k, used) = read_varint(self.b, self.i)?;
+        self.i += used;
+        let (field, wire) = ((k >> 3) as u32, (k & 7) as u32);
+        match wire {
+            0 => {
+                let (v, u) = read_varint(self.b, self.i)?;
+                self.i += u;
+                Some((field, Body::Varint(v)))
+            }
+            1 => {
+                if self.i + 8 > self.b.len() {
+                    return None;
+                }
+                let v = u64::from_le_bytes(self.b[self.i..self.i + 8].try_into().ok()?);
+                self.i += 8;
+                Some((field, Body::Fixed64(v)))
+            }
+            2 => {
+                let (len, u) = read_varint(self.b, self.i)?;
+                self.i += u;
+                let end = self.i + len as usize;
+                if end > self.b.len() {
+                    return None;
+                }
+                let s = &self.b[self.i..end];
+                self.i = end;
+                Some((field, Body::Bytes(s)))
+            }
+            5 => {
+                self.i += 4;
+                Some((field, Body::Varint(0)))
+            }
+            _ => None,
+        }
+    }
+}
+
+fn read_varint(b: &[u8], mut i: usize) -> Option<(u64, usize)> {
+    let (mut v, mut shift, start) = (0u64, 0u32, i);
+    loop {
+        let byte = *b.get(i)?;
+        v |= ((byte & 0x7f) as u64) << shift;
+        i += 1;
+        if byte & 0x80 == 0 {
+            return Some((v, i - start));
+        }
+        shift += 7;
+        if shift > 63 {
+            return None;
+        }
+    }
+}
+
+fn packed_varints(p: &[u8], out: &mut Vec<u64>) {
+    let mut i = 0;
+    while let Some((v, u)) = read_varint(p, i) {
+        out.push(v);
+        i += u;
+        if i >= p.len() {
+            break;
+        }
+    }
+}
+
+fn packed_doubles(p: &[u8], out: &mut Vec<f64>) {
+    for c in p.chunks_exact(8) {
+        out.push(f64::from_bits(u64::from_le_bytes(c.try_into().unwrap())));
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +633,126 @@ mod tests {
                 return (v, i - start);
             }
             shift += 7;
+        }
+    }
+
+    #[test]
+    fn a_graph_survives_a_round_trip_through_ommx() {
+        // Export then import, and check the two graphs score every state identically. Not "the
+        // same coefficients" -- the substitution runs both ways and the coefficients are supposed
+        // to change -- but the same ENERGY, which is the only thing that has to survive.
+        for g in [lattice2d(3, 1.0), lattice2d(2, -0.7)] {
+            let e = export(&g);
+            let (back, constant) = import(&e.bytes).expect("our own export must import");
+            assert_eq!(back.n, g.n);
+            for mask in 0..(1u32 << g.n) {
+                let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+                let want = g.energy(&s);
+                let got = back.energy(&s) + constant;
+                assert!(
+                    (want - got).abs() < 1e-9,
+                    "state {mask:b}: {want} before the round trip, {got} after"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn what_this_sampler_cannot_represent_is_refused_by_name() {
+        // The lp.rs discipline: a bridge that silently dropped what it could not represent would
+        // hand back a model solving a different problem, which is worse than not reading the file.
+        let mut inst = Vec::new();
+        let mut dv = Vec::new();
+        varint_field(&mut dv, schema::DV_ID, 0);
+        varint_field(&mut dv, schema::DV_KIND, 3); // KIND_CONTINUOUS
+        str_field(&mut dv, schema::DV_NAME, "temperature");
+        len_field(&mut inst, schema::INSTANCE_DECISION_VARIABLES, &dv);
+        match import(&inst) {
+            Err(ImportError::UnsupportedKind { id, name, kind }) => {
+                assert_eq!((id, kind), (0, 3));
+                assert_eq!(name, "temperature");
+                let msg = ImportError::UnsupportedKind { id, name, kind }.to_string();
+                assert!(msg.contains("no spin encoding"), "must say WHY: {msg}");
+            }
+            Err(e) => panic!("expected UnsupportedKind, got {e}"),
+            Ok(_) => panic!("a continuous variable must be refused, not read"),
+        }
+
+        // Degree three or higher points at `reduce` rather than being silently lowered here.
+        let mut poly = Vec::new();
+        let mut dv2 = Vec::new();
+        varint_field(&mut dv2, schema::DV_ID, 0);
+        varint_field(&mut dv2, schema::DV_KIND, schema::KIND_BINARY);
+        let mut bound = Vec::new();
+        double_field(&mut bound, schema::BOUND_LOWER, 0.0);
+        double_field(&mut bound, schema::BOUND_UPPER, 1.0);
+        len_field(&mut dv2, schema::DV_BOUND, &bound);
+        len_field(&mut poly, schema::INSTANCE_DECISION_VARIABLES, &dv2);
+        let mut obj = Vec::new();
+        len_field(&mut obj, 4, &[1, 2, 3]); // Function.polynomial
+        len_field(&mut poly, schema::INSTANCE_OBJECTIVE, &obj);
+        assert!(matches!(import(&poly), Err(ImportError::TooHighDegree)));
+        assert!(matches!(import(&[]), Err(ImportError::NoVariables)));
+    }
+
+    #[test]
+    fn packed_and_unpacked_repeated_fields_both_read() {
+        // The reference PACKS repeated scalars; this crate's own encoder did not until it was
+        // checked against real output. A decoder that handled only one of the two would read half
+        // the files it is given, and would look correct against its own writer forever.
+        let g = lattice2d(3, 1.0);
+        let packed = export(&g);
+        let (from_packed, c1) = import(&packed.bytes).unwrap();
+
+        // The same instance with rows/columns/values written one key per element.
+        let mut unpacked = Vec::new();
+        for (f, b) in Fields::new(&packed.bytes) {
+            match (f, b) {
+                (schema::INSTANCE_OBJECTIVE, Body::Bytes(obj)) => {
+                    let mut newobj = Vec::new();
+                    for (f2, b2) in Fields::new(obj) {
+                        match (f2, b2) {
+                            (schema::FUNCTION_QUADRATIC, Body::Bytes(q)) => {
+                                let mut nq = Vec::new();
+                                for (f3, b3) in Fields::new(q) {
+                                    match (f3, b3) {
+                                        (schema::QUAD_ROWS, Body::Bytes(p)) => {
+                                            let mut v = Vec::new();
+                                            packed_varints(p, &mut v);
+                                            for x in v { varint_field(&mut nq, schema::QUAD_ROWS, x); }
+                                        }
+                                        (schema::QUAD_COLUMNS, Body::Bytes(p)) => {
+                                            let mut v = Vec::new();
+                                            packed_varints(p, &mut v);
+                                            for x in v { varint_field(&mut nq, schema::QUAD_COLUMNS, x); }
+                                        }
+                                        (schema::QUAD_VALUES, Body::Bytes(p)) => {
+                                            let mut v = Vec::new();
+                                            packed_doubles(p, &mut v);
+                                            for x in v { double_field(&mut nq, schema::QUAD_VALUES, x); }
+                                        }
+                                        (fx, Body::Bytes(bx)) => len_field(&mut nq, fx, bx),
+                                        _ => {}
+                                    }
+                                }
+                                len_field(&mut newobj, schema::FUNCTION_QUADRATIC, &nq);
+                            }
+                            (fx, Body::Bytes(bx)) => len_field(&mut newobj, fx, bx),
+                            _ => {}
+                        }
+                    }
+                    len_field(&mut unpacked, schema::INSTANCE_OBJECTIVE, &newobj);
+                }
+                (fx, Body::Bytes(bx)) => len_field(&mut unpacked, fx, bx),
+                (fx, Body::Varint(v)) => varint_field(&mut unpacked, fx, v),
+                _ => {}
+            }
+        }
+        let (from_unpacked, c2) = import(&unpacked).unwrap();
+        assert_eq!(c1, c2);
+        for mask in 0..(1u32 << g.n) {
+            let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            assert!((from_packed.energy(&s) - from_unpacked.energy(&s)).abs() < 1e-12);
         }
     }
 }
