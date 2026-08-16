@@ -47,6 +47,17 @@ jobs:
         run: |
           cargo run --release --example ring_tv
           cargo run --release --example onsager
+  # Do the tests have teeth? A green suite says the code runs, not that a wrong answer would be
+  # noticed -- and the 0.12.0 release exists because 320 green tests could not tell an invented LP
+  # bound from a correct one. This breaks the code on purpose and requires the named test to go red.
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Every recorded mutation is caught by the test named for it
+        run: scripts/mutation-suite.sh
+
   c-abi:
     runs-on: ubuntu-latest
     steps:

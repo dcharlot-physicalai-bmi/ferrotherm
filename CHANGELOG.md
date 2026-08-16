@@ -46,6 +46,29 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### The mutations are written down and run every time
+
+`mutation-check.sh` breaks one line and asks whether a named test notices. It works, and it takes
+five arguments — so every mutation ever run through it was typed at a prompt once and then lost.
+"These tests have teeth" was established at a moment and never re-established, while the code
+underneath moved for months.
+
+`scripts/mutation-suite.sh` is the same tool with the mutations recorded, and it is a CI job. Each
+row is an invariant this project has actually got wrong, the smallest edit that reintroduces the
+error, and the test that must go red: the invented LP upper bound that forced 0.12.0, the `HashMap`
+whose iteration order used to decide CSR neighbour order and with it the last bits of every energy,
+and the `+ 0.0` that stops `Sum for f64` folding a clean model's soft cost to `-0`.
+
+The reason it exists is the 0.12.0 defect. 320 tests were green, and they were green because every
+bound test used the two-sided `10 <= t <= 20` form, so **not one of them could distinguish the right
+answer from the wrong one**. A suite is only evidence about the cases it can tell apart, and the only
+way to find out which those are is to break the code and watch.
+
+A row whose pattern no longer matches is a **failure, not a skip** — a mutation that silently stopped
+applying has been reporting a pass over nothing, which is the same shape as the three other blind
+checks found this week.
+
+
 ### You bring your own credentials, and the crate says how to get them
 
 `ferrotherm-cloud` shipped without telling anyone how to obtain an account. The driver was correct —
