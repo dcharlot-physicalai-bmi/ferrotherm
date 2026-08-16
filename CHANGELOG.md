@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### OMMX import reaches the bindings too
+
+Export landed on all nine surfaces; import stayed Rust-only, which is the same asymmetry in
+miniature. `ft_ommx_read` / `ft_ommx_error` (C ABI and header), `ft.from_ommx()` (Python),
+`ommxRead` / `ommxError` (Zig), `from_ommx` (Julia).
+
+Verified end to end rather than by shape: the Python binding reads an instance the reference stack
+built, anneals it, and lands on **the reference's own optimum** (state `1110`) with the energies
+agreeing exactly. Julia does the same. A continuous variable is refused by name — *"decision
+variable 0 ('temperature') has kind 3; ferrotherm samples spins"*.
+
+### `check-exports.sh` — a name exported with nothing behind it
+
+Writing the above, both Julia OMMX functions ended up **declared and exported with no function body
+in between**. The module loaded cleanly, `check-parity.sh` passed — it matches the `@cfn`
+declaration, which says a symbol is callable and nothing about whether anything calls it — and
+`from_ommx` was an `UndefVarError` the first time it was used. Julia does not resolve an exported
+name until then.
+
+The new check asks the interpreter to resolve every exported name. It is the cheapest check in the
+repository and it would have caught this immediately; mutation-tested by exporting a name that does
+not exist. `check-parity.sh` now says in its own comments what it does and does not prove.
+
+
 ### `check-parity.sh` now sees the gap it could not
 
 Everything that check did asked whether the core's C ABI reaches the bindings. It had nothing to say

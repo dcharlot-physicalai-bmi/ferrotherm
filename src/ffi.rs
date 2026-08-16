@@ -45,6 +45,72 @@ pub extern "C" fn ft_ising2d_new(l: u32, j: f64, beta: f64, seed: u64) -> *mut S
     Sim::new(lattice2d(l as usize, j), beta, seed)
 }
 
+/// Read an `ommx.v1.Instance` and return a simulation over it, or null if it cannot be read.
+///
+/// The direction that makes this a bridge rather than an exporter: a problem someone else compiled
+/// to OMMX -- from jijmodeling, say -- becomes something this sampler can run.
+///
+/// `constant_out`, when non-null, receives the offset the 0/1 to +/-1 substitution introduces:
+/// `ommx_objective(x) == ft_energy(sim) + constant`. Dropping it leaves an energy that ranks states
+/// correctly and reports the wrong number.
+///
+/// On null, [`ft_ommx_error`] says why in the caller's own terms -- a continuous variable, a bound
+/// that is not [0,1], an objective of degree three or more. This sampler samples spins, and a
+/// bridge that silently dropped what it could not represent would return a model that solves a
+/// different problem.
+#[no_mangle]
+pub extern "C" fn ft_ommx_read(
+    bytes: *const u8,
+    len: u32,
+    beta: f64,
+    seed: u64,
+    constant_out: *mut f64,
+) -> *mut Sim {
+    if bytes.is_null() {
+        set_ommx_error("no bytes were given");
+        return core::ptr::null_mut();
+    }
+    let raw = unsafe { core::slice::from_raw_parts(bytes, len as usize) };
+    match crate::ommx::import(raw) {
+        Ok((g, constant)) => {
+            set_ommx_error("");
+            if !constant_out.is_null() {
+                unsafe { *constant_out = constant };
+            }
+            Sim::new(g, beta, seed)
+        }
+        Err(e) => {
+            set_ommx_error(&e.to_string());
+            core::ptr::null_mut()
+        }
+    }
+}
+
+/// Why the last [`ft_ommx_read`] on this thread returned null. Empty when it did not.
+#[no_mangle]
+pub extern "C" fn ft_ommx_error(buf: *mut u8, cap: u32) -> u32 {
+    OMMX_ERROR.with(|e| {
+        let e = e.borrow();
+        let b = e.as_bytes();
+        if buf.is_null() {
+            return b.len() as u32;
+        }
+        let n = b.len().min(cap as usize);
+        unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+        n as u32
+    })
+}
+
+thread_local! {
+    /// Per-thread, because `ft_ommx_read` is a free function with no handle to hang an error on,
+    /// and a global would let one thread's failure explain another thread's success.
+    static OMMX_ERROR: core::cell::RefCell<String> = const { core::cell::RefCell::new(String::new()) };
+}
+
+fn set_ommx_error(s: &str) {
+    OMMX_ERROR.with(|e| *e.borrow_mut() = s.to_string());
+}
+
 /// New Z1-topology grid (degree 16, open boundaries), `w` x `h`, uniform coupling `j`, bias `hb`.
 #[no_mangle]
 pub extern "C" fn ft_z1_new(w: u32, h: u32, j: f64, hb: f64, beta: f64, seed: u64) -> *mut Sim {

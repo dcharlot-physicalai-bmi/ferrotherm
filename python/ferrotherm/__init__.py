@@ -186,6 +186,8 @@ _model_soft_cost = _sig("ft_model_soft_cost", c_double, [_p])
 _model_violation_is_hard = _sig("ft_model_violation_is_hard", c_uint32, [_p, c_uint32])
 _model_ancillas = _sig("ft_model_ancillas", c_uint32, [_p])
 _model_caveats = _sig("ft_model_caveats", c_uint32, [_p])
+_ommx_read = _sig("ft_ommx_read", _p, [_u8p, c_uint32, c_double, c_uint64, POINTER(c_double)])
+_ommx_error = _sig("ft_ommx_error", c_uint32, [_u8p, c_uint32])
 _model_ommx = _sig("ft_model_ommx", c_uint32, [_p, _u8p, c_uint32])
 _model_ommx_constant = _sig("ft_model_ommx_constant", c_double, [_p])
 _model_caveat = _sig("ft_model_caveat", c_uint32, [_p, c_uint32, _u8p, c_uint32])
@@ -929,6 +931,37 @@ class Answer:
         if self.soft_cost:
             out += f"\n  soft cost: {self.soft_cost:g}"
         return out + ">"
+
+
+def from_ommx(data: bytes, beta: float = 1.0, seed: int = 0) -> "tuple[Sim, float]":
+    """Read an ``ommx.v1.Instance`` and return a simulation over it, plus the constant.
+
+    The direction that makes this a bridge rather than an exporter: a problem someone else compiled
+    to OMMX — from jijmodeling, say — becomes something this sampler can run.
+
+    ``ommx_objective(x) == sim.energy + constant``. Dropping the constant leaves an energy that ranks
+    states correctly and reports the wrong number.
+
+    Raises :class:`ValueError` naming what could not be read: a continuous variable, a bound that is
+    not ``[0, 1]``, an objective of degree three or more. This sampler samples spins, and a bridge
+    that silently dropped what it could not represent would return a model solving a different
+    problem.
+
+    >>> import ferrotherm as ft                       # doctest: +SKIP
+    >>> sim, constant = ft.from_ommx(open("p.ommx", "rb").read(), beta=1.0)   # doctest: +SKIP
+    """
+    buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+    constant = c_double(0.0)
+    h = _ommx_read(buf, len(data), float(beta), int(seed), ctypes.byref(constant))
+    if not h:
+        need = _ommx_error(None, 0)
+        why = ""
+        if need:
+            eb = (ctypes.c_ubyte * need)()
+            got = _ommx_error(eb, need)
+            why = bytes(bytearray(eb)[:got]).decode("utf-8", "replace")
+        raise ValueError(why or "that is not an instance this sampler can read")
+    return Sim(h), float(constant.value)
 
 
 class Problem:

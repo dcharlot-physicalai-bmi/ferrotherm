@@ -302,6 +302,22 @@ double ft_model_soft_cost(const ft_model *m);
 /* 1 if violation i is a hard one, 0 if it is a preference that was traded away. */
 uint32_t ft_model_violation_is_hard(const ft_model *m, uint32_t i);
 
+/* Read an ommx.v1.Instance and return a simulation over it, or NULL if it cannot be read.
+ *
+ * The direction that makes this a bridge rather than an exporter: a problem someone else compiled
+ * to OMMX becomes something this sampler can run.
+ *
+ * constant_out, when non-NULL, receives the offset the 0/1 to -1/+1 substitution introduces:
+ *
+ *     ommx_objective(x) == ft_energy(sim) + constant
+ *
+ * On NULL, ft_ommx_error says why: a continuous variable, a bound that is not [0,1], an objective of
+ * degree three or more. This sampler samples spins, and a bridge that silently dropped what it could
+ * not represent would hand back a model that solves a different problem. */
+ft_sim *ft_ommx_read(const uint8_t *bytes, uint32_t len, double beta, uint64_t seed,
+                     double *constant_out);
+uint32_t ft_ommx_error(uint8_t *buf, uint32_t cap);
+
 /* Serialise the compiled model as an ommx.v1.Instance -- OMMX being the interchange format this
  * corner of the field converged on, so a ferrotherm program can be read by everyone else's tools.
  *

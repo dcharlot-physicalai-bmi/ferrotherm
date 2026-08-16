@@ -82,6 +82,12 @@ file_for() {
 
 # How each surface NAMES a symbol it has bound. Matching the bare name would count a mention in a
 # comment or a doc string as coverage, which is the failure this check exists to catch.
+#
+# NOTE, and it is a real limitation: for Julia this matches the `@cfn` DECLARATION, which says the
+# symbol can be called and nothing about whether anything calls it. Both OMMX functions were once
+# declared and exported with no function body in between -- the module loaded, this check passed,
+# and `from_ommx` was an UndefVarError the moment anyone used it. `check-exports.sh` closes that by
+# asking whether each exported name actually resolves.
 pattern_for() {
   case "$1" in
     header) echo "\\b$2[[:space:]]*\\(" ;;

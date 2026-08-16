@@ -65,7 +65,7 @@ export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export all_different!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
-export soften_last!, soft_cost, traded, amounts, ancillas, caveats, ommx
+export soften_last!, soft_cost, traded, amounts, ancillas, caveats, ommx, from_ommx
 
 # ---- finding the library -----------------------------------------------------------------------
 
@@ -218,6 +218,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_ancillas Cuint ModPtr
 @cfn ft_model_caveats Cuint ModPtr
 @cfn ft_model_ommx Cuint ModPtr Ptr{UInt8} Cuint
+@cfn ft_ommx_read SimPtr Ptr{UInt8} Cuint Cdouble Culonglong Ptr{Cdouble}
+@cfn ft_ommx_error Cuint Ptr{UInt8} Cuint
 @cfn ft_model_ommx_constant Cdouble ModPtr
 @cfn ft_model_caveat Cuint ModPtr Cuint Ptr{UInt8} Cuint
 @cfn ft_model_compile Cuint ModPtr
@@ -1125,6 +1127,52 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
            ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle),
            ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
            [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)])
+end
+
+"""
+    ommx(p) -> (Vector{UInt8}, Float64)
+
+The compiled model as an OMMX instance — the interchange format this corner of the field converged
+on, so a ferrotherm program can be read by jijmodeling and the Jij stack.
+
+Returns the protobuf bytes and the constant the ±1 to 0/1 substitution introduces:
+`ferrotherm_energy(s) == ommx_objective(x) + constant`. The constant is not optional bookkeeping —
+dropping it yields an instance with the same optimum and the wrong value.
+"""
+function ommx(p::Problem)
+    _live(p)
+    need = ft_model_ommx(p.handle, C_NULL, Cuint(0))
+    need == 0 && error("compile or solve the problem first; there is no instance yet")
+    buf = Vector{UInt8}(undef, need)
+    got = ft_model_ommx(p.handle, pointer(buf), Cuint(need))
+    (buf[1:got], ft_model_ommx_constant(p.handle))
+end
+
+"""
+    from_ommx(data; beta = 1.0, seed = 0) -> (Simulation, Float64)
+
+Read an `ommx.v1.Instance` and return a simulation over it, plus the constant.
+
+The direction that makes this a bridge rather than an exporter: a problem someone else compiled to
+OMMX becomes something this sampler can run. `ommx_objective(x) == energy(sim) + constant`.
+
+Errors naming what could not be read — a continuous variable, a bound that is not `[0,1]`, an
+objective of degree three or more — rather than silently dropping it.
+"""
+function from_ommx(data::AbstractVector{UInt8}; beta::Real = 1.0, seed::Integer = 0)
+    constant = Ref{Cdouble}(0.0)
+    h = ft_ommx_read(pointer(data), Cuint(length(data)), Cdouble(beta), Culonglong(seed), constant)
+    if h == C_NULL
+        need = ft_ommx_error(C_NULL, Cuint(0))
+        why = "that is not an instance this sampler can read"
+        if need > 0
+            buf = Vector{UInt8}(undef, need)
+            got = ft_ommx_error(pointer(buf), Cuint(need))
+            why = String(buf[1:got])
+        end
+        error(why)
+    end
+    (Simulation(h, "a simulation from that OMMX instance"), constant[])
 end
 
 """

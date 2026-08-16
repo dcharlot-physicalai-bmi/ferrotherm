@@ -25,6 +25,8 @@ pub const Error = error{
     TooFewDraws,
     /// A state whose length does not match the graph, or that holds a value other than -1 or +1.
     BadState,
+    /// An OMMX instance this sampler cannot represent. `ommxError` says which part.
+    Unreadable,
     /// A domain with nothing in it: a categorical under two values, or an integer with hi <= lo.
     BadDomain,
     /// A value the variable cannot take. Call `lastError` for the range it can.
@@ -285,6 +287,28 @@ pub const ProblemCertificate = struct {
         return buf[0..got];
     }
 };
+
+/// Read an `ommx.v1.Instance` and return a simulation over it.
+///
+/// The direction that makes this a bridge rather than an exporter: a problem someone else compiled
+/// to OMMX becomes something this sampler can run. `constant` receives the offset the 0/1 to +/-1
+/// substitution introduces -- `ommx_objective(x) == sim.energy() + constant` -- and dropping it
+/// leaves an energy that ranks states correctly and reports the wrong number.
+///
+/// Returns `error.Unreadable` for what this sampler cannot represent; `ommxError` says which.
+pub fn ommxRead(bytes: []const u8, beta: f64, seed: u64, constant: *f64) Error!Sim {
+    const h = c.ft_ommx_read(bytes.ptr, @intCast(bytes.len), beta, seed, constant);
+    if (h == null) return Error.Unreadable;
+    return Sim{ .h = h };
+}
+
+/// Why the last `ommxRead` on this thread failed, in the caller's own terms.
+pub fn ommxError(buf: []u8) []const u8 {
+    const need = c.ft_ommx_error(null, 0);
+    const n = @min(need, @as(u32, @intCast(buf.len)));
+    const got = c.ft_ommx_error(buf.ptr, n);
+    return buf[0..got];
+}
 
 /// Sample and certify. `draws` must be at least 16; certifying fewer says nothing.
 pub fn certify(sim: Sim, draws: u32, thin: u32) Error!Certificate {
