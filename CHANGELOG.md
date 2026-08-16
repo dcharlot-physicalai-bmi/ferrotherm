@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### DX12 checked — for correctness, and the limit named
+
+"Runs on Vulkan, Metal or DX12" was verified on two of the three. Now three, with an honest asterisk:
+
+| | adapter | API | tests |
+|---|---|---|---|
+| Apple M5 Max | IntegratedGpu | Metal | 6/6 |
+| NVIDIA L4 (EC2 `g6.xlarge`) | DiscreteGpu | Vulkan 1.4 | 6/6 |
+| Microsoft Basic Render Driver (EC2 Windows) | **Cpu** | DX12 | 6/6 |
+
+All three reproduce the exact mean energy from variable elimination. **The DX12 row is WARP, a
+software rasteriser** — it establishes that the shader compiles under DX12 and that the physics is
+right, and says nothing about DX12 on hardware. `Gpu::is_hardware()` reported `Cpu` and the benchmark
+refused to quote a speedup, which is the guard doing its job rather than a caveat added afterwards.
+
+Getting there took three dead ends worth recording: Windows `Write-Host` does not reach
+`get-console-output`, so the reporting channel that works on Linux does not exist there (SSM does);
+the base Windows AMI has no MSVC linker; and the GNU toolchain needs a MinGW `dlltool` it also does
+not have. The Build Tools install is the path.
+
+
 ## 0.11.1 (2026-08-16)
 
 **The OMMX export constant was documented backwards.** `Export::constant`, `ft_model_ommx_constant`

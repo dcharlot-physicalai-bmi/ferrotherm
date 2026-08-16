@@ -32,11 +32,17 @@
 //! |---|---|---|---|
 //! | Apple M5 Max | IntegratedGpu | Metal | 6/6 |
 //! | NVIDIA L4 (EC2 g6.xlarge) | DiscreteGpu | Vulkan 1.4 | 6/6 |
+//! | Microsoft Basic Render Driver (EC2 Windows) | **Cpu** | DX12 | 6/6 |
 //!
-//! Both run the same WGSL from the core crate, and both reproduce the exact mean energy computed by
-//! variable elimination. That matters more than it sounds: a shader can pass on Metal and fail on
-//! Vulkan, whose validation is stricter and whose f32 behaviour differs, and "runs on Vulkan, Metal
-//! or DX12" was previously a claim checked on one of the three. DX12 remains unchecked.
+//! All three run the same WGSL from the core crate and all three reproduce the exact mean energy
+//! computed by variable elimination. A shader can pass on Metal and fail on Vulkan, whose validation
+//! is stricter and whose f32 behaviour differs, so this was worth checking rather than assuming.
+//!
+//! **The DX12 row is WARP, a software rasteriser, and that is a real limit on what it proves.** It
+//! establishes that the shader compiles under DX12 and that the physics is right; it says nothing
+//! about DX12 on hardware, because there was none on that instance. [`Gpu::is_hardware`] reported
+//! `Cpu` and the benchmark refused to quote a speedup, which is the guard working rather than a
+//! caveat added afterwards. DX12 correctness: checked. DX12 on a real GPU: still not.
 //!
 //! ```no_run
 //! use ferrotherm::{ising::lattice2d, wgsl::GpuModel};
