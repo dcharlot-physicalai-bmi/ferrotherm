@@ -225,17 +225,28 @@ pub fn exact_boltzmann(g: &HetGraph, beta: f64) -> Vec<f64> {
     let total: usize = dims.iter().product();
     assert!(total <= 1 << 22, "exact enumeration too large");
     let mut p = vec![0.0; total];
-    let mut z = 0.0;
     let mut state = vec![0u8; g.n()];
+
+    // Max-shifted, for the reason spelled out in `ising::exact_boltzmann`: `exp(-beta*E)` overflows
+    // f64 near exp(709), so a large beta turned this reference distribution into NaN. `HetSampler`
+    // itself already shifts; the enumeration did not.
+    let mut mx = f64::NEG_INFINITY;
     for m in 0..total {
         let mut rem = m;
         for i in (0..g.n()).rev() {
             state[i] = (rem % dims[i]) as u8;
             rem /= dims[i];
         }
-        let w = (-beta * g.energy(&state)).exp();
-        p[m] = w;
-        z += w;
+        let l = -beta * g.energy(&state);
+        p[m] = l;
+        if l > mx {
+            mx = l;
+        }
+    }
+    let mut z = 0.0;
+    for v in p.iter_mut() {
+        *v = (*v - mx).exp();
+        z += *v;
     }
     for v in p.iter_mut() {
         *v /= z;

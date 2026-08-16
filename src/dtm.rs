@@ -84,10 +84,29 @@ pub struct Ebm {
     /// A proper 2-colouring. Every published pattern grid is bipartite (all connection rules have
     /// odd Manhattan length), so one sweep is two independent half sweeps.
     pub classes: [Vec<u32>; 2],
+    /// What the BFS actually concluded, rather than a re-inference from `classes`.
+    bipartite: bool,
 }
 
 impl Ebm {
     pub fn new(n: usize, edges: Vec<(u16, u16)>) -> Ebm {
+        // Endpoints are u16 while `n` is usize, so an n past the u16 space means a caller narrowing
+        // its own indices aliases them and builds a DIFFERENT GRAPH without error: every truncated
+        // index is still < n, so nothing indexes out of bounds and nothing panics. Measured on
+        // `pattern_grid(300, ..)`: 90,000 nodes collapse to 65,536 (27% aliased), 525,188 edges to
+        // 389,603, and the aliasing introduces an odd cycle so the chromatic sweep silently
+        // degrades to sequential. The threshold is n > 65,536, i.e. a grid side of 257.
+        //
+        // The type-level fix is to widen `edges` to `(u32, u32)`, which is what `pattern_grid`
+        // already emits and would delete the narrowing at every call site. That is a breaking
+        // change to a published signature; this refusal is not, and it converts silent corruption
+        // into a message.
+        assert!(
+            n <= u16::MAX as usize + 1,
+            "n={n} exceeds the u16 edge-index space (max {}), so edge endpoints would alias \
+             silently and build a different graph",
+            u16::MAX as usize + 1
+        );
         let ne = edges.len();
         let mut deg = vec![0u32; n];
         for &(a, b) in &edges {
@@ -138,11 +157,15 @@ impl Ebm {
             let c = if bipartite { colour[i] as usize } else { 0 };
             classes[c].push(i as u32);
         }
-        Ebm { n, edges, j: vec![0.0; ne], h: vec![0.0; n], offset, nbr, eidx, classes }
+        Ebm { n, edges, j: vec![0.0; ne], h: vec![0.0; n], offset, nbr, eidx, classes, bipartite }
     }
 
     pub fn is_bipartite(&self) -> bool {
-        !self.classes[1].is_empty()
+        // The BFS above already knows. This used to re-infer it as `!classes[1].is_empty()`, which
+        // is a different question: a graph with NO EDGES is bipartite, every node lands in class 0,
+        // and the inference reported false. Measured: edgeless -> false, single edge -> true,
+        // triangle -> false. Two of those three were right for the wrong reason.
+        self.bipartite
     }
 
     pub fn energy(&self, s: &[i8]) -> f64 {
@@ -368,21 +391,37 @@ impl Dtm {
             }
             e
         };
-        let mut num = 0.0f64;
+        // Log-sum-exp, both accumulators. The result is `num.ln() - den.ln()`, so this wanted log
+        // space all along -- and exponentiating first overflows f64 near exp(709), which turned a
+        // conditional log-probability into NaN at exactly the low temperatures a denoiser runs at.
+        // Shifting by the max is exact: it cancels in the ratio.
+        let lse = |mut acc: Vec<f64>| -> f64 {
+            let mx = acc.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if !mx.is_finite() {
+                return mx; // all -inf, or an already-broken energy; do not manufacture a number
+            }
+            let mut s = 0.0;
+            for v in acc.iter_mut() {
+                s += (*v - mx).exp();
+            }
+            mx + s.ln()
+        };
+
+        let mut num_l = Vec::with_capacity(1usize << nl);
         for zm in 0..(1usize << nl) {
-            num += (-full_e(x_prev, zm)).exp();
+            num_l.push(-full_e(x_prev, zm));
         }
-        let mut den = 0.0f64;
+        let mut den_l = Vec::with_capacity(1usize << (nv + nl));
         let mut xv = vec![0i8; nv];
         for xm in 0..(1usize << nv) {
             for b in 0..nv {
                 xv[b] = if xm >> b & 1 == 1 { 1 } else { -1 };
             }
             for zm in 0..(1usize << nl) {
-                den += (-full_e(&xv, zm)).exp();
+                den_l.push(-full_e(&xv, zm));
             }
         }
-        num.ln() - den.ln()
+        lse(num_l) - lse(den_l)
     }
 
     /// Exact theta-dependent loss: NLL(theta) = -E_Q[ sum_t ln P_theta(x^t | x^{t+1}) ] where Q
@@ -488,6 +527,31 @@ pub fn autocorr(series: &[f64], k: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_edgeless_graph_is_bipartite_and_a_triangle_is_not() {
+        // `is_bipartite` re-inferred the answer as `!classes[1].is_empty()`, which is a different
+        // question from the one the BFS had already answered. A graph with no edges IS bipartite --
+        // every node lands in class 0 and the inference said false.
+        assert!(Ebm::new(4, vec![]).is_bipartite(), "no edges means trivially bipartite");
+        assert!(Ebm::new(2, vec![(0, 1)]).is_bipartite(), "a single edge is bipartite");
+        assert!(
+            !Ebm::new(3, vec![(0, 1), (1, 2), (2, 0)]).is_bipartite(),
+            "a triangle has an odd cycle"
+        );
+        // and a 4-cycle is, which the old inference also got right -- for the right reason now
+        assert!(Ebm::new(4, vec![(0, 1), (1, 2), (2, 3), (3, 0)]).is_bipartite());
+    }
+
+    #[test]
+    #[should_panic(expected = "u16 edge-index space")]
+    fn a_node_count_the_edge_indices_cannot_address_is_refused() {
+        // Endpoints are u16 while n is usize. Past 65,536 a caller narrowing its own indices
+        // aliases them and builds a different graph with no error at all: every truncated index is
+        // still < n, so nothing is out of bounds and nothing panics. `pattern_grid(300, ..)`
+        // collapsed 90,000 nodes to 65,536 and introduced an odd cycle.
+        let _ = Ebm::new(u16::MAX as usize + 2, vec![]);
+    }
 
     /// THE SIGN TRAP (the paper's printed Eq. D1): the energy-form forward coupling with the
     /// NEGATIVE sign must reproduce the closed-form keep probability sigma(Gamma) =

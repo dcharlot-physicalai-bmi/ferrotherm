@@ -9,6 +9,22 @@ pub fn jacobi_eig(bm: &mut [f64], n: usize) -> Vec<f64> {
     for i in 0..n {
         v[i * n + i] = 1.0;
     }
+    // Both convergence thresholds are RELATIVE to the matrix, because absolute ones are not scale
+    // invariant and this returns no convergence signal for a caller to check.
+    //
+    // They used to be the bare constants `1e-22` and `1e-16`. A well-conditioned SPD matrix scaled
+    // down by 1e-13 has every off-diagonal below the second threshold, so no rotation is ever
+    // applied and the function returns the UNTOUCHED diagonal as its eigenvalues, with the identity
+    // as eigenvectors. Measured on [[3,1,0.5],[1,3,1],[0.5,1,3]]: correct at scale 1 and 1e-6,
+    // wrong in the second digit at 1e-11, and exactly the input diagonal at 1e-13. Downstream,
+    // `tla::solve_spd_exact_ou` checks only `lam.iter().all(|&l| l > 0.0)`, which those bogus
+    // positive eigenvalues satisfy, so it returned a component with the wrong SIGN and no error.
+    //
+    // Normalising by the Frobenius norm makes the thresholds mean "small compared to this matrix",
+    // which is what they were always meant to mean.
+    let nrm2: f64 = bm.iter().map(|x| x * x).sum::<f64>().max(f64::MIN_POSITIVE);
+    let off_eps = 1e-22 * nrm2;
+    let piv_eps = 1e-16 * nrm2.sqrt();
     for _sweep in 0..100 {
         let mut off = 0.0;
         for p in 0..n {
@@ -16,13 +32,13 @@ pub fn jacobi_eig(bm: &mut [f64], n: usize) -> Vec<f64> {
                 off += bm[p * n + q] * bm[p * n + q];
             }
         }
-        if off < 1e-22 {
+        if off < off_eps {
             break;
         }
         for p in 0..n {
             for q in (p + 1)..n {
                 let apq = bm[p * n + q];
-                if apq.abs() < 1e-16 {
+                if apq.abs() < piv_eps {
                     continue;
                 }
                 let (app, aqq) = (bm[p * n + p], bm[q * n + q]);
@@ -54,6 +70,31 @@ pub fn jacobi_eig(bm: &mut [f64], n: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_eigensolver_is_scale_invariant() {
+        // Both thresholds were absolute, so a well-conditioned SPD matrix scaled down far enough
+        // had every off-diagonal below the pivot threshold, no rotation was ever applied, and this
+        // returned the UNTOUCHED DIAGONAL as its eigenvalues with the identity as eigenvectors.
+        // The only existing test used an O(1) matrix and an absolute 1e-9 tolerance, so it could
+        // not see it. Downstream `tla::solve_spd_exact_ou` checks only that the eigenvalues are
+        // positive, which the bogus ones are, and returned a component with the wrong sign.
+        let base = [3.0f64, 1.0, 0.5, 1.0, 3.0, 1.0, 0.5, 1.0, 3.0];
+        let want = [1.8138590, 2.5000000, 4.6861410];
+        for scale in [1e13f64, 1e0, 1e-6, 1e-11, 1e-13] {
+            let mut a: Vec<f64> = base.iter().map(|v| v * scale).collect();
+            let _ = jacobi_eig(&mut a, 3);
+            let mut got: Vec<f64> = (0..3).map(|i| a[i * 3 + i] / scale).collect();
+            got.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            for (g, w) in got.iter().zip(want.iter()) {
+                assert!(
+                    (g - w).abs() < 1e-6,
+                    "scale {scale:e}: eigenvalues {got:?} are not {want:?} -- \
+                     a rescaled matrix has rescaled eigenvalues and nothing else changes"
+                );
+            }
+        }
+    }
 
     #[test]
     fn eigendecomposition_reconstructs() {

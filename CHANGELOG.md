@@ -46,6 +46,64 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### The exact reference distribution returned NaN at the betas its own schedules use
+
+`ising::exact_boltzmann` is the oracle every sampler in this crate is verified against. It
+accumulated `(-beta * energy).exp()` directly, and `f64` overflows near `exp(709)` — so on an
+8-spin ferromagnetic ring a large beta sent `z` to `+inf` and every probability to `0` or `NaN`.
+
+Measured before the fix: a 4×4 lattice is clean at β=20 and returns 2 NaN entries at β=24; a 24-spin
+complete ferromagnet, inside the documented `n ≤ 24` limit, is clean at β=2.5 and produces NaN at
+β=3.0. **The crate's own schedules run to β=6 and β=8.** So the oracle stopped answering inside the
+range it is used in, and `certify` swallowed it silently, because `NaN > floor` is false.
+
+Fixed by subtracting the maximum log-weight before exponentiating — exact, since the shift cancels
+in `w/z`. `HetSampler::sweep` already did this; the enumerations never got it. Applied to all three:
+`ising::exact_boltzmann`, `het::exact_boltzmann`, and both accumulators in `Dtm::exact_log_cond`,
+which ends in `num.ln() - den.ln()` and so wanted log space all along.
+
+### `certify`'s distributional gate switched itself off as models got bigger
+
+The sampling-noise floor is `0.5·√(2ⁿ/ess)`, which passes 1 as `n` grows — and total variation
+between two distributions can never exceed 1, so `tv > floor` becomes **unsatisfiable**. The gate
+went quiet on exactly the models it matters for, `Certificate::passed()` counted the silence as a
+pass, and `noise_floor: Some(2.04)` was still printed as though it were a real threshold.
+
+Measured with iid uniform noise, which has no relation to the model at all: at n=9 and 4000 draws it
+is caught; at **n=16 and the same 4000 draws it is not**; at 20000 draws it is caught again. A
+vacuous floor now reports `TooFewSamples` instead of nothing.
+
+`AboveNoiseFloor` appeared in the enum, in `Display`, and at one push site — and in **no test, at any
+n**. There is one now, and it fails against the old code.
+
+### `jacobi_eig` was not scale invariant
+
+Both convergence thresholds were absolute constants. A well-conditioned SPD matrix scaled down far
+enough has every off-diagonal below the pivot threshold, so no rotation is ever applied and the
+function returns the **untouched diagonal** as its eigenvalues with the identity as eigenvectors.
+On `[[3,1,0.5],[1,3,1],[0.5,1,3]]`: correct at scale 1 and 1e-6, wrong in the second digit at 1e-11,
+exactly the input diagonal at 1e-13. Downstream, `tla::solve_spd_exact_ou` checks only that the
+eigenvalues are positive — which the bogus ones are — and returned a component with the **wrong
+sign** and no error. The thresholds are relative to the Frobenius norm now, and the test runs the
+same matrix across 26 orders of magnitude.
+
+### Also
+
+- `ising::tv` zipped two slices of different length and returned a **truncated** distance:
+  `tv(&[0.25; 4], &[0.5, 0.5])` gave 0.25 where the honest answer over the shared 4-state space is
+  0.5. Truncation always under-estimates, and every use of `tv` has the shape
+  `assert!(tv < tolerance)` — the failure direction that turns a red test green. Refused now.
+- `Ebm::new` took a `usize` node count with `u16` edge endpoints and no check. Past 65,536 a caller
+  narrowing its own indices aliases them and builds a different graph **with no error**, since every
+  truncated index is still `< n`. `pattern_grid(300, ..)` collapsed 90,000 nodes to 65,536 and
+  introduced an odd cycle, silently degrading the chromatic sweep to sequential.
+- `Ebm::is_bipartite` re-inferred its answer as `!classes[1].is_empty()` rather than returning what
+  the BFS had already concluded, so an **edgeless graph reported false**.
+
+All five were found by an adversarial audit and confirmed by a second agent that was told to refute
+them; each fix carries a test that fails against the old code.
+
+
 ### A NaN objective coefficient silently disabled every other preference
 
 The worst kind of bug this crate can have, and it compiled, solved, and reported success.

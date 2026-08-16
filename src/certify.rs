@@ -67,7 +67,13 @@ impl core::fmt::Display for Finding {
                  {late:.4}, a gap of {sigma:.1} standard errors; burn in for longer"
             ),
             Finding::TooFewSamples { draws } => {
-                write!(f, "{draws} draws is too few to certify anything")
+                write!(
+                    f,
+                    "{draws} draws is too few to certify anything: the sampling-noise floor for a \
+                     state space this large reaches or exceeds 1, which is the most a total \
+                     variation can be, so a distributional comparison here cannot distinguish a \
+                     good sampler from pure noise. Draw more, or certify a smaller model"
+                )
             }
         }
     }
@@ -326,7 +332,16 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
         // Expected TV from finite sampling of a distribution over this many states. Comparing a
         // measured TV against zero instead of this is how a correct sampler gets called broken.
         let floor = 0.5 * ((1usize << g.n) as f64 / ess.max(1.0)).sqrt();
-        if tv > floor {
+        // A floor at or above 1 is not a floor, because TV between two distributions cannot exceed
+        // 1 -- so `tv > floor` becomes unsatisfiable and this gate silently switches itself OFF on
+        // exactly the models it matters for. Measured: iid uniform noise against a 16-spin lattice
+        // at 4000 draws gives tv = 0.999 and floor = 2.04, so nothing was reported and
+        // `Certificate::passed()` counted the absence as a pass -- while still printing
+        // `noise_floor: Some(2.04)` as though it were a real threshold. The same noise at n = 9 is
+        // caught. A gate that reports "fine" when it cannot see is worse than no gate.
+        if floor >= 1.0 {
+            findings.push(Finding::TooFewSamples { draws });
+        } else if tv > floor {
             findings.push(Finding::AboveNoiseFloor { tv, floor });
         }
         tv_exact = Some(tv);
@@ -478,6 +493,49 @@ mod tests {
             (m(&steady[..cut]) - m(&steady[n - cut..])).abs() < 0.02,
             "the steady trace must not"
         );
+    }
+
+    #[test]
+    fn the_distributional_gate_fires_on_noise_rather_than_switching_itself_off() {
+        // `AboveNoiseFloor` appeared in the enum, in Display, and at one push site -- and in NO
+        // test, at any n. That mattered, because the floor `0.5*sqrt(2^n/ess)` passes 1 as n grows,
+        // and TV can never exceed 1, so the comparison became unsatisfiable and the gate went
+        // quiet on exactly the models it is for. `passed()` counted the silence as a pass.
+        //
+        // Two sizes on purpose: n=9 is where the floor is meaningful, n=16 at the same draw count
+        // is where it used to go inert.
+        let mut rng = 0x2545F4914F6CDD1Du64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for (side, draws) in [(3usize, 4000usize), (4, 4000)] {
+            let g = crate::ising::lattice2d(side, 1.0);
+            // Samples with no relation whatever to the model.
+            let samples: Vec<Vec<i8>> = (0..draws)
+                .map(|_| {
+                    let r = next();
+                    (0..g.n).map(|b| if r >> (b % 64) & 1 == 1 { 1 } else { -1 }).collect()
+                })
+                .collect();
+            let trace: Vec<f64> = samples.iter().map(|s| g.energy(s)).collect();
+            let c = certify(&g, 0.9, &samples, &trace);
+            assert!(!c.passed(), "n={} pure noise must not pass", g.n);
+            // Either it caught the discrepancy, or it said it could not look. Never silence.
+            let spoke = c.findings.iter().any(|f| {
+                matches!(f, Finding::AboveNoiseFloor { .. } | Finding::TooFewSamples { .. })
+            });
+            assert!(spoke, "n={} said nothing about the distribution: {:?}", g.n, c.findings);
+            if let Some(floor) = c.noise_floor {
+                assert!(
+                    floor < 1.0 || c.findings.iter().any(|f| matches!(f, Finding::TooFewSamples { .. })),
+                    "n={}: floor {floor} is vacuous and nothing said so",
+                    g.n
+                );
+            }
+        }
     }
 
     #[test]
