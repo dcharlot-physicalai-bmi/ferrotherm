@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### check-versions now looks outside the directory
+
+Every gate in this repository compared the repository against itself, which is why all of them were
+green throughout the period `ferrotherm-gpu` sat at 0.2.0 in the tree and 0.1.0 on crates.io. The
+bump was committed, changelogged and pushed. `cargo add ferrotherm-gpu` still gave you 0.1.0 and a
+`Gpu` with no `is_hardware()`. Nothing was inconsistent — the tree agreed with itself perfectly. It
+simply was not shipped, and nothing could see that.
+
+`check-versions.sh` now queries the crates.io sparse index for every workspace member and fails when
+a version is ahead of the registry **on a commit already pushed to main** — narrow on purpose, since
+between a bump and `cargo publish` every crate is ahead and a gate that fires there is a gate people
+learn to ignore.
+
+It found two things on its first run: `ferrotherm-gpu` 0.2.0 unpublished, and `ferrotherm-cloud`
+0.1.0 — the Hitachi CMOS annealing driver, carrying a full description, licence, keywords and
+categories — never published and mentioned in no README or changelog.
+
+Writing it reproduced the failure it was written to catch, twice. A never-published crate answers the
+index with 404, `curl -f` calls that failure, and the first cut read `ferrotherm-cloud` as "the
+network is down", stopped, and reported "publish state not checked" without ever reaching
+`ferrotherm-gpu`. Then the summary line printed the all-clear above a table showing two crates that
+were not on crates.io. A gate that cannot distinguish *absent* from *could not look* reports the
+reassuring one; a summary that contradicts its own table teaches people to read only the summary.
+
+
 ### DX12 checked — for correctness, and the limit named
 
 "Runs on Vulkan, Metal or DX12" was verified on two of the three. Now three, with an honest asterisk:
