@@ -1,11 +1,12 @@
 [package]
 name = "ferrotherm-gpu"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Native GPU sampling for ferrotherm: the same WGSL sweep the browser runs, on Vulkan, Metal or DX12. Kept out of the core crate so `ferrotherm` stays std-only with zero dependencies."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferrotherm"
 keywords = ["thermodynamic", "ising", "gibbs-sampling", "gpu", "wgpu"]
+readme = "README.md"
 categories = ["science", "algorithms", "simulation"]
 
 # The core crate's headline is "std-only, zero dependencies", and that is a property worth keeping

@@ -46,6 +46,41 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### You bring your own credentials, and the crate says how to get them
+
+`ferrotherm-cloud` shipped without telling anyone how to obtain an account. The driver was correct —
+it has always taken a token from the caller — but "how do I get one" was answerable only by reading
+the source, and a driver for someone else's hardware that does not explain how to get access to that
+hardware is not finished.
+
+The crate docs and a new `cloud/README.md` now carry the actual process: request a token at
+<https://annealing-cloud.com/en/web-api/token-request.html>, which asks for an email address and a
+country and requires agreeing that you will not use the site or its output data for any purpose
+including the development of weapons of mass destruction (their Terms of Use, Section 8, Export
+Controls) and that you consent to the collection of personal information under those Terms. The
+administrator emails the token back. That page does not state issuance time or usage limits; the
+service homepage describes the Web API as free.
+
+**And the destination is now the caller's choice.** The endpoint was written into the call site, so
+the one address this crate could reach was the library's decision. It is a field with a stated
+default (`ACW_ENDPOINT`), replaceable via `Hitachi::with_endpoint` and readable via
+`Hitachi::endpoint`. That also makes `Device::run` reachable by a local mock, which is why nothing
+had ever tested it.
+
+A test pins the guarantee rather than leaving it to a reading of the code: with `ACW_TOKEN` unset
+there is no device at all, and pointed at a port nothing can listen on, describing the fabric and
+laying a program out both still succeed — because those paths are local. There is exactly one
+network call in the crate, and reaching it takes a token you supplied, a program you laid out and a
+call you made.
+
+### Two crates.io pages were blank
+
+`ferrotherm-gpu` and `ferrotherm-meter` had no `readme` key and no README, so their crates.io pages
+showed nothing at all. Both have one now: the GPU's three-API verification table with the WARP
+asterisk stated, and the meter's four refusals, which are the part worth reading, because the
+failure mode of energy measurement is a confident number rather than an error.
+
+
 ### CI had been red for weeks, and the gate was hiding why
 
 `check-semantics.sh` reported `python PRODUCED NOTHING -- its toolchain is present, so it broke` on

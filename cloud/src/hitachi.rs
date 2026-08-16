@@ -5,6 +5,34 @@
 //! real fabric in the world to support, and supporting it is what makes "universal" mean something
 //! checkable rather than rhetorical.
 //!
+//! # Getting your own credentials
+//!
+//! This crate ships no token and no account. It talks to **your** Annealing Cloud Web login, which
+//! you set up yourself, and it does nothing at all until you do.
+//!
+//! 1. Request an access token at
+//!    <https://annealing-cloud.com/en/web-api/token-request.html>. The form asks for an **email
+//!    address** and a **country**, and requires agreeing to two conditions: that you will not use
+//!    the site or its output data for any purpose including the development of weapons of mass
+//!    destruction (their Terms of Use, Section 8, Export Controls), and that you consent to the
+//!    collection of personal information under those Terms. Intended use and user type are
+//!    optional fields.
+//! 2. The administrator emails the token back to you. The token-request page does not state how
+//!    long that takes, nor any usage limits; the service homepage describes the Web API as free.
+//! 3. Put it in your environment and never in a file you commit:
+//!
+//! ```sh
+//! export ACW_TOKEN=<the token they emailed you>
+//! cargo run --release -p ferrotherm-cloud --example hitachi_run
+//! ```
+//!
+//! [`Hitachi::from_env`] reads exactly that one variable and returns `Err` when it is unset — it
+//! does not fall back to a bundled key, a config file or a credential store, because there are
+//! none. [`Hitachi::new`] takes the token directly if you would rather source it yourself.
+//!
+//! Read the API you are calling before you call it:
+//! <https://annealing-cloud.com/en/web-api/reference/v2.html>.
+//!
 //! # The conventions, measured rather than assumed
 //!
 //! **The sign is inverted.** Their energy is `Σ pᵢⱼ sᵢsⱼ`, *minimised*, so a positive coefficient is
@@ -132,9 +160,26 @@ impl core::fmt::Display for LayoutError {
     }
 }
 
+/// Annealing Cloud Web's public solve endpoint — the service this driver is named for.
+///
+/// It is a default, not a fixture: [`Hitachi::with_endpoint`] replaces it, which is what makes a
+/// local mock or a proxy possible. Before this was a field the address was written into the call
+/// site, so the destination was the library's choice rather than the caller's.
+pub const ACW_ENDPOINT: &str = "https://annealing-cloud.com/api/v2/solve";
+
 /// The Hitachi annealer as a backend.
+///
+/// # Nothing here contacts anyone until you set it up
+///
+/// Constructing a `Hitachi`, describing its [`fabric`](Device::fabric), laying a program out on the
+/// grid and embedding one all run entirely locally. The single network call in this crate lives in
+/// [`Device::run`], and reaching it takes a token you supplied, a program you laid out, and a call
+/// you made. There is no ambient default: [`Hitachi::from_env`] returns `Err` when `ACW_TOKEN` is
+/// unset rather than falling back to anything, and the crate reads no other environment variable,
+/// no config file and no credential store.
 pub struct Hitachi {
     token: String,
+    endpoint: String,
     machine: Machine,
     model: Vec<[i64; 4]>,      // x0, y0, x1, y1
     coeff: Vec<f64>,
@@ -151,6 +196,7 @@ impl Hitachi {
     pub fn new(token: impl Into<String>, machine: Machine) -> Hitachi {
         Hitachi {
             token: token.into(),
+            endpoint: String::from(ACW_ENDPOINT),
             machine,
             model: Vec::new(),
             coeff: Vec::new(),
@@ -166,6 +212,21 @@ impl Hitachi {
         std::env::var("ACW_TOKEN")
             .map(|t| Hitachi::new(t, machine))
             .map_err(|_| "set ACW_TOKEN to an Annealing Cloud Web token".to_string())
+    }
+
+    /// Send somewhere other than [`ACW_ENDPOINT`] — a mock, a proxy, or a self-hosted instance.
+    ///
+    /// The address a driver posts to is the caller's decision, not the driver's. Without this the
+    /// only way to exercise [`Device::run`] at all was to send a real job to a third party, which
+    /// is why nothing in this crate's tests has ever covered it.
+    pub fn with_endpoint(mut self, url: impl Into<String>) -> Hitachi {
+        self.endpoint = url.into();
+        self
+    }
+
+    /// Where this instance will post. See [`Hitachi::with_endpoint`].
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
     /// Place a program on the grid, embedding it if it does not already fit.
@@ -367,7 +428,7 @@ impl Device for Hitachi {
             return Err("no program laid out".into());
         }
         let body = self.request_json(1, schedule);
-        let resp = ureq::post("https://annealing-cloud.com/api/v2/solve")
+        let resp = ureq::post(&self.endpoint)
             .set("Authorization", &format!("Bearer {}", self.token))
             .set("Content-Type", "application/json")
             .timeout(std::time::Duration::from_secs(180))
@@ -461,6 +522,34 @@ fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
 #[cfg(test)]
 mod layout_reporting_tests {
     use super::*;
+
+    #[test]
+    fn nothing_reaches_the_network_without_a_token_and_an_endpoint_you_chose() {
+        // The guarantee, held by a test rather than by reading the code. Everything a caller can do
+        // before `run` -- construct, describe the fabric, lay out, embed -- is local, and `run`
+        // needs a token you passed and an address you can see.
+        std::env::remove_var("ACW_TOKEN");
+        assert!(
+            Hitachi::from_env(Machine::Asic).is_err(),
+            "no token means no device, rather than a device pointing somewhere by default"
+        );
+
+        // The default is the service this driver is named for, and it is visible and replaceable.
+        let d = asic();
+        assert_eq!(d.endpoint(), ACW_ENDPOINT, "the default is stated, not hidden in a call site");
+        let redirected = asic().with_endpoint("http://127.0.0.1:1/never-listening");
+        assert_eq!(redirected.endpoint(), "http://127.0.0.1:1/never-listening");
+
+        // And the local paths stay local: pointed at a port nothing can be listening on, laying a
+        // program out still succeeds. If any of this dialled out, it would fail here.
+        let mut m = asic().with_endpoint("http://127.0.0.1:1/never-listening");
+        let side = Machine::Asic.side();
+        // `factor <weight> <i> <j>`. Spins 0 and 1 are (0,0) and (1,0): King-adjacent.
+        let src = format!("ftp 1\nname local-only\nspins {}\nfactor -1 0 1\n", side + 2);
+        let p = Program::from_ftp(&src).expect("a program that fits the grid");
+        m.layout(&p).expect("layout is a local pass and must not need the network");
+        assert_eq!(m.fabric().max_spins, Some(side * side), "describing the fabric is local too");
+    }
 
     fn asic() -> Hitachi {
         Hitachi::new(String::from("no-token-needed-for-a-capability-check"), Machine::Asic)
