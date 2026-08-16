@@ -270,6 +270,20 @@ impl Program {
                         check_spin(v, p.spins, saw_spins, line)?;
                         class.push(v);
                     }
+                    // Bounded against the spin count before it touches the vector. `c` came
+                    // straight from the file: `c = u64::MAX` made `c + 1` overflow to a panic, and
+                    // any merely-large `c` allocated 24 bytes per entry, so a 45-byte program could
+                    // ask for gigabytes. A program of n spins cannot have more than n colour
+                    // classes -- each class is a non-empty set of distinct spins.
+                    if !saw_spins || c >= p.spins {
+                        return Err(FtpError {
+                            line,
+                            message: format!(
+                                "colour class {c} is out of range for a program of {} spins",
+                                p.spins
+                            ),
+                        });
+                    }
                     if p.colors.len() <= c {
                         p.colors.resize(c + 1, Vec::new());
                     }
@@ -357,6 +371,17 @@ fn check_spin(i: usize, n: usize, saw_spins: bool, line: usize) -> Result<(), Ft
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_colour_index_beyond_the_spin_count_is_refused() {
+        // `c` came straight from the file into a resize. `u64::MAX` made `c + 1` overflow to a
+        // panic, and any merely-large `c` allocated 24 bytes per entry -- so 45 bytes of source
+        // could ask for gigabytes. A program of n spins cannot have more than n colour classes.
+        assert!(Program::from_ftp("ftp 1\nspins 2\ncolor 18446744073709551615 0 1\n").is_err());
+        assert!(Program::from_ftp("ftp 1\nspins 2\ncolor 40000000 0 1\n").is_err());
+        // and an in-range class still parses
+        assert!(Program::from_ftp("ftp 1\nspins 2\ncolor 0 0\n").is_ok());
+    }
 
     fn models() -> Vec<(&'static str, Graph)> {
         vec![

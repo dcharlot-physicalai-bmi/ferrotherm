@@ -141,6 +141,24 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
     let mut m = Model::new();
     let mut vars: BTreeMap<String, Var> = BTreeMap::new();
     for name in &binaries {
+        // A `Bounds` line on a Binary variable was parsed into `bounds` and then never read, because
+        // this path does not consult the map. `x <= 0` means x is fixed OFF, and the model solved as
+        // though x were free -- a confident answer to a different problem, from a file the caller
+        // did not write and cannot check by eye. Anything other than the implied 0..1 is refused by
+        // name rather than silently dropped.
+        if let Some((lo, hi)) = bounds.get(name) {
+            if (*lo, *hi) != (0, 1) {
+                return err(
+                    0,
+                    format!(
+                        "'{name}' is declared Binary and also has Bounds {lo}..{hi}. A \
+                         bound on a binary either says nothing or fixes it, and this \
+                         reader will not guess which you meant: drop the bound, or move \
+                         '{name}' to General"
+                    ),
+                );
+            }
+        }
         vars.insert(name.clone(), m.binary(name));
     }
     for name in &generals {
@@ -434,6 +452,21 @@ End
         assert!(on <= 2, "at most two: {s}");
         assert!(s.value("a") + s.value("b") >= 1, "at least one of a, b: {s}");
         assert_eq!(s.value("c"), 0, "c is fixed off: {s}");
+    }
+
+    #[test]
+    fn a_bounds_line_on_a_binary_is_refused_rather_than_dropped() {
+        // The Bounds line was parsed into the map and then never consulted, because the binary path
+        // does not read it. `x <= 0` fixes x OFF, and the model solved as though x were free -- a
+        // confident answer to a different problem, from a file the caller did not write.
+        let src = "Maximize\n  obj: x + y\nSubject To\n  c: x + y <= 2\nBounds\n  x <= 0\nBinary\n  x y\nEnd\n";
+        let Err(e) = parse(src) else { panic!("a bound that fixes a binary must not be dropped") };
+        assert!(e.message.contains("declared Binary"), "says what is wrong: {e}");
+        assert!(e.message.contains("General"), "and offers the fix: {e}");
+
+        // A redundant 0..1 bound says nothing new and stays legal.
+        let ok = "Maximize\n  obj: x\nSubject To\n  c: x <= 1\nBounds\n  0 <= x <= 1\nBinary\n  x\nEnd\n";
+        assert!(parse(ok).is_ok(), "0..1 on a binary is redundant, not contradictory");
     }
 
     #[test]

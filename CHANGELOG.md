@@ -46,6 +46,44 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### Seven ways a caller could abort the host process, and one wrong answer
+
+An adversarial audit of the parsers, the C ABI and the server found nine defects, each confirmed by
+a second agent told to refute it. Seven of them **abort the calling process** rather than returning
+an error — across a C ABI a panic is non-unwinding, so a bad byte in a file kills the program that
+linked this library.
+
+| defect | what it took |
+|---|---|
+| `ommx::import` length prefix wrapped `usize`, skipping the bounds check | **11 bytes** |
+| An OMMX diagonal quadratic term (`row == col`) reached the builder as a self-edge | **23 bytes** of valid OMMX |
+| `serve`'s JSON parser had no depth limit | **40 KB** POST killed the whole server |
+| `ft_ising2d_new(1, ..)` built the self-edge `(0,0)` | one call |
+| `ft_planted_wishart(3, inf, ..)` — the guard admitted `+inf` while refusing NaN | one call |
+| `ft_model_integer` accepted a range spanning most of `i64` | two calls |
+| `ftp::Program::from_ftp` trusted the colour index; `c + 1` overflowed | **45 bytes** |
+
+The diagonal quadratic is the one worth dwelling on: `row == col` is **ordinary, well-formed OMMX**
+that other tools emit routinely. For a binary `x`, `x² == x` exactly, so it is now folded into the
+linear part rather than refused — refusing would have rejected valid input to stop a crash.
+
+**And one silent wrong answer.** `lp::parse` read a `Bounds` line on a `Binary` variable into its map
+and never consulted it, because the binary path does not look there. `x <= 0` fixes x **off**; the
+model solved as though x were free and returned a confident answer to a different problem — from a
+file the caller did not write and cannot check by eye.
+
+**A header that lied about its own arity.** `include/ferrotherm.h` declared `ft_gpu_class_ptr(const
+ft_sim *)` while the function takes `(sim, uint32_t c)`. C callers compiled **without a single
+warning** under `-Wall -Wextra` and read whatever was in the second register: every colour class came
+back `NULL`, with no diagnostic. Verified fixed from C — the classes now return real pointers.
+
+### Also
+
+- `scale_to_fit`'s repair needed one more line than the fix above: above 2^53 a decrement of 1.0 is a
+  **no-op** in f64, measured on `fujitsu_da3` where the ceiling is 3.07e18. Without a `next == n`
+  break the loop re-tests one candidate a million times. It now answers in 791 ns.
+
+
 ### The exact reference distribution returned NaN at the betas its own schedules use
 
 `ising::exact_boltzmann` is the oracle every sampler in this crate is verified against. It

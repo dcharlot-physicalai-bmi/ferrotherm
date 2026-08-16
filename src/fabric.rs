@@ -492,7 +492,16 @@ impl Fabric {
                 if lands(cand) && fits(cand) {
                     return Some(cand);
                 }
-                n -= 1.0;
+                // Above 2^53 a decrement of one is a NO-OP in f64 -- measured on `fujitsu_da3`,
+                // where top is 3.07e18 and `top - 1.0 == top`. Without this the loop re-tests one
+                // candidate a million times before the counter stops it: not a hang, but a million
+                // iterations of nothing. When the decrement stops moving, the candidate list is
+                // exhausted by definition.
+                let next = n - 1.0;
+                if next == n {
+                    break;
+                }
+                n = next;
                 tried += 1;
             }
             return None;

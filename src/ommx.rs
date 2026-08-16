@@ -376,6 +376,15 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                                 rows[k], cols[k]
                             )));
                         };
+                        // A DIAGONAL term (row == col) is well-formed OMMX and used to reach the
+                        // graph builder as a self-edge, which panics -- aborting the host process
+                        // through the C ABI. For a binary x, x^2 == x exactly, so the honest
+                        // treatment is to fold it into the linear part rather than refuse input
+                        // that other OMMX tools emit routinely.
+                        if i == j {
+                            lin[i] += vals[k];
+                            continue;
+                        }
                         quad.push((i, j, vals[k]));
                     }
                 }
@@ -490,7 +499,13 @@ impl<'a> Iterator for Fields<'a> {
             2 => {
                 let (len, u) = read_varint(self.b, self.i)?;
                 self.i += u;
-                let end = self.i + len as usize;
+                // `self.i + len` WRAPS on a hostile length, and a wrapped `end` sails past the
+                // bounds check below and panics in the slice -- which, reached through
+                // `ft_ommx_read`, is a non-unwinding panic that aborts the caller's process.
+                // Eleven bytes did it: 0x0A then ten 0xFF/0x01 varint bytes.
+                let Some(end) = self.i.checked_add(len as usize) else {
+                    return None;
+                };
                 if end > self.b.len() {
                     return None;
                 }
@@ -543,6 +558,31 @@ fn packed_doubles(p: &[u8], out: &mut Vec<f64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hostile_length_prefix_is_refused_rather_than_panicking() {
+        // Eleven bytes: tag 0x0A then a varint length of ~2^64. `self.i + len` WRAPPED, so the
+        // wrapped `end` sailed past the bounds check and the slice panicked -- and reached through
+        // `ft_ommx_read` that is a non-unwinding panic, which ABORTS the caller's process. A parser
+        // in a published library must not be able to kill the program that calls it.
+        let bytes = [0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
+        assert!(import(&bytes).is_err(), "malformed input must be an Err, never a panic");
+    }
+
+    #[test]
+    fn a_diagonal_quadratic_term_is_folded_rather_than_aborting() {
+        // row == col is ordinary, well-formed OMMX that other tools emit routinely. It used to
+        // reach the graph builder as a self-edge and panic. For a binary x, x^2 == x exactly, so
+        // folding it into the linear part is the honest answer rather than a refusal.
+        let bytes = [
+            0x12, 0x02, 0x10, 0x01, 0x1a, 0x0f, 0x1a, 0x0d, 0x08, 0x00, 0x10, 0x00, 0x19, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xbf, 0x28, 0x01,
+        ];
+        // `Graph` is deliberately not Debug, so report the error rather than the Ok value.
+        if let Err(e) = import(&bytes) {
+            panic!("a diagonal term must import, not abort or refuse: {e:?}");
+        }
+    }
     use crate::ising::lattice2d;
 
     #[test]

@@ -20,6 +20,15 @@ pub fn ring(n: usize, j: f64, h: f64) -> Graph {
 
 /// 2D nearest-neighbor square lattice with periodic boundaries, uniform J, no field.
 pub fn lattice2d(l: usize, j: f64) -> Graph {
+    // A side of 1 wraps every neighbour onto the site itself, so the periodic boundary produces the
+    // self-edge (0,0), which `GraphBuilder::couple` refuses with a panic -- reached through
+    // `ft_ising2d_new(1, ..)` that is a NON-UNWINDING panic and aborts the caller's process, while
+    // the header documents a NULL return. `l = 0` already returned a live empty handle, so the
+    // guard band stopped one short of the fatal value. An uncoupled lattice is the honest answer
+    // for a side with no distinct neighbours.
+    if l < 2 {
+        return GraphBuilder::new(l * l).build();
+    }
     let mut gb = GraphBuilder::new(l * l);
     for y in 0..l {
         for x in 0..l {

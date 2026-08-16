@@ -55,12 +55,34 @@ pub enum Domain {
 }
 
 impl Domain {
+    /// How many values it can take, without the clamp `size` applies.
+    ///
+    /// Separate because `size` returns `usize` and must saturate to stay usable, while the refusal
+    /// in `compile` needs the true magnitude to report it.
+    pub(crate) fn size_u128(&self) -> u128 {
+        match self {
+            Domain::Spin | Domain::Binary => 2,
+            Domain::Categorical(k) => *k as u128,
+            Domain::Integer { lo, hi } => {
+                let span = (*hi as i128) - (*lo as i128) + 1;
+                if span < 1 { 1 } else { span as u128 }
+            }
+        }
+    }
+
     /// How many values it can take.
     pub fn size(&self) -> usize {
         match self {
             Domain::Spin | Domain::Binary => 2,
             Domain::Categorical(k) => *k,
-            Domain::Integer { lo, hi } => (hi - lo + 1).max(1) as usize,
+            // In i128 then clamped: `hi - lo + 1` OVERFLOWS i64 for a wide range, and the wrapped
+            // value came back as a tiny or negative size. `ft_model_integer` reported success and
+            // `ft_model_compile` then aborted in `encode` with "a variable with fewer than 2
+            // values is a constant" -- a panic across the C ABI, where the documented failure is a
+            // zero return.
+            Domain::Integer { lo, hi } => {
+                (((*hi as i128) - (*lo as i128) + 1).clamp(1, usize::MAX as i128)) as usize
+            }
         }
     }
 
@@ -510,6 +532,13 @@ pub enum CompileError {
     Empty,
     /// Two variables sharing a name.
     DuplicateName(String),
+    /// An integer variable with more values than the graph can index.
+    ///
+    /// Spin indices are `u32`, so nothing here can address more than `u32::MAX` of them, and a
+    /// one-hot slot needs one spin per value. `ft_model_integer` used to accept a range spanning
+    /// most of `i64`, report success, and then `ft_model_compile` aborted the caller's process with
+    /// a capacity overflow -- where the documented failure is a zero return.
+    DomainTooLarge { var: String, size: u128 },
     /// A coefficient that is NaN or infinite.
     ///
     /// Not a pedantic check. A single NaN objective term used to compile, solve, and report
@@ -531,6 +560,13 @@ pub enum CompileError {
 impl core::fmt::Display for CompileError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            CompileError::DomainTooLarge { var, size } => write!(
+                f,
+                "'{var}' spans {size} values, and spin indices are u32 so at most {} can be \
+                 addressed. Narrow the range: a domain this size cannot be laid out, let alone \
+                 annealed",
+                u32::MAX
+            ),
             CompileError::NotFinite { what, value } => {
                 // Say WHICH failure, because they are different. And note the negation: a model
                 // stores "minimise this", so a term written as `maximize(+inf)` is held as -inf,
@@ -907,6 +943,15 @@ impl Model {
         // that can introduce one converges -- `objective`, `set_objective`, the LP and OMMX
         // readers, and the C ABI all end up compiling. Checking in `objective` alone would leave
         // the other four open, and this crate has shipped that shape of gap before.
+        // Refused here rather than at each entry point, for the same reason as the finiteness
+        // check below: `ft_model_integer`, the LP reader, the OMMX reader and the Rust API all
+        // converge on compile, and guarding one of them leaves the rest open.
+        for d in &self.decls {
+            let size = d.domain.size_u128();
+            if size > u32::MAX as u128 {
+                return Err(CompileError::DomainTooLarge { var: d.name.clone(), size });
+            }
+        }
         self.objective.check_finite("objective coefficient")?;
         // SOFT weights only. A hard constraint carries `f64::NAN` as its sentinel -- see the push
         // in `constrain` -- so checking every weight rejects every hard constraint in the crate,
@@ -1848,6 +1893,25 @@ mod tests {
         let s = c.solve_best_of(6);
         assert!(s.feasible(), "{s}");
         assert_eq!(s.value("temperature"), 13, "integers decode in their own range: {s}");
+    }
+
+    #[test]
+    fn an_integer_range_the_graph_cannot_index_is_refused_rather_than_aborting() {
+        // `ft_model_integer` accepted a range spanning most of i64, returned success, and
+        // `ft_model_compile` then ABORTED the caller's process with a capacity overflow -- where
+        // the header documents a zero return. Spin indices are u32; nothing here addresses more.
+        let mut m = Model::new();
+        m.integer("t", -4_611_686_018_427_387_904, 4_611_686_018_427_387_904);
+        match m.compile() {
+            Err(CompileError::DomainTooLarge { var, .. }) => assert_eq!(var, "t"),
+            Err(e) => panic!("refused for the wrong reason: {e}"),
+            Ok(_) => panic!("a domain of 9.2e18 values cannot be laid out"),
+        }
+
+        // A large but addressable range still compiles.
+        let mut ok = Model::new();
+        ok.integer("u", 0, 1000);
+        assert!(ok.compile().is_ok(), "1001 values is ordinary");
     }
 
     #[test]

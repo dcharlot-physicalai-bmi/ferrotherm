@@ -86,7 +86,7 @@ const uint32_t *ft_gpu_nbr(const ft_sim *sim);
 const float *ft_gpu_w(const ft_sim *sim);
 const float *ft_gpu_h(const ft_sim *sim);
 uint32_t ft_gpu_classes(const ft_sim *sim);
-const uint32_t *ft_gpu_class_ptr(const ft_sim *sim);
+const uint32_t *ft_gpu_class_ptr(const ft_sim *sim, uint32_t c);
 uint32_t ft_gpu_class_len(const ft_sim *sim, uint32_t c);
 
 /* Put a state INTO the simulation, so something computed elsewhere -- a GPU sweep, another solver --

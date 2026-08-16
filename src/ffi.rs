@@ -587,7 +587,11 @@ pub extern "C" fn ft_planted_frustrated(l: u32, loops: u32, seed: u64, beta: f64
 /// The Wishart planted ensemble: dense, and genuinely hard below alpha = 1.
 #[no_mangle]
 pub extern "C" fn ft_planted_wishart(n: u32, alpha: f64, seed: u64, beta: f64) -> *mut Sim {
-    if n < 3 || !(alpha > 0.0) {
+    // `!(alpha > 0.0)` rejects NaN and non-positives but ADMITS +inf, which reaches an allocation
+    // sized from it and aborts with "capacity overflow" -- a non-unwinding panic across the C ABI.
+    // Measured: NaN returned null correctly and +inf killed the process, from one guard. Every
+    // other non-finite check in this file uses `is_finite`; this one did not.
+    if n < 3 || !alpha.is_finite() || !(alpha > 0.0) {
         return core::ptr::null_mut();
     }
     let p = crate::planted::wishart(n as usize, alpha, seed);

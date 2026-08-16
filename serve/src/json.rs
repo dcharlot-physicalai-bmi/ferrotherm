@@ -166,7 +166,7 @@ fn wr_str(s: &str, out: &mut String) {
 pub fn parse(text: &str) -> Result<Json, String> {
     let b: Vec<char> = text.chars().collect();
     let mut i = 0;
-    let v = p_value(&b, &mut i)?;
+    let v = p_value(&b, &mut i, 0)?;
     skip_ws(&b, &mut i);
     if i != b.len() {
         return Err(format!("trailing input at char {i}"));
@@ -180,14 +180,33 @@ fn skip_ws(b: &[char], i: &mut usize) {
     }
 }
 
-fn p_value(b: &[char], i: &mut usize) -> Result<Json, String> {
+/// How deep `{`/`[` may nest before this refuses.
+///
+/// The parser is recursive descent with no bound, so nesting depth was stack depth. A 40 KB body of
+/// `{"graph":` followed by 20,000 `[` overflowed the thread stack and **aborted the whole
+/// `ferrotherm-serve` process** -- not the request, the server: the next connection got
+/// ECONNREFUSED. An unauthenticated 40 KB POST taking down the service is a denial of service, and
+/// the fix is a limit, not a bigger stack.
+///
+/// 64 is far past anything a real request needs: the deepest structure this API accepts is an
+/// object holding an array of arrays.
+const MAX_DEPTH: usize = 64;
+
+fn p_value(b: &[char], i: &mut usize, d: usize) -> Result<Json, String> {
     skip_ws(b, i);
     if *i >= b.len() {
         return Err("unexpected end of input".into());
     }
+    if d > MAX_DEPTH {
+        return Err(format!(
+            "JSON nested deeper than {MAX_DEPTH} at char {i}; refused before it becomes a stack \
+             overflow",
+            i = *i
+        ));
+    }
     match b[*i] {
-        '{' => p_obj(b, i),
-        '[' => p_arr(b, i),
+        '{' => p_obj(b, i, d),
+        '[' => p_arr(b, i, d),
         '"' => Ok(Json::Str(p_str(b, i)?)),
         't' => p_lit(b, i, "true", Json::Bool(true)),
         'f' => p_lit(b, i, "false", Json::Bool(false)),
@@ -278,7 +297,7 @@ fn p_str(b: &[char], i: &mut usize) -> Result<String, String> {
     Err("unterminated string".into())
 }
 
-fn p_arr(b: &[char], i: &mut usize) -> Result<Json, String> {
+fn p_arr(b: &[char], i: &mut usize, d: usize) -> Result<Json, String> {
     *i += 1;
     let mut out = Vec::new();
     skip_ws(b, i);
@@ -287,7 +306,7 @@ fn p_arr(b: &[char], i: &mut usize) -> Result<Json, String> {
         return Ok(Json::Arr(out));
     }
     loop {
-        out.push(p_value(b, i)?);
+        out.push(p_value(b, i, d + 1)?);
         skip_ws(b, i);
         match b.get(*i) {
             Some(',') => *i += 1,
@@ -300,7 +319,7 @@ fn p_arr(b: &[char], i: &mut usize) -> Result<Json, String> {
     }
 }
 
-fn p_obj(b: &[char], i: &mut usize) -> Result<Json, String> {
+fn p_obj(b: &[char], i: &mut usize, d: usize) -> Result<Json, String> {
     *i += 1;
     let mut out = Vec::new();
     let mut seen = BTreeMap::new();
@@ -320,7 +339,7 @@ fn p_obj(b: &[char], i: &mut usize) -> Result<Json, String> {
             return Err(format!("expected : at char {i}", i = *i));
         }
         *i += 1;
-        let v = p_value(b, i)?;
+        let v = p_value(b, i, d + 1)?;
         // last key wins, matching what every mainstream parser does with duplicates
         if let Some(&idx) = seen.get(&k) {
             out[idx] = (k, v);
