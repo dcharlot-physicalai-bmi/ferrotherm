@@ -20,6 +20,10 @@ tmp_*
 
 # npm's install tree for the browser tests. `npm install` recreates it from package-lock.json, and
 # committing it once put 181 files and 15 MB into both the repository and the published crate.
+# No trailing slash. `node_modules/` matches a DIRECTORY, and a symlink to one is not a directory --
+# which is how a symlink pointing at an absolute path on one machine got committed, survived review,
+# and broke `cargo publish` at the next release. Both forms, so neither shape gets through.
+node_modules
 node_modules/
 
 # The Python build tree and the staged native library. build-python-wheel.sh copies the cdylib into
