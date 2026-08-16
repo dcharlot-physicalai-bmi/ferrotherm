@@ -122,13 +122,34 @@ function __init__()
         catch
         end
     end
+    # Name the fix for the situation the caller is ACTUALLY in.
+    #
+    # This used to print the candidate list and nothing else. For anyone who installed the package
+    # rather than cloning it, that list is two paths under `.julia/packages/.../target/` -- which
+    # can never contain a build, because there is no checkout there -- and it never once mentioned
+    # `ferrotherm_jll`, which is the answer for that person. An error listing only paths that
+    # cannot work, omitting the one thing that would, is worse than terse.
+    jll_note = _jll_library() === nothing ?
+        """
+        `ferrotherm_jll` is not installed, which is how an installed (non-checkout) copy gets its
+        library:
+
+            pkg> add https://github.com/dcharlot-physicalai-bmi/ferrotherm.git:julia/ferrotherm_jll
+        """ :
+        "`ferrotherm_jll` is installed but its artifact did not load, which is a bug worth reporting."
+
     error("""
           could not load the ferrotherm native library.
 
-          Build it with `cargo build --release` in the ferrotherm checkout, or set
-          ENV["FERROTHERM_LIB"] to the library path before `using Ferrotherm`.
+          $(jll_note)
+          From a checkout, build it and point at the result:
 
-          Tried:
+              cargo build --release
+              ENV["FERROTHERM_LIB"] = "<checkout>/target/release/libferrotherm.dylib"
+
+          set before `using Ferrotherm`. (.so on Linux, .dll on Windows.)
+
+          Tried, in order:
           """ * join("  " .* _candidates(), "\n"))
 end
 
