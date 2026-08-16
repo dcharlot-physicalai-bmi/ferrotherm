@@ -324,12 +324,13 @@ uint32_t ft_ommx_error(uint8_t *buf, uint32_t cap);
  * Same two-call protocol as the text getters, except the payload is BINARY protobuf rather than
  * UTF-8: call with a NULL buffer for the length, then again with a buffer that size.
  *
- * ft_model_ommx_constant is not optional bookkeeping. ferrotherm's spins are -1/+1 and OMMX binaries
- * are 0/1, and the substitution between them introduces an offset:
+ * The objective needs no correction. ferrotherm's spins are -1/+1 and OMMX binaries are 0/1, and the
+ * substitution introduces an offset -- which the exporter APPLIES, writing it into the instance:
  *
- *     ferrotherm_energy(s) == ommx_objective(x) + constant,   s_i = 2*x_i - 1
+ *     ommx_objective(x) == ferrotherm_energy(s),   s_i = 2*x_i - 1
  *
- * An exporter that dropped it would produce an instance with the same optimum and the wrong value. */
+ * ft_model_ommx_constant reports that offset so the substitution is visible. Do NOT add it to the
+ * objective; it is already there, and adding it again is wrong by exactly its own value. */
 uint32_t ft_model_ommx(const ft_model *m, uint8_t *buf, uint32_t cap);
 double ft_model_ommx_constant(const ft_model *m);
 

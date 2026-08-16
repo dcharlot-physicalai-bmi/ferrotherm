@@ -52,7 +52,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 
 
 # ---- library loading ------------------------------------------------------------------------
@@ -1259,10 +1259,11 @@ class Problem:
         self._must(_model_soften_last(self._h, float(weight)), "soft constraint")
 
     def ommx(self) -> "tuple[bytes, float]":
-        """The compiled model as an OMMX instance -- the interchange format this corner of the field converged on, so a ferrotherm program can be read by jijmodeling, Jij's stack, and anything else that speaks it. Returns the protobuf bytes and the constant the +/-1 to 0/1 substitution introduces: ferrotherm_energy(s) == ommx_objective(x) + constant.
+        """The compiled model as an OMMX instance -- the interchange format this corner of the field converged on, so a ferrotherm program can be read by jijmodeling, Jij's stack, and anything else that speaks it. Returns the protobuf bytes and the offset the +/-1 to 0/1 substitution produced, ALREADY FOLDED INTO the instance -- ommx_objective(x) == ferrotherm_energy(s), so read the constant, do not add it.
 
-        The constant is not optional bookkeeping. Dropping it yields an instance with the same
-        optimum and the wrong value — an error that survives every check comparing only argmin.
+        **Read the constant, do not add it.** The exporter writes it into the instance, so
+        ``ommx_objective(x) == ferrotherm_energy(s)`` exactly and adding it again is wrong by its
+        own value. It is returned so the substitution is visible.
 
         >>> raw, constant = problem.ommx()          # doctest: +SKIP
         >>> from ommx.v1 import Instance            # doctest: +SKIP

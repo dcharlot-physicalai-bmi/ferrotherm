@@ -21,8 +21,10 @@
 //! **The variable change is the one thing to know.** Ferrotherm's spins are ±1 and OMMX's binaries
 //! are 0/1, so `s = 2x - 1` is substituted during export. That is not a relabelling: it changes
 //! every coefficient and introduces a constant, and an exporter that skipped it would produce a
-//! file that parses cleanly and describes a different model. [`Export::constant`] carries the
-//! offset so a caller can recover the original energy exactly.
+//! file that parses cleanly and describes a different model. The exporter applies it: the constant
+//! is written into the instance, so `ommx_objective(x) == ferrotherm_energy(s)` with nothing left
+//! for a caller to do. [`Export::constant`] reports the value for inspection and must NOT be added
+//! again.
 //!
 //! It sits beside [`crate::ftp`] and [`crate::lp`] because that is what it is: a format bridge, and
 //! this crate already keeps those in the core rather than out at the edge. Putting it in a sibling
@@ -79,12 +81,18 @@ pub mod schema {
 pub struct Export {
     /// The serialised `ommx.v1.Instance`.
     pub bytes: Vec<u8>,
-    /// The constant dropped by the ±1 → 0/1 substitution.
+    /// The offset the ±1 → 0/1 substitution produced, **already folded into the instance**.
     ///
-    /// `ferrotherm_energy(s) == ommx_objective(x) + constant` where `s_i = 2*x_i - 1`. An exporter
-    /// that discarded this would produce an instance whose optimum is at the same point and whose
-    /// value is wrong by a fixed amount, which is the kind of error that survives every test that
-    /// only compares argmin.
+    /// Read it, do not add it. `ommx_objective(x) == ferrotherm_energy(s)` exactly, because the
+    /// constant is written into the `Linear` message during export rather than left for a caller to
+    /// apply. Adding it again double-counts.
+    ///
+    /// It is reported because the substitution is a fact about the model worth being able to see —
+    /// the value that makes the two objectives line up — not because anything downstream needs to
+    /// apply it. `an_exported_objective_needs_no_correction` pins that, and it is pinned because the
+    /// first version of this field said the opposite: the docs told callers to add a number the
+    /// exporter had already applied, and the reference test agreed with the code rather than the
+    /// prose for a whole release.
     pub constant: f64,
     pub variables: usize,
 }
@@ -758,6 +766,34 @@ mod tests {
         for mask in 0..(1u32 << g.n) {
             let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
             assert!((from_packed.energy(&s) - from_unpacked.energy(&s)).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn an_exported_objective_needs_no_correction() {
+        // The contract, pinned. The exporter folds the substitution's constant into the instance,
+        // so the two objectives are equal and a caller who adds `Export::constant` gets a number
+        // that is wrong by exactly that much.
+        //
+        // This is here because the docs said the opposite for a release: `Export::constant` was
+        // described as an offset to apply, the C header and all four bindings repeated it, and the
+        // reference test agreed with the CODE rather than the prose -- so nothing failed.
+        let g = lattice2d(3, 1.0);
+        let e = export(&g);
+        let (back, leftover) = import(&e.bytes).unwrap();
+        for mask in 0..(1u32 << g.n) {
+            let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let direct = g.energy(&s);
+            let reimported = back.energy(&s) + leftover;
+            assert!(
+                (direct - reimported).abs() < 1e-9,
+                "a round trip must need only the IMPORT leftover: {direct} vs {reimported}"
+            );
+            assert!(
+                (direct - (reimported + e.constant)).abs() > 1e-12 || e.constant == 0.0,
+                "adding the EXPORT constant on top must be wrong -- if it is not, the exporter \
+                 stopped folding it in and this doc is stale again"
+            );
         }
     }
 }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.1 (2026-08-16)
+
+**The OMMX export constant was documented backwards.** `Export::constant`, `ft_model_ommx_constant`
+and the Python, Zig and Julia equivalents all told a caller to ADD the offset to the OMMX objective
+to recover ferrotherm's energy. The exporter already applies it — it is written into the instance's
+`Linear` message — so `ommx_objective(x) == ferrotherm_energy(s)` exactly, and a caller who followed
+the documentation got a number wrong by precisely that constant.
+
+The code was right the whole time. So was the reference test, which compares the two objectives
+**without** adding anything and therefore agreed with the code rather than the prose. Nothing failed;
+five surfaces carried the same wrong sentence for one release.
+
+Now pinned by `an_exported_objective_needs_no_correction`, which asserts that adding the export
+constant makes the comparison *wrong* — so if the exporter ever stops folding it in, the test says
+the documentation is stale rather than the arithmetic.
+
 ## 0.11.0 (2026-08-16)
 
 **Reproducible, measured, and speaking the format the field converged on.** Breaking:

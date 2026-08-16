@@ -1074,9 +1074,9 @@ pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
 /// UTF-8: call with a null buffer for the length, then again with a buffer that size. Returns 0
 /// before a successful compile.
 ///
-/// A caller that wants the energy back has to add the constant from [`ft_model_ommx_constant`]:
-/// ferrotherm's spins are +/-1 and OMMX binaries are 0/1, and the substitution that maps between
-/// them introduces an offset. See [`crate::ommx`].
+/// The objective needs no correction: the substitution's constant is written INTO the instance, so
+/// `ommx_objective(x) == ferrotherm_energy(s)`. [`ft_model_ommx_constant`] reports that value for
+/// inspection and must not be added on top. See [`crate::ommx`].
 #[no_mangle]
 pub extern "C" fn ft_model_ommx(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
     let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
@@ -1090,11 +1090,9 @@ pub extern "C" fn ft_model_ommx(m: *const ModelHandle, buf: *mut u8, cap: u32) -
     n as u32
 }
 
-/// The constant the +/-1 to 0/1 substitution introduces.
-///
-/// `ferrotherm_energy(s) == ommx_objective(x) + constant`. Returning the instance without this
-/// would hand a caller a model with the same optimum and the wrong value, which is the kind of
-/// error that survives every check that only compares argmin.
+/// The offset the +/-1 to 0/1 substitution produced, ALREADY FOLDED INTO the instance.
+/// Read it, do not add it: ommx_objective(x) == ferrotherm_energy(s) exactly, and adding it again double-counts.
+/// Reported so the substitution is visible, not because anything downstream must apply it.
 #[no_mangle]
 pub extern "C" fn ft_model_ommx_constant(m: *const ModelHandle) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) {

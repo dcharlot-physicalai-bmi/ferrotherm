@@ -1135,9 +1135,9 @@ end
 The compiled model as an OMMX instance — the interchange format this corner of the field converged
 on, so a ferrotherm program can be read by jijmodeling and the Jij stack.
 
-Returns the protobuf bytes and the constant the ±1 to 0/1 substitution introduces:
-`ferrotherm_energy(s) == ommx_objective(x) + constant`. The constant is not optional bookkeeping —
-dropping it yields an instance with the same optimum and the wrong value.
+Returns the protobuf bytes and the offset the ±1 to 0/1 substitution produced, **already folded
+into the instance**: `ommx_objective(x) == ferrotherm_energy(s)` exactly. Read the constant, do not
+add it — adding it again is wrong by its own value.
 """
 function ommx(p::Problem)
     _live(p)

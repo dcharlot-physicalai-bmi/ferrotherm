@@ -755,8 +755,8 @@ pub const Problem = struct {
         return buf[0..got];
     }
 
-    /// The constant the +/-1 to 0/1 substitution introduces. Not optional: without it the instance
-    /// has the same optimum and the wrong value.
+    /// The offset the +/-1 to 0/1 substitution produced, ALREADY folded into the instance.
+    /// Read it, do not add it: ommx_objective(x) == ferrotherm_energy(s) exactly.
     pub fn ommxConstant(self: *Problem) f64 {
         return c.ft_model_ommx_constant(self.h);
     }
