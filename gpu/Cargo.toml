@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-gpu"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Native GPU sampling for ferrotherm: the same WGSL sweep the browser runs, on Vulkan, Metal or DX12. Kept out of the core crate so `ferrotherm` stays std-only with zero dependencies."
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ categories = ["science", "algorithms", "simulation"]
 # and to a microcontroller. A GPU backend needs a driver stack, so it lives out here beside
 # `silicon`, `serve` and `cloud` -- each of which exists for the same reason.
 [dependencies]
-ferrotherm = { version = "0.10", path = ".." }
+ferrotherm = { version = "0.11", path = ".." }
 wgpu = "30"
 pollster = "0.4"
 
@@ -21,4 +21,4 @@ pollster = "0.4"
 # nothing in this crate needs to measure power, but the question "is it also cheaper" cannot be
 # asked without both, and it is the question the whole stack exists to answer.
 [dev-dependencies]
-ferrotherm-meter = { version = "0.1", path = "../meter" }
+ferrotherm-meter = { version = "0.2", path = "../meter" }

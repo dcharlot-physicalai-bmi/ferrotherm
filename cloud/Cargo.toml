@@ -9,7 +9,7 @@ keywords = ["thermodynamic", "ising", "annealing", "hitachi", "sampling"]
 categories = ["science", "api-bindings", "simulation"]
 
 [dependencies]
-ferrotherm = { version = "0.10", path = ".." }
+ferrotherm = { version = "0.11", path = ".." }
 ureq = "2"
 
 [dev-dependencies]

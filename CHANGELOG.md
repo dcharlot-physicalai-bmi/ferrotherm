@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-08-16)
+
+**Reproducible, measured, and speaking the format the field converged on.** Breaking:
+`requires-python` is now `>=3.11`, `Ledger::joules` returns `Option<f64>`, `Prices` gained a
+`source` field, and eleven functions returning a decision are `#[must_use]`.
+
+The headline is a correctness fix. **"Deterministic by seed" was only half true** — a `HashMap` in
+`GraphBuilder::build` randomised the CSR neighbour order, so the same model compiled to five
+different programs across five runs and a derived energy took six distinct values from one identical
+state. One word (`BTreeMap`) fixed it, and it is now measured on three machines rather than asserted
+on one.
+
+Also new: `ferrotherm-meter` (measured wall power), `src/ommx.rs` (the interchange format, both
+directions, all nine surfaces), constraint detection, and three checks — `check-semantics`,
+`check-exports` and the sibling-crate rule — each written after the bug it would have caught.
 
 ### OMMX import reaches the bindings too
 
