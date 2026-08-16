@@ -65,8 +65,25 @@ impl GraphBuilder {
     pub fn build(self) -> Graph {
         BUILDS.with(|b| b.set(b.get() + 1));
         let n = self.n;
-        // merge duplicates
-        let mut merged: std::collections::HashMap<(u32, u32), f64> = std::collections::HashMap::new();
+        // Merge duplicates. BTreeMap, NOT HashMap.
+        //
+        // Rust randomises HashMap iteration per instance, and this map's iteration order decides
+        // the CSR neighbour order, which decides the order every local field is SUMMED in. Float
+        // addition is not associative, so with a HashMap here:
+        //
+        //   - eight builds of one graph gave eight different CSR orders,
+        //   - the sampled state was identical every time (the RNG stream does not depend on it),
+        //   - and the energy computed from that identical state took SIX distinct values, all of
+        //     which print the same because they differ in the last bits.
+        //
+        // It also made `Program::to_ftp` non-reproducible: five runs of the same model emitted five
+        // different programs, a pure permutation of one another. A program IR whose bytes depend on
+        // which run produced it cannot be hashed, diffed, cached, or checked for reproducibility --
+        // and "deterministic by seed" is this crate's headline.
+        //
+        // A BTreeMap iterates in key order. The merge goes from O(m) to O(m log m), which is
+        // nothing beside the sampling it feeds, and the whole stack becomes byte-reproducible.
+        let mut merged: std::collections::BTreeMap<(u32, u32), f64> = std::collections::BTreeMap::new();
         for (a, b, j) in self.edges {
             let key = if a < b { (a, b) } else { (b, a) };
             *merged.entry(key).or_insert(0.0) += j;
@@ -198,5 +215,61 @@ mod tests {
         // classes partition the vertex set
         let total: usize = g.classes.iter().map(|c| c.len()).sum();
         assert_eq!(total, g.n);
+    }
+
+    #[test]
+    fn a_graph_builds_bit_identically_every_time() {
+        // "Deterministic by seed" is this crate's headline, and it was only half true. The merge in
+        // `build` used a HashMap, whose iteration order Rust randomises per instance, and that
+        // order decides the CSR neighbour order -- which decides the order every local field is
+        // SUMMED in. Float addition is not associative.
+        //
+        // Measured before the fix, over eight builds of one graph: eight distinct CSR orders, ONE
+        // sampled state (the RNG stream does not depend on the order), and SIX distinct energies
+        // computed from that identical state, all printing the same because they differed in the
+        // last bits.
+        use crate::gibbs::Sampler;
+        use crate::planted::wishart;
+        let mut orders = Vec::new();
+        let mut states = Vec::new();
+        let mut bits = Vec::new();
+        for _ in 0..8 {
+            let g = wishart(40, 1.0, 7).graph;
+            orders.push(g.nbr.clone());
+            let mut s = Sampler::new(&g, 1.2, 42);
+            s.sweeps(200, None);
+            bits.push(g.energy(&s.s).to_bits());
+            states.push(s.s.clone());
+        }
+        assert!(orders.windows(2).all(|w| w[0] == w[1]), "CSR neighbour order must not vary");
+        assert!(states.windows(2).all(|w| w[0] == w[1]), "the sampled state must not vary");
+        assert!(
+            bits.windows(2).all(|w| w[0] == w[1]),
+            "energies must be BIT-identical, not merely equal to the digits that get printed"
+        );
+    }
+
+    #[test]
+    fn the_compiled_program_is_byte_reproducible() {
+        // A program IR whose bytes depend on which run produced it cannot be hashed, diffed, cached
+        // or checked for reproducibility. Five runs of one model used to emit five different
+        // programs -- a pure permutation of each other, identical in length, which is why nothing
+        // noticed. It also meant two BINDINGS building the same model disagreed byte for byte,
+        // which is how this was found: check-parity proves a symbol exists on nine surfaces and
+        // says nothing about whether they compute the same thing.
+        use crate::model::{Expr, Lit, Model, Sense};
+        let build = || {
+            let mut m = Model::new();
+            let a = m.categorical("a", 3);
+            let b = m.categorical("b", 3);
+            m.not_equal(a, b);
+            m.at_most(vec![Lit::Is(a, 0), Lit::Is(b, 0)], 1);
+            m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
+            m.compile().unwrap().program.to_ftp()
+        };
+        let first = build();
+        for _ in 0..4 {
+            assert_eq!(build(), first, "the same model must compile to the same bytes");
+        }
     }
 }

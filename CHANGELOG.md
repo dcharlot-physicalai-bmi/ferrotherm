@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### "Deterministic by seed" was only half true
+
+`GraphBuilder::build` merged duplicate edges through a `HashMap`. Rust randomises HashMap iteration
+per instance, and that order decides the CSR neighbour order — which decides the order every local
+field is **summed** in. Float addition is not associative.
+
+Measured over eight builds of one graph, before the fix:
+
+- **8** distinct CSR neighbour orders
+- **1** sampled state — the RNG stream does not depend on the order, so the answer was stable
+- **6** distinct energies computed from that identical state, every one printing the same, because
+  they differed in the last bits
+
+And `Program::to_ftp` was not reproducible: five runs of one model emitted five different programs —
+pure permutations of each other, identical in length, which is why nothing noticed. A program IR
+whose bytes depend on which run produced it cannot be hashed, diffed, cached, or checked for
+reproducibility.
+
+One word: `BTreeMap`. The merge goes from O(m) to O(m log m), which is nothing beside the sampling
+it feeds, and the whole stack becomes byte-reproducible.
+
+**How it was found.** `check-parity.sh` proves a symbol exists on nine surfaces. It says nothing
+about whether they compute the same thing — so I built one model through Rust and through Python and
+diffed the compiled programs. They disagreed. Symbol parity is not semantic parity, and the same
+model now compiles byte-identically through both.
+
+
 ### The GPU is 12x faster and 10x cheaper — not 54x
 
 `gpu/examples/joules.rs` measures **both** paths at the wall on one machine and divides by the node
