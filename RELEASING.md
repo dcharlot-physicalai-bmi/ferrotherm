@@ -11,12 +11,22 @@ someone's head is a release procedure that skips a crate.
 
 ## The order
 
-crates.io resolves dependencies at publish time, so the core must be **live** before anything that
-pins it can go out. The index takes a few seconds to catch up.
+Two orderings matter, and one of them is not obvious.
+
+**Publish before you push.** `cargo publish` needs the version bump *committed*, not *pushed* — and
+`check-versions.sh` fails when a pushed commit is ahead of crates.io, which is exactly right and
+exactly what it did to the 0.13.0 release: CI started the moment the commit landed, ran during the
+ninety seconds the five dependents were still uploading, and correctly reported four crates ahead.
+Nothing was wrong except the order. Commit, publish all six, *then* push, and the window does not
+exist.
+
+**Core first.** crates.io resolves dependencies at publish time, so the core must be **live** before
+anything that pins it can go out. The index takes a few seconds to catch up.
 
 ```sh
 scripts/check-versions.sh          # everything agrees, and what is not yet on crates.io
 cargo test --release --workspace
+cargo clippy --release --workspace --all-targets -- -D warnings
 scripts/check-parity.sh            # every C ABI symbol reaches every binding
 scripts/check-semantics.sh         # every binding compiles one model to the same bytes
 scripts/check-exports.sh           # every exported binding name resolves
@@ -29,6 +39,9 @@ cargo publish -p ferrotherm-silicon
 cargo publish -p ferrotherm-serve
 
 scripts/check-versions.sh          # and now it should say all six are live
+
+git push origin main               # LAST, so CI never sees a half-published release
+git push origin vX.Y.Z
 ```
 
 ## What has to move together
