@@ -93,6 +93,7 @@ pub struct Certificate {
 }
 
 impl Certificate {
+    #[must_use = "a certificate with findings is a certificate that failed; ignoring this is reporting a sound run that was not one"]
     pub fn passed(&self) -> bool {
         self.findings.is_empty()
     }

@@ -184,6 +184,7 @@ impl Range {
     pub const fn integers(lo: f64, hi: f64) -> Range {
         Range { lo, hi, integral: true }
     }
+    #[must_use = "the whole question this asks is whether the constraint is satisfied"]
     pub fn holds(&self, v: f64) -> bool {
         v.is_finite() && v >= self.lo && v <= self.hi && (!self.integral || v.fract() == 0.0)
     }
@@ -270,6 +271,7 @@ pub struct Verdict {
 
 impl Verdict {
     /// Nothing rules it out, nothing is unpublished, and one variable goes to one site.
+    #[must_use = "false means this program does not fit the fabric, and submitting it anyway fails at the device instead of here"]
     pub fn is_runnable(&self) -> bool {
         self.caveats.is_empty()
     }

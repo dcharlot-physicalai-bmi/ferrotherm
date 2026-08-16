@@ -763,6 +763,7 @@ impl Model {
     /// For a caller who adds a constraint through one of the convenience builders and then decides
     /// it is a preference — and for the C ABI, where the pairwise constraints take their arguments
     /// directly rather than through a literal list. False when there is nothing to soften.
+    #[must_use = "false means the constraint was NOT made soft, so the model you compile is not the model you described"]
     pub fn soften_last(&mut self, weight: f64) -> bool {
         if !(weight > 0.0) || !weight.is_finite() {
             return false;
@@ -1687,6 +1688,7 @@ impl Solution {
     /// makes a constraint expensive rather than impossible, so a sampler whose objective outbids it
     /// returns a state that decodes perfectly and breaks the request -- and this reported it as
     /// feasible, which is the answer to a question nobody asked.
+    #[must_use = "an answer that broke a hard constraint is still returned, so not checking this is trusting values the model already rejected"]
     pub fn feasible(&self) -> bool {
         // Only the HARD violations. A soft constraint is a preference with a price, and breaking
         // one is the trade the modeller asked for rather than a failure to answer.

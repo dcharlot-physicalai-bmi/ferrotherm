@@ -243,14 +243,20 @@ impl Meter {
         // A delta smaller than the baseline's own wander is noise wearing a decimal point. Three
         // sigma, and the message says what to do about it -- run a bigger model, not more repeats,
         // because repeating a measurement that cannot resolve the signal averages noise.
+        // NOT `delta > 0.0 && delta < floor`. That was the first version and it left a hole a real
+        // run fell into: a delta of -0.05 W is neither below the 0.98 busy-machine threshold nor
+        // inside the `delta > 0` branch, so it passed both guards and `max(0.0)` turned it into
+        // zero joules -- the confident claim that the computation was free, arrived at by two
+        // guards each deciding it was the other one's problem.
         let delta = mean - idle_watts;
         let floor = (3.0 * idle.sigma).max(0.5);
-        if delta > 0.0 && delta < floor {
+        if delta < floor {
             return Err(format!(
                 "the run drew {delta:.2} W above a baseline that wanders by {:.2} W (1 sigma over \
-                 {} readings). That delta is inside the noise, so dividing it by the node count \
-                 would report precision this measurement does not have. Use a larger model so the \
-                 workload draws at least {floor:.1} W above idle.",
+                 {} readings). That delta is inside the noise -- at or below zero it is not even \
+                 the right sign -- so dividing it by the node count would report precision this \
+                 measurement does not have. Use a larger model so the workload draws at least \
+                 {floor:.1} W above idle.",
                 idle.sigma, idle.samples
             ));
         }
@@ -279,7 +285,10 @@ impl Meter {
             idle_watts,
             idle_sigma: idle.sigma,
             joules_total: mean * seconds,
-            joules_above_idle: (mean - idle_watts).max(0.0) * seconds,
+            // No clamp: a delta below the noise floor is refused above, so anything reaching here
+            // has cleared it. A `.max(0.0)` here would be a second chance for a bad measurement to
+            // become a plausible zero.
+            joules_above_idle: delta * seconds,
             samples,
             machine: self.machine.clone(),
             backend: self.backend,
@@ -433,13 +442,15 @@ mod tests {
             s.sweeps(2_000, Some(&mut led));
         }) {
             Ok(r) => r,
-            Err(e) if e.contains("still busy") => {
+            Err(e) if e.contains("still busy") || e.contains("inside the noise") => {
                 eprintln!("machine was not quiet enough to measure; skipping: {e}");
                 return;
             }
             Err(e) => panic!("{e}"),
         };
-        assert!(run.seconds > 0.8, "the workload has to outlast the guard: {run:?}");
+        // Not a seconds assertion: how long 131M updates take depends on what else the machine is
+        // doing, and this went red at 0.732 s only because the box had got quieter. The guard that
+        // matters is the sample count, checked below.
 
         assert!(run.samples >= MIN_SAMPLES, "{run:?}");
         assert!(run.mean_watts > 0.0 && run.seconds > 0.0, "{run:?}");

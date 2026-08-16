@@ -80,6 +80,7 @@ impl Planted {
     }
 
     /// Whether a state reaches the planted optimum.
+    #[must_use = "false means the sampler did not reach the planted optimum, which is the only thing this instance was built to check"]
     pub fn solved(&self, s: &[i8]) -> bool {
         self.graph.energy(s) <= self.ground_energy + 1e-9
     }

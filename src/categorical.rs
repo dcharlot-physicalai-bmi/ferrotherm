@@ -43,6 +43,18 @@ pub struct Categorical {
     pub graph: crate::graph::Graph,
     pub encoding: Encoding,
     pub k: usize,
+    /// Whether the penalty pins these variables to their codewords EXACTLY.
+    ///
+    /// False for a binary encoding whose `k` is not a power of two: the spare codewords decode to
+    /// nothing, and no pairwise penalty separates them from the valid ones — measured on k = 6, an
+    /// invalid state costs exactly what a valid one costs. `Slot::decode` is then the only thing
+    /// standing between the sampler and a wrong answer, so a caller that samples this block without
+    /// checking every decode is trusting states the encoding never excluded.
+    ///
+    /// `Slot::add_penalty` has always returned this. It was discarded here and in `Model::compile`;
+    /// the compile path grew `Compiled::caveats`, and the compiler found this one only once
+    /// `add_penalty` was marked `#[must_use]` — a fix in one caller is a hypothesis about the rest.
+    pub exact: bool,
 }
 
 impl Categorical {
@@ -52,12 +64,13 @@ impl Categorical {
         let width = encoding.spins(k);
         let mut b = GraphBuilder::new(n * width);
         let mut slots = Vec::with_capacity(n);
+        let mut exact = true;
         for v in 0..n {
             let s = Slot::new(v * width, k, encoding);
-            s.add_penalty(&mut b, p);
+            exact &= s.add_penalty(&mut b, p);
             slots.push(s);
         }
-        Categorical { slots, graph: b.build(), encoding, k }
+        Categorical { slots, graph: b.build(), encoding, k, exact }
     }
 
     /// Spins this layout occupies.
@@ -194,5 +207,17 @@ mod tests {
         let six = Categorical::new(60, 6, Encoding::Binary, 2.0);
         let f = six.sample_feasibility(1.0, 300, 3);
         assert!(f < 1.0, "k=6 binary must let surplus codes through, got {f:.3}");
+    }
+
+    #[test]
+    fn a_block_reports_whether_its_encoding_is_exact() {
+        // The bool `add_penalty` returns, carried instead of discarded. One-hot and domain-wall
+        // pin every codeword; binary does only when k is a power of two, and the difference is not
+        // cosmetic -- for k = 6 an invalid state costs exactly what a valid one costs, so the
+        // sampler has no reason to avoid it and `decode` is the only guard left.
+        assert!(Categorical::new(4, 6, Encoding::OneHot, 1.0).exact);
+        assert!(Categorical::new(4, 6, Encoding::DomainWall, 1.0).exact);
+        assert!(Categorical::new(4, 8, Encoding::Binary, 1.0).exact, "8 is a power of two");
+        assert!(!Categorical::new(4, 6, Encoding::Binary, 1.0).exact, "6 is not");
     }
 }

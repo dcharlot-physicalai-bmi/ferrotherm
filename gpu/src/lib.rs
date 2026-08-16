@@ -96,6 +96,7 @@ impl Gpu {
     }
 
     /// True when the adapter is real silicon rather than a software rasteriser.
+    #[must_use = "false means a software rasteriser, whose timings say nothing about a GPU. Quoting a speedup without checking this reports the wrong machine"]
     pub fn is_hardware(&self) -> bool {
         !matches!(self.info.device_type, wgpu::DeviceType::Cpu | wgpu::DeviceType::Other)
     }

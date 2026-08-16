@@ -61,6 +61,7 @@ impl Encoding {
     ///
     /// Binary cannot when `k` is not a power of two: the surplus codes are an arbitrary subset of
     /// the hypercube, and no pairwise penalty carves that out in general.
+    #[must_use = "false means invalid codewords remain reachable and `decode` is the only thing between them and a wrong answer"]
     pub fn is_exact(&self, k: usize) -> bool {
         match self {
             Encoding::Binary => k.is_power_of_two(),
@@ -167,6 +168,7 @@ impl Slot {
     ///
     /// Returns whether the penalty is exact. A `false` means invalid states remain reachable and
     /// [`Slot::decode`] is the only thing standing between them and a wrong answer.
+    #[must_use = "this says whether the encoding can be made EXACT. Discarding it is how a k=6 binary variable shipped with invalid codewords costing exactly what valid ones cost, for three releases"]
     pub fn add_penalty(&self, b: &mut GraphBuilder, p: f64) -> bool {
         let w = self.width();
         match self.encoding {

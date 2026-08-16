@@ -48,6 +48,7 @@ impl Prices {
     };
 
     /// Whether these prices describe anything.
+    #[must_use = "false means these prices describe no machine, and pricing a run against them produces a figure that looks exactly like a real one"]
     pub fn is_stated(&self) -> bool {
         self.e_sample.is_finite() && self.e_read.is_finite() && self.e_write.is_finite()
     }
