@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### The GPU is 12x faster and 10x cheaper — not 54x
+
+`gpu/examples/joules.rs` measures **both** paths at the wall on one machine and divides by the node
+updates the ledger counted. Apple M5 Max, 512×512, 4-second windows:
+
+| | throughput | J per node update |
+|---|---|---|
+| GPU | 5.98e9 updates/s | **3.90e-9** |
+| CPU, all 18 cores | 4.98e8 updates/s | **3.92e-8** |
+
+**12.0× faster, 10.0× cheaper per update.** The speedup exceeds the saving, which is the expected
+shape: the GPU draws more power while it works, and time and joules are different questions.
+
+`bench.rs` reported **54×**, and that number compares a whole GPU against **one CPU core of
+eighteen** — the oldest way to flatter a GPU benchmark. `Sampler::sweeps` is single-threaded;
+`sweeps_par` is the fair comparison and the ratio drops by a factor of four. The bench now says so
+at the bottom of its own output rather than in an errata.
+
+Three things this measurement needed, each found by it failing:
+
+- **Repeat until the instrument can see it.** 157M GPU updates finish in ~30 ms, so a single run
+  left the measurement window almost entirely idle and reported 1.26 W above a 1.10 W baseline
+  wander. You cannot measure something faster than your sampling interval by running it once.
+- **Cool down between paths.** The CPU's baseline taken straight after a 4-second GPU burn wandered
+  by 7.2 W, which swallowed the CPU's own signal. Two workloads measured back to back are not
+  independent unless the machine is allowed to forget the first.
+- **Use the machine fairly, which is also the only way to see it.** One busy core added 0.13 W to a
+  baseline wandering by 1.43 W. Using all eighteen made the comparison honest and the signal
+  measurable in the same change.
+
+
 ## 0.10.0 (2026-08-15)
 
 **Every capability the landscape survey measured, and one side of the energy claim now measured

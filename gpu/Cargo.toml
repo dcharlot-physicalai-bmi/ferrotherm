@@ -16,3 +16,9 @@ categories = ["science", "algorithms", "simulation"]
 ferrotherm = { version = "0.10", path = ".." }
 wgpu = "30"
 pollster = "0.4"
+
+# The energy comparison needs both a GPU and a meter. A dev-dependency rather than a real one:
+# nothing in this crate needs to measure power, but the question "is it also cheaper" cannot be
+# asked without both, and it is the question the whole stack exists to answer.
+[dev-dependencies]
+ferrotherm-meter = { version = "0.1", path = "../meter" }

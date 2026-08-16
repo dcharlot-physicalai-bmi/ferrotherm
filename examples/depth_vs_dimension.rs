@@ -80,6 +80,12 @@ fn quad(x: &[f64], m: &[f64], n: usize) -> f64 {
     x.iter().zip(&mx).map(|(a,b)| a*b).sum()
 }
 
+fn symmetrise(m: &[f64], n: usize) -> Vec<f64> {
+    let mut o = vec![0.0; n*n];
+    for i in 0..n { for j in 0..n { o[i*n+j] = 0.5*(m[i*n+j] + m[j*n+i]); } }
+    o
+}
+
 // ---- the plant -----------------------------------------------------------------------------
 /// A coupled, stable plant that is comparable across dimension: each state feeds the next, so it
 /// is genuinely n-dimensional rather than n independent scalar problems wearing one name.
@@ -103,7 +109,7 @@ impl Plant {
             let btpb = mul(&mul(&bt, &p, n), &self.b, n);
             let k = inv(&add(&self.r, &btpb), n);
             let corr = mul(&mul(&atpb, &k, n), &t(&atpb, n), n);
-            let next = add(&self.q, &sub(&atpa, &corr));
+            let next = symmetrise(&add(&self.q, &sub(&atpa, &corr)), n);
             let d: f64 = sub(&next, &p).iter().map(|v| v.abs()).sum();
             p = next;
             if d < 1e-12 { break; }
@@ -164,6 +170,42 @@ fn mppi_cost(p: &Plant, rollouts: usize, passes: usize, horizon: usize,
 fn main() {
     // ONLY=tuned runs just the properly-tuned sweep; the other two are already recorded.
     if std::env::var("ONLY").as_deref() == Ok("tuned") { tuned_sweep(); return; }
+    if std::env::var("ONLY").as_deref() == Ok("robust") { robustness(); return; }
+    if std::env::var("ONLY").as_deref() == Ok("under") {
+        const S0: f64 = 0.4;
+        let seeds: Vec<u64> = (1..=5).collect();
+        println!("=== underactuated: half the states have no direct control ===");
+        println!("{:>4} {:>10} {:>10} {:>11}", "n", "1 pass", "8 passes", "depth gain");
+        for &n in &[2usize, 4, 8] {
+            let pl = underactuated(n);
+            let opt = quad(&vec![1.0; n], &pl.riccati(), n);
+            let sg = S0 / (n as f64).sqrt();
+            let mut o = [0.0f64; 2];
+            for (i,&ps) in [1usize,8].iter().enumerate() {
+                let mut v: Vec<f64> = seeds.iter().map(|&sd| mppi_cost(&pl, 3200, ps, 5, sg, 0.6, 60, sd)).collect();
+                v.sort_by(|a,b| a.partial_cmp(b).unwrap());
+                o[i] = (v[v.len()/2]-opt)/opt*100.0;
+            }
+            println!("{:>4} {:>9.2}% {:>9.2}% {:>10.1}x", n, o[0], o[1], o[0]/o[1]);
+        }
+        return;
+    }
+    if std::env::var("ONLY").as_deref() == Ok("opt") {
+        println!("exact optima with the symmetrised Riccati (published values in the paper):");
+        let pubv = [(1usize,1.0033),(2,2.6556),(4,5.3112),(8,10.6225)];
+        for (n,was) in pubv {
+            let pl = Plant::new(n);
+            let now = quad(&vec![1.0; n], &pl.riccati(), n);
+            let d = (now-was).abs();
+            println!("  n={n:>2}  published {was:>9.4}  now {now:>9.4}  delta {d:>9.2e}  {}",
+                     if d < 5e-4 { "unchanged" } else { "CHANGED" });
+        }
+        return;
+    }
+    if std::env::var("ONLY").as_deref() == Ok("diag") {
+        for n in [2usize, 4, 8] { println!("  underactuated n={n}:"); riccati_diag(&underactuated(n)); }
+        return;
+    }
     println!("PREDICTED before measuring: the width floor RISES with dimension.");
     println!("Falsified if the floor sits near 21% at every n.\n");
     let seeds: Vec<u64> = (1..=5).collect();
@@ -246,4 +288,95 @@ fn tuned_sweep() {
                      n, sg, k, ps, (med-opt)/opt*100.0, (v[v.len()-1]-v[0])/opt*100.0);
         }
     }
+}
+
+// ---- does the claim survive a different plant? -----------------------------------------------
+// The sweep above uses ONE structure: a sparse circulant where each state feeds the next, fully
+// actuated. A result replicated across seeds but measured on a single plant is replicated in the
+// wrong direction: seeds test the sampler, structure tests the claim. If "the depth requirement
+// grows with dimension" is a property of sampling in a larger space it should survive a change of
+// coupling, of coupling strength, and of actuation. If it only holds for this circulant it is a
+// fact about this circulant.
+fn plant_variant(kind: &str, n: usize) -> Plant {
+    let mut a = vec![0.0; n*n];
+    match kind {
+        // published: sparse circulant, each state feeds the next
+        "circulant" => { for i in 0..n { a[i*n+i] = 0.85; a[i*n + (i+1)%n] = 0.10; } }
+        // dense: every state feeds every other, scaled so the row sum matches the circulant
+        "dense" => { for i in 0..n { a[i*n+i] = 0.85;
+            let off = if n > 1 { 0.10 / (n as f64 - 1.0) } else { 0.0 };
+            for j in 0..n { if j != i { a[i*n+j] = off; } } } }
+        // stronger coupling, weaker self-term: same spectral budget, different split
+        "strong" => { for i in 0..n { a[i*n+i] = 0.70; a[i*n + (i+1)%n] = 0.25; } }
+        // deterministic pseudo-random coupling, fixed seed, row-normalised to the same budget
+        _ => { let mut r = Pcg::new(20260815, 3);
+               for i in 0..n { a[i*n+i] = 0.85;
+                   let mut row: Vec<f64> = (0..n).map(|_| r.f64()).collect();
+                   let s: f64 = (0..n).filter(|&j| j != i).map(|j| row[j]).sum::<f64>().max(1e-9);
+                   for j in 0..n { if j != i { row[j] = 0.10 * row[j] / s; a[i*n+j] = row[j]; } } } }
+    }
+    let mut p = Plant::new(n);
+    p.a = a;
+    p
+}
+
+/// Underactuated: fewer control channels than states. B keeps only the first ceil(n/2) columns,
+/// so half the state is steered indirectly. This is the case a robot actually has when a joint
+/// is passive or a contact is unactuated, and it is where the claim is most likely to break.
+fn underactuated(n: usize) -> Plant {
+    let mut p = plant_variant("circulant", n);
+    let m = (n + 1) / 2;
+    let mut b = vec![0.0; n*n];
+    for i in 0..m { b[i*n+i] = 1.0; }
+    p.b = b;
+    p
+}
+
+fn riccati_diag(p: &Plant) {
+    let n = p.n;
+    let (at, bt) = (t(&p.a, n), t(&p.b, n));
+    let mut pm = p.q.clone();
+    for it in 0..20_000 {
+        let atp = mul(&at, &pm, n);
+        let atpa = mul(&atp, &p.a, n);
+        let atpb = mul(&atp, &p.b, n);
+        let btpb = mul(&mul(&bt, &pm, n), &p.b, n);
+        let k = inv(&add(&p.r, &btpb), n);
+        let corr = mul(&mul(&atpb, &k, n), &t(&atpb, n), n);
+        let next = symmetrise(&add(&p.q, &sub(&atpa, &corr)), n);
+        let d: f64 = sub(&next, &pm).iter().map(|v| v.abs()).sum();
+        pm = next;
+        let tr: f64 = (0..n).map(|i| pm[i*n+i]).sum();
+        if it % 4000 == 0 || !tr.is_finite() {
+            println!("    iter {it:>6}  residual {d:>12.3e}  trace(P) {tr:>14.4e}");
+        }
+        if !tr.is_finite() { println!("    -> P diverged at iteration {it}"); return; }
+        if d < 1e-12 { println!("    -> converged at iteration {it}, trace(P) {tr:.4}"); return; }
+    }
+    let tr: f64 = (0..n).map(|i| pm[i*n+i]).sum();
+    println!("    -> hit the 20,000 iteration cap, trace(P) {tr:.4e}");
+}
+
+fn robustness() {
+    const SIGMA0: f64 = 0.4;
+    let seeds: Vec<u64> = (1..=5).collect();
+    println!("\n=== robustness: does the claim survive a change of plant? ===");
+    println!("{:>14} {:>4} {:>10} {:>10} {:>10}", "plant", "n", "1 pass", "8 passes", "depth gain");
+    for kind in ["circulant", "dense", "strong", "random", "underact"] {
+        for &n in &[2usize, 8] {
+            let p = if kind == "underact" { underactuated(n) } else { plant_variant(kind, n) };
+            let opt = quad(&vec![1.0; n], &p.riccati(), n);
+            if !opt.is_finite() || opt <= 0.0 { println!("{kind:>14} {n:>4}   riccati did not converge"); continue; }
+            let sg = SIGMA0 / (n as f64).sqrt();
+            let mut out = [0.0f64; 2];
+            for (i, &ps) in [1usize, 8].iter().enumerate() {
+                let mut v: Vec<f64> = seeds.iter().map(|&s| mppi_cost(&p, 3200, ps, 5, sg, 0.6, 60, s)).collect();
+                v.sort_by(|a,b| a.partial_cmp(b).unwrap());
+                out[i] = (v[v.len()/2] - opt)/opt*100.0;
+            }
+            println!("{kind:>14} {n:>4} {:>9.2}% {:>9.2}% {:>9.1}x", out[0], out[1], out[0]/out[1]);
+        }
+    }
+    println!("\nThe claim needs: the 1-pass number worse at n=8 than n=2 in EVERY plant,");
+    println!("and depth improving it in EVERY plant. Anything else narrows the claim.");
 }

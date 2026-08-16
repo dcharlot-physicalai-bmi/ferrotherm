@@ -70,6 +70,11 @@ fn main() {
         println!("{l:>6}  {n:>8}  {gpu_ms:>11.1}  {cpu_ms:>11.1}  {ratio:>9}");
     }
     println!();
+    println!("THE CPU COLUMN IS ONE CORE. `Sampler::sweeps` is single-threaded, so every ratio above");
+    println!("is a whole GPU against one core of {}, which is the oldest way to flatter a GPU", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    println!("benchmark. Measured against all cores it is 12x, not 54x -- see examples/joules.rs,");
+    println!("which also prices both sides in joules and finds the GPU 10x cheaper per update.");
+    println!();
     println!("The GPU loses on small models and that is the honest shape of the result: fixed cost");
     println!("per run does not shrink, so there has to be enough work to amortise it. The crossover");
     println!("is the number worth quoting, not the peak.");
