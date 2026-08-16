@@ -245,8 +245,14 @@ mod tests {
         assert!(states.windows(2).all(|w| w[0] == w[1]), "the sampled state must not vary");
         assert!(
             bits.windows(2).all(|w| w[0] == w[1]),
-            "energies must be BIT-identical, not merely equal to the digits that get printed"
+            "energies must be BIT-identical WITHIN a platform, not merely equal to the digits that \
+             get printed"
         );
+        // Across platforms this is weaker, and the crate docs say so: the same state and the same
+        // program come out identical on macOS/arm64, Linux/x86_64 and Linux/aarch64, while the
+        // energy computed FROM that identical state differs by one ULP between macOS and Linux --
+        // floating-point contraction, not libm, which was measured bit-identical on both. Within
+        // one platform there is no excuse for variation, which is what this asserts.
     }
 
     #[test]

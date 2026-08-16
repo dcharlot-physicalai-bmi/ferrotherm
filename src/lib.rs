@@ -43,6 +43,34 @@
 //! assert_eq!(led.joules(&ferrotherm::ledger::Prices::UNSTATED), None);
 //! ```
 //!
+//! # What "deterministic by seed" does and does not promise
+//!
+//! Measured across three machines -- macOS/arm64 (Apple M5 Max), Linux/x86_64 (AMD EPYC 9R14) and
+//! Linux/aarch64 (Graviton3), all on rustc 1.97.1 -- running the identical program:
+//!
+//! | | macOS arm64 | Linux x86_64 | Linux aarch64 |
+//! |---|---|---|---|
+//! | compiled `.ftp` program | identical | identical | identical |
+//! | CSR neighbour order | identical | identical | identical |
+//! | **sampled state** | identical | identical | identical |
+//! | `exp()` and the sigmoid | identical | identical | identical |
+//! | energy computed from that state | `..a7b3` | `..a7b2` | `..a7b2` |
+//!
+//! **The answer is bit-reproducible.** The state a seed produces is the same on every platform
+//! tested, which is what the promise is for: a run can be repeated and a result checked.
+//!
+//! **A derived float may differ by one ULP across operating systems.** The two Linux boxes agree
+//! with each other across DIFFERENT architectures, and macOS disagrees with Linux on the SAME
+//! architecture -- so it is not architecture. It is not libm either: `exp` and the sigmoid were
+//! measured bit-identical on both. It is floating-point contraction, `w * s_i * s_j` accumulating
+//! through an `fma` on one target and a separate multiply and add on another, which round
+//! differently. Same values, same order, one bit apart.
+//!
+//! So: compare states, hashes and programs with `==`; compare energies with a tolerance. A test
+//! asserting bit-equality of a derived float across platforms asserts something this crate does not
+//! promise and could only deliver by disabling contraction everywhere, which costs more than the
+//! property is worth.
+//!
 //! Scope note: binary (pbit) nodes with pairwise couplings are the sampling core. Categorical
 //! and continuous nodes arrive through the program layer ([`program`]) and the thermodynamic
 //! linear-algebra module ([`tla`]); the compiler ([`compile`]) targets device topologies.

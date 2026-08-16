@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Determinism, measured on three machines
+
+Yesterday's `BTreeMap` fix made the stack byte-reproducible **on one machine**. That is a weaker
+claim than it sounds, so it was checked on two more: Linux/x86_64 (AMD EPYC 9R14) and
+Linux/aarch64 (Graviton3), against macOS/arm64 (Apple M5 Max), all on rustc 1.97.1.
+
+| | macOS arm64 | Linux x86_64 | Linux aarch64 |
+|---|---|---|---|
+| compiled `.ftp` program | identical | identical | identical |
+| CSR neighbour order | identical | identical | identical |
+| **sampled state** | identical | identical | identical |
+| `exp()` and the sigmoid | identical | identical | identical |
+| energy from that state | `…a7b3` | `…a7b2` | `…a7b2` |
+
+**The answer is bit-reproducible across OS and architecture.** A derived float can differ by **one
+ULP across operating systems** — and the cause is not what it looks like. The two Linux boxes agree
+with each other on *different* architectures while macOS disagrees with Linux on the *same* one, so
+it is not architecture; and `exp` was measured bit-identical on both, so it is not libm. It is
+floating-point contraction: `w * s_i * s_j` going through an `fma` on one target and a separate
+multiply and add on another.
+
+Documented at the top of the crate: compare states, hashes and programs with `==`; compare energies
+with a tolerance.
+
+
 ### "Deterministic by seed" was only half true
 
 `GraphBuilder::build` merged duplicate edges through a `HashMap`. Rust randomises HashMap iteration
