@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### `ferrotherm-ommx` — a `.ftp` program the rest of the ecosystem can read
+
+OMMX is the interchange format this corner of the field has converged on: jijmodeling 2.x compiles
+to it, and it is a shared dependency across the Jij stack. A compiled ferrotherm program now exports
+as an `ommx.v1.Instance` — binary decision variables, a quadratic objective, `SENSE_MINIMIZE` —
+which is a lossless target for an Ising model.
+
+**Zero dependencies.** The Rust `ommx` crate is `3.0.0-beta.3` while its Python counterpart is stable
+at `2.6.2`, and a shipped bridge should not rest on a beta. The subset needed is varints and
+length-delimited fields, and the field numbers were read out of the reference implementation's own
+protobuf descriptors rather than from prose.
+
+**Validated by the reference implementation, not by my reading of the schema.** The unit tests here
+check my own arithmetic and would pass just as happily with every field number wrong, because they
+never leave the process. So `tests/reference.rs` shells out to Python's `ommx` — different language,
+different codebase, the format's own maintainers — and has it evaluate the instance:
+
+> **512 states scored by the reference implementation, 0 disagreements with ferrotherm.**
+
+The substitution is the one thing to know: ferrotherm's spins are ±1 and OMMX binaries are 0/1, so
+`s = 2x − 1` is applied during export. That changes every coefficient and introduces a constant; an
+exporter that skipped it would produce a file that parses cleanly and describes a different model.
+The constant is carried in the `Linear` message so the OMMX objective equals ferrotherm's energy
+exactly rather than up to an offset a reader has to know about.
+
+Import (OMMX → ferrotherm) is not implemented. It is only possible for the subset ferrotherm can
+sample — binary or bounded-integer variables, degree ≤ 2 — and refusing the rest by name is the
+shape `src/lp.rs` already uses for LP files.
+
+
 ### Constraint detection — reported, never rewritten
 
 jijmodeling 2.x recognises one-hot patterns and hints the solver. Same idea, different verdict:

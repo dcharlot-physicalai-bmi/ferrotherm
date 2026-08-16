@@ -30,6 +30,12 @@ jobs:
       # refusal logic -- which is most of the crate -- still runs.
       - name: Power meter builds, and its tests skip rather than fail without a backend
         run: cargo test --release -p ferrotherm-meter
+      # The OMMX bridge hand-rolls protobuf, so the check that matters is the REFERENCE
+      # implementation reading what it writes. Installed here on purpose; the test skips without it.
+      - name: OMMX bridge, checked against the reference implementation
+        run: |
+          python3 -m pip install --quiet ommx
+          OMMX_PYTHON=python3 cargo test --release -p ferrotherm-ommx
       - name: Examples build
         run: cargo build --release --examples
       - name: Verification examples (exact-physics gates)
