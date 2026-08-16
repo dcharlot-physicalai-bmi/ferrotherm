@@ -46,6 +46,41 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### The Jetson meter backend, with the honest split stated
+
+`ferrotherm-meter` has had one backend and a comment where the second should be: *"the INA3221 rails
+are the equivalent. Not implemented here — the Jetson on this tailnet has been offline, and a backend
+nobody can run is a backend nobody has tested."* The doctrine is right and the conclusion was too
+strong. **Most of an INA3221 backend is testable without an INA3221**, because the interface is a
+directory of files.
+
+`meter::ina3221` reads them. Rail discovery, label matching, both driver layouts, both unit
+conversions, the refusals and the arithmetic are covered by seven tests against fixture directories
+the tests build themselves — `Rails::at` takes a path precisely so that is possible. **No reading in
+it has come from real hardware**, and that is stated in the module docs rather than left to be
+discovered. The part that was going to be wrong is the part that is now tested.
+
+**The defect it exists to avoid: the rails do not add up.** On a Jetson the three channels are
+*nested*, not disjoint — `VDD_IN` is the whole board and `VDD_CPU_GPU_CV` and `VDD_SOC` are parts of
+what it already counts. Summing them, which is the obvious move and what a backend written from the
+attribute names alone would do, roughly doubles the answer and does it silently. So it reads the
+labels and uses **one** rail, and when no label says which is total it refuses and lists what it
+found — there is no safe guess, since picking the largest fails exactly when a subsidiary rail
+spikes, and summing is wrong always.
+
+Two layouts, because the units differ and a factor-of-1000 slip still looks like a plausible
+wattage: upstream `hwmon` exposes **no power attribute at all**, only `in[123]_input` in mV and
+`curr[123]_input` in mA, so watts are `mV × mA / 1e6`; the L4T downstream driver reports mW directly.
+
+One bug found in it while writing, by reading back what I had written: the directory walk carried a
+single counter incremented per directory popped and called it depth, so it stopped descending after
+six directories however shallow they were — and `/sys/class/hwmon` is shallow and *wide*, which is
+exactly the shape that hid a device behind a handful of siblings. Depth is carried per entry now,
+with a separate absolute bound on directories visited, and `symlink_metadata` rather than `is_dir()`
+so a link pointing back up `/sys` is not followed. Covered by a test with the device behind nine
+siblings.
+
+
 ### The mutations are written down and run every time
 
 `mutation-check.sh` breaks one line and asks whether a named test notices. It works, and it takes

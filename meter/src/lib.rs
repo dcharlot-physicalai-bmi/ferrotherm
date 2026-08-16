@@ -24,9 +24,11 @@
 //! # Backends
 //!
 //! - **macOS**: `macmon pipe`, which reads the SoC's own power counters. Detected on `PATH`.
-//! - **Jetson / Linux**: the INA3221 rails under `/sys/bus/i2c/.../in_power*_input` are the
-//!   equivalent. Not implemented here — the Jetson on this tailnet has been offline for a week, and
-//!   a backend nobody can run is a backend nobody has tested. The trait is the seam it slots into.
+//! - **Jetson / Linux**: [`ina3221`], the shunt monitors on the board. Rail discovery, label
+//!   matching, both driver layouts and both unit conversions are tested against fixture
+//!   directories; **no reading has been taken from real hardware**, because the Jetson on this
+//!   tailnet is offline. That split is deliberate and stated rather than papered over -- the
+//!   arithmetic that was going to be wrong is tested, and the hardware path is not.
 //!
 //! ```no_run
 //! # use ferrotherm::{gibbs::Sampler, ising::lattice2d, ledger::Ledger};
@@ -66,6 +68,8 @@ const INTERVAL_MS: u64 = 100;
 /// subtracting it makes the next run look free. Machines with moving parts need settling time and
 /// the protocol has to include it.
 const SETTLE: Duration = Duration::from_secs(3);
+
+pub mod ina3221;
 
 /// A source of wall-power readings, in watts.
 pub struct Meter {
