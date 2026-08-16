@@ -16,6 +16,10 @@ jobs:
         run: scripts/check-versions.sh
       - name: Every C ABI symbol reaches every binding, or the gap is written down
         run: scripts/check-parity.sh
+      # Parity proves the names exist; this proves they compute the same thing. Bindings whose
+      # toolchain the runner lacks skip; a binding that is present and produces nothing FAILS.
+      - name: Every binding compiles one model to the same bytes
+        run: scripts/check-semantics.sh
       - name: Unit tests
         run: cargo test --release
       # The GPU crate builds everywhere and its tests skip where there is no adapter, so this

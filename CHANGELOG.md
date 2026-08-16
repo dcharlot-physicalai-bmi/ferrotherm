@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Semantic parity: seven surfaces, one model, one hash
+
+`check-parity.sh` proves every C ABI symbol reaches every binding. It says nothing about whether
+they **compute the same thing** — nine surfaces can each have `all_different` and three can get it
+wrong. `scripts/check-semantics.sh` builds one model through Rust, Python, Zig, Julia, HTTP, MCP and
+the wasm editor, and byte-diffs the compiled `.ftp` program, which is the semantic fingerprint.
+
+**All seven emit identical bytes**, `7a769648af237e11`, 3103 each. HTTP and MCP are driven through
+their real binaries; the editor through a headless browser.
+
+The model is chosen to exercise what has been wrong before: an integer over `10..=13` so
+`fix(t, 12)` must mean *twelve* and not slot twelve, a counting constraint that costs a slack
+variable, and objective terms carrying different weights *and* different values.
+
+Both mutations it was tested against are caught — a wrong objective weight in the HTTP path (HTTP
+and MCP diverge together, as they share a dispatch), and the historical slot-for-value bug in
+Python.
+
+**The first mutation initially slipped through.** Python raised, produced no file, dropped out of
+the comparison, and the run reported "5 bindings identical" — true, and useless. A binding whose
+toolchain is *absent* now skips; one that is *present and produces nothing* fails, because that
+means it broke.
+
+
 ### The GPU backend verified on a second vendor and API
 
 "Runs on Vulkan, Metal or DX12" was a claim checked on **one** of the three. Now two:
