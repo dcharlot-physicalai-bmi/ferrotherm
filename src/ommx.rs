@@ -24,6 +24,11 @@
 //! file that parses cleanly and describes a different model. [`Export::constant`] carries the
 //! offset so a caller can recover the original energy exactly.
 //!
+//! It sits beside [`crate::ftp`] and [`crate::lp`] because that is what it is: a format bridge, and
+//! this crate already keeps those in the core rather than out at the edge. Putting it in a sibling
+//! crate, as the first version did, meant the C ABI could not reach it and eight of the nine
+//! surfaces could not export at all.
+//!
 //! # Why this hand-rolls protobuf
 //!
 //! The Rust `ommx` crate is `3.0.0-beta.3` while its Python counterpart is stable at `2.6.2`, and a
@@ -33,7 +38,7 @@
 //! the **reference implementation parse what this writes**, which is the only check that would
 //! survive me having misread the schema.
 
-use ferrotherm::graph::Graph;
+use crate::graph::Graph;
 
 /// Field numbers and enum values, read from `ommx.v1`'s own protobuf descriptors.
 ///
@@ -221,7 +226,7 @@ pub enum ImportError {
     NotBinary { id: u64, name: String, lower: f64, upper: f64 },
     /// An objective of degree three or higher.
     ///
-    /// `ferrotherm::reduce` lowers those onto pairwise hardware with ancillas, so this is a
+    /// `crate::reduce` lowers those onto pairwise hardware with ancillas, so this is a
     /// deliberate boundary rather than a limit: read the model, then reduce it, so the caller sees
     /// what the reduction cost.
     TooHighDegree,
@@ -248,7 +253,7 @@ impl core::fmt::Display for ImportError {
             ),
             ImportError::TooHighDegree => write!(
                 f,
-                "this objective has degree three or higher. ferrotherm::reduce lowers such a model \
+                "this objective has degree three or higher. crate::reduce lowers such a model \
                  onto pairwise hardware with one ancilla per substituted pair -- run it explicitly, \
                  so the ancilla count is visible rather than paid silently here."
             ),
@@ -408,7 +413,7 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
 
     // x = (s+1)/2. A quadratic c*x_i*x_j becomes c/4 * (s_i s_j + s_i + s_j + 1); a linear a*x_i
     // becomes a/2 * s_i + a/2. Ferrotherm's energy is -J s_i s_j - h_i s_i, so the signs invert.
-    let mut b = ferrotherm::graph::GraphBuilder::new(n);
+    let mut b = crate::graph::GraphBuilder::new(n);
     let mut h = vec![0.0f64; n];
     let mut out_const = constant * flip;
     for (i, j, c) in &quad {
@@ -530,7 +535,7 @@ fn packed_doubles(p: &[u8], out: &mut Vec<f64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferrotherm::ising::lattice2d;
+    use crate::ising::lattice2d;
 
     #[test]
     fn an_exported_instance_scores_every_state_the_way_ferrotherm_does() {

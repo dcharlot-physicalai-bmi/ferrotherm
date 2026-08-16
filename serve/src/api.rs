@@ -170,6 +170,21 @@ fn opt_usize(v: &Json, key: &str, dflt: usize) -> usize {
     v.get(key).and_then(|x| x.as_usize()).unwrap_or(dflt)
 }
 
+/// Base64, hand-rolled: this crate has no dependencies and one encoder does not justify the first.
+fn b64(bytes: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(A[(n >> 18 & 63) as usize] as char);
+        out.push(A[(n >> 12 & 63) as usize] as char);
+        out.push(if c.len() > 1 { A[(n >> 6 & 63) as usize] as char } else { '=' });
+        out.push(if c.len() > 2 { A[(n & 63) as usize] as char } else { '=' });
+    }
+    out
+}
+
 fn ledger_json(l: &Ledger, p: &Prices, wall_s: f64) -> Json {
     // Counts are exact and always reported: they are what this run actually did. Joules are a
     // PROJECTION onto a device model, so they are reported only when that model states prices, and
@@ -908,6 +923,13 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         ("tries", Json::n(tries as f64)),
         ("wall_seconds", Json::n(wall)),
         ("ftp", Json::Str(compiled.program.to_ftp())),
+        // The same program as an ommx.v1.Instance, base64 because JSON has no bytes. OMMX is the
+        // interchange format this corner of the field converged on, so this is what makes a
+        // ferrotherm answer readable by everyone else's tooling.
+        ("ommx_b64", Json::Str(b64(&ferrotherm::ommx::export(&compiled.graph).bytes))),
+        // ferrotherm_energy(s) == ommx_objective(x) + this. Dropping it would hand back an instance
+        // with the same optimum and the wrong value.
+        ("ommx_constant", Json::n(ferrotherm::ommx::export(&compiled.graph).constant)),
         (
             "note",
             Json::s(
@@ -1705,5 +1727,53 @@ mod silent_wrongness {
         )
         .unwrap();
         assert!(clean.get("caveats").unwrap().as_arr().unwrap().is_empty(), "{clean:?}");
+    }
+
+    #[test]
+    fn the_reply_carries_an_ommx_instance_that_decodes() {
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3}],
+                    "constraints":[{"type":"not_equal","a":"a","b":"b"}],"tries":2}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let b64s = r.get("ommx_b64").unwrap().as_str().unwrap();
+        assert!(!b64s.is_empty());
+        assert_eq!(b64s.len() % 4, 0, "base64 must be padded to a multiple of four");
+        assert!(r.get("ommx_constant").unwrap().as_f64().is_some());
+
+        // Decode and check it is the instance the library would have produced directly, so the
+        // wire path cannot diverge from the in-process one.
+        let decoded = from_b64(b64s);
+        let compiled_again = {
+            let mut m = ferrotherm::model::Model::new();
+            let a = m.categorical("a", 3);
+            let b = m.categorical("b", 3);
+            m.not_equal(a, b);
+            m.compile().unwrap()
+        };
+        let direct = ferrotherm::ommx::export(&compiled_again.graph);
+        assert_eq!(decoded, direct.bytes, "the HTTP payload must be the library's own bytes");
+    }
+
+    /// Decode base64, for the test above only.
+    fn from_b64(s: &str) -> Vec<u8> {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let idx = |c: u8| A.iter().position(|&x| x == c).unwrap() as u32;
+        let raw: Vec<u8> = s.bytes().filter(|&c| c != b'=').collect();
+        let mut out = Vec::new();
+        for chunk in raw.chunks(4) {
+            let mut n = 0u32;
+            for (k, &c) in chunk.iter().enumerate() {
+                n |= idx(c) << (18 - 6 * k);
+            }
+            out.push((n >> 16) as u8);
+            if chunk.len() > 2 { out.push((n >> 8) as u8); }
+            if chunk.len() > 3 { out.push(n as u8); }
+        }
+        out
     }
 }

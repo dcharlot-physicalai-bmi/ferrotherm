@@ -302,6 +302,21 @@ double ft_model_soft_cost(const ft_model *m);
 /* 1 if violation i is a hard one, 0 if it is a preference that was traded away. */
 uint32_t ft_model_violation_is_hard(const ft_model *m, uint32_t i);
 
+/* Serialise the compiled model as an ommx.v1.Instance -- OMMX being the interchange format this
+ * corner of the field converged on, so a ferrotherm program can be read by everyone else's tools.
+ *
+ * Same two-call protocol as the text getters, except the payload is BINARY protobuf rather than
+ * UTF-8: call with a NULL buffer for the length, then again with a buffer that size.
+ *
+ * ft_model_ommx_constant is not optional bookkeeping. ferrotherm's spins are -1/+1 and OMMX binaries
+ * are 0/1, and the substitution between them introduces an offset:
+ *
+ *     ferrotherm_energy(s) == ommx_objective(x) + constant,   s_i = 2*x_i - 1
+ *
+ * An exporter that dropped it would produce an instance with the same optimum and the wrong value. */
+uint32_t ft_model_ommx(const ft_model *m, uint8_t *buf, uint32_t cap);
+double ft_model_ommx_constant(const ft_model *m);
+
 /* Compile-time CAVEATS: what the compiler knows is wrong with the model and cannot fix.
  *
  * Today there is one kind: an encoding no penalty can make exact. A binary encoding of k values

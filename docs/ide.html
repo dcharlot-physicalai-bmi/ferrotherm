@@ -634,6 +634,10 @@ function solveProblem(v) {
       feasible: W.ft_model_feasible(m) === 1,
       energy: W.ft_model_energy(m),
       penalty: W.ft_model_penalty(m),
+      // The same program as an ommx.v1.Instance. The editor shows its size rather than the bytes:
+      // a base64 blob in a status pane teaches nobody anything, and the point is that the program
+      // is exportable to the format the field converged on.
+      ommxBytes: W.ft_model_ommx(m, null, 0),
       violated: broken,
       // What the compiler knows is wrong with the model and cannot fix -- an encoding no penalty
       // can make exact. A value that reads back fine may still have come from a codeword the
@@ -708,6 +712,7 @@ function applySolve() {
   for (const b of r.violated) txt += "\n  broken: " + b;
   for (const b of r.traded) txt += "\n  traded: " + b;
   for (const c of r.caveats) txt += "\n  caveat: " + c;
+  if (r.ommxBytes) txt += "\n  " + "ommx".padEnd(pad) + " = " + r.ommxBytes + " bytes (ommx.v1.Instance)";
   if (r.softCost) txt += "\n  " + "soft cost".padEnd(pad) + " = " + r.softCost.toFixed(4);
   if (!r.feasible) {
     txt += "\n\n  A penalty makes a constraint expensive, not impossible, and this objective"

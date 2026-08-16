@@ -2,7 +2,26 @@
 
 ## Unreleased
 
-### `ferrotherm-ommx` — a `.ftp` program the rest of the ecosystem can read
+### OMMX on all nine surfaces — and moved into the core, where format bridges live
+
+The bridge shipped as a sibling crate, which was inconsistent with this codebase's own structure:
+`src/ftp.rs` and `src/lp.rs` are both format bridges and both live in the core. A sibling meant the
+C ABI could not reach it and **eight of the nine surfaces could not export at all**. Now `src/ommx.rs`,
+beside the two it belongs with, and reachable everywhere:
+
+`ft_model_ommx` / `ft_model_ommx_constant` (C ABI and header) · `Problem.ommx()` (Python) ·
+`ommx` / `ommxConstant` (Zig) · `ommx(p)` (Julia) · `ommx_b64` + `ommx_constant` (HTTP, MCP) ·
+byte count in the editor.
+
+A Python user can now hand a ferrotherm model straight to the OMMX ecosystem — verified end to end:
+the binding exports 373 bytes and the reference `Instance.from_bytes` reads 6 variables at degree 2.
+The HTTP payload is checked to decode to **the library's own bytes**, so the wire path cannot
+diverge from the in-process one.
+
+Base64 in the JSON surfaces is hand-rolled: `serve` has no dependencies and one encoder does not
+justify the first.
+
+### `src/ommx.rs` — a `.ftp` program the rest of the ecosystem can read
 
 OMMX is the interchange format this corner of the field has converged on: jijmodeling 2.x compiles
 to it, and it is a shared dependency across the Jij stack. A compiled ferrotherm program now exports

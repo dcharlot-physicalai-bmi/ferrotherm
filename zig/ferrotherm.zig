@@ -722,6 +722,21 @@ pub const Problem = struct {
         return c.ft_model_violations(self.h);
     }
 
+    /// The compiled model as an OMMX instance -- the interchange format this corner of the field converged on, so a ferrotherm program can be read by jijmodeling, Jij's stack, and anything else that speaks it.
+    /// Returns the protobuf bytes and the constant the +/-1 to 0/1 substitution introduces: ferrotherm_energy(s) == ommx_objective(x) + constant.
+    pub fn ommx(self: *Problem, buf: []u8) []const u8 {
+        const need = c.ft_model_ommx(self.h, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_model_ommx(self.h, buf.ptr, n);
+        return buf[0..got];
+    }
+
+    /// The constant the +/-1 to 0/1 substitution introduces. Not optional: without it the instance
+    /// has the same optimum and the wrong value.
+    pub fn ommxConstant(self: *Problem) f64 {
+        return c.ft_model_ommx_constant(self.h);
+    }
+
     /// How many compile-time caveats this model carries.
     ///
     /// What the compiler knows is wrong with the model and cannot fix.

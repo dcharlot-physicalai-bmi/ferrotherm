@@ -35,7 +35,7 @@ jobs:
       - name: OMMX bridge, checked against the reference implementation
         run: |
           python3 -m pip install --quiet ommx
-          OMMX_PYTHON=python3 cargo test --release -p ferrotherm-ommx
+          OMMX_PYTHON=python3 cargo test --release --test ommx_reference
       - name: Examples build
         run: cargo build --release --examples
       - name: Verification examples (exact-physics gates)

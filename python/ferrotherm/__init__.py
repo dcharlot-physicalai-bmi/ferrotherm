@@ -186,6 +186,8 @@ _model_soft_cost = _sig("ft_model_soft_cost", c_double, [_p])
 _model_violation_is_hard = _sig("ft_model_violation_is_hard", c_uint32, [_p, c_uint32])
 _model_ancillas = _sig("ft_model_ancillas", c_uint32, [_p])
 _model_caveats = _sig("ft_model_caveats", c_uint32, [_p])
+_model_ommx = _sig("ft_model_ommx", c_uint32, [_p, _u8p, c_uint32])
+_model_ommx_constant = _sig("ft_model_ommx_constant", c_double, [_p])
 _model_caveat = _sig("ft_model_caveat", c_uint32, [_p, c_uint32, _u8p, c_uint32])
 _model_violations = _sig("ft_model_violations", c_uint32, [_p])
 _model_violation = _sig("ft_model_violation", c_uint32, [_p, c_uint32, _u8p, c_uint32])
@@ -1222,6 +1224,23 @@ class Problem:
         constraint being outbid by the objective, and a soft one is meant to be traded against it.
         """
         self._must(_model_soften_last(self._h, float(weight)), "soft constraint")
+
+    def ommx(self) -> "tuple[bytes, float]":
+        """The compiled model as an OMMX instance -- the interchange format this corner of the field converged on, so a ferrotherm program can be read by jijmodeling, Jij's stack, and anything else that speaks it. Returns the protobuf bytes and the constant the +/-1 to 0/1 substitution introduces: ferrotherm_energy(s) == ommx_objective(x) + constant.
+
+        The constant is not optional bookkeeping. Dropping it yields an instance with the same
+        optimum and the wrong value — an error that survives every check comparing only argmin.
+
+        >>> raw, constant = problem.ommx()          # doctest: +SKIP
+        >>> from ommx.v1 import Instance            # doctest: +SKIP
+        >>> inst = Instance.from_bytes(raw)         # doctest: +SKIP
+        """
+        need = _model_ommx(self._h, None, 0)
+        if not need:
+            raise ValueError("compile or solve the problem first; there is no instance yet")
+        buf = (ctypes.c_ubyte * need)()
+        got = _model_ommx(self._h, buf, need)
+        return bytes(bytearray(buf)[:got]), float(_model_ommx_constant(self._h))
 
     def penalty(self, p: float) -> None:
         """Use exactly this penalty, disabling the automatic scaling.

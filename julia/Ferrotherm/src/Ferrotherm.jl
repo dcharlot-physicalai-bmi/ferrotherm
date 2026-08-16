@@ -65,7 +65,7 @@ export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export all_different!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
-export soften_last!, soft_cost, traded, amounts, ancillas, caveats
+export soften_last!, soft_cost, traded, amounts, ancillas, caveats, ommx
 
 # ---- finding the library -----------------------------------------------------------------------
 
@@ -217,6 +217,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_violation_amount Cdouble ModPtr Cuint
 @cfn ft_model_ancillas Cuint ModPtr
 @cfn ft_model_caveats Cuint ModPtr
+@cfn ft_model_ommx Cuint ModPtr Ptr{UInt8} Cuint
+@cfn ft_model_ommx_constant Cdouble ModPtr
 @cfn ft_model_caveat Cuint ModPtr Cuint Ptr{UInt8} Cuint
 @cfn ft_model_compile Cuint ModPtr
 @cfn ft_model_solve Cuint ModPtr Cuint

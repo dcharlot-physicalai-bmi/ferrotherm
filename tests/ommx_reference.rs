@@ -8,7 +8,7 @@
 //! because a missing optional interpreter is not a defect in this crate.
 //!
 //!     python3 -m venv /tmp/ommxref && /tmp/ommxref/bin/pip install ommx
-//!     OMMX_PYTHON=/tmp/ommxref/bin/python cargo test -p ferrotherm-ommx
+//!     OMMX_PYTHON=/tmp/ommxref/bin/python cargo test --test ommx_reference
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -29,7 +29,7 @@ fn the_reference_implementation_scores_every_state_as_we_do() {
     }
 
     let g = ferrotherm::ising::lattice2d(3, 1.0);
-    let export = ferrotherm_ommx::export(&g);
+    let export = ferrotherm::ommx::export(&g);
     let dir = std::env::temp_dir().join("ferrotherm-ommx-ref");
     std::fs::create_dir_all(&dir).unwrap();
     let inst = dir.join("instance.ommx");
@@ -124,7 +124,7 @@ open(r"{}", "w").write("\n".join(rows))
     let ok = Command::new(&py).args(["-c", &build]).status().map(|s| s.success()).unwrap_or(false);
     assert!(ok, "the reference failed to build its own instance");
 
-    let (g, constant) = ferrotherm_ommx::import(&std::fs::read(&inst).unwrap())
+    let (g, constant) = ferrotherm::ommx::import(&std::fs::read(&inst).unwrap())
         .expect("must read what the reference writes");
     assert_eq!(g.n, 4);
 
