@@ -11,4 +11,4 @@ categories = ["science", "hardware-support"]
 # Std only, like the core. The backend is a subprocess rather than a linked library, so there is
 # nothing to depend on -- and one field out of a JSON line does not justify a parser.
 [dependencies]
-ferrotherm = { version = "0.9", path = ".." }
+ferrotherm = { version = "0.10", path = ".." }

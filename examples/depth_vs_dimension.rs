@@ -162,6 +162,8 @@ fn mppi_cost(p: &Plant, rollouts: usize, passes: usize, horizon: usize,
 }
 
 fn main() {
+    // ONLY=tuned runs just the properly-tuned sweep; the other two are already recorded.
+    if std::env::var("ONLY").as_deref() == Ok("tuned") { tuned_sweep(); return; }
     println!("PREDICTED before measuring: the width floor RISES with dimension.");
     println!("Falsified if the floor sits near 21% at every n.\n");
     let seeds: Vec<u64> = (1..=5).collect();
@@ -191,6 +193,7 @@ fn main() {
     let rise = floors.last().unwrap().1 / floors[0].1;
     println!("\n  floor at n=8 over floor at n=1: {rise:.2}x");
     confound_check();
+    tuned_sweep();
     println!("  PREDICTION {} ", if rise > 1.3 { "CONFIRMED: the floor rises with dimension" }
                                  else if rise < 0.77 { "INVERTED: the floor FALLS with dimension" }
                                  else { "FALSIFIED: the floor is roughly dimension-independent" });
@@ -217,6 +220,30 @@ fn confound_check() {
             let med = v[v.len()/2];
             println!("{:>8.3} {:>10} {:>8} {:>9.2}% {:>8.2}%", sg, k, ps,
                      (med-opt)/opt*100.0, (v[v.len()-1]-v[0])/opt*100.0);
+        }
+    }
+}
+
+// ---- the properly tuned sweep ----------------------------------------------------------------
+// The main sweep holds sigma fixed per dimension, which the confound check showed is over-
+// perturbation at larger n. Comparing dimensions fairly means holding the TOTAL perturbation
+// constant, i.e. scaling the per-dimension noise by 1/sqrt(n). This is the curve to quote.
+fn tuned_sweep() {
+    const SIGMA0: f64 = 0.4;
+    let seeds: Vec<u64> = (1..=5).collect();
+    println!("\n=== tuned sweep: sigma = {SIGMA0}/sqrt(n), so total perturbation is constant ===");
+    println!("{:>4} {:>8} {:>10} {:>8} {:>10} {:>9}", "n", "sigma", "rollouts", "passes", "excess", "spread");
+    for &n in &[1usize, 2, 4, 8] {
+        let p = Plant::new(n);
+        let opt = quad(&vec![1.0; n], &p.riccati(), n);
+        let sg = SIGMA0 / (n as f64).sqrt();
+        for &(k, ps) in &[(3200usize,1usize),(3200,2),(3200,4),(3200,8)] {
+            let mut v: Vec<f64> = seeds.iter()
+                .map(|&s| mppi_cost(&p, k, ps, 5, sg, 0.6, 60, s)).collect();
+            v.sort_by(|a,b| a.partial_cmp(b).unwrap());
+            let med = v[v.len()/2];
+            println!("{:>4} {:>8.3} {:>10} {:>8} {:>9.2}% {:>8.2}%",
+                     n, sg, k, ps, (med-opt)/opt*100.0, (v[v.len()-1]-v[0])/opt*100.0);
         }
     }
 }

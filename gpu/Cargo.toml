@@ -13,6 +13,6 @@ categories = ["science", "algorithms", "simulation"]
 # and to a microcontroller. A GPU backend needs a driver stack, so it lives out here beside
 # `silicon`, `serve` and `cloud` -- each of which exists for the same reason.
 [dependencies]
-ferrotherm = { version = "0.9", path = ".." }
+ferrotherm = { version = "0.10", path = ".." }
 wgpu = "30"
 pollster = "0.4"

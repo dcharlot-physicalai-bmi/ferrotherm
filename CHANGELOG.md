@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (2026-08-15)
+
+**Every capability the landscape survey measured, and one side of the energy claim now measured
+rather than borrowed.** Breaking: `Ledger::joules` returns `Option<f64>`, `Prices` gained a `source`
+field, `Constraint` and `CompileError` gained variants. Two new sibling crates: `ferrotherm-gpu`
+(native GPU sampling) and `ferrotherm-meter` (measured wall power).
+
+This release closes the last four rows in `docs/LANDSCAPE.md` where any surveyed competitor —
+Extropic, D-Wave Ocean, Fixstars Amplify, Jij, PyQUBO, the open-source Ising layer, or the hardware
+vendors' own SDKs — had something this stack did not. Nine of the fifteen capabilities are ones no
+other surveyed stack has at all.
 
 ### `ferrotherm-meter` — measured wall power, so a joules figure describes the machine that produced it
 

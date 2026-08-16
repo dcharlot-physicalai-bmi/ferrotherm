@@ -6,7 +6,7 @@
 // package that cannot build.
 .{
     .name = .ferrotherm,
-    .version = "0.9.0",
+    .version = "0.10.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xd771a4733b9b84a1,
     .dependencies = .{},
