@@ -23,10 +23,11 @@ jobs:
       # Parity proves a symbol is DECLARED in each binding. For Julia that is an @cfn line, which
       # says nothing about whether a function wraps it -- both OMMX functions were once declared and
       # exported with no body in between, and the module loaded fine.
-      - name: Every exported binding name resolves
-        run: scripts/check-exports.sh
       - name: Unit tests
-        run: cargo test --release
+        # --workspace, not the root package alone. This was `cargo test --release`, which builds
+        # and tests only `ferrotherm` -- so ferrotherm-serve, ferrotherm-cloud and
+        # ferrotherm-silicon were never compiled by CI at all, and their tests never ran.
+        run: cargo test --release --workspace
       # The GPU crate builds everywhere and its tests skip where there is no adapter, so this
       # catches an API break on a runner with no driver -- which is every hosted runner.
       - name: GPU backend builds, and its tests skip rather than fail without an adapter
@@ -132,6 +133,13 @@ jobs:
           version: "1.12"
       - name: Build the library the binding loads
         run: cargo build --release
+      # Moved here from the `test` job, which has no Julia -- so it printed "skipping", exited 0,
+      # and had never checked anything in CI while reading as a step that passed. REQUIRE_JULIA
+      # makes the skip a failure, so it cannot go quiet again.
+      - name: Every exported binding name resolves
+        env:
+          FERROTHERM_REQUIRE_JULIA: "1"
+        run: scripts/check-exports.sh
       - name: Julia tests
         working-directory: julia/Ferrotherm
         env:

@@ -148,7 +148,18 @@ ZG
 else skip zig "no zig on PATH"; fi
 
 # ---- http and mcp: the real binaries, not a stand-in -------------------------------------------
-if cargo build --release --quiet -p ferrotherm-serve 2>/dev/null; then
+# A crate in THIS repository failing to compile is a failure, not an absent toolchain.
+#
+# This was `cargo build ... 2>/dev/null` falling through to `skip http/mcp "serve did not build"`,
+# which reads like "this machine lacks something" and exits 0. It does not lack anything: the crate
+# is right here and it is broken. The compiler error was discarded on the way past.
+if ! cargo build --release --quiet -p ferrotherm-serve 2> "$out/serve.err"; then
+  echo "  ferrotherm-serve is in this repository and did not compile:" >&2
+  sed 's/^/      /' "$out/serve.err" | tail -20 >&2
+  echo "  That is a break, not a missing toolchain." >&2
+  exit 2
+fi
+if true; then
   attempt http; attempt mcp
   (./target/release/ferrotherm-serve >/dev/null 2>&1 &)
   for _ in $(seq 1 40); do curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null && break; sleep 0.25; done
@@ -169,13 +180,13 @@ for line in p.stdout.splitlines():
         break
 PY
   pkill -f 'target/release/ferrotherm-serve' 2>/dev/null
-else skip http/mcp "serve did not build"; fi
+fi
 
 # ---- the editor, which is the wasm ---------------------------------------------------------------
 if [ -f web-tests/node_modules/.package-lock.json ] || node -e "require('playwright')" 2>/dev/null; then
   attempt wasm
   cp "$out/model.json" /tmp/_sem_model.json
-  node scripts/sem-wasm.mjs > "$out/wasm.ftp" 2>/dev/null || skip wasm "browser run failed"
+  node scripts/sem-wasm.mjs > "$out/wasm.ftp" 2> "$out/wasm.err" || true
 else skip wasm "no playwright"; fi
 
 # ---- compare -------------------------------------------------------------------------------------

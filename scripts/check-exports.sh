@@ -21,7 +21,20 @@ LIB="$here/target/release/libferrotherm.dylib"
 [ -f "$LIB" ] || LIB="$here/target/release/libferrotherm.so"
 [ -f "$LIB" ] || { echo "build the library first: cargo build --release" >&2; exit 2; }
 
-command -v julia >/dev/null 2>&1 || { echo "no julia on PATH; skipping"; exit 0; }
+# A skip that CANNOT be silent where it matters.
+#
+# This gate lived in a CI job with no Julia installed, so it printed "skipping", exited 0, and had
+# never checked anything there -- while reading, in the workflow, as a step that passed. Locally a
+# skip is right (not every machine has Julia); in CI it is the failure mode this whole script exists
+# to catch, one level up. `FERROTHERM_REQUIRE_JULIA=1` turns the skip into a refusal, and CI sets it.
+if ! command -v julia >/dev/null 2>&1; then
+  if [ "${FERROTHERM_REQUIRE_JULIA:-0}" = "1" ]; then
+    echo "FERROTHERM_REQUIRE_JULIA=1 but no julia on PATH: this run would have checked nothing" >&2
+    exit 2
+  fi
+  echo "no julia on PATH; skipping (set FERROTHERM_REQUIRE_JULIA=1 to make this a failure)"
+  exit 0
+fi
 
 # Written to a file rather than passed inline: the probe contains quotes, and nesting them inside a
 # command substitution is how the first version silently failed to run at all.

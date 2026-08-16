@@ -34,9 +34,25 @@ if [[ ${#wanted[@]} -eq 0 ]]; then
   exit 2
 fi
 
+# Matched against the wasm EXPORT SECTION, not as a substring of the whole binary.
+#
+# `grep -q "$sym" "$wasm"` was true if the name appeared anywhere at all -- inside a longer symbol
+# (`ft_len` inside `ft_length`), in a debug string, in a data segment. Measured on the shipped
+# artefact: 11 of the 77 names passed on a substring hit rather than a real export, so the gate
+# would have stayed green through a rename that broke every page.
+#
+# In a wasm binary an export name is stored length-prefixed, and for names under 128 bytes the
+# prefix is a single byte equal to the length. Matching `<len><name>` is exact enough to reject a
+# longer symbol that merely contains the one we want, and needs no wasm parser.
 missing=()
 for sym in "${wanted[@]}"; do
-  grep -q "$sym" "$wasm" || missing+=("$sym")
+  python3 - "$wasm" "$sym" <<'PY_MATCH' || missing+=("$sym")
+import sys
+blob = open(sys.argv[1], "rb").read()
+name = sys.argv[2].encode()
+# A name shorter than 128 bytes is preceded by one byte holding its length.
+sys.exit(0 if bytes([len(name)]) + name in blob else 1)
+PY_MATCH
 done
 
 printf 'checked %d exports the pages call against %s (%s bytes)\n' \

@@ -46,6 +46,33 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### Four gates that were not gating
+
+The same audit turned its lens on the checks themselves. Every one of these read, in a workflow, as
+a step that passed.
+
+- **CI never compiled three of the six crates.** The step was `cargo test --release`, which builds
+  and tests only the root package — so `ferrotherm-serve`, `ferrotherm-cloud` and
+  `ferrotherm-silicon` were never compiled by CI at all, and their **131 tests never ran**. It is
+  `--workspace` now, and the run does compile all six.
+- **`check-exports.sh` lived in a job with no Julia.** It printed "skipping" and exited 0 on every
+  CI run since it was written, having checked nothing. It has moved to the `julia` job, and
+  `FERROTHERM_REQUIRE_JULIA=1` — which CI sets — turns the skip into a refusal, so it cannot go
+  quiet again. A local run without Julia still skips, which is right.
+- **`check-wasm-exports.sh` matched substrings of the whole binary.** `grep -q "$sym" "$wasm"` is
+  true if the name appears anywhere: inside a longer symbol, in a debug string, in a data segment.
+  Demonstrated on the shipped artefact — the fake symbol `ft_ener` matches, because the real export
+  `ft_energy` contains it. Names are now matched length-prefixed against the export section, which
+  rejects `ft_ener` and still finds all 77 real exports.
+- **`check-semantics.sh` called a compile failure a missing toolchain.** `cargo build -p
+  ferrotherm-serve 2>/dev/null` falling through to `skip http/mcp "serve did not build"` reads as
+  "this machine lacks something" and exits 0. The machine lacks nothing: the crate is in this
+  repository and it is broken, and the compiler error was discarded on the way past. It exits 2 with
+  the error now — verified by breaking `serve/src/lib.rs` on purpose.
+- And the wasm binding's stderr was still being discarded — the one binding yesterday's pass missed,
+  which is why a failing wasm printed "(it wrote nothing to stderr either)".
+
+
 ### Seven ways a caller could abort the host process, and one wrong answer
 
 An adversarial audit of the parsers, the C ABI and the server found nine defects, each confirmed by
