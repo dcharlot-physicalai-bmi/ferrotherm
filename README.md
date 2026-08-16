@@ -66,7 +66,7 @@ a thing we say. `-gpu` is a sampler rather than a fabric and implements no `Devi
 | DTM — denoising thermodynamic models (Extropic's flagship architecture) | `dtm` — forward kernels, pattern grids, contrastive chain training, ACP, TC penalty | **shipped, verified** |
 | Lattice Random Walk (Normal Computing CN101 algorithm) | `lrw` — ternary-increment SDE integration, exact-moment identities | **shipped, verified** |
 | Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
-| Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped, verified on Metal, Vulkan and DX12** |
+| Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped**; the page verifies itself against Onsager in your browser before reporting a rate |
 | **Fabricated CMOS annealing silicon (Hitachi)** | `ferrotherm-cloud::hitachi` — 384×384 King's graph, four-bit coefficients, over a free public API | **shipped, conventions measured** |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
 
@@ -128,7 +128,10 @@ thermodynamic-computing corpus currently leaves empty.
   claim is a build,
   not a slogan.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against
-  Onsager on the visitor's GPU before reporting throughput** (measured here: |M| 0.9143 vs 0.9113,
+  Onsager on the visitor's GPU before reporting throughput** — and note that this page runs its
+  **own** shader, a dense degree-16 lattice kernel, not the general CSR sweep that `ferrotherm-gpu`
+  exposes and that the Metal/Vulkan/DX12 table above was measured on. Two shaders, two scopes: the
+  page's is checked by the page, against the closed form, on whatever GPU you open it with (measured here: |M| 0.9143 vs 0.9113,
   0.9750 vs 0.9736 on Apple metal-3). Measured: **9.35e9 flips/s** at full die scale (269,568
   nodes, degree 16; 0.107 ns/flip). CPU on the same machine, measured quiet: 7.3e7 flips/s
   single-thread (13.6 ns/flip), 3.8e8 flips/s at 18 threads via `sweeps_par` (an earlier

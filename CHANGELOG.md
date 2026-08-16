@@ -44,6 +44,28 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
+## 0.13.0
+
+**A crash-safety release.** Seven ways a caller could abort the host process, one silently wrong LP
+answer, an exact reference that returned NaN, a verification gate that switched itself off, and a
+header that lied about its own arity — all found by an adversarial audit, each confirmed by a second
+reviewer told to refute it, each fixed with a test that fails against the old code.
+
+If you link `ferrotherm` from C, Python, Julia, Zig or a browser, **upgrade**: on 0.12.0 eleven bytes
+of malformed OMMX, or 45 bytes of malformed `.ftp`, end the process that called you.
+
+### Breaking
+
+- `lp::parse` now refuses a `Bounds` line on a `Binary` variable instead of dropping it. Files that
+  used to parse and return a wrong answer now return an error naming the variable.
+- `Ebm::new` asserts its node count fits the `u16` edge index space.
+- `CompileError` gained `NotFinite` and `DomainTooLarge`; a match on it that was exhaustive is not.
+- `ising::tv` asserts its two distributions are the same length.
+- `serve` bounds a request by compiled **couplings**, so a model that used to be served slowly is now
+  refused quickly.
+
+The unreleased notes below detail each.
+
 ## Unreleased
 
 ### Two ways to overload the server from a tiny request
