@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### The GPU backend verified on a second vendor and API
+
+"Runs on Vulkan, Metal or DX12" was a claim checked on **one** of the three. Now two:
+
+| | adapter | API | tests |
+|---|---|---|---|
+| Apple M5 Max | IntegratedGpu | Metal | 6/6 |
+| NVIDIA L4 (EC2 `g6.xlarge`) | DiscreteGpu | Vulkan 1.4.329 | 6/6 |
+
+Both run the same WGSL from the core crate and both reproduce the **exact mean energy computed by
+variable elimination** — not agreement with each other, agreement with the physics. A shader can
+pass on Metal and fail on Vulkan, whose validation is stricter, so this was worth checking rather
+than assuming. DX12 remains unchecked and is written down as such.
+
+On the L4 the throughput curve is steeper than on the M5 Max — 80× at 262k nodes against
+single-threaded CPU, versus 31× — which is what a discrete card with its own memory should do. The
+same caveat applies: that column is one CPU core, and the fair multi-core figure is roughly a
+quarter of it.
+
+
 ### Determinism, measured on three machines
 
 Yesterday's `BTreeMap` fix made the stack byte-reproducible **on one machine**. That is a weaker

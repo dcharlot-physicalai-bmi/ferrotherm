@@ -24,7 +24,19 @@
 //! would be asserting something false.
 //!
 //! What they DO agree on is physics, and that is what [`Gpu::sweep`]'s tests check: the same
-//! magnetisation at the same temperature, and a planted instance solved to its known optimum.
+//! magnetisation at the same temperature, and the exact mean energy from variable elimination.
+//!
+//! # Verified on two vendors and two APIs
+//!
+//! | | adapter | API | tests |
+//! |---|---|---|---|
+//! | Apple M5 Max | IntegratedGpu | Metal | 6/6 |
+//! | NVIDIA L4 (EC2 g6.xlarge) | DiscreteGpu | Vulkan 1.4 | 6/6 |
+//!
+//! Both run the same WGSL from the core crate, and both reproduce the exact mean energy computed by
+//! variable elimination. That matters more than it sounds: a shader can pass on Metal and fail on
+//! Vulkan, whose validation is stricter and whose f32 behaviour differs, and "runs on Vulkan, Metal
+//! or DX12" was previously a claim checked on one of the three. DX12 remains unchecked.
 //!
 //! ```no_run
 //! use ferrotherm::{ising::lattice2d, wgsl::GpuModel};
