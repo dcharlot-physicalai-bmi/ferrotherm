@@ -470,16 +470,30 @@ impl Fabric {
                 return None;
             }
             let top = (s * v0).floor();
-            if !(top >= 1.0) || top > 1e6 {
-                return None; // no candidate, or too many to enumerate honestly
+            // `!(top >= 1.0)` rather than `top < 1.0`, deliberately: NaN must be REFUSED, and
+            // `top < 1.0` is false for NaN while this is true.
+            if !(top >= 1.0) {
+                return None; // no candidate at all
             }
+            // Bound the WORK, not the answer.
+            //
+            // This used to `return None` when `top > 1e6`, on the reasoning that a million
+            // candidates is too many to enumerate honestly. But the walk starts at `top` and
+            // descends, so the very first thing it declined to try is the LARGEST candidate --
+            // usually the answer. On `Machine::GpuInt`, whose range is the integers to ±2.1e9, a
+            // program with couplings 0.5 and 1.5 gives top ~= 7.2e8, so `scale_to_fit` reported
+            // "scaling cannot help" for a program that `s = 2` scales perfectly to 1 and 3. Two
+            // shipped fabric descriptors had ranges wide enough to trip it, and `Fabric::check`
+            // sends callers here by name, so the advice it gives led straight into a dead end.
             let mut n = top;
-            while n >= 1.0 {
+            let mut tried = 0u32;
+            while n >= 1.0 && tried < 1_000_000 {
                 let cand = n / v0;
                 if lands(cand) && fits(cand) {
                     return Some(cand);
                 }
                 n -= 1.0;
+                tried += 1;
             }
             return None;
         }
@@ -1199,6 +1213,30 @@ mod range_tests {
         assert_eq!(f.scale_to_fit(&program(&[1.0, 3.7], &[])), None, "3.7 lands nowhere");
         // but a program already on whole numbers scales cleanly
         assert_eq!(f.scale_to_fit(&program(&[2.0, 14.0], &[])), Some(0.5));
+    }
+
+    #[test]
+    fn a_wide_integral_range_still_gets_an_answer_rather_than_a_refusal() {
+        // `scale_to_fit` bounded the ANSWER instead of the work: when the candidate ceiling
+        // exceeded 1e6 it returned None without trying a single candidate -- and the walk starts
+        // at the ceiling and descends, so the first thing it declined to try was the largest and
+        // most likely one.
+        //
+        // This is not hypothetical. `Machine::GpuInt` on the Hitachi fabric takes the integers to
+        // +/-2,147,483,647, and `Fabric::check` names `scale_to_fit` in the message it hands a
+        // caller whose coefficients are fractional. So the advice led straight into a dead end.
+        let mut f = Fabric::unconstrained("wide-integral", Z1_SPICE);
+        f.coupling_range = Some(Range::integers(-2_147_483_647.0, 2_147_483_647.0));
+
+        let s = f.scale_to_fit(&program(&[0.5, 1.5], &[]))
+            .expect("0.5 and 1.5 scale onto whole numbers; a wide range does not change that");
+        // Whatever factor it picks must actually land every coefficient on an integer and fit.
+        for v in [0.5f64, 1.5] {
+            let scaled = v * s;
+            assert!((scaled - scaled.round()).abs() < 1e-9, "{v} * {s} = {scaled} is not whole");
+            assert!(scaled.abs() <= 2_147_483_647.0, "{scaled} is outside the range");
+        }
+        assert!(f.check(&program(&[0.5 * s, 1.5 * s], &[])).is_empty(), "and the result passes check");
     }
 
     #[test]

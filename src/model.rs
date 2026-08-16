@@ -266,6 +266,19 @@ impl Expr {
     pub fn zero() -> Expr {
         Expr::default()
     }
+
+    /// Every coefficient and the constant are finite, or say which is not.
+    pub(crate) fn check_finite(&self, what: &'static str) -> Result<(), CompileError> {
+        if !self.constant.is_finite() {
+            return Err(CompileError::NotFinite { what: "objective constant", value: self.constant });
+        }
+        for term in &self.terms {
+            if !term.coeff.is_finite() {
+                return Err(CompileError::NotFinite { what, value: term.coeff });
+            }
+        }
+        Ok(())
+    }
     /// `c`, a constant.
     pub fn constant(c: f64) -> Expr {
         Expr { terms: Vec::new(), constant: c }
@@ -497,6 +510,15 @@ pub enum CompileError {
     Empty,
     /// Two variables sharing a name.
     DuplicateName(String),
+    /// A coefficient that is NaN or infinite.
+    ///
+    /// Not a pedantic check. A single NaN objective term used to compile, solve, and report
+    /// `feasible: true` while silently discarding every OTHER preference: energy comparisons
+    /// against NaN are all false, so the sampler's "is this better than the best so far" test
+    /// never fires again. A model maximising `3·a` alongside one NaN term answered `a = 0` --
+    /// a confident, feasible-looking, wrong answer, which is the exact failure this crate exists
+    /// to refuse.
+    NotFinite { what: &'static str, value: f64 },
     /// An `all_different` over more variables than there are values for them to take.
     ///
     /// The pigeonhole principle, checked rather than annealed. A model like this has no answer at
@@ -509,6 +531,26 @@ pub enum CompileError {
 impl core::fmt::Display for CompileError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            CompileError::NotFinite { what, value } => {
+                // Say WHICH failure, because they are different. And note the negation: a model
+                // stores "minimise this", so a term written as `maximize(+inf)` is held as -inf,
+                // and printing the stored number without saying so reports a sign nobody wrote.
+                let why = if value.is_nan() {
+                    "every comparison against NaN is false, so a sampler carrying one \
+                     silently stops improving and returns a feasible-looking answer that \
+                     ignores every preference in the model"
+                } else {
+                    "an infinite coefficient makes every state's energy infinite, so no \
+                     state compares better than any other and the search degenerates to its \
+                     first sample"
+                };
+                write!(
+                    f,
+                    "a {what} is {value}, which is not a finite number: {why}. \
+                     (Coefficients are stored as 'minimise this', so a maximised term \
+                     appears here negated.)"
+                )
+            }
             CompileError::Pigeonhole { vars, values } => write!(
                 f,
                 "all_different over {vars} variables, but between them their domains hold only \
@@ -858,6 +900,21 @@ impl Model {
         for d in &self.decls {
             if seen.insert(d.name.clone(), ()).is_some() {
                 return Err(CompileError::DuplicateName(d.name.clone()));
+            }
+        }
+
+        // Every coefficient must be a finite number, checked HERE because this is where every path
+        // that can introduce one converges -- `objective`, `set_objective`, the LP and OMMX
+        // readers, and the C ABI all end up compiling. Checking in `objective` alone would leave
+        // the other four open, and this crate has shipped that shape of gap before.
+        self.objective.check_finite("objective coefficient")?;
+        // SOFT weights only. A hard constraint carries `f64::NAN` as its sentinel -- see the push
+        // in `constrain` -- so checking every weight rejects every hard constraint in the crate,
+        // which is what the first cut did and what the FFI cardinality tests caught immediately.
+        // The sentinel is deliberate; the check has to know that.
+        for (_, weight, hard) in &self.constraints {
+            if !*hard && !weight.is_finite() {
+                return Err(CompileError::NotFinite { what: "soft constraint weight", value: *weight });
             }
         }
 
@@ -1791,6 +1848,40 @@ mod tests {
         let s = c.solve_best_of(6);
         assert!(s.feasible(), "{s}");
         assert_eq!(s.value("temperature"), 13, "integers decode in their own range: {s}");
+    }
+
+    #[test]
+    fn a_coefficient_that_is_not_finite_is_refused_rather_than_disabling_the_objective() {
+        // One NaN term used to compile, solve, and report feasible: true -- while discarding every
+        // OTHER preference, because comparisons against NaN are all false and the sampler's
+        // "better than the best so far" test never fires again. A model maximising 3*a beside one
+        // NaN term answered a = 0. Confident, feasible-looking, wrong.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut m = Model::new();
+            let a = m.binary("a");
+            let b = m.binary("b");
+            m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
+            m.objective(Sense::Maximize, Expr::product(bad, &[Lit::Is(b, 1)]));
+            match m.compile() {
+                Err(CompileError::NotFinite { what, .. }) => assert_eq!(what, "objective coefficient"),
+                Err(e) => panic!("{bad} refused for the wrong reason: {e}"),
+                Ok(_) => panic!("{bad} compiled, and would have disabled the 3*a preference"),
+            }
+        }
+
+        // The finite model it was silently degrading still works -- the half that makes this a
+        // refusal worth having rather than merely strict.
+        let mut m = Model::new();
+        let a = m.binary("a");
+        m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
+        assert_eq!(m.compile().unwrap().solve_best_of(32).value("a"), 1);
+
+        // And a HARD constraint, whose weight sentinel IS NaN, must still compile. Checking every
+        // weight rather than only the soft ones rejected all of them.
+        let mut m = Model::new();
+        let x = m.categorical("x", 3);
+        m.fix(x, 1);
+        assert!(m.compile().is_ok(), "a hard constraint's NaN sentinel is not a bad coefficient");
     }
 
     #[test]

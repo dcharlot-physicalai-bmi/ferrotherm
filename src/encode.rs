@@ -251,7 +251,11 @@ mod tests {
         let slot = Slot::new(0, k, enc);
         let w = slot.width();
         let mut b = GraphBuilder::new(w);
-        slot.add_penalty(&mut b, p);
+        // Asserted, not discarded. Both callers pass one-hot or domain-wall, which are exact for
+        // every k, so a `false` here means the construction regressed -- and the whole point of the
+        // `#[must_use]` is that discarding this once already shipped a k=6 binary variable whose
+        // invalid codewords cost exactly what valid ones cost, for three releases.
+        assert!(slot.add_penalty(&mut b, p), "{enc:?} k={k} must be exactly encodable");
         let g = b.build();
 
         let mut best = f64::INFINITY;

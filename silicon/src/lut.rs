@@ -53,11 +53,27 @@ pub fn bsn_fire_prob(threshold: u8, k: u8) -> f64 {
 mod tests {
     use super::*;
 
+    /// The deprecated aliases still forward.
+    ///
+    /// Their whole purpose is that a 0.1.0 caller keeps building, which is a promise worth one
+    /// test rather than a warning in every other one. The tests used to *call* the deprecated
+    /// names, which exercised the shim by accident and the real function not at all.
+    #[test]
+    #[allow(deprecated)]
+    fn the_old_pbit_names_still_forward_to_the_bsn_ones() {
+        for threshold in 0..=6u8 {
+            assert_eq!(pbit_threshold_init(threshold), bsn_threshold_init(threshold));
+            for k in 0..=5u8 {
+                assert_eq!(pbit_fire_prob(threshold, k), bsn_fire_prob(threshold, k));
+            }
+        }
+    }
+
     /// Exhaustive: every LUT entry must equal the defining predicate.
     #[test]
     fn threshold_table_exhaustive() {
         for threshold in 0..=6u8 {
-            let init = pbit_threshold_init(threshold);
+            let init = bsn_threshold_init(threshold);
             for idx in 0u64..64 {
                 let n = (idx & 0b1_1111).count_ones() as u8;
                 let r = ((idx >> 5) & 1) as u8;
@@ -81,12 +97,12 @@ mod tests {
     #[test]
     fn fire_prob_matches_table() {
         for threshold in 0..=6u8 {
-            let init = pbit_threshold_init(threshold);
+            let init = bsn_threshold_init(threshold);
             for k in 0..=5u8 {
                 // pick any index with popcount k in the low 5 bits
                 let base: u64 = (0..k as u64).map(|b| 1u64 << b).sum();
                 let p_table = ((init >> base & 1) as f64 + (init >> (base | 32) & 1) as f64) / 2.0;
-                assert_eq!(p_table, pbit_fire_prob(threshold, k), "t={threshold} k={k}");
+                assert_eq!(p_table, bsn_fire_prob(threshold, k), "t={threshold} k={k}");
             }
         }
     }

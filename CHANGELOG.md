@@ -46,6 +46,74 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
 
 ## Unreleased
 
+### A NaN objective coefficient silently disabled every other preference
+
+The worst kind of bug this crate can have, and it compiled, solved, and reported success.
+
+```rust
+m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
+m.objective(Sense::Maximize, Expr::product(f64::NAN, &[Lit::Is(b, 1)]));
+```
+
+`compile()` returned `Ok`. `solve_best_of(64)` returned `feasible: true`. And `a` came back **0**,
+when it is worth +3. Every comparison against NaN is false, so the sampler's "is this better than
+the best so far" test never fires again and the search silently stops improving. A confident,
+feasible-looking, wrong answer.
+
+Non-finite coefficients are now refused at `compile()` — the one place `objective`, `set_objective`,
+the LP reader, the OMMX reader and the C ABI all converge, because checking in `objective` alone
+would leave the other four open. The message distinguishes NaN from infinity, since they fail
+differently, and notes that coefficients are stored as "minimise this" so a maximised term appears
+negated.
+
+Found while demonstrating that a *different* clippy lint should be allowed: `!(w > 0.0)` rejects NaN
+where clippy's suggested `w <= 0.0` accepts it, and checking whether the library actually refused a
+NaN weight showed that it did not.
+
+The first cut of the fix rejected every **hard** constraint, because a hard constraint carries
+`f64::NAN` as its sentinel. The FFI cardinality tests caught it immediately. The sentinel is
+deliberate; the check now knows that, and the test asserts a hard constraint still compiles.
+
+### `scale_to_fit` bounded the answer instead of the work
+
+`Fabric::scale_to_fit` returned `None` — "scaling cannot help" — whenever the candidate ceiling
+exceeded 1e6. The search walks candidates **downward from that ceiling**, so the first thing it
+declined to try was the largest, which is usually the answer.
+
+`Machine::GpuInt` takes the integers to ±2,147,483,647. A program with couplings 0.5 and 1.5 gives a
+ceiling near 7.2×10⁸, so `scale_to_fit` refused a program that `s = 2` scales perfectly onto 1 and 3.
+Two shipped fabric descriptors have ranges wide enough to trip it, and `Fabric::check` names
+`scale_to_fit` in the message it hands callers with fractional coefficients — so the advice led
+straight into a dead end. The work is bounded now, not the answer.
+
+### Clippy had never linted five of the six crates
+
+`cargo clippy --workspace --all-targets` **exits 101**: `src/ffi.rs` has 93 `extern "C"` functions
+that trip the deny-by-default `not_unsafe_ptr_arg_deref`, and the run aborts there. Measured
+consequence: **zero** lints reported for `-gpu`, `-meter`, `-cloud`, `-serve`, `-silicon` or any of
+the 21 examples. 39 warnings were invisible, including `-silicon` calling its own deprecated
+functions.
+
+Suppressing a lint to make a run go green is the move this project distrusts, so the property the
+lint points at was audited before allowing it: every handle goes through `as_ref`/`as_mut` (39 + 37
+sites, null-checked by construction), every caller-supplied out-pointer is null-checked before it is
+written, every copy is clamped with `.min(cap)`, and every `from_raw_parts` follows a null check on
+the same pointer. What remains — a non-null dangling pointer, or a lying capacity — is the C ABI's
+own contract, and marking these `unsafe fn` would move that obligation to callers who are C, Python
+`ctypes`, Julia `ccall`, Zig and JavaScript, none of which have Rust's `unsafe` to move it to. The
+allow is scoped to that module and the reasoning is written where the next reader will find it.
+
+### Also
+
+- `Slot::add_penalty`'s `#[must_use]` — whose note records that discarding it shipped a k=6 binary
+  variable with invalid codewords costing exactly what valid ones cost, for three releases — was
+  being discarded in a test helper. Asserted now.
+- `-silicon`'s tests called its own deprecated `pbit_*` aliases, exercising the shim by accident and
+  the real function not at all. They call the current names, and one deliberate test covers the
+  alias's actual promise: that a 0.1.0 caller keeps building.
+- The mutation suite is at **five** rows; the two new defects are in it.
+
+
 ### The Jetson meter backend, with the honest split stated
 
 `ferrotherm-meter` has had one backend and a comment where the second should be: *"the INA3221 rails

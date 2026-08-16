@@ -8,6 +8,36 @@
 //!
 //! Safety: handles are opaque pointers owned by the library; every function checks for null.
 //! One simulation is single-threaded; concurrent calls on one handle are the caller's bug.
+//!
+//! # Why `not_unsafe_ptr_arg_deref` is allowed here, and what was checked before allowing it
+//!
+//! Clippy's `not_unsafe_ptr_arg_deref` is deny-by-default, and these 93 `extern "C"` entry points
+//! all trip it. That mattered far more than the lint itself: `cargo clippy --workspace
+//! --all-targets` **aborted on this file with exit 101**, so `ferrotherm-gpu`, `-meter`, `-cloud`,
+//! `-serve`, `-silicon` and all 21 examples were never linted at all. Suppressing a lint to make a
+//! run go green is exactly the move this project distrusts, so the property the lint points at was
+//! audited first rather than assumed:
+//!
+//! - Every handle argument is dereferenced through `as_ref()` / `as_mut()`, which return `Option`
+//!   and so are null-checked by construction: 39 `as_mut`, 37 `as_ref`.
+//! - Every caller-supplied **out**-pointer is explicitly null-checked before it is written, and a
+//!   null buffer is answered with the length the caller needs rather than a write (`ft_ommx_error`,
+//!   `ft_model_ftp`, and the rest of the two-call sizing pairs).
+//! - Every copy into a caller buffer is clamped to the caller's own capacity with `.min(cap)`
+//!   before `copy_nonoverlapping`.
+//! - Every slice built from a caller pointer goes through `from_raw_parts` only after a null check
+//!   on the same pointer.
+//!
+//! What remains is the part no Rust signature can fix: a caller may hand over a **non-null dangling**
+//! pointer, or a capacity larger than the buffer it owns. Marking these `unsafe fn` would move that
+//! obligation onto callers who are C, Python `ctypes`, Julia `ccall`, Zig and JavaScript — none of
+//! which have Rust's `unsafe` to move it to. The contract lives in `include/ferrotherm.h`, where
+//! those callers can read it.
+//!
+//! So the allow is scoped to this module, and the lint is enforced everywhere else: CI runs
+//! `cargo clippy --workspace --all-targets -D warnings`, which before this comment existed had
+//! never linted five of the six published crates.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use crate::device::z1_grid;
 use crate::gibbs::Sampler;

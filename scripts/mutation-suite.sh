@@ -45,6 +45,17 @@ mutations=(
   # local field is summed in, which changes the last bits of the energy. Five runs, five programs.
   "src/graph.rs|BTreeMap<(u32, u32), f64> = std::collections::BTreeMap::new()|HashMap<(u32, u32), f64> = std::collections::HashMap::new()|graph::|CSR order via HashMap"
 
+  # A NaN objective coefficient compiled, solved, and reported feasible while silently disabling
+  # every other preference -- comparisons against NaN are all false, so the sampler stopped
+  # improving. Remove the guard and the refusal test must notice.
+  "src/model.rs|self.objective.check_finite(\"objective coefficient\")?;|let _ = self.objective.check_finite(\"objective coefficient\");|not_finite|NaN objective coefficient"
+
+  # scale_to_fit bounded the ANSWER instead of the work: above a 1e6 candidate ceiling it refused
+  # without trying the largest candidate, which is usually the answer.
+  # Reintroduced through the loop guard rather than the `if`, because the original defect was
+  # written `|| top > 1e6` and a literal `|` is this table's field separator.
+  "src/fabric.rs|while n >= 1.0 && tried < 1_000_000 {|while n >= 1.0 && tried < 1_000_000 && top <= 1e6 {|wide_integral|scale_to_fit ceiling refusal"
+
   # `Sum for f64` folds from -0.0, so a model with no soft violations reported \"-0\".
   "src/model.rs|.sum::<f64>() + 0.0|.sum::<f64>()|soft|soft cost negative zero"
 )
