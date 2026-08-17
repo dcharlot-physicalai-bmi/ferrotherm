@@ -44,7 +44,7 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
-## Unreleased
+## 0.15.0
 
 ### The OMMX decoder, rewritten from the specification
 
@@ -94,6 +94,13 @@ landing anywhere else must be an error. That took two attempts — the first ver
 "a prefix never reports all four fields", which is true of the broken decoder too, since a short
 message genuinely has fewer complete fields. Reverting the fix and watching it stay green is how
 that was found.
+
+### Breaking
+
+- `ImportError` gained a `Wire(WireError)` variant, so an exhaustive match on it no longer is.
+- `ommx::import` now returns an error for byte strings it used to accept as a shorter instance. That
+  is the point of the release: those inputs were being silently misread.
+- New public module `ferrotherm::wire`.
 
 ## 0.14.0
 
