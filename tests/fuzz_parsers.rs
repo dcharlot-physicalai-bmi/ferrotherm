@@ -98,6 +98,15 @@ unsafe impl GlobalAlloc for Capped {
 #[global_allocator]
 static ALLOC: Capped = Capped;
 
+/// How many cases each loop runs. `FT_FUZZ_ROUNDS` raises it without editing this file.
+///
+/// The default is sized to run in CI on every push -- a fuzzer nobody runs finds nothing -- and the
+/// seeds are fixed, so a deeper run explores strictly more without losing what the default covers.
+/// `FT_FUZZ_ROUNDS=200000 cargo test --release --test fuzz_parsers` is the soak.
+fn rounds(default: u64) -> u64 {
+    std::env::var("FT_FUZZ_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 /// Seeded xorshift64*. Deterministic, so a failure comes with the seed that reproduces it.
 struct Rng(u64);
 
@@ -216,7 +225,7 @@ fn mutate(rng: &mut Rng, base: &[u8]) -> Vec<u8> {
 #[test]
 fn no_parser_panics_on_random_bytes() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-    for round in 0..800u64 {
+    for round in 0..rounds(800) {
         let len = rng.below(96);
         let raw = rng.bytes(len);
         let text = String::from_utf8_lossy(&raw).to_string();
@@ -235,7 +244,7 @@ fn no_parser_panics_on_mutated_valid_input() {
     let ftp: Vec<Vec<u8>> = seeds_ftp().iter().map(|s| s.as_bytes().to_vec()).collect();
     let lp: Vec<Vec<u8>> = seeds_lp().iter().map(|s| s.as_bytes().to_vec()).collect();
 
-    for round in 0..800u64 {
+    for round in 0..rounds(800) {
         let fi = rng.below(ftp.len());
         let f = mutate(&mut rng, &ftp[fi]);
         must_not_panic("ftp::from_ftp (mutated)", round, &f, || {
@@ -345,7 +354,7 @@ fn nothing_that_parses_panics_when_it_is_then_compiled() {
     let mut rng = Rng(0x2545_F491_4F6C_DD1D);
     let lp = seeds_lp();
     let mut compiled = 0u32;
-    for round in 0..600u64 {
+    for round in 0..rounds(600) {
         let li = rng.below(lp.len());
         let l = mutate(&mut rng, lp[li].as_bytes());
         let text = String::from_utf8_lossy(&l).to_string();
