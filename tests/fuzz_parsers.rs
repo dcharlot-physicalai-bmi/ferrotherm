@@ -239,6 +239,90 @@ fn no_parser_panics_on_random_bytes() {
 }
 
 #[test]
+fn the_wire_codec_never_panics_and_never_reports_a_truncation_as_an_end() {
+    // Aimed at `wire` directly rather than through `ommx::import`, which only ever reaches the
+    // handful of wire types OMMX happens to use. Random bytes reach all of them, including the
+    // group encoding and the two that do not exist.
+    //
+    // The second half is the property the rewrite is FOR: every prefix of a valid message must be
+    // an Err, never a shorter Ok. The old decoder returned `Option`, so "the message ended" and
+    // "the message is corrupt" were one value and a truncated instance parsed as a complete
+    // smaller one.
+    use ferrotherm::wire::{put_double_field, put_str_field, put_varint_field, Reader};
+
+    let mut rng = Rng(0x8E3F_1A72_C05D_9B41);
+    for round in 0..rounds(800) {
+        let n = rng.below(80);
+        let raw = rng.bytes(n);
+        must_not_panic("wire::Reader", round, &raw, || {
+            let mut r = Reader::new(&raw);
+            // Drain it. A malformed input must stop with Err, not loop or panic.
+            for _ in 0..10_000 {
+                match r.read_field() {
+                    Ok(Some(_)) => continue,
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // A whole message, then every proper prefix of it.
+    let mut msg = Vec::new();
+    put_varint_field(&mut msg, 1, 150);
+    put_double_field(&mut msg, 2, -1.5);
+    put_str_field(&mut msg, 3, "hello");
+    put_varint_field(&mut msg, 4, u64::MAX);
+
+    let drain = |b: &[u8]| -> Result<usize, ()> {
+        let mut r = Reader::new(b);
+        let mut n = 0;
+        loop {
+            match r.read_field() {
+                Ok(Some(_)) => n += 1,
+                Ok(None) => return Ok(n),
+                Err(_) => return Err(()),
+            }
+        }
+    };
+    assert_eq!(drain(&msg), Ok(4), "the whole message reads as four fields");
+
+    // The precise property, and it took a second attempt to state.
+    //
+    // "A prefix never reports all four fields" is TRUE OF THE BROKEN DECODER TOO -- a short message
+    // genuinely has fewer complete fields, so the assertion passed whether truncation was an error
+    // or a silent end. Checked by reverting the `Truncated` arm to `Ok(None)` and watching it stay
+    // green, which is the only way to find out that a property is vacuous.
+    //
+    // What actually separates the two designs: a cut that lands ON a field boundary is a legitimate
+    // shorter message, and a cut that lands anywhere else is malformed and must say so. So collect
+    // the boundaries first, then require exactly that.
+    let boundaries: Vec<usize> = {
+        let mut r = Reader::new(&msg);
+        let mut ends = vec![0usize];
+        while let Ok(Some(_)) = r.read_field() {
+            ends.push(r.position());
+        }
+        ends
+    };
+    assert_eq!(boundaries.len(), 5, "four fields give five boundaries including 0");
+
+    for cut in 1..msg.len() {
+        let got = drain(&msg[..cut]);
+        if boundaries.contains(&cut) {
+            let want = boundaries.iter().position(|&b| b == cut).unwrap();
+            assert_eq!(got, Ok(want), "a cut on a field boundary is a shorter valid message");
+        } else {
+            assert_eq!(
+                got,
+                Err(()),
+                "a {cut}-byte prefix cuts mid-field and must be an ERROR, not a shorter message -- \
+                 that conflation is the defect this codec was rewritten to remove"
+            );
+        }
+    }
+}
+
+#[test]
 fn no_parser_panics_on_mutated_valid_input() {
     let mut rng = Rng(0xD1B5_4A32_D192_ED03);
     let ftp: Vec<Vec<u8>> = seeds_ftp().iter().map(|s| s.as_bytes().to_vec()).collect();

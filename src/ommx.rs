@@ -187,44 +187,26 @@ pub fn export(g: &Graph) -> Export {
 // Protobuf, the three wire types this needs. Written out rather than pulled in, because the subset
 // is small and the alternative is a beta dependency on somebody else's generated code.
 
-fn key(buf: &mut Vec<u8>, field: u32, wire: u32) {
-    varint(buf, ((field << 3) | wire) as u64);
-}
-fn varint(buf: &mut Vec<u8>, mut v: u64) {
-    loop {
-        let b = (v & 0x7f) as u8;
-        v >>= 7;
-        if v == 0 {
-            buf.push(b);
-            return;
-        }
-        buf.push(b | 0x80);
-    }
-}
-fn varint_field(buf: &mut Vec<u8>, field: u32, v: u64) {
-    key(buf, field, 0);
-    varint(buf, v);
-}
-fn double_field(buf: &mut Vec<u8>, field: u32, v: f64) {
-    key(buf, field, 1); // 64-bit, little-endian
-    buf.extend_from_slice(&v.to_le_bytes());
-}
-fn len_field(buf: &mut Vec<u8>, field: u32, body: &[u8]) {
-    key(buf, field, 2);
-    varint(buf, body.len() as u64);
-    buf.extend_from_slice(body);
-}
-fn str_field(buf: &mut Vec<u8>, field: u32, s: &str) {
-    len_field(buf, field, s.as_bytes());
-}
+// The writer delegates to `crate::wire`, so the two halves of the format cannot drift apart. They
+// used to be separate hand-rolled implementations in this file, which is how the reader and writer
+// came to AGREE WITH EACH OTHER and both be wrong about proto3's default-omission rule.
+use crate::wire::{
+    put_double_field as double_field, put_len_field as len_field, put_str_field as str_field,
+    put_varint as varint, put_varint_field as varint_field,
+};
 
-/// Why an OMMX instance could not be read as a ferrotherm model.
-///
 /// Refused by name, the way `src/lp.rs` refuses an LP file it cannot express. A bridge that
 /// silently dropped what it could not represent would hand back a model that solves a different
 /// problem, which is worse than not reading the file at all.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportError {
+    /// The bytes are not a well-formed protobuf message.
+    ///
+    /// Carried rather than flattened into `Malformed(String)` because it has a byte offset and a
+    /// specific cause, and because the old reader could not produce it at all: its decoder returned
+    /// `Option`, so a corrupt message was indistinguishable from a finished one and simply parsed
+    /// as a shorter instance.
+    Wire(crate::wire::WireError),
     /// A variable this sampler cannot represent.
     ///
     /// Ferrotherm samples spins. A continuous variable has no spin encoding at any width, and a
@@ -244,9 +226,16 @@ pub enum ImportError {
     NoVariables,
 }
 
+impl From<crate::wire::WireError> for ImportError {
+    fn from(e: crate::wire::WireError) -> Self {
+        ImportError::Wire(e)
+    }
+}
+
 impl core::fmt::Display for ImportError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            ImportError::Wire(e) => write!(f, "not a valid protobuf message: {e}"),
             ImportError::UnsupportedKind { id, name, kind } => write!(
                 f,
                 "decision variable {id} ('{name}') has kind {kind}; ferrotherm samples spins, so \
@@ -285,27 +274,29 @@ impl core::fmt::Display for ImportError {
 /// this crate's own encoder did not until it was checked. A decoder that handled only one of them
 /// would read half the files it is given.
 pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
+    use crate::wire::Value;
+
     let mut vars: Vec<(u64, String, u64, f64, f64)> = Vec::new();
     let mut objective: Option<&[u8]> = None;
     let mut sense = schema::SENSE_MINIMIZE;
 
-    for (field, body) in Fields::new(bytes) {
-        match (field, body) {
-            (schema::INSTANCE_DECISION_VARIABLES, Body::Bytes(b)) => {
+    for f in fields(bytes)? {
+        match (f.number, f.value) {
+            (schema::INSTANCE_DECISION_VARIABLES, Value::Bytes(b)) => {
                 // Same proto3 rule throughout: absent means the default. A bound is [0, 1] here
                 // because that is what a binary variable's is, and an omitted `lower` is 0.0
                 // rather than missing.
                 let (mut id, mut name, mut kind, mut lo, mut hi) = (0u64, String::new(), 0u64, 0.0, 1.0);
-                for (f2, b2) in Fields::new(b) {
-                    match (f2, b2) {
-                        (schema::DV_ID, Body::Varint(v)) => id = v,
-                        (schema::DV_KIND, Body::Varint(v)) => kind = v,
-                        (schema::DV_NAME, Body::Bytes(s)) => name = String::from_utf8_lossy(s).into(),
-                        (schema::DV_BOUND, Body::Bytes(bb)) => {
-                            for (f3, b3) in Fields::new(bb) {
-                                match (f3, b3) {
-                                    (schema::BOUND_LOWER, Body::Fixed64(v)) => lo = f64::from_bits(v),
-                                    (schema::BOUND_UPPER, Body::Fixed64(v)) => hi = f64::from_bits(v),
+                for g in fields(b)? {
+                    match (g.number, g.value) {
+                        (schema::DV_ID, Value::Varint(v)) => id = v,
+                        (schema::DV_KIND, Value::Varint(v)) => kind = v,
+                        (schema::DV_NAME, Value::Bytes(s)) => name = String::from_utf8_lossy(s).into(),
+                        (schema::DV_BOUND, Value::Bytes(bb)) => {
+                            for h in fields(bb)? {
+                                match (h.number, h.value) {
+                                    (schema::BOUND_LOWER, Value::Fixed64(v)) => lo = f64::from_bits(v),
+                                    (schema::BOUND_UPPER, Value::Fixed64(v)) => hi = f64::from_bits(v),
                                     _ => {}
                                 }
                             }
@@ -315,8 +306,8 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                 }
                 vars.push((id, name, kind, lo, hi));
             }
-            (schema::INSTANCE_OBJECTIVE, Body::Bytes(b)) => objective = Some(b),
-            (schema::INSTANCE_SENSE, Body::Varint(v)) => sense = v,
+            (schema::INSTANCE_OBJECTIVE, Value::Bytes(b)) => objective = Some(b),
+            (schema::INSTANCE_SENSE, Value::Varint(v)) => sense = v,
             _ => {}
         }
     }
@@ -345,21 +336,24 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
 
     if let Some(obj) = objective {
         let mut linear_body: Option<&[u8]> = None;
-        for (f, b) in Fields::new(obj) {
-            match (f, b) {
-                (1, Body::Fixed64(v)) => constant += f64::from_bits(v),
-                (2, Body::Bytes(bb)) => linear_body = Some(bb),
-                (schema::FUNCTION_QUADRATIC, Body::Bytes(q)) => {
+        for f in fields(obj)? {
+            match (f.number, f.value) {
+                (1, Value::Fixed64(v)) => constant += f64::from_bits(v),
+                (2, Value::Bytes(bb)) => linear_body = Some(bb),
+                (schema::FUNCTION_QUADRATIC, Value::Bytes(q)) => {
                     let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
-                    for (fq, bq) in Fields::new(q) {
-                        match (fq, bq) {
-                            (schema::QUAD_ROWS, Body::Varint(v)) => rows.push(v),
-                            (schema::QUAD_ROWS, Body::Bytes(p)) => packed_varints(p, &mut rows),
-                            (schema::QUAD_COLUMNS, Body::Varint(v)) => cols.push(v),
-                            (schema::QUAD_COLUMNS, Body::Bytes(p)) => packed_varints(p, &mut cols),
-                            (schema::QUAD_VALUES, Body::Fixed64(v)) => vals.push(f64::from_bits(v)),
-                            (schema::QUAD_VALUES, Body::Bytes(p)) => packed_doubles(p, &mut vals),
-                            (schema::QUAD_LINEAR, Body::Bytes(l)) => linear_body = Some(l),
+                    for g in fields(q)? {
+                        match (g.number, g.value) {
+                            // Both encodings, because a writer may pack a repeated scalar field or
+                            // not, and both are legal. Packed decoding now REFUSES on a corrupt
+                            // array instead of returning the prefix it managed to read.
+                            (schema::QUAD_ROWS, Value::Varint(v)) => rows.push(v),
+                            (schema::QUAD_ROWS, Value::Bytes(p)) => rows.extend(crate::wire::packed_varints(p)?),
+                            (schema::QUAD_COLUMNS, Value::Varint(v)) => cols.push(v),
+                            (schema::QUAD_COLUMNS, Value::Bytes(p)) => cols.extend(crate::wire::packed_varints(p)?),
+                            (schema::QUAD_VALUES, Value::Fixed64(v)) => vals.push(f64::from_bits(v)),
+                            (schema::QUAD_VALUES, Value::Bytes(p)) => vals.extend(crate::wire::packed_doubles(p)?),
+                            (schema::QUAD_LINEAR, Value::Bytes(l)) => linear_body = Some(l),
                             _ => {}
                         }
                     }
@@ -376,11 +370,11 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                                 rows[k], cols[k]
                             )));
                         };
-                        // A DIAGONAL term (row == col) is well-formed OMMX and used to reach the
-                        // graph builder as a self-edge, which panics -- aborting the host process
-                        // through the C ABI. For a binary x, x^2 == x exactly, so the honest
-                        // treatment is to fold it into the linear part rather than refuse input
-                        // that other OMMX tools emit routinely.
+                        // A DIAGONAL term (row == col) is well-formed OMMX that other tools emit
+                        // routinely, and it used to reach the graph builder as a self-edge, which
+                        // panics -- aborting the host process through the C ABI. For a binary x,
+                        // x^2 == x exactly, so folding it into the linear part is the honest
+                        // treatment rather than refusing valid input to stop a crash.
                         if i == j {
                             lin[i] += vals[k];
                             continue;
@@ -388,25 +382,25 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                         quad.push((i, j, vals[k]));
                     }
                 }
-                (4, Body::Bytes(_)) => return Err(ImportError::TooHighDegree),
+                (4, Value::Bytes(_)) => return Err(ImportError::TooHighDegree),
                 _ => {}
             }
         }
         if let Some(l) = linear_body {
-            for (f, b) in Fields::new(l) {
-                match (f, b) {
-                    (schema::LINEAR_TERMS, Body::Bytes(tb)) => {
-                        // Default 0, NOT a sentinel. proto3 omits a field at its default value,
-                        // so `Term { id: 0, coefficient: c }` serialises the coefficient alone --
-                        // and a sentinel turns the commonest variable in the file into "not
-                        // declared". This crate's own encoder writes id 0 explicitly, so its reader
-                        // and writer agreed with each other and were both wrong about the format;
-                        // it took reading a file the reference produced to see it.
+            for f in fields(l)? {
+                match (f.number, f.value) {
+                    (schema::LINEAR_TERMS, Value::Bytes(tb)) => {
+                        // Default 0, NOT a sentinel. proto3 omits a field at its default value, so
+                        // `Term { id: 0, coefficient: c }` serialises the coefficient alone -- and a
+                        // sentinel turns the commonest variable in the file into "not declared".
+                        // This crate's own encoder wrote id 0 explicitly, so its reader and writer
+                        // agreed with each other and were both wrong about the format; it took
+                        // reading a file the reference produced to see it.
                         let (mut id, mut c) = (0u64, 0.0f64);
-                        for (ft, bt) in Fields::new(tb) {
-                            match (ft, bt) {
-                                (schema::TERM_ID, Body::Varint(v)) => id = v,
-                                (schema::TERM_COEFFICIENT, Body::Fixed64(v)) => c = f64::from_bits(v),
+                        for g in fields(tb)? {
+                            match (g.number, g.value) {
+                                (schema::TERM_ID, Value::Varint(v)) => id = v,
+                                (schema::TERM_COEFFICIENT, Value::Fixed64(v)) => c = f64::from_bits(v),
                                 _ => {}
                             }
                         }
@@ -417,7 +411,7 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                         };
                         lin[i] += c;
                     }
-                    (schema::LINEAR_CONSTANT, Body::Fixed64(v)) => constant += f64::from_bits(v),
+                    (schema::LINEAR_CONSTANT, Value::Fixed64(v)) => constant += f64::from_bits(v),
                     _ => {}
                 }
             }
@@ -451,111 +445,24 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
     Ok((b.build(), out_const))
 }
 
-/// One protobuf field: its number and its payload.
-enum Body<'a> {
-    Varint(u64),
-    Fixed64(u64),
-    Bytes(&'a [u8]),
-}
-
-/// Walk the fields of a protobuf message, skipping anything unrecognised.
+/// Collect a message's fields, or say why the bytes are not one.
 ///
-/// Forward compatibility is the point: OMMX has grown fields between 2.0 and 2.6 and will grow more,
-/// and a reader that choked on one it did not know would break on the next release.
-struct Fields<'a> {
-    b: &'a [u8],
-    i: usize,
-}
-
-impl<'a> Fields<'a> {
-    fn new(b: &'a [u8]) -> Self {
-        Fields { b, i: 0 }
+/// The whole point of the rewrite: three outcomes, three values. `crate::wire::Reader` returns
+/// `Ok(None)` at a clean end and `Err` when the input is malformed, so this can hand a caller a
+/// list or a reason and never a truncated list that looks complete.
+fn fields(b: &[u8]) -> Result<Vec<crate::wire::Field<'_>>, ImportError> {
+    let mut r = crate::wire::Reader::new(b);
+    let mut out = Vec::new();
+    while let Some(f) = r.read_field()? {
+        out.push(f);
     }
-}
-
-impl<'a> Iterator for Fields<'a> {
-    type Item = (u32, Body<'a>);
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.b.len() {
-            return None;
-        }
-        let (k, used) = read_varint(self.b, self.i)?;
-        self.i += used;
-        let (field, wire) = ((k >> 3) as u32, (k & 7) as u32);
-        match wire {
-            0 => {
-                let (v, u) = read_varint(self.b, self.i)?;
-                self.i += u;
-                Some((field, Body::Varint(v)))
-            }
-            1 => {
-                if self.i + 8 > self.b.len() {
-                    return None;
-                }
-                let v = u64::from_le_bytes(self.b[self.i..self.i + 8].try_into().ok()?);
-                self.i += 8;
-                Some((field, Body::Fixed64(v)))
-            }
-            2 => {
-                let (len, u) = read_varint(self.b, self.i)?;
-                self.i += u;
-                // `self.i + len` WRAPS on a hostile length, and a wrapped `end` sails past the
-                // bounds check below and panics in the slice -- which, reached through
-                // `ft_ommx_read`, is a non-unwinding panic that aborts the caller's process.
-                // Eleven bytes did it: 0x0A then ten 0xFF/0x01 varint bytes.
-                let end = self.i.checked_add(len as usize)?;
-                if end > self.b.len() {
-                    return None;
-                }
-                let s = &self.b[self.i..end];
-                self.i = end;
-                Some((field, Body::Bytes(s)))
-            }
-            5 => {
-                self.i += 4;
-                Some((field, Body::Varint(0)))
-            }
-            _ => None,
-        }
-    }
-}
-
-fn read_varint(b: &[u8], mut i: usize) -> Option<(u64, usize)> {
-    let (mut v, mut shift, start) = (0u64, 0u32, i);
-    loop {
-        let byte = *b.get(i)?;
-        v |= ((byte & 0x7f) as u64) << shift;
-        i += 1;
-        if byte & 0x80 == 0 {
-            return Some((v, i - start));
-        }
-        shift += 7;
-        if shift > 63 {
-            return None;
-        }
-    }
-}
-
-fn packed_varints(p: &[u8], out: &mut Vec<u64>) {
-    let mut i = 0;
-    while let Some((v, u)) = read_varint(p, i) {
-        out.push(v);
-        i += u;
-        if i >= p.len() {
-            break;
-        }
-    }
-}
-
-fn packed_doubles(p: &[u8], out: &mut Vec<f64>) {
-    for c in p.chunks_exact(8) {
-        out.push(f64::from_bits(u64::from_le_bytes(c.try_into().unwrap())));
-    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::Value;
 
     #[test]
     fn a_hostile_length_prefix_is_refused_rather_than_panicking() {
@@ -757,45 +664,45 @@ mod tests {
 
         // The same instance with rows/columns/values written one key per element.
         let mut unpacked = Vec::new();
-        for (f, b) in Fields::new(&packed.bytes) {
-            match (f, b) {
-                (schema::INSTANCE_OBJECTIVE, Body::Bytes(obj)) => {
+        for fl in fields(&packed.bytes).unwrap() {
+            match (fl.number, fl.value) {
+                (schema::INSTANCE_OBJECTIVE, Value::Bytes(obj)) => {
                     let mut newobj = Vec::new();
-                    for (f2, b2) in Fields::new(obj) {
-                        match (f2, b2) {
-                            (schema::FUNCTION_QUADRATIC, Body::Bytes(q)) => {
+                    for f2 in fields(obj).unwrap() {
+                        match (f2.number, f2.value) {
+                            (schema::FUNCTION_QUADRATIC, Value::Bytes(q)) => {
                                 let mut nq = Vec::new();
-                                for (f3, b3) in Fields::new(q) {
-                                    match (f3, b3) {
-                                        (schema::QUAD_ROWS, Body::Bytes(p)) => {
-                                            let mut v = Vec::new();
-                                            packed_varints(p, &mut v);
-                                            for x in v { varint_field(&mut nq, schema::QUAD_ROWS, x); }
+                                for f3 in fields(q).unwrap() {
+                                    match (f3.number, f3.value) {
+                                        (schema::QUAD_ROWS, Value::Bytes(p)) => {
+                                            for x in crate::wire::packed_varints(p).unwrap() {
+                                                varint_field(&mut nq, schema::QUAD_ROWS, x);
+                                            }
                                         }
-                                        (schema::QUAD_COLUMNS, Body::Bytes(p)) => {
-                                            let mut v = Vec::new();
-                                            packed_varints(p, &mut v);
-                                            for x in v { varint_field(&mut nq, schema::QUAD_COLUMNS, x); }
+                                        (schema::QUAD_COLUMNS, Value::Bytes(p)) => {
+                                            for x in crate::wire::packed_varints(p).unwrap() {
+                                                varint_field(&mut nq, schema::QUAD_COLUMNS, x);
+                                            }
                                         }
-                                        (schema::QUAD_VALUES, Body::Bytes(p)) => {
-                                            let mut v = Vec::new();
-                                            packed_doubles(p, &mut v);
-                                            for x in v { double_field(&mut nq, schema::QUAD_VALUES, x); }
+                                        (schema::QUAD_VALUES, Value::Bytes(p)) => {
+                                            for x in crate::wire::packed_doubles(p).unwrap() {
+                                                double_field(&mut nq, schema::QUAD_VALUES, x);
+                                            }
                                         }
-                                        (fx, Body::Bytes(bx)) => len_field(&mut nq, fx, bx),
+                                        (fx, Value::Bytes(bx)) => len_field(&mut nq, fx, bx),
                                         _ => {}
                                     }
                                 }
                                 len_field(&mut newobj, schema::FUNCTION_QUADRATIC, &nq);
                             }
-                            (fx, Body::Bytes(bx)) => len_field(&mut newobj, fx, bx),
+                            (fx, Value::Bytes(bx)) => len_field(&mut newobj, fx, bx),
                             _ => {}
                         }
                     }
                     len_field(&mut unpacked, schema::INSTANCE_OBJECTIVE, &newobj);
                 }
-                (fx, Body::Bytes(bx)) => len_field(&mut unpacked, fx, bx),
-                (fx, Body::Varint(v)) => varint_field(&mut unpacked, fx, v),
+                (fx, Value::Bytes(bx)) => len_field(&mut unpacked, fx, bx),
+                (fx, Value::Varint(v)) => varint_field(&mut unpacked, fx, v),
                 _ => {}
             }
         }

@@ -95,6 +95,7 @@ pub mod device;
 pub mod ledger;
 pub mod lp;
 pub mod ommx;
+pub mod wire;
 pub mod model;
 pub mod mppi;
 pub mod oracle;

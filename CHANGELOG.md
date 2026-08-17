@@ -44,6 +44,57 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
+## Unreleased
+
+### The OMMX decoder, rewritten from the specification
+
+OMMX has produced **six** defects — more than the rest of this crate combined. Shipped as a sibling
+crate the C ABI could not reach. Julia functions exported with no body. The constant documented
+backwards on five surfaces. proto3's default-omission rule missed, so variable 0 read as "not
+declared". A length prefix that wrapped `usize` and crashed on eleven bytes. A diagonal quadratic
+term — *valid* OMMX — that aborted the host on twenty-three.
+
+That is not six unlucky mistakes. It is one structural fault with six symptoms, and it was in the
+decoder's type:
+
+```rust
+fn next(&mut self) -> Option<(u32, Body)>          // the old one
+fn read_field(&mut self) -> Result<Option<Field>, WireError>   // now
+```
+
+`None` meant **both** "the message ended" and "the message is corrupt". A truncated instance parsed
+as a shorter valid instance, silently, so every corruption case had to be caught by hand somewhere
+further up — which is precisely the whack-a-mole the six defects record. A decoder that cannot say
+"malformed" makes every caller guess.
+
+`src/wire.rs` is the replacement: the protobuf wire format written against the spec rather than
+against the instances that happened to turn up. Beyond the type change it fixes four things the old
+one had wrong:
+
+- **`fixed32` returned zero.** The arm was `self.i += 4; Some((field, Body::Varint(0)))` — four bytes
+  advanced with no bounds check and **the value replaced by 0**. Any 32-bit float field would have
+  read as 0.0 with nothing said.
+- **Groups (wire types 3/4) silently truncated the message.** Deprecated, not impossible; a reader
+  that stops at one reports a partial message as whole. Refused by name.
+- **Varints were not canonical.** At most ten bytes, and the tenth carries one bit. Longer is
+  malformed input, not a large number.
+- **Packed arrays truncated on error.** `while let Some(..)` returned the prefix it managed — the
+  same fault as the message-level one, one level down.
+
+Field number 0 is refused. Every length goes through `usize::try_from`, never `as usize` — the cast
+is what wrapped, and a wrapped length passes any bounds check written after it.
+
+**Validated against the format's own implementation throughout.** `tests/ommx_reference.rs` shells
+out to Python's `ommx` package and scores every state; it passed before the rewrite and passes
+after, so the wire change is provably behaviour-preserving where it matters.
+
+The new fuzz target `the_wire_codec_never_panics_and_never_reports_a_truncation_as_an_end` states the
+property directly: a cut landing **on** a field boundary is a legitimate shorter message, and a cut
+landing anywhere else must be an error. That took two attempts — the first version asserted only
+"a prefix never reports all four fields", which is true of the broken decoder too, since a short
+message genuinely has fewer complete fields. Reverting the fix and watching it stay green is how
+that was found.
+
 ## 0.14.0
 
 **Two unbounded allocations, found by a fuzzer written after 0.13.0 shipped.**
