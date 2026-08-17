@@ -44,6 +44,48 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
+## 0.14.0
+
+**Two unbounded allocations, found by a fuzzer written after 0.13.0 shipped.**
+
+The 0.13.0 audit found seven crash paths by *reading code*, which is not a repeatable method. So the
+parsers now have a fuzz harness — and it found two defects on its first two runs, both of a class the
+reading had missed entirely: not a panic, but an **allocation sized directly from a number in the
+input**.
+
+- **Fifty bytes asked for 96 GB.** `spins` was unbounded, which made the colour-class bound
+  `c < spins` **vacuous** — a declared spin count of `u64::MAX` admits every colour index there is.
+  `spins 18446744073709551615` then `color 4000000000 0` allocated 4,000,000,001 colour classes.
+  Two independent bounds now: `spins` is capped at `u32::MAX`, the graph's own index type, and
+  colour classes at 2²⁰ — a graph needing a million colours has a vertex of degree 999,999.
+- **A six-line LP file asked for 1 GB.** `lp::parse` emits one objective term per value of an
+  integer's domain, so a range spanning most of `i64` is an unbounded allocating loop — and it runs
+  *during parsing*, before `compile()` and therefore before 0.13.0's `DomainTooLarge` refusal could
+  see it. Refused at the declaration now, with the same `u32::MAX` ceiling so the two agree.
+
+### The harness
+
+`tests/fuzz_parsers.rs` (ftp, LP, OMMX) and `serve/tests/fuzz_json.rs` (the parser with the proven
+remote DoS). No fuzzing crate — the core keeps its zero dependencies — just a seeded xorshift, so
+every failure reproduces exactly. Three input shapes: random bytes, mutated valid inputs, and the
+specific integers that break arithmetic rather than parsing.
+
+Both carry a **capped global allocator** that refuses any single allocation over 512 MB. That is not
+decoration: a fuzzer's purpose is to find the input a parser mishandles, and when the mishandling is
+an unbounded allocation, *finding* it means the machine tries to serve it. The first run of this
+harness sent a laptop to swap. A refused allocation aborts instantly instead, and
+`the_allocation_cap_actually_fires` checks in a child process that the cap is wired to something.
+
+Verified by reverting both `ftp` bounds and watching the harness report
+`memory allocation of 96000000024 bytes failed` — and worth recording that the *first* version of
+the hostile-input list would **not** have re-found its own defect, because it had `spins u64::MAX`
+and a large colour index as separate cases when only their combination allocates.
+
+### Breaking
+
+- `ftp` refuses a spin count above `u32::MAX`, and a colour class index above 2²⁰.
+- `lp::parse` refuses a `General` variable whose domain exceeds `u32::MAX` values.
+
 ## 0.13.0
 
 **A crash-safety release.** Seven ways a caller could abort the host process, one silently wrong LP

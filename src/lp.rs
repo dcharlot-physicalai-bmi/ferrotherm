@@ -166,6 +166,29 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
         if hi <= lo {
             return err(0, format!("'{name}' is a general variable with bounds {lo}..{hi}"));
         }
+        // Refused HERE, before anything walks the domain.
+        //
+        // The objective loop below emits one term per value in `lo..=hi`, so a range spanning most
+        // of `i64` is not merely a large model -- it is an unbounded loop allocating on every
+        // iteration, and it runs during PARSING, before `compile()` and therefore before the
+        // `DomainTooLarge` refusal there can see it. Found by the parser fuzzer as a 1 GB
+        // allocation from a six-line LP file.
+        //
+        // The ceiling is the graph's own spin index type, matching `CompileError::DomainTooLarge`,
+        // so the two refusals agree on what is representable.
+        let span = (hi as i128) - (lo as i128) + 1;
+        if span > u32::MAX as i128 {
+            return err(
+                0,
+                format!(
+                    "'{name}' is a general variable over {lo}..{hi}, which is {span} values. \
+                     Spin indices are u32, so at most {} can be addressed -- and reading this file \
+                     would emit one objective term per value before anything checked. Narrow the \
+                     bounds",
+                    u32::MAX
+                ),
+            );
+        }
         vars.insert(name.clone(), m.integer(name, lo, hi));
     }
 

@@ -237,7 +237,29 @@ impl Program {
                 }
                 "name" => p.name = Some(it.next().unwrap_or("").to_string()),
                 "spins" => {
-                    p.spins = num(it.next(), line, "spins")?;
+                    // Bounded at the graph's own index type.
+                    //
+                    // This was unbounded, which also made the colour-class bound below VACUOUS:
+                    // that check asks whether `c < p.spins`, so a declared spin count of u64::MAX
+                    // admits every colour index there is. Fifty bytes -- `spins
+                    // 18446744073709551615` then `color 4000000000 0` -- was accepted and
+                    // allocated 4,000,000,001 colour classes, about 96 GB, from a file that fits
+                    // in a tweet. Found by the parser fuzzer on its first run, as a hang.
+                    //
+                    // Spin indices are `u32` in `Graph`, so nothing beyond that is representable
+                    // anyway; refusing here makes every later bound mean something.
+                    let n: usize = num(it.next(), line, "spins")?;
+                    if n > u32::MAX as usize {
+                        return Err(FtpError {
+                            line,
+                            message: format!(
+                                "{n} spins, but spin indices are u32 so at most {} can be \
+                                 addressed",
+                                u32::MAX
+                            ),
+                        });
+                    }
+                    p.spins = n;
                     saw_spins = true;
                 }
                 "bias" => {
@@ -275,11 +297,19 @@ impl Program {
                     // any merely-large `c` allocated 24 bytes per entry, so a 45-byte program could
                     // ask for gigabytes. A program of n spins cannot have more than n colour
                     // classes -- each class is a non-empty set of distinct spins.
-                    if !saw_spins || c >= p.spins {
+                    // Two bounds, because either alone is escapable. `c < spins` is vacuous when
+                    // `spins` is itself enormous, and a constant alone would admit a colour index
+                    // larger than the graph. A chromatic decomposition needs one class per colour,
+                    // and a graph needing a million of them has a vertex of degree 999,999 -- so
+                    // this ceiling is far past anything the physics produces, while keeping a
+                    // 50-byte file from asking for 96 GB.
+                    const MAX_COLOUR_CLASSES: usize = 1 << 20;
+                    if !saw_spins || c >= p.spins || c >= MAX_COLOUR_CLASSES {
                         return Err(FtpError {
                             line,
                             message: format!(
-                                "colour class {c} is out of range for a program of {} spins",
+                                "colour class {c} is out of range for a program of {} spins \
+                                 (and at most {MAX_COLOUR_CLASSES} classes)",
                                 p.spins
                             ),
                         });
