@@ -65,6 +65,24 @@ Set `publish = false` in its `Cargo.toml`. That is a statement, and the gate rea
 carrying a description, licence, keywords and categories but no publish — which is what
 `ferrotherm-cloud` was for months — is the one state that says neither.
 
+## The site carries its own copy of the browser surfaces
+
+`v2/` is a **separate repository**, so no ferrotherm CI job can see whether the deployed editor
+matches the code. That is not an oversight to fix with more CI — it is a fact about where the files
+live, and the consequence is that this is a step someone has to run:
+
+```sh
+scripts/publish-site-assets.sh --check   # exits 1 if the site is behind
+scripts/publish-site-assets.sh           # rebuild, copy, verify
+```
+
+Then commit the result **in `v2/`**, which is a different repository with a different remote.
+
+Skipping it is not visibly broken, which is exactly the problem. The deployed wasm was found several
+releases behind and missing `ft_model_ommx`: the editor loaded, the button was there, and clicking it
+did nothing, because a missing export is `undefined` in JavaScript rather than an error. A stale
+surface that *works* is worse than one that breaks.
+
 ## After crates.io
 
 - **Python**: `.github/workflows/python-release.yml` builds the wheels; it fires on a `v*` tag.

@@ -54,7 +54,16 @@ for f in graph.html ide.html index.html ferrotherm.wasm; do
   fi
 done
 
-# The same check CI runs, against the copy the SITE will serve rather than the one in the repo.
+# The same check `check-wasm-exports.sh` runs, against the copy the SITE will serve rather than the
+# one in this repository.
+#
+# CI does NOT run this, and cannot: the site is a separate git repository, so a ferrotherm runner has
+# no copy of it to compare against. This comment used to claim CI ran it, which is the worst kind of
+# false statement in a gate -- it reads as coverage and there is none. The site drifted to several
+# releases behind, missing `ft_model_ommx` entirely, and nothing said so.
+#
+# The workable place for it is the release procedure, where refreshing the site belongs anyway.
+# RELEASING.md carries it as a step.
 "$here/scripts/check-wasm-exports.sh" "$site/ferrotherm.wasm" | sed 's/^/  /'
 
 
