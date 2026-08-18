@@ -27,7 +27,21 @@ fn load_images(path: &str, limit: usize) -> (Vec<Vec<i8>>, usize) {
 
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
-    let path = a.first().expect("usage: dtm_scale <fmnist-images> [seconds] [L] [T]");
+    // A missing argument is a usage error, not a crash.
+    //
+    // This was `.expect(..)`, so running the example with no arguments printed "thread 'main'
+    // panicked" and a backtrace note -- which reads as the example being broken rather than as the
+    // caller having forgotten a path. Every other example in this directory runs with no arguments;
+    // this one needs a dataset, and the difference should look deliberate.
+    let Some(path) = a.first() else {
+        eprintln!("usage: dtm_scale <fmnist-images> [seconds] [L] [T]");
+        eprintln!();
+        eprintln!("  <fmnist-images>  an idx3-ubyte file, e.g. train-images-idx3-ubyte");
+        eprintln!("  [seconds]        wall-clock budget for training      (default 120)");
+        eprintln!("  [L]              pattern-grid side                   (default 70)");
+        eprintln!("  [T]              denoising steps                     (default 8)");
+        std::process::exit(2);
+    };
     let budget = Duration::from_secs(a.get(1).and_then(|s| s.parse().ok()).unwrap_or(120));
     let l: usize = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(70);
     let t_steps: usize = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(8);

@@ -50,10 +50,39 @@ jobs:
           OMMX_PYTHON=python3 cargo test --release --test ommx_reference
       - name: Examples build
         run: cargo build --release --examples
-      - name: Verification examples (exact-physics gates)
+      # RUN them, not merely build them.
+      #
+      # This step was two examples while `cargo build --examples` compiled all twenty, so eighteen
+      # were checked for compiling and never for working. `dtm_scale` had been panicking on a
+      # missing argument the whole time and nothing could see it, because a panic at runtime is
+      # invisible to a build.
+      #
+      # Every example that runs unattended is run, and a non-zero exit fails the job -- which is
+      # what the seven gate examples use to report a physics check failing. 115 s for seventeen of
+      # them, measured, which is affordable on every push.
+      #
+      # Three are excluded by name, with the reason, rather than by a silent filter:
+      #   depth_vs_dimension  199 s   too slow for every push
+      #   reach_on_z1         107 s   the flagship; slow, and run before a release
+      #   dtm_scale           needs a Fashion-MNIST idx3-ubyte file this runner does not have
+      - name: Every unattended example runs, and a gate example failing fails the build
         run: |
-          cargo run --release --example ring_tv
-          cargo run --release --example onsager
+          set -euo pipefail
+          skip="depth_vs_dimension reach_on_z1 dtm_scale"
+          ran=0
+          for f in examples/*.rs; do
+            n=$(basename "$f" .rs)
+            case " $skip " in *" $n "*) echo "  skipped $n"; continue;; esac
+            echo "  running $n"
+            cargo run --release --quiet --example "$n" >/dev/null
+            ran=$((ran + 1))
+          done
+          # A floor: if the glob ever stops matching, this passes over nothing.
+          if [ "$ran" -lt 15 ]; then
+            echo "only $ran examples ran; this checked almost nothing" >&2
+            exit 2
+          fi
+          echo "  $ran examples ran, all exit 0"
   # Do the tests have teeth? A green suite says the code runs, not that a wrong answer would be
   # noticed -- and the 0.12.0 release exists because 320 green tests could not tell an invented LP
   # bound from a correct one. This breaks the code on purpose and requires the named test to go red.
