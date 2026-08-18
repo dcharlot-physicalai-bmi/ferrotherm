@@ -49,37 +49,9 @@ pub fn bsn_fire_prob(threshold: u8, k: u8) -> f64 {
     }
 }
 
-/// Former name of [`bsn_threshold_init`], kept so 0.1.0 callers keep building.
-#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_threshold_init")]
-pub fn pbit_threshold_init(threshold: u8) -> u64 {
-    bsn_threshold_init(threshold)
-}
-
-/// Former name of [`bsn_fire_prob`], kept so 0.1.0 callers keep building.
-#[deprecated(note = "the literature name is the binary stochastic neuron; use bsn_fire_prob")]
-pub fn pbit_fire_prob(threshold: u8, k: u8) -> f64 {
-    bsn_fire_prob(threshold, k)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The deprecated aliases still forward.
-    ///
-    /// Their whole purpose is that a 0.1.0 caller keeps building, which is a promise worth one
-    /// test rather than a warning in every other one. The tests used to *call* the deprecated
-    /// names, which exercised the shim by accident and the real function not at all.
-    #[test]
-    #[allow(deprecated)]
-    fn the_old_pbit_names_still_forward_to_the_bsn_ones() {
-        for threshold in 0..=6u8 {
-            assert_eq!(pbit_threshold_init(threshold), bsn_threshold_init(threshold));
-            for k in 0..=5u8 {
-                assert_eq!(pbit_fire_prob(threshold, k), bsn_fire_prob(threshold, k));
-            }
-        }
-    }
 
     /// Exhaustive: every LUT entry must equal the defining predicate.
     #[test]

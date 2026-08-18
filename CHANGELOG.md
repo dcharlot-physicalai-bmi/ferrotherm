@@ -44,6 +44,18 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
+## Unreleased
+
+### `ferrotherm-silicon` 0.2.0 — the deprecated `pbit_*` aliases are gone
+
+`pbit_threshold_init` and `pbit_fire_prob` were kept "so 0.1.0 callers keep building", with a test
+pinning that promise. `ferrotherm-silicon` 0.1.0 has fifteen downloads, which is what crates.io's own
+mirroring produces for a crate with no dependents. The shim was protecting nobody and the test was
+spending CI on it.
+
+Use `bsn_threshold_init` and `bsn_fire_prob` — the literature name, which is what they were renamed
+to in the first place. This is a pre-1.0 project and a correct API beats a compatible one.
+
 ## 0.15.0
 
 ### The OMMX decoder, rewritten from the specification
