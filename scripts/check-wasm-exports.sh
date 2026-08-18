@@ -58,6 +58,42 @@ done
 printf 'checked %d exports the pages call against %s (%s bytes)\n' \
   "${#wanted[@]}" "$(basename "$wasm")" "$(wc -c < "$wasm" | tr -d ' ')"
 
+# The README states a size, and a stated number drifts.
+#
+# It said 44 KB while the artefact was 356 KB -- eight times out, and nothing could see it because
+# the figure lived in prose and the artefact lived in a file. Corrected once by hand, it went stale
+# again within a day when the OMMX rewrite added a module. A number a human retypes is a number that
+# rots, so the check reads both.
+#
+# 10% of slack, because a wasm is not byte-reproducible across toolchain versions and a gate that
+# fires on a rustc bump is a gate people disable.
+readme="$here/README.md"
+if [[ -f "$readme" ]]; then
+  raw_kb=$(( $(wc -c < "$wasm") / 1024 ))
+  gz_kb=$(( $(gzip -c "$wasm" | wc -c) / 1024 ))
+  claimed=$(grep -oE '\*\*[0-9]+ KB \.wasm\*\*' "$readme" | grep -oE '[0-9]+' | head -1)
+  claimed_gz=$(grep -oE '\([0-9]+ KB gzipped\)' "$readme" | grep -oE '[0-9]+' | head -1)
+  if [[ -z "$claimed" ]]; then
+    echo "the README no longer states a wasm size; this check now guards nothing" >&2
+    exit 2
+  fi
+  bad_size=0
+  for pair in "$claimed:$raw_kb:raw" "$claimed_gz:$gz_kb:gzipped"; do
+    said=${pair%%:*}; rest=${pair#*:}; actual=${rest%%:*}; what=${rest##*:}
+    [[ -n "$said" ]] || continue
+    lo=$(( actual * 9 / 10 )); hi=$(( actual * 11 / 10 ))
+    if (( said < lo || said > hi )); then
+      echo "README says ${said} KB ${what}; the artefact is ${actual} KB" >&2
+      bad_size=1
+    fi
+  done
+  if (( bad_size )); then
+    echo "A size a human retypes is a size that rots. Update README.md, or rebuild docs/*.wasm." >&2
+    exit 1
+  fi
+  printf 'README size figures agree: %s KB raw, %s KB gzipped\n' "$raw_kb" "$gz_kb"
+fi
+
 if [[ ${#missing[@]} -gt 0 ]]; then
   printf '\nmissing: %s\n' "${missing[*]}" >&2
   echo >&2
