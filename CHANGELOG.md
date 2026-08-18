@@ -44,6 +44,32 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
+## 0.15.1
+
+### PyPI was serving the Rust README
+
+`python/README.md` — the description PyPI shows — was a **verbatim copy of the Rust one**. Someone
+who ran `pip install ferrotherm` was told to run `cargo add ferrotherm` and shown Rust code. It also
+still carried the `joules` snippet that does not compile, because that fix was applied to the root
+README and the copy was forgotten.
+
+Rewritten as an actual Python README: the `Problem` API with named variables and named results, soft
+constraints, direct sampling, and the ledger — using the real accessors, which are properties
+(`s.magnetization`, `s.node_updates`, `s.joules`) and not the methods the first draft guessed at.
+
+`python/test_readme.py` executes **every** ```python block, standalone, and holds each `print` line
+to the value written beside it. Running them is what found `magnetization()`, and a `ledger()` that
+does not exist.
+
+The Onsager block used 16×16 over 500 sweeps and printed 0.898 beside Onsager's 0.974 as though they
+agreed. A small lattice sampled briefly is not the thermodynamic limit. It is 64×64 over 2000 sweeps
+now — four decimals, still instant — and says why the size is not decoration.
+
+Two rounds of the test being wrong before it was right, both found by reverting the README and
+watching it stay green: the first version checked **hardcoded** constants rather than the file, and
+the second searched the whole of stdout for the claimed number, so a drifted `|M|` was satisfied by
+the *next* line's output. It matches per line now.
+
 ## Unreleased
 
 ### `ferrotherm-silicon` 0.2.0 — the deprecated `pbit_*` aliases are gone

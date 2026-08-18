@@ -1,117 +1,90 @@
 # ferrotherm
 
-Thermodynamic computing in pure Rust. Sparse energy-based models, chromatic block-Gibbs, parallel
-tempering, thermodynamic linear algebra, stochastic differentiable programs, a variational
-compiler onto device topologies, and a first-class joules ledger — zero dependencies, std-only,
-wasm-clean, deterministic by seed, verified against exact physics before anything else.
+Thermodynamic computing from Python: state a problem, get named values back.
 
-The physics is open and old: Ising (1925), Glauber dynamics (1963), Gibbs sampling (Geman & Geman
-1984), checkerboard parallel sweeps, Ornstein-Uhlenbeck relaxation. A "thermodynamic sampling
-unit" accelerates exactly these loops and charges for I/O. Both the loops and the ledger belong in
-the open commons, runnable on every compute fabric: CPU today, WebGPU and wasm in the browser,
-physics-native silicon when there is silicon to measure.
-
-## Use it
+The physics is open and old — Ising (1925), Glauber dynamics (1963), Gibbs sampling (Geman & Geman
+1984) — and a "thermodynamic sampling unit" accelerates exactly these loops. This package binds the
+[`ferrotherm`](https://crates.io/crates/ferrotherm) Rust library through its C ABI: the solver is
+zero-dependency Rust, deterministic by seed, verified against exact physics.
 
 ```sh
-cargo add ferrotherm
+pip install ferrotherm
 ```
 
-```rust
-use ferrotherm::{ising, gibbs::Sampler, ledger::{Ledger, Z1_SPICE}};
+## State a problem in the vocabulary of the problem
 
-let g = ising::lattice2d(16, 1.0);            // a magnet below critical temperature
-let mut led = Ledger::default();
-let mut smp = Sampler::new(&g, 0.6, 42);
-smp.sweeps(500, Some(&mut led));               // sample it, and meter it
-println!("|M| = {:.3}", smp.s.iter().map(|&v| v as f64).sum::<f64>().abs() / g.n as f64);
-println!("device-model cost: {:.2e} J", led.joules(&Z1_SPICE));  // pre-silicon vendor prices, labelled
+Not a QUBO matrix. Variables have names and domains, constraints say what they mean, and the answer
+comes back keyed by the names you used.
+
+```python
+import ferrotherm as ft
+
+p = ft.Problem()
+a = p.categorical("a", 3)
+b = p.categorical("b", 3)
+p.not_equal(a, b)
+p.maximize(3 * a.is_(1) + 4 * b.is_(2))
+
+ans = p.solve(tries=32)
+print(ans.values)      # {'a': 1, 'b': 2}
+print(ans.feasible)    # True
 ```
 
-`AGENTS.md` carries the invariants and task recipes for AI agents; `llms.txt` is the machine
-summary. Every example doubles as a verification gate with a meaningful exit code.
+A constraint can be **soft** — a price rather than a wall — and the answer reports what it cost:
 
-## Field map
+```python
+import ferrotherm as ft
 
-| Thermodynamic-computing field | ferrotherm module | status |
-|---|---|---|
-| THRML — block-Gibbs on sparse EBM graphs (Extropic) | `graph` + `gibbs` + `device` | **shipped, verified** |
-| THRML — heterogeneous graphs (categorical nodes, arbitrary-arity factors) | `het` — mixed-kind factor-graph Gibbs | **shipped, verified** |
-| Torx — stochastic differentiable programming (Extropic) | `program` — typed wires, stochastic gates, 3 gradient routes | **shipped, verified** |
-| Thermalizers — variational compilation (Extropic) | `compile` — exact per-factor KL fit onto device patches | **shipped, verified** |
-| p-computer optimization line (Camsari et al.) | `tempering` — annealing + parallel tempering, ladder diagnostics | **shipped, verified** |
-| Thermodynamic linear algebra (Aifer et al. / Normal Computing) | `tla` — OU-network SPD solves + bias-free exact-transition integrator | **shipped, verified** |
-| Torx gradient estimators (Extropic) | `program` — REINFORCE + parameter-shift + **EBM-kernel** (one trajectory + one auxiliary draw) | **shipped, verified** |
-| DTM — denoising thermodynamic models (Extropic's flagship architecture) | `dtm` — forward kernels, pattern grids, contrastive chain training, ACP, TC penalty | **shipped, verified** |
-| Lattice Random Walk (Normal Computing CN101 algorithm) | `lrw` — ternary-increment SDE integration, exact-moment identities | **shipped, verified** |
-| Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
-| Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped, verified on Metal** |
-| Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
+p = ft.Problem()
+x = p.categorical("x", 3)
+y = p.categorical("y", 3)
+p.not_equal(x, y, soft=2.0)     # breaking this costs 2.0 x amount squared
+ans = p.solve(tries=32)
+print(ans.soft_cost, ans.violated)
+```
 
-Focus: **embodied and Physical AI** — sampling-based control (MPPI needs thousands of samples per
-tick), implicit/energy-based policies, world-model sampling — the workload domain the entire
-thermodynamic-computing corpus currently leaves empty.
+## Or sample the physics directly
 
-## Verification (all reproducible, seeds fixed)
+```python
+import ferrotherm as ft
 
-- `cargo test` — 6/6: exact-Boltzmann TV on an enumerable system, clamped-conditional exactness,
-  proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
-- `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
-  noise floor 0.0057 at 100k samples. Residual is sampling noise, not bias.
-- `cargo run --release --example onsager` — 2D Ising 64×64 vs Onsager/Yang closed form:
-  |M| matches to 4 decimals at β = 0.5/0.6/0.7; disordered above β_c.
-- `cargo run --release --example z1_ledger` — the crossings tax, executable, at the vendor's own
-  SPICE prices (arXiv:2608.01615 Table IV): the generative regime amortizes I/O; a 100 Hz control
-  loop is decided by the reflash-rate cap and the unpublished price of clamping an input.
-- `cargo run --release --example grad_check` — three independent gradient routes (REINFORCE,
-  parameter-shift, finite-difference referee) agree on the same stochastic circuit: −0.1922 /
-  −0.1922 / −0.1926 on the flip logit.
-- `cargo run --release --example gibbs_grad` — REINFORCE **through the Gibbs kernel** (exact
-  trajectory log-density, no approximation) matches the FD referee at three bias points; training
-  the biases of a ferromagnetic ring against E[(Σs)²/n] drives 2.21 → 0.20.
-- `cargo run --release --example lqr_energy` — a stochastic-program controller trained by gradient
-  descent lands on the provable optimum: k = 1.996 vs exact k* = 1.997, expected-cost excess 0.00%.
-  Control effort (R·E[Σu²]) is the actuation-proxy term — the E_task frame at the program level.
-- `cargo run --release --example compile_chain` — the compilation error bound (arXiv:2608.01615
-  Eq. 17, the chain rule of KL) verified **exactly**: readout KL 0.0057 ≤ Σε = 1.42 nats on a
-  3-stage compiled program, and context-matched compilation beats uniform-input compilation on the
-  inputs the program actually feeds it (ε 0.721 vs 0.754).
-- `cargo run --release --example reach_on_z1` — the flagship, and **the boundary is the result**:
-  a coherent quantized reach target exists (gate 90%, reached only after applying our
-  capacity-vs-basis lesson — raw-angle bins gate-fail at 32%, error-vector log-bins pass), but the
-  capacity ladder plateaus far below it: single patch kernel 15–30% closed-loop, per-joint
-  factorization 35–45%, trajectory-level post-training +3 pts. The reach law is J(q)ᵀe — products
-  of state bits that sparse local pairwise energies with a few hidden spins cannot route. A control
-  workload does **not yet** map onto the degree-16 fabric at patch scale; nobody has published
-  otherwise. The ledger stands regardless: at gate quality the device's compute would sit ~7 orders
-  below Jetson watts×time and E_task becomes actuation-dominated, while 9,600 clamp ops/s against
-  the ≤1/s reflash cap remains the unpriced feasibility wall.
+s = ft.lattice2d(64, 1.0, beta=0.6)   # a magnet below critical temperature
+s.sweep(2000)
+print(f"|M| = {abs(s.magnetization):.4f}")        # 0.9736
+print(f"Onsager = {ft.onsager(0.6):.4f}")         # 0.9736 — the closed form, matched to 4 dp
+```
 
-- `cargo test` also verifies: `tempering` finds the **exhaustively-enumerated ground state** of a
-  random frustrated 16-spin glass (and its ladder diagnostics catch dead replica pairs); `tla`
-  matches **Gaussian elimination** on SPD solves and recovers A⁻¹ from sample covariance; the
-  `ffi` path re-reproduces Onsager end to end through the C ABI.
-- `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
-  the cdylib is a **44 KB .wasm** exposing the `ft_*` C ABI: the run-everywhere claim is a build,
-  not a slogan.
-- `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against
-  Onsager on the visitor's GPU before reporting throughput** (measured here: |M| 0.9143 vs 0.9113,
-  0.9750 vs 0.9736 on Apple metal-3). Measured: **9.35e9 flips/s** at full die scale (269,568
-  nodes, degree 16; 0.107 ns/flip). CPU on the same machine, measured quiet: 7.3e7 flips/s
-  single-thread (13.6 ns/flip), 3.8e8 flips/s at 18 threads via `sweeps_par` (an earlier
-  published 86 ns/flip figure was contaminated by concurrent background load and is corrected).
-  Energy per flip at package watts / measured rate: 10 W → 1.07 nJ (151× the Z1 SPICE projection),
-  25 W → 2.67 nJ (377×), 60 W → 6.4 nJ (905×). So the measured gap between a first-pass browser
-  sampler on consumer silicon and the vendor's pre-silicon projection is **2–3 orders of
-  magnitude**, not the marketed four — with both biases stated: package watts cover the whole
-  platform; the SPICE figure excludes I/O and its own appendix revised the coarse model ~10× worse.
+That second line is the check that matters: Onsager's 1944 closed form for the infinite 2D lattice,
+and a 64x64 sampler reproducing it to four decimals. The size is not decoration — 16x16 over 500
+sweeps gives 0.898 against 0.974, because a small lattice sampled briefly is not the thermodynamic
+limit. Verify against exact physics before opinions.
 
-## Positions this crate takes
+`ft.ring`, `ft.z1_grid`, `ft.frustrated` and `ft.wishart` build the other standard graphs, and
+`ft.Model` takes an explicit edge list when you want to write the couplings yourself.
 
-1. **The ledger is not an appendix.** Every simulation carries joules: samples, reads, writes,
-   priced by a swappable `Prices` device model. Re-price the same workload on GPU-measured
-   watts×time and you have the impedance-tax comparison that decides whether standalone sampling
-   hardware is worth buying.
-2. **Determinism.** Same seed, same draws, on every platform. Published numbers are reproducible
-   or they are not published.
-3. **Verify against exact physics first.** Onsager before opinions.
+## Every run carries its joules
+
+The ledger is not an appendix. A sampler counts the work it did and prices it at Z1-class device
+figures, so the energy question is answerable rather than rhetorical. Note what is being priced:
+the modelled device, not the CPU this ran on.
+
+```python
+import ferrotherm as ft
+
+s = ft.lattice2d(64, 1.0, beta=0.6)
+s.sweep(2000)
+print(f"{s.node_updates} node updates -> {s.joules:.2e} J")
+```
+
+## The library it binds
+
+This package carries no solver of its own — it loads the shared library and calls it. In order:
+
+1. `FERROTHERM_LIB`, if you set it. An explicit path always wins.
+2. The copy shipped in the wheel.
+3. `target/release/` of a checkout, for developing against a local build.
+
+`ft.library_path()` tells you which one answered.
+
+Apache-2.0. Source, the Rust crate and eight other bindings:
+<https://github.com/dcharlot-physicalai-bmi/ferrotherm>. From the Institute for Physical AI @ BMI.

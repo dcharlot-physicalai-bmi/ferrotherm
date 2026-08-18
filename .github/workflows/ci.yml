@@ -125,7 +125,7 @@ jobs:
       - name: Python tests
         run: |
           pip install pytest
-          python -m pytest python/test_model.py -q
+          python -m pytest python/test_model.py python/test_readme.py -q
 
   wasm:
     runs-on: ubuntu-latest
