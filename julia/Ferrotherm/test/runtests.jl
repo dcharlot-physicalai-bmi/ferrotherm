@@ -285,3 +285,5 @@ end
     @test isempty(caveats(solve!(q; tries = 4)))
     close!(q)
 end
+
+include("readme.jl")

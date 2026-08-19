@@ -26,6 +26,44 @@ cargo build --release
 export FERROTHERM_LIB=$PWD/target/release/libferrotherm.dylib   # .so on Linux, .dll on Windows
 ```
 
+## Using it
+
+State a problem in the vocabulary of the problem — named variables, named constraints, and an answer
+keyed by the names you used.
+
+```julia
+using Ferrotherm
+
+p = Problem()
+a = categorical!(p, "a", 3)
+b = categorical!(p, "b", 3)
+not_equal!(p, a, b)
+maximize!(p, [(3.0, is(a, 1)), (4.0, is(b, 2))])
+
+ans = solve!(p; tries = 32)
+println(ans.values)        # Dict("b" => 2, "a" => 1)
+println(feasible(ans))     # true
+```
+
+Or sample the physics directly, and check it against the closed form:
+
+```julia
+using Ferrotherm
+
+s = lattice2d(64; J = 1.0, beta = 0.6)   # note the keyword arguments
+sweep!(s, 2000)
+println(round(abs(magnetization(s)); digits = 4))   # 0.9736
+println(round(onsager(0.6); digits = 4))            # 0.9736 — Onsager's closed form
+println(node_updates(s), " node updates -> ", joules_z1(s), " J")
+```
+
+That second comparison is the check that matters: Onsager's 1944 result for the infinite 2D lattice,
+reproduced to four decimals by a 64×64 sampler. The size is not decoration — 16×16 over 500 sweeps
+gives 0.898 against 0.974, because a small lattice sampled briefly is not the thermodynamic limit.
+
+The ledger travels with the run: `node_updates` and `joules_z1` price the modelled device, not the
+CPU this ran on.
+
 ## Why this is not `Pkg.add("Ferrotherm")`
 
 Checked against the registry's own rules on 2026-08-16 rather than assumed, because the answer
