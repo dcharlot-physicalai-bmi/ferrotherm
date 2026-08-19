@@ -20,6 +20,12 @@ jobs:
       # toolchain the runner lacks skip; a binding that is present and produces nothing FAILS.
       - name: Every binding compiles one model to the same bytes
         run: scripts/check-semantics.sh
+      # And SOLVES it to the same answer, which is a different question. check-semantics compares
+      # the model BEFORE it is solved, and its harness calls compile() explicitly -- so it exercised
+      # the exact step Zig's `solve` was skipping, and stayed green while that binding could not
+      # solve anything at all.
+      - name: Every binding solves one model to the same answer
+        run: scripts/check-answers.sh
       # Parity proves a symbol is DECLARED in each binding. For Julia that is an @cfn line, which
       # says nothing about whether a function wraps it -- both OMMX functions were once declared and
       # exported with no body in between, and the module loaded fine.
