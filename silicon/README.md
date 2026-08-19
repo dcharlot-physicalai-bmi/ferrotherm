@@ -8,6 +8,35 @@ Selected algorithms are ported, with permission, from Open Interface Engineering
 project. The port is a full re-implementation under IPAI @ BMI's control: no code path in this
 crate calls, links, or depends on any external entity's software.
 
+## Using it
+
+The declared capabilities need no board attached, which is most of the value: a caller can ask what
+rules their program out before buying hardware.
+
+```rust
+use ferrotherm_silicon::device::PtV2;
+
+let f = PtV2::describe();
+println!("{} | {:?}", f.name, f.topology);          // alchitry-pt-v2 | Degree(5)
+println!("max spins: {:?}", f.max_spins);           // Some(63400)
+println!("coupling: {:?}", f.coupling_range);       // integers 0..=1
+```
+
+`Degree(5)` is not a simplification: a LUT6 has six inputs and the random bit takes one, so five
+remain for neighbours. `63400` is the XC7A100T's LUT6 count. Both are properties of the part, and a
+program that needs more of either is refused by `Fabric::check` before anything is flashed.
+
+The LUT arithmetic is public too — a binary stochastic neuron is a threshold on a population count,
+and that is a table you can print:
+
+```rust
+use ferrotherm_silicon::lut::{bsn_threshold_init, bsn_fire_prob};
+
+println!("0x{:016x}", bsn_threshold_init(3));   // 0xfffefee8fee8e880
+println!("{:.4}", bsn_fire_prob(3, 5));         // 1.0000
+```
+
+
 ## Verified capability (all measured, not asserted)
 
 | capability | evidence |

@@ -18,6 +18,37 @@ A machine drawing 20 W doing nothing must not charge that to your workload. A "m
 forgets to subtract it reports mostly the cost of the computer being switched on. So the baseline
 and the delta are both reported — the subtraction is visible rather than assumed.
 
+## Using it
+
+`detect` returns `None` when the machine exposes no backend — that means **not found here**, never
+"impossible", and it is a case worth handling rather than unwrapping.
+
+```rust
+use ferrotherm_meter::Meter;
+use std::time::Duration;
+
+let Some(mut m) = Meter::detect() else {
+    println!("no power backend on this machine");
+    return;
+};
+println!("measuring on: {}", m.machine());          // e.g. Apple M5 Max
+
+let idle = m.idle(Duration::from_secs(2))?;         // 48.5 W (+/- 0.20 over 11 samples)
+let run = m.measure(idle, || {
+    // the workload
+})?;
+println!("{:.3} J above idle over {:.2} s", run.joules_above_idle, run.seconds);
+```
+
+Both halves of the baseline are on `Baseline` — `watts` and `sigma` — because a delta smaller than
+the baseline's own wander is not a small measurement, it is not a measurement. Two runs of one
+workload once reported 2.34e-8 and 1.81e-7 J per node update, an eight-fold spread, for exactly that
+reason.
+
+`Run::prices_from` turns a run and a `Ledger` into a `Prices` you can hand back to `ferrotherm` — so
+the same workload can be priced at what it actually cost here, instead of at a vendor's projection.
+
+
 ## What it refuses to answer
 
 This is the part worth reading, because the failure mode of energy measurement is a confident

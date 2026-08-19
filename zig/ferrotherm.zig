@@ -694,8 +694,15 @@ pub const Problem = struct {
         return n;
     }
 
-    /// Anneal `tries` times and keep the best answer.
+    /// Compile and solve, keeping the best of `tries` anneals.
+    ///
+    /// Compiles first, the way the Python and Julia bindings do. This used to call solve alone, so
+    /// the same program written from those bindings' examples returned `Error.NotSolved` -- which
+    /// says the sampler failed, when in fact nothing had been built for it to sample. One binding
+    /// out of step with the others is a trap for anyone who reads more than one, and
+    /// `ft_model_compile` is idempotent, so there is nothing to lose by making it the same.
     pub fn solve(self: *Problem, tries: u32) Error!void {
+        if (c.ft_model_compile(self.h) == 0) return Error.WillNotCompile;
         if (c.ft_model_solve(self.h, tries) == 0) return Error.NotSolved;
     }
 
@@ -711,6 +718,7 @@ pub const Problem = struct {
         stages: u32,
         sweeps: u32,
     ) Error!void {
+        if (c.ft_model_compile(self.h) == 0) return Error.WillNotCompile;
         if (c.ft_model_solve_with(self.h, tries, beta_hot, beta_cold, stages, sweeps) == 0) {
             return Error.BadSchedule;
         }
