@@ -10,6 +10,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The cross-binding gates below compare SURFACES, so this job needs the toolchains those
+      # surfaces are written in -- otherwise they skip, exit 0, and report success having compared
+      # four of seven. That is the same shape as check-exports.sh sitting in a job with no Julia:
+      # a gate that runs and covers less than it appears to. Measured before fixing: with a
+      # CI-like PATH, check-answers.sh compared 5 and silently skipped julia and zig.
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Playwright, for the wasm surface
+        working-directory: web-tests
+        run: npm install && npx playwright install --with-deps chromium
       - name: Install icarus-verilog (RTL bit-exactness gate)
         run: sudo apt-get update && sudo apt-get install -y iverilog
       - name: One version across every package
@@ -19,12 +36,16 @@ jobs:
       # Parity proves the names exist; this proves they compute the same thing. Bindings whose
       # toolchain the runner lacks skip; a binding that is present and produces nothing FAILS.
       - name: Every binding compiles one model to the same bytes
+        env:
+          FERROTHERM_REQUIRE_ALL: "1"
         run: scripts/check-semantics.sh
       # And SOLVES it to the same answer, which is a different question. check-semantics compares
       # the model BEFORE it is solved, and its harness calls compile() explicitly -- so it exercised
       # the exact step Zig's `solve` was skipping, and stayed green while that binding could not
       # solve anything at all.
       - name: Every binding solves one model to the same answer
+        env:
+          FERROTHERM_REQUIRE_ALL: "1"
         run: scripts/check-answers.sh
       # Parity proves a symbol is DECLARED in each binding. For Julia that is an @cfn line, which
       # says nothing about whether a function wraps it -- both OMMX functions were once declared and

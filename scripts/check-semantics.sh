@@ -44,8 +44,22 @@ LIB="$here/target/release/libferrotherm.dylib"
 [ -f "$LIB" ] || LIB="$here/target/release/libferrotherm.so"
 [ -f "$LIB" ] || { echo "no cdylib at target/release after building it" >&2; exit 2; }
 say() { printf '  %-14s %s\n' "$1" "$2"; }
-skip() { printf '  %-14s skipped: %s\n' "$1" "$2"; }
+note_skip() { missing="$missing $1"; }
+skip() { note_skip "$1"; printf '  %-14s skipped: %s\n' "$1" "$2"; }
 
+
+# A skip that CANNOT be silent where it matters.
+#
+# These gates compare SURFACES, so a missing toolchain does not weaken them a little -- it removes a
+# whole surface from the comparison and still exits 0. Measured: in CI's `test` job, which had only
+# Rust, this compared four of seven and reported success. That is the same shape as
+# `check-exports.sh` sitting in a job with no Julia.
+#
+# Locally a skip is right; not every machine has Julia, Zig and a browser. In CI it is the failure
+# mode the gate exists to catch, one level up. `FERROTHERM_REQUIRE_ALL=1` turns every skip into a
+# refusal, and CI sets it.
+require_all() { [ "${FERROTHERM_REQUIRE_ALL:-0}" = "1" ]; }
+missing=""
 # Which bindings were ATTEMPTED, so one that crashes is reported rather than dropped.
 #
 # Without this the loop below only saw files that exist. A binding that failed outright produced no
@@ -227,5 +241,11 @@ if [ "$bad" -gt 0 ]; then
   echo "$bad of $n bindings compile one model to different bytes." >&2
   echo "A binding that emits a different program is building a different model." >&2
   exit 1
+fi
+if require_all && [ -n "$missing" ]; then
+  echo "FERROTHERM_REQUIRE_ALL=1 and these surfaces were skipped:${missing}" >&2
+  echo "A skipped surface is not a weaker comparison, it is one fewer thing compared -- and this" >&2
+  echo "run would otherwise have exited 0 having said nothing about them." >&2
+  exit 2
 fi
 echo "  $n bindings compile one model to identical bytes"
