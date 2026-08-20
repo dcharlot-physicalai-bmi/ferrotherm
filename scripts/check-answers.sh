@@ -115,7 +115,7 @@ pub fn main() !void {
     try p.prefer(.maximize, 3.0, a.is(1));
     try p.prefer(.maximize, 4.0, b.is(2));
     try p.solve(64);
-    std.debug.print("a={d} b={d} feasible={}", .{ try p.value(a), try p.value(b), p.feasible() });
+    std.debug.print("a={?d} b={?d} feasible={}", .{ try p.value(a), try p.value(b), p.feasible() });
 }
 ZG
   # Zig prints through std.debug.print, which is STDERR -- so its answer and any panic trace land

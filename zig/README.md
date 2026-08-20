@@ -34,8 +34,8 @@ pub fn main() !void {
     try p.prefer(.maximize, 3.0, a.is(1));
     try p.prefer(.maximize, 4.0, b.is(2));
     try p.solve(32);
-    std.debug.print("a = {d}, b = {d}, feasible = {}\n",
-        .{ try p.value(a), try p.value(b), p.feasible() });   // a = 1, b = 2, feasible = true
+    std.debug.print("a = {?d}, b = {?d}, feasible = {}\n",
+        .{ try p.value(a), try p.value(b), p.feasible() });  // a = 1, b = 2, feasible = true
 }
 ```
 

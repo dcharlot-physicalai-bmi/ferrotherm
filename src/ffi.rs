@@ -902,9 +902,24 @@ pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32
     match (var_of(h, a), var_of(h, b)) {
         (Some(x), Some(y)) if a != b => {
             h.model.constrain(Constraint::NotEqual(x, y));
+            h.last_error.clear();
             1
         }
-        _ => 0,
+        // The header says "0 on refusal; ft_model_error says why", and this arm said nothing --
+        // leaving whatever error happened to be there from an earlier call, which is worse than
+        // empty. The two refusals are different mistakes and read differently.
+        _ => {
+            h.last_error = if a == b {
+                format!("'not_equal' needs two DIFFERENT variables; both arguments are variable {a}")
+            } else {
+                format!(
+                    "'not_equal' names variable {}, which is not declared; {} exist",
+                    if var_of(h, a).is_none() { a } else { b },
+                    h.model.len()
+                )
+            };
+            0
+        }
     }
 }
 
@@ -915,9 +930,24 @@ pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
     match (var_of(h, a), var_of(h, b)) {
         (Some(x), Some(y)) if a != b => {
             h.model.constrain(Constraint::Equal(x, y));
+            h.last_error.clear();
             1
         }
-        _ => 0,
+        // The header says "0 on refusal; ft_model_error says why", and this arm said nothing --
+        // leaving whatever error happened to be there from an earlier call, which is worse than
+        // empty. The two refusals are different mistakes and read differently.
+        _ => {
+            h.last_error = if a == b {
+                format!("'equal' needs two DIFFERENT variables; both arguments are variable {a}")
+            } else {
+                format!(
+                    "'equal' names variable {}, which is not declared; {} exist",
+                    if var_of(h, a).is_none() { a } else { b },
+                    h.model.len()
+                )
+            };
+            0
+        }
     }
 }
 
@@ -928,9 +958,24 @@ pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: i64) -> u32 {
     match var_of(h, v) {
         Some(x) if check_value(h, x, value) => {
             h.model.constrain(Constraint::Fix(x, value));
+            h.last_error.clear();
             1
         }
-        _ => 0,
+        // ONLY the undeclared case. `check_value` already sets a better message for an
+        // out-of-domain value -- it names the variable the caller declared and describes the
+        // domain, e.g. "'temperature' takes 10..=20; 3 is not one of them" -- and a first cut of
+        // this arm clobbered it with a worse one keyed by handle index. Two existing tests caught
+        // that immediately. An audit that reads a function BODY for `last_error` cannot see an
+        // error set inside a helper it calls; the tests could.
+        _ => {
+            if var_of(h, v).is_none() {
+                h.last_error = format!(
+                    "'fix' names variable {v}, which is not declared; {} exist",
+                    h.model.len()
+                );
+            }
+            0
+        }
     }
 }
 

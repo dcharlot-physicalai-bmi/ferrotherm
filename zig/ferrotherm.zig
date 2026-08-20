@@ -36,7 +36,19 @@ pub const Error = error{
     /// A model that does not compile. `lastError` says why.
     WillNotCompile,
     /// Reading an answer before solving one.
+    ///
+    /// NOT the same as a variable that solved but did not decode -- `value` returns null for that,
+    /// because the C ABI signals both with `i64::MIN` and only this side knows whether a solve has
+    /// happened. Python and Julia make the same distinction; this used to collapse them.
     NotSolved,
+    /// A name another variable already has.
+    ///
+    /// The C ABI refuses the rename and KEEPS the synthetic default (`v1`, `v2`, ...), so ignoring
+    /// its return left the second variable silently carrying a name the caller never chose --
+    /// which then appears in violation text and OMMX exports. Python raises and Julia throws.
+    DuplicateName,
+    /// There is no instance yet: compile or solve before asking for one.
+    NotCompiled,
 };
 
 /// A graph under construction. Add couplings and biases, then `build`.
@@ -493,6 +505,9 @@ pub const Sense = enum { maximize, minimize };
 ///     try p.solve(12);
 ///     const c = try p.value(west);   // 0, 1 or 2 — and not whatever east got
 pub const Problem = struct {
+    /// Whether a solve has happened, so `value` can tell "never solved" from "did not decode".
+    /// The C ABI cannot: it returns the same sentinel for both.
+    solved: bool = false,
     h: *c.ft_model,
 
     pub fn init() Error!Problem {
@@ -554,8 +569,14 @@ pub const Problem = struct {
     fn declare(self: *Problem, name: []const u8, idx: u32) Error!Var {
         if (idx == std.math.maxInt(u32)) return Error.BadDomain;
         // Push the name down, so a refusal names the variable the caller declared rather than the
-        // handle they were given back.
-        _ = c.ft_model_name(self.h, idx, name.ptr, @intCast(name.len));
+        // handle they were given back -- and CHECK it. Discarding this return let a duplicate name
+        // through: the C ABI refuses the rename, keeps the synthetic `v1`, and returns 0, so
+        // `p.binary("shift")` twice gave a second variable silently called "v1". Python raises and
+        // Julia throws; this said nothing. `lastError` carries the reason, which also covers a
+        // non-UTF-8 name.
+        if (c.ft_model_name(self.h, idx, name.ptr, @intCast(name.len)) == 0) {
+            return Error.DuplicateName;
+        }
         return .{ .idx = idx };
     }
 
@@ -704,6 +725,7 @@ pub const Problem = struct {
     pub fn solve(self: *Problem, tries: u32) Error!void {
         if (c.ft_model_compile(self.h) == 0) return Error.WillNotCompile;
         if (c.ft_model_solve(self.h, tries) == 0) return Error.NotSolved;
+        self.solved = true;
     }
 
     /// Anneal on your own ladder: `beta_hot` to `beta_cold` over `stages` of `sweeps` each.
@@ -722,12 +744,20 @@ pub const Problem = struct {
         if (c.ft_model_solve_with(self.h, tries, beta_hot, beta_cold, stages, sweeps) == 0) {
             return Error.BadSchedule;
         }
+        self.solved = true;
     }
 
-    /// The answer for one variable, in its own units.
-    pub fn value(self: *Problem, v: Var) Error!i64 {
+    /// The answer for one variable, in its own units, or null if it did not decode.
+    ///
+    /// The C ABI signals BOTH "no solution yet" and "solved, but this variable did not decode" with
+    /// `i64::MIN`, and only this side knows which. Collapsing them into `Error.NotSolved` was
+    /// actively misleading: a binary encoding of a non-power-of-two k can land on a spare codeword,
+    /// so a perfectly good solve leaves one variable undecoded -- and the caller was told the model
+    /// had never been solved. Python returns `None` and Julia `nothing` for exactly this case.
+    pub fn value(self: *Problem, v: Var) Error!?i64 {
+        if (!self.solved) return Error.NotSolved;
         const got = c.ft_model_value(self.h, v.idx);
-        if (got == std.math.minInt(i64)) return Error.NotSolved;
+        if (got == std.math.minInt(i64)) return null;
         return got;
     }
 
@@ -756,8 +786,12 @@ pub const Problem = struct {
 
     /// The compiled model as an OMMX instance -- the interchange format this corner of the field converged on, so a ferrotherm program can be read by jijmodeling, Jij's stack, and anything else that speaks it.
     /// Returns the protobuf bytes and the constant the +/-1 to 0/1 substitution introduces: ferrotherm_energy(s) == ommx_objective(x) + constant.
-    pub fn ommx(self: *Problem, buf: []u8) []const u8 {
+    pub fn ommx(self: *Problem, buf: []u8) Error![]const u8 {
         const need = c.ft_model_ommx(self.h, null, 0);
+        // A compiled instance is never empty, so need == 0 means "not compiled" unambiguously.
+        // This used to return an empty slice with no signal, and a caller wrote a zero-byte .ommx
+        // file believing it had serialised something. Python and Julia both raise here.
+        if (need == 0) return Error.NotCompiled;
         const n = @min(need, @as(u32, @intCast(buf.len)));
         const got = c.ft_model_ommx(self.h, buf.ptr, n);
         return buf[0..got];

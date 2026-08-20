@@ -383,12 +383,19 @@ pub fn sample(req: &Json) -> Result<Json, String> {
 pub fn anneal(req: &Json) -> Result<Json, String> {
     let gv = req.get("graph").ok_or("missing \"graph\"")?;
     let g = graph_from(gv)?;
-    let beta_min = opt_f64(req, "beta_min", 0.1);
-    let beta_max = opt_f64(req, "beta_max", 3.0);
+    // The library's ladder, not a second opinion.
+    //
+    // These were 0.1 -> 3.0 over 24 x 20 = 480 sweeps, where Python (__init__.py:334), Julia
+    // (Ferrotherm.jl:418) and the browser IDE (docs/ide.html) all use 0.05 -> 4.0 over 60 x 40 =
+    // 2400. Three surfaces agreeing and one disagreeing is not a design choice, it is drift: the
+    // same "use the defaults" request returned a worse best_energy here than everywhere else, on
+    // the same core, with nothing to say why.
+    let beta_min = opt_f64(req, "beta_min", 0.05);
+    let beta_max = opt_f64(req, "beta_max", 4.0);
     // Clamped, matching what /v1/solve's schedule arm already does. Unbounded, `stages` came
     // straight from the request body into an allocation.
-    let stages = opt_usize(req, "stages", 24).clamp(2, 10_000);
-    let per = opt_usize(req, "sweeps_per_stage", 20).clamp(1, 100_000);
+    let stages = opt_usize(req, "stages", 60).clamp(2, 10_000);
+    let per = opt_usize(req, "sweeps_per_stage", 40).clamp(1, 100_000);
     let seed = req.get("seed").and_then(|s| s.as_u64()).unwrap_or(0);
     if !(beta_min > 0.0 && beta_max > beta_min) {
         return Err("need 0 < beta_min < beta_max".into());
@@ -862,7 +869,9 @@ pub fn solve(req: &Json) -> Result<Json, String> {
 
     let penalty = m.effective_penalty();
     let compiled = m.compile().map_err(|e| e.to_string())?;
-    let tries = opt_usize(req, "tries", 16).clamp(1, 500);
+    // 12, matching Python (__init__.py:1205) and Julia (Ferrotherm.jl:1118). 16 here meant the
+    // same request cost a third more anneals over HTTP than in-process, for no stated reason.
+    let tries = opt_usize(req, "tries", 12).clamp(1, 500);
 
     // The annealing ladder, which the default handles for the models people write first and not for
     // the largest they will write. Every other surface lets a caller who measured their instance say
