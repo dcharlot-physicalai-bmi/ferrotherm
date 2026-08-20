@@ -197,11 +197,26 @@ PY
 fi
 
 # ---- the editor, which is the wasm ---------------------------------------------------------------
-if [ -f web-tests/node_modules/.package-lock.json ] || node -e "require('playwright')" 2>/dev/null; then
+# WHERE PLAYWRIGHT LIVES IS NOT WHERE THE IMPORT RESOLVES FROM.
+#
+# This guard tested for `web-tests/node_modules/.package-lock.json` and then ran the script from the
+# repository ROOT -- and an ESM `import "playwright"` from a file in `scripts/` never looks inside
+# `web-tests/`. Locally a stray root `node_modules` answered it and the surface passed. In CI, where
+# the workflow installs playwright into `web-tests/` and nowhere else, the script died with
+# ERR_MODULE_NOT_FOUND, and because the guard had said the toolchain was present the gate reported
+# "PRODUCED NOTHING -- its toolchain is present, so it broke". True, and about the harness rather
+# than the code. Ask the question the way the script will ask it, in each place it could be answered.
+pw_dir=""
+for d in "$here" "$here/web-tests"; do
+  if (cd "$d" && node -e "import('playwright').then(()=>process.exit(0),()=>process.exit(1))") 2>/dev/null; then
+    pw_dir="$d"; break
+  fi
+done
+if [ -n "$pw_dir" ]; then
   attempt wasm
   cp "$out/model.json" /tmp/_sem_model.json
-  node scripts/sem-wasm.mjs > "$out/wasm.ftp" 2> "$out/wasm.err" || true
-else skip wasm "no playwright"; fi
+  (cd "$pw_dir" && node "$here/scripts/sem-wasm.mjs") > "$out/wasm.ftp" 2> "$out/wasm.err" || true
+else skip wasm "playwright resolves from neither the repo root nor web-tests/"; fi
 
 # ---- compare -------------------------------------------------------------------------------------
 echo
