@@ -44,6 +44,42 @@ previously lived in nobody's head. See the Unreleased notes below for the gate t
   it never used — so every reader had to check whether couplings were being written twice.
 - Zero warnings across the workspace.
 
+## 0.16.0
+
+### Six cross-binding drifts, and the gate that catches the class
+
+`Problem.solve` in the Zig binding never called `ft_model_compile`, so it could not solve anything —
+and every gate was green. That is the finding worth keeping. `check-parity` proves the **names**
+reach each binding; `check-semantics` proves each **builds** byte-identical `.ftp`. Neither could see
+it, and check-semantics could not *by construction*: it compares the model before solving, and its
+own harness calls `compile()` explicitly, so it exercised the very step `solve` was skipping.
+
+`scripts/check-answers.sh` closes that: one model with a deliberately **unique** optimum, solved end
+to end on five surfaces, same answer required. Its Zig harness deliberately does *not* call
+`compile()`, because a gate that works around the defect it hunts is worth nothing.
+
+An adversarial read of every binding against `include/ferrotherm.h` then found six more, each
+confirmed by a second agent told to refute it (seven further claims were refuted and dropped):
+
+| surface | drift |
+|---|---|
+| `serve` | `/v1/anneal` ran 0.1→3.0 over **480** sweeps; Python, Julia and the browser IDE all use 0.05→4.0 over **2400** |
+| `serve` | `/v1/solve` defaulted to **16** tries; Python and Julia both use **12** |
+| `zig` | a duplicate name was accepted and **silently renamed** to the synthetic `v1` |
+| `zig` | `ommx()` before compile returned an **empty slice**, not an error |
+| `zig` | `value()` collapsed "never solved" with "solved but undecoded" |
+| C ABI | `not_equal`/`equal` returned 0 without setting `ft_model_error`, which the header promises |
+
+Three surfaces agreeing and one differing is drift, not a design choice.
+
+### Breaking
+
+- Zig `Problem.value` returns `Error!?i64` — `null` is a solved-but-undecoded variable, matching
+  Python's `None` and Julia's `nothing`.
+- Zig `Problem.ommx` returns `Error![]const u8`.
+- Zig `Problem.binary`/`categorical`/`integer` return `Error.DuplicateName` for a name already taken.
+- `ferrotherm-serve` 0.8.0: `/v1/anneal` and `/v1/solve` defaults now match the library's.
+
 ## 0.15.1
 
 ### PyPI was serving the Rust README
