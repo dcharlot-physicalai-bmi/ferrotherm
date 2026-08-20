@@ -41,11 +41,22 @@ skip() { printf '  %-10s skipped: %s\n' "$1" "$2"; }
 # THE MODEL. Chosen so the optimum is UNIQUE -- a model with ties would let two correct bindings
 # disagree, and this gate would blame them for it.
 #
-#   a, b over {0,1,2}, a != b, maximise 3*[a=1] + 4*[b=2]
+# It is the SAME model `check-semantics.sh` uses, deliberately: that gate proves every surface
+# BUILDS it to identical bytes, and this one proves they SOLVE it to the same answer. Together they
+# cover a program that touches two categoricals, an integer, `not_equal`, a counting constraint,
+# `fix`, and a two-term objective -- rather than each gate covering a different toy.
 #
-# Only a=1,b=2 scores 7; every other assignment scores 4, 3 or 0. So the answer is forced, and any
-# surface reporting something else is wrong rather than unlucky.
-EXPECT="a=1 b=2 feasible=true"
+#   a, b over {0,1,2}; t over 10..=13
+#   a != b, at_most 1 of {a=0, b=0}, fix t = 12
+#   maximise 3*[a=1] + 4*[b=2]
+#
+# Enumerated before being relied on: exactly one assignment scores 7, (a=1, b=2, t=12); every other
+# feasible point scores 4, 3 or 0. A model with TIES would let two correct bindings disagree and
+# this gate would blame them for it.
+#
+# `t` earns its place twice over -- it is the case where `fix(t, 12)` must mean TWELVE and not slot
+# twelve, which is a confusion this project has actually shipped.
+EXPECT="a=1 b=2 t=12 feasible=true"
 
 attempted=""
 attempt() { attempted="$attempted $1"; }
@@ -58,11 +69,14 @@ fn main() {
     let mut m = Model::new();
     let a = m.categorical("a", 3);
     let b = m.categorical("b", 3);
+    let t = m.integer("t", 10, 13);
     m.not_equal(a, b);
+    m.at_most(vec![Lit::Is(a, 0), Lit::Is(b, 0)], 1);
+    m.fix(t, 12);
     m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
     m.objective(Sense::Maximize, Expr::product(4.0, &[Lit::Is(b, 2)]));
     let s = m.compile().unwrap().solve_best_of(64);
-    print!("a={} b={} feasible={}", s.value("a"), s.value("b"), s.feasible());
+    print!("a={} b={} t={} feasible={}", s.value("a"), s.value("b"), s.value("t"), s.feasible());
 }
 RS
 attempt rust
@@ -76,12 +90,15 @@ import sys, os
 sys.path.insert(0, "python")
 import ferrotherm as ft
 p = ft.Problem()
-a = p.categorical("a", 3); b = p.categorical("b", 3)
+a = p.categorical("a", 3); b = p.categorical("b", 3); t = p.integer("t", 10, 13)
 p.not_equal(a, b)
+p.at_most([a.is_(0), b.is_(0)], 1)
+p.fix(t, 12)
 p.maximize(3 * a.is_(1) + 4 * b.is_(2))
 ans = p.solve(tries=64)
 open(os.path.join(sys.argv[1], "python.txt"), "w").write(
-    f"a={ans.values['a']} b={ans.values['b']} feasible={str(ans.feasible).lower()}")
+    f"a={ans.values['a']} b={ans.values['b']} t={ans.values['t']} "
+    f"feasible={str(ans.feasible).lower()}")
 PY
 
 # ---- julia ----------------------------------------------------------------------------------------
@@ -90,11 +107,14 @@ if command -v julia >/dev/null 2>&1; then
   FERROTHERM_LIB="$LIB" julia --project=julia/Ferrotherm -e '
     using Ferrotherm
     p = Problem()
-    a = categorical!(p, "a", 3); b = categorical!(p, "b", 3)
+    a = categorical!(p, "a", 3); b = categorical!(p, "b", 3); t = integer!(p, "t", 10:13)
     not_equal!(p, a, b)
+    at_most!(p, [is(a,0), is(b,0)], 1)
+    fix!(p, t, 12)
     maximize!(p, [(3.0, is(a,1)), (4.0, is(b,2))])
     ans = solve!(p; tries = 64)
-    print("a=", ans.values["a"], " b=", ans.values["b"], " feasible=", lowercase(string(feasible(ans))))
+    print("a=", ans.values["a"], " b=", ans.values["b"], " t=", ans.values["t"],
+          " feasible=", lowercase(string(feasible(ans))))
   ' > "$out/julia.txt" 2> "$out/julia.err"
 else skip julia "no julia on PATH"; fi
 
@@ -111,11 +131,15 @@ pub fn main() !void {
     defer p.deinit();
     const a = try p.categorical("a", 3);
     const b = try p.categorical("b", 3);
+    const t = try p.integer("t", 10, 13);
     try p.notEqual(a, b);
+    try p.count(.at_most, 1, &.{ a.is(0), b.is(0) });
+    try p.fix(t, 12);
     try p.prefer(.maximize, 3.0, a.is(1));
     try p.prefer(.maximize, 4.0, b.is(2));
     try p.solve(64);
-    std.debug.print("a={?d} b={?d} feasible={}", .{ try p.value(a), try p.value(b), p.feasible() });
+    std.debug.print("a={?d} b={?d} t={?d} feasible={}",
+        .{ try p.value(a), try p.value(b), try p.value(t), p.feasible() });
 }
 ZG
   # Zig prints through std.debug.print, which is STDERR -- so its answer and any panic trace land
@@ -138,14 +162,16 @@ if cargo build --release --quiet -p ferrotherm-serve 2>/dev/null; then
   (./target/release/ferrotherm-serve >/dev/null 2>&1 &)
   for _ in $(seq 1 40); do curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null && break; sleep 0.25; done
   curl -s -X POST localhost:8479/v1/solve -d '{
-      "variables":[{"name":"a","values":3},{"name":"b","values":3}],
-      "constraints":[{"type":"not_equal","a":"a","b":"b"}],
+      "variables":[{"name":"a","values":3},{"name":"b","values":3},{"name":"t","lo":10,"hi":13}],
+      "constraints":[{"type":"not_equal","a":"a","b":"b"},
+                     {"type":"at_most","k":1,"of":[{"var":"a","value":0},{"var":"b","value":0}]},
+                     {"type":"fix","var":"t","value":12}],
       "objective":{"maximize":true,"terms":[{"var":"a","value":1,"weight":3},{"var":"b","value":2,"weight":4}]},
       "tries":64}' 2>/dev/null \
     | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-print(f\"a={d['values']['a']} b={d['values']['b']} feasible={str(d['feasible']).lower()}\", end='')" \
+print(f\"a={d['values']['a']} b={d['values']['b']} t={d['values']['t']} feasible={str(d['feasible']).lower()}\", end='')" \
     > "$out/http.txt" 2> "$out/http.err"
   pkill -f 'target/release/ferrotherm-serve' 2>/dev/null
 else skip http "serve did not build"; fi
@@ -157,7 +183,11 @@ echo
 bad=0; n=0
 for name in $attempted; do
   f="$out/$name.txt"
-  got=$(tr -d '\r\n' < "$f" 2>/dev/null)
+  # `[ -f ]` first: a shell REDIRECT on a missing file reports through the shell's own stderr, which
+  # `2>/dev/null` on the command does not catch -- so a surface that produced nothing printed a raw
+  # "No such file or directory" above its own diagnosis.
+  got=""
+  [ -f "$f" ] && got=$(tr -d '\r\n' < "$f" 2>/dev/null)
   if [ -z "$got" ]; then
     say "$name" "PRODUCED NOTHING -- its toolchain is present, so it broke"
     [ -s "$out/$name.err" ] && sed 's/^/      /' "$out/$name.err" | tail -4
