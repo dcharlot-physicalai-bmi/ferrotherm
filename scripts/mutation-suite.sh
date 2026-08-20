@@ -34,7 +34,7 @@ if ! git diff --quiet; then
   exit 2
 fi
 
-# file | old | new | test filter | label
+# file | old | new | test filter | label | package (optional; omit for the root crate)
 #
 # Keep `old` long enough to be unambiguous and short enough to survive unrelated edits nearby.
 mutations=(
@@ -58,13 +58,21 @@ mutations=(
 
   # `Sum for f64` folds from -0.0, so a model with no soft violations reported \"-0\".
   "src/model.rs|.sum::<f64>() + 0.0|.sum::<f64>()|soft|soft cost negative zero"
+
+  # A BUSY MACHINE HAS NO IDLE. `Meter::idle` guarded the DELTA against the baseline's noise and
+  # never checked the baseline was idle, so a complete energy table was published here from a
+  # machine at load 82 -- other sessions' work charged to this workload. The contamination inflates
+  # the baseline, which overstates the idle share, which is the direction that flattered the very
+  # argument being made. Leave the guard in place but make it always permit, and the test that
+  # exercises the DECISION (rather than whatever this machine happens to be doing) must go red.
+  "meter/src/lib.rs|Some(l) if l > QUIET_LOAD => Err(format!(|Some(l) if false && l > QUIET_LOAD => Err(format!(|quiet|idle baseline on a busy machine|ferrotherm-meter"
 )
 
 bad=0
 ran=0
 for row in "${mutations[@]}"; do
-  IFS='|' read -r file old new filter label <<<"$row"
-  out="$(scripts/mutation-check.sh "$file" "$old" "$new" "$filter" "$label" 2>&1)"
+  IFS='|' read -r file old new filter label pkg <<<"$row"
+  out="$(scripts/mutation-check.sh "$file" "$old" "$new" "$filter" "$label" ${pkg:+"$pkg"} 2>&1)"
   echo "$out"
   ran=$((ran + 1))
   # RED is the only good outcome. Every other line means this row is not evidence of anything:

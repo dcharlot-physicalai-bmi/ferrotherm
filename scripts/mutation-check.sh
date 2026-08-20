@@ -27,11 +27,11 @@
 
 set -uo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "usage: $0 <file> <old> <new> <test-filter> <label>" >&2
+if [[ $# -lt 5 || $# -gt 6 ]]; then
+  echo "usage: $0 <file> <old> <new> <test-filter> <label> [package]" >&2
   exit 2
 fi
-file="$1"; old="$2"; new="$3"; filter="$4"; label="$5"
+file="$1"; old="$2"; new="$3"; filter="$4"; label="$5"; pkg="${6:-}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
@@ -50,7 +50,14 @@ if old not in t:
 open(path, 'w').write(t.replace(old, new, 1))
 PY
 
-out="$(cargo test --release --lib "$filter" 2>&1)"
+# WHICH CRATE. `cargo test --lib` with no package tests the ROOT package only, so a mutation in
+# `meter/`, `gpu/` or `serve/` would compile nothing and report NO TEST MATCHED -- a row that reads
+# like a skip while testing nothing at all. Pass the package for those.
+if [[ -n "$pkg" ]]; then
+  out="$(cargo test --release --lib -p "$pkg" "$filter" 2>&1)"
+else
+  out="$(cargo test --release --lib "$filter" 2>&1)"
+fi
 git checkout -- "$file"
 
 if ! grep -q "^test result:" <<<"$out"; then

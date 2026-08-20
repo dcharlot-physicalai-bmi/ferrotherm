@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.17.0
+
+### Every energy number this field publishes leaves out where the joules actually are
+
+`joules.rs` measures both paths **above idle** and divides by work done. So does every energy
+comparison this project has published, and so does every one the rest of the field has. It is the
+right question for a machine kept busy, and it quietly assumes the thing most workloads do not do.
+
+A sensor drawing from a posterior ten times a second computes for microseconds and waits out the
+rest of the second. Subtracting idle prices the microseconds and throws away the wait — and the wait
+is where the joules are. The new `duty` module prices the wait:
+
+```text
+E over one period  =  marginal × t_run  +  idle × period
+```
+
+### The standby budget: one number that decides the whole value proposition
+
+Inverting the same arithmetic gives what a competing device has to hit:
+
+```text
+standby budget = idle + marginal × duty
+```
+
+It grants the challenger **perfectly free computation**, so a better sampler cannot argue it down —
+whatever it rules out stays ruled out. And as the cadence slackens it collapses onto the incumbent's
+idle draw, with nothing about sampling left in it.
+
+Which is where the field runs out of numbers. `ledger::Prices` states `e_sample`, `e_read`,
+`e_write` and a reflash cap because Table IV states them. It carries **no standby term, because no
+thermodynamic vendor publishes one** — so the device column of that comparison cannot be filled in
+by anyone today, and the strongest available argument for a sampling fabric (the intermittent,
+low-duty edge workload) is the one nobody has priced.
+
+`duty` refuses a cadence the machine cannot sustain rather than pricing a run that could not have
+happened — the same refusal `Ledger::reflash_seconds` already makes on the device side. Seven tests,
+none of which need a power meter.
+
+### A busy machine has no idle, and `Meter` now says so
+
+`Meter::idle` has always guarded the *delta* against the baseline's noise. It never checked that the
+baseline was **idle**, and that hole has already cost this project a published number: the 86
+ns/flip figure corrected in an earlier release was contaminated by concurrent background load.
+
+It cost one again here. The first run of `duty_cycle` produced a complete, plausible table — 67.6 W
+idle, a 529% idle-dominance threshold, an intermittent workload understated by five orders of
+magnitude — on a machine at a 1-minute load average of **82**, with five other sessions running
+experiments and Rust builds. Nothing looked wrong. The numbers were somebody else's work charged to
+ours.
+
+`Meter::idle` now reads the load average and refuses above 2 runnable threads. `Baseline` carries
+`load1` so a figure published from it can be audited later, when the machine is no longer in that
+state. The threshold is 2 rather than a fraction of the core count because a load average counts
+runnable threads, not utilisation: two threads that never sleep are two cores' worth of heat whether
+the machine has four cores or forty.
+
+**Which way this biases matters.** Other people's work *inflates* a baseline, so idle looks larger
+than it is — and the argument this release is built on turns on how much of the bill is idle. The
+contaminated run flattered our own conclusion. Those numbers are withdrawn and the measurement is
+reported as pending rather than published.
+
+### `sweeps_par`'s throughput figure is not reproducible as stated
+
+The README quoted 3.8e8 flips/s at 18 threads without naming the lattice, which turns out to be the
+load-bearing detail: `sweeps_par` spawns its threads *inside* each sweep, so parallel efficiency is
+set by how much work one sweep carries and the same call reports different speedups at different
+problem sizes. Read off the source, not measured — re-measuring is pending a quiet machine.
+
+### Also
+
+- `duty_cycle` reports every path the instrument could see. An earlier version returned early unless
+  **both** measured, which threw away a good GPU measurement because the CPU's delta sat in the
+  noise — and the finding here is a property of one machine at a time, not of a ratio.
+- The example states which comparison it is making: the meter reads whole-system power, so its idle
+  term prices a fabric that **replaces** the host. A fabric sitting *beside* a host that stays awake
+  anyway is a different sum, and an integrated SoC shares one rail, so per-component idle is not
+  separable on this machine. Named rather than split by assumption.
+- `Baseline` gains a public field, which is a breaking change for anyone constructing one literally.
+
 ## 0.12.0
 
 ### `x >= 3` returned a confident optimum to an unbounded problem

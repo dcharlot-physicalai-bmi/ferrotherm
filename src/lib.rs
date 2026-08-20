@@ -93,6 +93,7 @@ pub mod gibbs;
 pub mod ising;
 pub mod device;
 pub mod ledger;
+pub mod duty;
 pub mod lp;
 pub mod ommx;
 pub mod wire;

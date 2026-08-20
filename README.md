@@ -76,7 +76,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 506 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 542 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
@@ -86,6 +86,24 @@ thermodynamic-computing corpus currently leaves empty.
 - `cargo run --release --example z1_ledger` — the crossings tax, executable, at the vendor's own
   SPICE prices (arXiv:2608.01615 Table IV): the generative regime amortizes I/O; a 100 Hz control
   loop is decided by the reflash-rate cap and the unpublished price of clamping an input.
+- `cargo run --release -p ferrotherm-gpu --example duty_cycle` — **the bill for being switched
+  on**, and the only place this stack prices the wait rather than subtracting it. Every energy
+  comparison in this field, including every one this project has published, divides joules *above
+  idle* by work done. That is the right question for a machine kept busy, and most places a sampling
+  substrate would go do not keep one busy: a sensor drawing from a posterior ten times a second
+  computes for microseconds and waits out the rest of the second. `duty` prices the wait, and
+  inverts it into the number a challenger has to hit — the **standby budget**, `idle + marginal ×
+  duty`, which grants the challenger perfectly free computation and therefore cannot be argued down
+  by a better sampler. As the cadence slackens it collapses onto the incumbent's idle draw, with
+  nothing about sampling left in it. Which is where the field runs out of numbers: `ledger::Prices`
+  carries no standby term because **no thermodynamic vendor publishes one**, so the device column of
+  that comparison cannot be filled in by anybody today, and the strongest available argument for a
+  sampling fabric — the intermittent, low-duty edge workload — is the one nobody has priced. The
+  arithmetic is verified by `duty`'s own tests, independently of any measurement. **The measurement
+  on this machine is not yet taken**: the first attempt was refused by `meter`'s new load guard at a
+  1-minute load average of 24 (five other sessions running experiments and builds), and a number
+  from a contaminated baseline would be *inflated* — it would make idle look larger than it is and
+  overstate exactly the thing being argued. Reported as pending rather than published.
 - `cargo run --release --example grad_check` — three independent gradient routes (REINFORCE,
   parameter-shift, finite-difference referee) agree on the same stochastic circuit: −0.1922 /
   −0.1922 / −0.1926 on the flip logit.
@@ -134,8 +152,13 @@ thermodynamic-computing corpus currently leaves empty.
   page's is checked by the page, against the closed form, on whatever GPU you open it with (measured here: |M| 0.9143 vs 0.9113,
   0.9750 vs 0.9736 on Apple metal-3). Measured: **9.35e9 flips/s** at full die scale (269,568
   nodes, degree 16; 0.107 ns/flip). CPU on the same machine, measured quiet: 7.3e7 flips/s
-  single-thread (13.6 ns/flip), 3.8e8 flips/s at 18 threads via `sweeps_par` (an earlier
-  published 86 ns/flip figure was contaminated by concurrent background load and is corrected).
+  single-thread (13.6 ns/flip), and **3.8e8 flips/s at 18 threads via `sweeps_par` — at a lattice
+  size that figure never stated, which is a defect in the figure**: `sweeps_par` spawns its threads
+  *inside* each sweep (`gibbs.rs`), so parallel efficiency is set by how much work one sweep carries
+  and the same call reports different speedups at different problem sizes. A multithreaded
+  throughput number without its problem size is not reproducible; re-measuring it is pending a quiet
+  machine. (An earlier published 86 ns/flip figure was contaminated by concurrent background load
+  and is corrected — the same failure the load guard now refuses outright.)
   Energy per flip at package watts / measured rate: 10 W → 1.07 nJ (151× the Z1 SPICE projection),
   25 W → 2.67 nJ (377×), 60 W → 6.4 nJ (905×). So the measured gap between a first-pass browser
   sampler on consumer silicon and the vendor's pre-silicon projection is **2–3 orders of
@@ -148,6 +171,16 @@ thermodynamic-computing corpus currently leaves empty.
    priced by a swappable `Prices` device model. Re-price the same workload on GPU-measured
    watts×time and you have the impedance-tax comparison that decides whether standalone sampling
    hardware is worth buying.
-2. **Determinism.** Same seed, same draws, on every platform. Published numbers are reproducible
+2. **Idle is part of the bill.** Every energy comparison in this field, this stack's own included
+   until now, divides joules *above idle* by work done — which is the right question only for a
+   machine kept busy, and most places a sampling substrate would go do not keep one busy. So `duty`
+   prices the wait, and reports both halves.
+3. **A busy machine has no idle.** `Meter::idle` reads the load average and refuses to call a
+   baseline idle above 2 runnable threads. This is not hypothetical hygiene: one published figure in
+   this README was already corrected for exactly this contamination, and the first run of
+   `duty_cycle` was refused by the new guard on a machine at load 24. The bias runs one way — other
+   people's work *inflates* a baseline — so the guard protects against overstatement, which is the
+   direction that would have flattered this project's own argument.
+4. **Determinism.** Same seed, same draws, on every platform. Published numbers are reproducible
    or they are not published.
-3. **Verify against exact physics first.** Onsager before opinions.
+5. **Verify against exact physics first.** Onsager before opinions.

@@ -45,6 +45,35 @@ What they do not have, checked by introspection rather than assumed: no energy, 
 power surface anywhere in `amplify`, and no certificate or sampling-fidelity surface. Those rows
 stand.
 
+### The sub-lane inside layer 10 that is empty for EVERYONE, this project included until 2026-08-20
+
+Layer 10 (energy / cost accounting) is marked **not found** for every group surveyed here, and this
+project has been claiming it. That claim was too generous to itself. Every energy figure in this
+tree — and every one anywhere in the field — is **joules above idle, divided by work done**. That
+prices a machine kept busy, and a sampling substrate's best case is the opposite: intermittent,
+low-duty edge work where the machine spends most of its life waiting.
+
+Price the wait and the argument inverts into a single hardware number:
+
+```text
+standby budget = idle + marginal × duty
+```
+
+which is what a challenger must come in under, **granting it perfectly free computation** — so no
+better sampler can argue it down. As the cadence slackens it collapses onto the incumbent's idle
+draw, and the entire case for a thermodynamic fabric reduces to its own standby power.
+
+**No thermodynamic vendor publishes a standby figure.** Extropic's Table IV states e_sample, e_read,
+e_write and a reflash cap; there is no standby row. Neither is there one in any other device model
+this survey located. So the comparison that would actually decide the field's strongest argument
+cannot be completed by anybody today — not by us, and not by them, and it is one number away from
+being decidable.
+
+That is where `src/duty.rs` and `Machine::beaten_by` sit: the arithmetic is public and takes the
+vendor's number as an argument, so the party that knows it can finish the sum. Whether this project
+can fill in its OWN side of the table is a measurement question, and as of this note it is pending a
+quiet machine — the first attempt was refused by `Meter::idle`'s load guard.
+
 ### And a strategic fact
 
 jijmodeling 2.x's `Compiler` converts problems into **OMMX** instances, and it round-trips through
@@ -2643,6 +2672,21 @@ R-hat; and there is no optimality certificate (no dual bound) on the optimisatio
 > /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/src/certify.rs (Finding 31-44, fit_beta 128-182, tau_int 189-213, certify 219-345); src/conform.rs (run 78-, AlwaysUp 250, Narrow 279); src/exact.rs; src/planted.rs; spec/ftp-v1.md; tests/spec_conformance.rs
 
 ### 10. Energy / cost accounting (joules or price per operation) — **yes** (0.9.0)
+
+**Amended 2026-08-20 — the row is still `yes`, and it was measuring the wrong half.** Every figure
+above is *joules above idle divided by work done*. That prices a machine kept busy, and the case a
+sampling substrate is supposed to win is the opposite one: intermittent, low-duty work where the
+machine spends most of its life waiting, and where subtracting idle discards where the joules
+actually went. `src/duty.rs` (0.17.0) prices the wait — `E over one period = marginal × t_run +
+idle × period` — and inverts it into `standby budget = idle + marginal × duty`, the standby power a
+challenger must beat *granting it free computation*. As the cadence slackens the budget collapses
+onto the incumbent's idle draw and nothing about sampling remains in it. **`Prices` has no standby
+term because no vendor in this survey publishes one**, so that comparison is one number away from
+being decidable and nobody can decide it; `Machine::beaten_by` takes the number as an argument so
+the party that knows it can. Also amended: `Meter::idle` now refuses a baseline above a 1-minute
+load average of 2, after a complete and plausible table was produced here on a machine at load 82.
+Foreign load *inflates* a baseline, so that contamination overstated the idle share — flattering
+this project's own argument, which is the dangerous direction.
 
 **Updated 2026-08-15.** All three findings closed, and the first was worse than reported. (a) `writes` is charged: `Device::program` IS the write, the trait now says so, and both the CPU and Hitachi implementations charge one per node. A demonstration run shows the write at 100% of the projected energy, which is the module's own thesis and was invisible while the term sat at zero. (b) `Prices` carries a `source` naming what the numbers describe, and `Prices::UNSTATED` exists: Hitachi and the CPU declare it rather than borrowing Z1's SPICE estimates, and `Ledger::joules` returns `Option<f64>` — `None`, not zero, because a device nobody has characterised does not cost nothing. The HTTP surface reported Z1 joules for every run including a plain CPU sample; it now reports exact COUNTS always, joules as null when unpriced, and a `priced_as` field generated from the prices rather than hardcoded. (c) `reflash_hz_cap` feeds `Ledger::reflash_seconds`: a workload that reflashes faster than the device sustains is unphysical, and pricing it describes a run that could not have happened. **Closed 2026-08-15:** `ferrotherm-meter` measures wall power and derives per-operation energy from it. macOS backend via `macmon`; std-only, no dependencies. Measured on an Apple M5 Max: **4.261e-7 J per node update**, whole-system above idle, from an 8.29 s window with 75 power readings — against `Z1_SPICE`'s 7.09e-15 J estimate, a ratio of 6.0e7. Those measure different things (a general-purpose CPU at the wall versus a per-device SPICE estimate for unfabricated silicon), so the ratio is the size of the prize being claimed rather than a measured speedup — but one side of it is now measured. Jetson/Linux INA3221 rails are the equivalent and are NOT implemented: the Jetson on this tailnet has been offline for a week, and a backend nobody can run is a backend nobody has tested.
 

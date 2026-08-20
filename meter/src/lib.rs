@@ -69,6 +69,15 @@ const INTERVAL_MS: u64 = 100;
 /// the protocol has to include it.
 const SETTLE: Duration = Duration::from_secs(3);
 
+/// Above this 1-minute load average, a baseline is not idle and this refuses to call it one.
+///
+/// Two, not a fraction of the core count, and the reason is what a load average counts: RUNNABLE
+/// THREADS, not utilisation. Two threads that never sleep are two cores' worth of heat whether the
+/// machine has four cores or forty, and that heat lands in the same whole-system wall reading the
+/// baseline is made of. A percentage-of-cores threshold would quietly permit an 18-core machine to
+/// take a "baseline" with four builds running.
+const QUIET_LOAD: f64 = 2.0;
+
 pub mod ina3221;
 
 /// A source of wall-power readings, in watts.
@@ -100,6 +109,13 @@ pub struct Baseline {
     /// Standard deviation of the readings the baseline was computed from.
     pub sigma: f64,
     pub samples: usize,
+    /// The machine's 1-minute load average while the baseline was taken, or `None` where it could
+    /// not be read.
+    ///
+    /// Reported rather than merely checked, because it is the one number that says whether this
+    /// baseline describes an idle machine or somebody else's build. It is carried on the result so
+    /// a figure published from it can be audited later, when the machine is no longer in that state.
+    pub load1: Option<f64>,
 }
 
 /// What a measured run cost.
@@ -252,10 +268,20 @@ impl Meter {
                 at_least.as_secs_f64()
             ));
         }
+        // A BUSY MACHINE HAS NO IDLE. Checked here rather than trusted, because the failure is
+        // silent and it has already cost this project a published number: an earlier 86 ns/flip
+        // figure was contaminated by concurrent background load and had to be corrected. Worse,
+        // the contamination biases in the dangerous direction -- other people's work inflates the
+        // baseline, so idle looks LARGER than it is, and any argument that turns on how much of
+        // the bill is idle comes out overstated. Measured here at load 82 with five other sessions
+        // running experiments, this backend reported a 67.6 W "idle" on a machine whose real idle
+        // is a fraction of that.
+        let load1 = load_average();
+        quiet_enough(load1)?;
         let v = self.readings.lock().unwrap();
         let inside: Vec<f64> = v.iter().filter(|(t, _)| *t >= from).map(|(_, w)| *w).collect();
         let var = inside.iter().map(|w| (w - mean).powi(2)).sum::<f64>() / inside.len() as f64;
-        Ok(Baseline { watts: mean, sigma: var.sqrt(), samples: n })
+        Ok(Baseline { watts: mean, sigma: var.sqrt(), samples: n, load1 })
     }
 
     /// Run `f`, sampling wall power throughout.
@@ -393,6 +419,46 @@ impl Run {
     }
 }
 
+/// The machine's 1-minute load average, or `None` where it cannot be read.
+///
+/// `None` means **not readable here**, never "the machine is quiet" -- the caller treats it as an
+/// unknown and proceeds, because refusing to measure on a platform that exposes no load average
+/// would be a worse failure than measuring without the guard.
+fn load_average() -> Option<f64> {
+    // Linux first: a file read beats spawning a process.
+    if let Ok(s) = std::fs::read_to_string("/proc/loadavg") {
+        return s.split_whitespace().next()?.parse().ok();
+    }
+    // macOS and the BSDs: `{ 1.23 4.56 7.89 }`.
+    let out = Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().find_map(|t| t.parse::<f64>().ok())
+}
+
+/// Is this load average quiet enough for the reading to be called an idle baseline?
+///
+/// Split out of [`Meter::idle`] so it can be tested WITHOUT arranging a busy machine. The first
+/// version of the guard lived inline, and its test could only assert something real when the
+/// machine happened to be loaded -- on a quiet machine it took the other branch and would have
+/// passed just as happily with the guard deleted. A test named after a property is not a test of it.
+///
+/// `None` means the platform exposes no load average, which is treated as permission to proceed:
+/// refusing to measure at all on such a platform is a worse failure than measuring unguarded, and
+/// [`Baseline::load1`] records that it was unknown.
+fn quiet_enough(load1: Option<f64>) -> Result<(), String> {
+    match load1 {
+        Some(l) if l > QUIET_LOAD => Err(format!(
+            "the 1-minute load average is {l:.1}, so this machine is not idle, and what \
+             follows would be somebody else's work charged to yours. A load average counts \
+             RUNNABLE THREADS, so anything above {QUIET_LOAD:.0} means at least that many are \
+             never sleeping. Wait for the machine to go quiet and take the baseline again. \
+             Note which way this biases: a contaminated baseline is INFLATED, so idle looks \
+             larger than it is, not smaller."
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Pull one numeric field out of a JSON object line.
 ///
 /// A hand-rolled scan rather than a parser, because one field does not justify a dependency in a
@@ -446,12 +512,70 @@ mod tests {
     }
 
     #[test]
+    fn the_load_average_is_readable_on_this_platform() {
+        // If this returns None the guard is inert here, which is a fact worth knowing rather than
+        // a thing to discover from a contaminated publication months later.
+        match load_average() {
+            Some(l) => assert!(l >= 0.0 && l.is_finite(), "implausible load average: {l}"),
+            None => eprintln!(
+                "no load average on this platform; Meter::idle cannot check that the machine is \
+                 quiet, and any baseline it takes is unguarded"
+            ),
+        }
+    }
+
+    #[test]
+    fn the_quiet_threshold_refuses_a_loaded_machine_and_names_the_reason() {
+        // Tested on the DECISION, not on whatever this machine happens to be doing, so deleting
+        // the guard fails here on a quiet machine and a busy one alike.
+        assert!(quiet_enough(Some(0.0)).is_ok());
+        assert!(quiet_enough(Some(QUIET_LOAD)).is_ok(), "the threshold itself is allowed");
+        assert!(
+            quiet_enough(None).is_ok(),
+            "a platform with no load average must still be measurable; the unknown is recorded"
+        );
+
+        // 82 is not arbitrary: it is the load this project actually published a table at.
+        let e = quiet_enough(Some(82.0)).unwrap_err();
+        assert!(e.contains("load average"), "the refusal must name the reason: {e}");
+        assert!(e.contains("82"), "and the value it saw: {e}");
+        assert!(
+            e.contains("INFLATED"),
+            "and which way the contamination biases, because that is what makes it dangerous: {e}"
+        );
+        // Just over the line is refused too, or the threshold is decorative.
+        assert!(quiet_enough(Some(QUIET_LOAD + 0.01)).is_err());
+    }
+
+    #[test]
+    fn idle_actually_consults_the_quiet_threshold() {
+        // The unit test above proves the decision is right; this proves `idle` asks it. Whichever
+        // side of the line this machine is on, the two must agree -- a guard that exists and is
+        // never called is the failure mode the split was made to expose.
+        let (mut m, _own) = meter_or_skip!();
+        let observed = load_average();
+        let verdict = m.idle(Duration::from_millis(1200));
+        match (observed, &verdict) {
+            (Some(l), Err(e)) if l > QUIET_LOAD => {
+                assert!(e.contains("load average"), "refused for the wrong reason: {e}");
+            }
+            (Some(l), Ok(b)) => {
+                assert!(l <= QUIET_LOAD, "granted a baseline at load {l}, above {QUIET_LOAD}");
+                assert_eq!(b.load1.map(|x| x <= QUIET_LOAD), Some(true));
+            }
+            // No load average, or refused for one of the other reasons (too few readings). Both
+            // are legitimate outcomes and neither says anything about this guard.
+            _ => {}
+        }
+    }
+
+    #[test]
     fn a_workload_too_short_to_measure_is_refused() {
         // The failure this prevents is a mean computed from one reading. The backend ticks on its
         // own clock, so a fast workload simply is not observable, and returning a number anyway
         // would be inventing precision.
         let (mut m, _own) = meter_or_skip!();
-        let zero = Baseline { watts: 0.0, sigma: 0.0, samples: MIN_SAMPLES };
+        let zero = Baseline { watts: 0.0, sigma: 0.0, samples: MIN_SAMPLES, load1: None };
         let e = m.measure(zero, || std::hint::black_box(1 + 1)).unwrap_err();
         assert!(e.contains("reading"), "must say what was short: {e}");
         assert!(e.contains("not an estimate"), "and why that is refused: {e}");

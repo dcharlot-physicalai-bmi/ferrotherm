@@ -23,14 +23,21 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
    inside the library.
 3. **The ledger is honest**: `ledger::Prices` describes a DEVICE MODEL. `Z1_SPICE` is a
    pre-silicon vendor estimate (arXiv:2608.01615 Table IV) and must stay labelled as such.
-4. **No dependencies.** Do not add any. The zero-dep property is a product feature (auditability,
+4. **Idle is part of the bill, and a busy machine has no idle.** Energy figures in this tree were
+   all joules ABOVE IDLE divided by work done, which prices a machine kept busy and silently
+   assumes the case a sampling substrate is worst at. `duty` prices the wait. And before taking any
+   power baseline, `Meter::idle` checks the load average and refuses above 2 runnable threads:
+   foreign load INFLATES a baseline, so contamination overstates the idle share — the direction
+   that flatters this project's own argument. A contaminated measurement that supports the thesis
+   is the dangerous one. Withdraw and re-measure; do not publish with a caveat.
+5. **No dependencies.** Do not add any. The zero-dep property is a product feature (auditability,
    wasm size, longevity), not an accident.
-5. **A value is what the modeller wrote.** Slot indices exist only inside `Model::linearise`, which
+6. **A value is what the modeller wrote.** Slot indices exist only inside `Model::linearise`, which
    is the one place that knows a domain's layout. Every public surface takes and returns the
    domain's own values. If you add a domain, give it its own arm in `Domain::values`, `index_of`
    and `Compiled::reify` — a catch-all is how a spin variable came to report 0 and 1 to the reader
    while the decoder handed back -1 and +1.
-6. **A default is not a fallback.** An input the code cannot understand is an error naming what
+7. **A default is not a fallback.** An input the code cannot understand is an error naming what
    was actually sent. Substituting a default for an unreadable value is how `"maximize": 1`
    silently minimised and `"value": "13"` silently pinned a variable to 0.
 
