@@ -23,6 +23,20 @@ exist.
 **Core first.** crates.io resolves dependencies at publish time, so the core must be **live** before
 anything that pins it can go out. The index takes a few seconds to catch up.
 
+**And the core is no longer the only such edge.** `ferrotherm-gpu` took a dev-dependency on
+`ferrotherm-meter` when the energy comparison needed both a GPU and a meter, which makes meter a
+second crate that has to be live first. The list above had gpu before meter and was right until
+that edge existed. Read the dependency graph rather than the list:
+
+```sh
+cargo metadata --no-deps --format-version 1 \
+  | python3 -c 'import json,sys
+p={p["name"]:p for p in json.load(sys.stdin)["packages"]}
+for n,pk in sorted(p.items()):
+    d=sorted({x["name"] for x in pk["dependencies"] if x["name"] in p})
+    print(f"{n:26} needs {d}")'
+```
+
 ```sh
 scripts/check-versions.sh          # everything agrees, and what is not yet on crates.io
 cargo test --release --workspace
@@ -33,8 +47,8 @@ scripts/check-answers.sh           # ...and solves it to the same answer on all 
 scripts/check-exports.sh           # every exported binding name resolves
 
 cargo publish -p ferrotherm        # FIRST. Everything below pins it.
+cargo publish -p ferrotherm-meter  # before gpu -- see below
 cargo publish -p ferrotherm-gpu
-cargo publish -p ferrotherm-meter
 cargo publish -p ferrotherm-cloud
 cargo publish -p ferrotherm-silicon
 cargo publish -p ferrotherm-serve
