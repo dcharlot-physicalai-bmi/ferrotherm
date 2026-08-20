@@ -124,7 +124,7 @@ thermodynamic-computing corpus currently leaves empty.
   physics is right, and says nothing about DX12 on hardware. `Gpu::is_hardware()` reported `Cpu` and
   the benchmark declined to quote a speedup on its own.
 - `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
-  the cdylib is a **366 KB .wasm** (131 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
+  the cdylib is a **367 KB .wasm** (131 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against

@@ -174,7 +174,21 @@ d=json.load(sys.stdin)
 print(f\"a={d['values']['a']} b={d['values']['b']} t={d['values']['t']} feasible={str(d['feasible']).lower()}\", end='')" \
     > "$out/http.txt" 2> "$out/http.err"
   pkill -f 'target/release/ferrotherm-serve' 2>/dev/null
-else skip http "serve did not build"; fi
+
+  # ---- mcp: the agent-facing surface, same core over stdio -------------------------------------
+  attempt mcp
+  python3 scripts/ans-mcp.py "$out" 2> "$out/mcp.err"
+else skip http/mcp "serve did not build"; fi
+
+# ---- wasm: the browser build, in a real engine -------------------------------------------------
+#
+# Instantiates docs/ferrotherm.wasm and calls the C ABI directly rather than driving the editor's
+# UI. The page's layout can change without the sampler drifting, and the sampler can drift without
+# the layout changing; this gate is about the second.
+if [ -f web-tests/node_modules/.package-lock.json ] || node -e "require('playwright')" 2>/dev/null; then
+  attempt wasm
+  node scripts/ans-wasm.mjs > "$out/wasm.txt" 2> "$out/wasm.err" || true
+else skip wasm "no playwright"; fi
 
 # ---- compare ---------------------------------------------------------------------------------------
 echo

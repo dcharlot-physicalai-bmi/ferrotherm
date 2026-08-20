@@ -29,7 +29,7 @@ cargo test --release --workspace
 cargo clippy --release --workspace --all-targets -- -D warnings
 scripts/check-parity.sh            # every C ABI symbol reaches every binding
 scripts/check-semantics.sh         # every binding compiles one model to the same bytes
-scripts/check-answers.sh           # ...and solves it to the same answer, which is not the same check
+scripts/check-answers.sh           # ...and solves it to the same answer on all seven surfaces
 scripts/check-exports.sh           # every exported binding name resolves
 
 cargo publish -p ferrotherm        # FIRST. Everything below pins it.
