@@ -1303,6 +1303,34 @@ test "a state computed elsewhere is scored by the same code, or refused" {
     try std.testing.expectEqual(@as(f64, -4.0), sim.energy());
 }
 
+test "the three places this binding used to disagree with Python and Julia" {
+    // Cross-binding drift, found by auditing every surface against the C ABI. Each was a case where
+    // Zig did something observably different for the same user intent -- the class of bug
+    // `scripts/check-answers.sh` catches at the answer level, pinned here at the call level.
+    var p = try Problem.init();
+    defer p.deinit();
+
+    // 1. A duplicate name was accepted and SILENTLY renamed. The C ABI refuses the rename and keeps
+    //    the synthetic default, so the second variable quietly became "v1" -- a name that then
+    //    appears in violation text and OMMX exports. Python raises, Julia throws.
+    _ = try p.binary("shift");
+    try std.testing.expectError(Error.DuplicateName, p.binary("shift"));
+
+    // 2. ommx() before compile returned an EMPTY SLICE with no signal, so a caller wrote a
+    //    zero-byte instance believing it had serialised one. Both other bindings raise.
+    var buf: [256]u8 = undefined;
+    try std.testing.expectError(Error.NotCompiled, p.ommx(&buf));
+
+    // 3. value() before a solve is NotSolved -- but that error used to ALSO mean "solved, and this
+    //    variable did not decode", because the C ABI signals both with i64::MIN. Only this side
+    //    knows which, so they are different values now: an error, and null.
+    const a = try p.binary("a");
+    try std.testing.expectError(Error.NotSolved, p.value(a));
+
+    try p.solve(16);
+    try std.testing.expect((try p.value(a)) != null); // a binary always decodes
+}
+
 test "all_different solves a latin square row, and pigeonhole is refused not annealed" {
     var p = try Problem.init();
     defer p.deinit();
@@ -1317,7 +1345,10 @@ test "all_different solves a latin square row, and pigeonhole is refused not ann
     try std.testing.expect(p.feasible());
     var seen = [_]bool{false} ** 4;
     for (vars) |v| {
-        const got = try p.value(v);
+        // `value` is optional now: null means solved-but-undecoded, which all_different over a
+        // one-hot encoding never produces. Asserting it is non-null is the point -- if that ever
+        // changes, this says so rather than silently indexing something else.
+        const got = (try p.value(v)) orelse return error.TestUnexpectedResult;
         try std.testing.expect(!seen[@intCast(got)]);
         seen[@intCast(got)] = true;
     }
