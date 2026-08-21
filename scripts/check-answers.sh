@@ -199,24 +199,19 @@ else skip http/mcp "serve did not build"; fi
 # Instantiates docs/ferrotherm.wasm and calls the C ABI directly rather than driving the editor's
 # UI. The page's layout can change without the sampler drifting, and the sampler can drift without
 # the layout changing; this gate is about the second.
-# WHERE PLAYWRIGHT LIVES IS NOT WHERE THE IMPORT RESOLVES FROM.
+# ONE probe, run by the same file that will do the work.
 #
-# This guard tested for `web-tests/node_modules/.package-lock.json` and then ran the script from the
-# repository ROOT -- and an ESM `import "playwright"` from a file in `scripts/` never looks inside
-# `web-tests/`. Locally a stray root `node_modules` answered it and the surface passed. In CI, where
-# the workflow installs playwright into `web-tests/` and nowhere else, the script died with
-# ERR_MODULE_NOT_FOUND, and because the guard had said the toolchain was present the gate reported
-# "PRODUCED NOTHING -- its toolchain is present, so it broke". True, and about the harness rather
-# than the code. Ask the question the way the script will ask it, in each place it could be answered.
-pw_dir=""
-for d in "$here" "$here/web-tests"; do
-  if (cd "$d" && node -e "import('playwright').then(()=>process.exit(0),()=>process.exit(1))") 2>/dev/null; then
-    pw_dir="$d"; break
-  fi
-done
-if [ -n "$pw_dir" ]; then
+# This guard has now been wrong twice. It first tested for `web-tests/node_modules/.package-lock.json`
+# and ran the driver from the repo root, where the import does not look. It then ran the driver from
+# `web-tests`, which changes nothing: bare-specifier resolution follows the IMPORTING FILE, never the
+# working directory. Both versions passed locally because a stray root `node_modules` answered the
+# import in every arrangement, so the local check could not tell the cases apart.
+#
+# The driver resolves playwright explicitly now and `--probe` asks it whether it can. Nothing here
+# re-implements that decision, because a guard and the code it guards must not be able to disagree.
+if node "$here/scripts/ans-wasm.mjs" --probe 2>/dev/null; then
   attempt wasm
-  (cd "$pw_dir" && node "$here/scripts/ans-wasm.mjs") > "$out/wasm.txt" 2> "$out/wasm.err" || true
+  node "$here/scripts/ans-wasm.mjs" > "$out/wasm.txt" 2> "$out/wasm.err" || true
 else skip wasm "playwright resolves from neither the repo root nor web-tests/"; fi
 
 # ---- compare ---------------------------------------------------------------------------------------
