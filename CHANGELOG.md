@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.18.0
+
+### The missing number is now a refusal, not a default
+
+0.17.0 shipped `Machine::beaten_by`, which took the challenger's standby power and compute energy
+as two bare `f64`s. That is usable and it is too easy to use wrongly: a caller can pass a standby
+of zero and complete the comparison without ever noticing that **no vendor publishes one**, which
+is precisely the assumption the module was written to expose. An API that lets the load-bearing
+unknown default to zero has not exposed anything.
+
+`DeviceRun` carries a device model at a cadence — its `Prices`, the `Ledger` of what it does in one
+period, its graph size, and `standby_watts: Option<f64>` where `None` means *nobody has published
+it*. `Machine::beaten_by_device` routes the comparison through it, and the checks arrive in the
+order that makes a verdict mean something:
+
+1. **Feasibility.** A fabric that cannot reflash inside the period loses at any price, and that
+   verdict must not wait behind a number nobody has. `DeviceCannotSustain`.
+2. **Is the computation priced at all.** `PricesUnstated`, distinct from a device that is
+   expensive — `Prices::UNSTATED` is a fact about the literature, not the hardware.
+3. **Standby.** `StandbyUnpublished`.
+
+The headline test is `the_real_published_device_model_cannot_be_compared_at_all`: take Z1_SPICE,
+the most completely specified device model in this field, run it model-resident so the reflash cap
+is not what stops us, at a cadence it comfortably sustains. Its computation prices out at 1.77e-8 J
+per period. The comparison still terminates, on one absent row.
+
+That refusal names one number and nothing else, so it is a request rather than an objection —
+`supplying_the_missing_number_makes_the_arithmetic_run` supplies a hypothetical milliwatt and gets
+a verdict identical to the loose-number form.
+
+### `duty_cycle` now says something true on a machine it cannot measure
+
+The example needed a power meter and a quiet machine, so on a loaded one it printed two refusals
+and stopped — correct, and useless. The device-side half needs neither. It now runs first and
+unconditionally, prices the vendor's own model, and prints exactly where the comparison stops.
+An example whose whole output is "I could not run" teaches nothing about the thing it exists to
+show.
+
+Breaking: `DutyError` gains three variants, so exhaustive matches on it need updating.
+
+
 ## 0.17.0
 
 ### Every energy number this field publishes leaves out where the joules actually are

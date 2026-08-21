@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-cloud"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "Cloud fabrics for ferrotherm: drives real third-party annealing silicon through the Device trait, starting with Hitachi's CMOS annealing ASIC. Separate crate because it needs a TLS client and the core has no dependencies."
 license = "Apache-2.0"
@@ -10,7 +10,7 @@ readme = "README.md"
 categories = ["science", "api-bindings", "simulation"]
 
 [dependencies]
-ferrotherm = { version = "0.17", path = ".." }
+ferrotherm = { version = "0.18", path = ".." }
 ureq = "2"
 
 [dev-dependencies]
