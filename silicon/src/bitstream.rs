@@ -180,10 +180,7 @@ pub fn decode(words: &[u32]) -> Vec<Packet> {
 
 /// Read a big-endian word stream out of raw configuration bytes.
 pub fn to_words(config: &[u8]) -> Vec<u32> {
-    config
-        .chunks_exact(4)
-        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+    config.as_chunks::<4>().0.iter().map(|&c| u32::from_be_bytes(c)).collect()
 }
 
 #[cfg(test)]

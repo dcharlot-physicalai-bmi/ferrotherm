@@ -359,13 +359,8 @@ impl Tap {
         self.shift_ir(IR_CFG_OUT)?;
         let raw = self.shift_dr(&vec![0u8; want * 4], true)?;
         let mut words = Vec::with_capacity(want);
-        for c in raw.chunks_exact(4) {
-            words.push(u32::from_be_bytes([
-                reverse_byte(c[0]),
-                reverse_byte(c[1]),
-                reverse_byte(c[2]),
-                reverse_byte(c[3]),
-            ]));
+        for c in raw.as_chunks::<4>().0 {
+            words.push(u32::from_be_bytes(c.map(reverse_byte)));
         }
         self.shift_ir(IR_BYPASS)?;
         Ok(words[WORDS..].to_vec()) // drop the dummy frame

@@ -335,8 +335,8 @@ impl Gpu {
 
         {
             let data = slice.get_mapped_range().map_err(|e| format!("mapping failed: {e:?}"))?;
-            for (i, chunk) in data.chunks_exact(4).enumerate().take(spins.len()) {
-                let v = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            for (i, &chunk) in data.as_chunks::<4>().0.iter().enumerate().take(spins.len()) {
+                let v = i32::from_le_bytes(chunk);
                 // Not `if v > 0 { 1 } else { -1 }`. That coercion turns any garbage — a dropped
                 // dispatch, a short copy — into a valid-looking state which is then scored with
                 // full confidence. The browser had exactly this bug; refusing is the whole point.

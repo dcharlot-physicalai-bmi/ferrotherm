@@ -293,15 +293,16 @@ pub fn packed_varints(p: &[u8]) -> Result<Vec<u64>, WireError> {
 /// Decode a packed repeated `double` field.
 ///
 /// A packed `double` array is a whole number of eight-byte groups by construction; a trailing
-/// remainder means the bytes are not what they claim to be, and `chunks_exact` would have dropped it
-/// without a word.
+/// remainder means the bytes are not what they claim to be, and a chunking iterator would have
+/// dropped it without a word.
 pub fn packed_doubles(p: &[u8]) -> Result<Vec<f64>, WireError> {
     if !p.len().is_multiple_of(8) {
         return Err(WireError::Truncated { at: p.len() - (p.len() % 8), needed: 8 - (p.len() % 8) });
     }
-    Ok(p.chunks_exact(8)
-        .map(|c| f64::from_bits(u64::from_le_bytes(c.try_into().expect("chunks_exact(8)"))))
-        .collect())
+    // `as_chunks::<8>` yields `[u8; 8]` directly, so the length is carried by the TYPE and the
+    // `try_into().expect("chunks_exact(8)")` this used to need -- an unreachable panic that still
+    // had to be read and dismissed by anyone auditing the parser -- is gone rather than justified.
+    Ok(p.as_chunks::<8>().0.iter().map(|&c| f64::from_bits(u64::from_le_bytes(c))).collect())
 }
 
 // ---- writing -------------------------------------------------------------------------------
