@@ -69,8 +69,12 @@ this survey located. So the comparison that would actually decide the field's st
 cannot be completed by anybody today — not by us, and not by them, and it is one number away from
 being decidable.
 
-That is where `src/duty.rs` and `Machine::beaten_by` sit: the arithmetic is public and takes the
-vendor's number as an argument, so the party that knows it can finish the sum. Whether this project
+That is where `src/duty.rs` and `Machine::beaten_by_device` sit: the arithmetic is public and takes
+the vendor's number as an argument, so the party that knows it can finish the sum. `DeviceRun`
+carries `standby_watts: Option<f64>` and the comparison REFUSES on `None` rather than defaulting it
+to zero, which is the difference between exposing the gap and quietly stepping over it. Applied to
+Z1_SPICE run model-resident at a sustainable cadence — every per-operation energy published, the
+computation priced at 1.77e-8 J per period — the verdict is `StandbyUnpublished`. Whether this project
 can fill in its OWN side of the table is a measurement question, and as of this note it is pending a
 quiet machine — the first attempt was refused by `Meter::idle`'s load guard.
 

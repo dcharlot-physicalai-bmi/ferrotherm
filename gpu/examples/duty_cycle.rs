@@ -26,7 +26,13 @@
 //! Falsified if the threshold comes in under 0.1 percent, which would mean idle is negligible and
 //! this whole line of argument is void.
 
-use ferrotherm::{duty::Machine, gibbs::Sampler, ising::lattice2d, ledger::Ledger, wgsl::GpuModel};
+use ferrotherm::{
+    duty::{DeviceRun, DutyError, Machine},
+    gibbs::Sampler,
+    ising::lattice2d,
+    ledger::{Ledger, Z1_SPICE},
+    wgsl::GpuModel,
+};
 use std::time::Duration;
 
 /// Application cadences worth pricing, as (label, seconds between task repetitions).
@@ -39,7 +45,57 @@ const CADENCES: &[(&str, f64)] = &[
     ("once an hour", 3600.0),
 ];
 
+/// Where the comparison stops, on the best-specified device model this field has published.
+///
+/// Needs no meter and no GPU, so it runs on any machine including a loaded one -- which matters,
+/// because it is the half of this example that does not depend on being able to measure.
+fn where_the_device_side_stops() {
+    // A Z1-class fabric, model resident: no per-tick reflash, so the reflash cap is not what
+    // stops us and the objection "you chose a workload it is bad at" does not apply.
+    let nodes = 9_216u64; // 96x96, the die in z1_ledger
+    let dev = DeviceRun {
+        prices: Z1_SPICE,
+        per_period: Ledger { samples: nodes * 250, reads: 834, writes: 0 },
+        graph_nodes: nodes,
+        standby_watts: None,
+    };
+
+    println!("THE DEVICE SIDE, on the vendor's own numbers (no meter needed for this part).\n");
+    println!("  model    : {nodes} nodes, resident, 250 sweeps and 834 reads per period");
+    println!("  prices   : {}", Z1_SPICE.source);
+    match dev.compute_joules() {
+        Ok(j) => println!("  compute  : {j:.4e} J per period -- fully priced, from Table IV"),
+        Err(e) => println!("  compute  : {e}"),
+    }
+    match dev.check_sustains(1.0) {
+        Ok(()) => println!("  cadence  : sustainable at 1 Hz (resident, so no reflash floor)"),
+        Err(e) => println!("  cadence  : {e}"),
+    }
+
+    // Everything about the computation is published. Now ask the question that decides a purchase.
+    match dev.joules_per_period(1.0) {
+        Ok(j) => println!("  total    : {j:.4e} J per period"),
+        Err(DutyError::StandbyUnpublished) => {
+            println!();
+            println!("  TOTAL    : cannot be computed.");
+            println!();
+            println!("  Every per-operation energy this device needs is published and the cadence is");
+            println!("  feasible, and the comparison still stops -- because `Prices` has no standby");
+            println!("  term, because Table IV has no standby row, because no thermodynamic vendor");
+            println!("  publishes one. Below full duty cycle standby IS the bill, so this is not a");
+            println!("  detail that rounds away: it is the whole quantity.");
+            println!();
+            println!("  One number, from the party that knows it, and `Machine::beaten_by_device`");
+            println!("  finishes the sum. Until then nobody can -- not us, and not them.");
+        }
+        Err(e) => println!("  total    : {e}"),
+    }
+    println!();
+}
+
 fn main() {
+    where_the_device_side_stops();
+
     let Some(gpu) = ferrotherm_gpu::Gpu::new() else {
         eprintln!("no GPU adapter; nothing to compare");
         return;

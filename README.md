@@ -76,7 +76,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 542 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 546 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
@@ -99,7 +99,12 @@ thermodynamic-computing corpus currently leaves empty.
   carries no standby term because **no thermodynamic vendor publishes one**, so the device column of
   that comparison cannot be filled in by anybody today, and the strongest available argument for a
   sampling fabric — the intermittent, low-duty edge workload — is the one nobody has priced. The
-  arithmetic is verified by `duty`'s own tests, independently of any measurement. **The measurement
+  arithmetic is verified by `duty`'s own tests, independently of any measurement, and
+  `Machine::beaten_by_device` makes the absence structural: a `DeviceRun` carries
+  `standby_watts: Option<f64>`, so the comparison **refuses** rather than defaulting the one number
+  nobody publishes to zero. Feed it `Z1_SPICE` model-resident at a cadence it sustains — computation
+  fully priced at 1.77e-8 J per period — and the verdict is still `StandbyUnpublished`. The
+  device-side half needs no meter, so it runs and reports even on a machine too busy to measure. **The measurement
   on this machine is not yet taken**: the first attempt was refused by `meter`'s new load guard at a
   1-minute load average of 24 (five other sessions running experiments and builds), and a number
   from a contaminated baseline would be *inflated* — it would make idle look larger than it is and

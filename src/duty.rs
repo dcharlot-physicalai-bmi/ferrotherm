@@ -46,6 +46,8 @@
 //! assert!((b - 20.1).abs() < 1e-9);   // ~= the idle draw, and almost nothing else
 //! ```
 
+use crate::ledger::{Ledger, Prices};
+
 /// A machine characterised by what it draws idle, what it adds while working, and how fast it works.
 ///
 /// All three are meant to be MEASURED on one machine -- `ferrotherm_meter::Run` reports exactly
@@ -79,6 +81,29 @@ pub enum DutyError {
         /// Seconds the cadence allows.
         period_s: f64,
     },
+    /// The device states no per-operation prices, so its computation cannot be priced.
+    ///
+    /// Distinct from a device that is expensive. [`Prices::UNSTATED`](crate::ledger::Prices::UNSTATED)
+    /// is a fact about the literature, not about the hardware.
+    PricesUnstated,
+    /// The device states no STANDBY power, so it cannot be compared at a cadence at all.
+    ///
+    /// This is the variant the module exists to produce. Every published device model in this field
+    /// states a per-sample, per-read and per-write energy and **no standby figure**, and at low duty
+    /// cycle standby is the entire bill -- so the comparison that decides the field's strongest
+    /// argument terminates here, for everybody, on one missing number.
+    StandbyUnpublished,
+    /// The device cannot reprogram itself fast enough to meet this cadence.
+    ///
+    /// The reflash cap, applied per period rather than per run. A fabric that must reload its
+    /// couplings every tick and sustains one reload a second cannot run a 100 Hz loop at any energy
+    /// price, which is a feasibility verdict that arrives before the joules.
+    DeviceCannotSustain {
+        /// Seconds the device's own reflash cap implies for this period's writes.
+        reflash_s: f64,
+        /// Seconds the cadence allows.
+        period_s: f64,
+    },
 }
 
 impl core::fmt::Display for DutyError {
@@ -90,6 +115,24 @@ impl core::fmt::Display for DutyError {
                 "that work needs {needs_s:.6} s of computation and the cadence allows {period_s:.6} s, \
                  so this machine cannot sustain it -- a joules figure here would price a run that \
                  could not have happened"
+            ),
+            DutyError::PricesUnstated => write!(
+                f,
+                "that device states no per-operation energy, so its computation has no price here. \
+                 Borrowing another device's prices is what produces a figure that looks exactly \
+                 like a real one"
+            ),
+            DutyError::StandbyUnpublished => write!(
+                f,
+                "that device states no standby power, and at anything below full duty cycle standby \
+                 IS the comparison -- so this cannot be answered rather than answered with a guess. \
+                 No thermodynamic vendor publishes the number; supply it and the arithmetic runs"
+            ),
+            DutyError::DeviceCannotSustain { reflash_s, period_s } => write!(
+                f,
+                "reprogramming this device for one period takes at least {reflash_s:.6} s and the \
+                 cadence allows {period_s:.6} s, so it cannot run this loop at ANY energy price. \
+                 The feasibility verdict arrives before the joules"
             ),
         }
     }
@@ -109,6 +152,64 @@ pub struct Verdict {
     pub standby_budget: f64,
     /// Whether the challenger is STRICTLY cheaper. A tie is not a reason to change fabric.
     pub challenger_wins: bool,
+}
+
+/// A device MODEL priced at a cadence: what it computes each period, at what per-operation cost,
+/// and what it draws between periods.
+///
+/// The counterpart to [`Machine`], which describes something measured. This describes something
+/// published, and it is deliberately hard to use without confronting what is not published: the
+/// standby field is an `Option` and every comparison path refuses on `None` rather than assuming a
+/// zero. A fabric that drew no power while idle would be a remarkable claim, and no vendor is
+/// making it -- they simply do not say.
+#[derive(Clone, Copy, Debug)]
+pub struct DeviceRun {
+    /// Per-operation energy. [`Prices::UNSTATED`] is a legitimate value here and yields
+    /// [`DutyError::PricesUnstated`], never a number.
+    pub prices: Prices,
+    /// Operations performed in ONE period, writes included -- a device that reloads its couplings
+    /// every tick pays for that every tick, which is the whole finding of `z1_ledger`.
+    pub per_period: Ledger,
+    /// Nodes in the graph, which is what turns a write count into full-graph reflashes.
+    pub graph_nodes: u64,
+    /// What it draws between periods. `None` means **nobody has published it**.
+    pub standby_watts: Option<f64>,
+}
+
+impl DeviceRun {
+    /// Energy for this period's operations, ignoring standby.
+    pub fn compute_joules(&self) -> Result<f64, DutyError> {
+        self.per_period.joules(&self.prices).ok_or(DutyError::PricesUnstated)
+    }
+
+    /// Can it reprogram itself fast enough for this cadence?
+    ///
+    /// Checked BEFORE any energy, because a fabric that cannot reload in time cannot run the loop
+    /// at any price, and a joules figure for it prices a run that could not have happened. A device
+    /// stating no cap implies no floor, so this passes -- unknown is not a violation.
+    pub fn check_sustains(&self, period_s: f64) -> Result<(), DutyError> {
+        if !period_s.is_finite() || period_s <= 0.0 {
+            return Err(DutyError::Empty("the period must be a finite positive number of seconds"));
+        }
+        match self.per_period.reflash_seconds(&self.prices, self.graph_nodes) {
+            Some(reflash_s) if reflash_s > period_s => {
+                Err(DutyError::DeviceCannotSustain { reflash_s, period_s })
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Total joules over one period: the operations, plus the wait.
+    ///
+    /// Refuses without a standby figure. That refusal is the point of the type.
+    pub fn joules_per_period(&self, period_s: f64) -> Result<f64, DutyError> {
+        self.check_sustains(period_s)?;
+        let standby = self.standby_watts.ok_or(DutyError::StandbyUnpublished)?;
+        if !standby.is_finite() || standby < 0.0 {
+            return Err(DutyError::NotPhysical("standby power must be finite and non-negative"));
+        }
+        Ok(self.compute_joules()? + standby * period_s)
+    }
 }
 
 impl Machine {
@@ -241,6 +342,34 @@ impl Machine {
             challenger_joules: challenger,
             standby_budget: self.standby_budget(work, period_s)?,
             // Strictly cheaper. A tie is not a reason to change your compute fabric.
+            challenger_wins: challenger < incumbent,
+        })
+    }
+
+    /// The same comparison, but against a published DEVICE MODEL rather than two loose numbers.
+    ///
+    /// Prefer this over [`Machine::beaten_by`]. Passing a bare `challenger_compute_joules` lets a
+    /// caller supply a standby of zero without ever noticing that no vendor states one, which is
+    /// exactly the assumption this module was written to expose. Routing the comparison through
+    /// [`DeviceRun`] makes the missing number a refusal instead of a default.
+    ///
+    /// Checks arrive in the order that makes the verdict meaningful: FEASIBILITY first (a fabric
+    /// that cannot reflash in time loses at any price), then whether its computation is priced at
+    /// all, then standby.
+    pub fn beaten_by_device(
+        &self,
+        device: &DeviceRun,
+        work: u64,
+        period_s: f64,
+    ) -> Result<Verdict, DutyError> {
+        // Validate the cadence against the incumbent first so an unsustainable comparison is
+        // refused once, with the same message, whichever side cannot keep up.
+        let incumbent = self.joules_per_period(work, period_s)?;
+        let challenger = device.joules_per_period(period_s)?;
+        Ok(Verdict {
+            incumbent_joules: incumbent,
+            challenger_joules: challenger,
+            standby_budget: self.standby_budget(work, period_s)?,
             challenger_wins: challenger < incumbent,
         })
     }
@@ -388,6 +517,93 @@ mod tests {
         // Just under, it wins -- so the budget really is the dividing line and not an artefact.
         let v2 = m.beaten_by(budget * 0.999, 0.0, work, period).unwrap();
         assert!(v2.challenger_wins, "0.1% under the budget wins: {v2:?}");
+    }
+
+    /// A Z1-class fabric running a 100 Hz control loop: one full reflash per tick, 64 samples,
+    /// 16 action bits read. The workload `z1_ledger` prices, expressed as a per-period rate.
+    fn z1_control_loop(nodes: u64) -> DeviceRun {
+        DeviceRun {
+            prices: crate::ledger::Z1_SPICE,
+            per_period: Ledger { samples: nodes * 64, reads: 16, writes: nodes },
+            graph_nodes: nodes,
+            standby_watts: None,
+        }
+    }
+
+    #[test]
+    fn the_real_published_device_model_cannot_be_compared_at_all() {
+        // THE FINDING, as a test. Z1_SPICE is the most completely specified device model in this
+        // field: per-sample, per-read and per-write energies plus a reflash cap, from a vendor's
+        // own SPICE table. Give it a cadence it CAN sustain and the comparison still terminates,
+        // because the table has no standby row and below full duty cycle standby is the bill.
+        let m = gpu();
+        let mut dev = z1_control_loop(1_000);
+        dev.per_period.writes = 0; // model-resident, so the reflash cap is not what stops us
+        assert!(dev.check_sustains(60.0).is_ok(), "no writes means no reflash floor");
+        assert!(dev.compute_joules().is_ok(), "its computation IS priced");
+
+        let err = m.beaten_by_device(&dev, 1_000_000, 60.0).unwrap_err();
+        assert_eq!(
+            err,
+            DutyError::StandbyUnpublished,
+            "everything about the computation is published and the comparison still cannot run"
+        );
+        assert!(format!("{err}").contains("standby"));
+    }
+
+    #[test]
+    fn feasibility_is_decided_before_energy() {
+        // A 100 Hz loop that reflashes the whole graph each tick needs 100 reflashes a second
+        // against a 1 Hz cap. That is not an expensive loop, it is an impossible one, and the
+        // verdict must arrive without reference to any energy price -- including the standby figure
+        // that does not exist, which would otherwise mask it.
+        let m = gpu();
+        let dev = z1_control_loop(1_000);
+        match m.beaten_by_device(&dev, 1_000_000, 0.01) {
+            Err(DutyError::DeviceCannotSustain { reflash_s, period_s }) => {
+                assert!((reflash_s - 1.0).abs() < 1e-9, "one full reflash at 1 Hz: {reflash_s}");
+                assert!((period_s - 0.01).abs() < 1e-12);
+            }
+            other => panic!("feasibility must be decided first, got {other:?}"),
+        }
+        // And it stays refused even once somebody publishes a standby figure.
+        let mut priced = dev;
+        priced.standby_watts = Some(0.0);
+        assert!(matches!(
+            m.beaten_by_device(&priced, 1_000_000, 0.01),
+            Err(DutyError::DeviceCannotSustain { .. })
+        ));
+    }
+
+    #[test]
+    fn an_unpriced_device_gets_no_number() {
+        let m = gpu();
+        let dev = DeviceRun {
+            prices: crate::ledger::Prices::UNSTATED,
+            per_period: Ledger { samples: 1_000, reads: 1, writes: 0 },
+            graph_nodes: 1_000,
+            standby_watts: Some(1.0),
+            };
+        assert_eq!(dev.compute_joules().unwrap_err(), DutyError::PricesUnstated);
+        assert_eq!(m.beaten_by_device(&dev, 1_000_000, 1.0).unwrap_err(), DutyError::PricesUnstated);
+    }
+
+    #[test]
+    fn supplying_the_missing_number_makes_the_arithmetic_run() {
+        // The refusal is not a dead end: it names one number, and with it the comparison completes
+        // and agrees exactly with the loose-number form. That is what makes it a request rather
+        // than an objection.
+        let m = gpu();
+        let mut dev = z1_control_loop(1_000);
+        dev.per_period.writes = 0;
+        dev.standby_watts = Some(0.001); // a milliwatt, hypothetical
+
+        let (work, period) = (1_000_000u64, 60.0);
+        let v = m.beaten_by_device(&dev, work, period).unwrap();
+        let loose = m.beaten_by(0.001, dev.compute_joules().unwrap(), work, period).unwrap();
+        assert!((v.challenger_joules - loose.challenger_joules).abs() < 1e-12);
+        assert_eq!(v.challenger_wins, loose.challenger_wins);
+        assert!(v.challenger_wins, "a milliwatt against a {} W idle draw wins", m.idle_watts);
     }
 
     #[test]
