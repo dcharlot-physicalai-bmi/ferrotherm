@@ -2597,6 +2597,22 @@ Against minorminer/Ocean or Fixstars this is the single largest missing layer.
 
 ### 7. Samplers / solvers (algorithms, CPU/GPU/hardware) — partial
 
+**Amended 2026-08-21 (0.19.0) — the harsh note is now half wrong, and fixing it found three bugs.**
+`ferrotherm-gpu` has carried a native WGSL sampler callable from Rust since 0.2.0, and `GpuDevice`
+now implements `Device`, so **`conform` can score the GPU path** — the sentence below that says it
+cannot was true from 0.9.0 until today. Scoring it immediately found what being unscoreable had
+hidden: (1) the GPU returned the schedule's LAST state where every other implementation returns the
+BEST seen, so it reported -57 against variable elimination's exact -59 on a ladder the CPU solved;
+(2) `Gpu::sweep` had no seed at all, so a `Device::run` honouring its signature would have accepted
+one and dropped it — reproducible, and deaf, which `conform`'s determinism case cannot distinguish;
+(3) a run inherited the previous run's state instead of starting from a seed-drawn configuration
+like `Sampler::new`, so a second run began at the first one's answer and handed it straight back.
+The fabric now also declares `Precision::Float { mantissa: 24 }`, which had never been stated
+anywhere: the shader's storage buffers are f32 while the CPU path is f64, and an undeclared
+difference is one nothing downstream can reason about. Still open from the note below: the GPU is
+not reachable from Python, Julia, Zig, HTTP or MCP; no tabu search, branch-and-bound, dual/LP/SDP
+bound, or population annealing.
+
 CPU, broad: `gibbs::Sampler` — chromatic block-Gibbs with `sweep`, `sweep_par(threads)`
 (std::thread::scope over disjoint index chunks within a colour class, bit-reproducible for fixed
 (seed, threads)), `clamp`/`unclamp`, `read_all`/`read_subset`. `tempering::{anneal,

@@ -57,6 +57,9 @@
 //! ```
 
 use ferrotherm::wgsl::{sweep_shader, GpuModel};
+pub mod device;
+pub use device::GpuDevice;
+
 use wgpu::util::DeviceExt;
 
 /// A GPU that can run the sweep.
@@ -130,6 +133,32 @@ impl Gpu {
         spins: &mut [i8],
         beta: f64,
         sweeps: u32,
+    ) -> Result<(), String> {
+        // Seed 0 mixes to an offset of 0, so this is bit-identical to the version that had no seed
+        // at all. That is deliberate: the Onsager checks and the browser's numbers were taken on
+        // this stream, and a "harmless" refactor that silently moved every draw would invalidate
+        // them without failing anything.
+        self.sweep_seeded(m, spins, beta, sweeps, 0)
+    }
+
+    /// The same sweep, drawing from the stream `seed` selects.
+    ///
+    /// The shader's RNG is `hash(step, node, const)` and `step` is the dispatch counter, so a seed
+    /// does not need a shader change: offsetting the counter by a mixing of the seed moves the
+    /// whole run onto a different stream while keeping every dispatch's counter distinct, which is
+    /// what stops a class resampling with the draws it just used.
+    ///
+    /// This exists because [`ferrotherm::fabric::Device::run`] takes a seed. A `Device` that
+    /// accepted one and ignored it would report reproducibility it does not have -- the caller
+    /// varies the seed, gets the same answer every time, and concludes the sampler is confident
+    /// rather than deaf.
+    pub fn sweep_seeded(
+        &self,
+        m: &GpuModel,
+        spins: &mut [i8],
+        beta: f64,
+        sweeps: u32,
+        seed: u64,
     ) -> Result<(), String> {
         if spins.len() != m.n as usize {
             return Err(format!(
@@ -261,7 +290,10 @@ impl Gpu {
         let mut params = vec![0u8; steps * stride as usize];
         for s in 0..sweeps as usize {
             for (li, &ci) in live.iter().enumerate() {
-                let step = (s * live.len() + li + 1) as u32;
+                // Knuth's multiplicative constant: mixes the seed across the whole u32 range and
+                // maps 0 to 0, which is what keeps the unseeded path exactly where it was.
+                let offset = (seed as u32).wrapping_mul(0x9E37_79B9);
+                let step = offset.wrapping_add((s * live.len() + li + 1) as u32);
                 let at = (s * live.len() + li) * stride as usize;
                 let p = &mut params[at..at + PARAMS_BYTES as usize];
                 p[0..4].copy_from_slice(&m.n.to_le_bytes());

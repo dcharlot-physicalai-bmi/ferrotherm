@@ -65,6 +65,12 @@ mutations=(
   # the baseline, which overstates the idle share, which is the direction that flattered the very
   # argument being made. Leave the guard in place but make it always permit, and the test that
   # exercises the DECISION (rather than whatever this machine happens to be doing) must go red.
+  # A `Device::run` that accepts a seed and swallows it reports reproducibility it does not have:
+  # the caller varies the seed, gets one answer every time, and reads a deaf sampler as a confident
+  # one. `conform`'s determinism case CANNOT catch this -- an ignored seed is perfectly
+  # reproducible -- so the tests that can are the ones named here.
+  "gpu/src/lib.rs|let offset = (seed as u32).wrapping_mul(0x9E37_79B9);|let offset = 0u32; let _ = seed;|seed|Device::run swallows its seed|ferrotherm-gpu"
+
   "meter/src/lib.rs|Some(l) if l > QUIET_LOAD => Err(format!(|Some(l) if false && l > QUIET_LOAD => Err(format!(|quiet|idle baseline on a busy machine|ferrotherm-meter"
 )
 

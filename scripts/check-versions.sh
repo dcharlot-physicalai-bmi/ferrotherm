@@ -70,19 +70,37 @@ jll_toml="julia/ferrotherm_jll/Project.toml"
 jll_art="julia/ferrotherm_jll/Artifacts.toml"
 if [[ -f "$jll_toml" && -f "$jll_art" ]]; then
   jll_v="$(grep -m1 '^version' "$jll_toml" | cut -d'"' -f2)"
-  # Every version-looking token in every download URL, deduplicated.
   art_vs="$(grep -oE 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' "$jll_art" | sed 's|.*/v||' | sort -u | tr '\n' ' ')"
   art_vs="${art_vs% }"
   if [[ -z "$art_vs" ]]; then
     printf '  %-36s %s\n' "$jll_art" "no download URLs -- the JLL would fetch nothing"
     bad=1
-  elif [[ "$art_vs" != "$jll_v" ]]; then
-    printf '  %-36s artifacts point at [%s], Project.toml says %s\n' "$jll_art" "$art_vs" "$jll_v"
-    echo "the JLL would resolve, load, and hand back the WRONG library." >&2
-    echo "rebuild it: gh release download v$jll_v -D <dir> && julia scripts/rebuild-julia-manifest.jl <version> <dir>" >&2
-    bad=1
-  else
+  elif [[ "$art_vs" == "$jll_v" ]]; then
     printf '  %-36s %s\n' "$jll_art" "artifacts point at v$jll_v"
+  else
+    # BEHIND IS ONLY WRONG ONCE THE BINARIES EXIST.
+    #
+    # Between bumping the version and the release job finishing there is a legitimate window where
+    # Project.toml is ahead of the manifest -- the tarballs are not built yet, so there is nothing
+    # for it to point at. Failing there would make every release red on the way out, which is how a
+    # gate gets ignored. The same allowance the crates.io rows above make for an unpushed tree.
+    #
+    # What is NOT legitimate is the release having shipped binaries the manifest never picked up.
+    # That is what happened at v0.18.0: all three tarballs uploaded, the manifest commit lost a
+    # rebase, and the JLL went on serving v0.17.0 under a 0.18.0 version number.
+    if ! command -v gh >/dev/null 2>&1; then
+      printf '  %-36s %s\n' "$jll_art" "points at [$art_vs], not v$jll_v -- publish state NOT checked (no gh)"
+    elif ! gh release view "v$jll_v" --json assets >/dev/null 2>&1; then
+      printf '  %-36s %s\n' "$jll_art" "points at [$art_vs]; no v$jll_v release yet, so nothing to point at"
+    elif [[ "$(gh release view "v$jll_v" --json assets --jq '[.assets[] | select(.name|endswith(".tar.gz"))] | length' 2>/dev/null || echo 0)" -eq 0 ]]; then
+      printf '  %-36s %s\n' "$jll_art" "points at [$art_vs]; v$jll_v release has no tarballs yet"
+    else
+      printf '  %-36s artifacts point at [%s], Project.toml says %s\n' "$jll_art" "$art_vs" "$jll_v"
+      echo "the v$jll_v release HAS tarballs and the manifest never picked them up." >&2
+      echo "the JLL would resolve, load, and hand back the WRONG library." >&2
+      echo "  gh release download v$jll_v -D <dir> && julia scripts/rebuild-julia-manifest.jl $jll_v <dir> $jll_art" >&2
+      bad=1
+    fi
   fi
 fi
 

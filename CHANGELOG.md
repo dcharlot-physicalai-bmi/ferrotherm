@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.19.0
+
+### The fastest sampler in the stack was the one path conformance could not reach
+
+`ferrotherm`'s own survey has carried this line since 0.9.0: *"no `impl Device` for a GPU, so
+`conform` cannot even score the GPU path."* It stayed true through five releases. The GPU sampler
+could be **run** and could not be **checked against the fabric it claims to be**.
+
+`GpuDevice` implements `Device`. Pointing `conform::run` at it took one line and found three
+defects that being unscoreable had hidden:
+
+**It returned the wrong state.** `Device::run`'s doc says "the final state" and every
+implementation returns the BEST seen — `Cpu` delegates to `tempering::anneal_scheduled`, which
+tracks the minimum over every sweep. The GPU returned whatever the coldest stage happened to stop
+on, scoring **-57 against variable elimination's exact -59** on a ladder the CPU solves exactly.
+
+**It could not have honoured a seed.** `Gpu::sweep` took none, so a `Device` matching the trait
+signature would have accepted a seed and dropped it. That failure is invisible to every determinism
+check ever written, because an ignored seed is perfectly reproducible: the caller varies it, gets
+one answer, and reads a deaf sampler as a confident one. The shader's RNG is `hash(step, node,
+const)`, so `sweep_seeded` offsets the dispatch counter by a mixing of the seed — no shader change,
+and seed 0 maps to offset 0 so every Onsager number taken on this stream is exactly where it was.
+
+**A run inherited the previous run's answer.** State was carried between calls and started at
+all-minus-one, where `Cpu` builds a fresh `Sampler::new(g, beta, seed)` whose initial configuration
+is drawn from the seed. So a second `run` began at the first one's best, could not improve on it,
+and returned it — two different seeds, one answer. Matching `Sampler::new` exactly also means CPU
+and GPU now start a given seed at the same configuration, which is what makes the two comparable.
+
+### The f32 that was never declared
+
+`GpuModel::{w,h}` are `Vec<f32>`: every coupling and field is rounded to 24 mantissa bits going in,
+while the CPU path keeps f64. Every other fabric here declares its precision — D-Wave `Unstated`,
+the fixed-point fabric `Fixed { bits }` — and the GPU declared nothing, so nothing downstream could
+tell an arithmetic difference from a sampler difference. It is `Precision::Float { mantissa: 24 }`
+now, and `Prices::UNSTATED` with the reason named: a GPU vendor publishes board power, which is a
+rate for a whole card, not joules per spin update.
+
+### Also
+
+- `scripts/mutation-suite.sh` gains the seed-swallowing mutation, on the package field added in
+  0.17.0 — without it the row would have compiled nothing and reported NO TEST MATCHED.
+- Still open, and still in the landscape: the GPU is not reachable from Python, Julia, Zig, HTTP or
+  MCP; there is no tabu search, branch-and-bound, dual/LP/SDP bound, or population annealing.
+
+
 ## 0.18.0
 
 ### The missing number is now a refusal, not a default
