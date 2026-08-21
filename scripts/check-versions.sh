@@ -51,6 +51,41 @@ for f in "${files[@]}"; do
   fi
 done
 
+# Placed AFTER `bad=0`, and that is not incidental: the first version of this gate sat above it,
+# so the assignment reset the flag it had just set. It printed the mismatch, printed the warning,
+# and exited 0 -- a gate that reports and cannot fail, which is worse than no gate because the
+# output looks like it was checked. Caught by mutating the manifest and reading the EXIT CODE
+# rather than the message.
+# ---- the JLL manifest has to name the version its Project.toml claims ---------------------------
+#
+# `ferrotherm_jll/Project.toml` carries a version and `Artifacts.toml` carries the URLs the binaries
+# are actually fetched from, and NOTHING compared them. They drifted at v0.18.0: the release job
+# built and uploaded all three platforms, then failed to commit the manifest after a rebase conflict
+# -- so Project.toml said 0.18.0 while every download URL still pointed at the v0.17.0 tarballs.
+#
+# That is the worst shape a version bug takes here. `Pkg.add` resolves, `using Ferrotherm` succeeds,
+# the library LOADS -- and it is the previous release's library, answering with the previous
+# release's behaviour under this release's version number. Nothing breaks; it is just wrong.
+jll_toml="julia/ferrotherm_jll/Project.toml"
+jll_art="julia/ferrotherm_jll/Artifacts.toml"
+if [[ -f "$jll_toml" && -f "$jll_art" ]]; then
+  jll_v="$(grep -m1 '^version' "$jll_toml" | cut -d'"' -f2)"
+  # Every version-looking token in every download URL, deduplicated.
+  art_vs="$(grep -oE 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' "$jll_art" | sed 's|.*/v||' | sort -u | tr '\n' ' ')"
+  art_vs="${art_vs% }"
+  if [[ -z "$art_vs" ]]; then
+    printf '  %-36s %s\n' "$jll_art" "no download URLs -- the JLL would fetch nothing"
+    bad=1
+  elif [[ "$art_vs" != "$jll_v" ]]; then
+    printf '  %-36s artifacts point at [%s], Project.toml says %s\n' "$jll_art" "$art_vs" "$jll_v"
+    echo "the JLL would resolve, load, and hand back the WRONG library." >&2
+    echo "rebuild it: gh release download v$jll_v -D <dir> && julia scripts/rebuild-julia-manifest.jl <version> <dir>" >&2
+    bad=1
+  else
+    printf '  %-36s %s\n' "$jll_art" "artifacts point at v$jll_v"
+  fi
+fi
+
 # The server versions independently -- it is a separate crate with its own release cadence -- but
 # the ferrotherm it depends on must be the one in this repository, or `cargo publish` resolves to
 # whatever is already on crates.io and quietly ships against an older library.
