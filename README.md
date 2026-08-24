@@ -76,7 +76,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 546 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 553 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
@@ -145,7 +145,18 @@ thermodynamic-computing corpus currently leaves empty.
   and whose f32 behaviour differs, so this was worth checking rather than assuming. **The DX12 run
   was WARP, a software rasteriser**: it establishes that the shader compiles under DX12 and that the
   physics is right, and says nothing about DX12 on hardware. `Gpu::is_hardware()` reported `Cpu` and
-  the benchmark declined to quote a speedup on its own.
+  the benchmark declined to quote a speedup on its own. Since 0.19.0 `GpuDevice` implements
+  `Device`, so **`conform` scores the GPU path** — for five releases the fastest sampler here was
+  the one path the conformance suite could not reach, runnable but uncheckable against the fabric
+  it claims to be. Pointing `conform::run` at it found three defects that being unscoreable had
+  hidden: it returned the schedule's last state where every other implementation returns the best
+  seen (−57 against variable elimination's exact −59, on a ladder the CPU solves); `Gpu::sweep` had
+  no seed, so a `Device` honouring the trait signature would have accepted one and dropped it —
+  which **no determinism check can catch, because an ignored seed is perfectly reproducible**; and a
+  run inherited the previous run's state instead of starting from a seed-drawn configuration, so a
+  second run began at the first's answer and handed it back. The fabric now also declares
+  `Precision::Float { mantissa: 24 }`: the shader's buffers are f32 while the CPU path is f64, and
+  an undeclared difference is one nothing downstream can reason about.
 - `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
   the cdylib is a **367 KB .wasm** (131 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
   claim is a build,
