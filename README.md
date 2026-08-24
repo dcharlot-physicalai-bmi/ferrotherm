@@ -50,7 +50,9 @@ them leaves `ferrotherm` intact.
 
 The two that drive *someone else's* hardware — `-cloud` and `-silicon` — reach it through the same
 [`fabric::Device`] trait, which is what makes "runs on any fabric" a thing you can check rather than
-a thing we say. `-gpu` is a sampler rather than a fabric and implements no `Device`.
+a thing we say. As of 0.19.0 `-gpu` reaches it too, through `GpuDevice`: it was a sampler and not a
+fabric for five releases, which meant the fastest path here was the only one `conform` could not
+score. Scoring it found three defects on the first run.
 
 ## Field map
 
