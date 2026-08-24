@@ -78,9 +78,17 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 553 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 562 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
+- `cargo test --lib bound::` — **optimality-gap certificates**, the lane every stack in the
+  landscape leaves empty by reporting "best known". `bound::forest` splits the energy into forests,
+  minimises each exactly at induced width 1, and tightens the split by subgradient ascent —
+  Lagrangian dual decomposition. `min_s E(s) >= Σ_k min_s E_k(s)` for **any** split, which is what
+  makes optimising the split safe. A sampler holding a state of energy `E` is then within `E - L` of
+  optimal whatever it found; at gap zero the answer is *proven* optimal without trusting the
+  sampler. Soundness checked against brute force on 200 random instances, and both ways it could
+  silently stop being a bound are recorded mutations.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
   noise floor 0.0057 at 100k samples. Residual is sampling noise, not bias.
 - `cargo run --release --example onsager` — 2D Ising 64×64 vs Onsager/Yang closed form:

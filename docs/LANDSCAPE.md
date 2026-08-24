@@ -2610,8 +2610,18 @@ like `Sampler::new`, so a second run began at the first one's answer and handed 
 The fabric now also declares `Precision::Float { mantissa: 24 }`, which had never been stated
 anywhere: the shader's storage buffers are f32 while the CPU path is f64, and an undeclared
 difference is one nothing downstream can reason about. Still open from the note below: the GPU is
-not reachable from Python, Julia, Zig, HTTP or MCP; no tabu search, branch-and-bound, dual/LP/SDP
-bound, or population annealing.
+not reachable from Python, Julia, Zig, HTTP or MCP; no tabu search, branch-and-bound, or population
+annealing.
+
+**A dual bound exists as of 0.20.0, and it is a lane nobody else occupies.** `src/bound.rs` splits
+the energy into forests, minimises each exactly by elimination at induced width 1, and tightens the
+split by subgradient ascent — Lagrangian dual decomposition. `min_s E(s) >= Σ_k min_s E_k(s)` holds
+for ANY split, which is what makes optimising the split safe. The output is an **optimality-gap
+certificate**: a sampler holding a state of energy `E` is within `E - L` of optimal whatever it
+found and however it found it, and at gap zero the answer is PROVEN optimal without trusting the
+sampler. Every other stack in this survey reports "best known", which is a statement about who has
+looked rather than about the problem. Soundness is checked against brute force on 200 random
+instances, and the two ways it could silently stop being a bound are both recorded mutations.
 
 CPU, broad: `gibbs::Sampler` — chromatic block-Gibbs with `sweep`, `sweep_par(threads)`
 (std::thread::scope over disjoint index chunks within a colour class, bit-reproducible for fixed

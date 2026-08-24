@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.20.0
+
+### How far from optimal is that answer? Nobody in this field can say
+
+Every sampler here returns the best state it happened to find, and none can say whether that is the
+optimum. On anything too large for `exact`, nobody else can either: the field reports **"best
+known"**, which is a statement about who has looked rather than about the problem. `planted` closes
+this by constructing instances whose optimum is known in advance — and that only works on instances
+you built.
+
+`bound` closes it for instances you did not build. Split the energy into parts and minimise each
+one independently:
+
+```text
+min_s E(s)  =  min_s Σ_k E_k(s)  >=  Σ_k min_s E_k(s)
+```
+
+The inequality is the whole method: the parts may disagree about `s`, so their separate minima can
+only be lower than any single state's total. It holds for **any** split, which is what makes it safe
+to optimise the split without ever risking an invalid bound. `bound::forest` splits the couplings
+into forests — where elimination runs at induced width 1, exact and linear — shares the fields
+across parts, and tightens by subgradient ascent until the parts stop disagreeing. That is
+Lagrangian dual decomposition, and the output is an **optimality-gap certificate**: a sampler
+holding a state of energy `E` is within `E - L` of optimal, whatever it found and however it found
+it. At gap zero the answer is *proven* optimal, checkable without trusting the sampler.
+
+Soundness is the only property that matters, because a bound above the optimum does not report a
+small gap — it reports a **negative** one, and every conclusion drawn from it is backwards. Checked
+against brute force on 200 random instances rather than argued.
+
+### The test that could not see the thing its doc comment claimed
+
+`forest` returns the best round, not the last, because subgradient ascent is not monotone. That
+sentence sat in a doc comment and **nothing could check it**: mutating `if total > best` to take the
+last round passed the entire suite, since `forest(g, r)` already maximises over rounds `0..r` and no
+test could see inside it.
+
+Measured instead of assumed: across 200 random instances at 40 rounds, **145 peak before the last
+round**, so taking the last would be worse roughly three times in four. `Bound::best_round` reports
+which round produced the value, which makes the difference observable from outside — and the
+mutation now dies. Both ways this can silently stop being a bound are recorded rows.
+
+### Also
+
+- One test had its premise wrong: it asserted the forest split beats the decoupled floor on a
+  *ferromagnetic* lattice, where every bond and field is satisfiable at once, so the floor is
+  already the exact optimum and there is no room above it. The question only means anything where
+  the floor is loose. It now checks both: strictly better on a frustrated instance, exactly equal
+  on the unfrustrated one.
+- `mutation-suite.sh` rows must be SINGLE-LINE patterns. A first draft embedded `\n`, which bash
+  does not expand and the replacement never matched — the row would have reported MUTATION DID NOT
+  APPLY, which the suite counts as a failure rather than a pass, so this one would have been caught
+  loudly rather than quietly. Recorded anyway, because the next one might not be.
+
+
 ## 0.19.0
 
 ### The fastest sampler in the stack was the one path conformance could not reach

@@ -59,19 +59,32 @@ mutations=(
   # `Sum for f64` folds from -0.0, so a model with no soft violations reported \"-0\".
   "src/model.rs|.sum::<f64>() + 0.0|.sum::<f64>()|soft|soft cost negative zero"
 
-  # A BUSY MACHINE HAS NO IDLE. `Meter::idle` guarded the DELTA against the baseline's noise and
-  # never checked the baseline was idle, so a complete energy table was published here from a
-  # machine at load 82 -- other sessions' work charged to this workload. The contamination inflates
-  # the baseline, which overstates the idle share, which is the direction that flattered the very
-  # argument being made. Leave the guard in place but make it always permit, and the test that
-  # exercises the DECISION (rather than whatever this machine happens to be doing) must go red.
   # A `Device::run` that accepts a seed and swallows it reports reproducibility it does not have:
   # the caller varies the seed, gets one answer every time, and reads a deaf sampler as a confident
   # one. `conform`'s determinism case CANNOT catch this -- an ignored seed is perfectly
   # reproducible -- so the tests that can are the ones named here.
   "gpu/src/lib.rs|let offset = (seed as u32).wrapping_mul(0x9E37_79B9);|let offset = 0u32; let _ = seed;|seed|Device::run swallows its seed|ferrotherm-gpu"
 
+  # A BUSY MACHINE HAS NO IDLE. `Meter::idle` guarded the DELTA against the baseline's noise and
+  # never checked the baseline was idle, so a complete energy table was published here from a
+  # machine at load 82 -- other sessions' work charged to this workload. The contamination inflates
+  # the baseline, which overstates the idle share, which is the direction that flattered the very
+  # argument being made. Leave the guard in place but make it always permit, and the test that
+  # exercises the DECISION (rather than whatever this machine happens to be doing) must go red.
   "meter/src/lib.rs|Some(l) if l > QUIET_LOAD => Err(format!(|Some(l) if false && l > QUIET_LOAD => Err(format!(|quiet|idle baseline on a busy machine|ferrotherm-meter"
+
+  # SOUNDNESS of the optimality bound. Drop one edge from the forest partition and `E = sum of the
+  # parts` stops holding, so the "bound" describes a different problem -- still a number, still
+  # plausible, and free to sit ABOVE the true minimum, which reports a NEGATIVE gap and makes every
+  # conclusion drawn from it backwards. Checked against brute force on 200 random instances.
+  "src/bound.rs|                forest.push((i, j, w));|                if !(i == 0 && j == 1) { forest.push((i, j, w)); }|bound|optimality bound drops an edge"
+
+  # Subgradient ascent is not monotone -- 145 of 200 random instances peak before the last round --
+  # so the bound must be the best round seen, not the final one. `if true` takes the last. This
+  # mutation SURVIVED the whole suite on its first outing, because `forest(g, r)` already maximises
+  # over rounds 0..r and no test could see inside that; `Bound::best_round` exists to make the
+  # difference observable from outside.
+  "src/bound.rs|        if total > best {|        if true {|bound|optimality bound takes the last round"
 )
 
 bad=0
