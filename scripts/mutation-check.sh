@@ -53,10 +53,18 @@ PY
 # WHICH CRATE. `cargo test --lib` with no package tests the ROOT package only, so a mutation in
 # `meter/`, `gpu/` or `serve/` would compile nothing and report NO TEST MATCHED -- a row that reads
 # like a skip while testing nothing at all. Pass the package for those.
+# `--nocapture`, so a test that SKIPPED can say so.
+#
+# A skipping test passes, and a passing test is exactly what a surviving mutant looks like. On a
+# runner with no GPU adapter the `Device::run swallows its seed` row reported "STILL GREEN -- the
+# test is blind" when the truth was that the test never ran: the three assertions that kill that
+# mutant sit behind `dev_or_skip!`. Those are different facts and the suite could not tell them
+# apart, so it called an absent GPU a blind test. Without `--nocapture` cargo swallows the skip
+# message and the distinction is simply unavailable.
 if [[ -n "$pkg" ]]; then
-  out="$(cargo test --release --lib -p "$pkg" "$filter" 2>&1)"
+  out="$(cargo test --release --lib -p "$pkg" "$filter" -- --nocapture 2>&1)"
 else
-  out="$(cargo test --release --lib "$filter" 2>&1)"
+  out="$(cargo test --release --lib "$filter" -- --nocapture 2>&1)"
 fi
 git checkout -- "$file"
 
@@ -66,6 +74,16 @@ elif grep -q "test result: FAILED" <<<"$out"; then
   printf '  %-38s RED (good)\n' "$label"
 elif grep -qE "^test result: ok\. 0 passed" <<<"$out"; then
   printf '  %-38s NO TEST MATCHED "%s"\n' "$label" "$filter"
+elif grep -qi "skipping" <<<"$out"; then
+  # This machine lacks what the test needs — no GPU adapter, no power backend. It keys on the
+  # convention every hardware-gated test in this tree already follows: print what is missing,
+  # ending in "skipping", and return. NOT the same as a blind test, and NOT a pass. The caller
+  # decides what to do about it, and `FERROTHERM_REQUIRE_ALL=1` makes it fatal.
+  # The WHOLE line, not the fragment after the last semicolon. A first cut matched `[^;]*skipping`,
+  # which cannot cross a `;` and so reported the reason as the bare word "skipping" — dropping
+  # "no GPU adapter on this machine", which is the only part a reader needs.
+  printf '  %-38s NOT EVALUATED HERE (%s)\n' "$label" \
+    "$(grep -i 'skipping' <<<"$out" | head -1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 else
   printf '  %-38s STILL GREEN — the test is blind\n' "$label"
 fi

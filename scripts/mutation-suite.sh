@@ -76,6 +76,8 @@ mutations=(
 
 bad=0
 ran=0
+unevaluated=0
+skipped_rows=""
 for row in "${mutations[@]}"; do
   IFS='|' read -r file old new filter label pkg <<<"$row"
   out="$(scripts/mutation-check.sh "$file" "$old" "$new" "$filter" "$label" ${pkg:+"$pkg"} 2>&1)"
@@ -84,7 +86,20 @@ for row in "${mutations[@]}"; do
   # RED is the only good outcome. Every other line means this row is not evidence of anything:
   # a mutation that did not apply tests nothing, a filter matching no test ran nothing, and a
   # build failure is inconclusive rather than safe.
-  grep -q "RED (good)" <<<"$out" || bad=$((bad + 1))
+  #
+  # One case is about the MACHINE rather than the row. A test gated on hardware this runner does
+  # not have — no GPU adapter, no power sensor — skips, and a skipping test PASSES, which is
+  # indistinguishable from a surviving mutant unless it is asked. CI called an absent GPU a blind
+  # test for exactly this reason. Counted apart, and not silently forgiven:
+  # `FERROTHERM_REQUIRE_ALL=1` turns it fatal, the same lever `check-semantics` and `check-answers`
+  # already use for this situation.
+  if grep -q "NOT EVALUATED HERE" <<<"$out"; then
+    unevaluated=$((unevaluated + 1))
+    skipped_rows="$skipped_rows
+  - $label"
+  elif ! grep -q "RED (good)" <<<"$out"; then
+    bad=$((bad + 1))
+  fi
 done
 
 echo
@@ -97,4 +112,19 @@ if [[ $bad -gt 0 ]]; then
   echo "A suite that stays green while the code is wrong is not measuring the code." >&2
   exit 1
 fi
-echo "  all $ran mutations caught by the test named for each"
+if [[ $unevaluated -gt 0 ]]; then
+  echo "$unevaluated of $ran mutations were NOT EVALUATED on this machine:$skipped_rows" >&2
+  echo >&2
+  echo "Their tests need hardware this runner does not have, so they skipped — and a skipping" >&2
+  echo "test passes, which is exactly what a surviving mutant looks like. This run is not" >&2
+  echo "evidence about those rows in either direction. Run it where the hardware is, or set" >&2
+  echo "FERROTHERM_REQUIRE_ALL=1 to make it fatal." >&2
+  if [[ "${FERROTHERM_REQUIRE_ALL:-0}" = "1" ]]; then
+    exit 1
+  fi
+fi
+if [[ $unevaluated -gt 0 ]]; then
+  echo "  $((ran - unevaluated)) of $ran mutations caught; $unevaluated not evaluated here"
+else
+  echo "  all $ran mutations caught by the test named for each"
+fi
