@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.22.0
+
+### The measurement, finally taken — and the instrument caught itself twice doing it
+
+Blocked all release cycle for want of an idle machine. Taken on an x86 box at load 0.4 with Intel
+RAPL, which reads **energy** directly rather than sampling power, so a window is a subtraction
+instead of an integral estimated from samples.
+
+Measured, i9-13900H, 1024×1024, 200 sweeps, one task of 209,715,200 node updates:
+
+| cadence | duty | above idle | true total | understated |
+|---|---|---|---|---|
+| continuous | 100% | 41.4 J | 43.7 J | 1× |
+| once a minute | 0.86% | 41.4 J | 309.0 J | **7×** |
+| once an hour | 0.014% | 41.4 J | 16,095 J | **389×** |
+
+Idle 4.5 W against 80.5 W marginal, so idle is most of the bill below a **5.5%** duty cycle, and
+the standby budget settles at **4.47 W**. Extropic's `<1 W` Z1 spec clears that — a real margin, and
+**~4.5×** rather than the 20× an assumed 20 W incumbent gives. Our own demo was flattering itself;
+the measured incumbent is far more frugal than the modelled one.
+
+### `psys` is a readable counter that reports computation is free
+
+RAPL exposes `psys`, documented as whole-platform and exactly what an idle-draw argument wants. On
+this part it is **dead**, and it fails in the worst possible way — readable, monotonic, plausible
+units, disconnected from the machine:
+
+```text
+           IDLE      20 CORES BUSY
+  psys     0.207 W      0.200 W     <- does not move
+  package  3.324 W     75.973 W
+```
+
+`rapl::choose` checks the one invariant that cannot be argued with — a platform cannot draw less
+than the chip inside it — and rejects `psys` when it reads below `package`. It would have supported
+our own thesis, which is the dangerous direction.
+
+### A meter and a device have to be in the same frame
+
+The first run reported the GPU arm at 5.5 W marginal and 1.06 J for the task. The RTX 4050 is
+**discrete**; RAPL `package-0` reads the CPU package; the card's draw is outside the counter
+entirely. That number was the cost of *feeding* the GPU. On an Apple SoC the identical code is
+correct, because `sys_power` covers the integrated GPU — so the error appears only when the backend
+changes underneath it.
+
+`Meter::scope()` returns `Scope::{WholeSystem, CpuPackage}` and `Scope::covers(discrete)` refuses
+rather than divides. `duty_cycle` now skips that arm with the reason printed, and reports the path
+it could see instead of discarding both.
+
+Package scope also **understates** the machine — no RAM, storage, fans or supply losses — which
+shrinks the incumbent's idle, the term the low-duty argument leans on. Conservative, and stated
+wherever the numbers appear.
+
+### Also
+
+- `Meter::detect()` now routes macmon → rapl → ina3221. Every backend must be added there in the
+  same commit: a backend nothing routes to is a backend nobody runs, which `ina3221` already
+  demonstrated once.
+- RAPL wraparound (262 kJ, about an hour at 75 W) is handled and tested; a wrap otherwise lands as
+  one absurd negative sample mid-run.
+- Subdomains are excluded by colon count: `intel-rapl:0:0` is the `core` subdomain of
+  `intel-rapl:0` and double-counts its parent.
+
+
 ## 0.21.0
 
 ### A fresh survey, and a claim of ours that did not survive it

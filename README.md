@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 564 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 568 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -102,27 +102,34 @@ thermodynamic-computing corpus currently leaves empty.
   loop is decided by the reflash-rate cap and the unpublished price of clamping an input.
 - `cargo run --release -p ferrotherm-gpu --example duty_cycle` — **the bill for being switched
   on**, and the only place this stack prices the wait rather than subtracting it. Every energy
-  comparison in this field, including every one this project has published, divides joules *above
-  idle* by work done. That is the right question for a machine kept busy, and most places a sampling
-  substrate would go do not keep one busy: a sensor drawing from a posterior ten times a second
-  computes for microseconds and waits out the rest of the second. `duty` prices the wait, and
-  inverts it into the number a challenger has to hit — the **standby budget**, `idle + marginal ×
-  duty`, which grants the challenger perfectly free computation and therefore cannot be argued down
-  by a better sampler. As the cadence slackens it collapses onto the incumbent's idle draw, with
-  nothing about sampling left in it. Which is where the field runs out of numbers: `ledger::Prices`
-  carries no standby term because **no thermodynamic vendor publishes one**, so the device column of
-  that comparison cannot be filled in by anybody today, and the strongest available argument for a
-  sampling fabric — the intermittent, low-duty edge workload — is the one nobody has priced. The
-  arithmetic is verified by `duty`'s own tests, independently of any measurement, and
-  `Machine::beaten_by_device` makes the absence structural: a `DeviceRun` carries
-  `standby_watts: Option<f64>`, so the comparison **refuses** rather than defaulting the one number
-  nobody publishes to zero. Feed it `Z1_SPICE` model-resident at a cadence it sustains — computation
-  fully priced at 1.77e-8 J per period — and the verdict is still `StandbyUnpublished`. The
-  device-side half needs no meter, so it runs and reports even on a machine too busy to measure. **The measurement
-  on this machine is not yet taken**: the first attempt was refused by `meter`'s new load guard at a
-  1-minute load average of 24 (five other sessions running experiments and builds), and a number
-  from a contaminated baseline would be *inflated* — it would make idle look larger than it is and
-  overstate exactly the thing being argued. Reported as pending rather than published.
+  comparison in this field, this project's own included, divides joules *above idle* by work done.
+  That prices a machine kept busy, and the case a sampling substrate is supposed to win is the
+  opposite: intermittent, low-duty work where the machine spends most of its life waiting.
+
+  **Measured** on an idle i9-13900H (RAPL, package scope), 1024×1024, 200 sweeps, one task:
+
+  | cadence | duty | above idle | true total | understated |
+  |---|---|---|---|---|
+  | continuous | 100% | 41.4 J | 43.7 J | 1× |
+  | once a minute | 0.86% | 41.4 J | 309.0 J | **7×** |
+  | once an hour | 0.014% | 41.4 J | 16,095 J | **389×** |
+
+  Idle 4.5 W against 80.5 W marginal, so idle is most of the bill below a **5.5%** duty cycle.
+  Inverted, that gives the number a challenger must beat — the **standby budget**,
+  `idle + marginal × duty`, which grants the challenger perfectly free computation and so cannot be
+  argued down by a better sampler. It settles at **4.47 W**, the idle draw, with nothing about
+  sampling left in it. `ledger::Prices` carries no standby term because **no thermodynamic vendor
+  publishes one**; `DeviceRun::with_standby_at_most` therefore substitutes a published ACTIVE figure,
+  which bounds standby from above since CMOS active is leakage plus switching. Extropic's Z1 spec of
+  `<1 W` sampling clears the 4.47 W budget — a real but **~4.5×** margin, not the 20× an assumed
+  20 W incumbent suggests.
+
+  Two scope facts decide how to read it. RAPL package scope **omits** RAM, storage, fans and supply
+  losses, so it understates the incumbent's idle — the term the argument leans on — making the
+  conclusion conservative. And the GPU arm **refused to report**: the RTX 4050 is discrete, RAPL
+  reads the CPU package, and the card's draw is outside the counter. It first reported 5.5 W
+  marginal, which was the cost of *feeding* the card. `Meter::scope()` and `Scope::covers()` now
+  refuse rather than divide.
 - `cargo run --release --example grad_check` — three independent gradient routes (REINFORCE,
   parameter-shift, finite-difference referee) agree on the same stochastic circuit: −0.1922 /
   −0.1922 / −0.1926 on the flip logit.

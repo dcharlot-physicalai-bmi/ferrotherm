@@ -48,6 +48,8 @@
 //! # Ok(()) }
 //! ```
 
+mod rapl;
+
 use ferrotherm::ledger::{Ledger, Prices};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
@@ -95,6 +97,35 @@ pub struct Meter {
     readings: Arc<Mutex<Vec<(Instant, f64)>>>,
     machine: String,
     backend: &'static str,
+    scope: Scope,
+}
+
+/// What a backend's reading actually covers.
+///
+/// Not decoration. A meter and a device have to be in the same frame for a comparison to mean
+/// anything, and they silently were not: RAPL `package-0` on a laptop with a DISCRETE RTX 4050
+/// reported the GPU arm of a duty-cycle run as 5.5 W marginal, because the card's draw never enters
+/// the CPU package counter. The number was small, plausible, and about the cost of FEEDING the
+/// GPU rather than running it. On an Apple SoC the same code was correct, because `sys_power`
+/// covers the whole package including the GPU — so the error appears only when the backend changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// Everything on one rail: CPU, integrated GPU, memory, the board. A discrete card on its own
+    /// power feed is still outside it, but nothing else is.
+    WholeSystem,
+    /// The CPU package alone. A discrete GPU is **invisible**, and so are RAM, storage and fans.
+    CpuPackage,
+}
+
+impl Scope {
+    /// Can a run on `device_is_discrete` hardware be attributed with this reading?
+    ///
+    /// `false` means the answer would be a number about the wrong component, which is worse than
+    /// no answer — so callers refuse rather than divide.
+    #[must_use = "false means this meter cannot see that device, and reporting anyway attributes the wrong component's energy"]
+    pub fn covers(&self, device_is_discrete: bool) -> bool {
+        !(device_is_discrete && *self == Scope::CpuPackage)
+    }
 }
 
 /// A measured idle baseline: its level AND its spread.
@@ -150,10 +181,14 @@ impl Meter {
     /// `None` means **not found here**, never "impossible" — a Linux box with INA3221 rails has the
     /// same counters and no backend yet.
     pub fn detect() -> Option<Meter> {
-        // Both, in order. `ina3221` shipped with its own tests and `detect` still returned only
-        // macmon -- so on the one class of machine the new backend exists for, the normal entry
-        // point could not reach it. A backend nothing routes to is a backend nobody runs.
-        Meter::macmon().or_else(Meter::ina3221)
+        // All of them, in order. `ina3221` once shipped with its own tests while `detect` still
+        // returned only macmon -- so on the one class of machine that backend exists for, the
+        // normal entry point could not reach it. A backend nothing routes to is a backend nobody
+        // runs, and every new one has to be added here in the same commit.
+        //
+        // RAPL before INA3221 because they cover different machines and RAPL is the cheaper probe:
+        // it reads a file, where INA3221 walks a sysfs tree looking for labelled rails.
+        Meter::macmon().or_else(Meter::rapl).or_else(Meter::ina3221)
     }
 
     /// The INA3221 backend: shunt monitors on the board, polled from sysfs.
@@ -176,8 +211,61 @@ impl Meter {
             }
             std::thread::sleep(ina3221::POLL);
         });
-        let m = Meter { child: None, readings, machine, backend: "ina3221" };
+        // A board rail carries everything downstream of it, discrete parts included.
+        let m = Meter { child: None, readings, machine, backend: "ina3221", scope: Scope::WholeSystem };
         m.wait_for_first(Duration::from_secs(4))?;
+        Some(m)
+    }
+
+    /// The x86 Linux backend: Intel RAPL energy counters via `/sys/class/powercap`.
+    ///
+    /// Unlike the other two this reads ENERGY rather than power, so a window's cost is a
+    /// subtraction instead of an integral estimated from samples — which removes the "workload
+    /// shorter than the sampling interval" failure the others have to refuse.
+    ///
+    /// See [`rapl`] for the domain that lies: `psys` is documented as whole-platform, reads 0.2 W
+    /// on the machine this was written against whether idle or running twenty busy cores, and is
+    /// rejected by checking it against the package it is supposed to contain.
+    pub fn rapl() -> Option<Meter> {
+        let (domain, kind) = rapl::choose()?;
+        let readings: Arc<Mutex<Vec<(Instant, f64)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&readings);
+        std::thread::spawn(move || {
+            let path = domain.path.join("energy_uj");
+            let read = |p: &std::path::Path| -> Option<u64> {
+                std::fs::read_to_string(p).ok()?.trim().parse().ok()
+            };
+            let Some(mut prev) = read(&path) else { return };
+            let mut last = Instant::now();
+            loop {
+                std::thread::sleep(Duration::from_millis(INTERVAL_MS));
+                let Some(now) = read(&path) else { return };
+                let dt = last.elapsed().as_secs_f64();
+                if dt > 0.0 {
+                    let w = domain.delta_j(prev, now) / dt;
+                    let mut v = sink.lock().unwrap();
+                    v.push((Instant::now(), w));
+                    if v.len() > 4096 {
+                        v.drain(..2048);
+                    }
+                }
+                prev = now;
+                last = Instant::now();
+            }
+        });
+        let cpu = std::fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("model name"))
+                    .and_then(|l| l.split(':').nth(1))
+                    .map(|v| v.trim().to_string())
+            })
+            .unwrap_or_else(|| "unknown x86".into());
+        let machine = format!("{cpu} [{}]", rapl::scope_note(kind));
+        let scope = if kind == "psys" { Scope::WholeSystem } else { Scope::CpuPackage };
+        let m = Meter { child: None, readings, machine, backend: "rapl", scope };
+        m.wait_for_first(Duration::from_secs(3))?;
         Some(m)
     }
 
@@ -212,7 +300,9 @@ impl Meter {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "unknown Apple silicon".into());
-        let m = Meter { child: Some(child), readings, machine, backend: "macmon" };
+        // `sys_power` is the whole SoC, GPU included -- which is why the discrete-GPU trap
+        // never appeared on Apple silicon.
+        let m = Meter { child: Some(child), readings, machine, backend: "macmon", scope: Scope::WholeSystem };
         // macmon does not produce its first reading for over a second. Waiting for it here means a
         // caller's measurement window covers their workload rather than the backend's warm-up --
         // which is what made a 1.2 s idle window collect exactly one sample.
@@ -243,6 +333,11 @@ impl Meter {
     }
 
     /// What this is measuring.
+    /// What this backend's readings cover. Check it before attributing a run to a device.
+    pub fn scope(&self) -> Scope {
+        self.scope
+    }
+
     pub fn machine(&self) -> &str {
         &self.machine
     }

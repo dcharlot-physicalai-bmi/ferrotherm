@@ -158,6 +158,10 @@ fn main() {
     println!("model   : {l}x{l} = {n} nodes; each path repeats {sweeps}-sweep passes for {:.0} s\n",
              window.as_secs_f64());
 
+    // Read before `row` takes a mutable borrow of the meter, and used everywhere below: the
+    // scope is a property of the backend, not of any one measurement.
+    let scope = meter.scope();
+
     // Same discipline as joules.rs: cool down BETWEEN paths, take a long baseline, and let the
     // meter refuse a run it cannot see rather than dividing by a window that was mostly idle.
     let mut row = |label: &str, pass: &mut dyn FnMut()| -> Option<Machine> {
@@ -191,10 +195,28 @@ fn main() {
         }
     };
 
-    let gm = GpuModel::from_graph(&g);
-    let mut spins = vec![1i8; n as usize];
-    gpu.sweep(&gm, &mut spins, 0.7, 1).unwrap(); // warm the pipeline, off the clock
-    let g_m = row("gpu", &mut || { gpu.sweep(&gm, &mut spins, 0.7, sweeps).unwrap(); });
+    // CAN THIS METER SEE THIS DEVICE? Checked before measuring, not after.
+    //
+    // On an Apple SoC `sys_power` covers the GPU and this is always true. On the Linux box it is
+    // not: RAPL `package-0` reads the CPU package, and a DISCRETE RTX 4050 draws on its own feed.
+    // The first run here reported the GPU arm at 5.5 W marginal and 1.06 J for the task -- small,
+    // plausible, and the cost of FEEDING the card rather than running it, with tens of watts
+    // outside the counter entirely. A number about the wrong component is worse than no number.
+    let discrete = matches!(gpu.adapter().device_type, wgpu::DeviceType::DiscreteGpu);
+    let g_m = if scope.covers(discrete) {
+        let gm = GpuModel::from_graph(&g);
+        let mut spins = vec![1i8; n as usize];
+        gpu.sweep(&gm, &mut spins, 0.7, 1).unwrap(); // warm the pipeline, off the clock
+        row("gpu", &mut || { gpu.sweep(&gm, &mut spins, 0.7, sweeps).unwrap(); })
+    } else {
+        eprintln!(
+            "gpu: {:?} is discrete and this meter reads {:?}, so the card's draw is outside the \
+             counter. Skipping rather than reporting the CPU-side cost of feeding it.",
+            gpu.adapter().device_type,
+            scope
+        );
+        None
+    };
 
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let mut led = Ledger::default();
@@ -263,9 +285,12 @@ fn main() {
     println!("  whole thermodynamic value proposition is one number -- standby power.");
     println!();
     println!("  WHICH COMPARISON THIS IS, because the budget means different things in two cases.");
-    println!("  The meter reads WHOLE-SYSTEM power, so the idle term above is the entire machine. That");
-    println!("  prices the case where the fabric REPLACES the host -- a standalone device that answers");
-    println!("  the query itself. It is the generous case, and the bar looks easy because of it.");
+    println!("  This meter's scope is {scope:?}.");
+    println!("  Whole-system readings price the case where the fabric REPLACES the host -- a");
+    println!("  standalone device answering the query itself, which is the generous case. A");
+    println!("  CPU-package reading is NARROWER: it omits RAM, storage, fans and supply losses, so");
+    println!("  it understates the incumbent's idle -- the very term the low-duty argument leans on,");
+    println!("  which makes any conclusion drawn from it conservative rather than flattering.");
     println!();
     println!("  The other case is a fabric sitting BESIDE a host that has to stay awake regardless. In");
     println!("  that arrangement the host's idle is common to both sides and cancels, and what remains");
