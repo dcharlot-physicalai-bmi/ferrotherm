@@ -2619,9 +2619,18 @@ split by subgradient ascent — Lagrangian dual decomposition. `min_s E(s) >= Σ
 for ANY split, which is what makes optimising the split safe. The output is an **optimality-gap
 certificate**: a sampler holding a state of energy `E` is within `E - L` of optimal whatever it
 found and however it found it, and at gap zero the answer is PROVEN optimal without trusting the
-sampler. Every other stack in this survey reports "best known", which is a statement about who has
-looked rather than about the problem. Soundness is checked against brute force on 200 random
-instances, and the two ways it could silently stop being a bound are both recorded mutations.
+sampler. Soundness is checked against brute force on 200 random instances, and the two ways it
+could silently stop being a bound are both recorded mutations.
+
+**CORRECTION, 2026-08-21 fresh survey.** 0.20.0 shipped saying this lane was empty and every other
+stack reports "best known". That is false. `dwave-preprocessing` — installed and listed in this
+very survey's D-Wave component inventory — exposes `dwave.preprocessing.lower_bounds.roof_duality()`,
+returning a lower bound on a BQM's energy plus strong/weak-persistency variable fixings. The
+previous survey graded D-Wave layer 9 "partial" and did not recognise the bound as a bound, so the
+gap was in our reading rather than in their library. The claim is withdrawn. What remains true and
+narrower: ours is a different relaxation (Lagrangian forest decomposition vs roof duality's max-flow
+construction), in a std-only Rust stack, and anytime — every subgradient round is a valid bound.
+Which is tighter where is **unmeasured**, and since both are sound their maximum is sound too.
 
 CPU, broad: `gibbs::Sampler` — chromatic block-Gibbs with `sweep`, `sweep_par(threads)`
 (std::thread::scope over disjoint index chunks within a colour class, bit-reproducible for fixed

@@ -1,15 +1,28 @@
 //! Lower bounds on the ground energy — how far from optimal a sampler's answer might be.
 //!
-//! Every sampler in this crate returns the best state it happened to find. None of them can say
-//! whether that is the optimum, and on any instance too large for [`exact`](crate::exact) nobody
-//! else can either: the field reports "best known", which is a statement about who has looked
-//! rather than about the problem. `planted` closes this by constructing instances whose optimum is
-//! known in advance, and that only works on instances you built.
+//! Every sampler in this crate returns the best state it happened to find, and none of them can say
+//! whether that is the optimum. [`planted`](crate::planted) answers it by constructing instances
+//! whose optimum is known in advance, which only works on instances you built.
 //!
-//! A lower bound closes it for instances you did not build. If `L <= E(s*)` for every state `s*`,
+//! A lower bound answers it for instances you did not build. If `L <= E(s*)` for every state `s*`,
 //! then a sampler holding a state of energy `E` is within `E - L` of optimal, whatever it found and
-//! however it found it. When the gap reaches zero the answer is **proven** optimal, and the proof
-//! is checkable without trusting the sampler.
+//! however it found it. When the gap reaches zero the answer is **proven** optimal, and the proof is
+//! checkable without trusting the sampler.
+//!
+//! # This is not an empty lane, and an earlier version of this doc said it was
+//!
+//! D-Wave's `dwave-preprocessing` has shipped `roof_duality()` for years: it returns a lower bound
+//! on a binary quadratic model's energy together with variable assignments that hold at every
+//! minimising point. 0.20.0 shipped claiming the field leaves this empty and reports only "best
+//! known". That was wrong, and the error was in our reading rather than their library — the same
+//! survey that missed it had `dwave-preprocessing` in its own component inventory.
+//!
+//! What this module is, stated narrowly: a lower bound in a std-only Rust stack, by a *different*
+//! relaxation — Lagrangian decomposition rather than roof duality's max-flow construction — and an
+//! **anytime** one, since every subgradient round yields a valid bound and the best so far is always
+//! available. No comparison against roof duality has been run, so which is tighter on which
+//! instances is **unmeasured**. Both are sound, so the maximum of the two is also sound, and that is
+//! what a caller with access to both should use.
 //!
 //! # Where the bound comes from
 //!

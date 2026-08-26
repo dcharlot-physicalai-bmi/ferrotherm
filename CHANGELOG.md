@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.21.0
+
+### A fresh survey, and a claim of ours that did not survive it
+
+0.20.0 shipped saying optimality-gap certificates were a lane every stack leaves empty, reporting
+only "best known". **That is false.** `dwave-preprocessing` exposes
+`dwave.preprocessing.lower_bounds.roof_duality()`, which returns a lower bound on a binary quadratic
+model's energy together with strong/weak-persistency variable fixings, and has for years. The error
+was in our reading rather than their library: the survey that missed it lists `dwave-preprocessing
+0.6.10` in its own D-Wave component inventory.
+
+Withdrawn in `bound`'s module docs, the README and `docs/LANDSCAPE.md`. What remains, stated
+narrowly: a lower bound in a std-only Rust stack, by a **different** relaxation — Lagrangian forest
+decomposition rather than roof duality's max-flow construction — and an **anytime** one, since every
+subgradient round is a valid bound. Which is tighter on which instances is **unmeasured**. Both are
+sound, so their maximum is sound too, and that is what a caller with access to both should use.
+
+### The standby figure is still unpublished — but active power is an upper bound on it
+
+The core finding survived the survey intact: no vendor states what any of this hardware draws
+between periods. What several do state is whole-device power **while working**. Extropic's Z1 spec
+says `<1 W` sampling above 50 MHz — a projection for taped-out silicon, and absent from their
+hardware page entirely. Fujitsu's Digital Annealer wants >100 W. A superparamagnetic-MTJ annealer
+reports 0.64 mW. Normal Computing still publishes no watts at all beside "up to 1000×".
+
+Active power bounds standby from above, because CMOS active power is leakage plus switching and
+standby is leakage alone. So `DeviceRun::with_standby_at_most` takes the published active figure and
+prices the device at or above what it really costs — which turns `StandbyUnpublished` from a dead
+end into an inequality that can still decide the question.
+
+The result is **asymmetric**, and `Verdict::outcome` enforces it rather than describing it:
+
+- a device that wins while charged its full active draw wins with the real figure too →
+  `ChallengerWins`
+- a device that loses under that handicap has proven nothing, because the handicap may be the whole
+  margin → `Inconclusive`, never `IncumbentWins`
+
+On the worked example — Z1's `<1 W` against a machine idling at 20 W, one task a minute — the
+outcome is `ChallengerWins`, from published numbers on both sides, for the first time.
+
+### Also
+
+- `DeviceRun` gains `standby_is_upper_bound` and `Verdict` gains `standby_was_bounded`, so a verdict
+  carries the provenance of the number that decided it. Breaking for anyone constructing either
+  literally.
+- Confirmed unchanged by the survey: Normal Computing publishes no watts; no vendor publishes idle,
+  standby, static or leakage power for any Ising machine.
+
+
 ## 0.20.0
 
 ### How far from optimal is that answer? Nobody in this field can say

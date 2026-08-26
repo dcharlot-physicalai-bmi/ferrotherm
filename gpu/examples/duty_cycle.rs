@@ -27,7 +27,7 @@
 //! this whole line of argument is void.
 
 use ferrotherm::{
-    duty::{DeviceRun, DutyError, Machine},
+    duty::{DeviceRun, DutyError, Machine, Outcome},
     gibbs::Sampler,
     ising::lattice2d,
     ledger::{Ledger, Z1_SPICE},
@@ -58,6 +58,7 @@ fn where_the_device_side_stops() {
         per_period: Ledger { samples: nodes * 250, reads: 834, writes: 0 },
         graph_nodes: nodes,
         standby_watts: None,
+        standby_is_upper_bound: false,
     };
 
     println!("THE DEVICE SIDE, on the vendor's own numbers (no meter needed for this part).\n");
@@ -86,10 +87,39 @@ fn where_the_device_side_stops() {
             println!("  detail that rounds away: it is the whole quantity.");
             println!();
             println!("  One number, from the party that knows it, and `Machine::beaten_by_device`");
-            println!("  finishes the sum. Until then nobody can -- not us, and not them.");
+            println!("  finishes the sum -- or an upper bound on it, which is what follows.");
         }
         Err(e) => println!("  total    : {e}"),
     }
+
+    // ---- and the way round it, which needs no measurement either --------------------------------
+    //
+    // Nobody states standby; several state whole-device power WHILE WORKING. Active is leakage plus
+    // switching and standby is leakage alone, so the active figure is an upper bound on the standby
+    // figure, and charging it can only overstate the device.
+    println!();
+    println!("USING A PUBLISHED ACTIVE-POWER FIGURE AS AN UPPER BOUND ON STANDBY.\n");
+    println!("  Z1 spec: <1 W while sampling above 50 MHz (a projection for taped-out silicon,");
+    println!("  and absent from Extropic's own hardware page). Charge the device that as standby.\n");
+    // A machine that must stay available: whatever idles here, against a task once a minute.
+    // Deliberately a MODEST incumbent idle so the result is not flattered -- 20 W, not the 67 W a
+    // laptop's whole-system reading gives.
+    let incumbent = Machine::new(20.0, 100.0, 1e9).expect("a plausible accelerator");
+    let task = 1_000_000u64;
+    for (label, period) in [("once a second", 1.0), ("once a minute", 60.0)] {
+        match incumbent.beaten_by_device(&dev.with_standby_at_most(1.0), task, period) {
+            Ok(v) => println!(
+                "  {label:<14} device {:>10.4} J vs incumbent {:>10.4} J  ->  {:?}",
+                v.challenger_joules, v.incumbent_joules, v.outcome()
+            ),
+            Err(e) => println!("  {label:<14} {e}"),
+        }
+    }
+    println!();
+    println!("  The asymmetry is the point. A device that wins while charged its full ACTIVE draw");
+    println!("  wins with the real standby too, whatever that turns out to be -- so a");
+    println!("  {:?} here is a finding. A loss under the same handicap would be", Outcome::ChallengerWins);
+    println!("  {:?}: the handicap could be the entire margin.", Outcome::Inconclusive);
     println!();
 }
 

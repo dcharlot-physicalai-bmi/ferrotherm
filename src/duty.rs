@@ -151,7 +151,24 @@ pub struct Verdict {
     /// The standby power the challenger had to come in under, granting it free computation.
     pub standby_budget: f64,
     /// Whether the challenger is STRICTLY cheaper. A tie is not a reason to change fabric.
+    ///
+    /// Read [`Verdict::outcome`] instead where the standby figure was a bound: this field alone
+    /// cannot distinguish "loses" from "loses only because we assumed the worst".
     pub challenger_wins: bool,
+    /// Whether the challenger's standby was an upper bound rather than a published figure.
+    pub standby_was_bounded: bool,
+}
+
+/// What a comparison actually established.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The challenger is cheaper here, and the finding survives whatever the real standby is.
+    ChallengerWins,
+    /// The incumbent is cheaper here, on figures both sides published.
+    IncumbentWins,
+    /// The challenger lost while being charged an upper bound on its standby, so this says
+    /// nothing: the assumption may be the entire margin. Publish the standby figure and re-run.
+    Inconclusive,
 }
 
 /// A device MODEL priced at a cadence: what it computes each period, at what per-operation cost,
@@ -174,9 +191,37 @@ pub struct DeviceRun {
     pub graph_nodes: u64,
     /// What it draws between periods. `None` means **nobody has published it**.
     pub standby_watts: Option<f64>,
+    /// Whether `standby_watts` is an UPPER BOUND rather than the figure itself.
+    ///
+    /// Set by [`DeviceRun::with_standby_at_most`]. It changes what a verdict is worth: a win under
+    /// a pessimistic substitution is a real win, and a loss under one proves nothing at all.
+    pub standby_is_upper_bound: bool,
 }
 
 impl DeviceRun {
+    /// Substitute a published ACTIVE power figure for the standby nobody publishes.
+    ///
+    /// Vendors state whole-device power while working and not while waiting. Extropic's Z1 spec
+    /// says **`<1 W`** while sampling above 50 MHz (a projection for taped-out silicon, not a
+    /// measurement); Fujitsu's Digital Annealer wants **>100 W**; a superparamagnetic-MTJ annealer
+    /// reports **0.64 mW**. None of them says what the part draws between periods.
+    ///
+    /// The substitution is sound because of how CMOS power decomposes: active is leakage plus
+    /// switching, standby is leakage alone, so for one part at one voltage and temperature
+    /// `standby <= active`. Putting the active figure in the standby slot therefore prices the
+    /// device at or above what it really costs.
+    ///
+    /// Which makes the result ASYMMETRIC, and [`Verdict::outcome`] enforces it: a device that wins
+    /// while charged its full active draw wins with the real figure too, whatever that turns out to
+    /// be. A device that loses under this assumption has proven nothing — the assumption may be the
+    /// only reason it lost.
+    #[must_use]
+    pub fn with_standby_at_most(mut self, active_watts: f64) -> DeviceRun {
+        self.standby_watts = Some(active_watts);
+        self.standby_is_upper_bound = true;
+        self
+    }
+
     /// Energy for this period's operations, ignoring standby.
     pub fn compute_joules(&self) -> Result<f64, DutyError> {
         self.per_period.joules(&self.prices).ok_or(DutyError::PricesUnstated)
@@ -209,6 +254,22 @@ impl DeviceRun {
             return Err(DutyError::NotPhysical("standby power must be finite and non-negative"));
         }
         Ok(self.compute_joules()? + standby * period_s)
+    }
+}
+
+impl Verdict {
+    /// What this comparison established, accounting for how the standby figure was obtained.
+    ///
+    /// The asymmetry is the whole point. Charging a device its ACTIVE draw as standby can only make
+    /// it look worse, so a win under that handicap is real and a loss under it is an artefact of
+    /// the handicap.
+    #[must_use]
+    pub fn outcome(&self) -> Outcome {
+        match (self.challenger_wins, self.standby_was_bounded) {
+            (true, _) => Outcome::ChallengerWins,
+            (false, false) => Outcome::IncumbentWins,
+            (false, true) => Outcome::Inconclusive,
+        }
     }
 }
 
@@ -343,6 +404,9 @@ impl Machine {
             standby_budget: self.standby_budget(work, period_s)?,
             // Strictly cheaper. A tie is not a reason to change your compute fabric.
             challenger_wins: challenger < incumbent,
+            // Two loose numbers carry no provenance; a caller who bounded one should say so by
+            // routing through `DeviceRun` instead.
+            standby_was_bounded: false,
         })
     }
 
@@ -371,6 +435,7 @@ impl Machine {
             challenger_joules: challenger,
             standby_budget: self.standby_budget(work, period_s)?,
             challenger_wins: challenger < incumbent,
+            standby_was_bounded: device.standby_is_upper_bound,
         })
     }
 }
@@ -527,6 +592,7 @@ mod tests {
             per_period: Ledger { samples: nodes * 64, reads: 16, writes: nodes },
             graph_nodes: nodes,
             standby_watts: None,
+            standby_is_upper_bound: false,
         }
     }
 
@@ -583,7 +649,8 @@ mod tests {
             per_period: Ledger { samples: 1_000, reads: 1, writes: 0 },
             graph_nodes: 1_000,
             standby_watts: Some(1.0),
-            };
+            standby_is_upper_bound: false,
+        };
         assert_eq!(dev.compute_joules().unwrap_err(), DutyError::PricesUnstated);
         assert_eq!(m.beaten_by_device(&dev, 1_000_000, 1.0).unwrap_err(), DutyError::PricesUnstated);
     }
@@ -604,6 +671,53 @@ mod tests {
         assert!((v.challenger_joules - loose.challenger_joules).abs() < 1e-12);
         assert_eq!(v.challenger_wins, loose.challenger_wins);
         assert!(v.challenger_wins, "a milliwatt against a {} W idle draw wins", m.idle_watts);
+    }
+
+    #[test]
+    fn an_active_power_figure_can_stand_in_for_the_standby_nobody_publishes() {
+        // The survey finding, made executable. No vendor states standby; several state whole-device
+        // power while WORKING -- Z1 `<1 W` sampling above 50 MHz, Fujitsu's Digital Annealer >100 W,
+        // an SMTJ annealer 0.64 mW. Active is leakage plus switching and standby is leakage alone,
+        // so `standby <= active` and charging the active figure can only overstate the device.
+        let m = gpu(); // idles at 20 W
+        let (work, period) = (1_000_000u64, 60.0);
+        let mut dev = z1_control_loop(1_000);
+        dev.per_period.writes = 0;
+
+        // Z1's published spec, used as the pessimistic stand-in.
+        let v = m.beaten_by_device(&dev.with_standby_at_most(1.0), work, period).unwrap();
+        assert_eq!(
+            v.outcome(),
+            Outcome::ChallengerWins,
+            "1 W against a 20 W idle draw: {:.2} J vs {:.2} J",
+            v.challenger_joules,
+            v.incumbent_joules
+        );
+        // And the win survives the handicap by construction -- that is what makes it a finding.
+        assert!(v.standby_was_bounded);
+    }
+
+    #[test]
+    fn losing_under_a_pessimistic_assumption_proves_nothing() {
+        // The asymmetry, enforced rather than described. Charge a device an absurd active draw and
+        // it loses -- but the assumption may be the entire margin, so the verdict is INCONCLUSIVE
+        // and must not read as "the incumbent wins".
+        let m = gpu();
+        let (work, period) = (1_000_000u64, 60.0);
+        let mut dev = z1_control_loop(1_000);
+        dev.per_period.writes = 0;
+
+        let bounded = m.beaten_by_device(&dev.with_standby_at_most(500.0), work, period).unwrap();
+        assert!(!bounded.challenger_wins);
+        assert_eq!(bounded.outcome(), Outcome::Inconclusive);
+
+        // The same loss with a PUBLISHED figure is a real loss, and says so.
+        let mut stated = z1_control_loop(1_000);
+        stated.per_period.writes = 0;
+        stated.standby_watts = Some(500.0);
+        let v = m.beaten_by_device(&stated, work, period).unwrap();
+        assert_eq!(v.outcome(), Outcome::IncumbentWins);
+        assert!(!v.standby_was_bounded);
     }
 
     #[test]
