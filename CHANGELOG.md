@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.23.0
+
+### G-set, reported as a gap instead of a league-table entry
+
+G-set has been the max-cut comparison set for twenty-five years, and every published figure is a
+**best cut found** — a lower bound, which ranks how hard people looked and can never say whether
+the best entry is optimal. `bound` supplies the other side, so the optimum is bracketed.
+
+Measured, 800-node instances, 8 restarts, seconds each:
+
+| instance | mean degree | cut found | best known | | upper bound | gap |
+|---|---|---|---|---|---|---|
+| G11 | 4.0 | 564 | 564 | **100.00%** | 579 | **2.6%** |
+| G14 | 11.7 | 3058 | 3064 | 99.80% | 3602 | 15.1% |
+| G1 | 47.9 | 11624 | 11624 | **100.00%** | 14958 | 22.3% |
+
+We match the world best-known cut on G1 and G11. On G11 the true optimum is provably in
+**[564, 579]**.
+
+### `bound::forest` is worth nothing on max-cut, and now says so
+
+A forest is **never frustrated**: any tree two-colours, so every edge in it is satisfiable at once
+and the part's minimum is exactly `-Σ|J|`. Sum across parts and `forest` **is** `decoupled` whenever
+the graph has no fields for the subgradient to move — which is every G-set instance. Measured:
+
+```text
+  G11:  decoupled -1600   forest -1600   -Σ|w| -1600
+  G14:  decoupled -4694   forest -4694   -Σ|w| -4694
+```
+
+with `best_round = 0`, forty rounds of tightening improving nothing. **Trees cannot see the only
+thing that makes max-cut hard.** Documented in the module rather than left for a reader to discover
+from a suspiciously round number.
+
+`bound::odd_cycle` charges `2·min|J|` for each **edge-disjoint** frustrated cycle — a cycle whose
+coupling signs multiply to negative has at least one violated edge, and that term flips from `-|J|`
+to `+|J|`. Edge-disjointness is what makes the penalties add: sharing an edge would double-count
+the single violation paying for both. It takes G11's upper bound from 817 to 579 in 0.0 s.
+
+Both are sound, so `gset_gap` reports the better of the two.
+
+### `gset` exists to get one sign right
+
+Max-cut is an Ising minimisation with the couplings **negated**. Load `J = +w` and
+`cut = (W + E)/2`, so minimising energy *minimises* the cut: a plausible number, a valid state, and
+the opposite problem — the kind of error that yields a complete benchmark table nobody can tell is
+wrong. With `J = -w`, `cut = (W - E)/2` and a lower bound on energy becomes an upper bound on the
+cut. A test proves the energy minimum coincides with the cut maximum by enumeration.
+
+Two refusals aimed at harness failures rather than parser hygiene: a truncated download parses into
+a valid **smaller** instance whose cut is incomparable with everyone else's (refused by edge count),
+and a `0` in a 1-based file silently shifts every edge onto the wrong vertices (refused by range).
+
+### A prediction, half right, and the wrong half recorded
+
+`gset_gap` pre-registered that the bound would loosen with density. The trend held exactly — 2.6% at
+mean degree 4, 15.1% at 11.7, 22.3% at 47.9 — but the prediction named the *forest* bound, which
+contributes nothing here. Right about the phenomenon, wrong about the mechanism, and the example
+says so where the prediction is.
+
+
 ## ferrotherm-gpu 0.3.4
 
 ### `cargo test` segfaulted on NVIDIA, and only a second vendor could have shown it

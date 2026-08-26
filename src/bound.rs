@@ -53,6 +53,26 @@
 //! println!("gap {:.3}", b.gap(&g, &ferro));
 //! ```
 //!
+//! # Where `forest` is worth nothing: max-cut
+//!
+//! A forest is **never frustrated**. Any tree two-colours, so every edge in it can be satisfied at
+//! once and the part's minimum is exactly `-Σ|J|` over its own edges. Sum that across parts and the
+//! forest bound **is** [`decoupled`] — the trivial floor — whenever the graph carries no fields for
+//! the subgradient to redistribute.
+//!
+//! That is exactly the G-set case, and it is not a corner: measured on real instances, where
+//! `fields_all_zero` is true and the two bounds agree to the last digit.
+//!
+//! ```text
+//!   G11:  decoupled -1600   forest -1600   -Σ|w| -1600
+//!   G14:  decoupled -4694   forest -4694   -Σ|w| -4694
+//! ```
+//!
+//! `forest` reports `best_round = 0` there — forty subgradient rounds improving nothing, because
+//! with `h = 0` there is no field mass to move. **Trees cannot see the only thing that makes
+//! max-cut hard**, which is odd cycles. Use [`odd_cycle`] on such instances, and prefer the maximum
+//! of the two in general, since both are sound.
+//!
 //! # What it does not do
 //!
 //! It does not certify a *sample*. [`certify`](crate::certify) asks whether draws came from the
@@ -215,6 +235,130 @@ pub fn forest(g: &Graph, rounds: usize) -> Bound {
         method: "forest decomposition, tightened by subgradient ascent on the field split",
         rounds: used,
         best_round,
+    }
+}
+
+/// A bound that can see frustration: the decoupled floor, plus what odd cycles must cost.
+///
+/// A cycle is **frustrated** when the product of its coupling signs is negative — for max-cut,
+/// where every `J` is negative, that is exactly an odd-length cycle. Around such a cycle no
+/// assignment satisfies every edge, so at least one is violated and its term flips from `-|J|` to
+/// `+|J|`: the cycle costs at least `2·min|J|` above the decoupled floor.
+///
+/// Those penalties **add** across EDGE-DISJOINT cycles, because no edge is asked to be violated
+/// twice. Sharing an edge would double-count the one violation that pays for both, so this claims
+/// each edge at most once and skips any cycle whose edges are already spoken for.
+///
+/// `max_len` caps the search. Short cycles are worth more per edge spent, and an uncapped search on
+/// a degree-48 graph is a different program.
+pub fn odd_cycle(g: &Graph, max_len: usize) -> Bound {
+    let base = decoupled(g);
+    if max_len < 3 {
+        return base;
+    }
+    // Edges, indexed so "claimed" is a bitset over them rather than a set of pairs.
+    let mut eid = std::collections::BTreeMap::new();
+    let mut ew: Vec<f64> = Vec::new();
+    for i in 0..g.n {
+        for k in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[k] as usize;
+            if j > i {
+                eid.insert((i, j), ew.len());
+                ew.push(g.w[k]);
+            }
+        }
+    }
+    let key = |a: usize, b: usize| if a < b { (a, b) } else { (b, a) };
+    let mut claimed = vec![false; ew.len()];
+    let mut penalty = 0.0;
+    let mut cycles = 0usize;
+
+    // For each still-free edge, look for the shortest cycle closing it through free edges only.
+    for i in 0..g.n {
+        for k in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[k] as usize;
+            if j <= i {
+                continue;
+            }
+            let e0 = eid[&key(i, j)];
+            if claimed[e0] {
+                continue;
+            }
+            // BFS from j back to i without reusing edge (i,j) or any claimed edge.
+            let mut prev: Vec<Option<usize>> = vec![None; g.n];
+            let mut seen = vec![false; g.n];
+            seen[j] = true;
+            let mut q = std::collections::VecDeque::from([(j, 0usize)]);
+            let mut path: Option<Vec<usize>> = None;
+            while let Some((u, d)) = q.pop_front() {
+                if d + 1 >= max_len {
+                    continue;
+                }
+                for kk in g.offset[u]..g.offset[u + 1] {
+                    let v = g.nbr[kk] as usize;
+                    let e = eid[&key(u, v)];
+                    if e == e0 || claimed[e] {
+                        continue;
+                    }
+                    if v == i {
+                        // Walk back to build the cycle's vertex list.
+                        let mut p = vec![i, u];
+                        let mut cur = u;
+                        while let Some(pp) = prev[cur] {
+                            p.push(pp);
+                            cur = pp;
+                        }
+                        path = Some(p);
+                        break;
+                    }
+                    if !seen[v] {
+                        seen[v] = true;
+                        prev[v] = Some(u);
+                        q.push_back((v, d + 1));
+                    }
+                }
+                if path.is_some() {
+                    break;
+                }
+            }
+            let Some(p) = path else { continue };
+            // Edges of the cycle: consecutive pairs, plus the closing edge (i,j).
+            let mut edges = vec![e0];
+            let mut ok = true;
+            for w in p.windows(2) {
+                let e = eid[&key(w[0], w[1])];
+                if claimed[e] || edges.contains(&e) {
+                    ok = false;
+                    break;
+                }
+                edges.push(e);
+            }
+            if !ok || edges.len() < 3 {
+                continue;
+            }
+            // FRUSTRATED? The product of signs decides it. An even number of negative couplings
+            // means the cycle can be satisfied, and claiming its edges would spend them for nothing.
+            let negatives = edges.iter().filter(|&&e| ew[e] < 0.0).count();
+            if negatives % 2 == 0 {
+                continue;
+            }
+            let min_abs = edges.iter().map(|&e| ew[e].abs()).fold(f64::INFINITY, f64::min);
+            if !min_abs.is_finite() || min_abs <= 0.0 {
+                continue;
+            }
+            for e in edges {
+                claimed[e] = true;
+            }
+            penalty += 2.0 * min_abs;
+            cycles += 1;
+        }
+    }
+    Bound {
+        value: base.value + penalty,
+        parts: cycles,
+        method: "decoupled floor plus 2*min|J| per edge-disjoint frustrated cycle",
+        rounds: 0,
+        best_round: 0,
     }
 }
 
@@ -426,6 +570,75 @@ mod tests {
         let b = forest(&g, 3);
         assert!(b.method.contains("exact"), "{}", b.method);
         assert!((b.value - true_min(&g)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_odd_cycle_bound_is_sound_too() {
+        // Same brute-force check the forest bound gets. A bound that sees frustration is worth
+        // nothing if it ever climbs above the truth.
+        for seed in 0..150u64 {
+            let g = random_graph(9, 0.45, seed);
+            let truth = true_min(&g);
+            let b = odd_cycle(&g, 6);
+            assert!(
+                b.value <= truth + 1e-9,
+                "seed {seed}: odd_cycle gave {} above the true minimum {truth}",
+                b.value
+            );
+        }
+    }
+
+    #[test]
+    fn a_triangle_is_frustrated_and_the_bound_says_so() {
+        // The smallest frustrated object. Three antiferromagnetic bonds cannot all be satisfied,
+        // so the optimum sits 2 above the decoupled floor of -3 -- exactly the 2*min|J| the cycle
+        // term adds.
+        let mut gb = GraphBuilder::new(3);
+        for (i, j) in [(0, 1), (1, 2), (2, 0)] {
+            gb.couple(i, j, -1.0);
+        }
+        let g = gb.build();
+        assert!((true_min(&g) - (-1.0)).abs() < 1e-9, "a frustrated triangle bottoms out at -1");
+        assert!((decoupled(&g).value - (-3.0)).abs() < 1e-9, "the trivial floor is -3");
+        let b = odd_cycle(&g, 4);
+        assert_eq!(b.parts, 1, "one cycle claimed");
+        assert!((b.value - (-1.0)).abs() < 1e-9, "cycle bound {} should be exact here", b.value);
+    }
+
+    #[test]
+    fn an_unfrustrated_cycle_is_not_charged_for() {
+        // An even cycle of antiferromagnets two-colours perfectly, so there is nothing to claim --
+        // and spending its edges would leave less for cycles that are frustrated.
+        let mut gb = GraphBuilder::new(4);
+        for (i, j) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
+            gb.couple(i, j, -1.0);
+        }
+        let g = gb.build();
+        let b = odd_cycle(&g, 5);
+        assert_eq!(b.parts, 0, "no frustrated cycle exists here");
+        assert!((b.value - decoupled(&g).value).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_cycle_bound_beats_the_forest_bound_where_the_forest_bound_is_blind() {
+        // THE FINDING, as a test. With no fields `forest` degenerates to `decoupled`, because a
+        // tree is never frustrated -- measured on G11 and G14, where the two agree to the last
+        // digit. Two disjoint triangles are that situation in miniature.
+        let mut gb = GraphBuilder::new(6);
+        for (i, j) in [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)] {
+            gb.couple(i, j, -1.0);
+        }
+        let g = gb.build();
+        assert!(g.h.iter().all(|&h| h == 0.0), "no fields, which is the G-set case");
+        let (f, c) = (forest(&g, 40), odd_cycle(&g, 4));
+        assert!(
+            (f.value - decoupled(&g).value).abs() < 1e-9,
+            "forest {} should degenerate to decoupled {}",
+            f.value,
+            decoupled(&g).value
+        );
+        assert!(c.value > f.value + 1e-9, "cycle {} must beat forest {}", c.value, f.value);
+        assert!(c.value <= true_min(&g) + 1e-9, "and still be sound");
     }
 
     #[test]

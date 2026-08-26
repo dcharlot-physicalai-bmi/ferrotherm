@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 568 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 578 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -93,6 +93,23 @@ thermodynamic-computing corpus currently leaves empty.
   a different relaxation (Lagrangian decomposition, not roof duality's max-flow), in a std-only Rust
   stack, and *anytime*: every round is a valid bound. Which is tighter on which instances is
   unmeasured; both are sound, so their maximum is too.
+- `cargo run --release --example gset_gap -- <G-set file> [best-known]` — **the standard max-cut
+  benchmark, reported as a gap rather than a league-table entry.** G-set has been the comparison
+  set for twenty-five years and every published figure is a *best cut found* — a lower bound, which
+  ranks how hard people looked. `bound` supplies the other side, so the true optimum is bracketed:
+
+  | instance | mean degree | cut found | best known | | upper bound | gap |
+  |---|---|---|---|---|---|---|
+  | G11 | 4.0 | 564 | 564 | **100.00%** | 579 | **2.6%** |
+  | G14 | 11.7 | 3058 | 3064 | 99.80% | 3602 | 15.1% |
+  | G1 | 47.9 | 11624 | 11624 | **100.00%** | 14958 | 22.3% |
+
+  800 nodes, 8 restarts, seconds each. **`bound::forest` contributes nothing here and the module
+  says so**: a tree is never frustrated and G-set carries no fields, so it degenerates to the
+  trivial `-Σ|w|` on every instance — measured, `decoupled -1600 / forest -1600` on G11.
+  `bound::odd_cycle` charges `2·min|J|` per edge-disjoint frustrated cycle, which is the only thing
+  that makes max-cut hard, and takes G11's bound from 817 to 579. Both are sound, so the harness
+  reports the better of the two.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
   noise floor 0.0057 at 100k samples. Residual is sampling noise, not bias.
 - `cargo run --release --example onsager` — 2D Ising 64×64 vs Onsager/Yang closed form:
