@@ -1,5 +1,35 @@
 # Changelog
 
+## ferrotherm-gpu 0.3.4
+
+### `cargo test` segfaulted on NVIDIA, and only a second vendor could have shown it
+
+The WGSL sampler had run on Apple Metal, an NVIDIA L4 under Vulkan, and DX12 under WARP — a
+software rasteriser. `GpuDevice` and the three defects `conform` found in it at 0.19.0 had been
+verified on Metal alone.
+
+On an RTX 4050, `cargo test -p ferrotherm-gpu` **SIGSEGVs**. Not a failure, not a skip: the test
+binary dies after the first test that touches an adapter. Single-threaded it passes 12/12, so the
+shader and the physics were never implicated — parallel Vulkan device creation and teardown crashes
+the driver stack on that machine, which has `nvidia_icd.json` and `nouveau_icd.json` both registered
+for the same physical device.
+
+Environmental in origin and ours in effect, because a user running the default `cargo test` on a
+common configuration got a crash. Both test modules now serialise adapter acquisition behind the
+same std-only lock `ferrotherm-meter` uses for a structurally identical reason.
+
+Two corrections on the way to it, both worth keeping:
+
+- The guard must be **returned to the caller**. Bound inside the macro it drops at the end of the
+  macro's own block and locks nothing for the test body — which looks exactly like a fix and is not.
+- The expansion must be a **block expression** (`{{ }}`), or `let (gpu, _own) = gpu_or_skip!();`
+  does not parse.
+
+Verified on the configuration that crashed: 12/12 under default parallelism on the RTX 4050,
+`conform` scoring the GPU path among them. "Runs on any fabric" now means more than one vendor's
+silicon.
+
+
 ## 0.22.0
 
 ### The measurement, finally taken — and the instrument caught itself twice doing it

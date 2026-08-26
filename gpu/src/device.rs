@@ -184,15 +184,18 @@ mod tests {
     use ferrotherm::ising::lattice2d;
 
     macro_rules! dev_or_skip {
-        () => {
+        () => {{
+            // Serialised for the same reason as `ferrotherm_gpu::tests::ADAPTER`: parallel
+            // Vulkan device creation segfaults the NVIDIA driver stack.
+            let own = crate::tests::ADAPTER.lock().unwrap_or_else(|e| e.into_inner());
             match GpuDevice::open() {
-                Some(d) => d,
+                Some(d) => (d, own),
                 None => {
                     eprintln!("no GPU adapter on this machine; skipping");
                     return;
                 }
             }
-        };
+        }};
     }
 
     #[test]
@@ -200,7 +203,7 @@ mod tests {
         // THE POINT OF THIS MODULE. `conform::run` takes a `&mut dyn Device`, so before this impl
         // existed the fastest sampler in the stack was the one path the conformance suite could not
         // reach -- runnable, and uncheckable against the fabric it claims to be.
-        let mut d = dev_or_skip!();
+        let (mut d, _own) = dev_or_skip!();
         if !d.is_hardware() {
             eprintln!("software rasteriser; the physics is still checked, the timings mean nothing");
         }
@@ -218,7 +221,7 @@ mod tests {
         // field is rounded to 24 mantissa bits going in while the CPU path keeps f64. Neither is
         // wrong; an undeclared difference is, because nothing downstream can then tell an
         // arithmetic gap from a sampler gap.
-        let d = dev_or_skip!();
+        let (d, _own) = dev_or_skip!();
         let f = d.fabric();
         assert_eq!(f.coupling_precision, Precision::Float { mantissa: 24 });
         assert_eq!(f.field_precision, Precision::Float { mantissa: 24 });
@@ -240,7 +243,7 @@ mod tests {
         //
         // Checked at the sweep level, where it is unambiguous: identical starting state, identical
         // beta, identical sweep count, two seeds.
-        let d = dev_or_skip!();
+        let (d, _own) = dev_or_skip!();
         let g = lattice2d(24, 1.0);
         let m = GpuModel::from_graph(&g);
         let hot = 0.15; // disordered, so two streams separate immediately
@@ -271,7 +274,7 @@ mod tests {
         // ground state, so best-so-far never leaves it and both seeds return the initial state --
         // which is correct behaviour and a completely blind test. This assertion only means
         // something where the sampler has somewhere to go.
-        let mut d = dev_or_skip!();
+        let (mut d, _own) = dev_or_skip!();
         let inst = ferrotherm::planted::frustrated_loops(12, 24, 5);
         let p = Program::from_graph(&inst.graph, &Schedule::default());
         assert!(d.program(&p).is_empty());
@@ -288,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_write_is_charged_because_that_is_the_term_the_ledger_rests_on() {
-        let mut d = dev_or_skip!();
+        let (mut d, _own) = dev_or_skip!();
         assert_eq!(d.ledger().writes, 0);
         let g = lattice2d(16, 1.0);
         let p = Program::from_graph(&g, &Schedule::default());
@@ -302,7 +305,7 @@ mod tests {
 
     #[test]
     fn running_without_a_program_is_an_error_not_an_empty_state() {
-        let mut d = dev_or_skip!();
+        let (mut d, _own) = dev_or_skip!();
         let e = d.run(&Schedule::constant(0.6, 10), 1).unwrap_err();
         assert!(e.contains("no program"), "{e}");
         // And an empty schedule runs nothing, which is worth saying rather than returning the

@@ -166,7 +166,18 @@ thermodynamic-computing corpus currently leaves empty.
   and whose f32 behaviour differs, so this was worth checking rather than assuming. **The DX12 run
   was WARP, a software rasteriser**: it establishes that the shader compiles under DX12 and that the
   physics is right, and says nothing about DX12 on hardware. `Gpu::is_hardware()` reported `Cpu` and
-  the benchmark declined to quote a speedup on its own. Since 0.19.0 `GpuDevice` implements
+  the benchmark declined to quote a speedup on its own. **Four backends now, and CI executes one**:
+  Apple Metal, NVIDIA Vulkan, Intel Iris Xe Vulkan, and lavapipe (software Vulkan) — 12/12 on each.
+  CI used to run this crate on a runner with no adapter, where every hardware-gated test skips, so
+  the fastest sampler in the stack had *zero* CI coverage and its correctness rested on whichever
+  machine somebody remembered to test by hand. It now installs lavapipe and runs the real shader,
+  and **a skip there is a failure** — a driver was installed on purpose, so "no GPU adapter" means
+  it did not load and the shader went unverified while the job stayed green.
+  **A second vendor found what one could not**:
+  on an RTX 4050 the default `cargo test -p ferrotherm-gpu` SIGSEGVs — parallel Vulkan device
+  creation crashes that driver stack, where single-threaded it passes 12/12. The shader was never
+  implicated; adapter acquisition is now serialised behind the same lock the meter uses, and the
+  suite passes under default parallelism there. Since 0.19.0 `GpuDevice` implements
   `Device`, so **`conform` scores the GPU path** — for five releases the fastest sampler here was
   the one path the conformance suite could not reach, runnable but uncheckable against the fabric
   it claims to be. Pointing `conform::run` at it found three defects that being unscoreable had

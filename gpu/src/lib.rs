@@ -409,25 +409,46 @@ fn bytes_f32(v: &[f32]) -> &[u8] {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ferrotherm::wgsl::GpuModel;
     use ferrotherm::gibbs::Sampler;
     use ferrotherm::ising::lattice2d;
 
+    /// ONE VULKAN DEVICE AT A TIME.
+    ///
+    /// `cargo test -p ferrotherm-gpu` **segfaulted** on an NVIDIA RTX 4050 — SIGSEGV in the test
+    /// binary, after the first test that touches an adapter. Single-threaded it passes 12/12, so
+    /// the shader and the physics were never the problem: parallel Vulkan device creation and
+    /// teardown crashes the driver stack on that box, which has both `nvidia_icd.json` and
+    /// `nouveau_icd.json` installed for the same physical device.
+    ///
+    /// Environmental in origin and OURS in effect: a user running the default `cargo test` on a
+    /// common configuration got a crash, not a skip and not a failure. Metal never showed it,
+    /// because a shader can pass on one backend and take the whole process down on another — which
+    /// is the reason this crate's own README gives for testing on more than one vendor.
+    ///
+    /// Same std-only lock the meter uses for the same shape of reason.
+    pub(crate) static ADAPTER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Skip rather than fail where there is no adapter. A headless runner having no driver is not
     /// a defect in this crate, and a red suite that means "this machine has no GPU" trains people
     /// to ignore it.
     macro_rules! gpu_or_skip {
-        () => {
+        () => {{
+            // Returned to the CALLER, not bound here: a guard dropped at the end of the macro's
+            // own block locks nothing for the test body, which is the whole point. `{{ }}` because
+            // the expansion has to be a BLOCK expression -- a bare statement list here does not
+            // parse where the caller writes `let (gpu, _own) = gpu_or_skip!();`.
+            let own = ADAPTER.lock().unwrap_or_else(|e| e.into_inner());
             match Gpu::new() {
-                Some(g) => g,
+                Some(g) => (g, own),
                 None => {
                     eprintln!("no GPU adapter on this machine; skipping");
                     return;
                 }
             }
-        };
+        }};
     }
 
     #[test]
@@ -446,7 +467,7 @@ mod tests {
         // The physics check, not a bit-comparison. The shader's RNG is a counter hash of
         // (step, node) and the CPU sampler has its own stream, so they cannot agree flip for flip.
         // What they must agree on is the phase.
-        let gpu = gpu_or_skip!();
+        let (gpu, _own) = gpu_or_skip!();
         let g = lattice2d(16, 1.0);
         let m = GpuModel::from_graph(&g);
 
@@ -473,7 +494,7 @@ mod tests {
         //
         // Variable elimination gives the true answer on a small lattice, and
         // E = -d(ln Z)/d(beta) is a two-point finite difference away from `log_partition`.
-        let gpu = gpu_or_skip!();
+        let (gpu, _own) = gpu_or_skip!();
         let g = lattice2d(4, 1.0);
         let n = 16.0;
         let solver = ferrotherm::exact::Elimination { max_width: 20 };
@@ -509,7 +530,7 @@ mod tests {
         // T_c (0.4407), so both chains equilibrate inside the budget and their means are
         // comparable. Both start from the SAME state, so any difference is the sampler rather than
         // where it began.
-        let gpu = gpu_or_skip!();
+        let (gpu, _own) = gpu_or_skip!();
         let g = lattice2d(12, 1.0);
         let n = 144.0;
         let beta = 0.7;
@@ -535,7 +556,7 @@ mod tests {
     fn a_state_that_is_not_plus_or_minus_one_is_refused_rather_than_coerced() {
         // The length guard, which is the reachable half of the same discipline: a mismatched
         // state is refused instead of being padded into something plausible.
-        let gpu = gpu_or_skip!();
+        let (gpu, _own) = gpu_or_skip!();
         let g = lattice2d(4, 1.0);
         let m = GpuModel::from_graph(&g);
         let mut wrong = vec![1i8; 9];
@@ -545,7 +566,7 @@ mod tests {
 
     #[test]
     fn a_bad_temperature_is_refused_by_name() {
-        let gpu = gpu_or_skip!();
+        let (gpu, _own) = gpu_or_skip!();
         let g = lattice2d(4, 1.0);
         let m = GpuModel::from_graph(&g);
         let mut s = vec![1i8; 16];

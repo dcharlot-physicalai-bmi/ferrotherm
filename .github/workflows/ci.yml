@@ -61,10 +61,39 @@ jobs:
       # Cargo.toml's [workspace.lints.clippy] with the reason for each; everything else is denied.
       - name: Clippy, across the whole workspace
         run: cargo clippy --release --workspace --all-targets -- -D warnings
-      # The GPU crate builds everywhere and its tests skip where there is no adapter, so this
-      # catches an API break on a runner with no driver -- which is every hosted runner.
-      - name: GPU backend builds, and its tests skip rather than fail without an adapter
-        run: cargo test --release -p ferrotherm-gpu
+      # THE GPU PATH IS EXECUTED HERE, not merely compiled.
+      #
+      # This step used to run `cargo test -p ferrotherm-gpu` on a runner with no adapter, where
+      # every hardware-gated test skips. That caught an API break and verified no physics at all:
+      # the fastest sampler in the stack had ZERO CI coverage, and its correctness rested on
+      # whichever machine somebody remembered to run by hand. A second vendor then found a SIGSEGV
+      # that had been latent for releases.
+      #
+      # lavapipe is a software Vulkan implementation, so a hosted runner can execute the real
+      # shader. It says nothing about speed and everything about correctness, which is exactly what
+      # a gate should assert -- the same split the README already makes for the DX12/WARP run.
+      - name: Install lavapipe, a software Vulkan device
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      - name: GPU backend, actually run against a software Vulkan adapter
+        run: |
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
+          test -n "$icd" || { echo "::error::mesa-vulkan-drivers installed but no lvp ICD found"; exit 1; }
+          echo "using $icd"
+          out=$(VK_ICD_FILENAMES="$icd" cargo test --release -p ferrotherm-gpu 2>&1)
+          echo "$out"
+          # A SKIP IS NOW A FAILURE. A driver was installed on purpose, so "no GPU adapter" means
+          # it did not load -- and the shader went unverified while the job stayed green, which is
+          # the exact shape of the hole this step was added to close.
+          if grep -q "no GPU adapter" <<<"$out"; then
+            echo "::error::lavapipe is installed but wgpu found no adapter; the GPU path did NOT run"
+            exit 1
+          fi
+          # Name the test rather than counting them: a count goes stale the moment one is added,
+          # and this is the one that puts the whole conformance suite through the GPU.
+          grep -q "conform_can_finally_score_the_gpu_path ... ok" <<<"$out" || {
+            echo "::error::the conformance case did not run on the GPU path"
+            exit 1
+          }
       # Same shape: no macmon on a Linux runner, so the measuring tests skip and the parsing and
       # refusal logic -- which is most of the crate -- still runs.
       - name: Power meter builds, and its tests skip rather than fail without a backend

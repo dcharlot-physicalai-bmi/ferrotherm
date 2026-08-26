@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-gpu"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 description = "Native GPU sampling for ferrotherm: the same WGSL sweep the browser runs, on Vulkan, Metal or DX12. Kept out of the core crate so `ferrotherm` stays std-only with zero dependencies."
 license = "Apache-2.0"
