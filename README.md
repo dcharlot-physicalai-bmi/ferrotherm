@@ -110,15 +110,29 @@ thermodynamic-computing corpus currently leaves empty.
   `exact_bracket` cannot say because its size is chosen to always prove. Measured, 40M-node budget,
   tabu incumbent, median of 3 seeds:
 
-  | family | mean degree | largest proved by 3/3 seeds | nodes there | stops at |
+  | family | mean degree | cheap bound proves | with the SDP bound | nodes at the cheap ceiling |
   |---|---|---|---|---|
-  | sparse | 6.0 | **76 spins** | 8.28M | 80 (1/3) |
-  | dense | 22.1 | **44 spins** | 12.17M | 48 (1/3) |
+  | sparse | 6.0 | 76 spins | **84 spins** | 8,277,603 → 156,793 (53×) |
+  | dense | 22.1 | 44 spins | **52 spins** | 12,173,789 → 192,501 (63×) |
 
-  Density costs far more than node count: the bound charges for every edge with both ends still
-  free, and a sparse graph has `O(n)` of those — a few fixings retire most of them — where a dense
-  one has `O(n²)` and stays loose for many levels. That is where an SDP bound *inside* the tree,
-  rather than only at the root, would start to pay.
+  Density costs far more than node count: the cheap bound charges for every edge with both ends
+  still free, and a sparse graph has `O(n)` of those — a few fixings retire most of them — where a
+  dense one has `O(n²)` and stays loose for many levels.
+- `cargo run --release --example sdp_in_tree` — **the sweep that corrected the previous line.** A
+  certified SDP bound on the residual problem inside the tree is now on by default, and the first
+  measurement of it said it did nothing: at depth 2 it fired ~21 times, pruned 0–4, and left the
+  node count unchanged on 17 of 19 sizes. That was a property of the setting, not the method —
+  depth 2 is at most seven nodes. Swept, on dense instances:
+
+  | spins | cheap | d4 | d8 | d12 | d16 | saturates |
+  |---|---|---|---|---|---|---|
+  | 32 | 94,809 | 68,769 | 17,465 | 17,465 | 17,465 | d8 |
+  | 36 | 242,943 | 160,381 | 13,963 | 1,731 | 1,731 | d12 |
+  | 40 | 2,181,007 | 1,869,399 | 379,181 | 17,231 | **2,451** | d16 |
+
+  It saturates because **the tree closes above that depth** once the bound is on — which means
+  depth was never the real control. `sdp_min_free` and `sdp_max_free` are: too small to be worth a
+  Cholesky, or too large to afford one.
 - `cargo test --lib tabu:: popanneal:: branch::` — **the three solvers a max-cut result is expected
   to be measured against.** `tabu` is the mandatory baseline in the literature, with the incremental
   gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updating in `O(degree)` per flip. `popanneal` is

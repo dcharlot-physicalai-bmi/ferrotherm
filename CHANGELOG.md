@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.26.0
+
+### A certified SDP bound inside the branch-and-bound tree, on by default
+
+`exact_reach` measured where the cheap bound runs out — 76 spins at mean degree 6, 44 at mean
+degree 22 — and its reading said the dense column is where an SDP bound *inside* the tree, rather
+than only at the root, would start to pay. It does, and by more than the argument suggested.
+
+The residual at any node is a real graph: the free spins, `λ` as their fields, the free–free
+couplings. So [`sdp::certified`] applies with no special case, and the bound it returns is sound by
+the same weak-duality argument, verified by the same completed Cholesky — **re-verified before it is
+allowed to discard a subtree**, because an unsound bound here does not raise anything. It throws
+away the branch holding the optimum and the run still reports `proved_optimal`, in a field
+indistinguishable from a correct proof.
+
+| family | mean degree | cheap bound proves | with the SDP bound | nodes at the cheap ceiling |
+|---|---|---|---|---|
+| sparse | 6.0 | 76 spins | **84 spins** | 8,277,603 → 156,793 (53×) |
+| dense | 22.1 | 44 spins | **52 spins** | 12,173,789 → 192,501 (63×) |
+
+### The first measurement of it said it did nothing, and that was a property of the setting
+
+At depth 2 the bound fired about twenty times per instance-set, pruned nought to four, and left the
+node count unchanged on 17 of 19 sizes — a clean negative, reported as a fact about the method.
+Depth 2 is at most seven nodes. Even a perfect bound there removes a constant fraction of a tree
+whose cost is set exponentially deeper down, so the setting could not have shown anything.
+
+`examples/sdp_in_tree` sweeps it instead of picking one:
+
+| spins | cheap | d4 | d8 | d12 | d16 | saturates |
+|---|---|---|---|---|---|---|
+| 32 | 94,809 | 68,769 | 17,465 | 17,465 | 17,465 | d8 |
+| 36 | 242,943 | 160,381 | 13,963 | 1,731 | 1,731 | d12 |
+| 40 | 2,181,007 | 1,869,399 | 379,181 | 17,231 | **2,451** | d16 |
+
+**It saturates because the tree closes above that depth.** Once the bound is on, no branch survives
+past that level, so a deeper setting has nothing left to visit — which means depth was never the
+real control. `sdp_min_free` (a subtree over a handful of spins is enumerated in fewer operations
+than one Cholesky) and `sdp_max_free` (the Cholesky is `O(m³)` and runs several times per bound, so
+an unbounded ceiling turns a large graph into minutes **per node** and looks like a hang) are. The
+default depth is set past where any of it bites.
+
+The `sdp fired` column reads prunes-over-calls, in both examples and in the HTTP reply. Calls alone
+would say the bound **ran**, which is not the same as saying it **helped** — and a bound that fires
+three hundred times and cuts nothing is three hundred wasted Choleskys.
+
+### A gate that could report a false failure
+
+`check-parity.sh` tested EXEMPT-table membership with `printf '%s\n' "${symbols[@]}" | grep -qx
+"$sym"`. On one loaded run it reported `ft_gpu_w` and `ft_cert_passed` as exported by nothing —
+both exist, both were untouched, and the very next run passed. `grep -q` exits at the first match,
+and whichever `grep` is on `PATH` is free to be raced by that.
+
+**A gate that can report a false failure is worse than no gate**, because people learn to re-run it
+instead of believing it, and then the next real failure gets re-run too. Replaced with a shell
+`case` over the joined array: no subprocess, no pipeline, deterministic. Five consecutive runs under
+load average 109, all green.
+
+### A gate that skipped every step and still printed a summary
+
+The local release script used `${name^^}` to upper-case a step label. That is bash 4; macOS ships
+bash 3.2, where it is a syntax error that kills the loop. Everything after the first step was
+skipped, and the script still printed `EXAMPLES ran=18 failed=1` — which reads as *one example
+broke*, not as *the tests, the docs, the parity check and the answer check never ran*. Caught by
+reading the log for the exit codes instead of the summary line. Same family as every other vacuous
+gate on record: the check that cannot fail, next to output that looks like it passed.
+
 ## 0.25.1
 
 ### The workbench can now tell you whether its own answer is any good

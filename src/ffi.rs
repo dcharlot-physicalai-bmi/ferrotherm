@@ -2513,6 +2513,7 @@ pub extern "C" fn ft_branch(sim: *mut Sim, max_nodes: u64) -> f64 {
     let p = crate::branch::Params {
         max_nodes: max_nodes.max(1),
         incumbent: Some(s.sampler_state.clone()),
+        ..crate::branch::Params::default()
     };
     let out = crate::branch::solve(&s.graph, &p);
     if out.state.len() == s.sampler_state.len() {

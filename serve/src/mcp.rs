@@ -153,6 +153,7 @@ pub fn tools() -> Json {
                 ("stages", prop("integer", "population: ladder rungs from beta = 0. Default 100.")),
                 ("beta_max", prop("number", "population: coldest inverse temperature. Default 6.0.")),
                 ("max_nodes", prop("integer", "branch: node budget. Default 20000000. Running out means no proof, which the reply reports.")),
+                ("sdp_depth", prop("integer", "branch: spend a certified semidefinite bound on the residual problem at every node down to this depth, instead of the cheap incremental one. Off by default. It buys a much tighter bound where the residual is still large and the nodes are still few -- the top of the tree -- and costs a Cholesky per node to do it. Whether that pays is instance-dependent: the reply reports sdp_prunes over sdp_calls, and a ratio of zero means every Cholesky was wasted.")),
                 ("incumbent", prop("array", "branch: a starting state, one entry per node, each -1 or +1. A good incumbent prunes from the first node and is worth far more than a better bound.")),
                 ("return_state", prop("boolean", "Include the state in the reply. Defaults to true under 4096 nodes.")),
             ],

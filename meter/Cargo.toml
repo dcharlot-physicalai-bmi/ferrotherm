@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-meter"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 description = "Measured wall power for ferrotherm: turns a run's operation counts into per-operation energy measured on the machine that ran it, instead of borrowed from another vendor's datasheet."
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ categories = ["science", "hardware-support"]
 # Std only, like the core. The backend is a subprocess rather than a linked library, so there is
 # nothing to depend on -- and one field out of a JSON line does not justify a parser.
 [dependencies]
-ferrotherm = { version = "0.25", path = ".." }
+ferrotherm = { version = "0.26", path = ".." }
 
 [lints]
 workspace = true

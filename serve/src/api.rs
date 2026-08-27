@@ -640,7 +640,16 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
             let incumbent = req.get("incumbent").and_then(|s| s.as_arr()).map(|sv| {
                 sv.iter().map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 }).collect::<Vec<i8>>()
             });
-            let p = ferrotherm::branch::Params { max_nodes, incumbent };
+            // `sdp_depth` is exposed because it is the one dial whose value is instance-dependent:
+            // it buys a much tighter bound at the top of the tree and costs a Cholesky per node to
+            // do it, and which way that lands depends on the density of the graph in the request.
+            let sdp_depth = req.get("sdp_depth").and_then(|v| v.as_usize()).filter(|d| *d <= 16);
+            let p = ferrotherm::branch::Params {
+                max_nodes,
+                incumbent,
+                sdp_depth,
+                ..ferrotherm::branch::Params::default()
+            };
             let o = ferrotherm::branch::solve(&g, &p);
             (
                 o.state,
@@ -651,6 +660,11 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                     ("nodes", Json::n(o.nodes as f64)),
                     ("pruned", Json::n(o.pruned as f64)),
                     ("hit_limit", Json::Bool(o.hit_limit)),
+                    // Calls AND prunes. Reporting only the calls would say the bound RAN, which is
+                    // not the same as saying it helped -- and a bound that fires a hundred times
+                    // and cuts nothing is a hundred wasted Choleskys.
+                    ("sdp_calls", Json::n(o.sdp_calls as f64)),
+                    ("sdp_prunes", Json::n(o.sdp_prunes as f64)),
                 ],
             )
         }

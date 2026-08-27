@@ -100,10 +100,18 @@ pattern_for() {
 # An exemption naming a symbol that does not exist is a lie in the table, and a table of reasons
 # nobody can check is the thing this script replaced. I wrote one on the first pass -- an entry for
 # ft_abi_version, a function that has never existed here.
+# The membership test is a shell `case` over the joined array rather than
+# `printf ... | grep -qx`. That pipeline reported BOTH ft_gpu_w and ft_cert_passed as missing during
+# one loaded run and passed on the next with nothing changed in between -- `grep -q` exits at the
+# first match, and whichever grep is on PATH is free to be raced by it. A gate that can report a
+# false failure is a gate people re-run instead of believing, which is worse than no gate: the next
+# real failure gets re-run too. Symbols are `[a-z0-9_]+`, so no entry can contain a space and the
+# substring test is exact.
 stale=0
+joined=" ${symbols[*]} "
 while IFS='|' read -r sym _ _; do
   [[ -n "$sym" ]] || continue
-  if ! printf '%s\n' "${symbols[@]}" | grep -qx "$sym"; then
+  if [[ "$joined" != *" $sym "* ]]; then
     printf '  STALE   %-34s exempted, but src/ffi.rs exports no such symbol\n' "$sym"
     stale=$((stale + 1))
   fi

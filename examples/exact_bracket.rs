@@ -68,7 +68,11 @@ fn main() {
 
             let ex = branch::solve(
                 &g,
-                &branch::Params { max_nodes: 20_000_000, incumbent: Some(t.state.clone()) },
+                &branch::Params {
+                    max_nodes: 20_000_000,
+                    incumbent: Some(t.state.clone()),
+                    ..branch::Params::default()
+                },
             );
             total_nodes += ex.nodes;
             if !ex.proved_optimal {

@@ -37,6 +37,48 @@
 //! the accumulation along a single root-to-node path, and the prune test carries an explicit slack
 //! sized from the instance for it — which costs a few extra nodes and cannot cost correctness.
 //!
+//! # A stronger bound, where a stronger bound is affordable
+//!
+//! The incremental bound above charges `Σ|J|` over every edge with **both ends still free**. That
+//! is `O(n)` such edges on a sparse graph and `O(n²)` on a dense one, which is why density costs so
+//! much more here than node count does: `examples/exact_reach` proves 76 spins at mean degree 6 and
+//! stops at 44 at mean degree 22, on less than a quarter of the node budget.
+//!
+//! [`Params::sdp_depth`] spends a **certified** SDP bound ([`crate::sdp`]) on the residual problem
+//! instead, at nodes no deeper than the given depth. The residual is a real graph — the free spins,
+//! with `λ` as their fields and the free–free couplings — so the same certified machinery applies
+//! unchanged, and the bound it returns is sound by the same weak-duality argument.
+//!
+//! **It pays, and the first measurement of it said otherwise.** Measured at depth 2 the bound fired
+//! about twenty times per instance, pruned nought to four, and left the node count unchanged on 17
+//! of 19 sizes — a result reported as a property of the method when it was a property of the
+//! setting. Depth 2 is at most seven nodes: even a perfect bound there removes a constant fraction
+//! of a tree whose cost is set exponentially deeper down.
+//!
+//! Swept properly (`examples/sdp_in_tree`), on dense instances at 3 seeds each:
+//!
+//! ```text
+//!   spins   cheap      d4        d8       d12      d16     saturates
+//!      32   94,809   68,769    17,465    17,465   17,465     d8
+//!      36  242,943  160,381    13,963     1,731    1,731     d12
+//!      40 2,181,007 1,869,399  379,181    17,231    2,451     d16
+//! ```
+//!
+//! **The depth saturates because the tree closes above it.** Once the bound is on, no branch
+//! survives past that level, so a deeper setting has nothing left to visit — which means depth was
+//! never the real control. [`Params::sdp_min_free`] and [`Params::sdp_max_free`] are: the first
+//! says the residual is too small to be worth a Cholesky, the second that it is too large to
+//! afford one. The default depth is simply set past where any of this bites.
+//!
+//! And it moves what can be **proved**, which is the number that matters
+//! (`examples/exact_reach`, 40M-node budget, 3 seeds):
+//!
+//! ```text
+//!   family                cheap proves   with the SDP bound   nodes at the cheap ceiling
+//!   sparse, mean deg 6      76 spins         84 spins         8,277,603 -> 156,793   (53x)
+//!   dense,  mean deg 22     44 spins         52 spins        12,173,789 -> 192,501   (63x)
+//! ```
+//!
 //! # What "proved" means
 //!
 //! [`Outcome::proved_optimal`] is true only when the search exhausted the tree within its node
@@ -55,11 +97,44 @@ pub struct Params {
     ///
     /// A good incumbent is worth far more than a better bound: it prunes from the first node.
     pub incumbent: Option<Vec<i8>>,
+    /// Spend a **certified SDP bound** on the residual problem at nodes no deeper than this.
+    ///
+    /// `None` uses the incremental bound everywhere. The default is deliberately deep — see the
+    /// module note: measured, the depth saturates once the tree closes above it, so the real
+    /// controls are [`Params::sdp_min_free`] and [`Params::sdp_max_free`], and depth is only a
+    /// proxy for "is the residual still big". It is kept because it is what the sweep in
+    /// `examples/sdp_in_tree` varies, and reproducing that sweep should not need a private field.
+    pub sdp_depth: Option<usize>,
+    /// How hard the SDP tries, when it is used at all. Sweeps mostly; the rank is left to the
+    /// Barvinok-Pataki default because the residual changes size at every node.
+    pub sdp: crate::sdp::Params,
+    /// Below this many free spins the SDP is skipped.
+    ///
+    /// A subtree over a handful of spins is enumerated in fewer operations than one Cholesky, so
+    /// the bound cannot pay there however tight it is.
+    pub sdp_min_free: usize,
+    /// Above this many free spins the SDP is skipped as well, and this is the guard that matters.
+    ///
+    /// The Cholesky is `O(m³)` in the free spins and runs several times per bound, so an unbounded
+    /// ceiling turns a 4096-node graph into minutes **per node**. 192 keeps one bound in the
+    /// low milliseconds. The cost of skipping is a looser bound; the cost of not skipping is a
+    /// solver that appears to hang.
+    pub sdp_max_free: usize,
 }
 
 impl Default for Params {
     fn default() -> Self {
-        Params { max_nodes: 20_000_000, incumbent: None }
+        Params {
+            max_nodes: 20_000_000,
+            incumbent: None,
+            // ON by default, and deep, because the measurement is not close: on dense instances at
+            // 40 spins it is 2,181,007 nodes against 2,451, and it moves the size that can be
+            // PROVED from 44 to 52. Off would be the conservative choice and the wrong one.
+            sdp_depth: Some(64),
+            sdp: crate::sdp::Params { sweeps: 60, ..crate::sdp::Params::default() },
+            sdp_min_free: 24,
+            sdp_max_free: 192,
+        }
     }
 }
 
@@ -80,6 +155,12 @@ pub struct Outcome {
     pub hit_limit: bool,
     /// The slack subtracted from the bound before every prune test, for the record.
     pub slack: f64,
+    /// SDP bounds computed, and how many of them pruned a subtree the cheap bound would have kept.
+    ///
+    /// Both zero when [`Params::sdp_depth`] is `None`. `sdp_prunes / sdp_calls` is what the dial is
+    /// actually worth on this instance — a ratio of zero means every Cholesky was wasted.
+    pub sdp_calls: u64,
+    pub sdp_prunes: u64,
 }
 
 /// Search for the minimum energy, with a proof when the budget allows.
@@ -94,6 +175,8 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
             pruned: 0,
             hit_limit: false,
             slack: 0.0,
+            sdp_calls: 0,
+            sdp_prunes: 0,
         };
     }
 
@@ -135,6 +218,14 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
         hit_limit: false,
         gauge_fixed,
         undo: Vec::with_capacity(g.nbr.len() + n),
+        // `None` becomes a depth no node reaches, so the hot path tests one integer rather than an
+        // Option it would have to unwrap at every node.
+        sdp_depth: p.sdp_depth.map_or(0, |d| d + 1),
+        sdp: p.sdp,
+        sdp_min_free: p.sdp_min_free,
+        sdp_max_free: p.sdp_max_free,
+        sdp_calls: 0,
+        sdp_prunes: 0,
     };
     st.descend(0, 0.0);
 
@@ -148,6 +239,8 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
         pruned: st.pruned,
         hit_limit: st.hit_limit,
         slack,
+        sdp_calls: st.sdp_calls,
+        sdp_prunes: st.sdp_prunes,
     }
 }
 
@@ -169,6 +262,15 @@ struct Search<'a> {
     gauge_fixed: bool,
     /// Saved `λ` entries, one shared stack for the whole search.
     undo: Vec<(usize, f64)>,
+    /// Deepest node at which to spend an SDP bound, and how hard it should try.
+    sdp_depth: usize,
+    sdp: crate::sdp::Params,
+    sdp_min_free: usize,
+    sdp_max_free: usize,
+    /// How many SDP bounds were computed, and how many of them pruned. Reported so the dial can be
+    /// judged on evidence rather than on the argument for it.
+    sdp_calls: u64,
+    sdp_prunes: u64,
 }
 
 impl Search<'_> {
@@ -199,6 +301,18 @@ impl Search<'_> {
             return;
         }
 
+        // The cheap bound did not prune. Near the top of the tree, where the residual is still
+        // large and the nodes are still few, it is worth asking a much more expensive question.
+        if depth < self.sdp_depth {
+            if let Some(lb2) = self.sdp_bound(fixed_energy) {
+                if lb2 - self.slack >= self.best {
+                    self.pruned += 1;
+                    self.sdp_prunes += 1;
+                    return;
+                }
+            }
+        }
+
         let i = self.order[depth];
         // Greedy value first: the sign that lowers `−s·λ` is the one more likely to hold the
         // optimum, and finding a good incumbent early is what makes the bound prune.
@@ -213,6 +327,60 @@ impl Search<'_> {
                 return;
             }
         }
+    }
+
+    /// A certified SDP lower bound on the energy of any completion of the current partial state.
+    ///
+    /// The residual is built as a real [`Graph`]: the free spins, `λ` as their fields, and the
+    /// free-free couplings. That is not a convenience — it means [`crate::sdp::certified`] applies
+    /// here with no special case, and the bound it returns is sound by the same weak-duality
+    /// argument, verified by the same completed Cholesky. **A bound inside a search that only works
+    /// inside that search is a bound nobody can check.**
+    ///
+    /// Returns `None` when the residual is too small to be worth a Cholesky, or when the SDP could
+    /// not verify a dual point — in which case the caller keeps the cheap bound rather than
+    /// pruning on nothing.
+    fn sdp_bound(&mut self, fixed_energy: f64) -> Option<f64> {
+        let n = self.g.n;
+        // Compact the free spins. `map[i]` is the residual index of free spin `i`, or `usize::MAX`.
+        let mut map = vec![usize::MAX; n];
+        let mut free = 0usize;
+        for i in 0..n {
+            if self.s[i] == 0 {
+                map[i] = free;
+                free += 1;
+            }
+        }
+        if free < self.sdp_min_free || free > self.sdp_max_free {
+            return None;
+        }
+        let mut gb = crate::graph::GraphBuilder::new(free);
+        for i in 0..n {
+            let a = map[i];
+            if a == usize::MAX {
+                continue;
+            }
+            // `λ_i` already carries what the fixed spins have said to `i`, which is exactly the
+            // field the residual problem has.
+            if self.lambda[i] != 0.0 {
+                gb.bias(a, self.lambda[i]);
+            }
+            for k in self.g.offset[i]..self.g.offset[i + 1] {
+                let j = self.g.nbr[k] as usize;
+                // Each free-free edge once: `j > i` in the original indexing, since the CSR holds
+                // both directions.
+                if j > i && map[j] != usize::MAX {
+                    gb.couple(a, map[j], self.g.w[k]);
+                }
+            }
+        }
+        let residual = gb.build();
+        let (b, cert) = crate::sdp::certified(&residual, &self.sdp, 1);
+        self.sdp_calls += 1;
+        // Re-verified before it is used to discard a subtree. The cost is one more Cholesky against
+        // the cost of a wrong prune, which is a false "proved optimal" that nothing downstream can
+        // tell from a real one.
+        cert.verify(&residual).ok().map(|v| fixed_energy + v.min(b.value))
     }
 
     fn fix(&mut self, i: usize, v: i8, depth: usize, fixed_energy: f64) {
@@ -360,7 +528,7 @@ mod tests {
     #[test]
     fn a_search_that_runs_out_of_budget_does_not_claim_a_proof() {
         let g = random_graph(40, 0.3, 5, true);
-        let o = solve(&g, &Params { max_nodes: 500, incumbent: None });
+        let o = solve(&g, &Params { max_nodes: 500, ..Params::default() });
         assert!(o.hit_limit, "500 nodes should not exhaust a 40-spin tree");
         assert!(!o.proved_optimal);
         assert!(o.nodes <= 501, "nodes {}", o.nodes);
@@ -431,4 +599,88 @@ mod tests {
         assert!(o.slack > 0.0, "a zero slack cannot absorb the accumulated rounding");
         assert!(o.slack < scale * 1e-9, "slack {} against a weight scale of {scale}", o.slack);
     }
+    /// THE TEST THE SDP DIAL EXISTS TO SURVIVE: a tighter bound may visit fewer nodes and may
+    /// never change the answer.
+    ///
+    /// An unsound bound in a branch-and-bound search does not raise anything. It discards a subtree
+    /// that held the optimum, and the run still reports `proved_optimal` — indistinguishable in
+    /// every field from a correct proof. So this compares the two dials against each other on
+    /// instances dense enough that the SDP has something to say, and requires the energies to
+    /// agree exactly.
+    #[test]
+    fn the_sdp_bound_changes_the_node_count_and_never_the_answer() {
+        let mut agreed = 0;
+        for seed in 0..6u64 {
+            let mut rng = crate::rng::Pcg::new(seed, 0xB0_1D);
+            let n = 26;
+            let mut gb = crate::graph::GraphBuilder::new(n);
+            for i in 0..n {
+                gb.bias(i, rng.f64() - 0.5);
+                for j in (i + 1)..n {
+                    if rng.f64() < 0.45 {
+                        gb.couple(i, j, rng.f64() * 2.0 - 1.0);
+                    }
+                }
+            }
+            let g = gb.build();
+            let cheap = solve(&g, &Params { sdp_depth: None, ..Params::default() });
+            let strong = solve(&g, &Params::default());
+            assert!(cheap.proved_optimal && strong.proved_optimal, "seed {seed}");
+            assert!(
+                (cheap.energy - strong.energy).abs() < 1e-9,
+                "seed {seed}: cheap bound proved {:.12}, SDP bound proved {:.12} -- one of them \
+                 discarded the optimum and still said it had a proof",
+                cheap.energy,
+                strong.energy
+            );
+            assert!(strong.sdp_calls > 0, "seed {seed}: the dial was set and never fired");
+            assert!(
+                strong.nodes <= cheap.nodes,
+                "seed {seed}: a TIGHTER bound visited MORE nodes ({} vs {})",
+                strong.nodes,
+                cheap.nodes
+            );
+            if strong.nodes < cheap.nodes {
+                agreed += 1;
+            }
+        }
+        // Not required per seed -- a bound that happens not to bite on one instance is fine -- but
+        // if it never bites on any of them the dial is decoration.
+        assert!(agreed > 0, "the SDP bound pruned nothing on any of six dense instances");
+    }
+
+    /// The size guards are what actually decide, and both ends have to hold.
+    ///
+    /// `sdp_min_free` matters for cost — a 14-spin subtree is enumerated in fewer operations than
+    /// one Cholesky. `sdp_max_free` matters for not hanging: the Cholesky is `O(m³)` and runs
+    /// several times per bound, so without a ceiling a large graph spends minutes on a single node
+    /// and looks like an infinite loop rather than a slow solver.
+    #[test]
+    fn the_size_guards_hold_at_both_ends() {
+        let dense = |n: usize| {
+            let mut gb = crate::graph::GraphBuilder::new(n);
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    gb.couple(i, j, if (i + j) % 3 == 0 { -1.0 } else { 1.0 });
+                }
+            }
+            gb.build()
+        };
+        // Under the floor: on by default, and it still never fires.
+        let small = dense(14);
+        assert_eq!(solve(&small, &Params::default()).sdp_calls, 0, "14 spins is under the floor");
+
+        // Over the ceiling: a low `sdp_max_free` must silence it on a graph that would otherwise
+        // use it, which is the guard a large model depends on.
+        let big = dense(30);
+        let on = solve(&big, &Params { max_nodes: 20_000, ..Params::default() });
+        let capped = solve(&big, &Params { sdp_max_free: 8, max_nodes: 20_000, ..Params::default() });
+        assert!(on.sdp_calls > 0, "30 spins is inside the default window");
+        assert_eq!(capped.sdp_calls, 0, "the ceiling must silence it");
+        // And silencing a SOUND bound may only cost nodes, never the answer.
+        if on.proved_optimal && capped.proved_optimal {
+            assert!((on.energy - capped.energy).abs() < 1e-9);
+        }
+    }
+
 }

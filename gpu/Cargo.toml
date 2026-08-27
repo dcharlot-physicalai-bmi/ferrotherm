@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-gpu"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2021"
 description = "Native GPU sampling for ferrotherm: the same WGSL sweep the browser runs, on Vulkan, Metal or DX12. Kept out of the core crate so `ferrotherm` stays std-only with zero dependencies."
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ categories = ["science", "algorithms", "simulation"]
 # and to a microcontroller. A GPU backend needs a driver stack, so it lives out here beside
 # `silicon`, `serve` and `cloud` -- each of which exists for the same reason.
 [dependencies]
-ferrotherm = { version = "0.25", path = ".." }
+ferrotherm = { version = "0.26", path = ".." }
 wgpu = "30"
 pollster = "0.4"
 

@@ -455,7 +455,7 @@ fn lanczos_min(cost: &Cost, y: &[f64], steps: usize, seed: u64) -> f64 {
 }
 
 /// How hard to try.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
     /// Mixing sweeps. More is tighter and never changes soundness.
     pub sweeps: usize,
