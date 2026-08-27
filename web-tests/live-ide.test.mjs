@@ -42,6 +42,30 @@ check('the live GPU-readback guard accepts a real state', good.ok && good.e === 
 const short = await probe(Array(13).fill(1));
 check('and refuses a short readback instead of padding it', !short.ok && /did not complete/.test(short.m), JSON.stringify(short));
 
+// The optimality bracket, against the DEPLOYED page and the DEPLOYED wasm. This is the check that
+// would have caught the stale module: `ft_bound_sdp` missing makes the call `undefined`, and calling
+// undefined in a click handler leaves the page looking fine and doing nothing.
+{
+  const ring = { n: 12, couplings: [] };
+  for (let i = 0; i < 12; i++) ring.couplings.push([i, (i + 1) % 12, i === 0 ? -1 : 1]);
+  await run(JSON.stringify({ graph: ring, beta: 1, seed: 1 }));
+  const r = await p.evaluate(() => {
+    document.getElementById('method').value = 'branch';
+    document.getElementById('solve').click();
+    return {
+      status: document.getElementById('status').textContent,
+      verdict: document.getElementById('certverdict').textContent,
+      shown: document.getElementById('cert').hidden === false,
+      best: document.querySelector('#btab tr.best')?.cells[0].textContent ?? null,
+      rows: [...document.querySelectorAll('#btab tr')].map(x => x.cells[0].textContent),
+    };
+  });
+  check('the live workbench proves a small instance', /tree exhausted/.test(r.status), r.status.slice(0, 90));
+  check('and shows the optimality bracket', r.shown && /PROVED OPTIMAL/.test(r.verdict), r.verdict);
+  check('the live wasm really carries the SDP bound', r.rows.includes('sdp'), r.rows.join(','));
+  check('and a bound is named as best', r.best !== null, String(r.best));
+}
+
 check('no page errors', errs.length === 0, errs.join(' | '));
 await b.close();
 console.log(fail ? `\n${fail} failed` : '\nall passed against the deployed page');
