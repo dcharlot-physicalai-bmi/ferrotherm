@@ -53,6 +53,12 @@ pub struct Sim {
     ground: Option<f64>,
     /// The last certificate, if `ft_certify` has been called.
     cert: Option<crate::certify::Certificate>,
+    /// The last tabu outcome, for [`ft_tabu_iterations`].
+    tb: Option<crate::tabu::Outcome>,
+    /// The last population-annealing outcome, for the `ft_popanneal_*` accessors.
+    pa: Option<crate::popanneal::Outcome>,
+    /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
+    bb: Option<crate::branch::Outcome>,
     sampler_state: Vec<i8>,
     beta: f64,
     seed: u64,
@@ -65,7 +71,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, pa: None, bb: None }))
     }
 }
 
@@ -2395,5 +2401,317 @@ mod model_cert_tests {
         assert_eq!(ft_model_certify(m, 0.5, 4, 1), 0, "and 4 draws certifies nothing");
         assert!(ft_model_cert_beta(m).is_nan());
         ft_model_free(m);
+    }
+}
+
+// ---- solvers and bounds ------------------------------------------------------------------------
+//
+// A GAP THAT HAD BEEN OPEN SINCE `bound` LANDED: the C ABI could build a graph and sample it, but
+// could not ask how far from optimal the sample was. Optimality-gap certificates are the headline
+// claim in this crate's README, and until now they were reachable from exactly one of the six
+// surfaces. `check-parity.sh` exists to catch a capability that stops at Rust, and it did not,
+// because a symbol that was never exported is not a parity failure -- it is a thing nobody can say.
+//
+// Each solver leaves its best state as the simulation's state, so `ft_spins` reads the answer and
+// `ft_energy` recomputes the energy from it rather than trusting the number returned here. That
+// also makes them compose: anneal, then tabu from where annealing stopped, then branch and bound
+// with that as its incumbent.
+
+/// Tabu search. Returns the energy of the best state found, or NaN on a null handle.
+///
+/// `tenure = 0` means "scale to the graph", matching [`crate::tabu::Params`]; `restart_after = 0`
+/// means never restart.
+#[no_mangle]
+pub extern "C" fn ft_tabu(sim: *mut Sim, iterations: u32, tenure: u32, restart_after: u32) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let p = crate::tabu::Params {
+        iterations: iterations.max(1) as usize,
+        tenure: tenure as usize,
+        restart_after: (restart_after > 0).then_some(restart_after as usize),
+    };
+    let out = crate::tabu::search_metered(&s.graph, &p, s.seed, Some(&mut s.ledger));
+    if out.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&out.state);
+    }
+    let e = out.energy;
+    s.tb = Some(out);
+    e
+}
+
+/// Iterations tabu actually ran, which is not always the budget it was given.
+///
+/// Exported rather than left implicit because truncation is invisible from outside otherwise --
+/// the defect that shipped in the first version of that module, where a run that spent 9 of 50,000
+/// iterations returned a result shaped exactly like a completed one.
+#[no_mangle]
+pub extern "C" fn ft_tabu_iterations(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.tb.as_ref()).map_or(0, |o| o.iterations_run as u64)
+}
+
+/// Population annealing. Returns the best energy found, or NaN on a null handle.
+///
+/// The ladder is linear from `β = 0` to `beta_max` in `stages` steps, which is what makes
+/// [`ft_popanneal_ln_z`] an absolute free energy rather than a ratio.
+#[no_mangle]
+pub extern "C" fn ft_popanneal(
+    sim: *mut Sim,
+    population: u32,
+    sweeps: u32,
+    beta_max: f64,
+    stages: u32,
+) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    if !beta_max.is_finite() || beta_max < 0.0 {
+        return f64::NAN;
+    }
+    let p = crate::popanneal::Params::linear_from_zero(
+        population.max(1) as usize,
+        sweeps.max(1) as usize,
+        beta_max,
+        stages.max(1) as usize,
+    );
+    let out = crate::popanneal::run(&s.graph, &p, s.seed);
+    if out.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&out.state);
+    }
+    let e = out.energy;
+    s.pa = Some(out);
+    e
+}
+
+/// `ln Z` at the final β from the last [`ft_popanneal`], or NaN if there was none.
+#[no_mangle]
+pub extern "C" fn ft_popanneal_ln_z(sim: *const Sim) -> f64 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.pa.as_ref()) {
+        Some(o) if o.ln_z_is_absolute => o.ln_z,
+        _ => f64::NAN,
+    }
+}
+
+/// The worst family statistic `ρ` over the ladder — **the number that says whether to believe
+/// [`ft_popanneal_ln_z`]**.
+///
+/// `1.0` means every ancestor still has one descendant; the population size means the population
+/// collapsed onto a single ancestor and explored one basin with N copies of one history. NaN if no
+/// run has happened.
+#[no_mangle]
+pub extern "C" fn ft_popanneal_rho(sim: *const Sim) -> f64 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.pa.as_ref()) {
+        Some(o) => o.rho_max,
+        None => f64::NAN,
+    }
+}
+
+/// Branch and bound, starting from this simulation's current state as its incumbent.
+///
+/// Returns the lowest energy found. **Whether it is the minimum is a separate question**, answered
+/// by [`ft_branch_proved`]: a run that exhausted its node budget returns the best it saw and says
+/// the proof is missing.
+#[no_mangle]
+pub extern "C" fn ft_branch(sim: *mut Sim, max_nodes: u64) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let p = crate::branch::Params {
+        max_nodes: max_nodes.max(1),
+        incumbent: Some(s.sampler_state.clone()),
+    };
+    let out = crate::branch::solve(&s.graph, &p);
+    if out.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&out.state);
+    }
+    let e = out.energy;
+    s.bb = Some(out);
+    e
+}
+
+/// 1 if the last [`ft_branch`] exhausted the tree and its answer is the proved minimum, else 0.
+#[no_mangle]
+pub extern "C" fn ft_branch_proved(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()) {
+        Some(o) => u32::from(o.proved_optimal),
+        None => 0,
+    }
+}
+
+/// Nodes the last [`ft_branch`] visited. 0 if there was none.
+#[no_mangle]
+pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()).map_or(0, |o| o.nodes)
+}
+
+/// A **lower bound on the ground energy** from decoupling every term. The cheapest and weakest.
+///
+/// `min_s E(s) ≥ −Σ|h| − Σ|J|`, in `O(edges)`. Every bound here is sound on its own, so a caller
+/// should take the maximum of the ones it can afford.
+#[no_mangle]
+pub extern "C" fn ft_bound_decoupled(sim: *const Sim) -> f64 {
+    unsafe { sim.as_ref() }.map_or(f64::NAN, |s| crate::bound::decoupled(&s.graph).value)
+}
+
+/// Lagrangian decomposition into forests, tightened by `rounds` of subgradient ascent.
+///
+/// **Worth nothing on an instance with no fields**: a tree is never frustrated, so every part
+/// minimises to `−Σ|J|` and this degenerates to [`ft_bound_decoupled`]. Exported anyway, with the
+/// caveat, because a caller comparing bounds should be able to see that for themselves.
+#[no_mangle]
+pub extern "C" fn ft_bound_forest(sim: *const Sim, rounds: u32) -> f64 {
+    unsafe { sim.as_ref() }
+        .map_or(f64::NAN, |s| crate::bound::forest(&s.graph, rounds as usize).value)
+}
+
+/// Charges `2·min|J|` for every edge-disjoint frustrated cycle up to length `max_len`.
+///
+/// Edge-disjointness is what makes the penalties add: two cycles sharing an edge could be paid for
+/// by the same single violation.
+#[no_mangle]
+pub extern "C" fn ft_bound_odd_cycle(sim: *const Sim, max_len: u32) -> f64 {
+    unsafe { sim.as_ref() }
+        .map_or(f64::NAN, |s| crate::bound::odd_cycle(&s.graph, max_len as usize).value)
+}
+
+/// The certified semidefinite bound — **re-verified at this boundary before it is returned**.
+///
+/// [`crate::sdp::certified`] hands back a dual point and the bound it certifies; this rebuilds the
+/// cost matrix from the graph and re-runs the positive-definiteness proof before letting the number
+/// cross, and returns NaN if that fails. A bound that only its own author can reproduce is not a
+/// bound, and a bound crossing a language boundary is exactly the case where the caller cannot
+/// check it themselves.
+#[no_mangle]
+pub extern "C" fn ft_bound_sdp(sim: *const Sim, sweeps: u32, seed: u64) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    let p = crate::sdp::Params { sweeps: sweeps.max(1) as usize, ..crate::sdp::Params::default() };
+    let (_, cert) = crate::sdp::certified(&s.graph, &p, seed);
+    cert.verify(&s.graph).unwrap_or(f64::NAN)
+}
+
+#[cfg(test)]
+mod solver_ffi_tests {
+    use super::*;
+
+    /// Everything a caller can reach through this boundary has to agree with the state it left
+    /// behind — the number returned is a claim about `ft_spins`, not a separate answer.
+    #[test]
+    fn every_solver_leaves_the_state_its_energy_belongs_to() {
+        for (name, run) in [
+            ("tabu", (|s: *mut Sim| ft_tabu(s, 4_000, 0, 1_000)) as fn(*mut Sim) -> f64),
+            ("popanneal", |s: *mut Sim| ft_popanneal(s, 64, 2, 6.0, 20)),
+            ("branch", |s: *mut Sim| ft_branch(s, 2_000_000)),
+        ] {
+            let sim = ft_planted_frustrated(4, 8, 7, 1.0);
+            assert!(!sim.is_null());
+            let e = run(sim);
+            assert!(e.is_finite(), "{name} returned {e}");
+            if name == "tabu" {
+                assert_eq!(ft_tabu_iterations(sim), 4_000, "the whole budget, not a truncated run");
+            }
+            assert!(
+                (ft_energy(sim) - e).abs() < 1e-9,
+                "{name}: returned {e}, the state it left has {}",
+                ft_energy(sim)
+            );
+            let known = ft_ground_energy(sim);
+            assert!(e >= known - 1e-9, "{name} beat the planted optimum {known} with {e}");
+            ft_free(sim);
+        }
+    }
+
+    /// Branch and bound has to report a PROOF, and has to withhold one when the budget ran out.
+    #[test]
+    fn the_proof_flag_crosses_the_boundary_and_can_say_no() {
+        let sim = ft_planted_frustrated(3, 4, 1, 1.0);
+        let e = ft_branch(sim, 5_000_000);
+        assert_eq!(ft_branch_proved(sim), 1, "a 9-spin tree fits in five million nodes");
+        assert!(ft_branch_nodes(sim) > 0);
+        assert!((e - ft_ground_energy(sim)).abs() < 1e-9, "a proved minimum IS the planted optimum");
+        ft_free(sim);
+
+        // A budget that genuinely runs out needs a genuinely hard instance. The obvious choice --
+        // a 64-spin Z1 grid -- turned out to prove itself in under 200 nodes, and that is not a
+        // weak test, it is a fact about the instance: a FERROMAGNET is unfrustrated, every coupling
+        // and every field can be satisfied at once, so `decoupled` is EXACTLY tight there and the
+        // root bound already equals the incumbent. Asserted below rather than discarded.
+        let hard = ft_planted_wishart(40, 0.5, 5, 1.0);
+        ft_branch(hard, 200);
+        assert_eq!(ft_branch_proved(hard), 0, "200 nodes cannot exhaust a dense 40-spin tree");
+        assert!(ft_branch_nodes(hard) <= 201);
+        ft_free(hard);
+    }
+
+    /// An unfrustrated instance is proved almost immediately, and the reason is worth stating.
+    ///
+    /// On a ferromagnet with aligned fields every term is satisfiable at once, so
+    /// `-Σ|h| - Σ|J|` is not a relaxation at all -- it is the ground energy. The root bound equals
+    /// the incumbent and the whole tree prunes. This is the case where the cheapest bound in the
+    /// crate is also the best one available, which is easy to forget after measuring it on G-set.
+    #[test]
+    fn a_ferromagnet_is_proved_at_once_because_the_cheap_bound_is_exact_there() {
+        let sim = ft_z1_new(8, 8, 0.5, 0.1, 1.0, 3);
+        let e = ft_branch(sim, 100_000);
+        assert_eq!(ft_branch_proved(sim), 1);
+        assert!(ft_branch_nodes(sim) < 300, "took {} nodes", ft_branch_nodes(sim));
+        let d = ft_bound_decoupled(sim);
+        assert!((e - d).abs() < 1e-9, "ground {e} should equal the decoupled bound {d}");
+        ft_free(sim);
+    }
+
+    /// Population annealing's diagnostic is the point of the method, so it has to cross too.
+    #[test]
+    fn population_annealing_hands_over_its_free_energy_and_its_warning() {
+        let sim = ft_z1_new(4, 4, 0.4, 0.0, 1.0, 5);
+        assert!(ft_popanneal_ln_z(sim).is_nan(), "no run yet, so no free energy");
+        assert!(ft_popanneal_rho(sim).is_nan());
+        ft_popanneal(sim, 128, 2, 3.0, 25);
+        let ln_z = ft_popanneal_ln_z(sim);
+        // Z(0) = 2^n and Z is non-decreasing in beta, so ln Z at any beta is at least n ln 2.
+        let floor = 16.0 * core::f64::consts::LN_2;
+        assert!(ln_z >= floor - 1e-9, "ln Z {ln_z} below n ln 2 = {floor}");
+        let rho = ft_popanneal_rho(sim);
+        assert!((1.0..=128.0).contains(&rho), "rho {rho} outside [1, population]");
+        ft_free(sim);
+    }
+
+    /// Every bound must be a bound, and the boundary must not be able to invent one.
+    ///
+    /// Checked against a PLANTED optimum, which is the only ground truth available on both sides of
+    /// this boundary without enumerating anything.
+    #[test]
+    fn no_bound_crossing_this_boundary_exceeds_a_known_optimum() {
+        let sim = ft_planted_frustrated(4, 12, 11, 1.0);
+        let known = ft_ground_energy(sim);
+        assert!(known.is_finite());
+        let bounds = [
+            ("decoupled", ft_bound_decoupled(sim)),
+            ("forest", ft_bound_forest(sim, 20)),
+            ("odd_cycle", ft_bound_odd_cycle(sim, 6)),
+            ("sdp", ft_bound_sdp(sim, 100, 1)),
+        ];
+        for (name, v) in bounds {
+            assert!(v.is_finite(), "{name} returned {v}");
+            assert!(v <= known + 1e-9, "{name} bound {v} EXCEEDS the planted optimum {known}");
+        }
+        // And the SDP, which is the expensive one, has to earn that by beating the trivial floor.
+        assert!(
+            bounds[3].1 >= bounds[0].1 - 1e-9,
+            "sdp {} is worse than decoupled {}",
+            bounds[3].1,
+            bounds[0].1
+        );
+        ft_free(sim);
+    }
+
+    /// A null handle is a caller error, not a crash, and NaN is how this ABI says so.
+    #[test]
+    fn a_null_handle_returns_rather_than_dereferencing() {
+        let n: *mut Sim = core::ptr::null_mut();
+        assert!(ft_tabu(n, 10, 0, 0).is_nan());
+        assert!(ft_popanneal(n, 8, 1, 1.0, 4).is_nan());
+        assert!(ft_branch(n, 10).is_nan());
+        assert!(ft_bound_decoupled(n).is_nan());
+        assert!(ft_bound_forest(n, 4).is_nan());
+        assert!(ft_bound_odd_cycle(n, 6).is_nan());
+        assert!(ft_bound_sdp(n, 10, 0).is_nan());
+        assert_eq!(ft_branch_proved(n), 0);
+        assert_eq!(ft_branch_nodes(n), 0);
+        assert!(ft_popanneal_ln_z(n).is_nan());
+        assert!(ft_popanneal_rho(n).is_nan());
     }
 }

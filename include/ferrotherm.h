@@ -163,6 +163,66 @@ uint32_t ft_cert_findings(const ft_sim *sim);
  * NULL, or 0 if there is no such finding. */
 uint32_t ft_cert_finding(const ft_sim *sim, uint32_t i, uint8_t *buf, uint32_t cap);
 
+/* ---- solvers and bounds -------------------------------------------------------------------------
+
+   Each solver LEAVES ITS BEST STATE as the simulation's state, so ft_spins reads the answer and
+   ft_energy recomputes the energy from it rather than trusting the number returned here. That also
+   makes them compose: anneal, then tabu from where annealing stopped, then branch and bound with
+   that as its incumbent.
+
+   Every bound below is a LOWER bound on the ground energy and is sound on its own, so a caller
+   should take the maximum of the ones it can afford. They are ordered cheapest first. */
+
+/* Tabu search. Returns the energy of the best state found, or NaN on NULL.
+   tenure = 0 scales the tenure to the graph; restart_after = 0 never restarts. */
+double ft_tabu(ft_sim *sim, uint32_t iterations, uint32_t tenure, uint32_t restart_after);
+
+/* Iterations the last ft_tabu actually ran. Less than the budget means the search was truncated,
+   which is otherwise invisible from outside. */
+uint64_t ft_tabu_iterations(const ft_sim *sim);
+
+/* Population annealing on a linear ladder from beta = 0 to beta_max in `stages` steps. Returns the
+   best energy found, or NaN on NULL or a bad beta_max. Starting at zero, where Z = 2^n exactly, is
+   what makes ft_popanneal_ln_z an absolute free energy rather than a ratio. */
+double ft_popanneal(ft_sim *sim, uint32_t population, uint32_t sweeps, double beta_max,
+                    uint32_t stages);
+
+/* ln Z at the final beta from the last ft_popanneal, or NaN if there was none. */
+double ft_popanneal_ln_z(const ft_sim *sim);
+
+/* The worst family statistic rho over the ladder -- THE NUMBER THAT SAYS WHETHER TO BELIEVE
+   ft_popanneal_ln_z. 1.0 means every ancestor still has one descendant; the population size means
+   the population collapsed onto one ancestor and explored a single basin with N copies of one
+   history. NaN if no run has happened. */
+double ft_popanneal_rho(const ft_sim *sim);
+
+/* Branch and bound, starting from this simulation's current state as its incumbent. Returns the
+   lowest energy found. WHETHER IT IS THE MINIMUM IS A SEPARATE QUESTION -- ask ft_branch_proved. */
+double ft_branch(ft_sim *sim, uint64_t max_nodes);
+
+/* 1 if the last ft_branch exhausted the tree and its answer is the proved minimum, else 0. A run
+   that ran out of nodes returns the best state it saw and reports 0 here. */
+uint32_t ft_branch_proved(const ft_sim *sim);
+uint64_t ft_branch_nodes(const ft_sim *sim);
+
+/* min E >= -sum|h| - sum|J|, in O(edges). The cheapest bound and the weakest. */
+double ft_bound_decoupled(const ft_sim *sim);
+
+/* Lagrangian decomposition into forests, tightened by `rounds` of subgradient ascent. WORTH
+   NOTHING ON AN INSTANCE WITH NO FIELDS: a tree is never frustrated, so every part minimises to
+   -sum|J| and this degenerates to ft_bound_decoupled. */
+double ft_bound_forest(const ft_sim *sim, uint32_t rounds);
+
+/* Charges 2*min|J| for every edge-disjoint frustrated cycle up to length max_len. Edge-disjointness
+   is what makes the penalties add. */
+double ft_bound_odd_cycle(const ft_sim *sim, uint32_t max_len);
+
+/* The certified semidefinite bound, RE-VERIFIED AT THIS BOUNDARY before it is returned: the cost
+   matrix is rebuilt from the graph and the positive-definiteness proof re-run, and NaN comes back
+   if that fails. A bound crossing a language boundary is exactly the case where the caller cannot
+   check it themselves. */
+double ft_bound_sdp(const ft_sim *sim, uint32_t sweeps, uint64_t seed);
+
 /* ---- exact inference --------------------------------------------------------------------------- */
 
 /* Exact ground energy by variable elimination, or NaN if the induced width exceeds `max_width`.

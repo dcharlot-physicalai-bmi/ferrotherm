@@ -462,6 +462,225 @@ pub fn energy(req: &Json) -> Result<Json, String> {
     ]))
 }
 
+/// Every lower bound on the ground energy, and — if a state is supplied — how far it is from
+/// optimal.
+///
+/// THE OPERATION THIS SERVER WAS MISSING. `verify` checks the sampler against the exact
+/// distribution and is capped at 20 nodes because it enumerates; this answers the same question —
+/// *should I believe this answer* — at any size, and answers it about the OPTIMUM rather than the
+/// distribution. `energy − best` is an upper limit on what a better search could still win, and
+/// zero means the state is proved optimal without trusting whatever produced it.
+///
+/// All four bounds are sound on their own, so `best` is their maximum. They disagree by a lot and
+/// in both directions: `odd_cycle` wins on sparse frustrated lattices, `sdp` by more the denser the
+/// instance gets, and `forest` is worth nothing at all on a graph with no fields.
+pub fn bound(req: &Json) -> Result<Json, String> {
+    let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
+    let rounds = opt_usize(req, "forest_rounds", 40).clamp(0, 10_000);
+    let max_cycle = opt_usize(req, "max_cycle", 6).clamp(0, 64);
+    let sdp_sweeps = opt_usize(req, "sdp_sweeps", 200).clamp(1, 100_000);
+    let seed = req.get("seed").and_then(|s| s.as_u64()).unwrap_or(1);
+
+    // The SDP factors a dense n x n matrix, so its cost is n^3 in the NODE COUNT and does not care
+    // how sparse the graph is. Refused rather than attempted: an unbounded Cholesky here is a way
+    // to take the server down with a valid-looking request.
+    const SDP_MAX_NODES: usize = 2_048;
+    let sdp = if g.n <= SDP_MAX_NODES {
+        let p = ferrotherm::sdp::Params { sweeps: sdp_sweeps, ..ferrotherm::sdp::Params::default() };
+        let (_, cert) = ferrotherm::sdp::certified(&g, &p, seed);
+        // Re-verified here, not trusted: rebuild the cost matrix from the graph and re-run the
+        // positive-definiteness proof before the number leaves this process.
+        cert.verify(&g).ok()
+    } else {
+        None
+    };
+
+    let d = ferrotherm::bound::decoupled(&g).value;
+    let f = ferrotherm::bound::forest(&g, rounds).value;
+    let c = ferrotherm::bound::odd_cycle(&g, max_cycle).value;
+    let mut pairs = vec![("decoupled", d), ("forest", f), ("odd_cycle", c)];
+    if let Some(v) = sdp {
+        pairs.push(("sdp", v));
+    }
+    let (which, best) = pairs
+        .iter()
+        .fold(("decoupled", f64::NEG_INFINITY), |acc, &(n, v)| if v > acc.1 { (n, v) } else { acc });
+
+    let mut out = vec![
+        ("nodes", Json::n(g.n as f64)),
+        ("decoupled", Json::n(d)),
+        ("forest", Json::n(f)),
+        ("odd_cycle", Json::n(c)),
+        (
+            "sdp",
+            match sdp {
+                Some(v) => Json::n(v),
+                None if g.n > SDP_MAX_NODES => {
+                    Json::s("refused: the SDP is O(n^3) dense and this graph is over 2048 nodes")
+                }
+                None => Json::s("refused: the certificate did not re-verify"),
+            },
+        ),
+        ("best", Json::n(best)),
+        ("which", Json::s(which)),
+    ];
+
+    if let Some(sv) = req.get("state").and_then(|s| s.as_arr()) {
+        if sv.len() != g.n {
+            return Err(format!("state has {} entries but the graph has {} nodes", sv.len(), g.n));
+        }
+        let mut s = Vec::with_capacity(g.n);
+        for (i, x) in sv.iter().enumerate() {
+            let v = x.as_f64().ok_or_else(|| format!("state[{i}] must be -1 or +1"))?;
+            if v != 1.0 && v != -1.0 {
+                return Err(format!("state[{i}] must be -1 or +1, got {v}"));
+            }
+            s.push(v as i8);
+        }
+        let e = g.energy(&s);
+        out.push(("energy", Json::n(e)));
+        out.push(("gap", Json::n(e - best)));
+    }
+    Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
+/// Minimise by a named method: tabu search, population annealing, or branch and bound.
+///
+/// `anneal` runs one chain down a ladder and hands back the best state it saw. These are the three
+/// things that do more than that: `tabu` remembers where it has been, `population` reports whether
+/// its own answer is trustworthy, and `branch` returns a PROOF or says it has none.
+pub fn optimize(req: &Json) -> Result<Json, String> {
+    let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("tabu").to_string();
+    let seed = req.get("seed").and_then(|s| s.as_u64()).unwrap_or(0);
+    let t0 = Instant::now();
+    let mut led = Ledger::default();
+
+    let (state, mut extra): (Vec<i8>, Vec<(&str, Json)>) = match method.as_str() {
+        "tabu" => {
+            let iterations = opt_usize(req, "iterations", 50_000).clamp(1, 100_000_000);
+            let tenure = opt_usize(req, "tenure", 0).min(g.n);
+            let restart = opt_usize(req, "restart_after", 5_000);
+            // A tabu iteration evaluates every node's move, so the honest budget is n per
+            // iteration -- the same accounting the ledger uses.
+            let budget = (g.n as u64).saturating_mul(iterations as u64);
+            if budget > MAX_NODE_UPDATES {
+                return Err(format!(
+                    "{budget} move evaluations requested, over the {MAX_NODE_UPDATES} ceiling"
+                ));
+            }
+            let p = ferrotherm::tabu::Params {
+                iterations,
+                tenure,
+                restart_after: (restart > 0).then_some(restart),
+            };
+            let o = ferrotherm::tabu::search_metered(&g, &p, seed, Some(&mut led));
+            let ran = o.iterations_run;
+            (
+                o.state,
+                vec![
+                    ("iterations_requested", Json::n(iterations as f64)),
+                    // Reported because truncation is otherwise invisible: a run that spent a
+                    // fraction of its budget returns a result shaped exactly like a full one.
+                    ("iterations_run", Json::n(ran as f64)),
+                    ("restarts", Json::n(o.restarts as f64)),
+                ],
+            )
+        }
+        "population" => {
+            let population = opt_usize(req, "population", 1_000).clamp(1, 1_000_000);
+            let sweeps = opt_usize(req, "sweeps", 4).clamp(1, 100_000);
+            let stages = opt_usize(req, "stages", 100).clamp(1, 100_000);
+            let beta_max = opt_f64(req, "beta_max", 6.0);
+            if !(beta_max.is_finite() && beta_max > 0.0) {
+                return Err("need beta_max > 0".into());
+            }
+            let budget = (g.n as u64)
+                .saturating_mul(population as u64)
+                .saturating_mul(sweeps as u64)
+                .saturating_mul(stages as u64 + 1);
+            if budget > MAX_NODE_UPDATES {
+                return Err(format!(
+                    "{budget} node updates requested, over the {MAX_NODE_UPDATES} ceiling"
+                ));
+            }
+            let p = ferrotherm::popanneal::Params::linear_from_zero(
+                population, sweeps, beta_max, stages,
+            );
+            let o = ferrotherm::popanneal::run(&g, &p, seed);
+            (
+                o.state,
+                vec![
+                    ("population", Json::n(population as f64)),
+                    ("beta_max", Json::n(beta_max)),
+                    (
+                        "ln_z",
+                        if o.ln_z_is_absolute { Json::n(o.ln_z) } else { Json::Null },
+                    ),
+                    // THE NUMBER THAT SAYS WHETHER TO BELIEVE ln_z. 1 is ideal; the population size
+                    // means every survivor descends from one ancestor.
+                    ("rho", Json::n(o.rho_max)),
+                    (
+                        "rho_reading",
+                        Json::s(if o.rho_max <= (population as f64 / 10.0).max(1.0) {
+                            "the population kept its diversity"
+                        } else {
+                            "the population collapsed; ln_z is not trustworthy"
+                        }),
+                    ),
+                ],
+            )
+        }
+        "branch" => {
+            let max_nodes = req
+                .get("max_nodes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20_000_000)
+                .clamp(1, 2_000_000_000);
+            let incumbent = req.get("incumbent").and_then(|s| s.as_arr()).map(|sv| {
+                sv.iter().map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 }).collect::<Vec<i8>>()
+            });
+            let p = ferrotherm::branch::Params { max_nodes, incumbent };
+            let o = ferrotherm::branch::solve(&g, &p);
+            (
+                o.state,
+                vec![
+                    // True ONLY when the tree was exhausted. A run that hit the budget returns its
+                    // best state and says the proof is missing.
+                    ("proved_optimal", Json::Bool(o.proved_optimal)),
+                    ("nodes", Json::n(o.nodes as f64)),
+                    ("pruned", Json::n(o.pruned as f64)),
+                    ("hit_limit", Json::Bool(o.hit_limit)),
+                ],
+            )
+        }
+        other => {
+            return Err(format!(
+                "unknown method {other:?}; expected \"tabu\", \"population\" or \"branch\""
+            ))
+        }
+    };
+
+    let wall = t0.elapsed().as_secs_f64();
+    // Recomputed from the state, not carried: the one number a caller acts on should not depend on
+    // an accumulator inside the solver being right.
+    let e = g.energy(&state);
+    let mut out = vec![
+        ("method", Json::s(&method)),
+        ("nodes_in_graph", Json::n(g.n as f64)),
+        ("best_energy", Json::n(e)),
+        ("seed", Json::n(seed as f64)),
+        ("ledger", ledger_json(&led, &Z1_SPICE, wall)),
+    ];
+    out.append(&mut extra);
+    if req.get("return_state").and_then(|b| b.as_bool()).unwrap_or(g.n <= 4096) {
+        out.push(("state", state_json(&state)));
+    } else {
+        out.push(("state_omitted", Json::s("pass \"return_state\": true to include it")));
+    }
+    Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
 /// Enumerate the exact Boltzmann distribution and compare the sampler against it.
 ///
 /// This is the tool that lets a caller check the sampler rather than trust it. It is capped at 20
@@ -558,6 +777,8 @@ pub fn capabilities() -> Json {
                 op("anneal", "Minimise energy down a geometric beta ladder.", "graph, beta_min, beta_max, stages, sweeps_per_stage, seed"),
                 op("energy", "Energy and magnetization of a given state.", "graph, state"),
                 op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
+                op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
+                op("optimize", "Minimise by tabu search, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
             ]),
         ),
@@ -1025,6 +1246,8 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
         "anneal" => anneal(req),
         "energy" => energy(req),
         "verify" => verify(req),
+        "bound" => bound(req),
+        "optimize" => optimize(req),
         "solve" => solve(req),
         "capabilities" => Ok(capabilities()),
         other => Err(format!(
@@ -1154,6 +1377,98 @@ mod tests {
         let e = run("energy", &format!(r#"{{"graph":{{"builtin":"ring","n":12}},"state":{state}}}"#))
             .unwrap();
         assert_eq!(e.get("energy").unwrap().as_f64(), s.get("energy").unwrap().as_f64());
+    }
+
+    /// A bound is a bound, over HTTP as much as in Rust — and the gap is what the tool is for.
+    #[test]
+    fn bounds_never_exceed_an_optimum_the_same_server_can_prove() {
+        // A frustrated ring: n bonds, all but one satisfiable, and small enough to prove.
+        let mut edges = Vec::new();
+        for i in 0..12 {
+            let w = if i == 0 { -1.0 } else { 1.0 };
+            edges.push(format!("[{i},{},{w}]", (i + 1) % 12));
+        }
+        let g = format!(r#"{{"n":12,"couplings":[{}]}}"#, edges.join(","));
+
+        let proof = dispatch("optimize", &parse(&format!(r#"{{"graph":{g},"method":"branch"}}"#)).unwrap()).unwrap();
+        assert_eq!(proof.get("proved_optimal").and_then(|v| v.as_bool()), Some(true));
+        let truth = proof.get("best_energy").unwrap().as_f64().unwrap();
+        assert!((truth - -10.0).abs() < 1e-9, "a frustrated 12-ring bottoms out at -10, got {truth}");
+
+        let state = crate::json::write(proof.get("state").unwrap());
+        let b = dispatch("bound", &parse(&format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap()).unwrap();
+        for k in ["decoupled", "forest", "odd_cycle"] {
+            let v = b.get(k).unwrap().as_f64().unwrap();
+            assert!(v <= truth + 1e-9, "{k} bound {v} exceeds the proved minimum {truth}");
+        }
+        // `sdp` is a number when the certificate re-verified and a REFUSAL STRING when it did not.
+        // Either is fine; a wrong number is not.
+        if let Some(v) = b.get("sdp").and_then(|v| v.as_f64()) {
+            assert!(v <= truth + 1e-9, "sdp bound {v} exceeds the proved minimum {truth}");
+        }
+        let best = b.get("best").unwrap().as_f64().unwrap();
+        assert!(best <= truth + 1e-9);
+        assert_eq!(b.get("energy").and_then(|v| v.as_f64()), Some(truth));
+        // The state IS the optimum, so the gap is exactly how loose the best bound is.
+        assert!((b.get("gap").unwrap().as_f64().unwrap() - (truth - best)).abs() < 1e-9);
+        // On a ring with no fields, `forest` cannot beat `decoupled`: a tree is never frustrated.
+        assert!(
+            (b.get("forest").unwrap().as_f64().unwrap()
+                - b.get("decoupled").unwrap().as_f64().unwrap())
+            .abs()
+                < 1e-9
+        );
+    }
+
+    /// Each method reports the thing only it can report, and a bad name is refused rather than
+    /// silently defaulted.
+    #[test]
+    fn optimize_carries_each_method_own_diagnostic() {
+        let g = r#"{"builtin":"ring","n":16,"j":1.0,"h":0.0}"#;
+
+        let tabu = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{g},"method":"tabu","iterations":2000}}"#)).unwrap()).unwrap();
+        assert_eq!(tabu.get("iterations_run").and_then(|v| v.as_f64()), Some(2000.0));
+
+        let pa = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{g},"method":"population","population":128,"stages":20}}"#)).unwrap()).unwrap();
+        let rho = pa.get("rho").unwrap().as_f64().unwrap();
+        assert!((1.0..=128.0).contains(&rho), "rho {rho} outside [1, population]");
+        assert!(pa.get("rho_reading").and_then(|v| v.as_str()).is_some());
+        // Z(0) = 2^n and Z never falls as beta rises, so ln Z is at least n ln 2.
+        let ln_z = pa.get("ln_z").unwrap().as_f64().unwrap();
+        assert!(ln_z >= 16.0 * std::f64::consts::LN_2 - 1e-9, "ln_z {ln_z}");
+
+        let br = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{g},"method":"branch","max_nodes":5}}"#)).unwrap()).unwrap();
+        assert_eq!(br.get("proved_optimal").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(br.get("hit_limit").and_then(|v| v.as_bool()), Some(true));
+
+        let e = dispatch("optimize", &parse(&format!(r#"{{"graph":{g},"method":"anneal"}}"#)).unwrap());
+        assert!(e.unwrap_err().contains("unknown method"), "a typo must not silently pick a default");
+    }
+
+    /// Every solver returns the energy OF THE STATE IT RETURNS, recomputed rather than carried.
+    #[test]
+    fn the_energy_over_http_belongs_to_the_state_over_http() {
+        let g = r#"{"builtin":"lattice2d","l":6,"j":1.0}"#;
+        for method in ["tabu", "population", "branch"] {
+            let r = dispatch("optimize", &parse(&format!(
+                r#"{{"graph":{g},"method":"{method}","iterations":2000,"population":32,"stages":10,"max_nodes":50000}}"#
+            )).unwrap()).unwrap();
+            let reported = r.get("best_energy").unwrap().as_f64().unwrap();
+            let state = crate::json::write(r.get("state").unwrap());
+            let scored = dispatch("energy", &parse(&format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap())
+                .unwrap()
+                .get("energy")
+                .unwrap()
+                .as_f64()
+                .unwrap();
+            assert!(
+                (reported - scored).abs() < 1e-9,
+                "{method} reported {reported}, its own state scores {scored}"
+            );
+        }
     }
 
     #[test]

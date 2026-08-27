@@ -60,6 +60,8 @@ export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
 export node_updates, joules_z1, onsager, library_path, close!
+export tabu!, tabu_iterations, population_anneal!, branch!, bounds, gap
+export PopulationRun, BranchResult, Bounds, trustworthy, best, tightest
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
@@ -207,6 +209,18 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_exact_log_z Cdouble SimPtr Cdouble Cuint
 @cfn ft_exact_width Cuint SimPtr
 @cfn ft_exact_ground_state Cuint SimPtr Cuint Ptr{Int8} Cuint
+@cfn ft_tabu Cdouble SimPtr Cuint Cuint Cuint
+@cfn ft_tabu_iterations Culonglong SimPtr
+@cfn ft_popanneal Cdouble SimPtr Cuint Cuint Cdouble Cuint
+@cfn ft_popanneal_ln_z Cdouble SimPtr
+@cfn ft_popanneal_rho Cdouble SimPtr
+@cfn ft_branch Cdouble SimPtr Culonglong
+@cfn ft_branch_proved Cuint SimPtr
+@cfn ft_branch_nodes Culonglong SimPtr
+@cfn ft_bound_decoupled Cdouble SimPtr
+@cfn ft_bound_forest Cdouble SimPtr Cuint
+@cfn ft_bound_odd_cycle Cdouble SimPtr Cuint
+@cfn ft_bound_sdp Cdouble SimPtr Cuint Culonglong
 @cfn ft_onsager Cdouble Cdouble
 @cfn ft_free Cvoid SimPtr
 
@@ -548,6 +562,148 @@ itself. `findings` is empty exactly when the run is sound — read that, not `be
 
 Nothing else in Julia reports `beta_eff` or `noise_floor` at all.
 """
+# ---- solvers and bounds -------------------------------------------------------------------------
+#
+# Each solver LEAVES ITS BEST STATE as the simulation's state, so `spins` reads the answer and
+# `energy` recomputes it from that state rather than trusting the number returned. They compose:
+# `anneal!`, then `tabu!` from where annealing stopped, then `branch!` with that as its incumbent.
+# The `!` is not decoration -- these mutate the simulation.
+
+"""A population-annealing run, with the diagnostic that says whether to believe it."""
+struct PopulationRun
+    energy::Float64
+    "`ln Z` at the final β, or `nothing` when the ladder did not start at infinite temperature."
+    ln_z::Union{Float64,Nothing}
+    "1.0 when every ancestor still has a descendant; `population` on total collapse."
+    rho::Float64
+    population::Int
+end
+
+"""
+    trustworthy(r::PopulationRun)
+
+`rho` below a tenth of the population. A rule of thumb, not a theorem — the number is on the struct
+so you can apply your own. A run whose `rho` spiked explored ONE basin with `population` copies of
+one history, and its `ln_z` is worth nothing.
+"""
+trustworthy(r::PopulationRun) = r.rho <= max(1.0, r.population / 10)
+
+"""What branch and bound found, and whether it proved it."""
+struct BranchResult
+    energy::Float64
+    "True only when the tree was exhausted inside the node budget."
+    proved::Bool
+    nodes::Int
+end
+
+"""Lower bounds on the ground energy. All sound, so `best` is their maximum."""
+struct Bounds
+    decoupled::Float64
+    forest::Float64
+    odd_cycle::Float64
+    "`nothing` when the certificate failed to re-verify. A refusal, not a missing feature."
+    sdp::Union{Float64,Nothing}
+end
+
+_pairs(b::Bounds) = let v = [("decoupled", b.decoupled), ("forest", b.forest),
+                             ("odd_cycle", b.odd_cycle)]
+    b.sdp === nothing ? v : push!(v, ("sdp", b.sdp))
+end
+
+"""Taking the maximum of sound bounds is sound."""
+best(b::Bounds) = maximum(last.(_pairs(b)))
+
+"""Which bound set `best`. They disagree by a lot, and in both directions.
+
+Named `tightest` rather than `which` because `Base.which` exists: exporting a second `which` makes
+`using Ferrotherm` ambiguous at the call site, and the error a user gets says nothing about bounds.
+"""
+tightest(b::Bounds) = first(argmax(last, _pairs(b)))
+
+"""
+    tabu!(s; iterations = 50_000, tenure = 0, restart_after = 5_000)
+
+Tabu search. Returns the best energy found and leaves that state on `s`.
+
+`tenure = 0` scales the tenure to the graph; `restart_after = 0` never restarts. Check
+`tabu_iterations` afterwards — a run shorter than its budget was truncated, and that is otherwise
+invisible from outside.
+"""
+function tabu!(s::Simulation; iterations::Integer = 50_000, tenure::Integer = 0,
+               restart_after::Integer = 5_000)
+    _live(s)
+    ft_tabu(s.handle, Cuint(max(1, iterations)), Cuint(tenure), Cuint(restart_after))
+end
+
+"""Iterations the last `tabu!` actually ran, or 0 if there was none."""
+function tabu_iterations(s::Simulation)
+    _live(s)
+    Int(ft_tabu_iterations(s.handle))
+end
+
+"""
+    population_anneal!(s; population = 1000, sweeps = 4, beta_max = 6.0, stages = 100)
+
+Population annealing: `population` chains down one ladder, resampled at each rung.
+
+Unlike a single annealed chain this also estimates the free energy, and reports whether to believe
+it. The ladder starts at `β = 0`, where `Z = 2^n` exactly, which is what makes `ln_z` absolute
+rather than a ratio.
+"""
+function population_anneal!(s::Simulation; population::Integer = 1000, sweeps::Integer = 4,
+                            beta_max::Real = 6.0, stages::Integer = 100)
+    _live(s)
+    e = ft_popanneal(s.handle, Cuint(max(1, population)), Cuint(max(1, sweeps)),
+                     Cdouble(beta_max), Cuint(max(1, stages)))
+    isnan(e) && throw(ArgumentError("beta_max must be finite and non-negative"))
+    z = ft_popanneal_ln_z(s.handle)
+    PopulationRun(e, isnan(z) ? nothing : z, ft_popanneal_rho(s.handle), Int(population))
+end
+
+"""
+    branch!(s; max_nodes = 20_000_000)
+
+Branch and bound from `s`'s current state, which it uses as its incumbent.
+
+The only solver here that returns a **proof**. A run that exhausts `max_nodes` returns the best
+state it saw with `proved = false`; a flag meaning "optimal, or else we gave up" gets read as the
+first thing and quoted as the second.
+"""
+function branch!(s::Simulation; max_nodes::Integer = 20_000_000)
+    _live(s)
+    e = ft_branch(s.handle, Culonglong(max(1, max_nodes)))
+    BranchResult(e, ft_branch_proved(s.handle) != 0, Int(ft_branch_nodes(s.handle)))
+end
+
+"""
+    bounds(s; forest_rounds = 40, max_cycle = 6, sdp_sweeps = 200, seed = 1)
+
+Every lower bound on the ground energy this library computes, and the best of them.
+
+All are sound on their own, so `best` is their maximum — not a tie-break, a result: `odd_cycle`
+wins on sparse frustrated lattices and `sdp` wins by more the denser the instance gets. The SDP
+bound is re-verified on the Rust side before it crosses, and is `nothing` if that fails.
+"""
+function bounds(s::Simulation; forest_rounds::Integer = 40, max_cycle::Integer = 6,
+                sdp_sweeps::Integer = 200, seed::Integer = 1)
+    _live(s)
+    sdp = ft_bound_sdp(s.handle, Cuint(max(1, sdp_sweeps)), Culonglong(seed))
+    Bounds(ft_bound_decoupled(s.handle),
+           ft_bound_forest(s.handle, Cuint(forest_rounds)),
+           ft_bound_odd_cycle(s.handle, Cuint(max_cycle)),
+           isnan(sdp) ? nothing : sdp)
+end
+
+"""
+    gap(s; kw...)
+
+How far `s`'s current state is from optimal, at worst: `energy(s) - best(bounds(s))`.
+
+Zero means the state is **proved** optimal without trusting the sampler that found it. Anything
+above is an upper limit on what a better search could still win.
+"""
+gap(s::Simulation; kw...) = energy(s) - best(bounds(s; kw...))
+
 struct Certificate
     draws::Int
     beta_eff::Float64

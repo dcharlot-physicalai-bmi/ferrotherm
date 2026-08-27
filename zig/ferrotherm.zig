@@ -154,8 +154,111 @@ pub const Sim = struct {
         return c.ft_ledger_joules_z1(self.h);
     }
 
+    // ---- solvers ------------------------------------------------------------------------------
+    //
+    // Each of these leaves its best state as the simulation's state, so `spins()` reads the answer
+    // and `energy()` recomputes it from that state rather than trusting the number returned here.
+    // They compose: anneal, then tabu from where annealing stopped, then `branch` with that as its
+    // incumbent.
+
+    /// Tabu search. Returns the energy of the best state found.
+    ///
+    /// `tenure = 0` scales the tenure to the graph; `restart_after = 0` never restarts. Check
+    /// `tabuIterations` afterwards: a run shorter than its budget was truncated, which is
+    /// otherwise invisible from outside.
+    pub fn tabu(self: Sim, iterations: u32, tenure: u32, restart_after: u32) f64 {
+        return c.ft_tabu(self.h, iterations, tenure, restart_after);
+    }
+
+    /// Iterations the last `tabu` actually ran, or 0 if there was none.
+    pub fn tabuIterations(self: Sim) u64 {
+        return c.ft_tabu_iterations(self.h);
+    }
+
+    /// Population annealing on a linear ladder from beta = 0 to `beta_max`.
+    ///
+    /// Starting at zero, where `Z = 2^n` exactly, is what makes `PopulationRun.ln_z` an absolute
+    /// free energy rather than a ratio.
+    pub fn populationAnneal(self: Sim, population: u32, sweeps: u32, beta_max: f64, stages: u32) Error!PopulationRun {
+        const e = c.ft_popanneal(self.h, population, sweeps, beta_max, stages);
+        if (std.math.isNan(e)) return Error.BadSchedule;
+        return .{
+            .energy = e,
+            .ln_z = c.ft_popanneal_ln_z(self.h),
+            .rho = c.ft_popanneal_rho(self.h),
+            .population = population,
+        };
+    }
+
+    /// Branch and bound from the current state, which it uses as its incumbent.
+    ///
+    /// The only solver here that returns a PROOF. A run that exhausts `max_nodes` comes back with
+    /// `proved = false` and the best state it saw.
+    pub fn branch(self: Sim, max_nodes: u64) BranchResult {
+        const e = c.ft_branch(self.h, max_nodes);
+        return .{
+            .energy = e,
+            .proved = c.ft_branch_proved(self.h) != 0,
+            .nodes = c.ft_branch_nodes(self.h),
+        };
+    }
+
+    /// Every lower bound on the ground energy this library computes, and the best of them.
+    ///
+    /// All are sound on their own, so `Bounds.best()` is their maximum -- not a tie-break, a
+    /// result: they disagree by a lot and in both directions.
+    pub fn bounds(self: Sim, forest_rounds: u32, max_cycle: u32, sdp_sweeps: u32, seed: u64) Bounds {
+        return .{
+            .decoupled = c.ft_bound_decoupled(self.h),
+            .forest = c.ft_bound_forest(self.h, forest_rounds),
+            .odd_cycle = c.ft_bound_odd_cycle(self.h, max_cycle),
+            .sdp = c.ft_bound_sdp(self.h, sdp_sweeps, seed),
+        };
+    }
+
     pub fn deinit(self: Sim) void {
         c.ft_free(self.h);
+    }
+};
+
+/// A population-annealing run, with the diagnostic that says whether to believe it.
+pub const PopulationRun = struct {
+    energy: f64,
+    /// `ln Z` at the final beta, or NaN when the ladder did not start at infinite temperature.
+    ln_z: f64,
+    /// The family statistic: 1.0 when every ancestor still has a descendant, `population` when the
+    /// population collapsed onto one and explored a single basin with N copies of one history.
+    rho: f64,
+    population: u32,
+
+    /// `rho` below a tenth of the population. A rule of thumb, not a theorem -- the number is
+    /// there so a caller can apply their own.
+    pub fn trustworthy(self: PopulationRun) bool {
+        return self.rho <= @max(1.0, @as(f64, @floatFromInt(self.population)) / 10.0);
+    }
+};
+
+/// What branch and bound found, and whether it proved it.
+pub const BranchResult = struct {
+    energy: f64,
+    /// True only when the tree was exhausted inside the node budget.
+    proved: bool,
+    nodes: u64,
+};
+
+/// Lower bounds on the ground energy. All sound, so `best()` is their maximum.
+pub const Bounds = struct {
+    decoupled: f64,
+    forest: f64,
+    odd_cycle: f64,
+    /// NaN when the certificate failed to re-verify on the other side of the boundary. That is a
+    /// refusal, not a missing feature.
+    sdp: f64,
+
+    pub fn best(self: Bounds) f64 {
+        var b = @max(self.decoupled, @max(self.forest, self.odd_cycle));
+        if (!std.math.isNan(self.sdp)) b = @max(b, self.sdp);
+        return b;
     }
 };
 
@@ -1370,4 +1473,78 @@ test "all_different solves a latin square row, and pigeonhole is refused not ann
     const why = q.lastError(&buf);
     try std.testing.expect(std.mem.indexOf(u8, why, "pigeonhole") != null or
         std.mem.indexOf(u8, why, "No assignment can satisfy") != null);
+}
+
+// ---- solvers and bounds -------------------------------------------------------------------------
+//
+// The C ABI could build a graph and sample it but not ask how far from optimal the sample was, so a
+// Zig user could do the easy half of what this library is for. These check the other half crossed
+// the boundary intact, rather than that the symbols merely resolve.
+
+/// A ring with one flipped bond: enumerable, and genuinely frustrated.
+fn frustratedRing(n: u32) !Sim {
+    var b = try Model.init(n);
+    var i: u32 = 0;
+    while (i < n) : (i += 1) try b.couple(i, (i + 1) % n, if (i == 0) -1.0 else 1.0);
+    return b.build(1.0, 3);
+}
+
+test "every solver leaves the state whose energy it reported" {
+    // The number returned is a claim about `spins()`, not a separate answer.
+    {
+        var sim = try frustratedRing(12);
+        defer sim.deinit();
+        const e = sim.tabu(5_000, 0, 1_000);
+        try std.testing.expectApproxEqAbs(e, sim.energy(), 1e-9);
+        try std.testing.expectEqual(@as(u64, 5_000), sim.tabuIterations());
+    }
+    {
+        var sim = try frustratedRing(12);
+        defer sim.deinit();
+        const r = try sim.populationAnneal(64, 2, 3.0, 20);
+        try std.testing.expectApproxEqAbs(r.energy, sim.energy(), 1e-9);
+        // Z(0) = 2^n and Z is non-decreasing in beta, so ln Z is at least n ln 2 at any beta.
+        try std.testing.expect(r.ln_z >= 12.0 * @log(2.0) - 1e-9);
+        try std.testing.expect(r.rho >= 1.0 and r.rho <= 64.0);
+    }
+    {
+        var sim = try frustratedRing(12);
+        defer sim.deinit();
+        const r = sim.branch(2_000_000);
+        try std.testing.expectApproxEqAbs(r.energy, sim.energy(), 1e-9);
+        try std.testing.expect(r.proved and r.nodes > 0);
+        // A frustrated ring of n bonds can satisfy all but one: -(n - 1) + 1.
+        try std.testing.expectApproxEqAbs(@as(f64, -10.0), r.energy, 1e-9);
+    }
+}
+
+test "branch and bound withholds a proof when the budget runs out" {
+    // The flag is the whole product. A search that gave up and still said `proved` would be worse
+    // than one that returned nothing.
+    var b = try Model.init(40);
+    var i: u32 = 0;
+    while (i < 40) : (i += 1) {
+        var j: u32 = i + 1;
+        while (j < 40) : (j += 1) try b.couple(i, j, if ((i * 7 + j) % 3 == 0) -1.0 else 1.0);
+    }
+    var sim = try b.build(1.0, 1);
+    defer sim.deinit();
+    const r = sim.branch(200);
+    try std.testing.expect(!r.proved);
+    try std.testing.expect(r.nodes <= 201);
+}
+
+test "no bound exceeds a ground energy the same object can prove" {
+    // One-sided on purpose: a bound may be loose by any amount and may never exceed the optimum.
+    var sim = try frustratedRing(12);
+    defer sim.deinit();
+    const truth = sim.branch(2_000_000).energy;
+    const b = sim.bounds(40, 6, 200, 1);
+    try std.testing.expect(b.decoupled <= truth + 1e-9);
+    try std.testing.expect(b.forest <= truth + 1e-9);
+    try std.testing.expect(b.odd_cycle <= truth + 1e-9);
+    try std.testing.expect(std.math.isNan(b.sdp) or b.sdp <= truth + 1e-9);
+    try std.testing.expect(b.best() <= truth + 1e-9);
+    // On a ring with no fields `forest` cannot beat `decoupled`: a tree is never frustrated.
+    try std.testing.expectApproxEqAbs(b.decoupled, b.forest, 1e-9);
 }

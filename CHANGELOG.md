@@ -1,5 +1,127 @@
 # Changelog
 
+## 0.25.0
+
+### The optimality-gap certificate was reachable from one of six surfaces
+
+`bound` is the headline claim in this crate's README — *a sampler holding a state of energy E is
+within E − L of optimal whatever it found; at gap zero the answer is proven optimal without
+trusting the sampler.* It had never been on the C ABI. Python, Julia, Zig, the HTTP server and the
+MCP tools could build a graph and sample it, and could not ask how far from optimal the sample was.
+
+`scripts/check-parity.sh` exists to catch exactly this — a capability that ships in Rust while the
+other surfaces stay green because a missing binding is not a build error anywhere. It did not catch
+it, and the reason is worth writing down: **it checks that every exported symbol reaches every
+binding. A capability that was never exported is not a parity failure — it is a thing nobody can
+say.** The gate protected the boundary it was pointed at, and the gap was one step upstream of it.
+
+Twelve symbols close it, on the header, Python, Zig and Julia:
+
+```text
+  ft_tabu               ft_popanneal          ft_branch            ft_bound_decoupled
+  ft_tabu_iterations    ft_popanneal_ln_z     ft_branch_proved     ft_bound_forest
+                        ft_popanneal_rho      ft_branch_nodes      ft_bound_odd_cycle
+                                                                   ft_bound_sdp
+```
+
+Three design choices in that list:
+
+**Each solver leaves its best state as the simulation's state.** So `ft_spins` reads the answer and
+`ft_energy` recomputes the energy from it rather than trusting the number the solver returned — and
+they compose: anneal, then tabu from where annealing stopped, then branch and bound with that as its
+incumbent. Every binding's test asserts the returned number matches the state left behind, because
+those are two different claims and only one of them is checkable.
+
+**`ft_bound_sdp` re-verifies the certificate before the number crosses.** It rebuilds the cost
+matrix from the graph, re-runs the positive-definiteness proof, and returns NaN if that fails. A
+bound crossing a language boundary is precisely the case where the caller cannot check it
+themselves.
+
+**`ft_tabu_iterations` and `ft_branch_proved` exist because the alternative is a number that looks
+complete.** A tabu run shorter than its budget was truncated; a branch-and-bound run that exhausted
+its nodes did not prove anything. Both are invisible from outside without a field to ask.
+
+The bindings gained `Bounds` / `BranchResult` / `PopulationRun` types with `best`, `proved` and
+`rho`, and Python and Julia gained a one-line `gap()` — `energy − best bound` — which is the number
+the README has been describing since `bound` landed and which no non-Rust user could compute.
+
+### And two operations the server never had
+
+The HTTP API and the MCP tools offered five operations: `sample`, `anneal`, `energy`, `verify`,
+`solve`. `verify` is the one that checks an answer — it enumerates the exact Boltzmann distribution
+and reports the sampler's distance from it, capped at 20 nodes because enumeration is `2ⁿ`. There
+was nothing that could check an answer at any other size.
+
+`bound` is that operation. It returns all four lower bounds and, when handed a state, `energy −
+best`: an upper limit on what a better search could still win, and **zero exactly when the state is
+proved optimal without trusting whatever produced it**. It answers a different question from
+`verify` — that one is about the distribution, this one is about the optimum — and unlike `verify`
+it has no size cap, except that the SDP is `O(n³)` dense and is refused above 2048 nodes rather
+than attempted, since an unbounded Cholesky is a way to take the server down with a valid-looking
+request.
+
+`optimize` exposes the three solvers with each method's own diagnostic in the reply:
+`iterations_run` for tabu, `rho` plus a plain-English `rho_reading` for population annealing, and
+`proved_optimal` / `hit_limit` for branch and bound.
+
+**The MCP parity test only ran in one direction.** It checked that every advertised tool was
+dispatchable — a tool with no operation behind it. It could not catch an operation with no tool in
+front of it, which is the direction this project keeps failing in: `bound` and `optimize` were
+dispatchable before they were advertised and nothing would have said so. The reverse check now runs
+against the HTTP capabilities list rather than a constant. While adding it, a neighbouring test
+that pinned the tool count at exactly 6 turned out to fail whenever a tool was ADDED — a failure
+that reads as "the new tool is broken" and is fixed by editing a number, which teaches nothing. It
+is a floor now, and completeness is checked against the API.
+
+### Two things the new tests found
+
+**A ferromagnet is proved optimal in under 300 nodes, and that is a fact about the instance.** The
+budget-exhaustion test was written against a 64-spin Z1 grid on the assumption that 200 nodes could
+not exhaust it. They could: a ferromagnet is unfrustrated, every coupling and every field is
+satisfiable at once, so `−Σ|h| − Σ|J|` is not a relaxation there — it is the ground energy. The root
+bound equals the incumbent and the entire tree prunes. Kept as its own test rather than discarded,
+because it is the case where the cheapest bound in the crate is also the best available, which is
+easy to forget after measuring bounds on G-set.
+
+**Julia is 1-based and said so.** The Julia test was written with the 0-based indices the C ABI,
+Python and Zig use, and `couple!` refused it: *`i = 0` is out of range for a model of 12 nodes;
+indices here are 1-based.* An off-by-one that silently built a different graph would have been
+scored with full confidence by everything downstream.
+
+### `examples/exact_reach`: how far the exact solver actually goes
+
+`exact_bracket` proves optima at 22 spins because that size is chosen to **always** prove — the tree
+is smaller than the node budget, so the gate cannot silently stop applying. That makes it useless
+for the question a user actually has, which is how big an instance they can hand this thing.
+
+`exact_reach` walks the size up on a sparse and a dense family until the budget runs out, and
+reports where it stopped. Not run in CI: it deliberately runs until it fails, which is the opposite
+of what a per-push check should do. Measured, 40M-node budget, tabu incumbent, median of 3 seeds:
+
+| family | mean degree | largest proved by 3/3 | nodes there | stops at |
+|---|---|---|---|---|
+| sparse | 6.0 | **76 spins** | 8,277,603 | 80 (1/3) |
+| dense | 22.1 | **44 spins** | 12,173,789 | 48 (1/3) |
+
+**Density costs far more than node count.** The bound charges for every edge with both ends still
+free: a sparse graph has `O(n)` of those and a few fixings retire most of them, so the bound becomes
+informative early; a dense one has `O(n²)`, so the root bound sits far below the optimum and stays
+loose for many levels. 76 spins against 44 at less than a quarter of the node budget.
+
+The prediction written into the example before it was run said the opposite — that a dense instance
+would tighten *faster* per level, since fixing a high-degree spin retires many edges at once. That
+is true per level and irrelevant to the outcome: there are quadratically more edges to retire.
+Corrected in the file rather than removed, because the reasoning was sound and the conclusion was
+not.
+
+It also names where the next lever is. An SDP bound *inside* the tree rather than only at the root
+is what the dense column is asking for, and that is what solvers of the BiqMac family do.
+
+This measurement is why the timing column reads `spoiled` rather than being withheld: the reach and
+the node counts are search outcomes, identical on any machine, and only the seconds are a rate. An
+earlier draft called `require_quiet` and would have exited without printing any of it — a
+misapplication of this workspace's own rule, on the same day the rule was written.
+
 ## 0.24.0
 
 ### A wall-clock number is a claim about the code only when the code had the machine

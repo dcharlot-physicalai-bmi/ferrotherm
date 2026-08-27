@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 625 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 635 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -93,6 +93,32 @@ thermodynamic-computing corpus currently leaves empty.
   a different relaxation (Lagrangian decomposition, not roof duality's max-flow), in a std-only Rust
   stack, and *anytime*: every round is a valid bound. Which is tighter on which instances is
   unmeasured; both are sound, so their maximum is too.
+- **Every one of those is reachable from every surface.** `bound` had never been on the C ABI:
+  optimality-gap certificates are the headline claim above, and until 0.25.0 Python, Julia, Zig, the
+  HTTP server and the MCP tools could build a graph and sample it but could not ask how far from
+  optimal the sample was. `scripts/check-parity.sh` exists to catch a capability that stops at Rust
+  and did not catch this one — **it checks that every exported symbol reaches every binding, and a
+  capability that was never exported is not a parity failure, it is a thing nobody can say.** Twelve
+  C ABI symbols close it (`ft_tabu`, `ft_popanneal`, `ft_branch`, `ft_bound_*` and their
+  accessors), plus `bound` and `optimize` on HTTP/MCP. Each solver leaves its best state as the
+  simulation's state, so the returned number is a claim about `spins` that every binding's tests
+  check, and they compose: anneal, then tabu, then branch and bound with that as its incumbent.
+  `ft_bound_sdp` **re-verifies the certificate before the number crosses** — a bound crossing a
+  language boundary is exactly the case where the caller cannot check it themselves. Python and
+  Julia get a one-line `gap()`.
+- `cargo run --release --example exact_reach` — **how far the exact solver actually goes**, which
+  `exact_bracket` cannot say because its size is chosen to always prove. Measured, 40M-node budget,
+  tabu incumbent, median of 3 seeds:
+
+  | family | mean degree | largest proved by 3/3 seeds | nodes there | stops at |
+  |---|---|---|---|---|
+  | sparse | 6.0 | **76 spins** | 8.28M | 80 (1/3) |
+  | dense | 22.1 | **44 spins** | 12.17M | 48 (1/3) |
+
+  Density costs far more than node count: the bound charges for every edge with both ends still
+  free, and a sparse graph has `O(n)` of those — a few fixings retire most of them — where a dense
+  one has `O(n²)` and stays loose for many levels. That is where an SDP bound *inside* the tree,
+  rather than only at the root, would start to pay.
 - `cargo test --lib tabu:: popanneal:: branch::` — **the three solvers a max-cut result is expected
   to be measured against.** `tabu` is the mandatory baseline in the literature, with the incremental
   gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updating in `O(degree)` per flip. `popanneal` is

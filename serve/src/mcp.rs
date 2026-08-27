@@ -115,6 +115,50 @@ pub fn tools() -> Json {
             vec!["graph"],
         ),
         tool(
+            "ferrotherm_bound",
+            "How far from optimal is this answer? Returns LOWER BOUNDS on the ground energy, and \
+             if you pass a state, the gap between it and the best bound. Unlike ferrotherm_verify \
+             this works at ANY size, and it answers a different question: verify checks the \
+             sampler's DISTRIBUTION, this bounds the OPTIMUM. A gap of zero means the state is \
+             proved optimal without trusting whatever produced it; anything above is an upper \
+             limit on what a better search could still win. All bounds are sound, so \"best\" is \
+             their maximum -- they disagree by a lot and in both directions.",
+            vec![
+                ("graph", schema_graph()),
+                ("state", prop("array", "Optional. One entry per node, each -1 or +1. Supplying it adds \"energy\" and \"gap\" to the reply, which is the point of the tool.")),
+                ("forest_rounds", prop("integer", "Subgradient rounds for the forest bound. Default 40. Worth nothing on a graph with no fields: a tree is never frustrated, so the bound degenerates to the trivial floor.")),
+                ("max_cycle", prop("integer", "Longest frustrated cycle to charge for. Default 6. This is the bound that sees frustration, which is the only thing that makes max-cut hard.")),
+                ("sdp_sweeps", prop("integer", "Mixing sweeps for the semidefinite bound. Default 200. Raising it buys almost nothing -- measured 12223 / 12224 / 12224 at 200 / 1000 / 4000 sweeps on G1.")),
+                ("seed", prop("integer", "Random seed for the semidefinite search. Default 1. It only chooses WHICH dual point gets verified; a bad choice loosens the bound and cannot make it wrong.")),
+            ],
+            vec!["graph"],
+        ),
+        tool(
+            "ferrotherm_optimize",
+            "Minimise an Ising graph by a named method. Prefer ferrotherm_anneal for a quick answer; \
+             reach for this when you need more than one. \"tabu\" remembers where it has been and \
+             escapes local minima a descent gets stuck in. \"population\" runs many chains with \
+             resampling and reports rho, a diagnostic that says whether to believe its own free \
+             energy. \"branch\" returns a PROOF -- proved_optimal is true only when it exhausted \
+             the search tree, and a run that hit its node budget says so rather than claiming one.",
+            vec![
+                ("graph", schema_graph()),
+                ("method", prop("string", "\"tabu\", \"population\" or \"branch\". Default \"tabu\".")),
+                ("seed", prop("integer", "Random seed. Default 0.")),
+                ("iterations", prop("integer", "tabu: flips to run. Default 50000. Check \"iterations_run\" in the reply -- a shorter run was truncated.")),
+                ("tenure", prop("integer", "tabu: how many iterations a flipped spin stays forbidden. Default 0, which scales it to the graph.")),
+                ("restart_after", prop("integer", "tabu: restart from a fresh state after this many iterations with no improvement. Default 5000; 0 never restarts.")),
+                ("population", prop("integer", "population: number of chains. Default 1000. rho is bounded by this, and rho near it means the population collapsed onto one ancestor.")),
+                ("sweeps", prop("integer", "population: Gibbs sweeps per replica per rung. Default 4.")),
+                ("stages", prop("integer", "population: ladder rungs from beta = 0. Default 100.")),
+                ("beta_max", prop("number", "population: coldest inverse temperature. Default 6.0.")),
+                ("max_nodes", prop("integer", "branch: node budget. Default 20000000. Running out means no proof, which the reply reports.")),
+                ("incumbent", prop("array", "branch: a starting state, one entry per node, each -1 or +1. A good incumbent prunes from the first node and is worth far more than a better bound.")),
+                ("return_state", prop("boolean", "Include the state in the reply. Defaults to true under 4096 nodes.")),
+            ],
+            vec!["graph"],
+        ),
+        tool(
             "ferrotherm_solve",
             "State a constraint or optimisation problem in its own vocabulary and get NAMED VALUES \
              back. Prefer this over ferrotherm_anneal: that one wants a graph of spins and returns \
@@ -286,7 +330,12 @@ mod tests {
     fn every_tool_has_a_usable_schema() {
         let r = call(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         let ts = r.get("result").unwrap().get("tools").unwrap().as_arr().unwrap();
-        assert_eq!(ts.len(), 6);
+        // A FLOOR, not an equality. The exact count was pinned here, so adding a tool failed this
+        // test -- which reads as "the new tool is broken" and is fixed by editing the number, a
+        // ritual that teaches nothing. What this test is for is that every advertised tool has a
+        // usable schema; `every_operation_the_http_api_advertises_has_an_mcp_tool` is what checks
+        // the set is complete, and it does so against the API rather than against a constant.
+        assert!(ts.len() >= 6, "only {} tools advertised", ts.len());
         for t in ts {
             let name = t.get("name").unwrap().as_str().unwrap();
             assert!(name.starts_with("ferrotherm_"), "{name}");
@@ -352,6 +401,38 @@ mod tests {
             assert!(
                 !matches!(&e, Err(m) if m.starts_with("unknown operation")),
                 "{name} is advertised but not dispatchable"
+            );
+        }
+    }
+
+    /// And the other direction, which is the one that was not checked.
+    ///
+    /// The test above catches a tool with no operation behind it. It cannot catch an operation
+    /// with no tool in front of it -- and that is the direction this project keeps failing in: a
+    /// capability lands in Rust, every surface still compiles, and the thing users cannot say is
+    /// invisible to every test. `bound` and `optimize` were dispatchable before they were
+    /// advertised, and nothing here would have noticed.
+    #[test]
+    fn every_operation_the_http_api_advertises_has_an_mcp_tool() {
+        let caps = api::capabilities();
+        let ops = caps.get("operations").and_then(|o| o.as_arr()).expect("capabilities lists operations");
+        let names: Vec<String> = tools()
+            .as_arr()
+            .unwrap()
+            .iter()
+            .map(|t| t.get("name").unwrap().as_str().unwrap().to_string())
+            .collect();
+        for o in ops {
+            let op = o.get("name").and_then(|n| n.as_str()).expect("each operation is named");
+            // `capabilities` describes the server rather than being an operation over a graph.
+            if op == "capabilities" {
+                continue;
+            }
+            let want = format!("ferrotherm_{op}");
+            assert!(
+                names.contains(&want),
+                "the HTTP API offers {op:?} and MCP does not advertise {want:?}; the tools are \
+                 documented as the same operations"
             );
         }
     }

@@ -30,7 +30,10 @@ from typing import Any, Iterable, Sequence
 
 __all__ = [
     "Answer",
+    "Bounds",
+    "BranchResult",
     "Certificate",
+    "PopulationRun",
     "Literal",
     "Model",
     "Problem",
@@ -52,7 +55,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 
 
 # ---- library loading ------------------------------------------------------------------------
@@ -141,6 +144,18 @@ _exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
 _exact_log_z = _sig("ft_exact_log_z", c_double, [_p, c_double, c_uint32])
 _exact_width = _sig("ft_exact_width", c_uint32, [_p])
 _exact_ground_state = _sig("ft_exact_ground_state", c_uint32, [_p, c_uint32, POINTER(c_int8), c_uint32])
+_tabu = _sig("ft_tabu", c_double, [_p, c_uint32, c_uint32, c_uint32])
+_tabu_iterations = _sig("ft_tabu_iterations", c_uint64, [_p])
+_popanneal = _sig("ft_popanneal", c_double, [_p, c_uint32, c_uint32, c_double, c_uint32])
+_popanneal_ln_z = _sig("ft_popanneal_ln_z", c_double, [_p])
+_popanneal_rho = _sig("ft_popanneal_rho", c_double, [_p])
+_branch = _sig("ft_branch", c_double, [_p, c_uint64])
+_branch_proved = _sig("ft_branch_proved", c_uint32, [_p])
+_branch_nodes = _sig("ft_branch_nodes", c_uint64, [_p])
+_bound_decoupled = _sig("ft_bound_decoupled", c_double, [_p])
+_bound_forest = _sig("ft_bound_forest", c_double, [_p, c_uint32])
+_bound_odd_cycle = _sig("ft_bound_odd_cycle", c_double, [_p, c_uint32])
+_bound_sdp = _sig("ft_bound_sdp", c_double, [_p, c_uint32, c_uint64])
 _free = _sig("ft_free", None, [_p])
 
 # the modelling layer
@@ -224,6 +239,91 @@ def _read_text(fn: Any, handle: Any) -> str:
 
 
 # ---- building -------------------------------------------------------------------------------
+
+
+class Bounds:
+    """Lower bounds on the ground energy. All sound, so :attr:`best` is their maximum.
+
+    ``sdp`` is ``None`` when the certificate failed to re-verify — which is a refusal, not a
+    missing feature. The others cannot fail.
+    """
+
+    __slots__ = ("decoupled", "forest", "odd_cycle", "sdp")
+
+    def __init__(self, decoupled: float, forest: float, odd_cycle: float,
+                 sdp: "float | None") -> None:
+        self.decoupled, self.forest, self.odd_cycle, self.sdp = decoupled, forest, odd_cycle, sdp
+
+    @property
+    def best(self) -> float:
+        """The tightest of them. Taking the maximum of sound bounds is sound."""
+        vs = [self.decoupled, self.forest, self.odd_cycle]
+        if self.sdp is not None:
+            vs.append(self.sdp)
+        return max(vs)
+
+    @property
+    def which(self) -> str:
+        """Which bound set :attr:`best`. They disagree by a lot, and in both directions."""
+        pairs = [("decoupled", self.decoupled), ("forest", self.forest),
+                 ("odd_cycle", self.odd_cycle)]
+        if self.sdp is not None:
+            pairs.append(("sdp", self.sdp))
+        return max(pairs, key=lambda kv: kv[1])[0]
+
+    def __repr__(self) -> str:
+        sdp = "refused" if self.sdp is None else f"{self.sdp:.6g}"
+        return (f"<Bounds best={self.best:.6g} by {self.which}; decoupled={self.decoupled:.6g} "
+                f"forest={self.forest:.6g} odd_cycle={self.odd_cycle:.6g} sdp={sdp}>")
+
+
+class BranchResult:
+    """What branch and bound found, and whether it proved it.
+
+    ``proved`` is true only when the tree was exhausted inside the node budget. A run that hit the
+    limit still returns its best state; it just cannot call it the minimum.
+    """
+
+    __slots__ = ("energy", "proved", "nodes")
+
+    def __init__(self, energy: float, proved: bool, nodes: int) -> None:
+        self.energy, self.proved, self.nodes = energy, proved, nodes
+
+    def __repr__(self) -> str:
+        head = "PROVED OPTIMAL" if self.proved else "best found (no proof: budget exhausted)"
+        return f"<BranchResult {self.energy:.6g} {head}, {self.nodes} nodes>"
+
+
+class PopulationRun:
+    """A population-annealing run, with the diagnostic that says whether to believe it.
+
+    ``rho`` is the family statistic: ``1.0`` when every ancestor still has one descendant,
+    ``population`` when the population collapsed onto a single ancestor. A run whose ``rho`` spiked
+    explored one basin with ``population`` copies of one history, and its ``ln_z`` is worth nothing.
+    ``trustworthy`` applies the usual rule of thumb; the number is there so you can apply your own.
+    """
+
+    __slots__ = ("energy", "ln_z", "rho", "population")
+
+    def __init__(self, energy: float, ln_z: "float | None", rho: float, population: int) -> None:
+        self.energy, self.ln_z, self.rho, self.population = energy, ln_z, rho, population
+
+    @property
+    def trustworthy(self) -> bool:
+        """``rho`` below a tenth of the population. A rule of thumb, not a theorem."""
+        return self.rho <= max(1.0, self.population / 10.0)
+
+    def free_energy(self, beta: float, n: int) -> "float | None":
+        """``-ln Z / (beta * n)``, or ``None`` when ``ln_z`` is unavailable."""
+        if self.ln_z is None or beta <= 0.0 or n <= 0:
+            return None
+        return -self.ln_z / (beta * n)
+
+    def __repr__(self) -> str:
+        z = "unavailable" if self.ln_z is None else f"{self.ln_z:.6g}"
+        warn = "" if self.trustworthy else "  ** rho says do not trust ln_z **"
+        return (f"<PopulationRun energy={self.energy:.6g} ln_z={z} "
+                f"rho={self.rho:.3g}/{self.population}{warn}>")
 
 
 class Certificate:
@@ -515,6 +615,92 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         v = float(_exact_log_z(self._h, float(beta), int(max_width)))
         return None if v != v else v
+
+    # ---- solvers ---------------------------------------------------------------------------
+    #
+    # Each of these leaves its best state as this simulation's state, so :attr:`spins` reads the
+    # answer and :attr:`energy` recomputes it. They compose: anneal, then tabu from where annealing
+    # stopped, then :meth:`branch` with that as its incumbent.
+
+    def tabu(self, iterations: int = 50_000, tenure: int = 0,
+             restart_after: int = 5_000) -> float:
+        """Tabu search. Returns the best energy found and leaves that state behind.
+
+        ``tenure=0`` scales the tenure to the graph; ``restart_after=0`` never restarts. Check
+        :meth:`tabu_iterations` afterwards — a run shorter than the budget was truncated, and that
+        is otherwise invisible.
+        """
+        self._live()
+        return float(_tabu(self._h, int(iterations), int(tenure), int(restart_after)))
+
+    def tabu_iterations(self) -> int:
+        """Iterations the last :meth:`tabu` actually ran, or 0 if there was none."""
+        self._live()
+        return int(_tabu_iterations(self._h))
+
+    def population_anneal(self, population: int = 1_000, sweeps: int = 4,
+                          beta_max: float = 6.0, stages: int = 100) -> "PopulationRun":
+        """Population annealing: ``population`` chains down one ladder, resampled at each rung.
+
+        Unlike a single annealed chain this also estimates the free energy, and reports whether to
+        believe it. The ladder starts at ``beta = 0``, where ``Z = 2 ** n`` exactly, which is what
+        makes :attr:`PopulationRun.ln_z` absolute rather than a ratio.
+        """
+        self._live()
+        e = float(_popanneal(self._h, int(population), int(sweeps), float(beta_max), int(stages)))
+        ln_z = float(_popanneal_ln_z(self._h))
+        return PopulationRun(
+            energy=e,
+            ln_z=None if ln_z != ln_z else ln_z,
+            rho=float(_popanneal_rho(self._h)),
+            population=int(population),
+        )
+
+    def branch(self, max_nodes: int = 20_000_000) -> "BranchResult":
+        """Branch and bound from the current state, which it uses as its incumbent.
+
+        The only solver here that returns a **proof**. A run that exhausts ``max_nodes`` returns the
+        best state it saw with ``proved=False``; a flag meaning "optimal, or else we gave up" would
+        get read as the first thing and quoted as the second.
+        """
+        self._live()
+        e = float(_branch(self._h, int(max_nodes)))
+        return BranchResult(
+            energy=e,
+            proved=bool(_branch_proved(self._h)),
+            nodes=int(_branch_nodes(self._h)),
+        )
+
+    # ---- bounds ----------------------------------------------------------------------------
+
+    def bounds(self, forest_rounds: int = 40, max_cycle: int = 6,
+               sdp_sweeps: int = 200, seed: int = 1) -> "Bounds":
+        """Every lower bound on the ground energy this library can compute, and the best of them.
+
+        All four are sound on their own, so :attr:`Bounds.best` is their maximum — not a tie-break,
+        a result: they disagree by a lot and in both directions. ``odd_cycle`` wins on sparse
+        frustrated lattices and ``sdp`` wins by more the denser the instance gets.
+
+        ``sdp`` is re-verified on the Rust side of the boundary before it crosses, and comes back
+        as ``None`` if that verification fails.
+        """
+        self._live()
+        sdp = float(_bound_sdp(self._h, int(sdp_sweeps), int(seed)))
+        return Bounds(
+            decoupled=float(_bound_decoupled(self._h)),
+            forest=float(_bound_forest(self._h, int(forest_rounds))),
+            odd_cycle=float(_bound_odd_cycle(self._h, int(max_cycle))),
+            sdp=None if sdp != sdp else sdp,
+        )
+
+    def gap(self, **kw: Any) -> float:
+        """How far this simulation's current state is from optimal, at worst.
+
+        ``energy - best_bound``. Zero means the state is **proved** optimal without trusting the
+        sampler that found it; anything above is an upper limit on what a better search could still
+        win. Takes the same keyword arguments as :meth:`bounds`.
+        """
+        return self.energy - self.bounds(**kw).best
 
     def close(self) -> None:
         if getattr(self, "_h", None):

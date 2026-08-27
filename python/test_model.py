@@ -485,3 +485,96 @@ def test_an_exact_model_carries_no_caveats():
     p.categorical("a", 5)
     p.integer("b", 0, 7)
     assert p.solve(tries=4).caveats == []
+
+
+# ---- solvers and bounds ----------------------------------------------------------------------
+#
+# The C ABI could build a graph and sample it, but not ask how far from optimal the sample was --
+# so a Python user could do the easy half of what this library is for. These check the other half
+# crossed the boundary intact, rather than that the symbols merely resolve.
+
+
+def _frustrated_chain(n: int = 12) -> "ft.Model":
+    """A ring with one flipped bond: enumerable, and genuinely frustrated."""
+    m = ft.Model(n)
+    for i in range(n):
+        m.couple(i, (i + 1) % n, -1.0 if i == 0 else 1.0)
+    return m
+
+
+def test_every_solver_leaves_the_state_whose_energy_it_reported():
+    """The number returned is a claim about ``spins``, not a separate answer."""
+    for name, run in [
+        ("tabu", lambda s: s.tabu(iterations=5_000)),
+        ("population_anneal", lambda s: s.population_anneal(population=64, stages=20).energy),
+        ("branch", lambda s: s.branch(max_nodes=2_000_000).energy),
+    ]:
+        sim = _frustrated_chain().build(beta=1.0, seed=3)
+        reported = float(run(sim))
+        assert math.isclose(reported, sim.energy, abs_tol=1e-9), (
+            f"{name} returned {reported}, the state it left has {sim.energy}"
+        )
+        assert set(sim.spins) <= {-1, 1}, "`spins` is a property here, not a method"
+
+
+def test_branch_and_bound_reports_a_proof_and_withholds_one():
+    """``proved`` is the whole product. A search that gave up must not claim one."""
+    sim = _frustrated_chain().build(beta=1.0, seed=1)
+    done = sim.branch()
+    assert done.proved and done.nodes > 0
+    # A frustrated ring of n bonds can satisfy all but one: -(n - 1) + 1.
+    assert math.isclose(done.energy, -10.0, abs_tol=1e-9), done
+
+    big = ft.Model(40)
+    for i in range(40):
+        for j in range(i + 1, 40):
+            big.couple(i, j, 1.0 if (i * 7 + j) % 3 else -1.0)
+    out = big.build(beta=1.0, seed=1).branch(max_nodes=200)
+    assert not out.proved and out.nodes <= 201, out
+
+
+def test_tabu_reports_how_far_it_actually_got():
+    """Truncation is invisible from outside without this, which is how it once shipped."""
+    sim = _frustrated_chain().build(beta=1.0, seed=2)
+    assert sim.tabu_iterations() == 0, "nothing has run yet"
+    sim.tabu(iterations=3_000, restart_after=0)
+    assert sim.tabu_iterations() == 3_000
+
+
+def test_population_annealing_hands_over_its_warning_with_its_free_energy():
+    sim = _frustrated_chain().build(beta=1.0, seed=4)
+    run = sim.population_anneal(population=256, sweeps=2, beta_max=3.0, stages=30)
+    # Z(0) = 2 ** n and Z is non-decreasing in beta, so ln Z is at least n ln 2 at any beta.
+    assert run.ln_z is not None and run.ln_z >= 12 * math.log(2) - 1e-9, run
+    assert 1.0 <= run.rho <= run.population
+    assert isinstance(run.trustworthy, bool)
+    f = run.free_energy(3.0, 12)
+    assert f is not None and math.isclose(f, -run.ln_z / (3.0 * 12))
+    # A one-step quench collapses the population onto one ancestor, and rho has to say so.
+    quenched = sim.population_anneal(population=64, sweeps=1, beta_max=40.0, stages=1)
+    assert quenched.rho > run.rho, (quenched, run)
+
+
+def test_no_bound_exceeds_a_ground_energy_the_same_object_can_prove():
+    """One-sided on purpose: a bound may be loose by any amount and may never exceed the optimum."""
+    sim = _frustrated_chain().build(beta=1.0, seed=5)
+    truth = sim.branch().energy
+    b = sim.bounds()
+    for name in ("decoupled", "forest", "odd_cycle", "sdp"):
+        v = getattr(b, name)
+        if v is None:
+            continue
+        assert v <= truth + 1e-9, f"{name} bound {v} exceeds the proved minimum {truth}"
+    assert b.best <= truth + 1e-9
+    assert b.which in {"decoupled", "forest", "odd_cycle", "sdp"}
+    # On a ring with no fields, `forest` cannot beat `decoupled`: a tree is never frustrated.
+    assert math.isclose(b.forest, b.decoupled, abs_tol=1e-9), (b.forest, b.decoupled)
+
+
+def test_the_gap_is_zero_exactly_when_the_state_is_provably_optimal():
+    sim = _frustrated_chain().build(beta=1.0, seed=6)
+    sim.branch()  # leaves the proved optimum as the state
+    assert sim.gap() >= -1e-9, "a gap below zero would mean a bound above the optimum"
+    loose = _frustrated_chain().build(beta=1.0, seed=7)
+    loose.spins = [1] * 12  # every bond satisfied except the frustrated one is NOT this state
+    assert loose.gap() > sim.gap() - 1e-9

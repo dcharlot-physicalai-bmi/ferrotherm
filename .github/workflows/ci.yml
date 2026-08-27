@@ -121,6 +121,8 @@ jobs:
       #   depth_vs_dimension  199 s   too slow for every push
       #   reach_on_z1         107 s   the flagship; slow, and run before a release
       #   dtm_scale           needs a Fashion-MNIST idx3-ubyte file this runner does not have
+      #   exact_reach         a measurement, not a gate: it runs the size up until the node budget
+      #                       runs out, which is the opposite of what a per-push check should do
       # docs.rs is a published surface and nothing here gated it. Turned on with 22 broken
       # intra-doc links already in the tree -- most of them prose like `[0,1]` or `reals[x]` that
       # rustdoc read as a link and could not resolve, two of them real (`Verdict::Runnable` and
@@ -141,7 +143,7 @@ jobs:
           FERROTHERM_ALLOW_BUSY: "1"
         run: |
           set -euo pipefail
-          skip="depth_vs_dimension reach_on_z1 dtm_scale"
+          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach"
           ran=0
           for f in examples/*.rs; do
             n=$(basename "$f" .rs)

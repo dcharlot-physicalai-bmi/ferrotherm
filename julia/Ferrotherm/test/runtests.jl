@@ -286,4 +286,91 @@ end
     close!(q)
 end
 
+# ---- solvers and bounds -------------------------------------------------------------------------
+#
+# The C ABI could build a graph and sample it but not ask how far from optimal the sample was, so a
+# Julia user could do the easy half of what this library is for. These check the other half crossed
+# the boundary intact, rather than that the symbols merely resolve.
+
+"A ring with one flipped bond: enumerable, and genuinely frustrated.
+
+Indices are 1-BASED here and 0-based in Python, Zig and the C ABI. That is deliberate and the
+binding refuses the other convention rather than accepting it -- an off-by-one that silently built
+a different graph would be scored with full confidence."
+function frustrated_ring(n = 12)
+    m = IsingModel(n)
+    for i in 1:n
+        couple!(m, i, i % n + 1, i == 1 ? -1.0 : 1.0)
+    end
+    m
+end
+
+@testset "every solver leaves the state whose energy it reported" begin
+    for (name, run) in [("tabu!", s -> tabu!(s; iterations = 5_000)),
+                        ("population_anneal!", s -> population_anneal!(s; population = 64, stages = 20).energy),
+                        ("branch!", s -> branch!(s; max_nodes = 2_000_000).energy)]
+        s = build(frustrated_ring(); beta = 1.0, seed = 3)
+        reported = run(s)
+        @test isapprox(reported, energy(s); atol = 1e-9)
+        @test all(v -> v == 1 || v == -1, spins(s))
+        close!(s)
+    end
+end
+
+@testset "branch and bound reports a proof and withholds one" begin
+    s = build(frustrated_ring(); beta = 1.0, seed = 1)
+    r = branch!(s)
+    @test r.proved && r.nodes > 0
+    # A frustrated ring of n bonds can satisfy all but one: -(n - 1) + 1.
+    @test isapprox(r.energy, -10.0; atol = 1e-9)
+    close!(s)
+
+    big = IsingModel(40)
+    for i in 1:40, j in (i + 1):40
+        couple!(big, i, j, (i * 7 + j) % 3 == 0 ? -1.0 : 1.0)
+    end
+    b = build(big; beta = 1.0, seed = 1)
+    out = branch!(b; max_nodes = 200)
+    @test !out.proved && out.nodes <= 201
+    close!(b)
+end
+
+@testset "tabu reports how far it actually got" begin
+    s = build(frustrated_ring(); beta = 1.0, seed = 2)
+    @test tabu_iterations(s) == 0
+    tabu!(s; iterations = 3_000, restart_after = 0)
+    @test tabu_iterations(s) == 3_000
+    close!(s)
+end
+
+@testset "population annealing hands over its warning with its free energy" begin
+    s = build(frustrated_ring(); beta = 1.0, seed = 4)
+    r = population_anneal!(s; population = 256, sweeps = 2, beta_max = 3.0, stages = 30)
+    # Z(0) = 2^n and Z is non-decreasing in beta, so ln Z is at least n ln 2 at any beta.
+    @test r.ln_z !== nothing && r.ln_z >= 12 * log(2) - 1e-9
+    @test 1.0 <= r.rho <= r.population
+    @test trustworthy(r) isa Bool
+    # A one-step quench collapses the population onto one ancestor, and rho has to say so.
+    q = population_anneal!(s; population = 64, sweeps = 1, beta_max = 40.0, stages = 1)
+    @test q.rho > r.rho
+    close!(s)
+end
+
+@testset "no bound exceeds a ground energy the same object can prove" begin
+    s = build(frustrated_ring(); beta = 1.0, seed = 5)
+    truth = branch!(s).energy
+    b = bounds(s)
+    for v in (b.decoupled, b.forest, b.odd_cycle, b.sdp)
+        v === nothing && continue
+        @test v <= truth + 1e-9
+    end
+    @test best(b) <= truth + 1e-9
+    @test tightest(b) in ("decoupled", "forest", "odd_cycle", "sdp")
+    # On a ring with no fields `forest` cannot beat `decoupled`: a tree is never frustrated.
+    @test isapprox(b.forest, b.decoupled; atol = 1e-9)
+    # The state left behind is the proved optimum, so the gap is closed.
+    @test gap(s) >= -1e-9
+    close!(s)
+end
+
 include("readme.jl")
