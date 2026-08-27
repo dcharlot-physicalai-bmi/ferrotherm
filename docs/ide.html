@@ -161,6 +161,7 @@
   <label class="ctl">solver
     <select id="method">
       <option value="tabu">tabu search</option>
+      <option value="bls">breakout local search</option>
       <option value="population">population annealing</option>
       <option value="branch">branch &amp; bound</option>
     </select>
@@ -1025,6 +1026,14 @@ $("solve").onclick = () => {
     // Reported because truncation is otherwise invisible: a run that spent a fraction of its
     // budget returns a result shaped exactly like a full one.
     extra = ran.toLocaleString() + " of 50,000 iterations";
+  } else if (m === "bls") {
+    e = W.ft_bls(sim, 50000);
+    const d = Number(W.ft_bls_descents(sim)), jump = W.ft_bls_max_jump(sim);
+    // Descents, not just the energy. The claim breakout local search makes is about what happens
+    // BETWEEN local optima, so a run that visited a handful spent its budget inside one basin and
+    // is a descent wearing the name -- and nothing in the energy alone would say so.
+    extra = d.toLocaleString() + " descents, longest jump " + jump
+      + (d < 5 ? " -- too few descents to have broken out of anything" : "");
   } else if (m === "population") {
     e = W.ft_popanneal(sim, 512, 4, Math.max(4.0, +$("beta").value / 100), 60);
     const rho = W.ft_popanneal_rho(sim), lnz = W.ft_popanneal_ln_z(sim);

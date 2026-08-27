@@ -291,6 +291,11 @@ const run = (body) => page.evaluate((json) => {
   check("and a search that is not a proof does not claim one", !/PROVED/.test(tb.verdict),
         tb.verdict);
 
+  const bl = await solve("bls");
+  check("breakout local search reports its descents", /descents/.test(bl.status),
+        bl.status.slice(0, 100));
+  check("and does not claim a proof either", !/PROVED/.test(bl.verdict), bl.verdict);
+
   const pa = await solve("population");
   check("population annealing reports rho", /rho [\d.]+ of 512/.test(pa.status),
         pa.status.slice(0, 100));
