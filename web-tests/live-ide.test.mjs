@@ -63,6 +63,12 @@ check('and refuses a short readback instead of padding it', !short.ok && /did no
   check('the live workbench proves a small instance', /tree exhausted/.test(r.status), r.status.slice(0, 90));
   check('and shows the optimality bracket', r.shown && /PROVED OPTIMAL/.test(r.verdict), r.verdict);
   check('the live wasm really carries the SDP bound', r.rows.includes('sdp'), r.rows.join(','));
+  const bl = await p.evaluate(() => {
+    document.getElementById('method').value = 'bls';
+    document.getElementById('solve').click();
+    return document.getElementById('status').textContent;
+  });
+  check('and breakout local search runs on the deployed page', /descents/.test(bl), bl.slice(0, 90));
   check('and a bound is named as best', r.best !== null, String(r.best));
 }
 
