@@ -8,7 +8,7 @@
 //! # What maps, exactly
 //!
 //! A compiled ferrotherm program is a set of spins with biases and pairwise couplings — an Ising
-//! model. OMMX expresses that as an [`Instance`] with **binary** decision variables and a quadratic
+//! model. OMMX expresses that as an `Instance` with **binary** decision variables and a quadratic
 //! objective, which is a lossless target for this shape:
 //!
 //! | ferrotherm | OMMX |

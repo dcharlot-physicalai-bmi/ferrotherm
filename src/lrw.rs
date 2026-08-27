@@ -4,7 +4,7 @@
 //! Simulates dx = f(x,t) dt + sigma(x,t) dW (diagonal noise) using only ternary increments per
 //! coordinate: Delta_i in {-dx_i, 0, +dx_i} with
 //!     P[Delta = +-dx] = 0.5 * (dt/dx) * ( +-f + sigma^2/dx ),
-//! which gives EXACT conditional moments E[Delta] = dt f and E[Delta^2] = dt sigma^2. With
+//! which gives EXACT conditional moments `E[Delta] = dt f` and `E[Delta^2] = dt sigma^2`. With
 //! dx = sqrt(dt) * sigma the zero branch vanishes (a pure coin flip). The stability mechanism,
 //! worth stating: Euler-Maruyama's second moment is dt sigma^2 + dt^2 f^2 (unbounded for
 //! super-linear drifts), the walk's is dt sigma^2 independent of f — so non-globally-Lipschitz

@@ -1,5 +1,250 @@
 # Changelog
 
+## 0.24.0
+
+### A wall-clock number is a claim about the code only when the code had the machine
+
+`examples/gset_gap` reported **85.7 s** for a G1 search that takes about 14 s on a quiet machine.
+It reported it in the same format, with the same confidence, as every honest timing beside it —
+because nothing in the example knew the difference. The machine's 1-minute load average was 189.
+
+This is the **third** time this class has cost this project a number. The 86 ns/flip figure was
+contaminated by background load and corrected. 0.17.0's `duty_cycle` table — 67.6 W idle, a 529%
+idle-dominance threshold — was taken at a load average of 82, and `ferrotherm-meter` grew a guard:
+it will not call a reading an idle baseline above a load average of 2, because **a busy machine has
+no idle**. Both fixes were local to the file that had just been burned.
+
+So the response this time was not a fourth local fix. The load-average reading moved down from
+`meter` into the core crate — one implementation instead of two — and every example in the
+repository was swept for the class, which found it in four.
+
+The distinction the module is built around:
+
+| | contaminated by load? | treatment |
+|---|---|---|
+| a cut, a bound, an energy, a state | no — same number whoever else is on the CPU | reported normally |
+| flips/s, ns/flip, J/flip, a speedup column, a head-to-head | **yes** — every one is a division by wall-clock time | refused |
+
+So `gset_gap` annotates and `flips_bench` / `parity_bench` stop:
+
+```text
+  cut found            11624   (8 restarts x 200-stage ladder, 85.7 s -- NOT A MEASUREMENT:
+                                the 1-minute load average reached 189.4, so this is the run
+                                queue's number, not the code's.)
+```
+
+`Timing::as_measurement` returns `Option<f64>`, so reaching the number means handling the
+contaminated case. The defect was never a missing check — it was a check whose result nothing was
+obliged to consult.
+
+`FERROTHERM_ALLOW_BUSY=1` returns the numbers with a caveat printed above them, and CI sets it: a
+hosted runner that has just finished `cargo build --release --examples` is exactly the machine the
+guard is describing, and what that step checks is that the examples RUN.
+
+### `sdp`: a certified SDP bound, and the mixing sweep made sparse
+
+The max-cut SDP relaxation is the standard strong bound, and the obvious way to compute it produces
+a *primal* value that bounds the SDP optimum from the wrong side — measured on G1, a naive
+"upper bound" of 9579.94 against a max cut of 11624. Unsound by 2044.
+
+`sdp` exhibits a **dual** point instead and checks one thing about it. For any dual-feasible `y`,
+weak duality gives `eᵀy ≤ p* ≤ min_s E(s)` with no optimality, convergence, or rank assumption
+anywhere — the mixing method, the rank, the Lanczos estimate and the seed are heuristics for
+*choosing* `y`, and a bad choice moves the bound down rather than making it wrong.
+
+The one claim that has to be true is that `C − Diag(y)` is positive definite, and that is
+discharged by Rump's criterion rather than by an eigensolver: shift the diagonal down by a
+computable constant and run a plain `f64` Cholesky, whose **completion proves definiteness**. No
+`mul_add` anywhere in it — fusion changes the error model the theorem assumes, and a "harmless"
+optimisation there would silently void the proof.
+
+`Certificate::verify` rebuilds the cost matrix from the graph and re-runs the whole check, touching
+nothing from the search that produced it. `gset_gap` calls it on every run. A bound that only its
+own author can reproduce is not a bound.
+
+The mixing sweep now reads a CSR copy of the cost matrix instead of scanning every column: on a
+degree-4 instance at n = 800 the dense form made 800 column visits to find the 4 that mattered. The
+CSR is built by scanning the dense rows in ascending column order, so every partial sum accumulates
+in the same order — the change is **bit-identical**, and a test asserts that on the bit pattern
+rather than on a tolerance. `assert!((a-b).abs() < 1e-12)` would pass just as happily for a
+reordering that changed the arithmetic.
+
+It buys time and **not tightness**, which is worth stating because the opposite was the working
+assumption. Sweeping the sweep count says so outright:
+
+```text
+  sweeps      G11        G14         G1
+     200      733       3409      12223
+   1,000      731       3409      12224
+   4,000      733       3409      12224
+```
+
+Twenty times the work, nothing to show for it. The mixing method reaches a stationary point early
+and the bound is limited by something else entirely.
+
+### The something else: `lanczos_min` was not returning an eigenvalue
+
+`crate::linalg::jacobi_eig` **returns the eigenvector matrix** and leaves the eigenvalues on the
+diagonal of the matrix it was handed. `lanczos_min` folded `min` over the return value. Eigenvector
+components live in `[-1, 1]`, so the "estimate of `λ_min`" was the most negative eigenvector
+*component* — a number near `-1` on every instance, with no relation to the spectrum of anything.
+
+Nothing failed. That is the part worth keeping. The module's design claim is that Lanczos is *only*
+a heuristic for choosing the shift — the Cholesky is what makes the bound sound, so a bad `θ` costs
+tightness and cannot cost correctness — and the claim held exactly as written: every certificate
+still verified, `gset_gap`'s independent re-check still passed, and the published-best-known
+sanity check never fired. The bound was quietly loose on every instance instead of wrong on any.
+
+It is also how the line survived. "Only a heuristic" is how a function gets no test, and a function
+with no test does not stay a heuristic — it becomes a different function. There is a test now:
+Lanczos is held against a dense Jacobi eigendecomposition of the same matrix, required to sit at or
+above `λ_min` (Rayleigh–Ritz) and to reach it within `1e-3` from a full-length Krylov space.
+
+**`examples/exact_bracket` is what exposed it**, on its first run, from a column nobody added for
+that purpose. Across all six 22-spin instances the `sdp` column was *identical* to `decoupled` —
+`certified` was falling back to its Gershgorin floor every time, because the shifted mixing point
+never beat it. A gate written to check soundness found a tightness defect that no soundness test
+could see.
+
+What one line was worth, on the same six instances:
+
+```text
+  seed   optimum   decoupled   odd-cycle    sdp before    sdp after
+     0   -13.872     -20.324     -19.119       -20.324      -14.934
+     1   -13.633     -20.502     -17.524       -20.502      -14.541
+     2   -18.623     -27.803     -24.420       -27.803      -19.952
+     3   -20.618     -30.774     -27.638       -30.774      -21.625
+     4   -20.499     -28.116     -24.804       -28.116      -20.865
+     5   -14.740     -24.291     -22.564       -24.291      -15.849
+```
+
+The bound now closes a mean **88%** of the distance from `decoupled` to the proved optimum, having
+closed none of it. And on G-set the corrected code lands on the numbers this module's own
+documentation had been claiming all along — 629, 3192 and 12083, to the unit — which is the other
+half of the story: the table was right and the code had stopped matching it, and nothing in the
+repository was able to notice.
+
+### `tabu`: the baseline a max-cut result is expected to be measured against
+
+Tabu search is the mandatory comparison in the max-cut literature, and this crate did not have it.
+The incremental move gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updates in `O(degree)` per flip.
+
+It shipped **unsound** in its first form and the bug is worth recording: when every move was tabu
+the loop `break`ed, so a run with a 50,000-iteration budget spent 9 of them and returned a result
+indistinguishable from a completed one. On `n = 9` it missed the optimum on 7 of 30 seeds. The fix
+is a restart rather than a return, a tenure clamped to `n − 1` so deadlock is unreachable, and
+`Outcome::iterations_run`, because truncation was otherwise invisible from outside.
+
+The control it is compared against changed too. `tenure: 1` had meant "no memory" only because of
+an off-by-one; once that was fixed, the control became a second treatment. `steepest_descent` is a
+real control algorithm instead.
+
+### `popanneal`: an annealer that reports how much to believe it
+
+Population annealing runs `R` chains down one ladder and resamples them at each rung. Two things
+fall out that a single annealed chain cannot produce:
+
+* **The partition function.** Each step's normalisation estimates `Z(β_k)/Z(β_{k−1})`, and the
+  ladder telescopes into `ln Z`. Starting at `β = 0`, where `Z = 2ⁿ` exactly, makes it absolute
+  rather than a ratio — and `Outcome::ln_z_is_absolute` is false when the ladder did not.
+* **A diagnostic that can say "do not trust this run."** `ρ = (Σ_f n_f²)/R` over ancestor families
+  is exactly 1 when every ancestor still has one descendant and exactly `R` when the population has
+  collapsed onto one. A run whose `ρ` spiked explored one basin with `R` copies of one history.
+
+Overflow is not a detail here. The reweighting factor is `exp(−Δβ·E)`, and G1's energies are near
+`−2·10⁴`: a ladder step of `Δβ = 0.03` asks for `exp(600)` and `f64` overflows at `exp(709.78)`.
+Unshifted, `Q` becomes `inf`, every `τ` becomes `NaN` and the population dies silently. Every
+exponential is shifted by the running maximum, which cancels exactly in the ratios. The test for it
+asserts the ladder **ran to the end**, not merely that `ln Z` was finite — a finite `ln_z` alone
+would pass on a run that gave up at step one.
+
+The flat-landscape test is exact rather than approximate: with no edges and no fields every
+reweighting factor is exactly 1, so `Σexp = R`, `ln(R/R) = 0`, `τ_i = 1`, no Bernoulli is drawn and
+no family is ever duplicated. `ln Z = n ln 2`, `ρ = 1` and the population size are all asserted with
+`assert_eq!`.
+
+### `branch`: the only thing here that returns a proof
+
+Every other solver hands back a state, and `bound` hands back the other side of a bracket. `branch`
+closes it: fix a spin, bound what the rest can still reach, discard the branch when the bound cannot
+beat what is in hand. The bound is `decoupled` on the residual problem, maintained in `O(degree)`
+per node rather than recomputed in `O(edges)`.
+
+Undo is where this kind of search goes quietly wrong. `x + d − d` is not `x`, so an undo done by
+arithmetic lets the bound drift as the search backtracks — and a bound that drifts **upward** prunes
+a subtree containing the optimum while still reporting `proved_optimal`. Nothing is undone by
+arithmetic here: scalars are restored by returning from the frame, touched entries of `λ` are saved
+and written back verbatim, and the prune test carries an explicit slack sized from the instance for
+what accumulates along a single root-to-node path.
+
+`proved_optimal` is true only when the tree was exhausted inside the node budget. A run that hit the
+limit says so, because a flag meaning "optimal, or else we gave up" gets read as the first thing and
+quoted as the second.
+
+### G-set, after all of it
+
+```text
+  instance  degree   cut found   best known     forest   odd-cycle     sdp      UB    gap
+  G11          4.0         564   564 (100%)        817        *579     629    *579   2.6%
+  G14         11.7        3058  3064 (99.8%)      4694        3602   *3192   *3192   4.2%
+  G1          47.9       11624  11624 (100%)     19176       14958  *12083  *12083   3.8%
+```
+
+Starred is the bound that won; all three are sound, so the harness takes the maximum. G1's gap goes
+from **22.3% to 3.8%** and G14's from **15.1% to 4.2%**, and G11 stays at 2.6% because on a degree-4
+torus the cycle bound is still the strongest thing here — a semidefinite relaxation wins by more the
+denser the instance, and a decomposition bound loses by more. G11's optimum is provably in
+**[564, 579]**.
+
+Timings are omitted from the table on purpose. Every number in it is a search outcome or a bound, so
+it is the same on any machine; the seconds this run took are not, and the harness says so itself.
+
+### CI has been failing since 0.23.0, and 0.23.0 was reported as green
+
+`examples/gset_gap` takes a G-set file path and exits 2 without one. CI runs every unattended
+example and requires exit 0. So from the moment that example landed, the example gate failed on
+every push — and the release it landed in was reported as passing. The correction is stated here
+rather than quietly fixed: `gh run list` says `failure` for the 0.23.0 commit.
+
+Adding `gset_gap` to the skip list would have silenced the symptom and left the example unexercised,
+which is the same outcome with better manners. It generates its own instance instead: with no
+argument it emits an 8×8 ±1 torus — the shape of G11–G13 — **in G-set's own text format** and parses
+it back through `Instance::parse`, so a bare `cargo run --example gset_gap` exercises the parser,
+both decomposition bounds, the SDP, and the certificate's independent re-verification. No 200 KB
+data file ships inside a source crate, and the example says outright that the built-in instance has
+no published best-known cut and is comparable to nothing.
+
+It also gained the check that needs no published number, and therefore runs on every instance:
+**a cut this run actually achieved cannot exceed its own upper bound.** The existing gate compared
+against the published best-known figure, which is only available for the real G-set files; this one
+holds anywhere, and it exits 1.
+
+### `cargo doc` is a published surface and nothing gated it
+
+Turning `RUSTDOCFLAGS='-D warnings' cargo doc` on found **22 broken intra-doc links** already in the
+tree. Most are prose that rustdoc read as a link and could not resolve — `[0,1]`, `reals[x]`,
+`E[Delta]`, `[DS]` — and two are real: `[Verdict::Runnable]` and `[crate::graph::GRAPH_BUILDS]` name
+items that do not exist (`Verdict::is_runnable` and `graph::graph_builds` do). All 22 are fixed in
+the same commit that adds the gate, because a gate turned on over a failing tree is a gate that gets
+turned off again.
+
+### `examples/exact_bracket`: the bounds are now checked against ground truth on every push
+
+Every bound in this crate was checked either against enumeration on graphs small enough to walk
+(≤ 20 spins) or against a published best-known cut — which is itself only a lower bound and cannot
+say whether a bound above it is wrong. Neither reaches an interesting size.
+
+`branch` does. At 22 spins — a 4-million-state space, 256× what a unit test's `brute_min` can
+enumerate — it returns the true minimum **with a proof**, so `decoupled`, `odd_cycle` and `sdp` can
+be held against ground truth on six independent instances every push. The check is one-sided on
+purpose: a lower bound may be loose by any amount and may never exceed the true minimum. The
+heuristics are checked from the other side — `tabu` and `popanneal` may not report an energy *below*
+a proved minimum, which would mean one of them is scoring states with a different energy function.
+
+A run that hits the node budget exits non-zero rather than reporting what it found. Without the
+proof the example checks nothing, and an example that silently degrades into checking nothing is the
+failure mode the whole file exists to prevent.
+
 ## 0.23.0
 
 ### G-set, reported as a gap instead of a league-table entry

@@ -121,7 +121,24 @@ jobs:
       #   depth_vs_dimension  199 s   too slow for every push
       #   reach_on_z1         107 s   the flagship; slow, and run before a release
       #   dtm_scale           needs a Fashion-MNIST idx3-ubyte file this runner does not have
+      # docs.rs is a published surface and nothing here gated it. Turned on with 22 broken
+      # intra-doc links already in the tree -- most of them prose like `[0,1]` or `reals[x]` that
+      # rustdoc read as a link and could not resolve, two of them real (`Verdict::Runnable` and
+      # `crate::graph::GRAPH_BUILDS` name items that do not exist). All fixed in the same commit
+      # that added this step, because a gate turned on over a failing tree is a gate that gets
+      # turned off again.
+      - name: The published documentation has no broken links
+        run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+
       - name: Every unattended example runs, and a gate example failing fails the build
+        # FERROTHERM_ALLOW_BUSY, deliberately. `flips_bench` and `parity_bench` refuse to print a
+        # throughput rate above a load average of 2, because a rate taken under contention measures
+        # the run queue -- and a hosted runner that has just finished `cargo build --release
+        # --examples` is exactly that. What this step checks is that the examples RUN, not what they
+        # measure, so the guard is overridden here and the numbers from this job are not quotable.
+        # The override is not silence: both print the load average and a caveat above their tables.
+        env:
+          FERROTHERM_ALLOW_BUSY: "1"
         run: |
           set -euo pipefail
           skip="depth_vs_dimension reach_on_z1 dtm_scale"

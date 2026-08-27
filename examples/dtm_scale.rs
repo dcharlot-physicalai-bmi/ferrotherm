@@ -7,6 +7,7 @@
 //
 // usage: cargo run --release --example dtm_scale -- <fmnist-images> [seconds] [L] [T]
 use ferrotherm::dtm::{forward_step, gamma_coupling, pattern_grid, Ebm, G12};
+use ferrotherm::host::Timing;
 use ferrotherm::rng::Pcg;
 use std::time::{Duration, Instant};
 
@@ -77,18 +78,33 @@ fn main() {
     // ---- measured cost of one training step at this scale ----
     let k_sweeps = 25usize;
     let batch = 8usize;
-    let t0 = Instant::now();
-    {
+    let (_, sweep_t) = Timing::around(|| {
         let mut s = vec![1i8; n];
         let extra = vec![0.0f64; n];
         layers[0].gibbs_chromatic(&mut s, &extra, 10, &mut rng);
+    });
+    // A per-sweep cost is a rate, and the training-step figure below is that rate multiplied by
+    // four more factors -- so contention on this machine is amplified, not diluted, by the
+    // projection. The budgeted loop further down is unaffected: a time budget is a stop condition,
+    // and it reports the steps it actually completed.
+    match sweep_t.as_measurement() {
+        Some(secs) => {
+            let per_sweep = secs / 10.0;
+            println!("\nmeasured: {:.2} ms per chromatic sweep of {n} nodes ({:.2e} node updates/s)",
+                     per_sweep * 1e3, n as f64 / per_sweep);
+            let step_cost = per_sweep * k_sweeps as f64 * 2.0 * batch as f64 * t_steps as f64;
+            println!("one training step (batch {batch}, K={k_sweeps}, both phases, {t_steps} layers): {:.2} s",
+                     step_cost);
+        }
+        None => {
+            println!("\nper-sweep cost: {sweep_t}");
+            if let Some(c) = sweep_t.caveat() {
+                println!("  {c}");
+            }
+            println!("the training-step projection is that rate x K x 2 x batch x layers, so it is \
+                      omitted rather than multiplied by {}x.", k_sweeps * 2 * batch * t_steps);
+        }
     }
-    let per_sweep = t0.elapsed().as_secs_f64() / 10.0;
-    println!("\nmeasured: {:.2} ms per chromatic sweep of {n} nodes ({:.2e} node updates/s)",
-             per_sweep * 1e3, n as f64 / per_sweep);
-    let step_cost = per_sweep * k_sweeps as f64 * 2.0 * batch as f64 * t_steps as f64;
-    println!("one training step (batch {batch}, K={k_sweeps}, both phases, {t_steps} layers): {:.2} s",
-             step_cost);
 
     // ---- train within the budget ----
     println!("\ntraining for {} s...", budget.as_secs());

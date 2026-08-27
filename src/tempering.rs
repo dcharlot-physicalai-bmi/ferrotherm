@@ -151,7 +151,7 @@ mod tests {
     }
 }
 
-/// Anneal under a [`Schedule`], leaving the best state found.
+/// Anneal under a [`crate::schedule::Schedule`], leaving the best state found.
 ///
 /// The graph is borrowed and never rebuilt: every quantity that varies during the run comes from
 /// the schedule. That is the whole point of the type, and `anneal_never_rebuilds_the_program`

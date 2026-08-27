@@ -5,13 +5,33 @@
 
 use ferrotherm::device::z1_grid;
 use ferrotherm::gibbs::Sampler;
+use ferrotherm::host::{self, Quiet};
 use std::time::Instant;
 
 fn main() {
+    // A head-to-head is the worst place to divide by the run queue: the other side of the
+    // comparison was measured at some other moment, so contention here reads as the other
+    // implementation being faster. This table is the one `scripts/thrml_bench.py` is compared
+    // against, so it refuses outright rather than printing with an asterisk.
+    let quiet = match host::require_quiet("a threads-vs-throughput table for comparison against THRML") {
+        Ok(q) => q,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(3);
+        }
+    };
+    if let Some(c) = quiet.caveat() {
+        println!("{c}\n");
+    }
     let side: Option<usize> = std::env::args().nth(1).and_then(|s| s.parse().ok());
     let (w, h) = side.map_or((576usize, 468usize), |s| (s, s));
     let g = z1_grid(w, h, 0.08, 0.0);
-    println!("Z1-topology grid {} nodes, degree 16; chromatic Gibbs throughput on this machine:\n", g.n);
+    println!("Z1-topology grid {} nodes, degree 16; chromatic Gibbs throughput on this machine:", g.n);
+    match quiet {
+        Quiet::Yes { load1: Some(l) } => println!("  1-minute load average {l:.2}\n"),
+        Quiet::Yes { load1: None } => println!("  1-minute load average unknown on this platform\n"),
+        Quiet::Overridden { .. } => println!(),
+    }
     println!("  {:>10} {:>14} {:>12} {:>10}", "threads", "flips/s", "ns/flip", "speedup");
     let mut base = 0.0;
     let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(8);

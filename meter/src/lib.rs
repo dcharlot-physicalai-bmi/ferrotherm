@@ -71,14 +71,18 @@ const INTERVAL_MS: u64 = 100;
 /// the protocol has to include it.
 const SETTLE: Duration = Duration::from_secs(3);
 
-/// Above this 1-minute load average, a baseline is not idle and this refuses to call it one.
-///
-/// Two, not a fraction of the core count, and the reason is what a load average counts: RUNNABLE
-/// THREADS, not utilisation. Two threads that never sleep are two cores' worth of heat whether the
-/// machine has four cores or forty, and that heat lands in the same whole-system wall reading the
-/// baseline is made of. A percentage-of-cores threshold would quietly permit an 18-core machine to
-/// take a "baseline" with four builds running.
-const QUIET_LOAD: f64 = 2.0;
+// The load-average instrument and its threshold now live in the core crate, at
+// `ferrotherm::host`. They started here, guarding an idle POWER baseline. Then a benchmark harness
+// reported 85.7 s for a G1 search that takes about 14 s on a quiet machine, and it turned out the
+// timing side of the workspace had no equivalent guard -- the same failure, in a crate that cannot
+// depend on this one. Rather than a second copy, the reading moved down and both sides import it.
+//
+// `QUIET_LOAD` is two, not a fraction of the core count, and the reason is what a load average
+// counts: RUNNABLE THREADS, not utilisation. Two threads that never sleep are two cores' worth of
+// heat whether the machine has four cores or forty, and that heat lands in the same whole-system
+// wall reading the baseline is made of. A percentage-of-cores threshold would quietly permit an
+// 18-core machine to take a "baseline" with four builds running.
+use ferrotherm::host::{load_average, QUIET_LOAD};
 
 pub mod ina3221;
 
@@ -223,7 +227,7 @@ impl Meter {
     /// subtraction instead of an integral estimated from samples — which removes the "workload
     /// shorter than the sampling interval" failure the others have to refuse.
     ///
-    /// See [`rapl`] for the domain that lies: `psys` is documented as whole-platform, reads 0.2 W
+    /// See the `rapl` module for the domain that lies: `psys` is documented as whole-platform, reads 0.2 W
     /// on the machine this was written against whether idle or running twenty busy cores, and is
     /// rejected by checking it against the package it is supposed to contain.
     pub fn rapl() -> Option<Meter> {
@@ -512,22 +516,6 @@ impl Run {
             ),
         })
     }
-}
-
-/// The machine's 1-minute load average, or `None` where it cannot be read.
-///
-/// `None` means **not readable here**, never "the machine is quiet" -- the caller treats it as an
-/// unknown and proceeds, because refusing to measure on a platform that exposes no load average
-/// would be a worse failure than measuring without the guard.
-fn load_average() -> Option<f64> {
-    // Linux first: a file read beats spawning a process.
-    if let Ok(s) = std::fs::read_to_string("/proc/loadavg") {
-        return s.split_whitespace().next()?.parse().ok();
-    }
-    // macOS and the BSDs: `{ 1.23 4.56 7.89 }`.
-    let out = Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    text.split_whitespace().find_map(|t| t.parse::<f64>().ok())
 }
 
 /// Is this load average quiet enough for the reading to be called an idle baseline?

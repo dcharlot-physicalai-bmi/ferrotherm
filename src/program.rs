@@ -32,15 +32,15 @@ pub struct State {
 }
 
 pub enum Gate {
-    /// Flip `bit` with probability sigma(params[p_theta]).
+    /// Flip `bit` with probability `sigma(params[p_theta])`.
     PNot { bit: usize, p_theta: usize },
-    /// reals[u] ~ Normal( params[p_k] * reals[err], sigma^2 ). The policy gate.
+    /// `reals[u] ~ Normal( params[p_k] * reals[err], sigma^2 )`. The policy gate.
     CtrlGauss { u: usize, err: usize, p_k: usize, sigma: f64 },
-    /// Deterministic linear dynamics: reals[x] = a * reals[x] + b * reals[u].
+    /// Deterministic linear dynamics: `reals[x] = a * reals[x] + b * reals[u]`.
     Lin { x: usize, u: usize, a: f64, b: f64 },
-    /// reals[err] = tgt - reals[x].
+    /// `reals[err] = tgt - reals[x]`.
     Err { err: usize, x: usize, tgt: f64 },
-    /// Stage-cost accumulator: reals[acc] += q * reals[x]^2 + r * reals[u]^2. Deterministic.
+    /// Stage-cost accumulator: `reals[acc] += q * reals[x]^2 + r * reals[u]^2`. Deterministic.
     CostQuad { acc: usize, x: usize, u: usize, q: f64, r: f64 },
     /// `sweeps` chromatic Glauber sweeps of graph `g` over `bits[0..g.n]`, at inverse
     /// temperature `beta`, with per-node bias params[p_h0 + i] REPLACING the graph's h.
@@ -166,7 +166,7 @@ impl Program {
         st
     }
 
-    /// REINFORCE gradient of E[L] with a batch-mean baseline. Returns (grad, mean_loss).
+    /// REINFORCE gradient of `E[L]` with a batch-mean baseline. Returns (grad, mean_loss).
     pub fn reinforce_grad<F: Fn(&State) -> f64>(
         &self,
         init: &State,

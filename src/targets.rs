@@ -1,6 +1,6 @@
 //! FPGA deployment-target database for the ferrotherm VM — from edge parts a classroom owns to
-//! the cloud instances a lab rents. Every number is labelled: [DS] datasheet fact, [EST]
-//! engineering estimate, [SWEEP] verified market/status research (Aug 2026). The capacity model
+//! the cloud instances a lab rents. Every number is labelled: `[DS]` datasheet fact, `[EST]`
+//! engineering estimate, `[SWEEP]` verified market/status research (Aug 2026). The capacity model
 //! (p-bits per LUT budget, flips/s at a colored-update clock) is an ESTIMATE until the
 //! calibration-anchor pass lands; the published-machine anchors below bound it from above.
 //!

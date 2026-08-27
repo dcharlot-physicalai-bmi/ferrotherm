@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 578 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 625 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -93,23 +93,52 @@ thermodynamic-computing corpus currently leaves empty.
   a different relaxation (Lagrangian decomposition, not roof duality's max-flow), in a std-only Rust
   stack, and *anytime*: every round is a valid bound. Which is tighter on which instances is
   unmeasured; both are sound, so their maximum is too.
+- `cargo test --lib tabu:: popanneal:: branch::` — **the three solvers a max-cut result is expected
+  to be measured against.** `tabu` is the mandatory baseline in the literature, with the incremental
+  gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updating in `O(degree)` per flip. `popanneal` is
+  population annealing: `R` chains down one ladder with resampling, which yields two things a single
+  annealed chain cannot — `ln Z` from the telescoping product of resampling normalisations (absolute
+  when the ladder starts at `β = 0`, where `Z = 2ⁿ` exactly), and `ρ = (Σ_f n_f²)/R` over ancestor
+  families, which is exactly 1 when every ancestor still has a descendant and exactly `R` when the
+  population has collapsed onto one — **a run that can say "do not trust me"**. Every exponential is
+  shifted by the running maximum, because `exp(−Δβ·E)` on a G-set instance asks for `exp(600)` and
+  `f64` overflows at `exp(709.78)`; the test for it asserts the ladder ran to the END, not merely
+  that `ln Z` came back finite. `branch` is branch and bound, and the only thing here that returns a
+  **proof**: `proved_optimal` is true only when the tree was exhausted inside the node budget, and a
+  run that hit the limit says so. Nothing in it is undone by arithmetic — `x + d − d` is not `x`,
+  and a bound that drifts upward prunes the subtree containing the optimum while still reporting
+  success — so scalars are restored by returning from the frame and touched entries are written back
+  verbatim.
 - `cargo run --release --example gset_gap -- <G-set file> [best-known]` — **the standard max-cut
   benchmark, reported as a gap rather than a league-table entry.** G-set has been the comparison
   set for twenty-five years and every published figure is a *best cut found* — a lower bound, which
   ranks how hard people looked. `bound` supplies the other side, so the true optimum is bracketed:
 
-  | instance | mean degree | cut found | best known | | upper bound | gap |
-  |---|---|---|---|---|---|---|
-  | G11 | 4.0 | 564 | 564 | **100.00%** | 579 | **2.6%** |
-  | G14 | 11.7 | 3058 | 3064 | 99.80% | 3602 | 15.1% |
-  | G1 | 47.9 | 11624 | 11624 | **100.00%** | 14958 | 22.3% |
+  | instance | mean degree | cut found | best known | | forest | odd-cycle | sdp | gap |
+  |---|---|---|---|---|---|---|---|---|
+  | G11 | 4.0 | 564 | 564 | **100.00%** | 817 | **579** | 629 | **2.6%** |
+  | G14 | 11.7 | 3058 | 3064 | 99.80% | 4694 | 3602 | **3192** | **4.2%** |
+  | G1 | 47.9 | 11624 | 11624 | **100.00%** | 19176 | 14958 | **12083** | **3.8%** |
 
-  800 nodes, 8 restarts, seconds each. **`bound::forest` contributes nothing here and the module
-  says so**: a tree is never frustrated and G-set carries no fields, so it degenerates to the
-  trivial `-Σ|w|` on every instance — measured, `decoupled -1600 / forest -1600` on G11.
-  `bound::odd_cycle` charges `2·min|J|` per edge-disjoint frustrated cycle, which is the only thing
-  that makes max-cut hard, and takes G11's bound from 817 to 579. Both are sound, so the harness
-  reports the better of the two.
+  800 nodes, 8 restarts. Bold is the bound that won; all three are sound, so the harness takes the
+  maximum. G11's optimum is provably in **[564, 579]**. **`bound::forest` contributes nothing here
+  and the module says so**: a tree is never frustrated and G-set carries no fields, so it
+  degenerates to the trivial `-Σ|w|` on every instance — measured, `decoupled -1600 / forest -1600`
+  on G11. `bound::odd_cycle` charges `2·min|J|` per edge-disjoint frustrated cycle, which is the
+  only thing that makes max-cut hard, and takes G11's bound from 817 to 579. `sdp` exhibits a
+  **dual point** and proves it positive definite by a completed Cholesky (Rump 2006), so weak
+  duality alone makes it a bound — no optimality, convergence or rank assumption anywhere — and it
+  wins by more the denser the instance is, where decomposition bounds suffer most.
+- `cargo run --release --example exact_bracket` — **a gate: every bound checked against a PROVED
+  optimum on every push.** `branch` returns the true minimum with a proof at 22 spins, 256× past
+  what a unit test can enumerate, so `decoupled`, `odd_cycle` and `sdp` are held against ground
+  truth on six independent instances rather than against a published cut that is itself only a
+  lower bound. The check is one-sided: a bound may be loose by any amount and may never exceed the
+  optimum. It found a real defect on its first run — the `sdp` column came back *identical to
+  `decoupled`* on all six, because `lanczos_min` had been folding `min` over `jacobi_eig`'s
+  eigenVECTOR matrix instead of reading the eigenvalues off the diagonal. Every certificate still
+  verified, because the Cholesky is what makes the bound sound; the bound was simply loose on every
+  instance. Fixing it moved G1 from 12223 to 12083 and closed a mean 88% of the gap at 22 spins.
 - `cargo run --release --example ring_tv` — 8-site Ising ring: TV(sampled, exact) = 0.0031 vs
   noise floor 0.0057 at 100k samples. Residual is sampling noise, not bias.
 - `cargo run --release --example onsager` — 2D Ising 64×64 vs Onsager/Yang closed form:
@@ -223,7 +252,16 @@ thermodynamic-computing corpus currently leaves empty.
   and the same call reports different speedups at different problem sizes. A multithreaded
   throughput number without its problem size is not reproducible; re-measuring it is pending a quiet
   machine. (An earlier published 86 ns/flip figure was contaminated by concurrent background load
-  and is corrected — the same failure the load guard now refuses outright.)
+  and is corrected — the same failure the load guard now refuses outright.) **`host` is that guard,
+  and it is now the whole class rather than one file.** The energy side has refused an idle baseline
+  above a load average of 2 since 0.17.0; the timing side had nothing, and `gset_gap` reported
+  85.7 s for a G1 search that takes about 14 s on a quiet machine, in the same format as every
+  honest timing beside it. The distinction the module is built on is that a **result** — a cut, a
+  bound, an energy — is the same number whoever else is on the CPU, while a **rate** — flips/s,
+  ns/flip, J/flip, a speedup column, a head-to-head — is a division by wall-clock time and measures
+  the run queue. So `gset_gap` annotates and `flips_bench` / `parity_bench` exit non-zero.
+  `Timing::as_measurement()` returns `Option<f64>`, because the defect was never a missing check —
+  it was a check whose result nothing was obliged to consult.
   Energy per flip at package watts / measured rate: 10 W → 1.07 nJ (151× the Z1 SPICE projection),
   25 W → 2.67 nJ (377×), 60 W → 6.4 nJ (905×). So the measured gap between a first-pass browser
   sampler on consumer silicon and the vendor's pre-silicon projection is **2–3 orders of

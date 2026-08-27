@@ -11,10 +11,25 @@
 
 use ferrotherm::device::z1_grid;
 use ferrotherm::gibbs::Sampler;
+use ferrotherm::host::{self, Quiet};
 use ferrotherm::ledger::Z1_SPICE;
 use std::time::Instant;
 
 fn main() {
+    // EVERY number below is a wall-clock time divided into something -- flips/s, ns/flip, and the
+    // whole joules-per-flip table, which is watts over a rate. On a contended machine each of them
+    // measures the run queue and looks exactly like a measurement of the code. So this stops rather
+    // than annotates; `gset_gap` annotates instead, because a CUT is the same number either way.
+    let quiet = match host::require_quiet("chromatic Gibbs throughput and the J/flip table") {
+        Ok(q) => q,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(3);
+        }
+    };
+    if let Some(c) = quiet.caveat() {
+        println!("{c}\n");
+    }
     // full die: 576 x 468 = 269,568 nodes (die dimensions unpublished; area matches the vendor's
     // stated pbit count)
     let (w, h) = (576usize, 468usize);
@@ -36,6 +51,9 @@ fn main() {
     let ns_per_flip = 1e9 / fps;
     println!("single-thread CPU chromatic Gibbs, {} sweeps of {} nodes in {:.2} s:", n_sweeps, g.n, dt);
     println!("  {:.2e} flips/s   ({:.1} ns/flip)", fps, ns_per_flip);
+    if let Quiet::Yes { load1: Some(l) } = quiet {
+        println!("  (1-minute load average {l:.2} -- the machine was this code's)");
+    }
     println!("  independent samples/s at K_mix = 250 sweeps: {:.2}\n", fps / (250.0 * g.n as f64));
 
     println!("joules per flip = platform watts / flips per second (our E_compute convention):");

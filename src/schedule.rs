@@ -7,7 +7,7 @@
 //! The rule this module exists to enforce: **annealing changes a number, never a program.** THRML
 //! rebuilds its program at each of 4,000 annealing steps because beta is compiled into its weights;
 //! our own DTM had the same defect until [`crate::kernel`] landed. A schedule makes the distinction
-//! structural, and [`crate::graph::GRAPH_BUILDS`] makes it checkable.
+//! structural, and [`crate::graph::graph_builds`] makes it checkable.
 
 /// Penalty strengths that a schedule may ramp.
 ///

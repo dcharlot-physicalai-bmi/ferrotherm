@@ -208,6 +208,63 @@ mod tests {
     }
 
     #[test]
+    fn the_cut_formula_survives_negative_weights() {
+        // COVERAGE GAP, found by asking. G-set carries +-1 weights, and every other test in this
+        // module uses an all-POSITIVE instance -- which cannot see a sign error that only appears
+        // when `w < 0`. `cut = (W - E)/2` was derived assuming nothing about the sign, so this
+        // checks it against the textbook definition directly: the sum of the weights of the edges
+        // crossing the cut, computed without going through the energy at all.
+        // Named, because the tuple-of-slice-of-tuples is over clippy's complexity limit inline --
+        // and the alias says what the second element IS, which the raw type did not.
+        type Edges = &'static [(usize, usize, f64)];
+        let cases: [(&str, Edges); 4] = [
+            ("3 3\n1 2 1\n2 3 1\n1 3 1\n", &[(0, 1, 1.0), (1, 2, 1.0), (0, 2, 1.0)]),
+            ("3 3\n1 2 -1\n2 3 -1\n1 3 -1\n", &[(0, 1, -1.0), (1, 2, -1.0), (0, 2, -1.0)]),
+            (
+                "4 4\n1 2 1\n2 3 -1\n3 4 1\n4 1 -1\n",
+                &[(0, 1, 1.0), (1, 2, -1.0), (2, 3, 1.0), (3, 0, -1.0)],
+            ),
+            (
+                "5 5\n1 2 -1\n2 3 1\n3 4 -1\n4 5 1\n5 1 -1\n",
+                &[(0, 1, -1.0), (1, 2, 1.0), (2, 3, -1.0), (3, 4, 1.0), (4, 0, -1.0)],
+            ),
+        ];
+        for (text, edges) in cases {
+            let inst = Instance::parse(text).unwrap();
+            for mask in 0u32..(1u32 << inst.nodes) {
+                let s: Vec<i8> =
+                    (0..inst.nodes).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let textbook: f64 =
+                    edges.iter().filter(|(a, b, _)| s[*a] != s[*b]).map(|(_, _, w)| *w).sum();
+                assert!(
+                    (inst.cut(&s) - textbook).abs() < 1e-12,
+                    "{text:?}: cut() gave {} and the crossing-edge sum is {textbook}",
+                    inst.cut(&s)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_upper_bound_direction_holds_for_negative_weights_too() {
+        // `max cut <= (W - L)/2` is pure algebra from `cut = (W - E)/2` and `L <= min E`, so it
+        // cannot depend on the sign of any weight -- but "cannot depend" is exactly the kind of
+        // claim worth checking against enumeration rather than asserting.
+        let inst = Instance::parse("5 5\n1 2 -1\n2 3 1\n3 4 -1\n4 5 1\n5 1 -1\n").unwrap();
+        let truth = (0u32..(1u32 << inst.nodes))
+            .map(|m| {
+                let s: Vec<i8> =
+                    (0..inst.nodes).map(|i| if m >> i & 1 == 1 { 1 } else { -1 }).collect();
+                inst.cut(&s)
+            })
+            .fold(f64::NEG_INFINITY, f64::max);
+        for b in [crate::bound::decoupled(&inst.graph), crate::bound::odd_cycle(&inst.graph, 6)] {
+            let ub = inst.cut_upper_bound(b.value);
+            assert!(ub >= truth - 1e-9, "{} gave upper bound {ub} below the true max cut {truth}", b.method);
+        }
+    }
+
+    #[test]
     fn a_truncated_file_is_refused_rather_than_solved() {
         // The common failure of a benchmark harness: a short download parses into a valid smaller
         // instance, samples happily, and reports a cut nobody else's number can be compared to.

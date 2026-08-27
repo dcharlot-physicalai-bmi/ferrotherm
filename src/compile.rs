@@ -66,7 +66,7 @@ impl Kernel {
         self.beta * acc
     }
 
-    /// Exact conditional over OUTPUT states (hidden marginalized): p[o] for o in 0..2^n_out.
+    /// Exact conditional over OUTPUT states (hidden marginalized): `p[o]` for `o` in `0..2^n_out`.
     pub fn exact_conditional(&self, x: &[i8]) -> Vec<f64> {
         let (no, nh) = (self.n_out, self.n_hid);
         let mut p = vec![0.0f64; 1 << no];
@@ -108,7 +108,7 @@ impl Kernel {
     /// Exact gradient of E_{y~target}[-log P~(y|x)] (cross-entropy; equals KL up to the target
     /// entropy constant). Positive phase: for each target-supported y, expectation over hidden
     /// given (x, y). Negative phase: expectation over all free. Accumulates into `grad`
-    /// (layout: [e_ff..][e_if..][b..]), scaled by `weight`. Returns weighted cross-entropy.
+    /// (layout: `[e_ff..][e_if..][b..]`), scaled by `weight`. Returns weighted cross-entropy.
     pub fn ce_grad(&self, x: &[i8], target: &[f64], weight: f64, grad: &mut [f64]) -> f64 {
         let (no, nh) = (self.n_out, self.n_hid);
         let n_free_states = 1usize << (no + nh);
@@ -472,7 +472,7 @@ pub fn patch_kernel(w: usize, h: usize, roles: &[u8], beta: f64, seed: u64) -> K
     }
 }
 
-/// Fully-enumerable target conditional: a table target[x_mask][y_mask].
+/// Fully-enumerable target conditional: a table `target[x_mask][y_mask]`.
 pub type Cpt = Vec<Vec<f64>>;
 
 /// Fit a kernel to a target CPT under input distribution `mu` (weights over x masks).

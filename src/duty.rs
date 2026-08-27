@@ -13,7 +13,7 @@
 //! > incumbent's IDLE draw. Its sampling efficiency does not enter.
 //!
 //! That is the whole thermodynamic value proposition restated as one measurable hardware number,
-//! and it is a number no thermodynamic vendor publishes. [`Prices`](crate::ledger::Prices) has
+//! and it is a number no thermodynamic vendor publishes. [`crate::ledger::Prices`] has
 //! `e_sample`, `e_read`, `e_write` and a reflash cap, because those are what the Z1 tables state;
 //! there is no standby term because there is no published standby figure to put in it. Reporting
 //! that absence is more useful than a guess wearing a decimal point.
@@ -378,7 +378,7 @@ impl Machine {
     /// `compute_joules` is the challenger's ENERGY FOR THE WHOLE TASK, not per operation -- a
     /// device that samples differently does not do the same number of operations, so a per-op
     /// price would not be comparable. Price it with [`Ledger::joules`](crate::ledger::Ledger::joules)
-    /// against that device's own [`Prices`](crate::ledger::Prices), which is what the ledger is for.
+    /// against that device's own [`crate::ledger::Prices`], which is what the ledger is for.
     pub fn beaten_by(
         &self,
         challenger_standby_watts: f64,

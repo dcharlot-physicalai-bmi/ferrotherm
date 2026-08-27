@@ -107,7 +107,7 @@ pub enum Precision {
     /// here, which claims every `f64` survives — false of an analog machine whose real limit is
     /// integrated control error. Saying "unstated" refuses to certify rather than quietly
     /// promising the best case, and a fabric carrying one of these cannot return
-    /// [`Verdict::Runnable`].
+    /// [`Verdict::is_runnable`].
     Unstated,
     /// Signed fixed-point in `bits` bits, one of them the sign, with a uniform step sized by the
     /// largest coefficient present.
@@ -308,7 +308,7 @@ pub enum Unsupported {
     /// The program cannot be placed on this fabric's sites as written.
     ///
     /// For a fabric that does its own placement check — a fixed grid, a named topology — where the
-    /// failure is specific and knowable. Distinct from [`Verdict::NeedsEmbedding`], which is the
+    /// failure is specific and knowable. Distinct from [`Caveat::NeedsEmbedding`], which is the
     /// case where placement is a question nobody cheap can answer; this is the case where the
     /// answer is known and it is no.
     Unplaceable { detail: String },
