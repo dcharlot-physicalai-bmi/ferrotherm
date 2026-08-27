@@ -262,7 +262,7 @@ thermodynamic-computing corpus currently leaves empty.
   `Precision::Float { mantissa: 24 }`: the shader's buffers are f32 while the CPU path is f64, and
   an undeclared difference is one nothing downstream can reason about.
 - `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
-  the cdylib is a **367 KB .wasm** (131 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
+  the cdylib is a **437 KB .wasm** (156 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against

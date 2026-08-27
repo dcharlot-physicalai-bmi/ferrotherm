@@ -247,6 +247,83 @@ const run = (body) => page.evaluate((json) => {
         unknown.status.slice(0, 90));
 }
 
+// --- the optimality bracket -------------------------------------------------------------------
+//
+// The panel this suite most needs to cover, because its failure mode is silence: a stale bracket
+// still RENDERS. Every check below is about the certificate matching the state beside it.
+{
+  const solve = (method) => page.evaluate((m) => {
+    document.getElementById("method").value = m;
+    document.getElementById("solve").click();
+    const row = (n) => [...document.querySelectorAll("#btab tr")]
+      .find(r => r.cells[0].textContent === n)?.cells[1].textContent ?? null;
+    return {
+      status: document.getElementById("status").textContent,
+      verdict: document.getElementById("certverdict").textContent,
+      hidden: document.getElementById("cert").hidden,
+      energy: document.getElementById("r-e").textContent,
+      best: document.querySelector("#btab tr.best")?.cells[0].textContent ?? null,
+      sdp: row("sdp"),
+      window: document.getElementById("brwindow").style.width,
+      note: document.getElementById("certnote").textContent,
+    };
+  }, method);
+
+  // A frustrated ring: 12 bonds, all but one satisfiable, and small enough to prove.
+  const ring = { n: 12, couplings: [] };
+  for (let i = 0; i < 12; i++) ring.couplings.push([i, (i + 1) % 12, i === 0 ? -1 : 1]);
+  await run(JSON.stringify({ graph: ring, beta: 1, seed: 1 }));
+
+  const br = await solve("branch");
+  check("branch and bound proves a small instance", /tree exhausted/.test(br.status),
+        br.status.slice(0, 100));
+  check("and the panel says so", /PROVED OPTIMAL/.test(br.verdict), br.verdict);
+  check("the bracket is shown once a solver has run", br.hidden === false);
+  check("a frustrated 12-ring bottoms out at -10", /^-10/.test(br.energy), br.energy);
+  check("a bound is named as the best one", br.best !== null, String(br.best));
+  check("and the note separates the two proofs",
+        /enumeration rather than by the bound|bound met the state/.test(br.note),
+        br.note.slice(0, 110));
+
+  const tb = await solve("tabu");
+  check("tabu reports what it actually ran", /of 50,000 iterations/.test(tb.status),
+        tb.status.slice(0, 90));
+  check("and a search that is not a proof does not claim one", !/PROVED/.test(tb.verdict),
+        tb.verdict);
+
+  const pa = await solve("population");
+  check("population annealing reports rho", /rho [\d.]+ of 512/.test(pa.status),
+        pa.status.slice(0, 100));
+
+  // THE ONE THAT MATTERS: a certificate must not outlive the model it is about.
+  const stale = await page.evaluate(() => {
+    const before = document.getElementById("cert").hidden;
+    const el = document.getElementById("src");
+    el.value = JSON.stringify({ graph: { builtin: "ring", n: 16, j: 1.0 }, beta: 1, seed: 0 });
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { before, after: document.getElementById("cert").hidden };
+  });
+  check("a new model clears the old certificate", stale.before === false && stale.after === true,
+        JSON.stringify(stale));
+
+  // And a sweep must retract the PROOF while leaving the bounds, which are about the graph.
+  await run(JSON.stringify({ graph: ring, beta: 1, seed: 1 }));
+  const after = await page.evaluate(() => {
+    document.getElementById("method").value = "branch";
+    document.getElementById("solve").click();
+    const proved = document.getElementById("certverdict").textContent;
+    document.getElementById("run").click();   // start sweeping
+    return new Promise(res => setTimeout(() => {
+      document.getElementById("run").click(); // stop
+      res({ proved, now: document.getElementById("certverdict").textContent,
+            shown: document.getElementById("cert").hidden === false });
+    }, 250));
+  });
+  check("sweeping retracts the proof", /PROVED/.test(after.proved) && !/PROVED/.test(after.now),
+        after.proved.slice(0, 40) + " -> " + after.now.slice(0, 40));
+  check("but the bounds survive, because they are about the graph", after.shown);
+}
+
 check("no page errors", errs.length === 0, errs.join(" | "));
 
 await browser.close();

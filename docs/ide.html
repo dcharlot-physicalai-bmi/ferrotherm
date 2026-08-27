@@ -102,6 +102,37 @@
     textarea{min-height:200px}
   }
   @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  /* ---- the optimality bracket ----
+     The one thing a sampler cannot tell you about its own answer. The bar spans from the certified
+     lower bound on the left to zero energy on the right; the shaded WINDOW is where the true
+     minimum still might be, and the tick is the state on screen. */
+  .cert{margin-top:16px;border:1px solid var(--line);border-radius:10px;
+        background:var(--panel-2);padding:13px 15px 15px}
+  .certtop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+  .certtitle{font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+             text-transform:uppercase;color:var(--gold)}
+  .certverdict{font-family:var(--mono);font-size:12px;color:var(--ink-dim)}
+  .certverdict.proved{color:var(--ok);letter-spacing:.06em}
+  .brtrack{position:relative;height:16px;border-radius:8px;overflow:hidden;
+           background:linear-gradient(90deg,rgba(207,170,91,.10),rgba(207,170,91,.30))}
+  .brwindow{position:absolute;top:0;bottom:0;left:0;
+            background:repeating-linear-gradient(135deg,
+              rgba(224,164,88,.55) 0 6px, rgba(224,164,88,.30) 6px 12px)}
+  .brtick{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);
+          box-shadow:0 0 0 1px rgba(11,18,32,.9)}
+  .brlabels{display:flex;justify-content:space-between;gap:10px;margin-top:7px;
+            font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+  .brlabels #brmid{color:var(--warn)}
+  .certnote{margin:11px 0 0;font-size:12.5px;color:var(--ink-dim);line-height:1.5}
+  .btab{width:100%;margin-top:11px;border-collapse:collapse;font-family:var(--mono);font-size:11.5px}
+  .btab td{padding:3px 0;color:var(--ink-faint);border-top:1px solid var(--line)}
+  .btab td:last-child{text-align:right;color:var(--ink-dim)}
+  .btab tr.best td{color:var(--gold)}
+  .btab tr.best td:first-child::after{content:" \2190 best"}
+  @media (prefers-reduced-motion:no-preference){
+    .brwindow{transition:left .25s ease, width .25s ease}
+    .brtick{transition:left .25s ease}
+  }
 </style>
 </head>
 <body>
@@ -127,6 +158,15 @@
   <label class="ctl">seed <input id="seed" type="number" value="1" min="0" step="1"></label>
   <button id="run" class="primary">Run</button>
   <button id="anneal">Anneal</button>
+  <label class="ctl">solver
+    <select id="method">
+      <option value="tabu">tabu search</option>
+      <option value="population">population annealing</option>
+      <option value="branch">branch &amp; bound</option>
+    </select>
+  </label>
+  <button id="solve">Solve</button>
+  <button id="certify">Certify</button>
   <button id="reset">Reset</button>
 </div>
 
@@ -159,6 +199,24 @@
         <div class="ro"><div class="k">node updates</div><div class="v small" id="r-u">0</div></div>
         <div class="ro"><div class="k">device joules</div><div class="v small" id="r-j">0</div></div>
       </div>
+
+      <section id="cert" class="cert" hidden>
+        <div class="certtop">
+          <span class="certtitle">Optimality</span>
+          <span class="certverdict" id="certverdict"></span>
+        </div>
+        <div class="brtrack" id="brtrack" role="img" aria-label="Optimality bracket">
+          <div class="brwindow" id="brwindow"></div>
+          <div class="brtick" id="brtick"></div>
+        </div>
+        <div class="brlabels">
+          <span id="brlo">&mdash;</span>
+          <span id="brmid"></span>
+          <span id="brhi">&mdash;</span>
+        </div>
+        <p class="certnote" id="certnote"></p>
+        <table class="btab" id="btab"></table>
+      </section>
 
       <details>
         <summary>Take this model to an agent</summary>
@@ -398,6 +456,16 @@ function circleLayout(n, edges) {
 
 const cv = $("view"), cx = cv.getContext("2d");
 
+// Declared here rather than beside the bracket code below, because `apply` clears both and `let`
+// is hoisted into the temporal dead zone rather than to `undefined`: reading them earlier in the
+// file would throw instead of quietly reading nothing.
+//
+// The bounds depend on the GRAPH; the gap depends on the state. So they are cached per model and
+// the bracket re-renders every frame off the cache -- which is what makes the window visibly close
+// while an anneal runs, at no cost per sweep.
+let certCache = null;
+let proved = false;   // set by branch and bound, cleared by anything that changes the state
+
 function draw() {
   const W_ = cv.width, H = cv.height;
   cx.fillStyle = "#070d16";
@@ -445,6 +513,8 @@ function readouts() {
   $("r-s").textContent = sweepsDone.toLocaleString();
   $("r-u").textContent = Number(W.ft_ledger_updates(sim)).toLocaleString();
   $("r-j").textContent = sci(W.ft_ledger_joules_z1(sim));
+  // Off the cache: the bounds are a property of the graph, so only the tick and the gap move.
+  if (certCache) renderBracket(certCache);
 }
 const fmt = (x) => (Math.abs(x) >= 1e5 ? x.toExponential(3) : x.toFixed(Math.abs(x) < 10 ? 3 : 1));
 const sci = (x) => (x === 0 ? "0" : x.toExponential(2) + " J");
@@ -454,6 +524,9 @@ const sci = (x) => (x === 0 ? "0" : x.toExponential(2) + " J");
 function loop() {
   if (!running) return;
   W.ft_sweep(sim, 1);
+  // A proof is about the state that was proved. One sweep later it is about a different state, and
+  // a verdict that outlives its subject is the failure this whole panel exists to avoid.
+  proved = false;
   sweepsDone++;
   draw();
   raf = requestAnimationFrame(loop);
@@ -762,6 +835,13 @@ function solveExports(r) {
 
 function apply() {
   stop();
+  // A new graph means new bounds and no proof. Carrying either across would put a certificate from
+  // one model beside the energy of another, which is the exact shape of a stale surface that still
+  // WORKS -- the worst kind, because nobody goes looking.
+  certCache = null;
+  proved = false;
+  const cel = document.getElementById("cert");
+  if (cel) cel.hidden = true;
   try {
     spec = parseSpec($("src").value);
     if (spec.variables) return applySolve();
@@ -802,6 +882,7 @@ $("run").onclick = () => {
 $("anneal").onclick = () => {
   if (!sim) return;
   stop();
+  proved = false;
   const bmax = Math.max(4.0, +$("beta").value / 100);
   const t0 = performance.now();
   const e = W.ft_anneal(sim, 0.05, bmax, 60, 40);
@@ -810,6 +891,159 @@ $("anneal").onclick = () => {
   draw();
   status("annealed to energy " + fmt(e) + " in " + ms.toFixed(0) + " ms"
     + " (60 stages x 40 sweeps, beta 0.05 to " + bmax.toFixed(2) + ")", "good");
+};
+
+// ---- solvers and the optimality bracket ---------------------------------------------------------
+//
+// THE THING A SAMPLER CANNOT SAY ABOUT ITS OWN ANSWER. Every number in the readouts above is a
+// property of the state on screen; none of them says whether a better state exists. `bound` answers
+// that from the other side -- a lower bound on the ground energy, so the true minimum is bracketed
+// between it and whatever the sampler found, and a gap of zero means the answer is optimal whoever
+// produced it.
+//
+// Two different certificates appear here and they are not the same claim:
+//   * a GAP of zero  -- the bound met the state, so no better state can exist. Proof by relaxation.
+//   * PROVED by branch and bound -- the search tree was exhausted. Proof by enumeration.
+// A branch-and-bound proof can arrive while the gap is still wide, because the tree closed on a
+// bound computed per subproblem rather than on the one shown here. Saying "proved" for the first
+// and "optimal" for the second would blur two arguments of very different cost.
+
+// The SDP factors a dense n x n matrix, so it is O(n^3) in the NODE COUNT and does not care how
+// sparse the graph is. In a browser tab that is a freeze rather than a wait, so it is skipped above
+// this size and the panel says so instead of quietly dropping the tightest bound.
+const SDP_MAX_NODES = 512;
+
+
+function bracket() {
+  if (!sim) return null;
+  const n = nodes;
+  const rows = [
+    ["decoupled", W.ft_bound_decoupled(sim)],
+    ["forest", W.ft_bound_forest(sim, 40)],
+    ["odd cycle", W.ft_bound_odd_cycle(sim, 6)],
+  ];
+  let skipped = false;
+  if (n <= SDP_MAX_NODES) {
+    const v = W.ft_bound_sdp(sim, 200, BigInt($("seed").value | 0));
+    // NaN means the certificate did not re-verify on the Rust side. That is a refusal, and it is
+    // reported as one rather than folded in as a missing row.
+    if (Number.isFinite(v)) rows.push(["sdp", v]);
+    else rows.push(["sdp", null]);
+  } else {
+    skipped = true;
+  }
+  const usable = rows.filter(r => Number.isFinite(r[1]));
+  const best = usable.reduce((a, b) => (b[1] > a[1] ? b : a));
+  return { rows, best, skipped };
+}
+
+
+function renderBracket(b) {
+  const el = $("cert");
+  if (!b || !sim) { el.hidden = true; return; }
+  el.hidden = false;
+  const lo = b.best[1], e = W.ft_energy(sim), gap = e - lo;
+  // The bar spans [lo, 0]: the shaded window is [lo, e], where the true minimum still might be, and
+  // the tick is the state on screen. Widths are fractions of |lo|, so the shading reads directly as
+  // "this much of the energy scale is still in question".
+  const span = Math.abs(lo) > 1e-12 ? Math.abs(lo) : 1;
+  const pct = Math.max(0, Math.min(100, (gap / span) * 100));
+  const at = Math.max(0, Math.min(100, ((e - lo) / span) * 100));
+  $("brwindow").style.left = "0%";
+  $("brwindow").style.width = pct.toFixed(3) + "%";
+  $("brtick").style.left = at.toFixed(3) + "%";
+
+  $("brlo").textContent = fmt(lo) + "  lower bound";
+  $("brhi").textContent = "0";
+  $("brmid").textContent = gap <= 1e-9 ? "" : "gap " + fmt(gap) + " (" + pct.toFixed(2) + "%)";
+
+  const v = $("certverdict");
+  if (gap <= 1e-9) {
+    v.textContent = "GAP ZERO -- this state is optimal";
+    v.className = "certverdict proved";
+  } else if (proved) {
+    v.textContent = "PROVED OPTIMAL by branch and bound";
+    v.className = "certverdict proved";
+  } else {
+    v.textContent = "within " + fmt(gap) + " of optimal, at worst";
+    v.className = "certverdict";
+  }
+
+  const note = [];
+  if (gap <= 1e-9) {
+    note.push("The bound met the state: no assignment of these spins has a lower energy, and that "
+      + "holds whatever produced this one.");
+  } else if (proved) {
+    note.push("Branch and bound exhausted the search tree, so this IS the minimum \u2014 by "
+      + "enumeration rather than by the bound above, which is still "
+      + fmt(gap) + " short of meeting it. Two different arguments, and the cheap one has not "
+      + "closed here.");
+  } else {
+    note.push("The true minimum lies in the shaded window. " + fmt(gap)
+      + " is the most a better search could still win \u2014 not what it would win.");
+  }
+  if (b.skipped) {
+    note.push("The semidefinite bound is skipped above " + SDP_MAX_NODES
+      + " nodes: it factors a dense n\u00d7n matrix, which is a frozen tab rather than a wait.");
+  } else if (b.rows.some(r => r[0] === "sdp" && r[1] === null)) {
+    note.push("The semidefinite certificate did not re-verify, so it was refused rather than used.");
+  }
+  $("certnote").textContent = note.join(" ");
+
+  $("btab").innerHTML = b.rows.map(([name, val]) => {
+    const cls = val === b.best[1] && Number.isFinite(val) ? ' class="best"' : "";
+    const shown = val === null ? "refused" : fmt(val);
+    return "<tr" + cls + "><td>" + name + "</td><td>" + shown + "</td></tr>";
+  }).join("");
+}
+
+function certify(quiet) {
+  if (!sim) return;
+  const t0 = performance.now();
+  certCache = bracket();
+  const ms = performance.now() - t0;
+  renderBracket(certCache);
+  if (!quiet) {
+    status("bounded in " + ms.toFixed(0) + " ms; best is " + certCache.best[0]
+      + " at " + fmt(certCache.best[1]), "good");
+  }
+}
+
+$("certify").onclick = () => certify(false);
+
+$("solve").onclick = () => {
+  if (!sim) return;
+  stop();
+  const m = $("method").value;
+  const seed = BigInt($("seed").value | 0);
+  const t0 = performance.now();
+  let e, extra = "";
+  proved = false;
+  if (m === "tabu") {
+    e = W.ft_tabu(sim, 50000, 0, 5000);
+    const ran = Number(W.ft_tabu_iterations(sim));
+    // Reported because truncation is otherwise invisible: a run that spent a fraction of its
+    // budget returns a result shaped exactly like a full one.
+    extra = ran.toLocaleString() + " of 50,000 iterations";
+  } else if (m === "population") {
+    e = W.ft_popanneal(sim, 512, 4, Math.max(4.0, +$("beta").value / 100), 60);
+    const rho = W.ft_popanneal_rho(sim), lnz = W.ft_popanneal_ln_z(sim);
+    // rho is the number that says whether to believe ln Z: 1 means every ancestor still has a
+    // descendant, 512 means the whole population descends from one.
+    extra = "rho " + rho.toFixed(1) + " of 512"
+      + (Number.isFinite(lnz) ? ", ln Z " + fmt(lnz) : "")
+      + (rho > 51.2 ? " -- the population collapsed, so ln Z is not trustworthy" : "");
+  } else {
+    e = W.ft_branch(sim, 20000000n);
+    proved = W.ft_branch_proved(sim) === 1;
+    extra = Number(W.ft_branch_nodes(sim)).toLocaleString() + " nodes, "
+      + (proved ? "tree exhausted" : "budget spent before the tree closed, so no proof");
+  }
+  const ms = performance.now() - t0;
+  draw();
+  certify(true);
+  status(m + " reached energy " + fmt(e) + " in " + ms.toFixed(0) + " ms (" + extra + ")",
+         proved || m !== "branch" ? "good" : "warn");
 };
 
 $("reset").onclick = () => apply();

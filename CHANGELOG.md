@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.25.1
+
+### The workbench can now tell you whether its own answer is any good
+
+Every number the browser workbench showed was a property of the state on screen — energy,
+magnetization, sweeps, joules. None of them said whether a better state existed, which is the
+question anyone running a sampler actually has. The C ABI gained the bounds in 0.25.0; the page now
+uses them.
+
+A **Solve** control runs tabu search, population annealing, or branch and bound, each reporting the
+diagnostic only it can report: iterations actually run, `rho` against the population size, and
+nodes-with-or-without-a-proof. A **Certify** button draws an **optimality bracket** — a bar from the
+certified lower bound to zero, with the window where the true minimum still might be shaded, and a
+tick at the state on screen. On the frustrated 12-ring preset: branch and bound proves −10 in 134
+nodes, and the SDP bound independently says nothing below −11.591 exists.
+
+**Two certificates, kept apart.** A gap of zero means the bound met the state, so no better state
+can exist — proof by relaxation. `PROVED OPTIMAL` from branch and bound means the tree was
+exhausted — proof by enumeration. The second can arrive while the gap is still wide, because the
+tree closes on bounds computed per subproblem rather than the one on screen. The panel says which
+argument it has, and the note explains the difference rather than blurring them into "optimal".
+
+**The bounds are cached per graph and the bracket re-renders every frame**, so the window visibly
+closes while an anneal runs, at no cost per sweep. That split is also the correctness boundary: a
+bound is a property of the *graph* and survives a sweep; a proof is about the *state* and does not.
+One sweep retracts the proof and keeps the bounds, and the browser tests assert exactly that —
+along with the case that matters more, that loading a new model clears the old certificate. A
+verdict that outlives its subject is the failure this panel exists to prevent, and it is a failure
+that still *renders*.
+
+### The committed wasm was seven days and one release stale
+
+`docs/ferrotherm.wasm` was built on 20 August, before `tabu`, `popanneal`, `branch`, `sdp`, `host`
+and twelve C ABI symbols existed. Rebuilt: 437 KB raw, 156 KB gzipped, 89 exports checked against
+what the pages actually call. `check-wasm-exports.sh` caught the README's size figures in the same
+pass — *a size a human retypes is a size that rots*.
+
 ## 0.25.0
 
 ### The optimality-gap certificate was reachable from one of six surfaces
