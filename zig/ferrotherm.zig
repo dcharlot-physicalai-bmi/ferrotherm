@@ -27,6 +27,10 @@ pub const Error = error{
     BadState,
     /// An OMMX instance this sampler cannot represent. `ommxError` says which part.
     Unreadable,
+    /// The exact planar solver cannot take this graph. `planarError` says which of the four
+    /// reasons it was -- fields, non-planar, a cut vertex, or weights that do not scale to
+    /// integers -- and they are four different things to do next.
+    NotPlanar,
     /// A domain with nothing in it: a categorical under two values, or an integer with hi <= lo.
     BadDomain,
     /// A value the variable cannot take. Call `lastError` for the range it can.
@@ -175,6 +179,36 @@ pub const Sim = struct {
         return c.ft_tabu_iterations(self.h);
     }
 
+    /// EXACT max-cut on a planar graph, in polynomial time. Not a search.
+    ///
+    /// Max-cut is NP-hard in general and polynomial on a planar graph, and the difference is a
+    /// theorem rather than an engineering margin. There is no budget to run out of and the answer
+    /// is the maximum, not the best found. On success the simulation's state becomes the optimal
+    /// partition, so `energy()` is then the PROVED minimum.
+    ///
+    /// Returns `error.NotPlanar` when the graph cannot be solved this way; `planarError` says which
+    /// of the four reasons it was, and they are four different things to do next.
+    pub fn exactPlanar(self: Sim, scale: f64) Error!PlanarCut {
+        // Not named `c`: that is the @cImport alias, and shadowing it here compiles into a
+        // recursive call to a float.
+        const value = c.ft_planar_cut(self.h, scale);
+        if (std.math.isNan(value)) return Error.NotPlanar;
+        return .{
+            .cut = value,
+            .energy = self.energy(),
+            .faces = c.ft_planar_faces(self.h),
+            .odd_faces = c.ft_planar_odd_faces(self.h),
+        };
+    }
+
+    /// Why the last `exactPlanar` refused, copied into `buf`.
+    pub fn planarError(self: Sim, buf: []u8) []const u8 {
+        const need = c.ft_planar_error(self.h, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_planar_error(self.h, buf.ptr, n);
+        return buf[0..got];
+    }
+
     /// Breakout local search -- the algorithm that holds the max-cut record on most of G-set.
     ///
     /// Steepest descent with an adaptive perturbation between local optima. One iteration is one
@@ -236,6 +270,17 @@ pub const Sim = struct {
     pub fn deinit(self: Sim) void {
         c.ft_free(self.h);
     }
+};
+
+/// An EXACT maximum cut on a planar graph. Not the best found -- the maximum.
+pub const PlanarCut = struct {
+    cut: f64,
+    /// The proved MINIMUM energy of the partition this achieved.
+    energy: f64,
+    faces: u64,
+    /// The size of the matching problem underneath, and the real cost driver. Zero is legitimate:
+    /// a grid with uniform weights has every face of even degree and the whole cut comes free.
+    odd_faces: u64,
 };
 
 /// A breakout-local-search run, with the evidence that it actually broke out.
@@ -1559,6 +1604,35 @@ test "branch and bound withholds a proof when the budget runs out" {
     const r = sim.branch(200);
     try std.testing.expect(!r.proved);
     try std.testing.expect(r.nodes <= 201);
+}
+
+test "the exact planar solver, and the reason it refuses" {
+    // A 4x4 antiferromagnetic grid: bipartite, so every one of its 24 edges is cut.
+    var b = try Model.init(16);
+    var y: u32 = 0;
+    while (y < 4) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 4) : (x += 1) {
+            const i = y * 4 + x;
+            if (x + 1 < 4) try b.couple(i, i + 1, -1.0);
+            if (y + 1 < 4) try b.couple(i, i + 4, -1.0);
+        }
+    }
+    var sim = try b.build(1.0, 1);
+    defer sim.deinit();
+    const r = try sim.exactPlanar(1.0);
+    try std.testing.expectEqual(@as(f64, 24.0), r.cut);
+    try std.testing.expectEqual(@as(f64, -24.0), r.energy);
+    try std.testing.expectEqual(@as(u64, 10), r.faces);
+
+    // A torus is genus 1, and the reduction is a plane statement. The REASON has to cross too:
+    // "not planar" and "has a cut vertex" are different instructions to a caller.
+    var torus = try Sim.lattice2d(4, 1.0, 1.0, 1);
+    defer torus.deinit();
+    try std.testing.expectError(Error.NotPlanar, torus.exactPlanar(1.0));
+    var buf: [512]u8 = undefined;
+    const msg = torus.planarError(&buf);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "not planar") != null);
 }
 
 test "breakout local search reports the evidence that it broke out" {

@@ -544,6 +544,52 @@ pub fn bound(req: &Json) -> Result<Json, String> {
     Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
 }
 
+/// **Exact** max-cut on a planar graph, in polynomial time.
+///
+/// The only operation here that returns an OPTIMUM rather than an attempt. Max-cut is NP-hard in
+/// general and polynomial on a planar graph, and the difference is a theorem: a cut in the graph is
+/// a cycle in the dual, so the problem becomes a minimum-weight T-join and then a minimum-weight
+/// perfect matching. There is no budget and no seed — the same request always returns the same
+/// answer, because there is only one.
+pub fn exact_planar(req: &Json) -> Result<Json, String> {
+    let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
+    let scale = opt_f64(req, "scale", 1.0);
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err("\"scale\" must be finite and positive".into());
+    }
+    // The matching underneath is O(k^3) in the odd-degree dual vertices, which is O(n) — so this is
+    // cubic in the node count and needs a ceiling like everything else here.
+    const MAX_NODES: usize = 20_000;
+    if g.n > MAX_NODES {
+        return Err(format!(
+            "{} nodes, over the {MAX_NODES} ceiling for the exact planar solver: the matching \
+             underneath is cubic",
+            g.n
+        ));
+    }
+    let t0 = Instant::now();
+    let out = ferrotherm::planarcut::solve(&g, &ferrotherm::planarcut::Params { scale })
+        // The four refusals are four different things to do next, so the reason is the reply.
+        .map_err(|e| e.to_string())?;
+    let wall = t0.elapsed().as_secs_f64();
+    let mut fields = vec![
+        ("nodes", Json::n(g.n as f64)),
+        ("cut", Json::n(out.cut)),
+        ("energy", Json::n(out.energy)),
+        ("exact", Json::Bool(true)),
+        ("faces", Json::n(out.faces as f64)),
+        // The size of the matching problem, and the real cost driver. Zero is legitimate.
+        ("odd_faces", Json::n(out.odd_faces as f64)),
+        ("wall_seconds", Json::n(wall)),
+    ];
+    if req.get("return_state").and_then(|b| b.as_bool()).unwrap_or(g.n <= 4096) {
+        fields.push(("state", state_json(&out.state)));
+    } else {
+        fields.push(("state_omitted", Json::s("pass \"return_state\": true to include it")));
+    }
+    Ok(Json::Obj(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
 /// Minimise by a named method: tabu search, population annealing, or branch and bound.
 ///
 /// `anneal` runs one chain down a ladder and hands back the best state it saw. These are the three
@@ -829,6 +875,7 @@ pub fn capabilities() -> Json {
                 op("energy", "Energy and magnetization of a given state.", "graph, state"),
                 op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
                 op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
+                op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
                 op("optimize", "Minimise by tabu search, breakout local search, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
             ]),
@@ -1299,6 +1346,7 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
         "verify" => verify(req),
         "bound" => bound(req),
         "optimize" => optimize(req),
+        "exact_planar" => exact_planar(req),
         "solve" => solve(req),
         "capabilities" => Ok(capabilities()),
         other => Err(format!(
@@ -1469,6 +1517,48 @@ mod tests {
             .abs()
                 < 1e-9
         );
+    }
+
+    /// The one operation here that returns an OPTIMUM, and the four refusals that are four
+    /// different instructions.
+    #[test]
+    fn exact_planar_returns_a_maximum_and_names_why_it_will_not() {
+        // A 4x4 antiferromagnetic grid: bipartite, so every one of its 24 edges is cut.
+        let mut e = Vec::new();
+        for y in 0..4usize {
+            for x in 0..4usize {
+                let i = y * 4 + x;
+                if x + 1 < 4 {
+                    e.push(format!("[{i},{},-1]", i + 1));
+                }
+                if y + 1 < 4 {
+                    e.push(format!("[{i},{},-1]", i + 4));
+                }
+            }
+        }
+        let g = format!(r#"{{"n":16,"couplings":[{}]}}"#, e.join(","));
+        let r = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{g}}}"#)).unwrap()).unwrap();
+        assert_eq!(r.get("cut").and_then(|v| v.as_f64()), Some(24.0));
+        assert_eq!(r.get("energy").and_then(|v| v.as_f64()), Some(-24.0));
+        assert_eq!(r.get("exact").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(r.get("faces").and_then(|v| v.as_f64()), Some(10.0));
+
+        // And no search can beat it, which is the check that makes "exact" mean something.
+        let o = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{g},"method":"breakout","iterations":50000}}"#)).unwrap()).unwrap();
+        assert!(o.get("best_energy").unwrap().as_f64().unwrap() >= -24.0 - 1e-9);
+
+        // A periodic lattice is a TORUS. Refused, and the reply says which of the four it is.
+        let torus = r#"{"builtin":"lattice2d","l":4,"j":1.0}"#;
+        let err = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap())
+            .unwrap_err();
+        assert!(err.contains("not planar"), "{err}");
+
+        // A field makes it a different problem, not a harder one.
+        let fielded = format!(r#"{{"n":16,"couplings":[{}],"biases":[[0,0.5]]}}"#, e.join(","));
+        let err = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{fielded}}}"#)).unwrap())
+            .unwrap_err();
+        assert!(err.contains("field"), "{err}");
     }
 
     /// Each method reports the thing only it can report, and a bad name is refused rather than

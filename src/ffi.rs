@@ -57,6 +57,8 @@ pub struct Sim {
     tb: Option<crate::tabu::Outcome>,
     /// The last breakout-local-search outcome, for the `ft_bls_*` accessors.
     bl: Option<crate::bls::Outcome>,
+    /// The last planar exact solve, or the reason it was refused.
+    pc: Option<Result<crate::planarcut::Outcome, String>>,
     /// The last population-annealing outcome, for the `ft_popanneal_*` accessors.
     pa: Option<crate::popanneal::Outcome>,
     /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
@@ -73,7 +75,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pa: None, bb: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, pa: None, bb: None }))
     }
 }
 
@@ -2589,6 +2591,78 @@ pub extern "C" fn ft_bls_max_jump(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.max_jump as u32)
 }
 
+/// **Exact** max-cut on a planar graph, in polynomial time. Not a search.
+///
+/// Returns the maximum cut weight under `w = −J`, or NaN when this graph cannot be solved this way
+/// — in which case [`ft_planar_error`] says which of the four reasons it was, because they are four
+/// different instructions to the caller. The simulation's state is set to the optimal partition, so
+/// [`ft_energy`] returns the **proved minimum** energy.
+///
+/// `scale` multiplies every coupling before it is rounded to an integer; pass 1.0 for whole-number
+/// couplings. The matching underneath is exact only in exact arithmetic, so a weight that does not
+/// land on an integer is refused rather than rounded.
+#[no_mangle]
+pub extern "C" fn ft_planar_cut(sim: *mut Sim, scale: f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let p = crate::planarcut::Params { scale };
+    match crate::planarcut::solve(&s.graph, &p) {
+        Ok(o) => {
+            if o.state.len() == s.sampler_state.len() {
+                s.sampler_state.copy_from_slice(&o.state);
+            }
+            let c = o.cut;
+            s.pc = Some(Ok(o));
+            c
+        }
+        Err(e) => {
+            s.pc = Some(Err(e.to_string()));
+            f64::NAN
+        }
+    }
+}
+
+/// Faces in the planar embedding from the last [`ft_planar_cut`] — the dual's vertex count.
+#[no_mangle]
+pub extern "C" fn ft_planar_faces(sim: *const Sim) -> u64 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.pc.as_ref()) {
+        Some(Ok(o)) => o.faces as u64,
+        _ => 0,
+    }
+}
+
+/// Odd-degree dual vertices from the last [`ft_planar_cut`].
+///
+/// The size of the matching problem, and the real cost driver: this is what makes the method
+/// `O(n³)` rather than `O(2ⁿ)`.
+#[no_mangle]
+pub extern "C" fn ft_planar_odd_faces(sim: *const Sim) -> u64 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.pc.as_ref()) {
+        Some(Ok(o)) => o.odd_faces as u64,
+        _ => 0,
+    }
+}
+
+/// Why the last [`ft_planar_cut`] refused, in the caller's own terms.
+///
+/// Two-call text protocol: pass a null buffer to learn the length, then a buffer of that size.
+/// Empty when the last call succeeded or none has happened. Exported because "not planar", "has a
+/// cut vertex", "has fields" and "weights are not integral" are four different things to do next,
+/// and a bare NaN collapses them into one.
+#[no_mangle]
+pub extern "C" fn ft_planar_error(sim: *const Sim, buf: *mut u8, cap: u32) -> u32 {
+    let msg = match unsafe { sim.as_ref() }.and_then(|s| s.pc.as_ref()) {
+        Some(Err(e)) => e.as_str(),
+        _ => "",
+    };
+    let bytes = msg.as_bytes();
+    if buf.is_null() {
+        return bytes.len() as u32;
+    }
+    let n = bytes.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, n) };
+    n as u32
+}
+
 /// A **lower bound on the ground energy** from decoupling every term. The cheapest and weakest.
 ///
 /// `min_s E(s) ≥ −Σ|h| − Σ|J|`, in `O(edges)`. Every bound here is sound on its own, so a caller
@@ -2755,12 +2829,85 @@ mod solver_ffi_tests {
         ft_free(sim);
     }
 
+    /// The exact planar solver crosses the boundary, and so does the REASON it refuses.
+    ///
+    /// Four refusals, four different things for a caller to do next. A bare NaN collapses them into
+    /// "it did not work", which is the least useful sentence available.
+    #[test]
+    fn the_planar_solver_and_its_four_refusals_cross_the_boundary() {
+        // A 4x4 antiferromagnetic grid: bipartite, so every one of its 24 edges is cut.
+        let b = ft_builder_new(16);
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                let i = y * 4 + x;
+                if x + 1 < 4 {
+                    ft_builder_couple(b, i, i + 1, -1.0);
+                }
+                if y + 1 < 4 {
+                    ft_builder_couple(b, i, i + 4, -1.0);
+                }
+            }
+        }
+        let sim = ft_builder_build(b, 1.0, 1);
+        assert_eq!(ft_planar_cut(sim, 1.0), 24.0);
+        assert_eq!(ft_planar_faces(sim), 10);
+        // ZERO odd faces, and that is a fact rather than a failure: with uniform weights every
+        // square face of a grid has degree 4 and the outer face degree 12, so the T-join is empty
+        // and the whole cut is free. Asserting `> 0` here -- as the first version of this test did
+        // -- asserts that the easy case does not occur.
+        assert_eq!(ft_planar_odd_faces(sim), 0);
+        assert_eq!(ft_planar_error(sim, core::ptr::null_mut(), 0), 0, "no error on success");
+        // The state left behind is the optimum, so `ft_energy` is the PROVED minimum.
+        assert_eq!(ft_energy(sim), -24.0);
+        ft_free(sim);
+
+        // A frustrated grid: mixed signs make face degrees odd, and the matching has work to do.
+        let b = ft_builder_new(16);
+        // A fixed, irregular sign pattern. Cycled rather than computed from a modulus, because the
+        // point is only that the signs are mixed and the pattern is reproducible.
+        let signs = [-1.0f64, -1.0, 1.0, -1.0, 1.0];
+        let mut k = 0usize;
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                let i = y * 4 + x;
+                if x + 1 < 4 {
+                    ft_builder_couple(b, i, i + 1, signs[k % signs.len()]);
+                    k += 1;
+                }
+                if y + 1 < 4 {
+                    ft_builder_couple(b, i, i + 4, signs[k % signs.len()]);
+                    k += 1;
+                }
+            }
+        }
+        let frus = ft_builder_build(b, 1.0, 1);
+        let c = ft_planar_cut(frus, 1.0);
+        assert!(c.is_finite() && c < 24.0, "a frustrated grid cannot cut every edge: {c}");
+        assert!(ft_planar_odd_faces(frus) > 0, "frustration makes face degrees odd");
+        ft_free(frus);
+
+        // A torus is genus 1, and the reduction is a plane statement.
+        let torus = ft_ising2d_new(4, 1.0, 1.0, 1);
+        assert!(ft_planar_cut(torus, 1.0).is_nan());
+        let need = ft_planar_error(torus, core::ptr::null_mut(), 0);
+        assert!(need > 0, "a refusal must carry a reason");
+        let mut buf = vec![0u8; need as usize];
+        let got = ft_planar_error(torus, buf.as_mut_ptr(), need);
+        let msg = String::from_utf8_lossy(&buf[..got as usize]).to_string();
+        assert!(msg.contains("not planar"), "{msg}");
+        ft_free(torus);
+    }
+
     /// A null handle is a caller error, not a crash, and NaN is how this ABI says so.
     #[test]
     fn a_null_handle_returns_rather_than_dereferencing() {
         let n: *mut Sim = core::ptr::null_mut();
         assert!(ft_tabu(n, 10, 0, 0).is_nan());
         assert!(ft_bls(n, 10).is_nan());
+        assert!(ft_planar_cut(n, 1.0).is_nan());
+        assert_eq!(ft_planar_faces(n), 0);
+        assert_eq!(ft_planar_odd_faces(n), 0);
+        assert_eq!(ft_planar_error(n, core::ptr::null_mut(), 0), 0);
         assert_eq!(ft_bls_descents(n), 0);
         assert_eq!(ft_bls_iterations(n), 0);
         assert_eq!(ft_bls_max_jump(n), 0);

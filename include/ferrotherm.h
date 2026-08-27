@@ -181,6 +181,30 @@ double ft_tabu(ft_sim *sim, uint32_t iterations, uint32_t tenure, uint32_t resta
    which is otherwise invisible from outside. */
 uint64_t ft_tabu_iterations(const ft_sim *sim);
 
+/* EXACT max-cut on a planar graph, in polynomial time. Not a search: no budget, no seed, no
+   incumbent. Returns the maximum cut weight under w = -J, or NaN when the graph cannot be solved
+   this way. The simulation's state becomes the optimal partition, so ft_energy then returns the
+   PROVED MINIMUM energy.
+
+   `scale` multiplies every coupling before it is rounded to an integer; pass 1.0 for whole-number
+   couplings. The matching underneath is exact only in exact arithmetic, so a weight that does not
+   land on an integer is refused rather than rounded. */
+double ft_planar_cut(ft_sim *sim, double scale);
+
+/* Faces in the planar embedding -- the dual's vertex count. */
+uint64_t ft_planar_faces(const ft_sim *sim);
+
+/* Odd-degree dual vertices: the size of the matching problem and the real cost driver. This is
+   what makes the method O(n^3) rather than O(2^n). Zero is a legitimate answer -- a grid with
+   uniform weights has every face of even degree and the whole cut comes free. */
+uint64_t ft_planar_odd_faces(const ft_sim *sim);
+
+/* Why the last ft_planar_cut refused, in the caller's own terms. Two-call text protocol: pass a
+   NULL buffer for the length, then a buffer of that size. Empty on success. There are four
+   distinct refusals -- fields, not planar, a cut vertex, non-integral weights -- and they are four
+   different things to do next, which a bare NaN collapses into one. */
+uint32_t ft_planar_error(const ft_sim *sim, uint8_t *buf, uint32_t cap);
+
 /* Breakout local search -- the algorithm that holds the max-cut record on most of G-set. Steepest
    descent with an adaptive perturbation between local optima. Returns the best energy found, or NaN
    on NULL. One iteration is one SPIN FLIP, which is what ft_tabu counts too, so passing the same

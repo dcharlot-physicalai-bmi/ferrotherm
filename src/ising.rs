@@ -42,6 +42,28 @@ pub fn lattice2d(l: usize, j: f64) -> Graph {
 
 /// Exact Boltzmann distribution over all 2^n states (n <= 24). Returns probabilities indexed by
 /// bitmask (bit b set => spin b = +1).
+/// A `w × h` grid with **open** boundaries: the planar one.
+///
+/// [`lattice2d`] wraps, which makes it a torus — genus 1, not planar, and the distinction is the
+/// whole reason [`crate::planarcut`] cannot be pointed at it. This is the grid that embeds in the
+/// plane, and it is also the classic planar max-cut instance: a spin glass on a square lattice with
+/// free boundaries.
+pub fn grid2d(w: usize, h: usize, j: f64) -> Graph {
+    let mut gb = GraphBuilder::new(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if x + 1 < w {
+                gb.couple(i, i + 1, j);
+            }
+            if y + 1 < h {
+                gb.couple(i, i + w, j);
+            }
+        }
+    }
+    gb.build()
+}
+
 pub fn exact_boltzmann(g: &Graph, beta: f64) -> Vec<f64> {
     assert!(g.n <= 24, "exact enumeration limited to 24 spins");
     let m = 1usize << g.n;

@@ -62,7 +62,8 @@ export treewidth, exact_ground_energy, exact_ground_state, exact_logz
 export node_updates, joules_z1, onsager, library_path, close!
 export tabu!, tabu_iterations, breakout!, population_anneal!, branch!, bounds, gap
 export BreakoutRun
-export PopulationRun, BranchResult, Bounds, trustworthy, best, tightest
+export PopulationRun, BranchResult, Bounds, PlanarCut, trustworthy, best, tightest
+export exact_planar!
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
@@ -212,6 +213,10 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_exact_ground_state Cuint SimPtr Cuint Ptr{Int8} Cuint
 @cfn ft_tabu Cdouble SimPtr Cuint Cuint Cuint
 @cfn ft_tabu_iterations Culonglong SimPtr
+@cfn ft_planar_cut Cdouble SimPtr Cdouble
+@cfn ft_planar_faces Culonglong SimPtr
+@cfn ft_planar_odd_faces Culonglong SimPtr
+@cfn ft_planar_error Cuint SimPtr Ptr{UInt8} Cuint
 @cfn ft_bls Cdouble SimPtr Cuint
 @cfn ft_bls_descents Culonglong SimPtr
 @cfn ft_bls_iterations Culonglong SimPtr
@@ -573,6 +578,43 @@ Nothing else in Julia reports `beta_eff` or `noise_floor` at all.
 # `energy` recomputes it from that state rather than trusting the number returned. They compose:
 # `anneal!`, then `tabu!` from where annealing stopped, then `branch!` with that as its incumbent.
 # The `!` is not decoration -- these mutate the simulation.
+
+"""An **exact** maximum cut on a planar graph. Not the best found — the maximum."""
+struct PlanarCut
+    cut::Float64
+    "The proved MINIMUM energy of the partition this achieved."
+    energy::Float64
+    faces::Int
+    """The size of the matching problem underneath, and the real cost driver. Zero is legitimate:
+    a grid with uniform weights has every face of even degree and the whole cut comes free."""
+    odd_faces::Int
+end
+
+"""
+    exact_planar!(s; scale = 1.0)
+
+**Exact** max-cut, in polynomial time, if `s`'s graph is planar. Not a search.
+
+Max-cut is NP-hard in general and polynomial on a planar graph, and the difference is a theorem
+rather than an engineering margin: a cut in the graph is a cycle in the dual, so the problem becomes
+a minimum-weight T-join and then a minimum-weight perfect matching. There is no budget to run out of
+and the answer is the maximum, not the best found.
+
+Throws with the reason if the graph cannot be solved this way — there are four, and they are four
+different things to do next. On success `s` holds the optimal partition, so `energy(s)` is then the
+proved **minimum**.
+"""
+function exact_planar!(s::Simulation; scale::Real = 1.0)
+    _live(s)
+    cut = ft_planar_cut(s.handle, Cdouble(scale))
+    if isnan(cut)
+        need = ft_planar_error(s.handle, Ptr{UInt8}(C_NULL), Cuint(0))
+        buf = Vector{UInt8}(undef, max(need, 1))
+        got = ft_planar_error(s.handle, pointer(buf), Cuint(need))
+        error(got == 0 ? "the planar solver refused" : String(buf[1:got]))
+    end
+    PlanarCut(cut, energy(s), Int(ft_planar_faces(s.handle)), Int(ft_planar_odd_faces(s.handle)))
+end
 
 """A breakout-local-search run, with the evidence that it actually broke out."""
 struct BreakoutRun

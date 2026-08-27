@@ -591,3 +591,31 @@ def test_breakout_reports_the_evidence_that_it_broke_out():
     assert math.isclose(r.energy, sim.energy, abs_tol=1e-9)
     # And it must not do worse than the descent it is built on.
     assert r.energy <= sim.bounds().best + abs(sim.bounds().best) + 1e-9
+
+
+def test_exact_planar_returns_a_maximum_and_refuses_with_a_reason():
+    """The one solver here that returns an optimum, and four refusals that are four instructions."""
+    m = ft.Model(16)
+    for y in range(4):
+        for x in range(4):
+            i = y * 4 + x
+            if x + 1 < 4:
+                m.couple(i, i + 1, -1.0)
+            if y + 1 < 4:
+                m.couple(i, i + 4, -1.0)
+    sim = m.build(beta=1.0, seed=1)
+    r = sim.exact_planar()
+    # A bipartite grid: every one of its 24 edges is cut.
+    assert r.cut == 24.0 and r.energy == -24.0
+    assert r.faces == 10
+    assert sim.energy == -24.0, "the state left behind is the optimum"
+
+    # No search may beat an exact answer. That is what makes the word mean something.
+    other = _frustrated_chain(12).build(beta=1.0, seed=1)
+    exact = other.exact_planar()
+    assert other.breakout(iterations=20_000).energy >= exact.energy - 1e-9
+
+    # A periodic lattice is a torus, and the reduction is a plane statement.
+    torus = ft.lattice2d(4, j=1.0, beta=1.0, seed=1)
+    with pytest.raises(ValueError, match="not planar"):
+        torus.exact_planar()

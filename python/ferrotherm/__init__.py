@@ -34,6 +34,7 @@ __all__ = [
     "BranchResult",
     "BreakoutRun",
     "Certificate",
+    "PlanarCut",
     "PopulationRun",
     "Literal",
     "Model",
@@ -56,7 +57,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.27.0"
+__version__ = "0.28.0"
 
 
 # ---- library loading ------------------------------------------------------------------------
@@ -147,6 +148,10 @@ _exact_width = _sig("ft_exact_width", c_uint32, [_p])
 _exact_ground_state = _sig("ft_exact_ground_state", c_uint32, [_p, c_uint32, POINTER(c_int8), c_uint32])
 _tabu = _sig("ft_tabu", c_double, [_p, c_uint32, c_uint32, c_uint32])
 _tabu_iterations = _sig("ft_tabu_iterations", c_uint64, [_p])
+_planar_cut = _sig("ft_planar_cut", c_double, [_p, c_double])
+_planar_faces = _sig("ft_planar_faces", c_uint64, [_p])
+_planar_odd_faces = _sig("ft_planar_odd_faces", c_uint64, [_p])
+_planar_error = _sig("ft_planar_error", c_uint32, [_p, ctypes.POINTER(ctypes.c_ubyte), c_uint32])
 _bls = _sig("ft_bls", c_double, [_p, c_uint32])
 _bls_descents = _sig("ft_bls_descents", c_uint64, [_p])
 _bls_iterations = _sig("ft_bls_iterations", c_uint64, [_p])
@@ -280,6 +285,25 @@ class Bounds:
         sdp = "refused" if self.sdp is None else f"{self.sdp:.6g}"
         return (f"<Bounds best={self.best:.6g} by {self.which}; decoupled={self.decoupled:.6g} "
                 f"forest={self.forest:.6g} odd_cycle={self.odd_cycle:.6g} sdp={sdp}>")
+
+
+class PlanarCut:
+    """An **exact** maximum cut on a planar graph. Not the best found — the maximum.
+
+    ``odd_faces`` is the size of the matching problem underneath, and the real cost driver: it is
+    what makes the method cubic rather than exponential. Zero is legitimate and means the whole cut
+    came free.
+    """
+
+    __slots__ = ("cut", "energy", "faces", "odd_faces")
+
+    def __init__(self, cut: float, energy: float, faces: int, odd_faces: int) -> None:
+        self.cut, self.energy = cut, energy
+        self.faces, self.odd_faces = faces, odd_faces
+
+    def __repr__(self) -> str:
+        return (f"<PlanarCut EXACT cut={self.cut:.6g} energy={self.energy:.6g} "
+                f"{self.faces} faces, {self.odd_faces} odd>")
 
 
 class BreakoutRun:
@@ -661,6 +685,31 @@ is how a dropped GPU dispatch turns into a believable energy.
         """Iterations the last :meth:`tabu` actually ran, or 0 if there was none."""
         self._live()
         return int(_tabu_iterations(self._h))
+
+    def exact_planar(self, scale: float = 1.0) -> "PlanarCut":
+        """**Exact** max-cut, in polynomial time, if this graph is planar.
+
+        Not a search. Max-cut is NP-hard in general and polynomial on a planar graph, and the
+        difference is a theorem: a cut in the graph is a cycle in the dual, so the problem becomes
+        a minimum-weight T-join and then a minimum-weight perfect matching. There is no budget to
+        run out of and the answer is the maximum, not the best found.
+
+        Raises :class:`ValueError` with the reason if the graph cannot be solved this way — there
+        are four, and they are four different things to do next.
+
+        On success the simulation's state becomes the optimal partition, so :attr:`energy` is then
+        the proved **minimum**.
+        """
+        self._live()
+        cut = float(_planar_cut(self._h, float(scale)))
+        if cut != cut:
+            raise ValueError(_read_text(_planar_error, self._h) or "the planar solver refused")
+        return PlanarCut(
+            cut=cut,
+            energy=self.energy,
+            faces=int(_planar_faces(self._h)),
+            odd_faces=int(_planar_odd_faces(self._h)),
+        )
 
     def breakout(self, iterations: int = 50_000) -> "BreakoutRun":
         """Breakout local search: steepest descent, with an adaptive perturbation between optima.

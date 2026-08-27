@@ -134,6 +134,26 @@ pub fn tools() -> Json {
             vec!["graph"],
         ),
         tool(
+            "ferrotherm_exact_planar",
+            "EXACT max-cut on a PLANAR graph, in polynomial time. The only tool here that returns \
+             an optimum rather than an attempt: there is no budget, no seed, and no incumbent, and \
+             the same request always returns the same answer because there is only one. Max-cut is \
+             NP-hard in general and polynomial on a planar graph, and the difference is a theorem \
+             rather than an engineering margin -- a cut in the graph is a cycle in the dual, so the \
+             problem becomes a minimum-weight T-join and then a minimum-weight perfect matching. \
+             Reach for this FIRST whenever the graph is planar: a grid with open boundaries, a road \
+             network, a circuit layout. It refuses, with the reason, on a graph carrying fields, on \
+             a non-planar graph (a PERIODIC lattice is a torus and is not planar), on a graph with \
+             a cut vertex, and on weights that do not scale to integers -- four different things to \
+             do next.",
+            vec![
+                ("graph", schema_graph()),
+                ("scale", prop("number", "Multiply every coupling by this before rounding to an integer. Default 1.0, which is right for whole-number couplings. The matching underneath is exact only in exact arithmetic, so a weight that does not land on an integer is refused rather than rounded -- rounding here moves the optimum, not the last digit.")),
+                ("return_state", prop("boolean", "Include the optimal partition in the reply. Defaults to true under 4096 nodes.")),
+            ],
+            vec!["graph"],
+        ),
+        tool(
             "ferrotherm_optimize",
             "Minimise an Ising graph by a named method. Prefer ferrotherm_anneal for a quick answer; \
              reach for this when you need more than one. \"tabu\" remembers where it has been and \

@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.28.0
+
+### Exact max-cut at 10,000 spins
+
+Everything else in this crate searches. This does not. Max-cut is NP-hard **in general** and
+polynomial **on a planar graph**, and the difference is a theorem rather than an engineering margin.
+
+| grid | spins | odd dual faces | **exact cut** | breakout local search | BLS short by |
+|---|---|---|---|---|---|
+| 10×10 | 100 | 42 | **75** | 74 | 1.33% |
+| 20×20 | 400 | 180 | **270** | 268 | 0.74% |
+| 40×40 | 1,600 | 742 | **1,115** | 1,089 | 2.33% |
+| 60×60 | 3,600 | 1,746 | **2,561** | 2,486 | 2.93% |
+| 100×100 | 10,000 | 4,848 | **7,040** | 6,864 | 2.50% |
+
+For scale: branch and bound with a certified SDP bound *proves* 76 spins (0.26.0). This proves
+10,000. The control is breakout local search — the record holder on most of G-set — precisely
+because it is good: a strong heuristic falling 2.5% short is the demonstration that structure beats
+search when the structure is there.
+
+The chain is `matching` → `planar` → `planarcut`. Fix an embedding; its faces are the vertices of
+the dual; **a cut in `G` is a cycle in `G*`**, because a cut crosses every cycle evenly and the
+cycles of the dual are the face boundaries. Complementing turns "maximise an even subgraph" into
+"minimise a `T`-join", and a minimum-weight `T`-join is a minimum-weight perfect matching over the
+odd-degree dual vertices under shortest-path distances. Negative weights are handled exactly rather
+than excluded: a negative edge is taken into the join up front and the parity requirement at both
+its endpoints flipped to pay for it.
+
+### It checks itself twice, and refuses rather than reports
+
+Five pieces — blossom, embedding, dual, `T`-join, two-colouring — none of which raises anything when
+subtly wrong. So two invariants that come free are asserted on every run: **the recovered edge set
+must two-colour** (the dual argument says it is a cut, so walking the graph and flipping across cut
+edges must never contradict itself), and **two disjoint computations of the cut must agree**
+(`W − w(F)` from the join, against what the recovered state actually cuts). Either failing returns
+an error and no number.
+
+It also refuses four different things, and says which, because they are four different instructions:
+a **field** makes it a different problem (the standard reduction adds an apex vertex, which is not
+planar); a **non-planar** graph is a fact about the instance — a periodic lattice is a torus;
+a **cut vertex** is an instruction to split, since max-cut decomposes exactly across biconnected
+components; **non-integral weights** are refused rather than rounded, because rounding here moves
+the optimum rather than the last digit.
+
+### The blossom hung, and then was quietly wrong 400 vertices later
+
+The first version of `matching` was a paraphrase of the standard primal-dual blossom and it did not
+terminate. Four divergences, each individually plausible: **unlabelled and outer nodes shared a
+value**, so the alternating tree could not tell a free vertex from one it had already reached;
+`augment` walked `slack` where the structure threads through `pa`; slacks were taken between node
+pairs rather than between the *representative real edges* that blossom nodes stand for; and
+`add_blossom` reversed the whole petal list instead of the tail after the base.
+
+Rewritten faithfully with the edge triple explicit, it then failed differently: `hi − cost` made the
+maximum-cost edge weight exactly **0**, which the solver reads as "no edge", so a complete graph
+with repeated costs lost enough edges to destroy its perfect matching — and correctly reported that
+none existed. The `+ 1` that fixes it is load-bearing and cancels, because every perfect matching
+has the same edge count.
+
+And then one more, which the brute-force test could not see: `augment` passed the real vertex where
+the reference passes its **containing blossom**. Invisible below about 400 vertices, where blossoms
+rarely nest; fatal at 1,600. Exhaustive enumeration stops at about 14. So a **planted** optimum was
+added — pair the vertices at cost 0, price everything else at 1 — which is checkable at 500
+vertices and would have caught it on the first run.
+
+### Verification
+
+`matching` is checked against exhaustive enumeration over 200 random instances plus negative costs,
+forced blossoms, and the planted optimum at 500 vertices. `planar` asserts **Euler's formula** on
+every embedding it returns, refuses `K5` and `K3,3` by name, refuses a periodic lattice, and checks
+that the rotation at each vertex is a permutation of the real neighbours. `planarcut` agrees with
+`branch::solve` — a completely different argument, enumeration in the spin domain — on 60 random
+planar instances, and no heuristic is ever allowed to beat it.
+
+Four C ABI symbols (`ft_planar_cut`, `ft_planar_faces`, `ft_planar_odd_faces`, `ft_planar_error`)
+on header, Python, Zig and Julia, plus `exact_planar` on HTTP and MCP. **111 C ABI symbols now
+reach every surface.** The error text crosses too: a bare NaN would collapse four instructions into
+"it did not work".
+
 ## 0.27.0
 
 ### Breakout local search, and the head-to-head this crate did not have

@@ -386,4 +386,27 @@ end
     close!(s)
 end
 
+@testset "exact planar max-cut returns a maximum, and names why it will not" begin
+    m = IsingModel(16)
+    for y in 0:3, x in 0:3
+        i = y * 4 + x + 1              # 1-based here, and the binding refuses the other convention
+        x + 1 < 4 && couple!(m, i, i + 1, -1.0)
+        y + 1 < 4 && couple!(m, i, i + 4, -1.0)
+    end
+    s = build(m; beta = 1.0, seed = 1)
+    r = exact_planar!(s)
+    # A bipartite grid: every one of its 24 edges is cut.
+    @test r.cut == 24.0
+    @test r.energy == -24.0
+    @test r.faces == 10
+    @test energy(s) == -24.0            # the state left behind is the optimum
+    close!(s)
+
+    # A periodic lattice is a torus, and the reduction is a plane statement.
+    t = lattice2d(4; J = 1.0, beta = 1.0, seed = 1)
+    err = try exact_planar!(t); "" catch e; sprint(showerror, e) end
+    @test occursin("not planar", err)
+    close!(t)
+end
+
 include("readme.jl")

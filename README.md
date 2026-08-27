@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 635 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 683 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -133,6 +133,28 @@ thermodynamic-computing corpus currently leaves empty.
   It saturates because **the tree closes above that depth** once the bound is on — which means
   depth was never the real control. `sdp_min_free` and `sdp_max_free` are: too small to be worth a
   Cholesky, or too large to afford one.
+- `cargo run --release --example planar_exact` — **exact max-cut at 10,000 spins.** Everything else
+  here searches. This does not: max-cut is NP-hard *in general* and polynomial *on a planar graph*,
+  and the difference is a theorem rather than an engineering margin. A cut in the graph is a cycle
+  in the dual, so the problem becomes a minimum-weight `T`-join and then a minimum-weight perfect
+  matching — Edmonds' blossom, in `matching`, with a Demoucron embedding in `planar`. Measured on
+  planar spin glasses with couplings uniform in `{−1, +1}`:
+
+  | grid | spins | odd dual faces | **exact cut** | breakout local search | BLS short by |
+  |---|---|---|---|---|---|
+  | 10×10 | 100 | 42 | **75** | 74 | 1.33% |
+  | 20×20 | 400 | 180 | **270** | 268 | 0.74% |
+  | 40×40 | 1,600 | 742 | **1,115** | 1,089 | 2.33% |
+  | 100×100 | 10,000 | 4,848 | **7,040** | 6,864 | 2.50% |
+
+  For scale: branch and bound with a certified SDP bound *proves* 76 spins. This proves 10,000,
+  because the structure is there. The whole pipeline — blossom, embedding, dual, `T`-join,
+  two-colouring — is five pieces none of which raises anything when subtly wrong, so it is checked
+  against `branch::solve` on small instances (a completely different argument, enumeration in the
+  spin domain), and it **checks itself twice** on every run: the recovered edge set must two-colour,
+  and two disjoint computations of the cut must agree. It refuses rather than reports — on fields,
+  on non-planarity, on a cut vertex, on weights that do not scale to integers — and says which,
+  because those are four different things to do next. A periodic lattice is a torus and is refused.
 - `cargo run --release --example maxcut_shootout -- G1.txt 11624` — **the head-to-head this crate did
   not have.** Three solvers on one instance at the same number of spin flips, 8 seeds each:
 
