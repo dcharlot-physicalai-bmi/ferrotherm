@@ -181,6 +181,24 @@ double ft_tabu(ft_sim *sim, uint32_t iterations, uint32_t tenure, uint32_t resta
    which is otherwise invisible from outside. */
 uint64_t ft_tabu_iterations(const ft_sim *sim);
 
+/* Breakout local search -- the algorithm that holds the max-cut record on most of G-set. Steepest
+   descent with an adaptive perturbation between local optima. Returns the best energy found, or NaN
+   on NULL. One iteration is one SPIN FLIP, which is what ft_tabu counts too, so passing the same
+   number to both is a matched-budget comparison. */
+double ft_bls(ft_sim *sim, uint32_t iterations);
+
+/* Local optima the last ft_bls visited. A run with a handful of descents spent its budget inside
+   one basin and is a descent, not a breakout search. */
+uint64_t ft_bls_descents(const ft_sim *sim);
+
+/* Flips the last ft_bls actually made, which is not always the budget it was given. */
+uint64_t ft_bls_iterations(const ft_sim *sim);
+
+/* The largest jump magnitude the last ft_bls reached. It grows only when a descent returns to the
+   immediately previous local optimum, so a value above the initial L0 is evidence the adaptive rule
+   fired rather than idled. */
+uint32_t ft_bls_max_jump(const ft_sim *sim);
+
 /* Population annealing on a linear ladder from beta = 0 to beta_max in `stages` steps. Returns the
    best energy found, or NaN on NULL or a bad beta_max. Starting at zero, where Z = 2^n exactly, is
    what makes ft_popanneal_ln_z an absolute free energy rather than a ratio. */

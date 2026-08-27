@@ -143,9 +143,9 @@ pub fn tools() -> Json {
              the search tree, and a run that hit its node budget says so rather than claiming one.",
             vec![
                 ("graph", schema_graph()),
-                ("method", prop("string", "\"tabu\", \"population\" or \"branch\". Default \"tabu\".")),
+                ("method", prop("string", "\"tabu\", \"breakout\", \"population\" or \"branch\". Default \"tabu\". \"breakout\" is breakout local search, the algorithm that holds the max-cut record on most of the G-set benchmark: steepest descent with an adaptive perturbation between local optima. One iteration is one spin flip for both \"tabu\" and \"breakout\", so giving them the same number is a matched-budget comparison. Check \"descents\" in the reply -- a run with a handful of them spent its budget inside one basin and is a descent, not a breakout search.")),
                 ("seed", prop("integer", "Random seed. Default 0.")),
-                ("iterations", prop("integer", "tabu: flips to run. Default 50000. Check \"iterations_run\" in the reply -- a shorter run was truncated.")),
+                ("iterations", prop("integer", "tabu and breakout: flips to run. Default 50000. Check \"iterations_run\" in the reply -- a shorter run was truncated.")),
                 ("tenure", prop("integer", "tabu: how many iterations a flipped spin stays forbidden. Default 0, which scales it to the graph.")),
                 ("restart_after", prop("integer", "tabu: restart from a fresh state after this many iterations with no improvement. Default 5000; 0 never restarts.")),
                 ("population", prop("integer", "population: number of chains. Default 1000. rho is bounded by this, and rho near it means the population collapsed onto one ancestor.")),

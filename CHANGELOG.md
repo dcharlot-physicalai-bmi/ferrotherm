@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.27.0
+
+### Breakout local search, and the head-to-head this crate did not have
+
+`tabu` is the baseline a new max-cut heuristic has to beat. `bls` is the thing that beat it: Benlic
+& Hao's breakout local search improved the best-known cut on **33** of 71 G-set instances and
+matched it on 35 more. A stack reporting a max-cut number without being able to run this is
+reporting a number from the wrong decade.
+
+It is descent plus a perturbation that thinks. The descent has **no tabu list at all** — the paper
+is explicit that this is the point rather than an omission, arguing that diversification during
+descent is what tabu search and annealing both get wrong and that the compromise matters only once a
+local optimum is reached. What happens there is the algorithm: three move sets (highest-gain spin;
+highest-gain from each side; uniformly random), a jump magnitude `L` that grows **only when a
+descent lands on the same optimum as last time**, and a directed-versus-random mix following
+`P = max(e^(−ω/T), P0)` in the count of consecutive non-improving descents.
+
+`examples/maxcut_shootout` runs three solvers on one instance at the same number of spin flips,
+8 seeds each:
+
+| instance | degree | parallel tempering | tabu search | **breakout local search** | best known |
+|---|---|---|---|---|---|
+| G11 | 4.0 | 556 | 560 | **562** | 564 |
+| G14 | 11.7 | 3045 | **3057** | 3054 | 3064 |
+| G1 | 47.9 | 11612 | 11622 | **11624** | 11624 |
+
+BLS matches the world best-known cut on G1 and wins two of three — the result the literature
+predicts, and the first time this crate could check it.
+
+### The first version of that table was measured in the wrong unit
+
+It gave parallel tempering `budget` flips and gave tabu and BLS `budget / n`, because their *ledger*
+charge is `n` move evaluations per flip — and a budget in ledger samples is not a budget in flips.
+At n = 800 that handed the deterministic searches **500 flips against tempering's 320,000**, and the
+table read as a clean sweep for tempering on every instance, with BLS last. The tell was in a column
+that was already being printed: 12 to 26 descents. A search that visits twenty local optima on an
+800-node graph has not run.
+
+The asymmetry that remains is stated rather than hidden: tempering pays `O(degree)` to make a flip
+where tabu and BLS pay `O(n)` to **choose** one, because neither has the Fiduccia–Mattheyses bucket
+structure the paper uses. A matched-flip table flatters the deterministic searches on quality and
+says nothing about what their flips cost. There is no single budget fair to both, and naming the
+asymmetry beats pretending there is.
+
+### The published pseudo-code is ambiguous, and that is a parameter
+
+Algorithm 1 sets `ω ← 0` on an improvement; it also sets `ω ← 0` on the stagnation reset; and
+Algorithm 2 branches on `ω = 0` to apply the *random* perturbation — whose own comment says it is
+for the stagnation case. By the time the perturbation procedure sees `ω`, the two paths are
+indistinguishable. `Params::random_after_improvement` carries both readings, defaulting to the
+pseudo-code as written, and a test asserts they produce measurably different searches. A parameter
+is the honest way to carry an ambiguity in a source; picking one silently is not.
+
+### An off-by-one the Rust test could not see
+
+`iterations_run` came back as 20,001 against a 20,000 budget. The `M2` perturbation applies **two**
+moves and the budget was only checked before the pair, so the second went through after the first
+had reached the ceiling. The Rust test asserted the budget was spent — on one ferromagnet, at one
+budget, where the pair never straddled the boundary. The HTTP test failed instead, on a different
+instance at a different budget. The test now sweeps three budgets and six instances, which is what
+it should have done to be a test of the property rather than of an example.
+
+### Reachable everywhere on the same day
+
+Four C ABI symbols (`ft_bls`, `ft_bls_descents`, `ft_bls_iterations`, `ft_bls_max_jump`) on the
+header, Python, Zig and Julia, plus `"method": "breakout"` on HTTP and MCP with the full
+perturbation breakdown in the reply. 107 C ABI symbols now reach every surface that should have
+them. `descents` is exported everywhere because it is the number that says whether the algorithm
+ran: a handful means the budget was spent inside one basin, and the energy alone would not say so.
+
 ## 0.26.0
 
 ### A certified SDP bound inside the branch-and-bound tree, on by default

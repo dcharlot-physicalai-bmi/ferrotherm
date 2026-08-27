@@ -100,6 +100,7 @@ pub mod branch;
 pub mod gset;
 pub mod popanneal;
 pub mod tabu;
+pub mod bls;
 pub mod sdp;
 pub mod lp;
 pub mod ommx;

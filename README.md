@@ -133,9 +133,32 @@ thermodynamic-computing corpus currently leaves empty.
   It saturates because **the tree closes above that depth** once the bound is on — which means
   depth was never the real control. `sdp_min_free` and `sdp_max_free` are: too small to be worth a
   Cholesky, or too large to afford one.
-- `cargo test --lib tabu:: popanneal:: branch::` — **the three solvers a max-cut result is expected
+- `cargo run --release --example maxcut_shootout -- G1.txt 11624` — **the head-to-head this crate did
+  not have.** Three solvers on one instance at the same number of spin flips, 8 seeds each:
+
+  | instance | degree | parallel tempering | tabu search | **breakout local search** | best known |
+  |---|---|---|---|---|---|
+  | G11 | 4.0 | 556 | 560 | **562** | 564 |
+  | G14 | 11.7 | 3045 | **3057** | 3054 | 3064 |
+  | G1 | 47.9 | 11612 | 11622 | **11624** | 11624 |
+
+  BLS matches the world best-known cut on G1 and wins two of three; that is the result the
+  literature predicts, and it is the first time this crate has been able to check it. **The budget
+  is flips, not seconds** — a wall-clock comparison needs a quiet machine, and the asymmetry it
+  hides is stated in the example: tempering pays `O(degree)` to make a flip where tabu and BLS pay
+  `O(n)` to choose one.
+- `cargo test --lib tabu:: bls:: popanneal:: branch::` — **the four solvers a max-cut result is expected
   to be measured against.** `tabu` is the mandatory baseline in the literature, with the incremental
-  gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updating in `O(degree)` per flip. `popanneal` is
+  gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updating in `O(degree)` per flip. `bls` is breakout local
+  search (Benlic & Hao 2013), which improved the best-known cut on 33 of 71 G-set instances and is
+  the record holder on most of them: descent with **no tabu list at all** — the paper argues
+  diversification during descent is the mistake — and an adaptive perturbation between local optima.
+  The jump `L` grows only when a descent lands on *the same* optimum as last time, and the mix of
+  directed and random perturbations follows `P = max(e^(−ω/T), P0)` in the count of consecutive
+  non-improving descents. Its published pseudo-code is genuinely ambiguous about whether an
+  *improving* descent is also followed by a random perturbation — `ω ← 0` means both "just improved"
+  and "just stagnated" by the time the perturbation procedure sees it — so both readings are a
+  parameter and a test asserts they are different searches. `popanneal` is
   population annealing: `R` chains down one ladder with resampling, which yields two things a single
   annealed chain cannot — `ln Z` from the telescoping product of resampling normalisations (absolute
   when the ladder starts at `β = 0`, where `Z = 2ⁿ` exactly), and `ρ = (Σ_f n_f²)/R` over ancestor

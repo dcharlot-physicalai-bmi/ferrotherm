@@ -60,7 +60,8 @@ export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
 export node_updates, joules_z1, onsager, library_path, close!
-export tabu!, tabu_iterations, population_anneal!, branch!, bounds, gap
+export tabu!, tabu_iterations, breakout!, population_anneal!, branch!, bounds, gap
+export BreakoutRun
 export PopulationRun, BranchResult, Bounds, trustworthy, best, tightest
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
@@ -211,6 +212,10 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_exact_ground_state Cuint SimPtr Cuint Ptr{Int8} Cuint
 @cfn ft_tabu Cdouble SimPtr Cuint Cuint Cuint
 @cfn ft_tabu_iterations Culonglong SimPtr
+@cfn ft_bls Cdouble SimPtr Cuint
+@cfn ft_bls_descents Culonglong SimPtr
+@cfn ft_bls_iterations Culonglong SimPtr
+@cfn ft_bls_max_jump Cuint SimPtr
 @cfn ft_popanneal Cdouble SimPtr Cuint Cuint Cdouble Cuint
 @cfn ft_popanneal_ln_z Cdouble SimPtr
 @cfn ft_popanneal_rho Cdouble SimPtr
@@ -568,6 +573,35 @@ Nothing else in Julia reports `beta_eff` or `noise_floor` at all.
 # `energy` recomputes it from that state rather than trusting the number returned. They compose:
 # `anneal!`, then `tabu!` from where annealing stopped, then `branch!` with that as its incumbent.
 # The `!` is not decoration -- these mutate the simulation.
+
+"""A breakout-local-search run, with the evidence that it actually broke out."""
+struct BreakoutRun
+    energy::Float64
+    "Local optima visited. A handful means the budget was spent inside one basin."
+    descents::Int
+    iterations_run::Int
+    "The largest jump reached. Above the initial L0 means the adaptive rule fired."
+    max_jump::Int
+end
+
+"""
+    breakout!(s; iterations = 50_000)
+
+Breakout local search — the algorithm that holds the max-cut record on most of G-set.
+
+Steepest descent with an adaptive perturbation between local optima. One iteration is one **spin
+flip**, the same unit `tabu!` counts, so giving both the same number is a matched-budget comparison
+— the only comparison that is honest without a quiet machine.
+
+Check `descents`: a run with a handful of them spent its budget inside one basin and is a descent,
+not a breakout search.
+"""
+function breakout!(s::Simulation; iterations::Integer = 50_000)
+    _live(s)
+    e = ft_bls(s.handle, Cuint(max(1, iterations)))
+    BreakoutRun(e, Int(ft_bls_descents(s.handle)), Int(ft_bls_iterations(s.handle)),
+                Int(ft_bls_max_jump(s.handle)))
+end
 
 """A population-annealing run, with the diagnostic that says whether to believe it."""
 struct PopulationRun

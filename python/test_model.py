@@ -506,6 +506,7 @@ def test_every_solver_leaves_the_state_whose_energy_it_reported():
     """The number returned is a claim about ``spins``, not a separate answer."""
     for name, run in [
         ("tabu", lambda s: s.tabu(iterations=5_000)),
+        ("breakout", lambda s: s.breakout(iterations=5_000).energy),
         ("population_anneal", lambda s: s.population_anneal(population=64, stages=20).energy),
         ("branch", lambda s: s.branch(max_nodes=2_000_000).energy),
     ]:
@@ -578,3 +579,15 @@ def test_the_gap_is_zero_exactly_when_the_state_is_provably_optimal():
     loose = _frustrated_chain().build(beta=1.0, seed=7)
     loose.spins = [1] * 12  # every bond satisfied except the frustrated one is NOT this state
     assert loose.gap() > sim.gap() - 1e-9
+
+
+def test_breakout_reports_the_evidence_that_it_broke_out():
+    """The claim BLS makes is about what happens BETWEEN local optima."""
+    sim = _frustrated_chain(20).build(beta=1.0, seed=9)
+    r = sim.breakout(iterations=20_000)
+    assert r.iterations_run == 20_000
+    assert r.descents > 1, "a run with one descent never left its first basin"
+    assert r.max_jump >= 1
+    assert math.isclose(r.energy, sim.energy, abs_tol=1e-9)
+    # And it must not do worse than the descent it is built on.
+    assert r.energy <= sim.bounds().best + abs(sim.bounds().best) + 1e-9

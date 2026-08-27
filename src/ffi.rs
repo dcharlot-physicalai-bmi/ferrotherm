@@ -55,6 +55,8 @@ pub struct Sim {
     cert: Option<crate::certify::Certificate>,
     /// The last tabu outcome, for [`ft_tabu_iterations`].
     tb: Option<crate::tabu::Outcome>,
+    /// The last breakout-local-search outcome, for the `ft_bls_*` accessors.
+    bl: Option<crate::bls::Outcome>,
     /// The last population-annealing outcome, for the `ft_popanneal_*` accessors.
     pa: Option<crate::popanneal::Outcome>,
     /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
@@ -71,7 +73,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, pa: None, bb: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pa: None, bb: None }))
     }
 }
 
@@ -2539,6 +2541,54 @@ pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()).map_or(0, |o| o.nodes)
 }
 
+/// Breakout local search — the algorithm that holds the max-cut record on most of G-set.
+///
+/// Steepest descent with an adaptive perturbation between local optima; see [`crate::bls`] for what
+/// makes it different from [`ft_tabu`]. Returns the best energy found, or NaN on a null handle.
+///
+/// One iteration is one **spin flip**, which is also what [`ft_tabu`] counts — so passing the same
+/// number to both is a matched-budget comparison, and it is the only comparison this ABI can offer
+/// honestly: a wall-clock one needs a quiet machine.
+#[no_mangle]
+pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let p = crate::bls::Params {
+        iterations: iterations.max(1) as usize,
+        ..crate::bls::Params::default()
+    };
+    let out = crate::bls::search_metered(&s.graph, &p, s.seed, Some(&mut s.ledger));
+    if out.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&out.state);
+    }
+    let e = out.energy;
+    s.bl = Some(out);
+    e
+}
+
+/// Local optima the last [`ft_bls`] visited. 0 if there was none.
+///
+/// The number that says whether the search had room to work: a run with a handful of descents spent
+/// its budget inside one basin and is a descent, not a breakout search.
+#[no_mangle]
+pub extern "C" fn ft_bls_descents(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.descents as u64)
+}
+
+/// Flips the last [`ft_bls`] actually made, which is not always the budget it was given.
+#[no_mangle]
+pub extern "C" fn ft_bls_iterations(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.iterations_run as u64)
+}
+
+/// The largest jump magnitude the last [`ft_bls`] reached — how hard it had to work to escape.
+///
+/// It grows only when a descent returns to the immediately previous local optimum, so a value above
+/// the initial `L0` is direct evidence the adaptive rule fired rather than idled.
+#[no_mangle]
+pub extern "C" fn ft_bls_max_jump(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.max_jump as u32)
+}
+
 /// A **lower bound on the ground energy** from decoupling every term. The cheapest and weakest.
 ///
 /// `min_s E(s) ≥ −Σ|h| − Σ|J|`, in `O(edges)`. Every bound here is sound on its own, so a caller
@@ -2594,6 +2644,7 @@ mod solver_ffi_tests {
     fn every_solver_leaves_the_state_its_energy_belongs_to() {
         for (name, run) in [
             ("tabu", (|s: *mut Sim| ft_tabu(s, 4_000, 0, 1_000)) as fn(*mut Sim) -> f64),
+            ("bls", |s: *mut Sim| ft_bls(s, 4_000)),
             ("popanneal", |s: *mut Sim| ft_popanneal(s, 64, 2, 6.0, 20)),
             ("branch", |s: *mut Sim| ft_branch(s, 2_000_000)),
         ] {
@@ -2603,6 +2654,11 @@ mod solver_ffi_tests {
             assert!(e.is_finite(), "{name} returned {e}");
             if name == "tabu" {
                 assert_eq!(ft_tabu_iterations(sim), 4_000, "the whole budget, not a truncated run");
+            }
+            if name == "bls" {
+                assert_eq!(ft_bls_iterations(sim), 4_000, "the whole budget, not a truncated run");
+                assert!(ft_bls_descents(sim) > 0, "a search with no descents is not a search");
+                assert!(ft_bls_max_jump(sim) >= 1);
             }
             assert!(
                 (ft_energy(sim) - e).abs() < 1e-9,
@@ -2704,6 +2760,10 @@ mod solver_ffi_tests {
     fn a_null_handle_returns_rather_than_dereferencing() {
         let n: *mut Sim = core::ptr::null_mut();
         assert!(ft_tabu(n, 10, 0, 0).is_nan());
+        assert!(ft_bls(n, 10).is_nan());
+        assert_eq!(ft_bls_descents(n), 0);
+        assert_eq!(ft_bls_iterations(n), 0);
+        assert_eq!(ft_bls_max_jump(n), 0);
         assert!(ft_popanneal(n, 8, 1, 1.0, 4).is_nan());
         assert!(ft_branch(n, 10).is_nan());
         assert!(ft_bound_decoupled(n).is_nan());

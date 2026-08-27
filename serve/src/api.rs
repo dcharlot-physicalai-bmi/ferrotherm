@@ -587,6 +587,42 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                 ],
             )
         }
+        "breakout" => {
+            let iterations = opt_usize(req, "iterations", 50_000).clamp(1, 100_000_000);
+            // One iteration is one FLIP here, and the ledger charges n move evaluations for it --
+            // two different numbers measuring two different things. The ceiling is on the
+            // evaluations, because that is the work.
+            let budget = (g.n as u64).saturating_mul(iterations as u64);
+            if budget > MAX_NODE_UPDATES {
+                return Err(format!(
+                    "{budget} move evaluations requested, over the {MAX_NODE_UPDATES} ceiling"
+                ));
+            }
+            let p = ferrotherm::bls::Params { iterations, ..ferrotherm::bls::Params::default() };
+            let o = ferrotherm::bls::search_metered(&g, &p, seed, Some(&mut led));
+            let pert = o.perturbations;
+            (
+                o.state,
+                vec![
+                    ("iterations_requested", Json::n(iterations as f64)),
+                    ("iterations_run", Json::n(o.iterations_run as f64)),
+                    // The claim BLS makes is about what happens BETWEEN local optima, so a run with
+                    // a handful of descents did not run the algorithm -- and the energy alone would
+                    // not say so.
+                    ("descents", Json::n(o.descents as f64)),
+                    ("max_jump", Json::n(o.max_jump as f64)),
+                    ("returns_to_previous_optimum", Json::n(o.returns as f64)),
+                    (
+                        "perturbations",
+                        Json::obj(vec![
+                            ("directed_one", Json::n(pert.directed_one as f64)),
+                            ("directed_two", Json::n(pert.directed_two as f64)),
+                            ("random", Json::n(pert.random as f64)),
+                        ]),
+                    ),
+                ],
+            )
+        }
         "population" => {
             let population = opt_usize(req, "population", 1_000).clamp(1, 1_000_000);
             let sweeps = opt_usize(req, "sweeps", 4).clamp(1, 100_000);
@@ -670,7 +706,8 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
         }
         other => {
             return Err(format!(
-                "unknown method {other:?}; expected \"tabu\", \"population\" or \"branch\""
+                "unknown method {other:?}; expected \"tabu\", \"breakout\", \"population\" \
+                 or \"branch\""
             ))
         }
     };
@@ -792,7 +829,7 @@ pub fn capabilities() -> Json {
                 op("energy", "Energy and magnetization of a given state.", "graph, state"),
                 op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
                 op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
-                op("optimize", "Minimise by tabu search, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, return_state"),
+                op("optimize", "Minimise by tabu search, breakout local search, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
             ]),
         ),
@@ -1458,6 +1495,19 @@ mod tests {
         assert_eq!(br.get("proved_optimal").and_then(|v| v.as_bool()), Some(false));
         assert_eq!(br.get("hit_limit").and_then(|v| v.as_bool()), Some(true));
 
+        let bl = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{g},"method":"breakout","iterations":20000}}"#)).unwrap()).unwrap();
+        assert_eq!(bl.get("iterations_run").and_then(|v| v.as_f64()), Some(20000.0));
+        // The claim BLS makes is about what happens BETWEEN local optima. A run with one descent
+        // spent 20,000 flips inside a single basin and is not the algorithm.
+        assert!(bl.get("descents").unwrap().as_f64().unwrap() > 1.0, "{:?}", bl.get("descents"));
+        let mix = bl.get("perturbations").expect("the adaptive mix is the algorithm");
+        let total: f64 = ["directed_one", "directed_two", "random"]
+            .iter()
+            .map(|k| mix.get(k).and_then(|v| v.as_f64()).unwrap_or(-1.0))
+            .sum();
+        assert!(total > 0.0, "no perturbation of any kind fired: {mix:?}");
+
         let e = dispatch("optimize", &parse(&format!(r#"{{"graph":{g},"method":"anneal"}}"#)).unwrap());
         assert!(e.unwrap_err().contains("unknown method"), "a typo must not silently pick a default");
     }
@@ -1466,7 +1516,7 @@ mod tests {
     #[test]
     fn the_energy_over_http_belongs_to_the_state_over_http() {
         let g = r#"{"builtin":"lattice2d","l":6,"j":1.0}"#;
-        for method in ["tabu", "population", "branch"] {
+        for method in ["tabu", "breakout", "population", "branch"] {
             let r = dispatch("optimize", &parse(&format!(
                 r#"{{"graph":{g},"method":"{method}","iterations":2000,"population":32,"stages":10,"max_nodes":50000}}"#
             )).unwrap()).unwrap();

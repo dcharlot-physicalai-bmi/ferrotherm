@@ -175,6 +175,23 @@ pub const Sim = struct {
         return c.ft_tabu_iterations(self.h);
     }
 
+    /// Breakout local search -- the algorithm that holds the max-cut record on most of G-set.
+    ///
+    /// Steepest descent with an adaptive perturbation between local optima. One iteration is one
+    /// SPIN FLIP, which is what `tabu` counts too, so giving both the same number is a
+    /// matched-budget comparison -- the only comparison that is honest without a quiet machine.
+    ///
+    /// Check `descents`: a run with a handful of them spent its budget inside one basin.
+    pub fn breakout(self: Sim, iterations: u32) BreakoutRun {
+        const e = c.ft_bls(self.h, iterations);
+        return .{
+            .energy = e,
+            .descents = c.ft_bls_descents(self.h),
+            .iterations_run = c.ft_bls_iterations(self.h),
+            .max_jump = c.ft_bls_max_jump(self.h),
+        };
+    }
+
     /// Population annealing on a linear ladder from beta = 0 to `beta_max`.
     ///
     /// Starting at zero, where `Z = 2^n` exactly, is what makes `PopulationRun.ln_z` an absolute
@@ -219,6 +236,16 @@ pub const Sim = struct {
     pub fn deinit(self: Sim) void {
         c.ft_free(self.h);
     }
+};
+
+/// A breakout-local-search run, with the evidence that it actually broke out.
+pub const BreakoutRun = struct {
+    energy: f64,
+    /// Local optima visited. A handful means the budget was spent inside one basin.
+    descents: u64,
+    iterations_run: u64,
+    /// The largest jump reached. Above the initial L0 means the adaptive rule fired.
+    max_jump: u32,
 };
 
 /// A population-annealing run, with the diagnostic that says whether to believe it.
@@ -1532,6 +1559,18 @@ test "branch and bound withholds a proof when the budget runs out" {
     const r = sim.branch(200);
     try std.testing.expect(!r.proved);
     try std.testing.expect(r.nodes <= 201);
+}
+
+test "breakout local search reports the evidence that it broke out" {
+    // The claim BLS makes is about what happens BETWEEN local optima, so a run that never left one
+    // has not run the algorithm -- and nothing in the energy alone would say so.
+    var sim = try frustratedRing(24);
+    defer sim.deinit();
+    const r = sim.breakout(20_000);
+    try std.testing.expectApproxEqAbs(r.energy, sim.energy(), 1e-9);
+    try std.testing.expectEqual(@as(u64, 20_000), r.iterations_run);
+    try std.testing.expect(r.descents > 1);
+    try std.testing.expect(r.max_jump >= 1);
 }
 
 test "no bound exceeds a ground energy the same object can prove" {

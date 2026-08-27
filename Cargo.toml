@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm"
-version = "0.26.0"
+version = "0.27.0"
 edition = "2021"
 description = "Thermodynamic computing in pure Rust: sparse energy-based models, chromatic block-Gibbs, parallel tempering, thermodynamic linear algebra, stochastic differentiable programs, a variational compiler onto device topologies, exact inference by variable elimination, planted instances with known optima, sampler certificates, and a first-class joules ledger. std-only, zero dependencies, wasm-clean, deterministic by seed."
 license = "Apache-2.0"

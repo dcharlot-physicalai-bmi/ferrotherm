@@ -307,6 +307,7 @@ end
 
 @testset "every solver leaves the state whose energy it reported" begin
     for (name, run) in [("tabu!", s -> tabu!(s; iterations = 5_000)),
+                        ("breakout!", s -> breakout!(s; iterations = 5_000).energy),
                         ("population_anneal!", s -> population_anneal!(s; population = 64, stages = 20).energy),
                         ("branch!", s -> branch!(s; max_nodes = 2_000_000).energy)]
         s = build(frustrated_ring(); beta = 1.0, seed = 3)
@@ -370,6 +371,18 @@ end
     @test isapprox(b.forest, b.decoupled; atol = 1e-9)
     # The state left behind is the proved optimum, so the gap is closed.
     @test gap(s) >= -1e-9
+    close!(s)
+end
+
+@testset "breakout reports the evidence that it broke out" begin
+    # The claim BLS makes is about what happens BETWEEN local optima, so a run that never left one
+    # has not run the algorithm -- and nothing in the energy alone would say so.
+    s = build(frustrated_ring(20); beta = 1.0, seed = 9)
+    r = breakout!(s; iterations = 20_000)
+    @test r.iterations_run == 20_000
+    @test r.descents > 1
+    @test r.max_jump >= 1
+    @test isapprox(r.energy, energy(s); atol = 1e-9)
     close!(s)
 end
 

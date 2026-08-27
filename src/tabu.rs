@@ -196,7 +196,11 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
 }
 
 /// `Δ_i` for every node: the energy change from flipping `i`.
-fn gains(g: &Graph, s: &[i8]) -> Vec<f64> {
+///
+/// Shared with [`crate::bls`] rather than copied. This and [`flip`] are the incremental update,
+/// which is the part most likely to drift between two implementations and the part where a drift
+/// is invisible -- a wrong `Δ` does not raise anything, it quietly makes a search worse.
+pub(crate) fn gains(g: &Graph, s: &[i8]) -> Vec<f64> {
     (0..g.n)
         .map(|i| {
             let mut field = g.h[i];
@@ -209,7 +213,7 @@ fn gains(g: &Graph, s: &[i8]) -> Vec<f64> {
 }
 
 /// Flip `i` and repair the affected gains in `O(degree)`.
-fn flip(g: &Graph, s: &mut [i8], delta: &mut [f64], i: usize) {
+pub(crate) fn flip(g: &Graph, s: &mut [i8], delta: &mut [f64], i: usize) {
     s[i] = -s[i];
     delta[i] = -delta[i];
     let si = s[i] as f64;

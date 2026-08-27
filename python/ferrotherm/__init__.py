@@ -32,6 +32,7 @@ __all__ = [
     "Answer",
     "Bounds",
     "BranchResult",
+    "BreakoutRun",
     "Certificate",
     "PopulationRun",
     "Literal",
@@ -55,7 +56,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.26.0"
+__version__ = "0.27.0"
 
 
 # ---- library loading ------------------------------------------------------------------------
@@ -146,6 +147,10 @@ _exact_width = _sig("ft_exact_width", c_uint32, [_p])
 _exact_ground_state = _sig("ft_exact_ground_state", c_uint32, [_p, c_uint32, POINTER(c_int8), c_uint32])
 _tabu = _sig("ft_tabu", c_double, [_p, c_uint32, c_uint32, c_uint32])
 _tabu_iterations = _sig("ft_tabu_iterations", c_uint64, [_p])
+_bls = _sig("ft_bls", c_double, [_p, c_uint32])
+_bls_descents = _sig("ft_bls_descents", c_uint64, [_p])
+_bls_iterations = _sig("ft_bls_iterations", c_uint64, [_p])
+_bls_max_jump = _sig("ft_bls_max_jump", c_uint32, [_p])
 _popanneal = _sig("ft_popanneal", c_double, [_p, c_uint32, c_uint32, c_double, c_uint32])
 _popanneal_ln_z = _sig("ft_popanneal_ln_z", c_double, [_p])
 _popanneal_rho = _sig("ft_popanneal_rho", c_double, [_p])
@@ -275,6 +280,25 @@ class Bounds:
         sdp = "refused" if self.sdp is None else f"{self.sdp:.6g}"
         return (f"<Bounds best={self.best:.6g} by {self.which}; decoupled={self.decoupled:.6g} "
                 f"forest={self.forest:.6g} odd_cycle={self.odd_cycle:.6g} sdp={sdp}>")
+
+
+class BreakoutRun:
+    """A breakout-local-search run, with the evidence that it actually broke out.
+
+    ``descents`` is the number of local optima visited and ``max_jump`` the largest perturbation it
+    had to reach for. A run with few descents never left its first basin; a ``max_jump`` still at
+    the initial value means the adaptive rule never fired.
+    """
+
+    __slots__ = ("energy", "descents", "iterations_run", "max_jump")
+
+    def __init__(self, energy: float, descents: int, iterations_run: int, max_jump: int) -> None:
+        self.energy, self.descents = energy, descents
+        self.iterations_run, self.max_jump = iterations_run, max_jump
+
+    def __repr__(self) -> str:
+        return (f"<BreakoutRun {self.energy:.6g} after {self.descents} descents, "
+                f"{self.iterations_run} flips, L<={self.max_jump}>")
 
 
 class BranchResult:
@@ -637,6 +661,26 @@ is how a dropped GPU dispatch turns into a believable energy.
         """Iterations the last :meth:`tabu` actually ran, or 0 if there was none."""
         self._live()
         return int(_tabu_iterations(self._h))
+
+    def breakout(self, iterations: int = 50_000) -> "BreakoutRun":
+        """Breakout local search: steepest descent, with an adaptive perturbation between optima.
+
+        The algorithm that holds the max-cut record on most of G-set. One iteration is one spin
+        flip — the same unit :meth:`tabu` counts — so giving both the same number is a
+        matched-budget comparison, which is the only comparison that is honest without a quiet
+        machine.
+
+        Check :attr:`BreakoutRun.descents`: a run with a handful of them spent its budget inside
+        one basin and is a descent, not a breakout search.
+        """
+        self._live()
+        e = float(_bls(self._h, int(iterations)))
+        return BreakoutRun(
+            energy=e,
+            descents=int(_bls_descents(self._h)),
+            iterations_run=int(_bls_iterations(self._h)),
+            max_jump=int(_bls_max_jump(self._h)),
+        )
 
     def population_anneal(self, population: int = 1_000, sweeps: int = 4,
                           beta_max: float = 6.0, stages: int = 100) -> "PopulationRun":
