@@ -1,28 +1,28 @@
 [[ferrotherm]]
-git-tree-sha1 = "9ccb109749ab7780a1a1ec37997e7be50abd8465"
+git-tree-sha1 = "6b2b4b133d859db6a570c961beb2b52cbb690de2"
 arch = "aarch64"
 lazy = true
 os = "macos"
 
     [[ferrotherm.download]]
-    sha256 = "cffac99ca1bd8b8ecf9aa98ff26bc6052a4bf2c3412d5766f5a21ef488821486"
-    url = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/releases/download/v0.25.0/ferrotherm.v0.25.0.aarch64-apple-darwin.tar.gz"
+    sha256 = "adf0fd7be67364c130285c77de27d3d4f2e5eb67b3f88caa5e1974955229b2aa"
+    url = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/releases/download/v0.25.1/ferrotherm.v0.25.1.aarch64-apple-darwin.tar.gz"
 [[ferrotherm]]
-git-tree-sha1 = "67fc315ca569f8abdff3d1422540a3fbaf58ef8a"
+git-tree-sha1 = "624d17390abbb7e45062f6eb2cbc9217dd47dc8b"
 arch = "x86_64"
 lazy = true
 libc = "glibc"
 os = "linux"
 
     [[ferrotherm.download]]
-    sha256 = "84ff5cac97887a26c9dd7af5356f14f01fe266b74e2f0ea84cf7080e2fb38416"
-    url = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/releases/download/v0.25.0/ferrotherm.v0.25.0.x86_64-linux-gnu.tar.gz"
+    sha256 = "60e14cd5fbca64e5ba99f8d33e90e847448505f509e1b3d1ccfa3f685d5a17dc"
+    url = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/releases/download/v0.25.1/ferrotherm.v0.25.1.x86_64-linux-gnu.tar.gz"
 [[ferrotherm]]
-git-tree-sha1 = "456726cfaa4c436f5239946147f9991d84deaaf9"
+git-tree-sha1 = "9ba7d547437eeb8d0d0661209f4cacf3ab2b8c00"
 arch = "x86_64"
 lazy = true
 os = "windows"
 
     [[ferrotherm.download]]
-    sha256 = "4840ca6a0e1374e850e47a23dbaa424ddf39b6e80ac9c2a81a4d3c405b7a8ceb"
-    url = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/releases/download/v0.25.0/ferrotherm.v0.25.0.x86_64-w64-mingw32.tar.gz"
+    sha256 = "a3c99ce080ab297d8f1598a2b250f700c728ab8fa23e5da966bb3f6d3677cdf0"
+    url = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/releases/download/v0.25.1/ferrotherm.v0.25.1.x86_64-w64-mingw32.tar.gz"
