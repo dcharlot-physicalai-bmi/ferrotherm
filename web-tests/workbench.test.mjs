@@ -32,7 +32,7 @@ const check = (name, ok, detail = "") => {
   if (!ok) failed++;
 };
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ["--enable-unsafe-webgpu"] });
 const page = await browser.newPage();
 const errs = [];
 page.on("pageerror", e => errs.push("pageerror: " + e.message));
@@ -475,6 +475,75 @@ const run = (body) => page.evaluate((json) => {
   // A model with no single beta must not blank the readout by setting the slider from undefined.
   check("and a spec with no beta leaves the slider readable", /^\d/.test(preset.beta.trim()),
         JSON.stringify(preset.beta));
+}
+
+// --- the live view must not be frame-bound ---------------------------------------------------------
+//
+// It ran ONE sweep per requestAnimationFrame, which pinned it near 60 sweeps a second on every
+// model and every machine: a 5-ring and a 512x512 lattice sampled at exactly the same rate, and
+// making the sampler faster moved that number by nothing. The cap was the frame, not the physics.
+//
+// The threshold below is deliberately far above 60 rather than near whatever this machine happens
+// to manage. A rate assertion tuned to one machine fails on a slower one and says nothing on a
+// faster one; this asks only whether the frame is still the ceiling, which is a structural question
+// with a structural answer.
+{
+  const rate = await page.evaluate(async () => {
+    const sel = document.getElementById("preset");
+    sel.value = "frustrated";
+    sel.dispatchEvent(new Event("change"));
+    await new Promise(r => setTimeout(r, 150));
+    const read = () => +document.getElementById("r-s").textContent.replace(/,/g, "");
+    const before = read();
+    document.getElementById("run").click();
+    await new Promise(r => setTimeout(r, 1200));
+    document.getElementById("run").click();
+    return read() - before;
+  });
+  check("the live view is not pinned to one sweep per frame", rate > 5000,
+        `${rate.toLocaleString()} sweeps in ~1.2s; one-per-frame would be about 72`);
+}
+
+// --- the GPU path must not be paying for round trips -----------------------------------------------
+//
+// docs/ide.html used to build a params buffer, a bind group, an encoder and a SUBMIT per
+// (sweep x colour class): 400 driver round trips for the 200-sweep panel, plus a fresh
+// requestDevice and shader compile on every call. gpu/src/lib.rs records the same bug natively and
+// what it looked like -- "~60 ms almost independent of node count" -- and names the tell:
+//
+//     Constant time under a growing workload is the signature of paying for round trips
+//     rather than arithmetic.
+//
+// So this asserts the SHAPE rather than a rate: per-node cost must FALL as the model grows. A
+// wall-clock threshold would be a statement about whatever machine ran it; this is a statement
+// about where the time goes, and it holds on a slow machine and a fast one alike.
+//
+// Skipped where WebGPU is absent, because a headless runner without it can say nothing here.
+{
+  const hasGpu = await page.evaluate(async () => {
+    if (!navigator.gpu) return false;
+    try { return !!(await navigator.gpu.requestAdapter()); } catch { return false; }
+  });
+  if (!hasGpu) {
+    console.log("SKIP  the GPU path shape   no WebGPU adapter in this browser");
+  } else {
+    const pts = [];
+    for (const l of [32, 128]) {
+      pts.push(await page.evaluate(async l => {
+        document.getElementById("src").value =
+          JSON.stringify({ graph: { builtin: "lattice2d", l, j: 1.0 }, beta: 0.44, seed: 1 });
+        document.getElementById("src").dispatchEvent(new Event("change"));
+        await new Promise(r => setTimeout(r, 250));
+        const g = await gpuSweep(200);
+        return { n: W.ft_len(sim), ms: g.ms };
+      }, l));
+    }
+    const per = pts.map(p => p.ms / p.n);
+    check("the GPU path is arithmetic-bound, not round-trip-bound", per[1] < per[0] * 0.9,
+          `${(per[0] * 1000).toFixed(2)} us/node at n=${pts[0].n} -> ${(per[1] * 1000).toFixed(2)} at n=${pts[1].n}`);
+    check("and the spins actually moved", pts.every(p => p.ms > 0),
+          "a silently-failed dynamic offset leaves the state frozen and the timing near zero");
+  }
 }
 
 check("no page errors", errs.length === 0, errs.join(" | "));

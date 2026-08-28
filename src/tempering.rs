@@ -51,6 +51,54 @@ pub struct TemperingResult {
     pub swap_rates: Vec<f64>,
 }
 
+/// Advance every replica by `swap_every` sweeps.
+///
+/// **This is free parallelism and it changes no answer.** Each replica owns its `Sampler` and its
+/// own `Pcg`, seeded once from `seed ^ (i * 0x9E37)`, so a replica's draws depend only on its own
+/// state and its own history — never on what another replica did or on the order they ran in. That
+/// is what makes replica-level threading different from splitting a colour class, where the thread
+/// count IS part of the sample path: here the result is bit-identical whether one thread runs eight
+/// replicas or eight threads run one each.
+///
+/// The ledger is the only thing shared, and it is a counter. Each thread accumulates its own and
+/// the sums are added afterwards, which is integer addition and therefore order-independent.
+///
+/// Serial in a browser: `wasm32-unknown-unknown` has a std whose `thread::spawn` compiles and then
+/// panics at runtime, so there is nothing to spread across and the same answer comes out either way.
+pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&mut Ledger>) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if reps.len() > 1 {
+            let counted: Vec<u64> = std::thread::scope(|scope| {
+                let handles: Vec<_> = reps
+                    .iter_mut()
+                    .map(|rep| {
+                        scope.spawn(move || {
+                            let mut own = Ledger::default();
+                            for _ in 0..swap_every {
+                                rep.sweep(Some(&mut own));
+                            }
+                            own.samples
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().expect("a replica sweep")).collect()
+            });
+            if let Some(l) = ledger {
+                l.samples += counted.iter().sum::<u64>();
+            }
+            return;
+        }
+    }
+    let mut ledger = ledger;
+    for rep in reps.iter_mut() {
+        for _ in 0..swap_every {
+            rep.sweep(ledger.as_deref_mut());
+        }
+    }
+}
+
+
 /// Parallel tempering over a beta ladder. Every `swap_every` sweeps, adjacent replicas attempt a
 /// state exchange with probability min(1, exp(delta_beta * delta_E)) — the standard replica-
 /// exchange criterion, alternating even/odd pairs so a state can traverse the whole ladder.
@@ -71,11 +119,7 @@ pub fn parallel_tempering(
     let mut best = reps[r - 1].s.clone();
     let mut best_e = g.energy(&best);
     for round in 0..rounds {
-        for rep in reps.iter_mut() {
-            for _ in 0..swap_every {
-                rep.sweep(ledger.as_deref_mut());
-            }
-        }
+        advance(&mut reps, swap_every, ledger.as_deref_mut());
         // coldest replica is the optimizer; track its best
         for rep in reps.iter() {
             let e = g.energy(&rep.s);
@@ -107,6 +151,69 @@ pub fn parallel_tempering(
 
 #[cfg(test)]
 mod tests {
+
+    /// Replica-level threading must change NOTHING, and this proves it against a hand-rolled
+    /// serial reference rather than against the argument that it should.
+    ///
+    /// The reference does exactly what `advance` used to do -- one replica after another, each
+    /// with its own sampler -- so if `advance` ever grows a shared RNG, a shared best-tracker or
+    /// any cross-replica read, these two stop agreeing.
+    #[test]
+    fn replica_threading_is_bit_identical_to_running_them_one_at_a_time() {
+        let g = crate::ising::lattice2d(16, 1.0);
+        let betas = geometric_ladder(0.1, 3.0, 8);
+
+        for seed in [1u64, 0xBEEF, 0x1234_5678] {
+            let got = parallel_tempering(&g, &betas, 30, 4, seed, None);
+
+            // The serial reference, written out.
+            let r = betas.len();
+            let mut reps: Vec<Sampler> =
+                (0..r).map(|i| Sampler::new(&g, betas[i], seed ^ (i as u64 * 0x9E37))).collect();
+            let mut swap_rng = Pcg::new(seed ^ 0x5A5A, 3);
+            let mut best = reps[r - 1].s.clone();
+            let mut best_e = g.energy(&best);
+            for round in 0..30 {
+                for rep in reps.iter_mut() {
+                    for _ in 0..4 {
+                        rep.sweep(None);
+                    }
+                }
+                for rep in reps.iter() {
+                    let e = g.energy(&rep.s);
+                    if e < best_e {
+                        best_e = e;
+                        best = rep.s.clone();
+                    }
+                }
+                for i in (round % 2..r - 1).step_by(2) {
+                    let e_i = g.energy(&reps[i].s);
+                    let e_j = g.energy(&reps[i + 1].s);
+                    let arg = (betas[i + 1] - betas[i]) * (e_j - e_i);
+                    if arg >= 0.0 || swap_rng.f64() < arg.exp() {
+                        let (a, b) = reps.split_at_mut(i + 1);
+                        std::mem::swap(&mut a[i].s, &mut b[0].s);
+                    }
+                }
+            }
+
+            assert_eq!(got.best_e, best_e, "seed {seed:#x}: energy must be bit-identical");
+            assert_eq!(got.best, best, "seed {seed:#x}: state must be bit-identical");
+        }
+    }
+
+    /// And the ledger counts the same total however the replicas were spread.
+    #[test]
+    fn the_ledger_totals_the_same_across_replicas() {
+        let g = crate::ising::lattice2d(12, 1.0);
+        let betas = geometric_ladder(0.2, 2.0, 6);
+        let mut led = Ledger::default();
+        parallel_tempering(&g, &betas, 10, 3, 7, Some(&mut led));
+        // 6 replicas x 10 rounds x 3 sweeps x n nodes, and integer addition does not care in which
+        // order the threads finished.
+        assert_eq!(led.samples, 6 * 10 * 3 * g.n as u64);
+    }
+
     use super::*;
     use crate::graph::GraphBuilder;
 

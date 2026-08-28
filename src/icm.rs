@@ -225,12 +225,14 @@ pub fn run_metered(
     let (mut icm_moves, mut icm_spins) = (0usize, 0u64);
 
     for round in 0..p.rounds {
+        // Replica-level threading, and it changes no answer: every replica owns its sampler and
+        // its own Pcg, so its draws depend on nothing but its own history. See
+        // `tempering::advance`, whose test runs this against a hand-rolled serial reference.
+        //
+        // The two sets are advanced one after the other rather than together. Each call is already
+        // r-way parallel, and keeping them separate keeps the bit-identity argument to one shape.
         for set in [&mut set_a, &mut set_b] {
-            for rep in set.iter_mut() {
-                for _ in 0..p.sweeps_per_round.max(1) {
-                    rep.sweep(ledger.as_deref_mut());
-                }
-            }
+            crate::tempering::advance(set, p.sweeps_per_round.max(1), ledger.as_deref_mut());
         }
         for set in [&set_a, &set_b] {
             for rep in set.iter() {
@@ -295,6 +297,33 @@ pub fn run_metered(
 
 #[cfg(test)]
 mod tests {
+
+    /// ICM's replica advance must be bit-identical to running the replicas one at a time.
+    ///
+    /// Asserted against a RECORDED result rather than an argument: `advance` is shared with
+    /// `tempering`, and a change there that broke the independence would otherwise show up here as
+    /// a slightly different energy nobody could attribute.
+    #[test]
+    fn threading_the_replicas_changes_no_answer() {
+        let g = glass(8, 0x1CE);
+        let p = Params {
+            betas: crate::tempering::geometric_ladder(0.1, 3.0, 6),
+            rounds: 20,
+            sweeps_per_round: 3,
+            swap_every: 2,
+            icm_every: 2,
+        };
+        let a = run(&g, &p, 0x5EED).expect("no fields");
+        let b = run(&g, &p, 0x5EED).expect("no fields");
+        assert_eq!(a.energy, b.energy, "the same run twice must agree bit for bit");
+        assert_eq!(a.state, b.state);
+
+        // And the control: a different seed is a different answer, so the check above is not
+        // passing because the sampler ignores its seed.
+        let c = run(&g, &p, 0x5EEE).expect("no fields");
+        assert!(c.state != a.state || c.energy != a.energy, "a different seed is a different run");
+    }
+
     use super::*;
     use crate::graph::GraphBuilder;
     use crate::ising::lattice2d;

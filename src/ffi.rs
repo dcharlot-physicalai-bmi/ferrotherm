@@ -3814,6 +3814,35 @@ mod parallel_sweep_tests {
     }
 
     #[test]
+    fn threads_used_reports_the_chunks_that_ran_not_the_number_asked_for() {
+        // A ring of 5 two-colours into classes of 3 and 2. Asked for 4 threads, the larger class
+        // splits into chunks of ceil(3/4) = 1, so THREE run -- and the first version of this
+        // accessor answered 4, because it computed min(threads, biggest class). An accessor whose
+        // doc says "what actually ran" and returns what was asked for is worse than none.
+        let b = ft_builder_new(5);
+        for i in 0..5u32 {
+            assert_eq!(ft_builder_couple(b, i, (i + 1) % 5, -1.0), 1);
+        }
+        let s = ft_builder_build(b, 0.5, 1);
+        assert!(!s.is_null());
+        ft_sweep_par(s, 5, 4);
+        let used = ft_threads_used(s);
+        assert!(used <= 4, "cannot use more threads than were asked for: {used}");
+        assert!(used <= 3, "5 nodes over 2 colour classes cannot occupy 4 threads: {used}");
+        ft_free(s);
+
+        // And a class big enough to fill them does report the full count.
+        let b2 = ft_builder_new(400);
+        for i in 0..400u32 {
+            assert_eq!(ft_builder_couple(b2, i, (i + 1) % 400, -1.0), 1);
+        }
+        let s2 = ft_builder_build(b2, 0.5, 1);
+        ft_sweep_par(s2, 2, 4);
+        assert_eq!(ft_threads_used(s2), 4, "200 nodes per class split four ways is four threads");
+        ft_free(s2);
+    }
+
+    #[test]
     fn zero_threads_asks_the_machine_and_the_answer_is_at_least_one() {
         assert!(ft_hardware_threads() >= 1, "a machine has at least one thread");
         let s = lattice(12, 0.4, 5);

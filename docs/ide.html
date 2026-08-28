@@ -585,13 +585,42 @@ const sci = (x) => (x === 0 ? "0" : x.toExponential(2) + " J");
 
 // ---- driving -----------------------------------------------------------------------------------
 
+// How many sweeps to run per animation frame.
+//
+// This used to be 1, which pinned the live view at about sixty sweeps a second on every model --
+// a 32x32 lattice and a 512x512 one ran at exactly the same rate, and making the sampler faster
+// moved that number by nothing at all. The frame was the bottleneck, not the sampler.
+//
+// It adapts, because the right batch is entirely a function of model size: enough sweeps to fill
+// most of a frame, and not so many that the tab stops answering. TARGET_MS is deliberately under
+// half a frame so the draw, the browser and anything else the page is doing still fit.
+let perFrame = 1;
+const TARGET_MS = 7;
+
 function loop() {
   if (!running) return;
-  W.ft_sweep(sim, 1);
+  // Batching CHANGES THE SAMPLE PATH and that is fine here, but only here. `ft_sweep` reseeds from
+  // (seed ^ sweeps_done * const) on every call, so fifty calls of one sweep and one call of fifty
+  // are different -- equally valid -- paths. This is the live VIEW; every reproducible thing on
+  // this page (Certify, Verify, the bounds, the benchmark panel) calls ft_sweep with its own
+  // explicit count and is untouched by what happens here.
+  const t0 = performance.now();
+  W.ft_sweep(sim, perFrame);
+  const ms = performance.now() - t0;
+
+  // Aim at TARGET_MS, and move gently: a single slow frame -- a GC pause, another tab -- should
+  // not collapse the batch to 1 and take a hundred frames to climb back.
+  if (ms > 0.05) {
+    const want = perFrame * (TARGET_MS / ms);
+    perFrame = Math.max(1, Math.min(4096, Math.round(perFrame * 0.7 + want * 0.3)));
+  } else if (perFrame < 4096) {
+    perFrame = Math.min(4096, perFrame * 2);
+  }
+
   // A proof is about the state that was proved. One sweep later it is about a different state, and
   // a verdict that outlives its subject is the failure this whole panel exists to avoid.
   proved = false;
-  sweepsDone++;
+  sweepsDone += perFrame;
   draw();
   raf = requestAnimationFrame(loop);
 }
@@ -1017,6 +1046,9 @@ function apply() {
   // WORKS -- the worst kind, because nobody goes looking.
   certCache = null;
   proved = false;
+  // A fresh model needs its own batch size: a 512x512 lattice inheriting a 5-ring's batch of 4096
+  // would freeze the tab on the first frame.
+  perFrame = 1;
   const cel = document.getElementById("cert");
   if (cel) cel.hidden = true;
   try {
@@ -1341,12 +1373,74 @@ function wasmStr(ptrFn, lenFn) {
   return new TextDecoder().decode(b);
 }
 
+// The GPU device, shader and pipeline, built once.
+//
+// They do not depend on the model, and `requestAdapter` + `requestDevice` + a shader compile on
+// every call is a cost paid for nothing. Kept in a promise so two overlapping calls share one
+// device rather than racing to create two.
+let gpuBoot = null;
+function gpuDevice() {
+  if (gpuBoot) return gpuBoot;
+  gpuBoot = (async () => {
+    if (!navigator.gpu) throw new Error("this browser exposes no WebGPU");
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) throw new Error("no WebGPU adapter available");
+    const device = await adapter.requestDevice();
+    device.addEventListener?.("uncapturederror", e => { gpuDiag += " | GPU ERROR: " + e.error.message; });
+
+    const module = device.createShaderModule({ code: wasmStr(W.ft_shader, W.ft_shader_len) });
+    if (module.getCompilationInfo) {
+      const info = await module.getCompilationInfo();
+      const bad = info.messages.filter(m => m.type !== "info");
+      if (bad.length) {
+        gpuBoot = null;
+        throw new Error("shader did not compile:\n" +
+          bad.map(m => "  line " + m.lineNum + ":" + m.linePos + " " + m.type + ": " + m.message).join("\n"));
+      }
+    }
+
+    // AN EXPLICIT LAYOUT, because binding 0 needs `hasDynamicOffset`.
+    //
+    // This is the whole fix, and it is the one this repository has now made three times. Without
+    // it every dispatch needs its own params buffer, its own bind group and -- fatally -- its own
+    // SUBMIT: 200 sweeps over two colour classes is 400 driver round trips, and gpu/src/lib.rs
+    // records that this made the GPU slower than the CPU at every size, with a time nearly
+    // independent of node count. Constant time under a growing workload is the signature of
+    // paying for round trips rather than arithmetic.
+    //
+    // `layout: "auto"` cannot express hasDynamicOffset, and setBindGroup(..., [offset]) against an
+    // auto layout then fails validation SILENTLY -- web/gibbs_bench.html records finding that the
+    // hard way, with spins that never moved and a frozen magnetisation masquerading as data. So
+    // the page checks that the state actually changed before believing any of it.
+    const sto = ro => ({ type: ro ? "read-only-storage" : "storage" });
+    const bgl = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE,
+          buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 32 } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: sto(true) },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: sto(true) },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: sto(true) },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: sto(true) },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: sto(false) },
+        { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: sto(false) },
+      ],
+    });
+    const pipeline = await device.createComputePipelineAsync({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+      compute: { module, entryPoint: "sweep" },
+    });
+    // Read the alignment rather than assuming 256: it is a device limit, and a wrong slot stride
+    // is another way to fail validation quietly.
+    const slot = Math.max(32, device.limits.minUniformBufferOffsetAlignment || 256);
+    const vendor = adapter.info ? (adapter.info.vendor || "?") : "?";
+    return { device, pipeline, bgl, slot, vendor };
+  })();
+  return gpuBoot;
+}
+
 /** Run `sweeps` chromatic sweeps on the GPU, starting from the simulation's current state. */
 async function gpuSweep(sweeps) {
-  if (!navigator.gpu) throw new Error("this browser exposes no WebGPU");
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) throw new Error("no WebGPU adapter available");
-  const device = await adapter.requestDevice();
+  const { device, pipeline, bgl, slot, vendor } = await gpuDevice();
 
   const n = W.ft_len(sim), k = W.ft_gpu_k(sim), nc = W.ft_gpu_classes(sim);
   // Copies, not views: the wasm heap can move under us while buffers are being written.
@@ -1374,54 +1468,59 @@ async function gpuSweep(sweeps) {
     classes.push({ len, buf: mk(idx, GPUBufferUsage.STORAGE) });
   }
   const bDbg = mk(new Float32Array(n), ST);
-  const bParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const maxDispatch = Math.max(1, Math.min(sweeps * nc, Math.floor(4096 / Math.max(1, nc)) * nc));
+  const bParams = device.createBuffer({
+    size: maxDispatch * slot,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
 
   let sw = 0.0; for (let i = 0; i < wts.length; i++) sw += Math.abs(wts[i]);
   gpuDiag = "n=" + n + " k=" + k + " nc=" + nc + " classLens=" + classes.map(c => c.len).join(",") +
             " sum|w|=" + sw.toFixed(1) + " nbrMax=" + Math.max.apply(null, Array.from(nbr.slice(0, 64)));
-  const module = device.createShaderModule({ code: wasmStr(W.ft_shader, W.ft_shader_len) });
-  if (module.getCompilationInfo) {
-    const info = await module.getCompilationInfo();
-    const bad = info.messages.filter(m => m.type !== "info");
-    if (bad.length) {
-      throw new Error("shader did not compile:\n" +
-        bad.map(m => "  line " + m.lineNum + ":" + m.linePos + " " + m.type + ": " + m.message).join("\n"));
-    }
-  }
-  // Async, so a layout or validation problem rejects here instead of leaving an invalid pipeline
-  // whose dispatches quietly do nothing. That silence is what hid a uniform-alignment bug.
-  device.addEventListener?.("uncapturederror", e => { gpuDiag += " | GPU ERROR: " + e.error.message; });
-  const pipeline = await device.createComputePipelineAsync({
-    layout: "auto", compute: { module, entryPoint: "sweep" } });
-
   const beta = +$("beta").value / 100;
   const t0 = performance.now();
-  for (let s = 0; s < sweeps; s++) {
-    for (let c = 0; c < nc; c++) {
-      const p = new ArrayBuffer(32);
-      new Uint32Array(p, 0, 4).set([n, k, classes[c].len, (s * nc + c + 1) >>> 0]);
-      new Float32Array(p, 16, 1).set([beta]);
-      device.queue.writeBuffer(bParams, 0, p);
-      const bind = device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: bParams } },
-          { binding: 1, resource: { buffer: bNbr } },
-          { binding: 2, resource: { buffer: bW } },
-          { binding: 3, resource: { buffer: bH } },
-          { binding: 4, resource: { buffer: classes[c].buf } },
-          { binding: 5, resource: { buffer: bSpin } },
-          { binding: 6, resource: { buffer: bDbg } },
-        ],
-      });
-      const enc = device.createCommandEncoder();
-      const pass = enc.beginComputePass();
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bind);
-      pass.dispatchWorkgroups(Math.ceil(classes[c].len / 64));
-      pass.end();
-      device.queue.submit([enc.finish()]);
+
+  // Every dispatch's parameters live at its own aligned offset in ONE uniform buffer, written in
+  // one go; the bind group is built once per colour class and re-bound with a dynamic offset.
+  // That turns (sweeps x classes) submits into one per batch.
+  //
+  // Batched rather than all-at-once so the uniform buffer stays small: 4096 dispatches at a
+  // 256-byte slot is 1 MiB, which is nothing, but a 512x512 model swept ten thousand times is not.
+  const binds = classes.map(cl => device.createBindGroup({
+    layout: bgl,
+    entries: [
+      { binding: 0, resource: { buffer: bParams, size: 32 } },
+      { binding: 1, resource: { buffer: bNbr } },
+      { binding: 2, resource: { buffer: bW } },
+      { binding: 3, resource: { buffer: bH } },
+      { binding: 4, resource: { buffer: cl.buf } },
+      { binding: 5, resource: { buffer: bSpin } },
+      { binding: 6, resource: { buffer: bDbg } },
+    ],
+  }));
+  const BATCH = Math.max(1, Math.floor(4096 / Math.max(1, nc)));
+  for (let s0 = 0; s0 < sweeps; s0 += BATCH) {
+    const nsw = Math.min(BATCH, sweeps - s0);
+    const arr = new ArrayBuffer(nsw * nc * slot);
+    for (let s = 0; s < nsw; s++) {
+      for (let c = 0; c < nc; c++) {
+        const off = (s * nc + c) * slot;
+        new Uint32Array(arr, off, 4).set([n, k, classes[c].len, ((s0 + s) * nc + c + 1) >>> 0]);
+        new Float32Array(arr, off + 16, 1).set([beta]);
+      }
     }
+    device.queue.writeBuffer(bParams, 0, arr);
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    for (let s = 0; s < nsw; s++) {
+      for (let c = 0; c < nc; c++) {
+        pass.setBindGroup(0, binds[c], [(s * nc + c) * slot]);
+        pass.dispatchWorkgroups(Math.ceil(classes[c].len / 64));
+      }
+    }
+    pass.end();
+    device.queue.submit([enc.finish()]);
   }
   const readback = device.createBuffer({ size: spins.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
   const dbgBack = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
@@ -1437,7 +1536,7 @@ async function gpuSweep(sweeps) {
   dbgBack.unmap();
   const ms = performance.now() - t0;
 
-  return { state: out, fields, ms, adapter: adapter.info ? (adapter.info.vendor || "?") : "?" };
+  return { state: out, fields, ms, adapter: vendor };
 }
 
 $("gpurun").onclick = async () => {

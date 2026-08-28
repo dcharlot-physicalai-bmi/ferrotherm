@@ -146,7 +146,21 @@ impl<'g> Sampler<'g> {
             updated += class.iter().filter(|&&iu| !self.clamped[iu as usize]).count() as u64;
         }
         self.par_sweeps += 1;
-        self.threads_used = threads.min(g.classes.iter().map(|c| c.len()).max().unwrap_or(1).max(1));
+        // The PEAK number of chunks any one class was actually split into -- not `threads`, and not
+        // `min(threads, biggest class)` either, which is what the first version of this computed
+        // and which over-reports: five nodes across four threads is a chunk of two, so three
+        // threads run and not four. A caller dividing throughput by this number needs the count
+        // that ran or its per-thread figure is quietly wrong.
+        self.threads_used = g
+            .classes
+            .iter()
+            .map(|c| {
+                let chunk = c.len().div_ceil(threads);
+                if chunk == 0 { 0 } else { c.len().div_ceil(chunk) }
+            })
+            .max()
+            .unwrap_or(1)
+            .max(1);
         if let Some(l) = ledger {
             l.samples += updated;
         }
@@ -170,10 +184,12 @@ impl<'g> Sampler<'g> {
         self.threads_used = 1;
     }
 
-    /// How many threads the last [`Self::sweep_par`] actually used.
+    /// How many threads the last [`Self::sweep_par`] actually used, at its peak.
     ///
-    /// Always 1 in a browser, whatever was asked for. A caller that reports throughput per thread
-    /// needs this number rather than the one it passed in.
+    /// The largest number of chunks any single colour class was split into. Not the number asked
+    /// for: a class of five across four threads is a chunk of two, so three threads run. Always 1
+    /// in a browser, whatever was requested. A caller that reports throughput per thread needs
+    /// this number rather than the one it passed in.
     pub fn threads_used(&self) -> usize {
         self.threads_used
     }

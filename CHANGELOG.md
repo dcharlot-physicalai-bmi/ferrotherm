@@ -44,6 +44,54 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The browser: two ceilings, neither of them the sampler
+
+**The live view ran one sweep per animation frame.** A 5-ring and a 512x512 lattice sampled at
+exactly the same rate — about sixty a second — and making the sampler faster moved that number by
+nothing at all, because the frame was the ceiling. It now runs an adaptive batch sized to about 7 ms
+of a 16 ms frame, so the ceiling is the physics. A regression guard asserts the SHAPE rather than a
+rate: more than five thousand sweeps in 1.2 s, where one-per-frame is about seventy-two. A threshold
+tuned to this machine would fail on a slower one and say nothing on a faster one.
+
+Batching changes the sample path and that is fine *here* and only here: `ft_sweep` reseeds from
+`(seed ^ sweeps_done * const)` on every call, so fifty calls of one sweep and one call of fifty are
+different — equally valid — paths. This is the live **view**; Certify, Verify, the bounds and the
+benchmark panel each call `ft_sweep` with their own explicit count and are untouched.
+
+**The page's WebGPU path was the pre-fix version of a bug this repository already fixed twice and
+wrote a paragraph about.** It built a params buffer, a bind group, an encoder and a *submit* per
+(sweep × colour class) — 400 driver round trips for the 200-sweep panel — plus a fresh
+`requestAdapter`, `requestDevice` and shader compile on every call. `gpu/src/lib.rs:230` names the
+same bug natively, records that it "made the GPU slower than the CPU at every size", and gives the
+tell: **constant time under a growing workload is the signature of paying for round trips rather
+than arithmetic.**
+
+Fixed the way the native path and `web/gibbs_bench.html` already were: an explicit bind-group layout
+with `hasDynamicOffset`, every dispatch's parameters at its own aligned offset in one uniform
+buffer, one encoder and one submit per batch. The device, module and pipeline are built once instead
+of per call, and the slot stride is read from `device.limits.minUniformBufferOffsetAlignment` rather
+than assumed to be 256.
+
+The measured shape, in headless Chromium on a machine at load 129 — so read the trend, not the
+numbers:
+
+| nodes | GPU ms | µs/node |
+|---|---|---|
+| 1,024 | 22.6 | 22.07 |
+| 4,096 | 86.1 | 21.02 |
+| 16,384 | 134.8 | 8.23 |
+| 36,864 | 186.1 | 5.05 |
+
+Per-node cost **falls** as the model grows 36×, and total time grows with the work. That is
+arithmetic-bound. The guard asserts exactly that and nothing about speed, so it means the same thing
+on any machine.
+
+`web/gibbs_bench.html` had recorded the trap that makes this dangerous: `layout: "auto"` never grants
+`hasDynamicOffset`, and `setBindGroup(..., [offset])` against an auto layout then **fails validation
+silently**, leaving spins that never move and a frozen magnetisation masquerading as data. So the
+change was verified by the page's own field check — worst |Δ| of 0.000e+0 between the f32 GPU and
+f64 CPU fields on colour class 0 — and by the state having actually moved.
+
 ### Every binding was sampling on one core of eighteen
 
 `Sampler::sweep_par` has been here for a long time: it splits each colour class across OS threads,
@@ -52,8 +100,19 @@ for bit-reproducibility at a fixed `(seed, threads)`. It reached **Rust and the 
 ABI, so not Python, not Zig, not Julia, not the browser. Every one of those callers ran one core, and
 nothing anywhere said so.
 
-Three entry points close it — `ft_sweep_par`, `ft_threads_used`, `ft_hardware_threads` — with
-wrappers in all three bindings. On this machine `hardware_threads()` returns **18** and
+And the optimizers above it were single-threaded too. `tempering::parallel_tempering` and
+`icm::run` advanced their replicas one at a time, which is **free parallelism**: every replica owns
+its `Sampler` and its own `Pcg`, seeded once, so its draws depend on nothing but its own history.
+Replica-level threading is therefore bit-identical, unlike splitting a colour class where the thread
+count *is* part of the sample path. Proven rather than argued: a test runs `parallel_tempering`
+against a hand-rolled serial reference across three seeds and asserts the best energy and the best
+state match exactly, so a future change that introduces any cross-replica read will break it.
+
+Population annealing is deliberately left alone. It reuses **one** `Sampler` across the population,
+so its RNG state carries from member to member and threading it would change the answer.
+
+Three entry points close the binding gap — `ft_sweep_par`, `ft_threads_used`,
+`ft_hardware_threads` — with wrappers in all three bindings. On this machine `hardware_threads()` returns **18** and
 `threads=0` means *ask the machine* rather than making a caller look it up.
 
 Two things it refuses to do quietly:
@@ -61,7 +120,10 @@ Two things it refuses to do quietly:
 - **The thread count is part of the run.** A different count is a different, equally valid sample
   path, so the docs say to record it beside the seed, and a test asserts that one thread and four
   do NOT agree — without it, `threads` could be decorative and every check would still pass.
-- **`ft_threads_used` reports what RAN, not what was asked.** `wasm32-unknown-unknown` has a std
+- **`ft_threads_used` reports what RAN, not what was asked** — and the first version of it did not.
+  It computed `min(threads, biggest class)`, which over-reports: five nodes across four threads is a
+  chunk of two, so three threads run and not four. It now counts the chunks actually spawned, and
+  the test asserts the number rather than `>= 1`, which is what let the wrong one through. `wasm32-unknown-unknown` has a std
   whose `thread::spawn` compiles and then panics at runtime, so `sweep_par` is now cfg'd to run
   serially in a browser — and to say `1`. Running serially and reporting eight would be the silent
   downgrade this whole codebase is built to avoid.
