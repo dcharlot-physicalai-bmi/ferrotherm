@@ -36,6 +36,7 @@ __all__ = [
     "Certificate",
     "PlanarCut",
     "PopulationRun",
+    "ToroidalBound",
     "Literal",
     "Model",
     "Problem",
@@ -57,7 +58,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 
 
 # ---- library loading ------------------------------------------------------------------------
@@ -149,6 +150,8 @@ _exact_ground_state = _sig("ft_exact_ground_state", c_uint32, [_p, c_uint32, POI
 _tabu = _sig("ft_tabu", c_double, [_p, c_uint32, c_uint32, c_uint32])
 _tabu_iterations = _sig("ft_tabu_iterations", c_uint64, [_p])
 _planar_cut = _sig("ft_planar_cut", c_double, [_p, c_double])
+_toroidal_bound = _sig("ft_toroidal_bound", c_double, [_p, c_double])
+_toroidal_attained = _sig("ft_toroidal_attained", c_uint32, [_p])
 _planar_faces = _sig("ft_planar_faces", c_uint64, [_p])
 _planar_odd_faces = _sig("ft_planar_odd_faces", c_uint64, [_p])
 _planar_error = _sig("ft_planar_error", c_uint32, [_p, ctypes.POINTER(ctypes.c_ubyte), c_uint32])
@@ -304,6 +307,24 @@ class PlanarCut:
     def __repr__(self) -> str:
         return (f"<PlanarCut EXACT cut={self.cut:.6g} energy={self.energy:.6g} "
                 f"{self.faces} faces, {self.odd_faces} odd>")
+
+
+class ToroidalBound:
+    """An upper bound on the maximum cut of a torus, and whether it is achieved.
+
+    ``attained`` means the relaxation's optimum is itself a genuine cut, so the bound *is* the
+    maximum — proved. Not attained leaves the bound standing: every cut is such a subgraph, so a
+    maximum over the larger set can only be larger.
+    """
+
+    __slots__ = ("cut", "attained")
+
+    def __init__(self, cut: float, attained: bool) -> None:
+        self.cut, self.attained = cut, attained
+
+    def __repr__(self) -> str:
+        what = "MAXIMUM (attained)" if self.attained else "upper bound"
+        return f"<ToroidalBound {self.cut:.6g} — {what}>"
 
 
 class BreakoutRun:
@@ -710,6 +731,27 @@ is how a dropped GPU dispatch turns into a believable energy.
             faces=int(_planar_faces(self._h)),
             odd_faces=int(_planar_odd_faces(self._h)),
         )
+
+    def toroidal_bound(self, scale: float = 1.0) -> "ToroidalBound":
+        """An **upper bound** on the maximum cut of a toroidal grid.
+
+        The side of the G-set table nobody publishes. Every figure there is a best cut *found* — a
+        lower bound. This is the other end of the bracket, from the same dual reduction run on a
+        toroidal embedding: on a torus the cycle space of the dual is four times the cut space, so
+        the relaxation ranges over sets that are not cuts and its optimum bounds the maximum above.
+
+        Measured, it closes the bracket on G11: bound 564, published best 564, so 564 is optimal.
+
+        Raises :class:`ValueError` unless the graph is a toroidal grid — the structure is recovered
+        from the edge list, and a match on all ``2n`` edges is a proof rather than a guess.
+        """
+        self._live()
+        cut = float(_toroidal_bound(self._h, float(scale)))
+        if cut != cut:
+            raise ValueError(
+                "not a toroidal grid, or the weights do not scale to integers"
+            )
+        return ToroidalBound(cut=cut, attained=bool(_toroidal_attained(self._h)))
 
     def breakout(self, iterations: int = 50_000) -> "BreakoutRun":
         """Breakout local search: steepest descent, with an adaptive perturbation between optima.

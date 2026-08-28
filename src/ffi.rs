@@ -59,6 +59,8 @@ pub struct Sim {
     bl: Option<crate::bls::Outcome>,
     /// The last planar exact solve, or the reason it was refused.
     pc: Option<Result<crate::planarcut::Outcome, String>>,
+    /// The last toroidal bound, for [`ft_toroidal_attained`].
+    tor: Option<crate::planarcut::SurfaceBound>,
     /// The last population-annealing outcome, for the `ft_popanneal_*` accessors.
     pa: Option<crate::popanneal::Outcome>,
     /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
@@ -75,7 +77,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, pa: None, bb: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, pa: None, bb: None }))
     }
 }
 
@@ -2543,6 +2545,56 @@ pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()).map_or(0, |o| o.nodes)
 }
 
+/// An **upper bound** on the maximum cut of a toroidal grid, from the same dual reduction.
+///
+/// A torus is not a plane and [`ft_planar_cut`] refuses it, correctly. But the dual argument needs
+/// only faces, and an embedding on any surface has them. What changes is what the answer means: on
+/// a torus the cycle space of the dual is four times the cut space, so the relaxation ranges over
+/// sets that are not cuts and its optimum can only bound the maximum from above.
+///
+/// That is the side of G-set nobody publishes. Every figure in the table is a best cut **found** —
+/// a lower bound. This is the other end of the bracket. Measured: it closes the bracket on G11,
+/// proving the twenty-five-year-old best-known cut of 564 optimal.
+///
+/// Returns NaN unless the graph is a toroidal grid, whose structure is recovered from the edge list
+/// — a match on all `2n` edges rather than a guess. [`ft_toroidal_attained`] says whether the bound
+/// happens to be achieved by a genuine cut, in which case it is the maximum rather than a bound.
+#[no_mangle]
+pub extern "C" fn ft_toroidal_bound(sim: *mut Sim, scale: f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    s.tor = None;
+    let Some(emb) = crate::planar::torus_grid_of(&s.graph) else { return f64::NAN };
+    let p = crate::planarcut::Params { scale };
+    match crate::planarcut::bound_on_surface(&s.graph, &emb, &p) {
+        Ok(b) => {
+            // A bound that is attained comes with the state that attains it, and leaving it behind
+            // is what makes `ft_energy` the proved minimum in that case.
+            if let Some(st) = &b.state {
+                if st.len() == s.sampler_state.len() {
+                    s.sampler_state.copy_from_slice(st);
+                }
+            }
+            let c = b.cut;
+            s.tor = Some(b);
+            c
+        }
+        Err(_) => f64::NAN,
+    }
+}
+
+/// 1 if the last [`ft_toroidal_bound`] was **attained** by a genuine cut, else 0.
+///
+/// Attained means the relaxation's optimum two-coloured the graph, so it is a cut and the bound is
+/// the maximum — proved, not bounded. Not attained still leaves the bound standing: every cut is
+/// such a subgraph, so a maximum over the larger set can only be larger.
+#[no_mangle]
+pub extern "C" fn ft_toroidal_attained(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.tor.as_ref()) {
+        Some(b) => u32::from(b.attained),
+        None => 0,
+    }
+}
+
 /// Breakout local search — the algorithm that holds the max-cut record on most of G-set.
 ///
 /// Steepest descent with an adaptive perturbation between local optima; see [`crate::bls`] for what
@@ -2898,6 +2950,47 @@ mod solver_ffi_tests {
         ft_free(torus);
     }
 
+    /// The toroidal bound crosses, and it bounds -- checked against a search that cannot beat it.
+    #[test]
+    fn the_toroidal_bound_crosses_and_is_never_beaten() {
+        // A 6x6 periodic lattice: a torus, refused by the planar solver and answered by this one.
+        let torus = ft_ising2d_new(6, -1.0, 1.0, 3);
+        let bound = ft_toroidal_bound(torus, 1.0);
+        assert!(bound.is_finite(), "a periodic lattice IS a toroidal grid");
+        assert!(ft_planar_cut(torus, 1.0).is_nan(), "and it is not planar");
+        // Every edge of a bipartite torus can be cut, and 6x6 is bipartite: 72 edges.
+        assert_eq!(bound, 72.0);
+        assert_eq!(ft_toroidal_attained(torus), 1, "a bound that is achieved says so");
+        ft_free(torus);
+
+        // A frustrated torus: a search must never exceed the bound, which is what makes it one.
+        let hard = ft_ising2d_new(5, 1.0, 1.0, 3);
+        let b = ft_toroidal_bound(hard, 1.0);
+        assert!(b.is_finite());
+        let e = ft_bls(hard, 200_000);
+        // cut = (W - E) / 2 with W = sum of -J over 50 edges of J = +1, so W = -50.
+        let cut = (-50.0 - e) / 2.0;
+        assert!(cut <= b + 1e-9, "breakout local search reached {cut}, above the bound {b}");
+        ft_free(hard);
+
+        // An open grid is planar, not toroidal, and this must decline rather than answer.
+        let b2 = ft_builder_new(9);
+        for y in 0..3u32 {
+            for x in 0..3u32 {
+                let i = y * 3 + x;
+                if x + 1 < 3 {
+                    ft_builder_couple(b2, i, i + 1, -1.0);
+                }
+                if y + 1 < 3 {
+                    ft_builder_couple(b2, i, i + 3, -1.0);
+                }
+            }
+        }
+        let planar = ft_builder_build(b2, 1.0, 1);
+        assert!(ft_toroidal_bound(planar, 1.0).is_nan(), "an open grid is not a torus");
+        ft_free(planar);
+    }
+
     /// A null handle is a caller error, not a crash, and NaN is how this ABI says so.
     #[test]
     fn a_null_handle_returns_rather_than_dereferencing() {
@@ -2905,6 +2998,8 @@ mod solver_ffi_tests {
         assert!(ft_tabu(n, 10, 0, 0).is_nan());
         assert!(ft_bls(n, 10).is_nan());
         assert!(ft_planar_cut(n, 1.0).is_nan());
+        assert!(ft_toroidal_bound(n, 1.0).is_nan());
+        assert_eq!(ft_toroidal_attained(n), 0);
         assert_eq!(ft_planar_faces(n), 0);
         assert_eq!(ft_planar_odd_faces(n), 0);
         assert_eq!(ft_planar_error(n, core::ptr::null_mut(), 0), 0);

@@ -619,3 +619,22 @@ def test_exact_planar_returns_a_maximum_and_refuses_with_a_reason():
     torus = ft.lattice2d(4, j=1.0, beta=1.0, seed=1)
     with pytest.raises(ValueError, match="not planar"):
         torus.exact_planar()
+
+
+def test_the_toroidal_bound_is_the_other_end_of_the_bracket():
+    """G-set publishes lower bounds. This is the upper one, and it must never be beatable."""
+    torus = ft.lattice2d(6, j=-1.0, beta=1.0, seed=1)
+    b = torus.toroidal_bound()
+    # A 6x6 periodic lattice is bipartite: all 72 edges cut, and the bound is achieved.
+    assert b.cut == 72.0 and b.attained
+
+    # The planar solver declines the same graph. That distinction is the whole point.
+    with pytest.raises(ValueError, match="not planar"):
+        torus.exact_planar()
+
+    # A frustrated torus: no search may exceed the bound.
+    hard = ft.lattice2d(5, j=1.0, beta=1.0, seed=1)
+    hb = hard.toroidal_bound()
+    e = hard.breakout(iterations=100_000).energy
+    cut = (-50.0 - e) / 2.0     # W = sum of -J over 50 edges of J = +1
+    assert cut <= hb.cut + 1e-9, f"a search reached {cut}, above the bound {hb.cut}"

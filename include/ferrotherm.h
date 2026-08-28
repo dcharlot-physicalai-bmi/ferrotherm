@@ -205,6 +205,25 @@ uint64_t ft_planar_odd_faces(const ft_sim *sim);
    different things to do next, which a bare NaN collapses into one. */
 uint32_t ft_planar_error(const ft_sim *sim, uint8_t *buf, uint32_t cap);
 
+/* An UPPER BOUND on the maximum cut of a toroidal grid, from the same dual reduction. A torus is
+   not a plane and ft_planar_cut refuses it; but the dual argument needs only faces, and an
+   embedding on any surface has them. On a torus the cycle space of the dual is four times the cut
+   space, so the relaxation ranges over sets that are not cuts and its optimum bounds the maximum
+   from above.
+
+   That is the side of G-set nobody publishes: every figure in the table is a best cut FOUND, a
+   lower bound. Measured, this closes the bracket on G11, proving its best-known cut of 564 optimal.
+
+   Returns NaN unless the graph is a toroidal grid, whose structure is recovered from the edge list
+   -- a match on all 2n edges rather than a guess. */
+double ft_toroidal_bound(ft_sim *sim, double scale);
+
+/* 1 if the last ft_toroidal_bound was ATTAINED by a genuine cut, in which case it is the maximum
+   rather than a bound, and the simulation's state is the partition achieving it. Not attained still
+   leaves the bound standing: every cut is such a subgraph, so a maximum over the larger set can
+   only be larger. */
+uint32_t ft_toroidal_attained(const ft_sim *sim);
+
 /* Breakout local search -- the algorithm that holds the max-cut record on most of G-set. Steepest
    descent with an adaptive perturbation between local optima. Returns the best energy found, or NaN
    on NULL. One iteration is one SPIN FLIP, which is what ft_tabu counts too, so passing the same

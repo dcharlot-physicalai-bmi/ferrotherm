@@ -126,6 +126,7 @@ jobs:
       #   sdp_in_tree         same: it sweeps an expensive bound past the point where it pays
       #   maxcut_shootout     needs a G-set instance file this runner does not have
       #   planar_exact        exact max-cut up to 10,000 spins; minutes, not seconds
+      #   toroidal_bound      needs a G-set instance file this runner does not have
       # docs.rs is a published surface and nothing here gated it. Turned on with 22 broken
       # intra-doc links already in the tree -- most of them prose like `[0,1]` or `reals[x]` that
       # rustdoc read as a link and could not resolve, two of them real (`Verdict::Runnable` and
@@ -146,7 +147,7 @@ jobs:
           FERROTHERM_ALLOW_BUSY: "1"
         run: |
           set -euo pipefail
-          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact"
+          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact toroidal_bound"
           ran=0
           for f in examples/*.rs; do
             n=$(basename "$f" .rs)

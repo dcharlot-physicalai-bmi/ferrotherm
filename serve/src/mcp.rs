@@ -154,6 +154,27 @@ pub fn tools() -> Json {
             vec!["graph"],
         ),
         tool(
+            "ferrotherm_toroidal_bound",
+            "An UPPER BOUND on the maximum cut of a TOROIDAL GRID -- the side of the benchmark \
+             table nobody publishes. Every G-set figure is a best cut FOUND, which is a LOWER \
+             bound; this is the other end of the bracket, so together they say where the optimum \
+             actually is. A torus is not a plane, so ferrotherm_exact_planar refuses it -- but the \
+             dual argument needs only faces, and an embedding on any surface has them. On a torus \
+             the cycle space of the dual is four times the cut space, so the relaxation ranges over \
+             sets that are not cuts and its optimum bounds the maximum from above. Measured, this \
+             closes the bracket on G11 and proves its best-known cut of 564 optimal. Check \
+             \"attained\": true means the bound is itself achieved by a cut and so IS the maximum, \
+             proved; false leaves it a bound, which still stands. Refuses unless the graph really \
+             is a toroidal grid -- the structure is recovered from the edge list, a match on all 2n \
+             edges, rather than assumed.",
+            vec![
+                ("graph", schema_graph()),
+                ("scale", prop("number", "Multiply every coupling by this before rounding to an integer. Default 1.0.")),
+                ("return_state", prop("boolean", "Include the partition, when the bound is attained and there is one. Defaults to true under 4096 nodes.")),
+            ],
+            vec!["graph"],
+        ),
+        tool(
             "ferrotherm_optimize",
             "Minimise an Ising graph by a named method. Prefer ferrotherm_anneal for a quick answer; \
              reach for this when you need more than one. \"tabu\" remembers where it has been and \

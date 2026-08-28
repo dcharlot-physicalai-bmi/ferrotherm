@@ -70,7 +70,7 @@
 
 use crate::graph::Graph;
 use crate::matching::min_weight_perfect;
-use crate::planar;
+use crate::planar::{self, Embedding};
 use std::collections::{BTreeMap, BinaryHeap};
 
 /// How to read the weights.
@@ -163,18 +163,76 @@ impl core::fmt::Display for Error {
     }
 }
 
+/// The same reduction, on **any** surface, and the honest thing it produces there.
+///
+/// The dual argument needs only faces, and an embedding on any surface has them. What changes above
+/// the sphere is what the answer means. On the sphere every even subgraph of the dual is a cut. On a
+/// surface of genus `g` the cycle space of the dual is `4^g` times larger than the cut space, so the
+/// relaxation ranges over more sets than there are cuts and its optimum is an **upper bound**.
+///
+/// The bound is not loose in a way you have to guess about, and this is the useful part: an even
+/// subgraph of the dual is a cut **exactly when it two-colours the graph**, which is a check already
+/// on the exact path. So the same run either hands back a genuine cut — in which case the bound is
+/// attained and *is* the maximum, proved — or reports that it is a strict upper bound.
+/// [`SurfaceBound::attained`] is that distinction and it is not guessable from the number.
+///
+/// This is the state of the art for the toroidal case rather than a shortcut around it. Barahona's
+/// exact genus-`g` algorithm exists and needs modular arithmetic over a nested-dissection solve;
+/// the 2026 survey of toroidal max-cut offers a heuristic and this same relaxation as the upper
+/// bound. Nothing here claims otherwise.
+pub fn bound_on_surface(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, Error> {
+    solve_inner(g, emb, p)
+}
+
+/// An upper bound on the maximum cut, and whether it happens to be the maximum.
+#[derive(Clone, Debug)]
+pub struct SurfaceBound {
+    /// An upper bound on the maximum cut under `w = −J`. **Equal to it when [`Self::attained`]**.
+    pub cut: f64,
+    /// Whether the relaxation's optimum is a genuine cut. On the sphere, always. Above it,
+    /// sometimes — and when it is, the bound is a *proof* rather than a bound.
+    pub attained: bool,
+    /// The optimal partition. `Some` exactly when `attained`.
+    pub state: Option<Vec<i8>>,
+    /// `E(s)` for that partition: the proved **minimum** energy. `Some` exactly when `attained`.
+    pub energy: Option<f64>,
+    /// The genus of the surface the embedding describes. 0 is the sphere.
+    pub genus: usize,
+    pub faces: usize,
+    pub odd_faces: usize,
+}
+
 /// Solve max-cut exactly on a planar graph.
 pub fn solve(g: &Graph, p: &Params) -> Result<Outcome, Error> {
+    if g.n == 0 {
+        return Ok(Outcome { state: Vec::new(), cut: 0.0, energy: 0.0, faces: 0, odd_faces: 0 });
+    }
+    for (i, &h) in g.h.iter().enumerate() {
+        if h != 0.0 {
+            return Err(Error::HasFields { node: i, h });
+        }
+    }
+    let emb = planar::embed(g)
+        .ok_or_else(|| Error::NotEmbeddable(planar::why(g).unwrap_or(planar::Refusal::NotPlanar)))?;
+    let b = solve_inner(g, &emb, p)?;
+    // On the sphere the relaxation IS the cut space, so a failure to attain would mean the
+    // reduction is wrong -- which is what `NotACut` says.
+    let (Some(state), Some(energy)) = (b.state, b.energy) else { return Err(Error::NotACut) };
+    Ok(Outcome { state, cut: b.cut, energy, faces: b.faces, odd_faces: b.odd_faces })
+}
+
+fn solve_inner(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, Error> {
     for (i, &h) in g.h.iter().enumerate() {
         if h != 0.0 {
             return Err(Error::HasFields { node: i, h });
         }
     }
     if g.n == 0 {
-        return Ok(Outcome { state: Vec::new(), cut: 0.0, energy: 0.0, faces: 0, odd_faces: 0 });
+        return Ok(SurfaceBound {
+            cut: 0.0, attained: true, state: Some(Vec::new()), energy: Some(0.0),
+            genus: 0, faces: 0, odd_faces: 0,
+        });
     }
-    let emb = planar::embed(g)
-        .ok_or_else(|| Error::NotEmbeddable(planar::why(g).unwrap_or(planar::Refusal::NotPlanar)))?;
 
     // ---- the primal edges, once each, with integer weights --------------------------------------
     let mut edges: Vec<(usize, usize, i64)> = Vec::new();
@@ -246,6 +304,7 @@ pub fn solve(g: &Graph, p: &Params) -> Result<Outcome, Error> {
         // correct dual -- which is exactly why it is checked.
         return Err(Error::NotACut);
     }
+    let _ = &emb;
 
     // Adjacency of the dual with |w| weights, for the shortest paths.
     let mut adj: Vec<Vec<(usize, i64, usize)>> = vec![Vec::new(); nf];
@@ -290,10 +349,23 @@ pub fn solve(g: &Graph, p: &Params) -> Result<Outcome, Error> {
     for (i, &(_, _, _, ei)) in dual.iter().enumerate() {
         cut_edge[ei] = !in_f[i];
     }
-    let state = two_colour(g.n, &edges, &cut_edge).ok_or(Error::NotACut)?;
-
-    // FIRST CHECK: `W - w(F)` from the join, against the cut the recovered state actually makes.
     let via_join = (total - (base + join_weight)) as f64 / p.scale;
+
+    // THE ONE CHECK THAT IS ALSO THE ANSWER. An even subgraph of the dual is a cut **exactly when**
+    // it two-colours the graph -- every cycle of `G` must meet it evenly, which is what the walk
+    // below tests. On the sphere that always holds and a failure means the reduction is wrong. Above
+    // the sphere it holds only when the relaxation's optimum happens to land in the cut space, and
+    // that is the difference between a proof and a bound.
+    let genus = emb.genus().unwrap_or(0);
+    let Some(state) = two_colour(g.n, &edges, &cut_edge) else {
+        return Ok(SurfaceBound {
+            cut: via_join, attained: false, state: None, energy: None,
+            genus, faces: nf, odd_faces: k,
+        });
+    };
+
+    // SECOND CHECK: `W - w(F)` from the join, against the cut the recovered state actually makes.
+    // Two disjoint computations of the same quantity, so a disagreement means neither is reported.
     let mut via_state = 0.0f64;
     for &(u, v, w) in &edges {
         if state[u] != state[v] {
@@ -303,11 +375,11 @@ pub fn solve(g: &Graph, p: &Params) -> Result<Outcome, Error> {
     if (via_join - via_state).abs() > 1e-6 {
         return Err(Error::Disagreement { via_join, via_state });
     }
-
-    // SECOND CHECK: the energy, recomputed from the state by the graph itself rather than from any
-    // quantity this function has been carrying.
     let energy = g.energy(&state);
-    Ok(Outcome { state, cut: via_state, energy, faces: nf, odd_faces: k })
+    Ok(SurfaceBound {
+        cut: via_state, attained: true, state: Some(state), energy: Some(energy),
+        genus, faces: nf, odd_faces: k,
+    })
 }
 
 /// Dijkstra from `s`, returning distances and, for each vertex, `(predecessor, dual edge index)`.
@@ -567,6 +639,106 @@ mod tests {
             assert!((out.cut - truth(&g)).abs() < 1e-9, "{w}x{h}: {} vs proof", out.cut);
             // All couplings -1 on a bipartite grid: every edge is cut under `w = -J`.
             assert_eq!(out.cut, (w * (h - 1) + h * (w - 1)) as f64);
+        }
+    }
+
+    /// A `w × h` toroidal grid glass, numbered row-major to match [`planar::torus_grid`].
+    fn torus_glass(w: usize, h: usize, seed: u64) -> Graph {
+        let mut rng = Pcg::new(seed, 0x7043_1533);
+        let mut gb = GraphBuilder::new(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                gb.couple(i, y * w + (x + 1) % w, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                gb.couple(i, ((y + 1) % h) * w + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+            }
+        }
+        gb.build()
+    }
+
+    /// THE TOROIDAL CLAIM, AND ITS LIMIT.
+    ///
+    /// On a torus the cycle space of the dual is four times the cut space, so the relaxation ranges
+    /// over sets that are not cuts and its optimum can only be an UPPER bound. Two things have to
+    /// hold and both are checked against branch and bound, which proves the true maximum by
+    /// enumerating spins:
+    ///
+    /// * the bound is never below the truth — a bound that can be beaten is not a bound;
+    /// * when `attained` it is exactly the truth — that flag is the whole product, and a flag that
+    ///   is sometimes wrong is worse than no flag.
+    #[test]
+    fn the_toroidal_bound_is_never_beaten_and_is_exact_when_it_says_so() {
+        let (mut attained, mut total) = (0, 0);
+        for (w, h) in [(3usize, 3usize), (3, 4), (4, 4), (3, 5)] {
+            for seed in 0..8u64 {
+                let g = torus_glass(w, h, seed);
+                let emb = planar::torus_grid(w, h).expect("3 or more each way");
+                assert_eq!(emb.genus(), Some(1), "this is a torus, not a sphere");
+                let b = bound_on_surface(&g, &emb, &Params::default()).expect("integral weights");
+                let want = truth(&g);
+                total += 1;
+                assert!(
+                    b.cut >= want - 1e-9,
+                    "{w}x{h} seed {seed}: the 'upper bound' {} is BELOW the proved maximum {want}",
+                    b.cut
+                );
+                if b.attained {
+                    attained += 1;
+                    assert!(
+                        (b.cut - want).abs() < 1e-9,
+                        "{w}x{h} seed {seed}: attained, so it must equal the maximum {want}, got {}",
+                        b.cut
+                    );
+                    // And the state it hands back must actually make that cut.
+                    let s = b.state.as_ref().expect("attained means there is a state");
+                    let mut got = 0.0;
+                    for u in 0..g.n {
+                        for k in g.offset[u]..g.offset[u + 1] {
+                            if (g.nbr[k] as usize) > u && s[u] != s[g.nbr[k] as usize] {
+                                got -= g.w[k];
+                            }
+                        }
+                    }
+                    assert!((got - b.cut).abs() < 1e-9);
+                    assert_eq!(b.energy, Some(g.energy(s)));
+                } else {
+                    assert!(b.state.is_none() && b.energy.is_none(), "no state without a proof");
+                }
+                assert_eq!(b.genus, 1);
+            }
+        }
+        // Not every instance attains -- that is the point of the flag -- but if NONE did, the flag
+        // would be decoration and the module would be an upper bound generator wearing a proof's
+        // clothes.
+        assert!(attained > 0, "the bound was attained on none of {total} toroidal instances");
+        assert!(attained < total, "attained on ALL of them, so the test never exercised a bound");
+    }
+
+    /// The same reduction on the sphere always attains, which is the control for the test above:
+    /// if it did not, "attained" would be measuring the reduction rather than the topology.
+    #[test]
+    fn on_the_sphere_the_bound_is_always_attained() {
+        for seed in 0..12u64 {
+            let mut rng = Pcg::new(seed, 0x5F03);
+            let (w, h) = (4, 4);
+            let mut gb = GraphBuilder::new(w * h);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = y * w + x;
+                    if x + 1 < w {
+                        gb.couple(i, i + 1, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                    }
+                    if y + 1 < h {
+                        gb.couple(i, i + w, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                    }
+                }
+            }
+            let g = gb.build();
+            let emb = planar::embed(&g).expect("a grid is planar");
+            let b = bound_on_surface(&g, &emb, &Params::default()).unwrap();
+            assert!(b.attained, "seed {seed}: on the sphere every even dual subgraph IS a cut");
+            assert_eq!(b.genus, 0);
+            assert!((b.cut - truth(&g)).abs() < 1e-9);
         }
     }
 

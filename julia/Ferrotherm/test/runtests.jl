@@ -409,4 +409,17 @@ end
     close!(t)
 end
 
+@testset "the toroidal bound is the other end of the bracket" begin
+    # G-set publishes lower bounds. This is the upper one.
+    t = lattice2d(6; J = -1.0, beta = 1.0, seed = 1)
+    b = toroidal_bound!(t)
+    # A 6x6 periodic lattice is bipartite: all 72 edges cut, and the bound is achieved.
+    @test b.cut == 72.0
+    @test b.attained
+    # The planar solver declines the same graph, which is the distinction being drawn.
+    err = try exact_planar!(t); "" catch e; sprint(showerror, e) end
+    @test occursin("not planar", err)
+    close!(t)
+end
+
 include("readme.jl")

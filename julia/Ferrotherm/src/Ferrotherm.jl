@@ -63,7 +63,8 @@ export node_updates, joules_z1, onsager, library_path, close!
 export tabu!, tabu_iterations, breakout!, population_anneal!, branch!, bounds, gap
 export BreakoutRun
 export PopulationRun, BranchResult, Bounds, PlanarCut, trustworthy, best, tightest
-export exact_planar!
+export exact_planar!, toroidal_bound!
+export ToroidalBound
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
@@ -214,6 +215,8 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_tabu Cdouble SimPtr Cuint Cuint Cuint
 @cfn ft_tabu_iterations Culonglong SimPtr
 @cfn ft_planar_cut Cdouble SimPtr Cdouble
+@cfn ft_toroidal_bound Cdouble SimPtr Cdouble
+@cfn ft_toroidal_attained Cuint SimPtr
 @cfn ft_planar_faces Culonglong SimPtr
 @cfn ft_planar_odd_faces Culonglong SimPtr
 @cfn ft_planar_error Cuint SimPtr Ptr{UInt8} Cuint
@@ -614,6 +617,34 @@ function exact_planar!(s::Simulation; scale::Real = 1.0)
         error(got == 0 ? "the planar solver refused" : String(buf[1:got]))
     end
     PlanarCut(cut, energy(s), Int(ft_planar_faces(s.handle)), Int(ft_planar_odd_faces(s.handle)))
+end
+
+"""An upper bound on the maximum cut of a torus, and whether it is achieved."""
+struct ToroidalBound
+    cut::Float64
+    "True when the relaxation's optimum is itself a genuine cut, so the bound IS the maximum."
+    attained::Bool
+end
+
+"""
+    toroidal_bound!(s; scale = 1.0)
+
+An **upper bound** on the maximum cut of a toroidal grid.
+
+The side of the G-set table nobody publishes: every figure there is a best cut *found*, a lower
+bound. This is the other end of the bracket, from the same dual reduction run on a toroidal
+embedding — on a torus the cycle space of the dual is four times the cut space, so the relaxation
+ranges over sets that are not cuts and its optimum bounds the maximum above.
+
+Measured, it closes the bracket on G11: bound 564, published best 564, so 564 is optimal.
+
+Throws unless the graph is a toroidal grid, whose structure is recovered from the edge list.
+"""
+function toroidal_bound!(s::Simulation; scale::Real = 1.0)
+    _live(s)
+    v = ft_toroidal_bound(s.handle, Cdouble(scale))
+    isnan(v) && error("not a toroidal grid, or the weights do not scale to integers")
+    ToroidalBound(v, ft_toroidal_attained(s.handle) != 0)
 end
 
 """A breakout-local-search run, with the evidence that it actually broke out."""

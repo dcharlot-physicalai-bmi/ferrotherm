@@ -590,6 +590,53 @@ pub fn exact_planar(req: &Json) -> Result<Json, String> {
     Ok(Json::Obj(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
 }
 
+/// An **upper bound** on the maximum cut of a toroidal grid.
+///
+/// The side of the G-set table nobody publishes: every figure there is a best cut *found*, a lower
+/// bound. This is the other end of the bracket. On G11 it closes it, proving the twenty-five-year-old
+/// best-known cut of 564 optimal.
+pub fn toroidal_bound(req: &Json) -> Result<Json, String> {
+    let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
+    let scale = opt_f64(req, "scale", 1.0);
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err("\"scale\" must be finite and positive".into());
+    }
+    const MAX_NODES: usize = 20_000;
+    if g.n > MAX_NODES {
+        return Err(format!("{} nodes, over the {MAX_NODES} ceiling: the matching is cubic", g.n));
+    }
+    let emb = ferrotherm::planar::torus_grid_of(&g).ok_or(
+        "not a toroidal grid. The structure is recovered from the edge list -- a match on all 2n \
+         edges -- rather than assumed, so this is a statement about the graph, not a limitation",
+    )?;
+    let t0 = Instant::now();
+    let b = ferrotherm::planarcut::bound_on_surface(
+        &g,
+        &emb,
+        &ferrotherm::planarcut::Params { scale },
+    )
+    .map_err(|e| e.to_string())?;
+    let wall = t0.elapsed().as_secs_f64();
+    let mut fields = vec![
+        ("nodes", Json::n(g.n as f64)),
+        ("upper_bound", Json::n(b.cut)),
+        // ATTAINED means the bound is the maximum, proved. Not attained leaves it a bound, and
+        // conflating the two is the only way to misuse this number.
+        ("attained", Json::Bool(b.attained)),
+        ("genus", Json::n(b.genus as f64)),
+        ("faces", Json::n(b.faces as f64)),
+        ("odd_faces", Json::n(b.odd_faces as f64)),
+        ("wall_seconds", Json::n(wall)),
+    ];
+    if let (Some(s), Some(e)) = (&b.state, b.energy) {
+        fields.push(("energy", Json::n(e)));
+        if req.get("return_state").and_then(|v| v.as_bool()).unwrap_or(g.n <= 4096) {
+            fields.push(("state", state_json(s)));
+        }
+    }
+    Ok(Json::Obj(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
 /// Minimise by a named method: tabu search, population annealing, or branch and bound.
 ///
 /// `anneal` runs one chain down a ladder and hands back the best state it saw. These are the three
@@ -876,6 +923,7 @@ pub fn capabilities() -> Json {
                 op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
                 op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
                 op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
+                op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
                 op("optimize", "Minimise by tabu search, breakout local search, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
             ]),
@@ -1347,6 +1395,7 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
         "bound" => bound(req),
         "optimize" => optimize(req),
         "exact_planar" => exact_planar(req),
+        "toroidal_bound" => toroidal_bound(req),
         "solve" => solve(req),
         "capabilities" => Ok(capabilities()),
         other => Err(format!(
@@ -1559,6 +1608,41 @@ mod tests {
         let err = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{fielded}}}"#)).unwrap())
             .unwrap_err();
         assert!(err.contains("field"), "{err}");
+    }
+
+    /// The other end of the bracket, over HTTP.
+    #[test]
+    fn the_toroidal_bound_bounds_and_declines_what_is_not_a_torus() {
+        let torus = r#"{"builtin":"lattice2d","l":6,"j":-1.0}"#;
+        let r = dispatch("toroidal_bound", &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap())
+            .unwrap();
+        // A 6x6 periodic lattice is bipartite: all 72 edges cut, and the bound is achieved.
+        assert_eq!(r.get("upper_bound").and_then(|v| v.as_f64()), Some(72.0));
+        assert_eq!(r.get("attained").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(r.get("genus").and_then(|v| v.as_f64()), Some(1.0));
+
+        // The planar solver declines the same graph, which is the distinction being drawn.
+        assert!(dispatch("exact_planar", &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap())
+            .unwrap_err()
+            .contains("not planar"));
+
+        // And this one declines an open grid, saying it is a statement about the graph.
+        let mut e = Vec::new();
+        for y in 0..4usize {
+            for x in 0..4usize {
+                let i = y * 4 + x;
+                if x + 1 < 4 {
+                    e.push(format!("[{i},{},-1]", i + 1));
+                }
+                if y + 1 < 4 {
+                    e.push(format!("[{i},{},-1]", i + 4));
+                }
+            }
+        }
+        let open = format!(r#"{{"n":16,"couplings":[{}]}}"#, e.join(","));
+        let err = dispatch("toroidal_bound", &parse(&format!(r#"{{"graph":{open}}}"#)).unwrap())
+            .unwrap_err();
+        assert!(err.contains("not a toroidal grid"), "{err}");
     }
 
     /// Each method reports the thing only it can report, and a bad name is refused rather than

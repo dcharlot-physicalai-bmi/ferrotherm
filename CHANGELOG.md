@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.29.0
+
+### G11's best-known max-cut has stood for twenty-five years. It is optimal, and this proves it.
+
+| instance | torus | odd dual faces | best known (a lower bound) | **upper bound** | verdict |
+|---|---|---|---|---|---|
+| G11 | 8×100 | 434 | 564 | **564** | **the bracket closes: 564 is OPTIMAL** |
+| G12 | 16×50 | 394 | 556 | **558** | the optimum is in [556, 558] |
+| G13 | 32×25 | 384 | 582 | **583** | the optimum is in [582, 583] |
+
+G-set publishes one number per instance and it is always the same kind of number: a best cut
+**found**. That is a lower bound — somebody achieved it — and it can never say whether anything
+better exists. These are the other end.
+
+A torus is not a plane, so `planarcut::solve` refuses G11 and is right to. But the dual argument
+needs only **faces**, and an embedding on any surface has them. Run the same reduction on a toroidal
+embedding and the arithmetic is identical; what changes is what the answer means. On a torus the
+cycle space of the dual is four times the cut space, so the relaxation ranges over sets that are not
+cuts, and its optimum can only be an **upper bound**. Every cut is such a subgraph, so a maximum
+over the larger set is at least the maximum over the smaller one — which is the whole proof.
+
+The grid dimensions are **recovered from the edge list**, not assumed. `planar::torus_grid_of` tries
+every factorisation and requires the entire edge set to match; agreement on all 1,600 edges is a
+statement about the graph rather than a guess about the file.
+
+### The bound says when it is not a bound
+
+`bound_on_surface` reports `attained`: whether the relaxation's optimum is itself a genuine cut. An
+even subgraph of the dual is a cut **exactly when it two-colours the graph**, which was already the
+self-check on the exact path — so the same walk that catches a broken reduction on the sphere
+decides, above it, whether the answer is a proof or a bound. On the sphere it always holds, and a
+test asserts that, because otherwise "attained" would be measuring the reduction rather than the
+topology.
+
+The toroidal test requires three things against branch and bound: the bound is never below the
+proved maximum; when attained it equals it exactly; and it is attained on **some but not all**
+instances. Without that last clause the flag could be a constant and the suite would not notice.
+
+### What is not here, and is not claimed
+
+**Exact genus-1 max-cut is not implemented.** I expected it to be four planar subproblems. It is
+not: Barahona's polynomial algorithm for arbitrary orientable surfaces needs modular arithmetic over
+a generalized-nested-dissection solve, and the 2026 survey of toroidal max-cut offers a *heuristic*
+plus exactly this relaxation as the upper bound. The recollection was wrong and the correction is
+worth more than the guess would have been — checking it before building saved a fortnight of
+building the wrong thing.
+
+Two C ABI symbols (`ft_toroidal_bound`, `ft_toroidal_attained`) on header, Python, Zig and Julia,
+plus `toroidal_bound` on HTTP and MCP. **113 C ABI symbols reach every surface.**
+
 ## 0.28.0
 
 ### Exact max-cut at 10,000 spins

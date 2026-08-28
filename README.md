@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 669 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 676 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -155,6 +155,27 @@ thermodynamic-computing corpus currently leaves empty.
   and two disjoint computations of the cut must agree. It refuses rather than reports — on fields,
   on non-planarity, on a cut vertex, on weights that do not scale to integers — and says which,
   because those are four different things to do next. A periodic lattice is a torus and is refused.
+- `cargo run --release --example toroidal_bound -- G11.txt 564` — **G11's best-known cut is
+  optimal, and this proves it.** G-set's toroidal instances are the case the exact planar solver
+  refuses: a torus is not a plane. But the dual argument needs only *faces*, and an embedding on any
+  surface has them — so the same reduction runs on a toroidal embedding, where the cycle space of
+  the dual is four times the cut space and its optimum is therefore an **upper bound**. That is the
+  side of the table nobody publishes: every G-set figure is a best cut *found*, a lower bound.
+
+  | instance | torus | odd dual faces | best known (lower) | **upper bound** | verdict |
+  |---|---|---|---|---|---|
+  | G11 | 8×100 | 434 | 564 | **564** | **the bracket closes: 564 is OPTIMAL** |
+  | G12 | 16×50 | 394 | 556 | **558** | optimum in [556, 558] |
+  | G13 | 32×25 | 384 | 582 | **583** | optimum in [582, 583] |
+
+  The grid dimensions are **recovered from the edge list**, not assumed — a match on all 1,600 edges
+  is a proof of structure. `bound_on_surface` also reports whether the bound is *attained* (its
+  optimum is itself a cut, so it is the maximum by construction rather than a bound); on the sphere
+  that always holds, and asserting it is how the planar path knows the reduction is right.
+
+  **Exact genus-1 max-cut is not implemented and is not claimed.** Barahona's algorithm needs
+  modular arithmetic over a nested-dissection solve; the 2026 toroidal survey offers a heuristic and
+  this same relaxation as the bound. What is here is the bound, and the honest verdict beside it.
 - `cargo run --release --example maxcut_shootout -- G1.txt 11624` — **the head-to-head this crate did
   not have.** Three solvers on one instance at the same number of spin flips, 8 seeds each:
 

@@ -105,7 +105,29 @@ impl Embedding {
         out
     }
 
-    /// Does this rotation system describe a planar embedding of a connected graph?
+    /// `V − E + F` for this rotation system: the Euler characteristic of the surface it embeds in.
+    ///
+    /// 2 is the sphere, 0 the torus, −2 the genus-2 surface. This is the one number that says
+    /// *which surface* a list of lists actually describes, and everything downstream turns on it:
+    /// the dual argument behind [`crate::planarcut`] gives an exact maximum on the sphere and only
+    /// an upper bound above it.
+    pub fn euler(&self) -> i64 {
+        if self.n == 0 {
+            return 2;
+        }
+        self.n as i64 - self.edges() as i64 + self.faces().len() as i64
+    }
+
+    /// Orientable genus, from Euler's formula `χ = 2 − 2g`. `None` if `χ` is odd or positive.
+    pub fn genus(&self) -> Option<usize> {
+        let c = self.euler();
+        if c > 2 || (2 - c) % 2 != 0 {
+            return None;
+        }
+        Some(((2 - c) / 2) as usize)
+    }
+
+    /// Does this rotation system describe a **planar** embedding of a connected graph?
     ///
     /// Euler: `V − E + F = 2`. Checked rather than assumed, because a rotation system is just a
     /// list of lists — nothing about its type says the faces it traces close up into a sphere.
@@ -113,9 +135,128 @@ impl Embedding {
         if self.n == 0 {
             return true;
         }
-        let (v, e, f) = (self.n as i64, self.edges() as i64, self.faces().len() as i64);
-        v - e + f == 2
+        self.euler() == 2
     }
+}
+
+/// The rotation system of a `w × h` **toroidal** grid, laid out row-major.
+///
+/// A torus is not a plane and [`embed`] refuses it, correctly. But an embedding on any surface has
+/// faces, and faces are all the dual argument needs — so this exists to hand
+/// [`crate::planarcut::bound_on_surface`] the one thing it cannot derive.
+///
+/// The cyclic order at every vertex is right, up, left, down, which is the standard embedding: it
+/// traces `w·h` square faces, and `V − E + F = wh − 2wh + wh = 0`, the Euler characteristic of the
+/// torus. Both are asserted by the tests rather than argued here.
+///
+/// `w` and `h` must be at least 3. At 2 the periodic grid has a doubled edge between neighbours —
+/// two distinct edges the graph type cannot tell apart — and an embedding of a multigraph is a
+/// different object from an embedding of its underlying simple graph.
+pub fn torus_grid(w: usize, h: usize) -> Option<Embedding> {
+    if w < 3 || h < 3 {
+        return None;
+    }
+    let n = w * h;
+    let mut adj = vec![Vec::with_capacity(4); n];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let right = y * w + (x + 1) % w;
+            let up = ((y + h - 1) % h) * w + x;
+            let left = y * w + (x + w - 1) % w;
+            let down = ((y + 1) % h) * w + x;
+            adj[i] = vec![right, up, left, down];
+        }
+    }
+    Some(Embedding { n, adj })
+}
+
+/// Recover a toroidal grid embedding from an edge list, if the graph is one.
+///
+/// A toroidal grid carries its embedding in its structure, but a file does not say so — G-set's
+/// toroidal instances are edge lists like any other, and "toroidal" is a word in the accompanying
+/// prose. This tries every factorisation `n = w · h` and returns the embedding for the first whose
+/// **entire edge set** matches, so a match is a proof rather than a guess: `2n` edges all in the
+/// right places cannot happen by accident.
+///
+/// Measured on the three toroidal G-set instances: G11 is 8 × 100, G12 is 16 × 50, G13 is 32 × 25.
+pub fn torus_grid_of(g: &Graph) -> Option<Embedding> {
+    let n = g.n;
+    if n < 9 {
+        return None;
+    }
+    let mut have: Vec<(usize, usize)> = Vec::new();
+    for u in 0..n {
+        for k in g.offset[u]..g.offset[u + 1] {
+            let v = g.nbr[k] as usize;
+            if v > u {
+                have.push((u, v));
+            }
+        }
+    }
+    have.sort_unstable();
+    have.dedup();
+    if have.len() != 2 * n {
+        return None; // a toroidal grid is 4-regular
+    }
+    for w in 3..=(n / 3) {
+        // `is_multiple_of` rather than `% == 0`: stable since 1.87 and what clippy asks for. No
+        // MSRV is declared here and CI builds on stable, so there is nothing to be cautious about.
+        if !n.is_multiple_of(w) {
+            continue;
+        }
+        let h = n / w;
+        if h < 3 {
+            continue;
+        }
+        let mut want: Vec<(usize, usize)> = Vec::with_capacity(2 * n);
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                let a = y * w + (x + 1) % w;
+                let b = ((y + 1) % h) * w + x;
+                want.push((i.min(a), i.max(a)));
+                want.push((i.min(b), i.max(b)));
+            }
+        }
+        want.sort_unstable();
+        want.dedup();
+        if want == have {
+            return torus_grid(w, h);
+        }
+    }
+    None
+}
+
+/// Build an [`Embedding`] from a rotation system supplied by the caller.
+///
+/// Validated, not trusted: every list must be a permutation of a set of distinct neighbours, the
+/// relation must be symmetric, and every dart must land on exactly one traced face. A rotation
+/// system that fails any of those is not an embedding of anything, and the faces it would trace
+/// would be a dual of nothing.
+pub fn from_rotation(adj: Vec<Vec<usize>>) -> Option<Embedding> {
+    let n = adj.len();
+    for (v, list) in adj.iter().enumerate() {
+        let mut s = list.clone();
+        s.sort_unstable();
+        let before = s.len();
+        s.dedup();
+        if s.len() != before {
+            return None; // a repeated neighbour
+        }
+        if s.iter().any(|&u| u >= n || u == v) {
+            return None;
+        }
+        for &u in list {
+            if !adj[u].contains(&v) {
+                return None; // not symmetric
+            }
+        }
+    }
+    let e = Embedding { n, adj };
+    // The dart count is the check that the traced faces really partition the embedding.
+    let darts: usize = e.faces().iter().map(|f| f.len()).sum();
+    (darts == 2 * e.edges()).then_some(e)
 }
 
 /// Embed `g` in the plane, or return `None`.
@@ -719,6 +860,73 @@ mod tests {
         // And every dart is on exactly one face, so the traces partition 2E.
         let darts: usize = e.faces().iter().map(|f| f.len()).sum();
         assert_eq!(darts, 2 * e.edges());
+    }
+
+    /// The torus is not a plane, and the rotation system says so in the one number that can.
+    #[test]
+    fn the_toroidal_grid_has_euler_characteristic_zero() {
+        for (w, h) in [(3usize, 3usize), (4, 4), (5, 7), (20, 40)] {
+            let e = torus_grid(w, h).expect("3 or more each way");
+            assert_eq!(e.len(), w * h);
+            assert_eq!(e.edges(), 2 * w * h, "a 4-regular graph on {w}x{h}");
+            assert_eq!(e.faces().len(), w * h, "every face of a toroidal grid is a square");
+            assert_eq!(e.euler(), 0, "{w}x{h}: the torus has chi = 0");
+            assert_eq!(e.genus(), Some(1));
+            assert!(!e.is_consistent(), "it is a valid embedding, and NOT a planar one");
+            // Every dart on exactly one face, which is what makes the dual well defined.
+            assert_eq!(e.faces().iter().map(|f| f.len()).sum::<usize>(), 2 * e.edges());
+        }
+        // Below 3 the periodic grid has doubled edges, and an embedding of a multigraph is a
+        // different object from an embedding of its underlying simple graph.
+        assert!(torus_grid(2, 5).is_none());
+        assert!(torus_grid(5, 2).is_none());
+    }
+
+    /// The structure is recovered from the edge list alone, and only when it is really there.
+    #[test]
+    fn a_toroidal_grid_is_recognised_and_nothing_else_is() {
+        use crate::ising::lattice2d;
+        for (w, h) in [(3usize, 4usize), (5, 8), (8, 100), (16, 50)] {
+            let mut gb = GraphBuilder::new(w * h);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = y * w + x;
+                    gb.couple(i, y * w + (x + 1) % w, 1.0);
+                    gb.couple(i, ((y + 1) % h) * w + x, 1.0);
+                }
+            }
+            let e = torus_grid_of(&gb.build())
+                .unwrap_or_else(|| panic!("{w}x{h} is a toroidal grid"));
+            assert_eq!(e.euler(), 0);
+            assert_eq!(e.len(), w * h);
+        }
+        // A square periodic lattice is the same object by another constructor.
+        assert!(torus_grid_of(&lattice2d(6, 1.0)).is_some());
+        // And things that are not: an open grid, and a graph of the right degree that is not a grid.
+        assert!(torus_grid_of(&grid2d(6, 6, 1.0)).is_none(), "open boundaries are not a torus");
+        assert!(torus_grid_of(&ring(12, 1.0, 0.0)).is_none(), "degree 2, not 4");
+    }
+
+    /// A rotation system supplied from outside is validated, not trusted.
+    #[test]
+    fn a_supplied_rotation_is_checked_rather_than_believed() {
+        // The planar 4-cycle, by hand.
+        let ok = from_rotation(vec![vec![1, 3], vec![0, 2], vec![1, 3], vec![0, 2]])
+            .expect("a valid 4-cycle rotation");
+        assert_eq!(ok.euler(), 2);
+
+        // Asymmetric: 0 lists 1, but 1 does not list 0.
+        assert!(from_rotation(vec![vec![1], vec![]]).is_none());
+        // A repeated neighbour is a multigraph, which this cannot represent.
+        assert!(from_rotation(vec![vec![1, 1], vec![0, 0]]).is_none());
+        // A self-loop, and an index off the end.
+        assert!(from_rotation(vec![vec![0], vec![]]).is_none());
+        assert!(from_rotation(vec![vec![9], vec![0]]).is_none());
+        // And a genuine embedding round-trips: the torus rotation validates as one.
+        let t = torus_grid(4, 4).unwrap();
+        let back = from_rotation((0..t.len()).map(|v| t.rotation(v).to_vec()).collect())
+            .expect("the torus rotation is a valid embedding");
+        assert_eq!(back.euler(), 0);
     }
 
     /// A disconnected graph is refused rather than half-embedded: the caller's next step is a dual,

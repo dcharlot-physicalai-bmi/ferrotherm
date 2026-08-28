@@ -209,6 +209,19 @@ pub const Sim = struct {
         return buf[0..got];
     }
 
+    /// An UPPER BOUND on the maximum cut of a toroidal grid, from the same dual reduction.
+    ///
+    /// The side of the G-set table nobody publishes: every figure there is a best cut FOUND, a
+    /// lower bound. Measured, this closes the bracket on G11 and proves its best-known 564 optimal.
+    ///
+    /// `error.NotPlanar` unless the graph is a toroidal grid, whose structure is recovered from the
+    /// edge list -- a match on all 2n edges rather than a guess.
+    pub fn toroidalBound(self: Sim, scale: f64) Error!ToroidalBound {
+        const v = c.ft_toroidal_bound(self.h, scale);
+        if (std.math.isNan(v)) return Error.NotPlanar;
+        return .{ .cut = v, .attained = c.ft_toroidal_attained(self.h) != 0 };
+    }
+
     /// Breakout local search -- the algorithm that holds the max-cut record on most of G-set.
     ///
     /// Steepest descent with an adaptive perturbation between local optima. One iteration is one
@@ -281,6 +294,13 @@ pub const PlanarCut = struct {
     /// The size of the matching problem underneath, and the real cost driver. Zero is legitimate:
     /// a grid with uniform weights has every face of even degree and the whole cut comes free.
     odd_faces: u64,
+};
+
+/// An upper bound on the maximum cut of a torus, and whether it is achieved.
+pub const ToroidalBound = struct {
+    cut: f64,
+    /// True when the relaxation's optimum is itself a genuine cut, so the bound IS the maximum.
+    attained: bool,
 };
 
 /// A breakout-local-search run, with the evidence that it actually broke out.
@@ -1604,6 +1624,17 @@ test "branch and bound withholds a proof when the budget runs out" {
     const r = sim.branch(200);
     try std.testing.expect(!r.proved);
     try std.testing.expect(r.nodes <= 201);
+}
+
+test "the toroidal bound bounds, and a search cannot beat it" {
+    // A 6x6 periodic lattice: a torus. Bipartite, so every one of its 72 edges is cut.
+    var torus = try Sim.lattice2d(6, -1.0, 1.0, 3);
+    defer torus.deinit();
+    const b = try torus.toroidalBound(1.0);
+    try std.testing.expectEqual(@as(f64, 72.0), b.cut);
+    try std.testing.expect(b.attained);
+    // And the planar solver correctly declines the same graph.
+    try std.testing.expectError(Error.NotPlanar, torus.exactPlanar(1.0));
 }
 
 test "the exact planar solver, and the reason it refuses" {
