@@ -94,6 +94,12 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
     they are the two ways a mutation check has silently lied here before.
 - A new capability lands on every surface it belongs on, or the gap is written down. The matrix is
   Rust / C header / Python / Zig / Julia / node editor / HTTP / MCP.
+  - **Declaring a symbol a binding never calls is gaming the gate, not passing it.** `check-parity.sh`
+    greps for the name; three `ft_hubo_*` entry points were "reachable" from Python and Julia only
+    because signatures had been declared for them and nothing called them. The honest move was to
+    delete the declarations and write three EXEMPT lines saying why a borrowed state pointer, a
+    pending-list count and a fixed-arity node-graph form belong to the wasm path and not to a
+    high-level binding.
   `scripts/check-parity.sh` enforces the four that hang off the C ABI, and a gap passes only with a
   reason in its EXEMPT table. It is in CI. Written-down means written there, not remembered here --
   the rule was broken twice while it lived only in this file, and its first run found sixteen real

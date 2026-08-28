@@ -49,6 +49,8 @@ compiles through the same code, so an answer does not depend on which door you c
 - program: stochastic differentiable circuits; REINFORCE + parameter-shift + FD-referee gradients
 - compile: variational compilation of conditionals onto device patches; chain-rule KL error bound
 - ffi: C ABI (ft_*) for wasm and host languages, including the whole modelling layer (ft_model_*)
+  and the native higher-order path (ft_hubo_*)
+- hubo: higher-order models solved WITHOUT quadratising -- no ancillas, no penalty to get right
 
 ## Examples (each is a verification gate, exit code = pass/fail)
 
@@ -85,6 +87,34 @@ without a `--selftest` that damages the thing under test and demands a failure.
 What has no drawing is refused rather than approximated: a counting constraint whose literals name
 DIFFERENT values has no node (a counting node holds one value for all of them), and `fromModel`
 says so instead of drawing the one it can. That model still runs through HTTP and MCP.
+
+## Higher-order terms: two paths, and they are not equivalent
+
+A term over three or more variables can go two ways, and both are reachable from every surface.
+
+- **Quadratised.** `objective` with `of: [...]` (or `ft_model_objective_product`) lowers it through
+  Rosenberg's reduction: one ancilla per substituted pair, plus a penalty. The reply reports
+  `ancillas`, and the guarantee is about finding OPTIMA rather than about sampling.
+- **Native.** `hubo` / `ft_hubo_*` / `Hubo` (Python, Zig, Julia) solves it as written. A term of any
+  width contributes `-w * prod(s_i)`; no ancillas exist to get right.
+
+The difference is measured, not argued. `examples/hubo_vs_reduction` gives the reduced arm its best
+beta ladder and up to 1024x the budget: on 60 three-body terms over 40 spins the native path reaches
+-48.12 and the reduced path reaches -34.00 at a thousand times the work. The mechanism is the
+penalty, chosen as the sum of every coefficient's magnitude and therefore ~1300 against term weights
+of 1 -- any flip that would move the search must first pay it, so the landscape is rigid rather than
+merely larger. Zero ancilla violations across 384 runs confirms it: stuck inside the feasible region,
+not wandering out of it.
+
+So: reach for `hubo` when the model IS higher-order and the target is a CPU. Reach for the
+quadratised path when the target is pairwise hardware, which is what the reduction is for.
+`scripts/check-hubo-answers.sh` puts a three-body parity term -- the smallest model that cannot be
+expressed pairwise at all -- through Rust, Python, Zig and Julia and compares the energy, the state
+invariant, and the ancilla count, so a surface that quietly reduced it is caught reporting the wrong
+saving for the right answer.
+
+`ancillas_avoided` is an UPPER BOUND, not a cost: the reduction shares one ancilla across every term
+containing the same pair, so on three terms sharing one it spends one where the count reports three.
 
 ## Constraints, all nine of them
 

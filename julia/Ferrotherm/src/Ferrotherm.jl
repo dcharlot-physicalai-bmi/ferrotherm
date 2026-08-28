@@ -52,7 +52,8 @@ module Ferrotherm
 
 using Libdl
 
-export IsingModel, Simulation, Certificate
+export IsingModel, Simulation, Certificate, Hubo
+export hubo, add!, anneal!, delta, terms, max_arity, ancillas_avoided, proposals, accepted
 export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
@@ -177,6 +178,28 @@ end
 
 const SimPtr = Ptr{Cvoid}
 const BldPtr = Ptr{Cvoid}
+
+const HuboPtr = Ptr{Cvoid}
+
+@cfn ft_hubo_new HuboPtr Cuint
+@cfn ft_hubo_free Cvoid HuboPtr
+@cfn ft_hubo_from_sim HuboPtr SimPtr
+@cfn ft_hubo_vars_clear Cuint HuboPtr
+@cfn ft_hubo_var Cuint HuboPtr Cuint
+@cfn ft_hubo_add Cuint HuboPtr Cdouble
+@cfn ft_hubo_len Cuint HuboPtr
+@cfn ft_hubo_terms Cuint HuboPtr
+@cfn ft_hubo_max_arity Cuint HuboPtr
+@cfn ft_hubo_ancillas_avoided Cuint HuboPtr
+@cfn ft_hubo_anneal Cdouble HuboPtr Cdouble Cdouble Cuint Cuint Culonglong
+@cfn ft_hubo_read Cuint HuboPtr Ptr{Int8} Cuint
+@cfn ft_hubo_set_spins Cuint HuboPtr Ptr{Int8} Cuint
+@cfn ft_hubo_energy Cdouble HuboPtr
+@cfn ft_hubo_delta Cdouble HuboPtr Cuint
+@cfn ft_hubo_proposals Culonglong HuboPtr
+@cfn ft_hubo_accepted Culonglong HuboPtr
+@cfn ft_hubo_joules_z1 Cdouble HuboPtr
+@cfn ft_hubo_error Cuint HuboPtr Ptr{UInt8} Cuint
 
 @cfn ft_ising2d_new SimPtr Cuint Cdouble Cdouble Culonglong
 @cfn ft_z1_new SimPtr Cuint Cuint Cdouble Cdouble Cdouble Culonglong
@@ -1114,6 +1137,148 @@ function Base.show(io::IO, a::Answer)
         print(io, "\n  broken: ", v, i <= length(a.by) ? " (by $(round(a.by[i]; digits = 4)))" : "")
     end
 end
+
+"""
+    Hubo(n)
+
+A higher-order model, solved without quadratising it.
+
+A term of any width contributes `-w * prod(s_i)`, so nothing here needs an ancilla. The other route
+to a k-body term -- an objective product on [`Problem`](@ref) -- goes through Rosenberg's reduction,
+which buys one ancilla per substituted pair and a penalty larger than the whole model can pay. That
+penalty is what costs: on 60 three-body terms over 40 spins the reduced path at 1024x the budget
+does not reach this one at 1x, because the landscape goes rigid rather than merely larger.
+
+```julia
+h = Hubo(3)
+add!(h, [1, 2, 3], 1.0)      # one-based, like everything else in Julia
+anneal!(h; seed = 7)         # -1.0
+```
+"""
+mutable struct Hubo
+    handle::HuboPtr
+    n::Int
+    function Hubo(n::Integer)
+        n >= 1 || error("a model with no variables can hold no term")
+        h = ft_hubo_new(Cuint(n))
+        h == C_NULL && error("could not allocate a higher-order model")
+        m = new(h, Int(n))
+        finalizer(close!, m)
+        m
+    end
+end
+
+function close!(h::Hubo)
+    if h.handle != C_NULL
+        ft_hubo_free(h.handle)
+        h.handle = HuboPtr(C_NULL)
+    end
+    nothing
+end
+
+_live(h::Hubo) = h.handle == C_NULL && error("this model has been closed")
+
+function _why(h::Hubo)
+    need = ft_hubo_error(h.handle, Ptr{UInt8}(C_NULL), Cuint(0))
+    need == 0 && return ""
+    buf = Vector{UInt8}(undef, need)
+    got = ft_hubo_error(h.handle, pointer(buf), Cuint(need))
+    String(buf[1:got])
+end
+
+"""Lift a pairwise simulation, unchanged, so both paths can score the same state."""
+function hubo(s::Simulation)
+    _live(s)
+    p = ft_hubo_from_sim(s.handle)
+    p == C_NULL && error("could not lift this simulation")
+    h = Hubo(1)              # a placeholder handle, replaced below
+    close!(h)
+    h.handle = p
+    h.n = Int(ft_hubo_len(p))
+    h
+end
+
+"""
+    add!(h, variables, weight)
+
+Add one term of any arity. Variables are one-based.
+
+A variable out of range or repeated within the term is an error: `s * s = 1`, so a repeat would
+silently change the term's order rather than mean what was written.
+"""
+function add!(h::Hubo, variables, weight::Real)
+    _live(h)
+    ft_hubo_vars_clear(h.handle)
+    for v in variables
+        (1 <= v <= h.n) || error("no variable $v; $(h.n) declared")
+        if ft_hubo_var(h.handle, Cuint(v - 1)) == 0
+            ft_hubo_vars_clear(h.handle)
+            error("rejected term $(collect(variables)): $(_why(h))")
+        end
+    end
+    if ft_hubo_add(h.handle, Cdouble(weight)) == 0
+        error("rejected term $(collect(variables)) at weight $weight: $(_why(h))")
+    end
+    h
+end
+
+"""Anneal and return the best energy. Zero for any ladder parameter means its own default."""
+function anneal!(h::Hubo; beta_min::Real = 0.0, beta_max::Real = 0.0, stages::Integer = 0,
+                 sweeps_per_stage::Integer = 0, seed::Integer = 1)
+    _live(h)
+    e = ft_hubo_anneal(h.handle, Cdouble(beta_min), Cdouble(beta_max), Cuint(stages),
+                       Cuint(sweeps_per_stage), Culonglong(seed))
+    isnan(e) && error("could not anneal: $(_why(h))")
+    e
+end
+
+"""The current state, copied out."""
+function spins(h::Hubo)
+    _live(h)
+    buf = Vector{Int8}(undef, h.n)
+    ft_hubo_read(h.handle, pointer(buf), Cuint(h.n)) == 0 && error("could not read the state")
+    buf
+end
+
+"""Put a state in, so something computed elsewhere is scored by this library."""
+function spins!(h::Hubo, s::AbstractVector{<:Integer})
+    _live(h)
+    length(s) == h.n || error("this model has $(h.n) spins; $(length(s)) were offered")
+    buf = Int8[Int8(v) for v in s]
+    ft_hubo_set_spins(h.handle, pointer(buf), Cuint(h.n)) == 0 && error(_why(h))
+    h
+end
+
+"""Energy of the current state."""
+function energy(h::Hubo)
+    _live(h)
+    ft_hubo_energy(h.handle)
+end
+
+"""The energy change from flipping spin `i` (one-based), in O(terms containing i)."""
+function delta(h::Hubo, i::Integer)
+    _live(h)
+    d = ft_hubo_delta(h.handle, Cuint(i - 1))
+    isnan(d) && error("no variable $i; $(h.n) declared")
+    d
+end
+
+terms(h::Hubo) = (_live(h); Int(ft_hubo_terms(h.handle)))
+max_arity(h::Hubo) = (_live(h); Int(ft_hubo_max_arity(h.handle)))
+
+"""
+An UPPER BOUND on what a pairwise reduction would have spent, not the cost: `reduce` substitutes the
+commonest pair first, so one ancilla serves every term containing it, and on three terms sharing one
+pair it spends one where this reports three.
+"""
+ancillas_avoided(h::Hubo) = (_live(h); Int(ft_hubo_ancillas_avoided(h.handle)))
+proposals(h::Hubo) = (_live(h); Int(ft_hubo_proposals(h.handle)))
+accepted(h::Hubo) = (_live(h); Int(ft_hubo_accepted(h.handle)))
+joules_z1(h::Hubo) = (_live(h); ft_hubo_joules_z1(h.handle))
+
+Base.length(h::Hubo) = h.n
+Base.show(io::IO, h::Hubo) =
+    print(io, "Hubo($(h.n) spins, $(terms(h)) terms, max arity $(max_arity(h)))")
 
 """
     Problem()

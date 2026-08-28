@@ -664,3 +664,96 @@ def test_the_closed_gaps_carry_their_own_caveats():
     m.bias(3, 0.5)
     with pytest.raises(ValueError, match="h = 0"):
         m.build(beta=1.0, seed=1).cluster_anneal()
+
+
+# ---- higher-order models -------------------------------------------------------------------------
+#
+# The other route to a k-body term is an objective product on Problem, which quadratises it with
+# ancillas. These check the NATIVE path: no ancillas, and the same numbers every other binding gets.
+
+
+def test_a_three_body_term_is_solved_without_ancillas():
+    h = ft.Hubo(3)
+    h.add([0, 1, 2], 1.0)
+    e = h.anneal(seed=7)
+    assert e == -1.0, e
+    s = h.state
+    assert s[0] * s[1] * s[2] == 1, s
+    assert h.terms == 1
+    assert h.max_arity == 3
+    # The ceiling, not the cost: one substitution for one three-body term.
+    assert h.ancillas_avoided == 1
+    assert h.proposals > 0, "a run that proposed nothing is not a run"
+
+
+def test_a_repeated_variable_is_refused_rather_than_changing_the_order():
+    h = ft.Hubo(4)
+    # s * s = 1, so [0, 0, 1] is a one-body term wearing a three-body's clothes.
+    with pytest.raises(ValueError, match="already in this term"):
+        h.add([0, 0, 1], 1.0)
+    with pytest.raises(ValueError, match="no variable 9"):
+        h.add([0, 9], 1.0)
+    with pytest.raises(ValueError, match="finite"):
+        h.add([0, 1], float("nan"))
+    assert h.terms == 0, "nothing malformed was recorded"
+    # And a refused term leaves nothing pending for the next one to absorb.
+    h.add([0, 1, 2], 1.0)
+    assert h.terms == 1 and h.max_arity == 3
+
+
+def test_the_energy_returned_is_a_claim_about_the_state_left_behind():
+    h = ft.Hubo(4)
+    h.add([0, 1, 2], 1.5)
+    h.add([1, 2, 3], -2.0)
+    e = h.anneal(seed=3)
+    assert abs(h.energy - e) < 1e-9, (h.energy, e)
+
+    # And the incremental update agrees with recomputing, which is the check another language or a
+    # GPU would run against this library.
+    for i in range(4):
+        before = h.energy
+        d = h.delta(i)
+        s = h.state
+        s[i] = -s[i]
+        h.state = s
+        assert abs(h.energy - before - d) < 1e-9, (i, d, h.energy - before)
+        s[i] = -s[i]
+        h.state = s
+
+
+def test_a_state_is_taken_whole_or_refused_whole():
+    h = ft.Hubo(3)
+    h.add([0, 1, 2], 1.0)
+    h.state = [1, 1, 1]
+    assert h.energy == -1.0
+    with pytest.raises(ValueError, match="-1 or"):
+        h.state = [1, 0, 1]
+    assert h.energy == -1.0, "the refused write changed nothing"
+    with pytest.raises(ValueError, match="3 spins"):
+        h.state = [1, 1]
+
+
+def test_a_lifted_graph_scores_exactly_as_the_pairwise_path_does():
+    # If these disagree, one of them has the sign convention wrong and every later comparison
+    # inherits it silently.
+    m = ft.Model(5)
+    for i in range(4):
+        m.couple(i, i + 1, 1.0 if i % 2 == 0 else -1.0)
+    m.bias(0, 0.5)
+    sim = m.build(beta=0.9, seed=11)
+    sim.sweep(20)
+    h = ft.Hubo.from_sim(sim)
+    assert abs(h.energy - sim.energy) < 1e-9, (h.energy, sim.energy)
+    assert h.max_arity == 2, "a lifted pairwise graph is still pairwise"
+    assert h.ancillas_avoided == 0, "nothing wider than two needs a substitution"
+
+
+def test_a_bad_ladder_is_refused_and_a_nan_is_not_read_as_a_default():
+    h = ft.Hubo(3)
+    h.add([0, 1, 2], 1.0)
+    with pytest.raises(ValueError):
+        h.anneal(beta_min=8.0, beta_max=0.05)
+    with pytest.raises(ValueError):
+        h.anneal(beta_min=float("nan"), beta_max=8.0)
+    # Zeros DO mean "use the default", which is why NaN has to be refused before that test.
+    assert h.anneal(seed=1) == -1.0

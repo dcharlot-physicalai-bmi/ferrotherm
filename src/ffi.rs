@@ -2885,6 +2885,351 @@ pub extern "C" fn ft_bound_sdp(sim: *const Sim, sweeps: u32, seed: u64) -> f64 {
     cert.verify(&s.graph).unwrap_or(f64::NAN)
 }
 
+// ---- higher-order models -------------------------------------------------------------------
+//
+// Everything above this line is pairwise, or becomes pairwise. `crate::hubo` is the one module that
+// is neither: a term of any width contributes `-w * prod(s_i)` and the change from one flip is a
+// sum over the terms containing that spin, so nothing about it needs an ancilla. Until now it had
+// reached exactly one surface -- Rust -- and every other caller wanting a k-body model went through
+// `Model` and `reduce`, which is a different computation with a measurable cost.
+//
+// How much cost was an open question and is not one any more. `examples/hubo_vs_reduction` runs the
+// two paths on the same terms and gives the reduced arm its best ladder and up to 1024x the budget:
+// on 60 three-body terms over 40 spins the native path reaches -48.12 and the reduced path reaches
+// -34.00 at a thousand times the work. The mechanism is `Reduction::penalty`, chosen as the sum of
+// every coefficient's magnitude and therefore ~1300 against term weights of 1, which makes the
+// landscape rigid rather than merely larger. That is why this section exists: not so a k-body model
+// can be EXPRESSED from C -- `ft_model_objective_product` already allows that -- but so it can be
+// SOLVED the way `hubo` solves it.
+//
+// `ft_hubo_ancillas_avoided` is a CEILING and its doc says so. `reduce` shares one ancilla across
+// every term containing the same pair, so it usually spends fewer.
+
+use crate::hubo::{Hubo, Outcome as HuboOutcome, Params as HuboParams};
+
+/// A higher-order model under construction, plus whatever it last annealed.
+pub struct HuboHandle {
+    hubo: Hubo,
+    /// The last run, or `None` before one. Read by the counters and by `ft_hubo_energy`.
+    out: Option<HuboOutcome>,
+    /// The current state, which a caller may also write with `ft_hubo_set_spins`.
+    state: Vec<i8>,
+    ledger: Ledger,
+    last_error: String,
+    /// Variables accumulating for the next term. Closed by `ft_hubo_add`.
+    vars: Vec<u32>,
+}
+
+/// A model over `n` spins. NULL if `n` is zero, since a model with no variables can hold no term.
+#[no_mangle]
+pub extern "C" fn ft_hubo_new(n: u32) -> *mut HuboHandle {
+    if n == 0 {
+        return core::ptr::null_mut();
+    }
+    Box::into_raw(Box::new(HuboHandle {
+        hubo: Hubo::new(n as usize),
+        out: None,
+        state: vec![1; n as usize],
+        ledger: Ledger::default(),
+        last_error: String::new(),
+        vars: Vec::new(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn ft_hubo_free(h: *mut HuboHandle) {
+    if !h.is_null() {
+        drop(unsafe { Box::from_raw(h) });
+    }
+}
+
+/// Lift a pairwise simulation into a higher-order model, unchanged.
+///
+/// The only way the native-versus-reduced comparison this module exists to settle can be set up
+/// from outside Rust: build a graph, lift it, and check that both paths score it identically.
+#[no_mangle]
+pub extern "C" fn ft_hubo_from_sim(sim: *const Sim) -> *mut HuboHandle {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return core::ptr::null_mut() };
+    let hubo = Hubo::from_graph(&s.graph);
+    Box::into_raw(Box::new(HuboHandle {
+        hubo,
+        out: None,
+        state: s.sampler_state.clone(),
+        ledger: Ledger::default(),
+        last_error: String::new(),
+        vars: Vec::new(),
+    }))
+}
+
+/// Start a fresh variable list for the next term.
+#[no_mangle]
+pub extern "C" fn ft_hubo_vars_clear(h: *mut HuboHandle) -> u32 {
+    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    hh.vars.clear();
+    1
+}
+
+/// Append a variable to the pending term. Refuses one out of range, or one already pending.
+///
+/// The repeat is caught HERE rather than at `ft_hubo_add`, because `s * s = 1` silently changes a
+/// term's order and a caller that learns about it several calls later has to work out which call
+/// was wrong. `Hubo::add` refuses it too; this is the earlier of the two.
+#[no_mangle]
+pub extern "C" fn ft_hubo_var(h: *mut HuboHandle, var: u32) -> u32 {
+    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    if var as usize >= hh.hubo.len() {
+        hh.last_error = format!("no variable {var}; {} declared", hh.hubo.len());
+        return 0;
+    }
+    if hh.vars.contains(&var) {
+        hh.last_error =
+            format!("variable {var} is already in this term; s*s = 1, so a repeat would change its order");
+        return 0;
+    }
+    hh.vars.push(var);
+    hh.last_error.clear();
+    1
+}
+
+/// How many variables are pending, so a caller can check its own bookkeeping.
+#[no_mangle]
+pub extern "C" fn ft_hubo_vars(h: *const HuboHandle) -> u32 {
+    match unsafe { h.as_ref() } {
+        Some(hh) => hh.vars.len() as u32,
+        None => 0,
+    }
+}
+
+/// Close the pending variables as one term of the given weight.
+///
+/// Clears the list whether it succeeds or not, and clears it FIRST -- a refused term that left its
+/// variables pending would be silently absorbed by the next one.
+#[no_mangle]
+pub extern "C" fn ft_hubo_add(h: *mut HuboHandle, weight: f64) -> u32 {
+    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    let vars: Vec<usize> = core::mem::take(&mut hh.vars).iter().map(|&v| v as usize).collect();
+    match hh.hubo.add(&vars, weight) {
+        Ok(()) => {
+            hh.last_error.clear();
+            1
+        }
+        Err(e) => {
+            hh.last_error = e.to_string();
+            0
+        }
+    }
+}
+
+/// A term of up to four variables, positionally, for a node graph with a fixed number of ports.
+///
+/// `u32::MAX` in a slot means "no variable there". `count` says how many of `a b c d` to read, so a
+/// caller cannot accidentally add a term of the wrong order by leaving a stale argument in place.
+/// Everything past four goes through `ft_hubo_var` + `ft_hubo_add`, which has no arity ceiling.
+#[no_mangle]
+pub extern "C" fn ft_hubo_term(
+    h: *mut HuboHandle,
+    count: u32,
+    weight: f64,
+    a: u32,
+    b: u32,
+    c: u32,
+    d: u32,
+) -> u32 {
+    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    if count == 0 || count > 4 {
+        hh.last_error = format!("this form takes one to four variables, not {count}");
+        return 0;
+    }
+    hh.vars.clear();
+    for &v in [a, b, c, d].iter().take(count as usize) {
+        if ft_hubo_var(h, v) == 0 {
+            // ft_hubo_var left the reason behind; clear the partial term so it cannot bleed.
+            let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+            hh.vars.clear();
+            return 0;
+        }
+    }
+    ft_hubo_add(h, weight)
+}
+
+/// Spins in the model.
+#[no_mangle]
+pub extern "C" fn ft_hubo_len(h: *const HuboHandle) -> u32 {
+    match unsafe { h.as_ref() } {
+        Some(hh) => hh.hubo.len() as u32,
+        None => 0,
+    }
+}
+
+/// Terms in the model.
+#[no_mangle]
+pub extern "C" fn ft_hubo_terms(h: *const HuboHandle) -> u32 {
+    match unsafe { h.as_ref() } {
+        Some(hh) => hh.hubo.terms() as u32,
+        None => 0,
+    }
+}
+
+/// The widest term, or 0 for a model with none.
+#[no_mangle]
+pub extern "C" fn ft_hubo_max_arity(h: *const HuboHandle) -> u32 {
+    match unsafe { h.as_ref() } {
+        Some(hh) => hh.hubo.max_arity() as u32,
+        None => 0,
+    }
+}
+
+/// An UPPER BOUND on the ancillas a pairwise reduction would have spent, and this path did not.
+///
+/// A ceiling rather than a cost: `reduce::to_pairwise` substitutes the commonest pair first, so one
+/// ancilla serves every term containing that pair, and on three terms sharing one it spends one
+/// where this returns three. See [`crate::hubo::Hubo::ancillas_avoided`].
+#[no_mangle]
+pub extern "C" fn ft_hubo_ancillas_avoided(h: *const HuboHandle) -> u32 {
+    match unsafe { h.as_ref() } {
+        Some(hh) => hh.hubo.ancillas_avoided() as u32,
+        None => 0,
+    }
+}
+
+/// Anneal, returning the best energy found, or NaN on a refusal.
+///
+/// Zero for any ladder parameter means "use the default for that one". NaN is refused explicitly
+/// BEFORE that test, because `NaN > 0.0` is false and would otherwise be read as a zero and
+/// silently answered on a ladder the caller never asked for.
+#[no_mangle]
+pub extern "C" fn ft_hubo_anneal(
+    h: *mut HuboHandle,
+    beta_min: f64,
+    beta_max: f64,
+    stages: u32,
+    sweeps_per_stage: u32,
+    seed: u64,
+) -> f64 {
+    let Some(hh) = (unsafe { h.as_mut() }) else { return f64::NAN };
+    if !beta_min.is_finite() || !beta_max.is_finite() || beta_min < 0.0 || beta_max < 0.0 {
+        hh.last_error =
+            format!("a beta ladder needs two finite non-negative numbers, not {beta_min} and {beta_max}");
+        return f64::NAN;
+    }
+    let d = HuboParams::default();
+    let p = HuboParams {
+        beta_min: if beta_min > 0.0 { beta_min } else { d.beta_min },
+        beta_max: if beta_max > 0.0 { beta_max } else { d.beta_max },
+        stages: if stages > 0 { stages as usize } else { d.stages },
+        sweeps_per_stage: if sweeps_per_stage > 0 { sweeps_per_stage as usize } else { d.sweeps_per_stage },
+    };
+    if p.beta_max <= p.beta_min {
+        hh.last_error =
+            format!("beta_max must exceed beta_min; got {} and {}", p.beta_max, p.beta_min);
+        return f64::NAN;
+    }
+    let out = crate::hubo::anneal_metered(&hh.hubo, &p, seed, Some(&mut hh.ledger));
+    hh.state.clear();
+    hh.state.extend_from_slice(&out.state);
+    let e = out.energy;
+    hh.out = Some(out);
+    hh.last_error.clear();
+    e
+}
+
+/// The current state, or NULL. Valid until the next `ft_hubo_*` call on this handle.
+#[no_mangle]
+pub extern "C" fn ft_hubo_spins(h: *const HuboHandle) -> *const i8 {
+    match unsafe { h.as_ref() } {
+        Some(hh) if !hh.state.is_empty() => hh.state.as_ptr(),
+        _ => core::ptr::null(),
+    }
+}
+
+/// Copy the state out. Refuses a length that is not exactly the model's, never writing partially.
+#[no_mangle]
+pub extern "C" fn ft_hubo_read(h: *const HuboHandle, out: *mut i8, len: u32) -> u32 {
+    let Some(hh) = (unsafe { h.as_ref() }) else { return 0 };
+    if out.is_null() || len as usize != hh.state.len() {
+        return 0;
+    }
+    unsafe { core::ptr::copy_nonoverlapping(hh.state.as_ptr(), out, hh.state.len()) };
+    1
+}
+
+/// Put a state IN, so something computed elsewhere can be scored by this library.
+///
+/// Refuses any element that is not -1 or +1, and refuses the whole write rather than part of it: a
+/// model half-set from a bad buffer would score a state that never existed anywhere.
+#[no_mangle]
+pub extern "C" fn ft_hubo_set_spins(h: *mut HuboHandle, ptr: *const i8, len: u32) -> u32 {
+    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    if ptr.is_null() || len as usize != hh.hubo.len() {
+        hh.last_error =
+            format!("this model has {} spins; {len} were offered", hh.hubo.len());
+        return 0;
+    }
+    let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+    if let Some(bad) = src.iter().position(|&v| v != -1 && v != 1) {
+        hh.last_error = format!("spin {bad} is {}, and a spin is -1 or +1", src[bad]);
+        return 0;
+    }
+    hh.state.clear();
+    hh.state.extend_from_slice(src);
+    hh.last_error.clear();
+    1
+}
+
+/// Energy of the current state, or NaN if the handle is null.
+#[no_mangle]
+pub extern "C" fn ft_hubo_energy(h: *const HuboHandle) -> f64 {
+    match unsafe { h.as_ref() } {
+        Some(hh) if hh.state.len() == hh.hubo.len() => hh.hubo.energy(&hh.state),
+        _ => f64::NAN,
+    }
+}
+
+/// The energy change from flipping spin `i`, or NaN if the handle is null or `i` is out of range.
+///
+/// The higher-order twin of [`ft_field`]: what lets another language, or a GPU, check this
+/// library's arithmetic term by term rather than only comparing a final number.
+#[no_mangle]
+pub extern "C" fn ft_hubo_delta(h: *const HuboHandle, i: u32) -> f64 {
+    match unsafe { h.as_ref() } {
+        Some(hh) if (i as usize) < hh.hubo.len() && hh.state.len() == hh.hubo.len() => {
+            hh.hubo.delta(&hh.state, i as usize)
+        }
+        _ => f64::NAN,
+    }
+}
+
+/// Flips proposed by the last run. Without it a run that moved nothing looks like a completed one.
+#[no_mangle]
+pub extern "C" fn ft_hubo_proposals(h: *const HuboHandle) -> u64 {
+    unsafe { h.as_ref() }.and_then(|hh| hh.out.as_ref()).map_or(0, |o| o.proposals)
+}
+
+/// Flips accepted by the last run.
+#[no_mangle]
+pub extern "C" fn ft_hubo_accepted(h: *const HuboHandle) -> u64 {
+    unsafe { h.as_ref() }.and_then(|hh| hh.out.as_ref()).map_or(0, |o| o.accepted)
+}
+
+/// Joules this model WOULD have cost on a Z1-class device (vendor SPICE prices, pre-silicon).
+#[no_mangle]
+pub extern "C" fn ft_hubo_joules_z1(h: *const HuboHandle) -> f64 {
+    unsafe { h.as_ref() }.map_or(f64::NAN, |hh| hh.ledger.joules(&Z1_SPICE).unwrap_or(f64::NAN))
+}
+
+/// The last refusal, as UTF-8. Same two-call protocol as [`ft_model_error`].
+#[no_mangle]
+pub extern "C" fn ft_hubo_error(h: *const HuboHandle, buf: *mut u8, cap: u32) -> u32 {
+    let Some(hh) = (unsafe { h.as_ref() }) else { return 0 };
+    let b = hh.last_error.as_bytes();
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
 #[cfg(test)]
 mod solver_ffi_tests {
     use super::*;
@@ -3183,5 +3528,186 @@ mod solver_ffi_tests {
         assert_eq!(ft_branch_nodes(n), 0);
         assert!(ft_popanneal_ln_z(n).is_nan());
         assert!(ft_popanneal_rho(n).is_nan());
+    }
+}
+
+#[cfg(test)]
+mod hubo_ffi_tests {
+    use super::*;
+
+    /// Build a model through the ABI exactly as a C caller would.
+    fn model(n: u32, terms: &[(&[u32], f64)]) -> *mut HuboHandle {
+        let h = ft_hubo_new(n);
+        assert!(!h.is_null());
+        for (vars, w) in terms {
+            assert_eq!(ft_hubo_vars_clear(h), 1);
+            for &v in *vars {
+                assert_eq!(ft_hubo_var(h, v), 1, "variable {v}");
+            }
+            assert_eq!(ft_hubo_add(h, *w), 1, "term {vars:?}");
+        }
+        h
+    }
+
+    #[test]
+    fn the_module_doc_example_solves_through_the_abi() {
+        // src/hubo.rs's own doctest: a three-body parity term, minimised when the product is +1.
+        let h = model(3, &[(&[0, 1, 2], 1.0)]);
+        let e = ft_hubo_anneal(h, 0.0, 0.0, 0, 0, 7);
+        assert_eq!(e, -1.0, "the three-body parity term");
+
+        let mut out = [0i8; 3];
+        assert_eq!(ft_hubo_read(h, out.as_mut_ptr(), 3), 1);
+        assert_eq!(out[0] as i32 * out[1] as i32 * out[2] as i32, 1, "{out:?}");
+
+        // The energy the run returned is a claim about the state it left behind, so read it back.
+        assert!((ft_hubo_energy(h) - e).abs() < 1e-9, "{} against {e}", ft_hubo_energy(h));
+        assert_eq!(ft_hubo_terms(h), 1);
+        assert_eq!(ft_hubo_max_arity(h), 3);
+        assert_eq!(ft_hubo_ancillas_avoided(h), 1, "one substitution for one 3-body term");
+        assert!(ft_hubo_proposals(h) > 0, "a run that proposed nothing is not a run");
+        ft_hubo_free(h);
+    }
+
+    #[test]
+    fn a_refused_variable_does_not_bleed_into_the_next_term() {
+        // The failure this prevents: a half-built term left pending, silently absorbed by the term
+        // after it, producing a model nobody wrote and an answer to it.
+        let h = ft_hubo_new(4);
+        assert_eq!(ft_hubo_var(h, 0), 1);
+        assert_eq!(ft_hubo_var(h, 9), 0, "out of range");
+        assert_eq!(ft_hubo_vars(h), 1, "the good one is still pending; only the bad one was refused");
+
+        assert_eq!(ft_hubo_var(h, 0), 0, "a repeat, because s*s = 1 changes the order silently");
+        let need = ft_hubo_error(h, core::ptr::null_mut(), 0);
+        let mut buf = vec![0u8; need as usize];
+        ft_hubo_error(h, buf.as_mut_ptr(), need);
+        let msg = String::from_utf8(buf).unwrap();
+        assert!(msg.contains("already in this term"), "{msg}");
+
+        // A refused ADD clears the list, so nothing survives into the next term.
+        assert_eq!(ft_hubo_add(h, f64::NAN), 0, "a non-finite weight poisons every energy");
+        assert_eq!(ft_hubo_vars(h), 0, "cleared even though the add failed");
+        assert_eq!(ft_hubo_terms(h), 0, "nothing malformed was recorded");
+        ft_hubo_free(h);
+    }
+
+    #[test]
+    fn the_positional_form_matches_the_list_form() {
+        let a = model(4, &[(&[0, 1, 2], 1.5), (&[1, 2, 3], -2.0)]);
+        let b = ft_hubo_new(4);
+        assert_eq!(ft_hubo_term(b, 3, 1.5, 0, 1, 2, u32::MAX), 1);
+        assert_eq!(ft_hubo_term(b, 3, -2.0, 1, 2, 3, u32::MAX), 1);
+
+        let state: [i8; 4] = [1, -1, 1, -1];
+        assert_eq!(ft_hubo_set_spins(a, state.as_ptr(), 4), 1);
+        assert_eq!(ft_hubo_set_spins(b, state.as_ptr(), 4), 1);
+        assert_eq!(ft_hubo_energy(a), ft_hubo_energy(b), "two ways to say one model");
+        for i in 0..4 {
+            assert_eq!(ft_hubo_delta(a, i), ft_hubo_delta(b, i), "flip {i}");
+        }
+
+        // A count that does not match the arguments is refused rather than read partially.
+        assert_eq!(ft_hubo_term(b, 5, 1.0, 0, 1, 2, 3), 0);
+        assert_eq!(ft_hubo_term(b, 0, 1.0, 0, 1, 2, 3), 0);
+        assert_eq!(ft_hubo_vars(b), 0, "a refused positional term leaves nothing pending");
+        ft_hubo_free(a);
+        ft_hubo_free(b);
+    }
+
+    #[test]
+    fn a_lifted_graph_scores_exactly_as_the_pairwise_path_does() {
+        // The comparison this section exists to make possible from outside Rust: the same state,
+        // scored by both paths, must give the same number. If it does not, one of them has the
+        // sign convention wrong and every later comparison inherits it.
+        let b = ft_builder_new(6);
+        assert!(!b.is_null());
+        for i in 0..5u32 {
+            assert_eq!(ft_builder_couple(b, i, i + 1, if i % 2 == 0 { 1.0 } else { -1.0 }), 1);
+        }
+        assert_eq!(ft_builder_bias(b, 0, 0.5), 1);
+        let sim = ft_builder_build(b, 0.9, 11);
+        assert!(!sim.is_null());
+        ft_sweep(sim, 20);
+
+        let h = ft_hubo_from_sim(sim);
+        assert!(!h.is_null());
+        assert_eq!(ft_hubo_len(h), 6);
+        assert_eq!(ft_hubo_max_arity(h), 2, "a lifted pairwise graph is still pairwise");
+        assert_eq!(ft_hubo_ancillas_avoided(h), 0, "nothing wider than two needs a substitution");
+
+        let pairwise = ft_energy(sim);
+        let native = ft_hubo_energy(h);
+        assert!((pairwise - native).abs() < 1e-9, "{pairwise} against {native}");
+
+        // And the incremental update agrees with recomputing, node by node, through the ABI --
+        // which is the check another language or a GPU would run against this library.
+        let mut state = vec![0i8; 6];
+        assert_eq!(ft_hubo_read(h, state.as_mut_ptr(), 6), 1);
+        for i in 0..6usize {
+            let before = ft_hubo_energy(h);
+            let d = ft_hubo_delta(h, i as u32);
+            state[i] = -state[i];
+            assert_eq!(ft_hubo_set_spins(h, state.as_ptr(), 6), 1);
+            let after = ft_hubo_energy(h);
+            assert!((after - before - d).abs() < 1e-9, "flip {i}: {d} against {}", after - before);
+            state[i] = -state[i];
+            assert_eq!(ft_hubo_set_spins(h, state.as_ptr(), 6), 1);
+        }
+        ft_hubo_free(h);
+        ft_free(sim);
+    }
+
+    #[test]
+    fn a_bad_ladder_is_refused_by_name_and_a_nan_is_not_read_as_a_default() {
+        let h = model(3, &[(&[0, 1, 2], 1.0)]);
+        assert!(ft_hubo_anneal(h, 8.0, 0.05, 10, 10, 1).is_nan(), "backwards");
+        assert!(ft_hubo_anneal(h, f64::NAN, 8.0, 10, 10, 1).is_nan(), "NaN is not a zero");
+        assert!(ft_hubo_anneal(h, -1.0, 8.0, 10, 10, 1).is_nan(), "negative");
+        // Zeros DO mean "use the default", which is the whole reason NaN has to be refused first.
+        assert_eq!(ft_hubo_anneal(h, 0.0, 0.0, 0, 0, 1), -1.0);
+        ft_hubo_free(h);
+    }
+
+    #[test]
+    fn a_state_is_refused_whole_or_taken_whole() {
+        let h = model(3, &[(&[0, 1, 2], 1.0)]);
+        let good: [i8; 3] = [1, 1, 1];
+        assert_eq!(ft_hubo_set_spins(h, good.as_ptr(), 3), 1);
+        assert_eq!(ft_hubo_energy(h), -1.0);
+
+        let bad: [i8; 3] = [1, 0, 1];
+        assert_eq!(ft_hubo_set_spins(h, bad.as_ptr(), 3), 0, "0 is not a spin");
+        assert_eq!(ft_hubo_energy(h), -1.0, "the refused write changed nothing");
+        assert_eq!(ft_hubo_set_spins(h, good.as_ptr(), 2), 0, "wrong length");
+        assert_eq!(ft_hubo_read(h, core::ptr::null_mut(), 3), 0);
+        ft_hubo_free(h);
+    }
+
+    #[test]
+    fn every_call_is_inert_on_a_null_handle() {
+        let n: *mut HuboHandle = core::ptr::null_mut();
+        ft_hubo_free(n);
+        assert!(ft_hubo_from_sim(core::ptr::null()).is_null());
+        assert_eq!(ft_hubo_vars_clear(n), 0);
+        assert_eq!(ft_hubo_var(n, 0), 0);
+        assert_eq!(ft_hubo_vars(n), 0);
+        assert_eq!(ft_hubo_add(n, 1.0), 0);
+        assert_eq!(ft_hubo_term(n, 2, 1.0, 0, 1, u32::MAX, u32::MAX), 0);
+        assert_eq!(ft_hubo_len(n), 0);
+        assert_eq!(ft_hubo_terms(n), 0);
+        assert_eq!(ft_hubo_max_arity(n), 0);
+        assert_eq!(ft_hubo_ancillas_avoided(n), 0);
+        assert!(ft_hubo_anneal(n, 0.05, 8.0, 10, 10, 1).is_nan());
+        assert!(ft_hubo_spins(n).is_null());
+        assert_eq!(ft_hubo_read(n, core::ptr::null_mut(), 0), 0);
+        assert_eq!(ft_hubo_set_spins(n, core::ptr::null(), 0), 0);
+        assert!(ft_hubo_energy(n).is_nan());
+        assert!(ft_hubo_delta(n, 0).is_nan());
+        assert_eq!(ft_hubo_proposals(n), 0);
+        assert_eq!(ft_hubo_accepted(n), 0);
+        assert!(ft_hubo_joules_z1(n).is_nan());
+        assert_eq!(ft_hubo_error(n, core::ptr::null_mut(), 0), 0);
+        assert!(ft_hubo_new(0).is_null(), "a model with no variables can hold no term");
     }
 }

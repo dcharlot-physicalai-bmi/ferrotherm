@@ -61,6 +61,15 @@ jobs:
         env:
           FERROTHERM_REQUIRE_ALL: "1"
         run: scripts/check-answers.sh
+      # And one HIGHER-ORDER model, which is a different claim: the model above is pairwise, so a
+      # surface that quietly routed a k-body term through the reduction would still answer it
+      # correctly. The three-body parity term cannot be expressed pairwise at all, and the ancilla
+      # count is in the comparison so a surface that reduced it anyway is caught reporting the
+      # wrong saving for the right answer.
+      - name: Every binding solves one higher-order model to the same answer
+        env:
+          FERROTHERM_REQUIRE_ALL: "1"
+        run: scripts/check-hubo-answers.sh
       # Parity proves a symbol is DECLARED in each binding. For Julia that is an @cfn line, which
       # says nothing about whether a function wraps it -- both OMMX functions were once declared and
       # exported with no body in between, and the module loaded fine.

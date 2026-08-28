@@ -599,6 +599,78 @@ double ft_model_cert_floor(const ft_model *m); /* the sampling noise floor tv mu
  * Ground truth to check a lattice simulation against; 0 above the critical point. */
 double ft_onsager(double beta);
 
+/* ---- higher-order models ---------------------------------------------------------------------- */
+/*
+ * Everything above is pairwise, or becomes pairwise. A k-body term CAN be expressed through
+ * ft_model_objective_product, which quadratises it with ancillas -- but that is a different
+ * computation with a measured cost: examples/hubo_vs_reduction gives the reduced path its best
+ * ladder and 1024x the budget and it still does not reach the native path at 1x, because the
+ * reduction's penalty is ~1300 against term weights of 1 and the landscape goes rigid.
+ *
+ * This is the native path. A term of any width contributes -w * prod(s_i), no ancillas anywhere.
+ *
+ * Refusal convention throughout: uint32_t functions return 1 on success and 0 on refusal, double
+ * functions return NaN, constructors return NULL. ft_hubo_error carries the reason.
+ */
+typedef struct ft_hubo ft_hubo;
+
+/* A model over `n` spins, or NULL if n is 0. Free with ft_hubo_free. */
+ft_hubo *ft_hubo_new(uint32_t n);
+void ft_hubo_free(ft_hubo *h);
+
+/* Lift a pairwise simulation into a higher-order model unchanged, so both paths can score the
+ * same state. NULL on a null sim. */
+ft_hubo *ft_hubo_from_sim(const ft_sim *sim);
+
+/* Build a term of ANY arity: clear, push each variable, close with a weight. ft_hubo_var refuses a
+ * variable out of range or already pending (s*s = 1 would silently change the term's order), and
+ * ft_hubo_add clears the pending list whether it succeeds or not, so a refused term cannot be
+ * absorbed by the next one. */
+uint32_t ft_hubo_vars_clear(ft_hubo *h);
+uint32_t ft_hubo_var(ft_hubo *h, uint32_t var);
+uint32_t ft_hubo_vars(const ft_hubo *h);
+uint32_t ft_hubo_add(ft_hubo *h, double weight);
+
+/* One to four variables positionally, for a node graph with a fixed number of ports. `count` says
+ * how many of a b c d to read; UINT32_MAX marks an unused slot. Anything wider goes through
+ * ft_hubo_var + ft_hubo_add, which has no arity ceiling. */
+uint32_t ft_hubo_term(ft_hubo *h, uint32_t count, double weight,
+                      uint32_t a, uint32_t b, uint32_t c, uint32_t d);
+
+/* The model's own numbers. ft_hubo_ancillas_avoided is an UPPER BOUND on what a pairwise reduction
+ * would have spent, not the cost: reduce shares one ancilla across every term containing the same
+ * pair, so on three terms sharing one it spends one where this returns three. */
+uint32_t ft_hubo_len(const ft_hubo *h);
+uint32_t ft_hubo_terms(const ft_hubo *h);
+uint32_t ft_hubo_max_arity(const ft_hubo *h);
+uint32_t ft_hubo_ancillas_avoided(const ft_hubo *h);
+
+/* Anneal, returning the best energy or NaN on a refusal. Zero for any ladder parameter means "use
+ * the default for that one"; NaN is refused rather than read as a zero. */
+double ft_hubo_anneal(ft_hubo *h, double beta_min, double beta_max,
+                      uint32_t stages, uint32_t sweeps_per_stage, uint64_t seed);
+
+/* Read the state three ways. ft_hubo_spins is valid until the next ft_hubo_* call on this handle;
+ * ft_hubo_read refuses a length that is not exactly the model's and never writes partially;
+ * ft_hubo_set_spins refuses any element that is not -1 or +1, and refuses the whole write. */
+const int8_t *ft_hubo_spins(const ft_hubo *h);
+uint32_t ft_hubo_read(const ft_hubo *h, int8_t *out, uint32_t len);
+uint32_t ft_hubo_set_spins(ft_hubo *h, const int8_t *ptr, uint32_t len);
+
+/* Score the current state, and probe one flip of it. ft_hubo_delta is the higher-order twin of
+ * ft_field: what lets another language or a GPU check this library's arithmetic term by term. */
+double ft_hubo_energy(const ft_hubo *h);
+double ft_hubo_delta(const ft_hubo *h, uint32_t i);
+
+/* What the last run did. Without the counters, a run that flipped nothing looks like a completed
+ * one. Joules are what this WOULD have cost on a Z1-class device (vendor SPICE, pre-silicon). */
+uint64_t ft_hubo_proposals(const ft_hubo *h);
+uint64_t ft_hubo_accepted(const ft_hubo *h);
+double ft_hubo_joules_z1(const ft_hubo *h);
+
+/* The last refusal as UTF-8. Two-call protocol: pass a NULL buf for the length, then a buffer. */
+uint32_t ft_hubo_error(const ft_hubo *h, uint8_t *buf, uint32_t cap);
+
 /* Release a simulation. */
 void ft_free(ft_sim *sim);
 

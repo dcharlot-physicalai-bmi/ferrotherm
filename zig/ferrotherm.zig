@@ -401,6 +401,71 @@ pub fn onsager(beta: f64) f64 {
 
 // ---- tests ---------------------------------------------------------------------------------
 
+test "a higher-order term is solved without ancillas" {
+    // The module doc's own example: a three-body parity term, minimised when the product is +1.
+    var h = try Hubo.init(3);
+    defer h.deinit();
+    try h.add(&.{ 0, 1, 2 }, 1.0);
+
+    const e = try h.anneal(0, 0, 0, 0, 7);
+    try std.testing.expectApproxEqAbs(@as(f64, -1.0), e, 1e-9);
+
+    var state: [3]i8 = undefined;
+    try h.read(&state);
+    try std.testing.expectEqual(@as(i32, 1), @as(i32, state[0]) * state[1] * state[2]);
+
+    try std.testing.expectEqual(@as(u32, 1), h.terms());
+    try std.testing.expectEqual(@as(u32, 3), h.maxArity());
+    // The ceiling, not the cost: one substitution for one three-body term.
+    try std.testing.expectEqual(@as(u32, 1), h.ancillasAvoided());
+    try std.testing.expect(h.proposals() > 0);
+}
+
+test "a repeated variable is refused rather than silently changing the order" {
+    var h = try Hubo.init(4);
+    defer h.deinit();
+
+    // s * s = 1, so [0, 0, 1] is a one-body term wearing a three-body's clothes.
+    try std.testing.expectError(Error.RejectedEntry, h.add(&.{ 0, 0, 1 }, 1.0));
+    try std.testing.expectError(Error.RejectedEntry, h.add(&.{ 0, 9 }, 1.0));
+    try std.testing.expectEqual(@as(u32, 0), h.terms());
+
+    // And a refused term leaves nothing pending for the next one to absorb.
+    try h.add(&.{ 0, 1, 2 }, 1.0);
+    try std.testing.expectEqual(@as(u32, 1), h.terms());
+    try std.testing.expectEqual(@as(u32, 3), h.maxArity());
+}
+
+test "a lifted graph scores exactly as the pairwise path does" {
+    var m = try Model.init(5);
+    defer m.deinit();
+    var i: u32 = 0;
+    while (i < 4) : (i += 1) try m.couple(i, i + 1, if (i % 2 == 0) 1.0 else -1.0);
+    try m.bias(0, 0.5);
+    var sim = try m.build(0.9, 11);
+    defer sim.deinit();
+    _ = sim.sweep(20);
+
+    var h = try Hubo.fromSim(sim);
+    defer h.deinit();
+    // The two paths must agree on the SAME state, or one of them has the sign convention wrong
+    // and every later comparison inherits it silently.
+    try std.testing.expectApproxEqAbs(sim.energy(), h.energy(), 1e-9);
+    try std.testing.expectEqual(@as(u32, 2), h.maxArity());
+    try std.testing.expectEqual(@as(u32, 0), h.ancillasAvoided());
+}
+
+test "a bad ladder is an error and NaN is not read as a default" {
+    var h = try Hubo.init(3);
+    defer h.deinit();
+    try h.add(&.{ 0, 1, 2 }, 1.0);
+
+    try std.testing.expectError(Error.BadSchedule, h.anneal(8.0, 0.05, 10, 10, 1));
+    try std.testing.expectError(Error.BadSchedule, h.anneal(std.math.nan(f64), 8.0, 10, 10, 1));
+    // Zeros DO mean "use the default", which is why NaN has to be refused before that test.
+    try std.testing.expectApproxEqAbs(@as(f64, -1.0), try h.anneal(0, 0, 0, 0, 1), 1e-9);
+}
+
 test "lattice agrees with Onsager" {
     var sim = try Sim.lattice2d(64, 1.0, 0.5, 1);
     defer sim.deinit();
@@ -739,6 +804,123 @@ pub const Sense = enum { maximize, minimize };
 ///     _ = try p.compile();
 ///     try p.solve(12);
 ///     const c = try p.value(west);   // 0, 1 or 2 — and not whatever east got
+/// A higher-order model, solved without quadratising it.
+///
+/// A term of any width contributes `-w * prod(s_i)`, so nothing here needs an ancilla. The other
+/// route to a k-body term -- an objective product on `Problem` -- goes through Rosenberg's
+/// reduction, which buys one ancilla per substituted pair and a penalty larger than the whole model
+/// can pay. That penalty is what costs: on 60 three-body terms over 40 spins the reduced path at
+/// 1024x the budget does not reach this one at 1x, because the landscape goes rigid rather than
+/// merely larger.
+pub const Hubo = struct {
+    h: *c.ft_hubo,
+    n: u32,
+
+    /// A model over `n` spins. Zero is refused: a model with no variables can hold no term.
+    pub fn init(n: u32) Error!Hubo {
+        const h = c.ft_hubo_new(n) orelse return Error.OutOfMemory;
+        return .{ .h = h, .n = n };
+    }
+
+    /// Lift a pairwise simulation, unchanged, so both paths can score the same state.
+    pub fn fromSim(sim: Sim) Error!Hubo {
+        const h = c.ft_hubo_from_sim(sim.h) orelse return Error.OutOfMemory;
+        return .{ .h = h, .n = c.ft_hubo_len(h) };
+    }
+
+    pub fn deinit(self: Hubo) void {
+        c.ft_hubo_free(self.h);
+    }
+
+    /// Add one term of any arity.
+    ///
+    /// A variable out of range or repeated within the term is refused: `s * s = 1`, so a repeat
+    /// would silently change the term's order rather than mean what was written. The pending list
+    /// is cleared either way, so a refused term cannot be absorbed by the next one.
+    pub fn add(self: Hubo, vars: []const u32, weight: f64) Error!void {
+        _ = c.ft_hubo_vars_clear(self.h);
+        for (vars) |v| {
+            if (c.ft_hubo_var(self.h, v) == 0) {
+                _ = c.ft_hubo_vars_clear(self.h);
+                return Error.RejectedEntry;
+            }
+        }
+        if (c.ft_hubo_add(self.h, weight) == 0) return Error.RejectedEntry;
+    }
+
+    /// Anneal and return the best energy. Zero for any ladder parameter means its own default.
+    pub fn anneal(
+        self: Hubo,
+        beta_min: f64,
+        beta_max: f64,
+        stages: u32,
+        sweeps_per_stage: u32,
+        seed: u64,
+    ) Error!f64 {
+        const e = c.ft_hubo_anneal(self.h, beta_min, beta_max, stages, sweeps_per_stage, seed);
+        if (std.math.isNan(e)) return Error.BadSchedule;
+        return e;
+    }
+
+    /// Copy the current state out. `out` must be exactly `n` long, and is never partly written.
+    pub fn read(self: Hubo, out: []i8) Error!void {
+        if (c.ft_hubo_read(self.h, out.ptr, @intCast(out.len)) == 0) return Error.BadState;
+    }
+
+    /// Put a state in, so something computed elsewhere is scored by this library. Refuses any
+    /// element that is not -1 or +1, and refuses the whole write rather than part of it.
+    pub fn setState(self: Hubo, spins: []const i8) Error!void {
+        if (c.ft_hubo_set_spins(self.h, spins.ptr, @intCast(spins.len)) == 0) return Error.BadState;
+    }
+
+    /// Energy of the current state.
+    pub fn energy(self: Hubo) f64 {
+        return c.ft_hubo_energy(self.h);
+    }
+
+    /// The energy change from flipping spin `i`, in O(terms containing i).
+    pub fn delta(self: Hubo, i: u32) Error!f64 {
+        const d = c.ft_hubo_delta(self.h, i);
+        if (std.math.isNan(d)) return Error.RejectedEntry;
+        return d;
+    }
+
+    pub fn terms(self: Hubo) u32 {
+        return c.ft_hubo_terms(self.h);
+    }
+
+    pub fn maxArity(self: Hubo) u32 {
+        return c.ft_hubo_max_arity(self.h);
+    }
+
+    /// An UPPER BOUND on what a pairwise reduction would have spent, not the cost: `reduce`
+    /// substitutes the commonest pair first, so one ancilla serves every term containing it.
+    pub fn ancillasAvoided(self: Hubo) u32 {
+        return c.ft_hubo_ancillas_avoided(self.h);
+    }
+
+    pub fn proposals(self: Hubo) u64 {
+        return c.ft_hubo_proposals(self.h);
+    }
+
+    pub fn accepted(self: Hubo) u64 {
+        return c.ft_hubo_accepted(self.h);
+    }
+
+    /// What the last run WOULD have cost on a Z1-class device (vendor SPICE, pre-silicon).
+    pub fn joulesZ1(self: Hubo) f64 {
+        return c.ft_hubo_joules_z1(self.h);
+    }
+
+    /// Why the last call was refused. Empty when nothing was.
+    pub fn lastError(self: Hubo, buf: []u8) []const u8 {
+        const need = c.ft_hubo_error(self.h, null, 0);
+        const n = @min(need, @as(u32, @intCast(buf.len)));
+        const got = c.ft_hubo_error(self.h, buf.ptr, n);
+        return buf[0..got];
+    }
+};
+
 pub const Problem = struct {
     /// Whether a solve has happened, so `value` can tell "never solved" from "did not decode".
     /// The C ABI cannot: it returns the same sentinel for both.

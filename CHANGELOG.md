@@ -44,6 +44,38 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### `hubo` reaches every surface, and one gate proves they agree
+
+The native higher-order path had reached exactly one surface, Rust. It now has a C ABI --
+`ft_hubo_*`, 22 entry points -- and bindings in Python (`ferrotherm.Hubo`), Zig (`ft.Hubo`) and
+Julia (`Ferrotherm.Hubo`), plus declarations in the header. 130 exported symbols became 152.
+
+The reason is the measurement above, not symmetry for its own sake: every non-Rust caller wanting a
+k-body term was on the reduced path, and the reduced path does not reach the native one at a
+thousand times the budget.
+
+`scripts/check-hubo-answers.sh` is the gate that makes the four doors mean the same thing. Its model
+is a **three-body parity term** — the smallest model that cannot be expressed pairwise at all, so a
+surface that quietly routed it through the reduction would still answer −1 and be caught by the
+**ancilla count**, which is in the comparison for exactly that reason. All four report
+`energy=-1 product=1 terms=1 arity=3 ancillas=1`. The energy is compared and the state is not: the
+optimum is four-fold degenerate, and demanding one particular assignment would blame two correct
+bindings for disagreeing about something they are entitled to.
+
+Three entry points are EXEMPT from the high-level bindings with reasons: `ft_hubo_spins` hands back
+a borrowed pointer valid until the next call and every binding copies through `ft_hubo_read`
+instead; `ft_hubo_vars` reports a pending count that no binding can lose track of, since each builds
+and closes a term inside one function; `ft_hubo_term` is the fixed-arity positional form a node
+graph needs because a browser has no allocator for a variadic call.
+
+**They were not exempt at first — they were "passing" because Python and Julia had declared
+ctypes/`@cfn` signatures for them that nothing called.** A declaration no caller uses satisfies a
+grep and binds nothing. The declarations are deleted and the exemptions written, which is the
+outcome the table exists to produce.
+
+Also fixed on the way: `Hubo.energy` was a method where `Sim.energy` is a property, caught by a test
+that called it the way the rest of the binding reads.
+
 ### The parity gate was checking 118 of 130 symbols and reporting perfect parity
 
 `check-parity.sh` discovers exported symbols by grepping `src/ffi.rs` for `pub extern "C" fn`.

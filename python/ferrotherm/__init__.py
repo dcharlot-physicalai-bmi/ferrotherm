@@ -30,6 +30,7 @@ from typing import Any, Iterable, Sequence
 
 __all__ = [
     "Answer",
+    "Hubo",
     "Bounds",
     "BranchResult",
     "BreakoutRun",
@@ -180,6 +181,27 @@ _free = _sig("ft_free", None, [_p])
 
 # the modelling layer
 _u8p = ctypes.POINTER(ctypes.c_ubyte)
+_hubo_new = _sig("ft_hubo_new", _p, [c_uint32])
+_hubo_free = _sig("ft_hubo_free", None, [_p])
+_hubo_from_sim = _sig("ft_hubo_from_sim", _p, [_p])
+_hubo_vars_clear = _sig("ft_hubo_vars_clear", c_uint32, [_p])
+_hubo_var = _sig("ft_hubo_var", c_uint32, [_p, c_uint32])
+_hubo_add = _sig("ft_hubo_add", c_uint32, [_p, c_double])
+_hubo_len = _sig("ft_hubo_len", c_uint32, [_p])
+_hubo_terms = _sig("ft_hubo_terms", c_uint32, [_p])
+_hubo_max_arity = _sig("ft_hubo_max_arity", c_uint32, [_p])
+_hubo_ancillas_avoided = _sig("ft_hubo_ancillas_avoided", c_uint32, [_p])
+_hubo_anneal = _sig("ft_hubo_anneal", c_double,
+                    [_p, c_double, c_double, c_uint32, c_uint32, ctypes.c_uint64])
+_hubo_read = _sig("ft_hubo_read", c_uint32, [_p, ctypes.POINTER(ctypes.c_int8), c_uint32])
+_hubo_set_spins = _sig("ft_hubo_set_spins", c_uint32, [_p, ctypes.POINTER(ctypes.c_int8), c_uint32])
+_hubo_energy = _sig("ft_hubo_energy", c_double, [_p])
+_hubo_delta = _sig("ft_hubo_delta", c_double, [_p, c_uint32])
+_hubo_proposals = _sig("ft_hubo_proposals", ctypes.c_uint64, [_p])
+_hubo_accepted = _sig("ft_hubo_accepted", ctypes.c_uint64, [_p])
+_hubo_joules_z1 = _sig("ft_hubo_joules_z1", c_double, [_p])
+_hubo_error = _sig("ft_hubo_error", c_uint32, [_p, _u8p, c_uint32])
+
 _model_new = _sig("ft_model_new", _p, [])
 _model_free = _sig("ft_model_free", None, [_p])
 _model_categorical = _sig("ft_model_categorical", c_uint32, [_p, c_uint32])
@@ -455,6 +477,158 @@ class Certificate:
         if self.findings:
             head += "".join("\n  - " + f for f in self.findings)
         return head + ">"
+
+
+class Hubo:
+    """A higher-order model, solved without quadratising it.
+
+    A term of any width contributes ``-w * prod(s_i)``, so nothing here needs an ancilla. The other
+    route to a k-body term -- an objective product on :class:`Problem` -- goes through Rosenberg's
+    reduction, which introduces one ancilla per substituted pair and a penalty chosen larger than
+    the whole model can pay. That penalty is what costs: measured on 60 three-body terms over 40
+    spins, the reduced path at 1024x the budget does not reach this one at 1x.
+
+    >>> h = Hubo(3)
+    >>> h.add([0, 1, 2], 1.0)              # doctest: +ELLIPSIS
+    <ferrotherm.Hubo ...>
+    >>> round(h.anneal(seed=7), 6)
+    -1.0
+    >>> h.state[0] * h.state[1] * h.state[2]
+    1
+    """
+
+    def __init__(self, n: int) -> None:
+        if n < 1:
+            raise ValueError("a model with no variables can hold no term")
+        self.n = int(n)
+        self._h = _hubo_new(self.n)
+        if not self._h:
+            raise RuntimeError("could not allocate a higher-order model")
+
+    @classmethod
+    def from_sim(cls, sim: "Sim") -> "Hubo":
+        """Lift a pairwise simulation, unchanged, so both paths can score the same state."""
+        h = cls.__new__(cls)
+        h._h = _hubo_from_sim(sim._h)
+        if not h._h:
+            raise RuntimeError("could not lift this simulation")
+        h.n = _hubo_len(h._h)
+        return h
+
+    def _live(self) -> None:
+        if getattr(self, "_h", None) is None:
+            raise RuntimeError("this model was already freed")
+
+    def _why(self) -> str:
+        return _read_text(_hubo_error, self._h)
+
+    def add(self, variables: Iterable[int], weight: float) -> "Hubo":
+        """Add one term of any arity. Returns self, so calls chain.
+
+        A variable out of range or repeated within the term raises: ``s * s = 1``, so a repeat
+        would silently change the term's order rather than mean what was written.
+        """
+        self._live()
+        _hubo_vars_clear(self._h)
+        vs = [int(v) for v in variables]
+        for v in vs:
+            if _hubo_var(self._h, v) == 0:
+                raise ValueError(f"rejected term {vs}: {self._why()}")
+        if _hubo_add(self._h, float(weight)) == 0:
+            raise ValueError(f"rejected term {vs} at weight {weight}: {self._why()}")
+        return self
+
+    def anneal(self, beta_min: float = 0.0, beta_max: float = 0.0, stages: int = 0,
+               sweeps_per_stage: int = 0, seed: int = 1) -> float:
+        """Anneal and return the best energy. Zero for any ladder parameter means its default."""
+        self._live()
+        e = _hubo_anneal(self._h, float(beta_min), float(beta_max), int(stages),
+                         int(sweeps_per_stage), int(seed))
+        if e != e:  # NaN
+            raise ValueError(f"could not anneal: {self._why()}")
+        return e
+
+    @property
+    def state(self) -> List[int]:
+        """The current state, copied out. Never a view into the library's memory."""
+        self._live()
+        buf = (ctypes.c_int8 * self.n)()
+        if _hubo_read(self._h, buf, self.n) == 0:
+            raise RuntimeError("could not read the state")
+        return [int(v) for v in buf]
+
+    @state.setter
+    def state(self, spins: Sequence[int]) -> None:
+        self._live()
+        if len(spins) != self.n:
+            raise ValueError(f"this model has {self.n} spins; {len(spins)} were offered")
+        buf = (ctypes.c_int8 * self.n)(*[int(v) for v in spins])
+        if _hubo_set_spins(self._h, buf, self.n) == 0:
+            raise ValueError(self._why())
+
+    @property
+    def energy(self) -> float:
+        """Energy of the current state.
+
+        A property, like :attr:`Sim.energy`: a scalar readout of what the handle holds right now.
+        """
+        self._live()
+        return float(_hubo_energy(self._h))
+
+    def delta(self, i: int) -> float:
+        """The energy change from flipping spin ``i``, in O(terms containing i)."""
+        self._live()
+        d = _hubo_delta(self._h, int(i))
+        if d != d:
+            raise IndexError(f"no variable {i}; {self.n} declared")
+        return d
+
+    @property
+    def terms(self) -> int:
+        self._live()
+        return int(_hubo_terms(self._h))
+
+    @property
+    def max_arity(self) -> int:
+        self._live()
+        return int(_hubo_max_arity(self._h))
+
+    @property
+    def ancillas_avoided(self) -> int:
+        """An UPPER BOUND on what a pairwise reduction would have spent, not the cost.
+
+        ``reduce`` substitutes the commonest pair first, so one ancilla serves every term containing
+        it: on three terms sharing one pair it spends one where this reports three.
+        """
+        self._live()
+        return int(_hubo_ancillas_avoided(self._h))
+
+    @property
+    def proposals(self) -> int:
+        self._live()
+        return int(_hubo_proposals(self._h))
+
+    @property
+    def accepted(self) -> int:
+        self._live()
+        return int(_hubo_accepted(self._h))
+
+    def joules_z1(self) -> float:
+        """What the last run WOULD have cost on a Z1-class device (vendor SPICE, pre-silicon)."""
+        self._live()
+        return _hubo_joules_z1(self._h)
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __repr__(self) -> str:
+        return (f"<ferrotherm.Hubo {self.n} spins, {self.terms} terms, "
+                f"max arity {self.max_arity}>")
+
+    def __del__(self) -> None:
+        if getattr(self, "_h", None):
+            _hubo_free(self._h)
+            self._h = None
 
 
 class Model:
