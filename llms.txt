@@ -60,12 +60,49 @@ compiles through the same code, so an answer does not depend on which door you c
 
 ## Servers, for an agent
 
-- `ferrotherm-serve`: an HTTP API and an MCP server over the same operations. Six MCP tools; reach
-  for `ferrotherm_solve` first, since every other tool wants a graph of spins and returns an array
-  of +/-1. `GET /v1/capabilities` describes the HTTP side.
+- `ferrotherm-serve`: an HTTP API and an MCP server over the same operations. Ten MCP tools
+  (sample, anneal, energy, verify, bound, exact_planar, toroidal_bound, optimize, solve,
+  capabilities); reach for `ferrotherm_solve` first, since every other tool wants a graph of spins
+  and returns an array of +/-1. `/v1/capabilities` describes the HTTP side, by GET or POST.
 - The node editor exposes `window.ferrotherm` for scripted use: `ready`, `types()`, `add`, `set`,
   `connect`, `find`, `run()`, `toJson`/`fromJson`, `check()`. See web-tests/editor.test.mjs, which
   drives exactly that surface.
+
+## The model you write and the picture a person edits are the same document
+
+`window.ferrotherm.fromModel(m)` lays out the SAME JSON `ferrotherm_solve` takes -- variables,
+constraints, objective -- as a node graph, and `toModel()` reads it back. So a model you write can
+be opened, moved, extended by hand and returned to you without going through a second notation, and
+you never have to author node positions: they are computed, because the model has none.
+
+Two gates hold that claim up rather than asserting it. `scripts/check-editor-parity.sh` says every
+Constraint variant in the model layer is reachable from a node -- it exists because the layer had
+nine and the editor offered six for as long as nothing compared the lists. `scripts/check-editor-model.sh`
+puts one model through both doors and compares the COMPILED size, because an editor that silently
+drops a `k` still draws, still runs, and answers a different question. Both refuse to be believed
+without a `--selftest` that damages the thing under test and demands a failure.
+
+What has no drawing is refused rather than approximated: a counting constraint whose literals name
+DIFFERENT values has no node (a counting node holds one value for all of them), and `fromModel`
+says so instead of drawing the one it can. That model still runs through HTTP and MCP.
+
+## Constraints, all nine of them
+
+not_equal, equal, fix, cardinality (exactly k), at_most, at_least, exactly_one, at_most_one,
+all_different. Reach for `all_different` for assignment, scheduling, colouring and puzzles: it
+lowers per shared value rather than per pair, so it needs no slack and costs nothing where two
+domains do not overlap. Prefer exactly_one / at_most_one over k = 1 -- at_most with k = 1 buys a
+slack variable it does not need, and the compiler says so in `caveats`.
+
+ANY constraint takes `soft: w`, which makes it a PREFERENCE priced at w rather than a rule. The
+solver may trade it away, the answer stays feasible, and the reply reports it under `violated` with
+`"hard": false` plus a `cost`. Hard for what an answer must satisfy to be an answer; soft for what
+you would like.
+
+Encodings: one-hot (default, exact), domain-wall (exact, one spin fewer per variable IN ISOLATION
+-- across a pairwise constraint the lowering pays ancillas and it loses, measured 9 spins against
+one-hot's 8), binary (fewest spins, but REFUSED in any constraint or objective, since a binary
+indicator is a product of every bit). The node editor offers the first two for that reason.
 
 ## Live
 

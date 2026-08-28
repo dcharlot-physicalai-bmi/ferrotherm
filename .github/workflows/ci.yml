@@ -33,6 +33,17 @@ jobs:
         run: scripts/check-versions.sh
       - name: Every C ABI symbol reaches every binding, or the gap is written down
         run: scripts/check-parity.sh
+      # The node editor is a surface like any other, and check-parity.sh does not look at it. That
+      # gap was real: the model layer had nine constraints and the editor offered six, for as long
+      # as nobody compared the lists. --selftest first, because this gate is a pile of greps over a
+      # moving file and the first version of it passed an editor with a node type cut out.
+      - name: The visual editor can say everything the model layer can
+        run: scripts/check-editor-parity.sh --selftest && scripts/check-editor-parity.sh
+      # And MEANS it. Parity is a check on vocabulary and passes an editor whose fromModel drops a
+      # k, a soft price or an objective term -- which still draws every node type, still runs, and
+      # answers a different question. Same pair as check-parity vs check-semantics.
+      - name: One model through the API and through the picture, same compiled size
+        run: scripts/check-editor-model.sh
       # Parity proves the names exist; this proves they compute the same thing. Bindings whose
       # toolchain the runner lacks skip; a binding that is present and produces nothing FAILS.
       - name: Every binding compiles one model to the same bytes

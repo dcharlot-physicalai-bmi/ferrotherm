@@ -1,5 +1,85 @@
 # Changelog
 
+## Unreleased
+
+No Rust source changed, so no crate version moved. What changed is the **visual editor**, which is
+shipped from `docs/` to the site rather than to crates.io, and the two gates that now hold it to the
+library.
+
+### The editor could say six of the nine constraints the model layer has
+
+`model` has nine: `not_equal`, `equal`, `fix`, `cardinality`, `at_most`, `at_least`, `exactly_one`,
+`at_most_one`, `all_different`. The C ABI reaches all nine — `ft_model_close` takes a kind code, and
+kinds 3, 4 and 5 are the last three. The node editor called kinds 0, 1 and 2 and nothing else, so
+`all_different` — the constraint the MCP tool description itself calls *the workhorse of assignment,
+scheduling, colouring and puzzles* — could not be stated in the visual environment at all. The page's
+own shipped example was three pairwise inequalities doing by hand what one `all_different` says.
+
+Nothing caught it because nothing looked. `scripts/check-parity.sh` asks whether every C ABI symbol
+reaches every **language binding**; the editor is not a language binding, so it sat outside the one
+gate that would have asked. A missing node type is not a build error anywhere. It is simply a thing
+a modeller cannot say.
+
+Now stated, and held there:
+
+- **`all_different`, `exactly_one`, `at_most_one`** are node types, wired through `ft_model_var` /
+  `ft_model_lit` and `ft_model_close`.
+- **Counting constraints grew their ports.** They drew four, which is what a node with four drawn
+  ports can hold and not what "at most two of these nine shifts" needs. They now build the literal
+  list and close it, which has no arity ceiling. Documents and scripts naming the old `a`/`b`/`c`/`d`
+  ports still load: a positional port asked for by name is a request for *a* port, and the next free
+  one is the honest answer.
+- **Every constraint carries `soft`.** Zero is a rule; a positive number is a preference priced at
+  that weight, which the solver may trade away while the answer stays feasible. That is half of
+  modelling and the editor could not say it. The report now distinguishes `broken:` from `traded:`
+  and prices the trade, because printing both under one word teaches that "broken" and "not an
+  answer" are the same thing, which is exactly the distinction soft constraints exist to draw.
+- **Variables carry an encoding**, one-hot or domain-wall. Binary is deliberately not offered: the
+  compiler refuses a binary-encoded variable in *any* constraint or objective, so the option would
+  be a guaranteed refusal rather than a capability. That exemption is written down in the gate.
+- **The compiler's `caveats` reach the report.** They were computed and dropped. One of them — that
+  `at_most` with k = 1 buys a slack variable `at_most_one` does not need — is now volunteered.
+
+### The model an agent writes and the picture a person edits are one document
+
+`window.ferrotherm.fromModel(m)` lays out the same JSON `ferrotherm_solve` and `POST /v1/solve`
+take, and `toModel()` reads it back. Positions are computed, because the model has none. There are
+`Copy model` / `Paste model` buttons beside the graph-JSON pair, and `Copy link` puts the model in
+the URL **fragment** — the half a browser does not send to a server — so opening somebody's model
+does not put their problem in a log. An open editor follows a pasted link rather than ignoring it,
+with the previous graph one Undo away.
+
+Two things it refuses rather than approximates, both by name:
+
+- a counting constraint whose literals name **different values** has no drawing, since a counting
+  node holds one value for all of them. It still runs through HTTP and MCP, and the refusal says so.
+- a variable **no constraint or objective mentions** is not reachable from Solve, so `toModel` would
+  drop it. Caught on the way in rather than lost on the way out.
+
+### Two gates, each of which had to fail first
+
+- **`scripts/check-editor-parity.sh`** — every `Constraint` variant is reachable from a node, every
+  `Encoding` is offered or exempt *with a reason*, every constraint can be priced. Its `--selftest`
+  removes `all_different` from a copy of the page and demands a failure; the first version of that
+  self-test **passed the damaged editor**, because an unconditional `EDITOR=docs/graph.html` at the
+  top of the script overwrote the path the self-test was pointing at it. A gate that has only ever
+  passed is indistinguishable from a gate that cannot fail.
+- **`scripts/check-editor-model.sh`** — one model through the API and through `fromModel`, comparing
+  the **compiled** size and feasibility across six models covering every constraint kind and both
+  objective shapes. Parity is a check on vocabulary and would pass an editor that silently drops a
+  `k`: such an editor draws every node type, runs, and answers a different question. Its selftest
+  damages `fromModel` to drop a `k` and demands the failure — necessary, because this gate reads its
+  numbers out of a report by regex, and a regex that stops matching reports −1 on both sides and
+  calls it agreement.
+
+Three assertions in the first draft of the editor tests were **wrong about the library** and the
+library was right: `cardinality(k=1)` is not more expensive than `exactly_one` (they compile to
+identical graphs, and the compiler declines to caveat either); domain-wall does not save a spin
+end-to-end (it saves one *per variable in isolation* — 3 against 4 — and loses across a pairwise
+constraint, 9 against 8, because the lowering pays ancillas to return to quadratic); and a binary
+encoding produces no caveat from the editor because it produces no *model* — it is refused before
+compiling. All three now assert what is true, including the losses.
+
 ## 0.30.0
 
 ### The four gaps the toolchain survey named, closed

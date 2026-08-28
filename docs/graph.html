@@ -101,6 +101,9 @@
   <button id="load">Load</button>
   <button id="copy">Copy JSON</button>
   <button id="paste">Paste JSON</button>
+  <button id="tomodel" title="The model as the HTTP and MCP APIs take it">Copy model</button>
+  <button id="frommodel" title="Lay out a model an agent wrote">Paste model</button>
+  <button id="link" title="A link that opens this model in this editor">Copy link</button>
   <button id="undo" title="Ctrl+Z">Undo</button>
   <button id="redo" title="Ctrl+Shift+Z">Redo</button>
   <button id="fit">Fit</button>
@@ -122,6 +125,9 @@
     <button class="add" data-t="cardinality">Exactly k of</button>
     <button class="add" data-t="atmost">At most k of</button>
     <button class="add" data-t="atleast">At least k of</button>
+    <button class="add" data-t="exactlyone">Exactly one of</button>
+    <button class="add" data-t="atmostone">At most one of</button>
+    <button class="add" data-t="alldifferent">All different</button>
     <h3>Objective</h3>
     <button class="add" data-t="prefer">Prefer value</button>
     <button class="add" data-t="agree">Prefer a = b</button>
@@ -172,25 +178,73 @@ is a model that compiles.</pre>
 
 const TYPES = {
   // --- variables: what the problem is about --------------------------------------------------
-  categorical:{ title: "Categorical",  kind: "var", ins: [], fields: [["name", "", "text"], ["values", 3, "int"]] },
-  integer:    { title: "Integer",      kind: "var", ins: [], fields: [["name", "", "text"], ["lo", 0, "int"], ["hi", 5, "int"]] },
+  //
+  // "encoding" is HOW a variable is stored, not what it means. one-hot spends one spin per value;
+  // domain-wall spends one fewer. Both are exact.
+  //
+  // Binary is deliberately NOT offered. It spends ceil(log2 k) spins, which is the fewest, but the
+  // compiler refuses a binary-encoded variable in any constraint or objective at all -- a binary
+  // indicator is a product of every bit, so its degree grows with the domain. A binary variable in
+  // this editor could therefore be declared and never used, and a picker whose third option makes
+  // every model refuse is a worse thing to offer than two options that work.
+  //
+  // Domain-wall is not free either, and the report is where you see it. In ISOLATION it saves a
+  // spin per variable (a fixed 4-value variable is 3 spins against one-hot's 4). Across a PAIRWISE
+  // constraint it loses: two 4-value variables under a != came to 9 spins domain-wall against 8
+  // one-hot, because a domain-wall indicator is already a product and the lowering pays ancillas
+  // to bring the pair back to quadratic. Cheaper per variable is not cheaper per model.
+  categorical:{ title: "Categorical",  kind: "var", ins: [],
+                fields: [["name", "", "text"], ["values", 3, "int"],
+                         ["encoding", "one-hot", "pick:one-hot|domain-wall"]] },
+  integer:    { title: "Integer",      kind: "var", ins: [],
+                fields: [["name", "", "text"], ["lo", 0, "int"], ["hi", 5, "int"],
+                         ["encoding", "one-hot", "pick:one-hot|domain-wall"]] },
   binary:     { title: "Binary",       kind: "var", ins: [], fields: [["name", "", "text"]] },
 
   // --- constraints: what must hold -------------------------------------------------------------
-  notequal:   { title: "a ≠ b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
-  equal:      { title: "a = b",        kind: "cons", ins: [["a", "var"], ["b", "var"]], fields: [] },
-  fix:        { title: "Fix value",    kind: "cons", ins: [["var", "var"]], fields: [["value", 0, "int"]] },
-  cardinality:{ title: "Exactly k of", kind: "cons",
-                ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
-                fields: [["k", 1, "int"], ["value", 1, "int"]] },
+  //
+  // Every constraint carries "soft". Zero means a RULE: an answer that breaks it is not an answer.
+  // Any positive number makes it a PREFERENCE priced at that weight, which the solver may trade
+  // away against the objective while the answer stays feasible; the report names what it traded
+  // and what the trade cost. That distinction is half of modelling and the editor could not say
+  // it at all until now.
+  notequal:   { title: "a \u2260 b",        kind: "cons", ins: [["a", "var"], ["b", "var"]],
+                fields: [["soft", 0, "num"]] },
+  equal:      { title: "a = b",        kind: "cons", ins: [["a", "var"], ["b", "var"]],
+                fields: [["soft", 0, "num"]] },
+  fix:        { title: "Fix value",    kind: "cons", ins: [["var", "var"]],
+                fields: [["value", 0, "int"], ["soft", 0, "num"]] },
+
+  // Counting nodes grow their ports like Solve does. They were capped at four, which is what a
+  // node with four drawn ports can hold and not what "at most two of these nine shifts" needs;
+  // they now build the list through ft_model_lit and close it, which has no arity ceiling.
+  cardinality:{ title: "Exactly k of", kind: "cons", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["k", 1, "int"], ["value", 1, "int"], ["soft", 0, "num"]] },
   // Inequalities cost extra spins: each one needs a slack variable to become an equality the
   // sampler can square. The slack never appears in the answer.
-  atmost:     { title: "At most k of",  kind: "cons",
-                ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
-                fields: [["k", 1, "int"], ["value", 1, "int"]] },
-  atleast:    { title: "At least k of", kind: "cons",
-                ins: [["a", "var"], ["b", "var"], ["c", "var"], ["d", "var"]],
-                fields: [["k", 1, "int"], ["value", 1, "int"]] },
+  atmost:     { title: "At most k of",  kind: "cons", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["k", 1, "int"], ["value", 1, "int"], ["soft", 0, "num"]] },
+  atleast:    { title: "At least k of", kind: "cons", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["k", 1, "int"], ["value", 1, "int"], ["soft", 0, "num"]] },
+  // k=1 lowered as a counting constraint pays for a comparator it does not need. These two lower
+  // pairwise instead and need no slack at all, so prefer them wherever k is one.
+  exactlyone: { title: "Exactly one of", kind: "cons", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["value", 1, "int"], ["soft", 0, "num"]] },
+  atmostone:  { title: "At most one of", kind: "cons", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["value", 1, "int"], ["soft", 0, "num"]] },
+  // The workhorse of assignment, scheduling, colouring and puzzles, and the one constraint the
+  // editor could not state. It is about VARIABLES rather than literals: every one wired in takes a
+  // different value. It lowers per shared value rather than per pair, so it needs no slack, costs
+  // nothing where two domains do not overlap, and asking it of more variables than the values they
+  // share is refused when the model compiles rather than answered wrongly at some penalty.
+  alldifferent:{ title: "All different", kind: "cons", variadic: ["var"],
+                ins: [["in 1", ["var"]]],
+                fields: [["soft", 0, "num"]] },
 
   // --- objective: what to prefer ---------------------------------------------------------------
   prefer:     { title: "Prefer value", kind: "obj", ins: [["var", "var"]],
@@ -214,6 +268,12 @@ const TYPES = {
                 fields: [["beta", 0.5, "num"], ["draws", 800, "int"], ["thin", 4, "int"]] },
   report:     { title: "Report",       kind: null, ins: [["result", "result"]], fields: [] },
 };
+
+/** Node types that close the pending literal list, and the kind code each closes with. */
+const COUNTING = { cardinality: 0, atmost: 1, atleast: 2, exactlyone: 3, atmostone: 4,
+                   alldifferent: 5 };
+/** Encoding names as the library numbers them. */
+const ENCODINGS = { "one-hot": 0, "domain-wall": 2 };
 
 let nodes = [], links = [], nextId = 1;
 const $ = id => document.getElementById(id);
@@ -326,16 +386,35 @@ function draw() {
       row.className = "row";
       const lab = document.createElement("label");
       lab.textContent = k;
-      const inp = document.createElement("input");
+      // A "pick:a|b|c" field is one of a fixed set, so it is a select rather than a box the
+      // modeller can type a typo into. The library refuses an unknown encoding rather than
+      // defaulting, and an editor that can only offer the valid ones never provokes that refusal.
+      const choices = kind.startsWith("pick:") ? kind.slice(5).split("|") : null;
+      const inp = document.createElement(choices ? "select" : "input");
       const text = kind === "text";
-      inp.type = text ? "text" : "number";
-      if (!text) inp.step = kind === "int" ? "1" : "any";
-      if (text) inp.placeholder = TYPES[n.type].title.toLowerCase() + " " + n.id;
-      inp.value = n.vals[k];
+      if (choices) {
+        for (const c of choices) {
+          const o = document.createElement("option");
+          o.value = o.textContent = c;
+          inp.appendChild(o);
+        }
+        inp.value = n.vals[k];
+      } else {
+        inp.type = text ? "text" : "number";
+        if (!text) inp.step = kind === "int" ? "1" : "any";
+        if (text) inp.placeholder = TYPES[n.type].title.toLowerCase() + " " + n.id;
+        inp.value = n.vals[k];
+      }
       inp.onfocus = () => checkpoint();
       // A name changes what this node is called everywhere -- the title bar, the report, search --
       // so the whole node redraws rather than only the field the caret is in.
-      inp.oninput = () => { n.vals[k] = text ? inp.value : +inp.value; if (text) redrawTitle(n); };
+      const commit = () => {
+        n.vals[k] = choices ? inp.value : (text ? inp.value : +inp.value);
+        if (text) redrawTitle(n);
+        if (choices) draw();
+      };
+      inp.onchange = commit;
+      inp.oninput = () => { if (!choices) commit(); };
       row.appendChild(lab); row.appendChild(inp);
       bd.appendChild(row);
     }
@@ -430,7 +509,23 @@ const booted = new Promise((res, rej) => { bootDone = res; bootFailed = rej; });
     const r = await WebAssembly.instantiateStreaming(fetch("ferrotherm.wasm"), {});
     W = r.instance.exports; mem = W.memory;
     $("status").textContent = "ferrotherm.wasm loaded";
-    loadExample();
+    // A model in the URL wins over the shipped example: someone followed a link to see THAT model,
+    // and showing them graph colouring instead would be answering a question nobody asked. A link
+    // that does not decode says so and falls back, rather than opening blank.
+    const linked = modelFromHash();
+    if (linked) {
+      try {
+        const r = fromModel(linked);
+        $("out").textContent = `from the link: ${r.variables} variables, ${r.constraints} `
+          + `constraints, ${r.terms} objective terms.\n\nPress Run graph.`;
+      } catch (e) {
+        loadExample();
+        $("out").textContent = "the link carried something that is not a model: " + (e.message || e)
+          + "\n\nShowing the example instead.";
+      }
+    } else {
+      loadExample();
+    }
     bootDone();
   } catch (e) {
     bootFailed(e);
@@ -488,12 +583,17 @@ function runGraph() {
     const idx = new Map();
     for (const n of varNodes) {
       let i;
-      if (n.type === "categorical") i = W.ft_model_categorical(m, n.vals.values | 0);
-      else if (n.type === "integer") i = W.ft_model_integer(m, BigInt(n.vals.lo | 0), BigInt(n.vals.hi | 0));
+      // The _as forms take the encoding as well. There is no separate one-hot path any more,
+      // because two ways to declare a variable is two places for them to disagree.
+      const enc = ENCODINGS[n.vals.encoding] ?? 0;
+      if (n.type === "categorical") i = W.ft_model_categorical_as(m, n.vals.values | 0, enc);
+      else if (n.type === "integer")
+        i = W.ft_model_integer_as(m, BigInt(n.vals.lo | 0), BigInt(n.vals.hi | 0), enc);
       else i = W.ft_model_binary(m);
       if (i === 0xFFFFFFFF) {
-        $("out").textContent = "'" + TYPES[n.type].title + "' has invalid parameters " +
-          "(a categorical needs at least 2 values; an integer needs hi > lo).";
+        $("out").textContent = "'" + TYPES[n.type].title + "' was refused: " +
+          (readText(W.ft_model_error, m) ||
+           "a categorical needs at least 2 values; an integer needs hi > lo.");
         return;
       }
       idx.set(n.id, i);
@@ -530,31 +630,45 @@ function runGraph() {
         ? ($("out").textContent = "'" + TYPES[n.type].title + "' needs both inputs wired to variables.", false)
         : true;
 
-      if (n.type === "cardinality" || n.type === "atmost" || n.type === "atleast") {
-        const vs = ["a", "b", "c", "d"].map(pn => inputOf(n.id, pn)).filter(Boolean)
+      // A positive "soft" turns the constraint just added into a priced preference. The counting
+      // forms take the weight in the close call; the pairwise ones are softened afterwards, which
+      // is the same thing said in the order each ABI offers.
+      const weight = +n.vals.soft || 0;
+      const soften = ok => ok && (weight > 0 ? W.ft_model_soften_last(m, weight) : 1);
+
+      if (n.type in COUNTING) {
+        const vs = insOf(n).map(([pn]) => inputOf(n.id, pn)).filter(Boolean)
                      .map(x => idx.get(x.id)).filter(x => x !== undefined);
         if (vs.length < 2) {
           $("out").textContent = "'" + TYPES[n.type].title + "' needs at least two variables."; return;
         }
-        const fn = { cardinality: W.ft_model_cardinality,
-                     atmost: W.ft_model_at_most,
-                     atleast: W.ft_model_at_least }[n.type];
-        if (!did(n, fn(m, vs.length, n.vals.k | 0, BigInt(n.vals.value | 0),
-                       vs[0], vs[1], vs[2] ?? 0xFFFFFFFF, vs[3] ?? 0xFFFFFFFF))) return;
+        W.ft_model_lits_clear(m);
+        for (const v of vs) {
+          // all_different is about the VARIABLES, not about any particular value of them, so it
+          // goes through ft_model_var: the library picks a value from the variable's own domain
+          // and the modeller never has to invent one that happens to be in range.
+          const ok = n.type === "alldifferent"
+            ? W.ft_model_var(m, v)
+            : W.ft_model_lit(m, v, BigInt(n.vals.value | 0));
+          if (!did(n, ok)) return;
+        }
+        const kind = COUNTING[n.type], k = n.vals.k | 0;
+        if (!did(n, weight > 0 ? W.ft_model_close_soft(m, kind, k, weight)
+                               : W.ft_model_close(m, kind, k))) return;
         cons++;
       }
       else if (n.type === "notequal") {
         if (!need2(ia, ib)) return;
-        if (!did(n, W.ft_model_not_equal(m, ia, ib))) return;
+        if (!did(n, soften(W.ft_model_not_equal(m, ia, ib)))) return;
         cons++;
       } else if (n.type === "equal") {
         if (!need2(ia, ib)) return;
-        if (!did(n, W.ft_model_equal(m, ia, ib))) return;
+        if (!did(n, soften(W.ft_model_equal(m, ia, ib)))) return;
         cons++;
       }
       else if (n.type === "fix") {
         if (iv === undefined) { $("out").textContent = "'Fix value' needs a variable."; return; }
-        if (!did(n, W.ft_model_fix(m, iv, BigInt(n.vals.value | 0)))) return;
+        if (!did(n, soften(W.ft_model_fix(m, iv, BigInt(n.vals.value | 0))))) return;
         cons++;
       } else if (n.type === "prefer") {
         if (iv === undefined) { $("out").textContent = "'Prefer value' needs a variable."; return; }
@@ -619,14 +733,29 @@ function runGraph() {
       txt += "ancillas  " + anc + " (a term named three or more variables; the lowering added"
            + "\n          these, and the guarantee is about optima rather than sampling)\n";
     }
+    const cost = W.ft_model_soft_cost ? W.ft_model_soft_cost(m) : 0;
+    if (cost) txt += "traded   " + cost.toFixed(4) + " of preference\n";
     txt += "feasible  " + (feasible ? "yes" : "NO");
     // Which part was not delivered. "NO" on its own leaves the modeller to work out whether an
     // encoding broke or a constraint was outbid, and those want different remedies.
+    //
+    // A soft constraint that was traded away is listed too, but NOT as a failure: the answer is
+    // feasible and the trade is the thing the modeller asked for by pricing it. Printing both
+    // under one word would teach a reader that "broken" and "not an answer" are the same, which
+    // is exactly the distinction soft constraints exist to draw.
     const nbroken = W.ft_model_violations(m);
     for (let i = 0; i < nbroken; i++) {
-      txt += "\n  broken: " + readTextIdx(W.ft_model_violation, m, i)
+      const hard = !W.ft_model_violation_is_hard || W.ft_model_violation_is_hard(m, i) === 1;
+      txt += "\n  " + (hard ? "broken: " : "traded: ") + readTextIdx(W.ft_model_violation, m, i)
            + " (by " + W.ft_model_violation_amount(m, i) + ")";
     }
+    // What the compiler wants the modeller to know about the model it just built: a binary
+    // encoding whose size is not a power of two decodes some states to nothing, a counting
+    // constraint with k=1 paid for a comparator it did not need, a constraint that constrains
+    // nothing at all. Reaching binary encodings from this editor made these reachable too, and an
+    // editor that swallows them hands back a confident wrong answer.
+    const ncav = W.ft_model_caveats ? W.ft_model_caveats(m) : 0;
+    for (let i = 0; i < ncav; i++) txt += "\n  note: " + readTextIdx(W.ft_model_caveat, m, i);
     if (!feasible) {
       txt += "\n\nA penalty makes a constraint expensive, not impossible, and this objective\n"
            + "outbid it. Lower the objective weights, or split the problem.";
@@ -745,6 +874,260 @@ function fromJson(text) {
   draw(); fitView();
   return { nodes: fresh.length, links: wires.length, dropped: (d.links || []).length - wires.length };
 }
+
+// ---- the model, in the shape the API takes ------------------------------------------------------
+//
+// One vocabulary, two notations. The editor's is spatial and the API's is textual, and a modeller
+// should be able to move between them without losing anything -- an agent writes the model, a
+// person opens it, moves three nodes, adds a constraint, and hands it back.
+
+/** Constraint node type -> the "type" the API uses for it, and vice versa. */
+const API_CONS = { notequal: "not_equal", equal: "equal", fix: "fix", cardinality: "cardinality",
+                   atmost: "at_most", atleast: "at_least", exactlyone: "exactly_one",
+                   atmostone: "at_most_one", alldifferent: "all_different" };
+const CONS_API = Object.fromEntries(Object.entries(API_CONS).map(([a, b]) => [b, a]));
+
+function toModel() {
+  const rep = nodes.find(n => n.type === "report");
+  const solveNode = rep && inputOf(rep.id, "result");
+  // Without a Solve there is no model, only nodes. Everything reachable from it is the model, which
+  // is the same rule Run uses -- so what you copy is what would have been solved, not what happens
+  // to be lying on the canvas.
+  const reach = solveNode ? upstream(solveNode) : new Set(nodes.map(n => n.id));
+  const inModel = n => reach.has(n.id);
+
+  const varNodes = nodes.filter(n => inModel(n) && TYPES[n.type].kind === "var");
+  const nameOf = n => label(n);
+  const variables = varNodes.map(n => {
+    const v = { name: nameOf(n) };
+    if (n.type === "categorical") v.values = n.vals.values | 0;
+    else if (n.type === "integer") { v.lo = n.vals.lo | 0; v.hi = n.vals.hi | 0; }
+    else v.values = 2;
+    if (n.vals.encoding && n.vals.encoding !== "one-hot") v.encoding = n.vals.encoding;
+    return v;
+  });
+
+  const constraints = [], terms = [];
+  let maximize = null;
+  for (const n of nodes) {
+    if (!inModel(n)) continue;
+    const T = TYPES[n.type];
+    const wiredVars = () => insOf(n).map(([pn]) => inputOf(n.id, pn)).filter(Boolean).map(nameOf);
+    const soft = +n.vals.soft || 0;
+
+    if (T.kind === "cons") {
+      let c;
+      if (n.type === "notequal" || n.type === "equal") {
+        const a = inputOf(n.id, "a"), b = inputOf(n.id, "b");
+        if (!a || !b) continue;
+        c = { type: API_CONS[n.type], a: nameOf(a), b: nameOf(b) };
+      } else if (n.type === "fix") {
+        const v = inputOf(n.id, "var");
+        if (!v) continue;
+        c = { type: "fix", var: nameOf(v), value: n.vals.value | 0 };
+      } else if (n.type === "alldifferent") {
+        c = { type: "all_different", of: wiredVars().map(name => ({ var: name })) };
+      } else {
+        c = { type: API_CONS[n.type],
+              of: wiredVars().map(name => ({ var: name, value: n.vals.value | 0 })) };
+        if ("k" in n.vals) c.k = n.vals.k | 0;
+      }
+      if (soft > 0) c.soft = soft;
+      constraints.push(c);
+    } else if (T.kind === "obj") {
+      // The API carries ONE sense for the whole objective, while each node carries its own. A term
+      // that disagrees is negated instead of dropped, because minimising +w is maximising -w and
+      // silently losing the term would change the answer without saying so.
+      const want = !!(n.vals.maximize | 0);
+      if (maximize === null) maximize = want;
+      const w = (want === maximize ? 1 : -1) * (+n.vals.weight || 0);
+      const value = n.vals.value | 0;
+      if (n.type === "prefer") {
+        const v = inputOf(n.id, "var");
+        if (v) terms.push({ var: nameOf(v), value, weight: w });
+      } else if (n.type === "agree") {
+        const a = inputOf(n.id, "a"), b = inputOf(n.id, "b");
+        if (a && b) {
+          terms.push({ var: nameOf(a), value, and_var: nameOf(b), and_value: value, weight: w });
+        }
+      } else if (n.type === "together") {
+        const vs = wiredVars();
+        if (vs.length) terms.push({ of: vs.map(name => ({ var: name, value })), weight: w });
+      }
+    }
+  }
+
+  const m = { variables, constraints };
+  if (terms.length) m.objective = { maximize: maximize ?? true, terms };
+  if (solveNode) {
+    const V = solveNode.vals;
+    m.tries = V.tries | 0;
+    m.schedule = { beta_hot: +V["beta hot"], beta_cold: +V["beta cold"],
+                   stages: V.stages | 0, sweeps: V.sweeps | 0 };
+  }
+  return m;
+}
+
+function fromModel(d) {
+  if (!d || !Array.isArray(d.variables)) {
+    throw new Error('a model is {"variables": [...], "constraints": [...]}; this had no variables');
+  }
+  nodes = []; links = []; nextId = 1;
+  const COL = [40, 340, 640, 900];
+  const byName = new Map();
+  d.variables.forEach((v, i) => {
+    const isInt = v.lo !== undefined && v.hi !== undefined;
+    const type = isInt ? "integer" : (v.values === 2 && v.encoding === undefined ? "binary" : "categorical");
+    const vals = { name: v.name };
+    if (isInt) { vals.lo = v.lo | 0; vals.hi = v.hi | 0; } else if (type === "categorical") vals.values = v.values | 0;
+    if (v.encoding && type !== "binary") vals.encoding = v.encoding;
+    const n = addNode(type, COL[0], 30 + i * 110);
+    Object.assign(n.vals, vals);
+    byName.set(v.name, n.id);
+  });
+  const need = name => {
+    const id = byName.get(name);
+    if (id === undefined) throw new Error(`the model constrains "${name}", which it never declares`);
+    return id;
+  };
+
+  const s = addNode("solve", COL[2], 60);
+  if (d.schedule) {
+    const q = d.schedule;
+    if (q.beta_hot) s.vals["beta hot"] = +q.beta_hot;
+    if (q.beta_cold) s.vals["beta cold"] = +q.beta_cold;
+    if (q.stages) s.vals.stages = q.stages | 0;
+    if (q.sweeps) s.vals.sweeps = q.sweeps | 0;
+  }
+  if (d.tries) s.vals.tries = d.tries | 0;
+
+  let row = 0;
+  const wire = (from, to, port, kind) => links.push({ from, to, port, kind });
+  const next = to => "in " + (links.filter(l => l.to === to).length + 1);
+
+  for (const c of d.constraints || []) {
+    const type = CONS_API[c.type];
+    if (!type) throw new Error(`unknown constraint type "${c.type}"; known: ${Object.keys(CONS_API).join(", ")}`);
+    const n = addNode(type, COL[1], 30 + row++ * 110);
+    if (c.soft) n.vals.soft = +c.soft;
+    if (type === "notequal" || type === "equal") {
+      wire(need(c.a), n.id, "a", "var"); wire(need(c.b), n.id, "b", "var");
+    } else if (type === "fix") {
+      n.vals.value = c.value | 0;
+      wire(need(c.var), n.id, "var", "var");
+    } else {
+      // A counting node carries ONE value for every literal, which is what a node with one field
+      // can hold. A model whose literals name different values cannot be drawn, and saying so is
+      // better than drawing something that means something else.
+      const of = c.of || [];
+      const vals = [...new Set(of.map(o => o.value).filter(v => v !== undefined))];
+      if (vals.length > 1) {
+        throw new Error(`"${c.type}" names the values ${vals.join(", ")} across its literals; a `
+          + "counting node holds one value for all of them, so this model has no drawing. It still "
+          + "runs through the HTTP and MCP APIs, which take a value per literal.");
+      }
+      if (vals.length === 1) n.vals.value = vals[0] | 0;
+      if (c.k !== undefined && "k" in n.vals) n.vals.k = c.k | 0;
+      for (const o of of) wire(need(o.var), n.id, next(n.id), "var");
+    }
+    wire(n.id, s.id, next(s.id), "cons");
+  }
+
+  const sense = d.objective?.maximize;
+  for (const t of d.objective?.terms || []) {
+    const w = +t.weight || 0;
+    let n;
+    if (t.of) {
+      n = addNode("together", COL[1], 30 + row++ * 110);
+      n.vals.value = (t.of[0]?.value ?? 1) | 0;
+      for (const o of t.of) wire(need(o.var), n.id, next(n.id), "var");
+    } else if (t.and_var !== undefined) {
+      n = addNode("agree", COL[1], 30 + row++ * 110);
+      n.vals.value = (t.value ?? 0) | 0;
+      wire(need(t.var), n.id, "a", "var"); wire(need(t.and_var), n.id, "b", "var");
+    } else {
+      n = addNode("prefer", COL[1], 30 + row++ * 110);
+      n.vals.value = (t.value ?? 0) | 0;
+      wire(need(t.var), n.id, "var", "var");
+    }
+    // A negative weight under "maximize" is a term pushing the other way. The node carries a sense
+    // of its own, so it is stated as the opposite sense at a positive weight rather than left as a
+    // sign the reader has to hold in their head.
+    n.vals.maximize = (w < 0 ? !sense : !!sense) ? 1 : 0;
+    n.vals.weight = Math.abs(w);
+    wire(n.id, s.id, next(s.id), "obj");
+  }
+
+  // A variable that no constraint and no objective term mentions is not reachable from Solve, and
+  // `toModel` reads the model as what Solve reaches -- so drawing one would lose it on the way back
+  // out, silently, which is the one thing a bridge between two notations must not do. Refuse it
+  // here, by name, where the modeller can still see which variable they forgot to use.
+  const used = new Set(links.map(l => l.from));
+  const orphans = [...byName.entries()].filter(([, id]) => !used.has(id)).map(([n]) => n);
+  if (orphans.length) {
+    nodes = []; links = []; nextId = 1; draw();
+    throw new Error(`no constraint or objective mentions ${orphans.map(o => `"${o}"`).join(", ")}. `
+      + "A graph reads its model as whatever Solve reaches, so an unmentioned variable would be "
+      + "lost on the way back out. Give it a constraint, or drop it from the model.");
+  }
+
+  const r = addNode("report", COL[3], 60);
+  wire(s.id, r.id, "result", "result");
+  draw(); fitView();
+  return { variables: d.variables.length, constraints: (d.constraints || []).length,
+           terms: (d.objective?.terms || []).length };
+}
+
+// ---- a model in a link ---------------------------------------------------------------------------
+//
+// The last leg of the round trip. An agent that writes a model can hand a PERSON the model, not a
+// description of it: the JSON rides in the fragment, which browsers do not send to the server, so
+// nothing about somebody's problem reaches a log by being looked at.
+//
+// base64url of UTF-8, because a fragment is not a place for raw braces and quotes, and because the
+// standard alphabet's + and / are not either.
+function encodeModel(m) {
+  const bytes = new TextEncoder().encode(JSON.stringify(m));
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodeModel(frag) {
+  const pad = frag.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(pad + "=".repeat((4 - (pad.length % 4)) % 4));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+/** The model this page was opened with, or null. Never throws: a bad link is not a crash. */
+function modelFromHash() {
+  const h = location.hash;
+  if (!h.startsWith("#model=")) return null;
+  try { return decodeModel(h.slice(7)); } catch { return null; }
+}
+
+/** This graph as a link that opens it. */
+function modelLink() {
+  return location.origin + location.pathname + "#model=" + encodeModel(toModel());
+}
+
+// Pasting a model link into the address bar of an ALREADY-OPEN editor changes only the fragment,
+// and a browser does not reload for that. Without this the link silently did nothing, which reads
+// as a broken link rather than as a page that never looked. A checkpoint first, so the graph that
+// was on the canvas is one Undo away.
+window.addEventListener("hashchange", () => {
+  const m = modelFromHash();
+  if (!m) return;
+  checkpoint();
+  try {
+    const r = fromModel(m);
+    $("out").textContent = `from the link: ${r.variables} variables, ${r.constraints} constraints, `
+      + `${r.terms} objective terms.\n\nUndo brings back what was here.\n\nPress Run graph.`;
+  } catch (e) {
+    $("out").textContent = "the link carried something that is not a model: " + (e.message || e);
+  }
+});
 
 function saveFile() {
   const blob = new Blob([toJson()], { type: "application/json" });
@@ -901,6 +1284,38 @@ $("paste").onclick = async () => {
 };
 $("fit").onclick = fitView;
 
+// The two directions of the round trip, on the toolbar beside the graph-JSON pair. Copy model
+// hands an agent something it can POST; Paste model takes what an agent wrote and draws it.
+$("tomodel").onclick = async () => {
+  try {
+    const j = JSON.stringify(toModel(), null, 2);
+    await navigator.clipboard.writeText(j);
+    $("out").textContent = "the model, as /solve and ferrotherm_solve take it:\n\n" + j;
+  } catch (err) { $("out").textContent = "could not copy: " + (err.message || err); }
+};
+$("link").onclick = async () => {
+  try {
+    const u = modelLink();
+    await navigator.clipboard.writeText(u);
+    // A fragment is not sent to the server, but it IS in the address bar and in whatever the link
+    // is pasted into, so say how long it is: a model past a few hundred variables makes a link some
+    // chat clients will cut in half, and a truncated link fails as a bad model rather than as a
+    // truncated link.
+    $("out").textContent = `copied a ${u.length}-character link.\n\nThe model rides in the `
+      + `fragment, which browsers do not send to the server, so opening it tells nobody anything.`
+      + (u.length > 2000 ? "\n\nThis one is long enough that some clients will cut it; send the "
+                         + "model JSON instead if it does not survive the trip." : "");
+  } catch (err) { $("out").textContent = "could not copy: " + (err.message || err); }
+};
+$("frommodel").onclick = async () => {
+  try {
+    checkpoint();
+    const r = fromModel(JSON.parse(await navigator.clipboard.readText()));
+    $("out").textContent = `laid out ${r.variables} variables, ${r.constraints} constraints and `
+      + `${r.terms} objective terms.\n\nPress Run graph.`;
+  } catch (err) { $("out").textContent = "not a model: " + (err.message || err); }
+};
+
 /**
  * A node's input ports right now.
  *
@@ -928,12 +1343,17 @@ function problems(n) {
   // A variadic node's trailing empty port is where the NEXT link goes, not a thing left undone.
   const ports = TYPES[n.type].variadic ? insOf(n).slice(0, -1) : T.ins;
   const missing = ports.filter(([name]) => !inputOf(n.id, name)).map(([name]) => name);
-  if (n.type === "cardinality" || n.type === "atmost" || n.type === "atleast") {
-    const wired = T.ins.filter(([name]) => inputOf(n.id, name)).length;
+  if (n.type in COUNTING) {
+    const wired = insOf(n).filter(([name]) => inputOf(n.id, name)).length;
     if (wired < 2) return "wire at least two variables into it";
-    if ((n.vals.k | 0) < 0 || (n.vals.k | 0) > wired) return `k must be between 0 and ${wired}`;
+    // exactly-one and at-most-one carry no k, and all_different carries neither k nor a value.
+    if ("k" in n.vals && ((n.vals.k | 0) < 0 || (n.vals.k | 0) > wired)) {
+      return `k must be between 0 and ${wired}`;
+    }
+    if ((+n.vals.soft || 0) < 0) return "a soft price is positive, or zero for a rule";
     return null;
   }
+  if ((+n.vals.soft || 0) < 0) return "a soft price is positive, or zero for a rule";
   if (n.type === "categorical" && (n.vals.values | 0) < 2) return "a categorical needs at least 2 values";
   if (n.type === "integer" && (n.vals.hi | 0) <= (n.vals.lo | 0)) return "an integer needs hi > lo";
   if (n.type === "solve" && !links.some(l => l.to === n.id)) return "wire a constraint or objective in";
@@ -960,20 +1380,22 @@ function loadExample() {
   const c = addNode("categorical", 50, 360);
   // Named, because the answer comes back in these words rather than in node numbers.
   a.vals.name = "west"; b.vals.name = "middle"; c.vals.name = "east";
-  const ab = addNode("notequal", 300, 90);
-  const bc = addNode("notequal", 300, 240);
-  const ac = addNode("notequal", 300, 390);
-  const s = addNode("solve", 540, 200);
-  const r = addNode("report", 760, 210);
+  // One all_different rather than three pairwise inequalities. The two compile to the same graph
+  // -- the library measures that and declines to caveat either, since advice that saves nothing
+  // costs the reader time -- so the whole difference is in what the modeller has to say. Three
+  // regions is three pairwise nodes against one; ten regions is forty-five against one.
+  const ad = addNode("alldifferent", 320, 180);
+  const s = addNode("solve", 560, 200);
+  const r = addNode("report", 780, 210);
   const wire = (from, to, port, kind) => links.push({ from: from.id, to: to.id, port, kind });
-  wire(a, ab, "a", "var"); wire(b, ab, "b", "var");
-  wire(b, bc, "a", "var"); wire(c, bc, "b", "var");
-  wire(a, ac, "a", "var"); wire(c, ac, "b", "var");
-  wire(ab, s, "in 1", "cons"); wire(bc, s, "in 2", "cons"); wire(ac, s, "in 3", "cons");
+  wire(a, ad, "in 1", "var"); wire(b, ad, "in 2", "var"); wire(c, ad, "in 3", "var");
+  wire(ad, s, "in 1", "cons");
   wire(s, r, "result", "result");
   draw();
   $("out").textContent = "Graph colouring, stated as itself: three regions of three colours,\n" +
-    "and three constraints saying neighbours must differ.\n\nPress Run graph.";
+    "and one constraint saying they must all differ.\n\n" +
+    "Copy model gives you this as the JSON the HTTP and MCP APIs take.\n" +
+    "Paste model brings one back the other way.\n\nPress Run graph.";
 }
 $("example").onclick = loadExample;
 window.addEventListener("resize", drawWires);
@@ -1004,6 +1426,29 @@ window.ferrotherm = {
     return n.id;
   },
   remove(id) { checkpoint(); removeNode(id); },
+
+  /**
+   * The graph as a MODEL, in the shape the HTTP API and the MCP server already take.
+   *
+   * The editor speaks in nodes and the API speaks in variables, constraints and an objective. They
+   * are the same model said twice, and until now there was no way across: an agent could write the
+   * JSON and a person could draw the graph, and neither could hand their work to the other. `.ftp`
+   * does not close it either -- that is the COMPILED program, in couplings and biases, and nothing
+   * in it remembers that two spins were once a variable called "shift".
+   */
+  toModel() { return toModel(); },
+
+  /**
+   * Lay a model out as a graph. Same JSON, the other direction.
+   *
+   * Positions are computed rather than stored, because the model has none: variables in a column,
+   * what constrains them beside it, Solve and Report at the end. An agent's model becomes something
+   * a person can see and move; the person's edits go back out through toModel().
+   */
+  fromModel(m) { checkpoint(); return fromModel(typeof m === "string" ? JSON.parse(m) : m); },
+
+  /** A link that opens this graph's model in this editor. The model rides in the fragment. */
+  link() { return modelLink(); },
   /** Set one field on one node, refusing a field the node does not have. */
   set(id, field, value) {
     const n = nodes.find(x => x.id === id);
@@ -1031,7 +1476,16 @@ window.ferrotherm = {
       const ins = insOf(b);
       port = ins[ins.length - 1][0];
     }
-    const spec = insOf(b).find(([nm]) => nm === port);
+    let spec = insOf(b).find(([nm]) => nm === port);
+    // The counting nodes used to draw four fixed ports named a, b, c, d. They grow their ports
+    // now, so those names no longer exist -- but a positional port asked for by name is a request
+    // for A port, and the honest answer is the next free one rather than an error about a
+    // vocabulary that changed underneath a saved script.
+    if (!spec && TYPES[b.type].variadic) {
+      const ins = insOf(b);
+      port = ins[ins.length - 1][0];
+      spec = ins[ins.length - 1];
+    }
     if (!spec) {
       throw new Error(`"${TYPES[b.type].title}" has no input "${port}"; it has `
         + insOf(b).map(i => `"${i[0]}"`).join(", "));
