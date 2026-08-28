@@ -99,6 +99,18 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
   the rule was broken twice while it lived only in this file, and its first run found sixteen real
   gaps including the ancilla count, which is the number that says whether sampling a solved model is
   sound at all.
+  - **The node editor is a surface, and check-parity.sh does not look at it.** That exemption was
+    not deliberate and it cost three constraints: the model layer had nine, the C ABI reached all
+    nine through `ft_model_close`'s kind codes, and the editor called kinds 0, 1 and 2 — so
+    `all_different` was unsayable in a picture for as long as nothing compared the lists.
+    `scripts/check-editor-parity.sh` now does, with the same EXEMPT-with-a-reason rule, and
+    `scripts/check-editor-model.sh` puts one model through the API and through `fromModel` and
+    compares the COMPILED size — because vocabulary parity passes an editor that silently drops a
+    `k`, which still draws every node type, still runs, and answers a different question. Both are
+    in CI and both carry a `--selftest` that damages the thing under test and demands a failure. Run
+    it: the first version of the parity self-test PASSED an editor with `all_different` cut out,
+    because an unconditional assignment at the top of the script overwrote the path the self-test
+    was pointing at it.
 - State provenance on every number in docs: measured / simulated / projected, and on what.
 - Follow the failure-analysis discipline: if a method underperforms, measure WHERE it fails
   (train vs held-out vs on-policy; per-factor vs end-to-end) before concluding anything.
