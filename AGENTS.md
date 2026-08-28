@@ -105,6 +105,14 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
   the rule was broken twice while it lived only in this file, and its first run found sixteen real
   gaps including the ancilla count, which is the number that says whether sampling a solved model is
   sound at all.
+  - **`hubo` reaches seven of the eight, and the eighth is written down here.** Rust, C header,
+    Python, Zig, Julia, HTTP, MCP and the browser workbench all take a higher-order model. The NODE
+    EDITOR does not, and should not as it stands: it is an editor for the MODEL layer -- named
+    variables, domains, constraints -- and `hubo` is spins and terms. Wiring a spins-and-terms node
+    into a graph whose whole value is that answers come back in the modeller's own words would be
+    putting two vocabularies on one canvas. The honest form would be a model-layer node that
+    compiles to `hubo` instead of to the reduction, which is a compiler change and not an editor
+    one. Until that exists, the gap is this paragraph.
   - **The node editor is a surface, and check-parity.sh does not look at it.** That exemption was
     not deliberate and it cost three constraints: the model layer had nine, the C ABI reached all
     nine through `ft_model_close`'s kind codes, and the editor called kinds 0, 1 and 2 — so
