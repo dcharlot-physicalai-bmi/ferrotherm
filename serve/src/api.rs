@@ -1061,6 +1061,7 @@ pub fn capabilities() -> Json {
                 op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
                 op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
+                op("hubo", "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.", "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed"),
             ]),
         ),
         (
@@ -1521,6 +1522,98 @@ pub fn solve(req: &Json) -> Result<Json, String> {
 }
 
 /// Route a named operation. Shared by both transports.
+/// Minimise a HIGHER-ORDER model natively, with no ancillas.
+///
+/// Every other operation here is pairwise, or becomes pairwise. `solve` will take a term over three
+/// or more variables and lower it through Rosenberg's reduction -- one ancilla per substituted pair
+/// plus a penalty -- and report the ancillas it spent. That is the right pass when the target is
+/// pairwise hardware and the wrong one when the target is a CPU, and the difference is measured
+/// rather than argued: `examples/hubo_vs_reduction` gives the reduced arm its best beta ladder and
+/// 1024x the budget, and on 60 three-body terms over 40 spins it reaches -34.00 where this path
+/// reaches -48.12 at 1x. The mechanism is the penalty, ~1300 against term weights of 1, which makes
+/// the landscape rigid rather than merely larger.
+///
+/// Terms are `{"vars": [i, j, k, ...], "weight": w}` over 0-based spin indices, any arity.
+pub fn hubo(req: &Json) -> Result<Json, String> {
+    let n = value_of(req, "spins", 0, "hubo")?;
+    if n < 1 {
+        return Err("\"spins\" must be at least 1: a model with no variables can hold no term".into());
+    }
+    let terms = req
+        .get("terms")
+        .and_then(|x| x.as_arr())
+        .ok_or("missing \"terms\": an array of {\"vars\": [i, j, k], \"weight\": w}")?;
+    if terms.is_empty() {
+        return Err("\"terms\" is empty; a model with no terms has nothing to minimise".into());
+    }
+
+    let mut h = ferrotherm::hubo::Hubo::new(n as usize);
+    for (i, term) in terms.iter().enumerate() {
+        let vs = term
+            .get("vars")
+            .and_then(|x| x.as_arr())
+            .ok_or_else(|| format!("terms[{i}] needs a \"vars\" array of spin indices"))?;
+        let mut vars = Vec::with_capacity(vs.len());
+        for (k, v) in vs.iter().enumerate() {
+            let x = v
+                .as_i64()
+                .ok_or_else(|| format!("terms[{i}].vars[{k}] must be a whole number"))?;
+            if x < 0 || x >= n {
+                return Err(format!(
+                    "terms[{i}].vars[{k}] is {x}, and this model has {n} spins numbered 0..{}",
+                    n - 1
+                ));
+            }
+            vars.push(x as usize);
+        }
+        let w = term
+            .get("weight")
+            .and_then(|x| x.as_f64())
+            .ok_or_else(|| format!("terms[{i}] needs a numeric \"weight\""))?;
+        // The library's refusal is more specific than anything phrased here -- it names the
+        // repeated variable and how many times it appeared -- so it is passed through.
+        h.add(&vars, w).map_err(|e| format!("terms[{i}]: {e}"))?;
+    }
+
+    let d = ferrotherm::hubo::Params::default();
+    let p = ferrotherm::hubo::Params {
+        beta_min: opt_f64(req, "beta_min", d.beta_min),
+        beta_max: opt_f64(req, "beta_max", d.beta_max),
+        stages: opt_usize(req, "stages", d.stages),
+        sweeps_per_stage: opt_usize(req, "sweeps_per_stage", d.sweeps_per_stage),
+    };
+    if !(p.beta_max > p.beta_min) || !p.beta_min.is_finite() || !p.beta_max.is_finite() {
+        return Err(format!(
+            "beta_max must exceed beta_min and both must be real; got {} and {}",
+            p.beta_min, p.beta_max
+        ));
+    }
+    let seed = value_of(req, "seed", 1, "hubo")? as u64;
+    let out = ferrotherm::hubo::anneal(&h, &p, seed);
+
+    Ok(Json::obj(vec![
+        ("energy", Json::n(out.energy)),
+        ("state", Json::Arr(out.state.iter().map(|&s| Json::n(s as f64)).collect())),
+        ("spins", Json::n(h.len() as f64)),
+        ("terms", Json::n(h.terms() as f64)),
+        ("max_arity", Json::n(h.max_arity() as f64)),
+        ("ancillas_avoided", Json::n(h.ancillas_avoided() as f64)),
+        ("proposals", Json::n(out.proposals as f64)),
+        ("accepted", Json::n(out.accepted as f64)),
+        (
+            "note",
+            Json::s(
+                "Solved natively: no ancillas, and no penalty weight to get right. \
+                 \"ancillas_avoided\" is an UPPER BOUND on what a pairwise reduction would have \
+                 spent, not the cost -- the reduction shares one ancilla across every term \
+                 containing the same pair, so on three terms sharing one it spends one where this \
+                 reports three. Use \"solve\" instead when the target is pairwise hardware, which \
+                 is what the reduction is for.",
+            ),
+        ),
+    ]))
+}
+
 pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
     match op {
         "sample" => sample(req),
@@ -1532,6 +1625,7 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
         "exact_planar" => exact_planar(req),
         "toroidal_bound" => toroidal_bound(req),
         "solve" => solve(req),
+        "hubo" => hubo(req),
         "capabilities" => Ok(capabilities()),
         other => Err(format!(
             "unknown operation {other:?}; call \"capabilities\" for the list"

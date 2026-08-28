@@ -54,10 +54,15 @@ The reason is the measurement above, not symmetry for its own sake: every non-Ru
 k-body term was on the reduced path, and the reduced path does not reach the native one at a
 thousand times the budget.
 
-`scripts/check-hubo-answers.sh` is the gate that makes the four doors mean the same thing. Its model
+It reaches the HTTP API and the MCP server too: `POST /v1/hubo`, and `ferrotherm_hubo` as the
+eleventh MCP tool, whose description says outright when to prefer it over a three-or-more-variable
+objective term in `ferrotherm_solve` and what the alternative costs. **Six surfaces**, then: Rust,
+Python, Zig, Julia, HTTP and MCP.
+
+`scripts/check-hubo-answers.sh` is the gate that makes those doors mean the same thing. Its model
 is a **three-body parity term** — the smallest model that cannot be expressed pairwise at all, so a
 surface that quietly routed it through the reduction would still answer −1 and be caught by the
-**ancilla count**, which is in the comparison for exactly that reason. All four report
+**ancilla count**, which is in the comparison for exactly that reason. All six report
 `energy=-1 product=1 terms=1 arity=3 ancillas=1`. The energy is compared and the state is not: the
 optimum is four-fold degenerate, and demanding one particular assignment would blame two correct
 bindings for disagreeing about something they are entitled to.

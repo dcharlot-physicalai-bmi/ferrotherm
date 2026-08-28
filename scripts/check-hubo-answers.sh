@@ -121,6 +121,46 @@ ZG
   rm -f zig/_hans.zig
 else skip zig "no zig on PATH"; fi
 
+# ---- http and mcp -------------------------------------------------------------------------------
+#
+# Two more surfaces, and the two an agent actually reaches for. They share one dispatch, so they
+# cannot disagree with each other -- but they can both disagree with the library, which is what a
+# comparison against the other four catches.
+if cargo build --release --quiet -p ferrotherm-serve 2>/dev/null; then
+  BODY='{"spins":3,"terms":[{"vars":[0,1,2],"weight":1.0}],"seed":7}'
+  # Single quotes throughout the Python, so nothing here needs a backslash inside an f-string --
+  # which Python rejects outright and which cost this gate one run to discover.
+  READ='
+import json, sys
+d = json.load(sys.stdin)
+s = d["state"]
+prod = int(s[0]) * int(s[1]) * int(s[2])
+print("energy=%g product=%d terms=%d arity=%d ancillas=%d"
+      % (d["energy"], prod, d["terms"], d["max_arity"], d["ancillas_avoided"]), end="")'
+
+  attempt http
+  (./target/release/ferrotherm-serve 127.0.0.1:8487 >/dev/null 2>&1 &)
+  for _ in $(seq 1 40); do
+    curl -s -o /dev/null -X POST localhost:8487/v1/capabilities -d '{}' 2>/dev/null && break
+    sleep 0.25
+  done
+  curl -s -X POST localhost:8487/v1/hubo -d "$BODY" 2>/dev/null \
+    | python3 -c "$READ" > "$out/http.txt" 2> "$out/http.err"
+  pkill -f 'ferrotherm-serve 127.0.0.1:8487' 2>/dev/null
+
+  attempt mcp
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ferrotherm_hubo\",\"arguments\":$BODY}}" \
+    | ./target/release/ferrotherm-mcp 2>/dev/null \
+    | python3 -c "
+import json,sys
+line = next(l for l in sys.stdin if l.strip())
+print(json.loads(line)['result']['content'][0]['text'], end='')" 2>/dev/null \
+    | python3 -c "$READ" > "$out/mcp.txt" 2> "$out/mcp.err"
+else
+  skip http "ferrotherm-serve did not build"
+  skip mcp "ferrotherm-serve did not build"
+fi
+
 # ---- compare ----------------------------------------------------------------------------------
 echo
 bad=0

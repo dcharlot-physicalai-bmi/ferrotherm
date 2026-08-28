@@ -232,6 +232,35 @@ pub fn tools() -> Json {
             vec!["variables"],
         ),
         tool(
+            "ferrotherm_hubo",
+            "Minimise a HIGHER-ORDER model natively: terms over any number of variables, with no \
+             ancillas and no penalty weight to get right. Reach for this INSTEAD of a three-or-more \
+             variable objective term in ferrotherm_solve whenever the model is genuinely \
+             higher-order and you are running on a CPU. Both paths work and they are not \
+             equivalent: ferrotherm_solve lowers a k-body term through Rosenberg's reduction, \
+             adding one ancilla spin per substituted pair plus a penalty chosen as the sum of every \
+             coefficient's magnitude -- around 1300 against term weights of 1 -- and that penalty \
+             makes the landscape rigid rather than merely larger, because any single flip that \
+             would move the search must first pay it. Measured on 60 three-body terms over 40 \
+             spins: this path reaches -48.12 at its budget while the reduced path reaches -34.00 at \
+             a THOUSAND TIMES that budget, with zero ancilla violations in either, so the reduced \
+             search is stuck inside the feasible region rather than escaping it. Use the reduction \
+             only when the target really is pairwise hardware, which is what it is for. Note that \
+             \"ancillas_avoided\" in the reply is an UPPER BOUND on what a reduction would have \
+             spent and not the cost: the reduction shares one ancilla across every term containing \
+             the same pair, so on three terms sharing one it spends one where this reports three.",
+            vec![
+                ("spins", prop("integer", "How many variables the model has. They are numbered 0..spins-1, and every index in every term must be one of them.")),
+                ("terms", prop("array", "Each is {\"vars\": [i, j, k, ...], \"weight\": w}, contributing -w times the product of those spins. ANY arity: one variable is a field, two is a coupling, three or more is what this operation exists for. A variable repeated inside one term is refused rather than accepted, because s*s = 1 would silently make the term a different order than the one written -- the refusal names the variable and how many times it appeared.")),
+                ("beta_min", prop("number", "Hot end of the annealing ladder. Default 0.05.")),
+                ("beta_max", prop("number", "Cold end. Must exceed beta_min; default 8.0.")),
+                ("stages", prop("integer", "Ladder steps from hot to cold. Default 200.")),
+                ("sweeps_per_stage", prop("integer", "Sweeps at each beta. Default 8.")),
+                ("seed", prop("integer", "Same seed reproduces the run exactly. Default 1.")),
+            ],
+            vec!["spins", "terms"],
+        ),
+        tool(
             "ferrotherm_capabilities",
             "Describe this server: operations, graph specification, limits, and conventions.",
             vec![],
