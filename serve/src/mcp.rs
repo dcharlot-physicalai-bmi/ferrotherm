@@ -213,7 +213,12 @@ pub fn tools() -> Json {
              back. Prefer this over ferrotherm_anneal: that one wants a graph of spins and returns \
              an array of +/-1, which means computing spin indices yourself to say something as \
              simple as \"these two must differ\". Declare variables with domains, state \
-             constraints, optionally give an objective, and read the answer by name. Check \
+             constraints, optionally give an objective, and read the answer by name. \
+             The reply's \"objective\" is what the answer is WORTH, in your own units and the \
+             direction you wrote it: read that to compare two answers or to say what a schedule is \
+             worth. \"energy\" is a different number -- the compiled Ising energy with every \
+             penalty and the constant folded in -- which orders two answers to ONE model and means \
+             nothing across models or after a penalty change. Check \
              `feasible` before trusting the values. False means the answer breaks something you \
              asked for, and the reply says which: a variable in \"did_not_decode\", or a \
              HARD constraint in \"violated\" that the objective outbid. A penalty makes a \

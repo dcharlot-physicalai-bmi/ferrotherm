@@ -494,6 +494,16 @@ double ft_model_ommx_constant(const ft_model *m);
  * the sampler has no reason to prefer an answer, and ft_model_value reports "did not decode".
  *
  * Read these after ft_model_compile and before trusting a result. Zero is the normal case. */
+/* The objective's value in the modeller's own units, in the direction they wrote it. NaN when no
+ * objective was written, when both senses were used and there is no single direction to report, or
+ * when a variable did not decode and there is only half an answer to score.
+ *
+ * Distinct from ft_model_energy, which is the compiled Ising energy with every penalty and the
+ * constant folded in -- a number about SPINS that compares two answers to one model and nothing
+ * else, and that moves when the penalty does. */
+double ft_model_objective(const ft_model *m);
+uint32_t ft_model_has_objective(const ft_model *m);
+
 uint32_t ft_model_caveats(const ft_model *m);
 uint32_t ft_model_caveat(const ft_model *m, uint32_t i, uint8_t *buf, uint32_t cap);
 

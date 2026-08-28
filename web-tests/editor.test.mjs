@@ -674,6 +674,38 @@ const counting = (kind, k, reward = "up") => page.evaluate(([kind, k, reward]) =
   await fresh.close();
 }
 
+// --- an answer is scored in the modeller's own units -----------------------------------------------
+//
+// The report used to carry ONE number: the compiled Ising energy, with every penalty and the
+// constant folded in. A person who wires up "Prefer value" nodes cannot read what their answer is
+// worth out of that, cannot compare two answers by it, and cannot tell a good answer from a barely
+// feasible one -- and it moves when the penalty does, so it is not even stable across edits.
+{
+  const txt = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const mon = F.add("categorical", 40, 40, { name: "mon", values: 3 });
+    const tue = F.add("categorical", 40, 200, { name: "tue", values: 3 });
+    const ne = F.add("notequal", 300, 60);
+    F.connect(mon, ne, "a"); F.connect(tue, ne, "b");
+    const s = F.add("solve", 620, 60);
+    F.connect(ne, s);
+    const o1 = F.add("prefer", 320, 320, { value: 1, weight: 5, maximize: 1 });
+    F.connect(mon, o1, "var"); F.connect(o1, s);
+    const o2 = F.add("prefer", 320, 420, { value: 2, weight: 4, maximize: 1 });
+    F.connect(tue, o2, "var"); F.connect(o2, s);
+    F.connect(s, F.add("report", 900, 60), "result");
+    return F.run();
+  });
+  const obj = +(txt.match(/objective\s+(-?[\d.]+)/)?.[1] ?? NaN);
+  const energy = +(txt.match(/energy\s+(-?[\d.]+)/)?.[1] ?? NaN);
+  check("the report says what the answer is worth", obj === 9,
+        `objective ${obj}; the optimum of 5*[mon=1] + 4*[tue=2] under mon != tue is 9`);
+  check("and labels which number is which", /your units/.test(txt) && /compiled Ising/.test(txt));
+  check("the two numbers are not the same one", obj !== energy,
+        `objective ${obj}, energy ${energy}`);
+}
+
 // --- nothing threw along the way ---------------------------------------------------------------------
 check("no page errors", errs.length === 0, errs.join(" | "));
 

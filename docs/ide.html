@@ -804,6 +804,10 @@ function solveProblem(v) {
       values, spins, tries, ms,
       feasible: W.ft_model_feasible(m) === 1,
       energy: W.ft_model_energy(m),
+      // What the answer is WORTH, in the modeller's own units. Null when no objective was written,
+      // when both senses were used, or when a variable did not decode -- the ABI answers that
+      // question separately rather than making a reader test for NaN.
+      objective: W.ft_model_has_objective(m) ? W.ft_model_objective(m) : null,
       penalty: W.ft_model_penalty(m),
       // The same program as an ommx.v1.Instance. The editor shows its size rather than the bytes:
       // a base64 blob in a status pane teaches nobody anything, and the point is that the program
@@ -876,8 +880,16 @@ function applySolve() {
   const pad = Math.max(...r.values.map(([n]) => n.length), 1);
   let txt = r.values.map(([n, v]) =>
     "  " + n.padEnd(pad) + " = " + (v === null ? "(did not decode)" : v)).join("\n");
-  txt += "\n\n  " + "spins".padEnd(pad) + " = " + r.spins
-       + "\n  " + "energy".padEnd(pad) + " = " + r.energy.toFixed(4)
+  // What the answer is WORTH comes first, because it is the number the modeller wrote the model
+  // to obtain. `energy` below is the compiled Ising energy with every penalty and the constant
+  // folded in: it orders two answers to ONE model and says nothing about the schedule.
+  if (r.objective !== null) {
+    txt += "\n\n  " + "objective".padEnd(pad) + " = " + r.objective.toFixed(4) + "   (your units)";
+    txt += "\n  " + "spins".padEnd(pad) + " = " + r.spins;
+  } else {
+    txt += "\n\n  " + "spins".padEnd(pad) + " = " + r.spins;
+  }
+       + "\n  " + "energy".padEnd(pad) + " = " + r.energy.toFixed(4) + "   (compiled Ising)"
        + "\n  " + "penalty".padEnd(pad) + " = " + r.penalty.toFixed(2)
        + "\n  " + "feasible".padEnd(pad) + " = " + (r.feasible ? "yes" : "NO");
   for (const b of r.violated) txt += "\n  broken: " + b;

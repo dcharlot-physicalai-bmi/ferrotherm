@@ -827,3 +827,26 @@ def test_a_parallel_sweep_samples_the_same_physics():
         got = acc / 300
         want = ft.onsager(beta)
         assert abs(got - want) < 0.03, f"threads={threads}: |M| {got:.4f} vs Onsager {want:.4f}"
+
+
+def test_an_answer_is_scored_in_the_modellers_own_units():
+    # `energy` is the compiled Ising energy with every penalty and the constant folded in, and it
+    # was the only number an answer carried. A person cannot read what their schedule is worth out
+    # of it, cannot compare two answers by it, and it moves when the penalty does.
+    p = ft.Problem()
+    mon = p.categorical("mon", 3)
+    tue = p.categorical("tue", 3)
+    p.not_equal(mon, tue)
+    p.maximize(5 * mon.is_(1) + 4 * tue.is_(2))
+    a = p.solve(tries=64)
+    assert a.feasible, a
+    assert a.objective == 9.0, (a.values, a.objective)
+    assert a.objective != a.energy, "if these agree the test is measuring nothing"
+
+
+def test_no_objective_reports_none_rather_than_zero():
+    # Zero would read as "worth nothing" instead of "not asked".
+    p = ft.Problem()
+    v = p.categorical("v", 2)
+    p.fix(v, 1)
+    assert p.solve(tries=4).objective is None

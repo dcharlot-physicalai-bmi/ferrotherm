@@ -232,6 +232,8 @@ _model_solve_with = _sig("ft_model_solve_with", c_uint32,
                          [_p, c_uint32, c_double, c_double, c_uint32, c_uint32])
 _model_value = _sig("ft_model_value", ctypes.c_int64, [_p, c_uint32])
 _model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
+_model_objective = _sig("ft_model_objective", c_double, [_p])
+_model_has_objective = _sig("ft_model_has_objective", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
 _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
@@ -1488,6 +1490,14 @@ class Answer:
     to decode reads ``None`` and appears in :attr:`undecoded`, and a constraint the objective
     outbid is described in :attr:`violated`.
 
+    :attr:`objective` is what the answer is WORTH, in your own units and the direction you wrote
+    it in. :attr:`energy` is the compiled Ising energy with every penalty and the constant folded
+    in — a number about spins, which compares two answers to one model and nothing else, and which
+    moves when the penalty does. Write ``maximize 5*mon + 4*tue``, get ``mon = 1, tue = 2``, and
+    ``objective`` reads 9 while ``energy`` reads some number in the hundreds. ``objective`` is
+    ``None`` when no objective was written, when both senses were used and there is no single
+    direction to report, or when a variable did not decode and there is only half an answer.
+
     :attr:`caveats` lists what the compiler knows is wrong with the model and cannot fix — today,
     an encoding no penalty can make exact. Empty is the normal case; a non-empty one means a value
     that reads back fine may still have come from a codeword the penalty never excluded.
@@ -1498,8 +1508,8 @@ class Answer:
     ground state.
     """
 
-    __slots__ = ("values", "feasible", "energy", "spins", "penalty", "violated", "soft_cost",
-                 "ancillas", "caveats")
+    __slots__ = ("values", "feasible", "energy", "objective", "spins", "penalty", "violated",
+                 "soft_cost", "ancillas", "caveats")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -1845,6 +1855,8 @@ class Problem:
         ]
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
                       violated=broken, energy=float(_model_energy(self._h)),
+                      objective=(float(_model_objective(self._h))
+                                 if _model_has_objective(self._h) else None),
                       spins=int(spins), penalty=float(_model_penalty(self._h)),
                       soft_cost=float(_model_soft_cost(self._h)),
                       ancillas=int(_model_ancillas(self._h)),

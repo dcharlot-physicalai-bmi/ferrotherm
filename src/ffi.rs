@@ -1271,6 +1271,33 @@ pub extern "C" fn ft_model_caveats(m: *const ModelHandle) -> u32 {
     }
 }
 
+/// The objective's value in the modeller's own units, in the direction they wrote it.
+///
+/// NaN when no objective was written, when both senses were used and there is no single direction
+/// to report, or when a variable did not decode and there is only half an answer to score.
+///
+/// Distinct from [`ft_model_energy`], which is the compiled Ising energy with every penalty and
+/// the constant folded in. That number is about SPINS: it compares two answers to one model and
+/// nothing else, and it moves when the penalty does. A modeller who wrote `maximize 5*mon + 4*tue`
+/// reads their schedule's worth here and reads a number in the hundreds there.
+#[no_mangle]
+pub extern "C" fn ft_model_objective(m: *const ModelHandle) -> f64 {
+    unsafe { m.as_ref() }
+        .and_then(|h| h.solution.as_ref())
+        .and_then(|s| s.objective)
+        .unwrap_or(f64::NAN)
+}
+
+/// Whether the answer carries an objective value at all, so a caller need not test for NaN.
+#[no_mangle]
+pub extern "C" fn ft_model_has_objective(m: *const ModelHandle) -> u32 {
+    u32::from(
+        unsafe { m.as_ref() }
+            .and_then(|h| h.solution.as_ref())
+            .is_some_and(|s| s.objective.is_some()),
+    )
+}
+
 /// Copy caveat `i` as UTF-8; same two-call protocol as the other text getters.
 #[no_mangle]
 pub extern "C" fn ft_model_caveat(

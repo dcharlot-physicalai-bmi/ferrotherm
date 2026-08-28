@@ -426,6 +426,33 @@ pub fn onsager(beta: f64) f64 {
 
 // ---- tests ---------------------------------------------------------------------------------
 
+test "an answer is scored in the modeller's own units" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const mon = try p.categorical("mon", 3);
+    const tue = try p.categorical("tue", 3);
+    try p.notEqual(mon, tue);
+    try p.prefer(.maximize, 5.0, mon.is(1));
+    try p.prefer(.maximize, 4.0, tue.is(2));
+    try p.solve(64);
+
+    const obj = p.objective() orelse return error.TestUnexpectedResult;
+    try std.testing.expectApproxEqAbs(@as(f64, 9.0), obj, 1e-9);
+    try std.testing.expect(p.feasible());
+    // And it is NOT the compiled energy, which is the only number this used to hand back.
+    try std.testing.expect(obj != p.energy());
+}
+
+test "a model with no objective reports none rather than zero" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const v = try p.categorical("v", 2);
+    try p.fix(v, 1);
+    try p.solve(8);
+    // Zero would read as "worth nothing" instead of "not asked".
+    try std.testing.expect(p.objective() == null);
+}
+
 test "a parallel sweep reproduces itself and reports what ran" {
     try std.testing.expect(hardwareThreads() >= 1);
 
@@ -1244,8 +1271,23 @@ pub const Problem = struct {
         return c.ft_model_feasible(self.h) == 1;
     }
 
+    /// The compiled Ising energy: the objective, every penalty and the constant, all folded in.
+    ///
+    /// A number about SPINS. It compares two answers to the same model and nothing else, and it
+    /// moves when the penalty does. For what the answer is WORTH, see `objective`.
     pub fn energy(self: *Problem) f64 {
         return c.ft_model_energy(self.h);
+    }
+
+    /// The objective's value in your own units, in the direction you wrote it.
+    ///
+    /// Null when no objective was written, when both senses were used and there is no single
+    /// direction to report, or when a variable did not decode and there is only half an answer to
+    /// score. Write `maximize 5*mon + 4*tue`, get mon = 1 and tue = 2, and this reads 9 where
+    /// `energy` reads a number in the hundreds with the penalties in it.
+    pub fn objective(self: *Problem) ?f64 {
+        if (c.ft_model_has_objective(self.h) == 0) return null;
+        return c.ft_model_objective(self.h);
     }
 
     /// The penalty actually used, after any automatic scaling.

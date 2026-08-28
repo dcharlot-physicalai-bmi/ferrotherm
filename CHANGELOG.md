@@ -44,6 +44,39 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### An answer now says what it is worth
+
+A model's answer carried exactly one number: `energy`, which is `graph.energy(state)` — the
+**compiled Ising energy**, with every penalty and the constant folded in. Write
+`maximize 5*mon + 4*tue`, get `mon = 1, tue = 2`, and the answer said **−32**. That number orders
+two answers to the same model and does nothing else: it is not what the schedule is worth, it cannot
+be compared across models, and it moves when the penalty does.
+
+`Solution::objective` is the objective's value in the modeller's own units, in the direction they
+wrote it. Same model, same answer: **9**.
+
+`Model::objective` normalises the sense away as it accumulates — it negates what is maximised, which
+is right for the compiler and wrong for the reader — so the direction is now recorded alongside and
+negated back on the way out. Three cases report `None` rather than a misleading number:
+
+- **no objective was written** — `None`, not `0.0`, which would read as *worth nothing* instead of
+  *not asked*;
+- **both senses were used** — mixed objectives compose fine as arithmetic and have no single
+  direction to report, so reporting whichever call came last would be a number with a sign nobody
+  chose;
+- **a variable did not decode** — scoring half an answer produces something that looks like a score
+  and is not one.
+
+`objective(Minimize, Expr::zero())` in a loop over an empty list must not turn a maximisation into a
+directionless objective, so the sense is recorded only when the call actually contributes a term.
+There is a test for exactly that.
+
+It reaches every surface: `ft_model_objective` and `ft_model_has_objective` (a separate question, so
+a caller need not test for NaN), `Answer.objective` in Python, `Problem.objective()` returning `?f64`
+in Zig, `Answer.objective` as `Union{Float64, Nothing}` in Julia, `"objective"` in the HTTP reply and
+the MCP tool description, and both browser pages — where it is printed **above** the energy and each
+number is labelled, `(your units)` against `(compiled Ising)`.
+
 ### The browser: two ceilings, neither of them the sampler
 
 **The live view ran one sweep per animation frame.** A 5-ring and a 512x512 lattice sampled at

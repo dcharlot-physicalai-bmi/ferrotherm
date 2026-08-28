@@ -1479,6 +1479,12 @@ pub fn solve(req: &Json) -> Result<Json, String> {
             ),
         ),
         ("energy", Json::n(sol.energy)),
+        // What the answer is WORTH, in the modeller's own units and the direction they wrote it.
+        // "energy" above is the compiled Ising energy with every penalty and the constant folded
+        // in: it compares two answers to one model and nothing else, and it moves when the penalty
+        // does. Null when no objective was written, when both senses were used and there is no
+        // single direction to report, or when a variable did not decode.
+        ("objective", sol.objective.map_or(Json::Null, Json::n)),
         // What the traded-away preferences cost, separated from the objective on purpose: telling
         // those apart is the whole point of saying a constraint is soft.
         ("soft_cost", Json::n(sol.soft_cost())),
@@ -1515,7 +1521,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                  Entries with \"hard\": false are preferences you priced with \"soft\", and the \
                  solver trading one away leaves the answer feasible -- \"soft_cost\" totals what \
                  those trades cost, at weight x amount SQUARED. \
-                 The \"ftp\" field is the compiled program and runs unchanged on any backend.",
+                 \"objective\" is what the answer is worth in YOUR units and the direction you wrote it; \"energy\" is the compiled Ising energy with every penalty and the constant folded in, which compares two answers to one model and nothing else. The \"ftp\" field is the compiled program and runs unchanged on any backend.",
             ),
         ),
     ]))

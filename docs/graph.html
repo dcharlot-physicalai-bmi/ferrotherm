@@ -728,7 +728,14 @@ function runGraph() {
       const bad = v === -9223372036854775808n || v === undefined;
       txt += "  " + label(n) + " = " + (bad ? "(did not decode)" : v) + "\n";
     }
-    txt += "\nenergy    " + W.ft_model_energy(m).toFixed(4) + "\n";
+    // What the answer is WORTH comes before what the spins cost. A modeller who wired up
+    // "Prefer value" nodes wrote the model to obtain this number; the energy below is the compiled
+    // Ising energy with every penalty and the constant folded in, which orders two answers to ONE
+    // model and says nothing about the thing they were modelling.
+    if (W.ft_model_has_objective && W.ft_model_has_objective(m)) {
+      txt += "\nobjective " + W.ft_model_objective(m).toFixed(4) + "   (your units)\n";
+    }
+    txt += "energy    " + W.ft_model_energy(m).toFixed(4) + "   (compiled Ising)\n";
     const anc = W.ft_model_ancillas ? W.ft_model_ancillas(m) : 0;
     if (anc) {
       txt += "ancillas  " + anc + " (a term named three or more variables; the lowering added"

@@ -310,6 +310,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_value Clonglong ModPtr Cuint
 @cfn ft_model_feasible Cuint ModPtr
 @cfn ft_model_energy Cdouble ModPtr
+@cfn ft_model_objective Cdouble ModPtr
+@cfn ft_model_has_objective Cuint ModPtr
 @cfn ft_model_penalty Cdouble ModPtr
 @cfn ft_model_violations Cuint ModPtr
 @cfn ft_model_violation Cuint ModPtr Cuint Ptr{UInt8} Cuint
@@ -1101,6 +1103,14 @@ struct Answer
     feasible::Bool
     violated::Vector{String}
     energy::Float64
+    """What the answer is WORTH, in your own units and the direction you wrote it in.
+
+    `nothing` when no objective was written, when both senses were used and there is no single
+    direction to report, or when a variable did not decode. Distinct from `energy`, which is the
+    compiled Ising energy with every penalty and the constant folded in -- a number about spins
+    that compares two answers to one model and nothing else.
+    """
+    objective::Union{Float64, Nothing}
     spins::Int
     penalty::Float64
     soft_cost::Float64
@@ -1663,8 +1673,9 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
         # whether a larger penalty would be enough, cannot get that from the text.
         hard && push!(by, ft_model_violation_amount(p.handle, Cuint(i)))
     end
+    obj = ft_model_has_objective(p.handle) == 1 ? ft_model_objective(p.handle) : nothing
     Answer(vals, ft_model_feasible(p.handle) == 1, broken,
-           ft_model_energy(p.handle), Int(spins), ft_model_penalty(p.handle),
+           ft_model_energy(p.handle), obj, Int(spins), ft_model_penalty(p.handle),
            ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
            [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)])
 end

@@ -504,6 +504,12 @@ struct Decl {
 pub struct Model {
     decls: Vec<Decl>,
     objective: Expr,
+    /// The sense every `objective` call used, or `None` if they disagreed or none was written.
+    ///
+    /// `objective` normalises the sense away by negating what is maximised, which is right for the
+    /// compiler and wrong for the reader: a modeller who wrote `maximize 5*mon + 4*tue` wants 9
+    /// back, not -9. This is the only place the direction they wrote in survives.
+    sense: Option<Sense>,
     /// Each constraint, its penalty (NaN for "scale it"), and whether breaking it is allowed.
     constraints: Vec<(Constraint, f64, bool)>,
     /// Penalty strength applied to encodings and to constraints without their own.
@@ -626,6 +632,7 @@ impl Model {
         Model {
             decls: Vec::new(),
             objective: Expr::zero(),
+            sense: None,
             constraints: Vec::new(),
             penalty: 2.0,
             auto_penalty: true,
@@ -768,6 +775,19 @@ impl Model {
         // Storing it as "minimise this" removes both. Maximising e is minimising -e; a model has no
         // global sense left to flip, and terms in opposite directions compose the way arithmetic
         // says they should.
+        // Remember the direction the modeller wrote in, so the answer can be reported back in it.
+        // Only when this call CONTRIBUTES something: `objective(Minimize, Expr::zero())` adds no
+        // term and must not turn a maximisation into a mixed objective. Mixed senses compose fine
+        // as arithmetic and have no single direction to report, so they are recorded as exactly
+        // that rather than as whichever call came last.
+        let contributes = !e.terms.is_empty() || e.constant != 0.0;
+        if contributes {
+            self.sense = match self.sense {
+                None => Some(sense),
+                Some(prev) if prev == sense => Some(prev),
+                _ => None,
+            };
+        }
         let signed = if sense == Sense::Maximize { e.scaled(-1.0) } else { e };
         let acc = core::mem::take(&mut self.objective);
         self.objective = acc.plus(signed);
@@ -777,6 +797,7 @@ impl Model {
     /// Discard everything accumulated so far and use exactly this objective.
     pub fn set_objective(&mut self, sense: Sense, e: Expr) -> &mut Self {
         self.objective = Expr::zero();
+        self.sense = None;
         self.objective(sense, e)
     }
 
@@ -1158,6 +1179,8 @@ impl Model {
             .collect();
 
         Ok(Compiled {
+            objective: self.objective.clone(),
+            sense: self.sense,
             program,
             graph,
             ancillas,
@@ -1511,6 +1534,10 @@ pub struct Compiled {
     /// undecoded — a correct answer to the wrong question, because what the modeller needs is to
     /// know at COMPILE time that the encoding they picked cannot be tight. That is what this is.
     pub caveats: Vec<String>,
+    /// The objective as written, normalised to a minimisation, plus the direction it was written
+    /// in. Kept so an answer can be SCORED in the modeller's units and not only in spins.
+    objective: Expr,
+    sense: Option<Sense>,
     /// Kept so a decoded answer can be CHECKED, not just read.
     ///
     /// A penalty makes a constraint expensive, not impossible. The sampler is free to pay it, and
@@ -1539,7 +1566,32 @@ impl Compiled {
         }
         // Then check what was asked for. A decoded answer is a readable one, not a correct one.
         let violated = if invalid.is_empty() { self.check(&values) } else { Vec::new() };
-        Solution { values, invalid, violated, energy: self.graph.energy(state) }
+        // The objective is scored on the DECODED values, not on the spins: it is the answer to
+        // "what is this worth", and a variable that did not decode has no value to score. So an
+        // answer with anything invalid reports no objective rather than a number computed from
+        // half a solution.
+        let objective = if invalid.is_empty() { self.score(&values) } else { None };
+        Solution { values, invalid, violated, energy: self.graph.energy(state), objective }
+    }
+
+    /// The objective's value at a decoded assignment, in the direction the modeller wrote it.
+    ///
+    /// `self.objective` is normalised to a minimisation -- `Model::objective` negates what is
+    /// maximised -- so a maximisation is negated back on the way out. That normalisation is right
+    /// for the compiler and wrong for the reader, and this is where the two part company.
+    fn score(&self, values: &BTreeMap<String, i64>) -> Option<f64> {
+        let sense = self.sense?;
+        let holds = |l: &Lit| match l {
+            Lit::Spin(v) => values.get(&self.names[v.0]) == Some(&1),
+            Lit::Is(v, want) => values.get(&self.names[v.0]) == Some(want),
+        };
+        let mut acc = self.objective.constant;
+        for term in &self.objective.terms {
+            if term.lits.iter().all(holds) {
+                acc += term.coeff;
+            }
+        }
+        Some(if sense == Sense::Maximize { -acc } else { acc })
     }
 
     /// Which constraints the decoded values break, each described in the caller's own names.
@@ -1794,7 +1846,19 @@ pub struct Solution {
     /// all, while a violated constraint means every value read cleanly and one of them is not what
     /// was asked for. Both mean the penalty lost, and both need a larger one.
     pub violated: Vec<Violation>,
+    /// The compiled Ising energy: the objective, every penalty and the constant, all folded in.
+    ///
+    /// A number about SPINS. Two answers to the same model can be compared with it, and nothing
+    /// else can: it is not what the schedule is worth, and it moves when the penalty does.
     pub energy: f64,
+    /// The objective's value in the modeller's own units, in the direction they wrote it.
+    ///
+    /// `None` when no objective was written, or when `objective` was called with both senses and
+    /// there is no single direction to report. A modeller who wrote `maximize 5*mon + 4*tue` and
+    /// got `mon = 1, tue = 2` reads **9** here, and reads the compiled Ising energy in `energy` --
+    /// which for that model is some number in the hundreds with the penalties in it and tells them
+    /// nothing about their schedule.
+    pub objective: Option<f64>,
 }
 
 impl Solution {
@@ -1882,6 +1946,89 @@ impl core::fmt::Display for Solution {
 
 #[cfg(test)]
 mod tests {
+
+    /// The number a modeller can actually use.
+    ///
+    /// `energy` is the compiled Ising energy with every penalty and the constant folded in, and it
+    /// is the only number an answer carried until now. A person who writes "maximize 5*mon + 4*tue"
+    /// cannot read their schedule's worth out of it, cannot compare two answers by it, and cannot
+    /// tell a good answer from a barely-feasible one.
+    #[test]
+    fn an_answer_is_scored_in_the_modellers_own_units() {
+        let mut m = Model::new();
+        let mon = m.categorical("mon", 3);
+        let tue = m.categorical("tue", 3);
+        m.not_equal(mon, tue);
+        m.objective(Sense::Maximize, Expr::product(5.0, &[Lit::Is(mon, 1)]));
+        m.objective(Sense::Maximize, Expr::product(4.0, &[Lit::Is(tue, 2)]));
+        let c = m.compile().unwrap();
+        let s = c.solve_best_of(64);
+
+        let obj = s.objective.expect("a single-sense objective has a direction to report");
+        // The optimum is 9: mon = 1 and tue = 2, which not_equal permits.
+        assert_eq!(obj, 9.0, "values {:?} energy {}", s.values, s.energy);
+        assert!(s.feasible());
+        // And it is NOT the compiled energy, which is what the modeller was being handed before.
+        assert_ne!(obj, s.energy, "if these agree the test is measuring nothing");
+    }
+
+    #[test]
+    fn a_minimisation_is_reported_as_written_and_a_mixed_objective_is_not_reported_at_all() {
+        let mut m = Model::new();
+        let x = m.categorical("x", 3);
+        m.objective(Sense::Minimize, Expr::product(7.0, &[Lit::Is(x, 0)]));
+        let s = m.compile().unwrap().solve_best_of(32);
+        // Minimising a cost of 7 for x = 0: the optimum takes any other value and pays 0.
+        assert_eq!(s.objective, Some(0.0), "{:?}", s.values);
+
+        // Both senses at once composes fine as arithmetic and has NO single direction to report.
+        // Reporting whichever call came last would be a number with a sign nobody chose.
+        let mut mixed = Model::new();
+        let a = mixed.categorical("a", 2);
+        let b = mixed.categorical("b", 2);
+        mixed.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
+        mixed.objective(Sense::Minimize, Expr::product(2.0, &[Lit::Is(b, 1)]));
+        assert_eq!(mixed.compile().unwrap().solve_best_of(16).objective, None);
+
+        // And a model with no objective at all reports none rather than zero, which would read as
+        // "worth nothing" instead of "not asked".
+        let mut none = Model::new();
+        let v = none.categorical("v", 2);
+        none.fix(v, 1);
+        assert_eq!(none.compile().unwrap().solve_best_of(8).objective, None);
+    }
+
+    #[test]
+    fn an_empty_objective_call_does_not_make_the_objective_mixed() {
+        // `objective(Minimize, Expr::zero())` in a loop over an empty list must not turn a
+        // maximisation into a directionless one.
+        let mut m = Model::new();
+        let x = m.categorical("x", 2);
+        m.objective(Sense::Maximize, Expr::product(4.0, &[Lit::Is(x, 1)]));
+        m.objective(Sense::Minimize, Expr::zero());
+        assert_eq!(m.compile().unwrap().solve_best_of(16).objective, Some(4.0));
+    }
+
+    #[test]
+    fn a_variable_that_did_not_decode_means_no_objective_rather_than_a_partial_one() {
+        // Scoring half an answer produces a number that looks like a score and is not one.
+        let mut m = Model::new();
+        let x = m.categorical_as("x", 6, Encoding::Binary);
+        let y = m.categorical("y", 2);
+        m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(y, 1)]));
+        let c = m.compile().unwrap();
+        // A binary slot over 6 values has two codewords that decode to nothing; drive one in.
+        let mut state = vec![-1i8; c.spins()];
+        for s in state.iter_mut().take(c.spins()) {
+            *s = 1;
+        }
+        let sol = c.decode(&state);
+        if !sol.invalid.is_empty() {
+            assert_eq!(sol.objective, None, "an unreadable variable means no score");
+        }
+        let _ = x;
+    }
+
     use super::*;
 
     #[test]
