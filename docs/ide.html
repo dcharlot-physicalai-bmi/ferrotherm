@@ -923,6 +923,29 @@ function bracket() {
     ["forest", W.ft_bound_forest(sim, 40)],
     ["odd cycle", W.ft_bound_odd_cycle(sim, 6)],
   ];
+  // THE TOROIDAL BOUND, when the graph is a torus -- which the 2D lattice preset is, because it
+  // wraps. It is by far the strongest bound available there, and unavailable on anything else.
+  //
+  // The C ABI reports a max-CUT bound and this panel works in ENERGY, so the conversion is written
+  // out rather than guessed at. With max-cut weights w = -J:
+  //     cut(s) = (W - E(s)) / 2   where   W = sum of w = -sum of J
+  // so   E(s) = W - 2*cut(s),  and an upper bound B on the cut gives a LOWER bound W - 2B on the
+  // energy, which is the direction this panel needs. `W` is summed from the model in the editor
+  // rather than asked of the library, because the library has no symbol for it and inventing a
+  // conversion is how a bound ends up in the wrong units.
+  const tor = W.ft_toroidal_bound(sim, 1.0);
+  if (Number.isFinite(tor) && spec && spec.graph) {
+    let wmax = 0;
+    try {
+      for (const c of explicit(spec.graph).couplings) wmax += -(+c[2]);
+      rows.push([W.ft_toroidal_attained(sim) === 1 ? "torus (attained)" : "torus", wmax - 2 * tor]);
+    } catch (e) {
+      // A model the expander cannot enumerate is not a reason to drop the other bounds -- but it
+      // IS a reason to say so, because a row that silently disappears is indistinguishable from a
+      // graph that is not a torus.
+      rows.push(["torus", null]);
+    }
+  }
   let skipped = false;
   if (n <= SDP_MAX_NODES) {
     const v = W.ft_bound_sdp(sim, 200, BigInt($("seed").value | 0));

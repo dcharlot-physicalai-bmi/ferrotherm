@@ -291,6 +291,36 @@ const run = (body) => page.evaluate((json) => {
   check("and a search that is not a proof does not claim one", !/PROVED/.test(tb.verdict),
         tb.verdict);
 
+  // The 2D lattice preset WRAPS, so it is a torus -- and the toroidal bound is by far the
+  // strongest one available there. Checked on the preset rather than a hand-built graph, because
+  // the row only appears when the page recognises the model as a torus.
+  const torus = await page.evaluate(() => {
+    document.getElementById("preset").value = "lattice";
+    document.getElementById("preset").dispatchEvent(new Event("change"));
+    document.getElementById("certify").click();
+    const trs = [...document.querySelectorAll("#btab tr")];
+    const val = (re) => {
+      const r = trs.find(x => re.test(x.cells[0].textContent));
+      return r ? parseFloat(r.cells[1].textContent) : NaN;
+    };
+    return {
+      rows: trs.map(r => r.cells[0].textContent),
+      best: document.querySelector("#btab tr.best")?.cells[0].textContent ?? null,
+      torVal: val(/torus/),
+      decVal: val(/decoupled/),
+    };
+  });
+  check("the lattice preset is recognised as a torus", torus.rows.some(r => /torus/.test(r)),
+        torus.rows.join(","));
+  // It TIES rather than wins, and that is a fact about the instance: the preset is a FERROMAGNET,
+  // where -sum|J| is not a relaxation at all but the ground energy itself. Asserting that the
+  // toroidal bound is strictly best here would be asserting that the easy case does not occur.
+  check("and it is attained, so it IS the maximum rather than a bound",
+        torus.rows.some(r => /torus \(attained\)/.test(r)), torus.rows.join(","));
+  check("and it ties the cheap bound a ferromagnet makes exact",
+        Math.abs(torus.torVal - torus.decVal) < 1e-9,
+        `torus ${torus.torVal} vs decoupled ${torus.decVal}`);
+
   const bl = await solve("bls");
   check("breakout local search reports its descents", /descents/.test(bl.status),
         bl.status.slice(0, 100));
