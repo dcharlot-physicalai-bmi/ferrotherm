@@ -148,6 +148,7 @@
       <option value="glass">spin glass 24</option>
       <option value="maxcut">max-cut 12</option>
       <option value="solve">a problem, not a graph</option>
+      <option value="hubo">higher-order, no ancillas</option>
       <option value="z1">Z1 grid 24&times;24</option>
     </select>
   </label>
@@ -335,6 +336,19 @@ const PRESETS = {
     ],
     tries: 12
   };
+
+  PRESETS.hubo = {
+    spins: 8,
+    terms: [
+      { vars: [0, 1, 2], weight: 1.0 },
+      { vars: [2, 3, 4], weight: -1.0 },
+      { vars: [4, 5, 6], weight: 1.0 },
+      { vars: [1, 6, 7], weight: -1.0 },
+      { vars: [0, 3, 5, 7], weight: 1.0 },
+      { vars: [1, 4], weight: -0.5 }
+    ],
+    seed: 7
+  };
 })();
 
 // ---- wasm ------------------------------------------------------------------------------------
@@ -417,11 +431,17 @@ function parseSpec(text) {
   if (!v || typeof v !== "object") throw new Error("the model must be a JSON object");
   // Two request shapes, and the operation is decided by which one you wrote: "variables" is a
   // problem for `solve`, "graph" is a set of spins for `sample` and `anneal`.
-  if (!v.graph && !v.variables) {
-    throw new Error('give "graph" for a set of spins to sample, or "variables" for a problem to solve');
+  // THREE request shapes, and the operation is decided by which one you wrote. "graph" is a set
+  // of spins for sample and anneal, "variables" is a problem for solve, and "terms" is a
+  // HIGHER-ORDER model for hubo -- terms of any arity, solved with no ancillas and no penalty.
+  const shapes = ["graph", "variables", "terms"].filter(k => v[k] !== undefined);
+  if (shapes.length === 0) {
+    throw new Error('give "graph" for a set of spins to sample, "variables" for a problem to '
+      + 'solve, or "terms" for a higher-order model to minimise natively');
   }
-  if (v.graph && v.variables) {
-    throw new Error('give "graph" or "variables", not both: they are different operations');
+  if (shapes.length > 1) {
+    throw new Error(`give one of "graph", "variables" or "terms", not ${shapes.length} `
+      + `("${shapes.join('", "')}"): they are different operations`);
   }
   return v;
 }
@@ -580,8 +600,13 @@ function load(name) {
   const p = PRESETS[name];
   $("src").value = JSON.stringify(p, null, 2)
     .replace(/\[\n\s+(-?[\d.]+),\n\s+(-?[\d.]+),\n\s+(-?[\d.]+)\n\s+\]/g, "[$1, $2, $3]");
-  $("beta").value = Math.round(p.beta * 100);
-  $("betaval").textContent = p.beta.toFixed(2);
+  // A problem and a higher-order model have no single beta -- they carry a ladder, or take the
+  // default one -- so the slider is left where it is rather than being set from `undefined`, which
+  // reads back as NaN and blanks the readout.
+  if (Number.isFinite(p.beta)) {
+    $("beta").value = Math.round(p.beta * 100);
+    $("betaval").textContent = p.beta.toFixed(2);
+  }
   $("seed").value = p.seed;
   apply();
 }
@@ -863,6 +888,114 @@ function applySolve() {
   solveExports(r);
 }
 
+/**
+ * Minimise a higher-order model natively, where the lattice view would be.
+ *
+ * The other route to a k-body term is an objective product in a "variables" spec, which lowers it
+ * through the reduction: one ancilla per substituted pair plus a penalty chosen as the sum of every
+ * coefficient's magnitude. That penalty is what costs -- around 1300 against term weights of 1 --
+ * and it makes the landscape rigid rather than merely larger, because any flip that would move the
+ * search must first pay it. Measured, at 1024x the budget, the reduced path does not catch this
+ * one. Hence a third request shape rather than a note telling the reader to write it differently.
+ */
+function applyHubo() {
+  freeSim();
+  lattice = 0;
+
+  // The two-call text protocol, for this handle. `solveProblem` has its own copy closed over the
+  // model handle; this one takes the handle, because a helper that closes over one handle cannot
+  // read another one's error and would silently return the empty string if asked to.
+  const why = (handle) => {
+    const need = W.ft_hubo_error(handle, null, 0);
+    if (!need) return "";
+    const ptr = W.ft_scratch(need);
+    const got = W.ft_hubo_error(handle, ptr, need);
+    return new TextDecoder().decode(new Uint8Array(W.memory.buffer, ptr, got));
+  };
+
+  const n = spec.spins | 0;
+  if (n < 1) throw new Error('"spins" must be at least 1: a model with no variables holds no term');
+  const h = W.ft_hubo_new(n);
+  if (!h) throw new Error("could not allocate a higher-order model");
+
+  try {
+    spec.terms.forEach((term, i) => {
+      const vars = term.vars;
+      if (!Array.isArray(vars) || !vars.length) {
+        throw new Error(`terms[${i}] needs a "vars" array of spin indices`);
+      }
+      W.ft_hubo_vars_clear(h);
+      for (const v of vars) {
+        // The library's refusal names the variable and, for a repeat, how many times it appeared.
+        // Reporting that rather than a sentence written here is the difference between "rejected"
+        // and knowing which index to change.
+        if (!W.ft_hubo_var(h, v | 0)) {
+          throw new Error(`terms[${i}]: ` + why(h));
+        }
+      }
+      if (!W.ft_hubo_add(h, +term.weight)) {
+        throw new Error(`terms[${i}]: ` + why(h));
+      }
+    });
+
+    const t0 = performance.now();
+    const e = W.ft_hubo_anneal(h, +spec.beta_min || 0, +spec.beta_max || 0,
+                               spec.stages | 0, spec.sweeps_per_stage | 0,
+                               BigInt(spec.seed | 0 || 1));
+    const ms = performance.now() - t0;
+    if (Number.isNaN(e)) throw new Error(why(h) || "could not anneal");
+
+    const len = W.ft_hubo_len(h);
+    const ptr = W.ft_hubo_spins(h);
+    const state = Array.from(new Int8Array(mem.buffer, ptr, len));
+    const arity = W.ft_hubo_max_arity(h);
+    const avoided = W.ft_hubo_ancillas_avoided(h);
+
+    let txt = "  energy    = " + e.toFixed(4)
+            + "\n  spins     = " + len
+            + "\n  terms     = " + W.ft_hubo_terms(h)
+            + "\n  max arity = " + arity
+            + "\n  proposals = " + W.ft_hubo_proposals(h)
+            + "\n  accepted  = " + W.ft_hubo_accepted(h)
+            + "\n  ancillas  = 0"
+            + "\n\n  state: [" + state.join(", ") + "]";
+    if (avoided) {
+      txt += "\n\n  A pairwise reduction would have spent AT MOST " + avoided + " ancilla(s)"
+           + "\n  on this model, and this path spent none. At most rather than exactly:"
+           + "\n  the reduction shares one ancilla across every term containing the"
+           + "\n  same pair, so it usually needs fewer than the per-term count.";
+    } else {
+      txt += "\n\n  Nothing here is wider than two, so a reduction would have added"
+           + "\n  nothing either. Write a term over three or more variables to see"
+           + "\n  what the other path would have cost.";
+    }
+
+    cx.fillStyle = "#070d16";
+    cx.fillRect(0, 0, cv.width, cv.height);
+    cx.fillStyle = "#cfe3ff";
+    cx.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace';
+    cx.textBaseline = "top";
+    txt.split("\n").forEach((line, i) => cx.fillText(line, 14, 16 + i * 18));
+
+    $("viewhint").textContent = len + " spins, " + W.ft_hubo_terms(h) + " terms of arity up to "
+      + arity + ", in " + ms.toFixed(0) + " ms";
+    status("minimised natively: no ancillas, and no penalty weight to get right.", "good");
+
+    const compact = JSON.stringify(spec);
+    $("curl").textContent =
+      "curl -s -X POST localhost:8479/v1/hubo \\\n  -d '" + compact + "'";
+    $("mcpcall").textContent =
+      JSON.stringify({ name: "ferrotherm_hubo", arguments: spec }, null, 2);
+    // There is no .ftp: a higher-order model has no pairwise program, which is the point of it.
+    $("ftp").textContent =
+      "no .ftp: the portable program format is pairwise, and this model is not.\n"
+      + "That is what the reduction would have been for, and what it would have cost.";
+    delete $("ftp").dataset.full;
+  } finally {
+    W.ft_hubo_free(h);
+  }
+}
+
 /** The request body and the compiled program, for a problem rather than a graph. */
 function solveExports(r) {
   const compact = JSON.stringify(spec);
@@ -889,6 +1022,7 @@ function apply() {
   try {
     spec = parseSpec($("src").value);
     if (spec.variables) return applySolve();
+    if (spec.terms) return applyHubo();
     const beta = +$("beta").value / 100, seed = +$("seed").value;
     const n = build(spec, beta, seed);
     sweepsDone = 0;

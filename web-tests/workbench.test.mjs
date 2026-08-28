@@ -413,6 +413,70 @@ const run = (body) => page.evaluate((json) => {
   await linked.close();
 }
 
+// --- a higher-order model, solved natively in the browser ------------------------------------------
+//
+// The third request shape. A term over three or more variables in a "variables" spec goes through
+// the reduction -- one ancilla per substituted pair, plus a penalty ~1300 against term weights of
+// 1 that makes the landscape rigid. This path spends none of that, and the assertion below is the
+// one that separates them: the ancilla count the OTHER path would have paid.
+{
+  const run = spec => page.evaluate(s => {
+    document.getElementById("src").value = JSON.stringify(s);
+    document.getElementById("src").dispatchEvent(new Event("change"));
+    return {
+      hint: document.getElementById("viewhint").textContent,
+      status: document.getElementById("status").textContent,
+      curl: document.getElementById("curl").textContent,
+      mcp: document.getElementById("mcpcall").textContent,
+      ftp: document.getElementById("ftp").textContent,
+    };
+  }, spec);
+
+  const parity = await run({ spins: 3, terms: [{ vars: [0, 1, 2], weight: 1.0 }], seed: 7 });
+  check("a three-body model runs in the browser", /3 spins, 1 terms of arity up to 3/.test(parity.hint),
+        parity.hint);
+  check("and says it spent no ancillas", /no ancillas/.test(parity.status), parity.status.slice(0, 70));
+  check("the curl and MCP panes name the right operation",
+        /v1\/hubo/.test(parity.curl) && /ferrotherm_hubo/.test(parity.mcp));
+  // A higher-order model has no pairwise program, and saying so is better than showing an empty
+  // pane that reads as a bug.
+  check("and the .ftp pane explains why there is none", /is pairwise, and this model is not/.test(parity.ftp),
+        parity.ftp.split("\n")[0]);
+
+  // The refusal path, by name: s * s = 1, so a repeat is a different term than the one written.
+  const repeat = await run({ spins: 3, terms: [{ vars: [0, 0, 1], weight: 1.0 }] });
+  check("a repeated variable is refused by name",
+        /already in this term/.test(repeat.status), repeat.status.slice(0, 80));
+
+  const outside = await run({ spins: 3, terms: [{ vars: [0, 9], weight: 1.0 }] });
+  check("and so is one out of range", /no variable 9/.test(outside.status), outside.status.slice(0, 60));
+
+  // Two shapes at once is two operations, not a merge.
+  const both = await page.evaluate(() => {
+    document.getElementById("src").value =
+      JSON.stringify({ graph: { builtin: "lattice2d", l: 4, j: 1 }, terms: [] });
+    document.getElementById("src").dispatchEvent(new Event("change"));
+    return document.getElementById("status").textContent;
+  });
+  check("two request shapes at once is refused", /not 2|different operations/.test(both),
+        both.slice(0, 70));
+
+  const preset = await page.evaluate(() => {
+    const s = document.getElementById("preset");
+    s.value = "hubo";
+    s.dispatchEvent(new Event("change"));
+    return {
+      hint: document.getElementById("viewhint").textContent,
+      beta: document.getElementById("betaval").textContent,
+    };
+  });
+  check("the shipped higher-order preset runs", /8 spins, 6 terms of arity up to 4/.test(preset.hint),
+        preset.hint);
+  // A model with no single beta must not blank the readout by setting the slider from undefined.
+  check("and a spec with no beta leaves the slider readable", /^\d/.test(preset.beta.trim()),
+        JSON.stringify(preset.beta));
+}
+
 check("no page errors", errs.length === 0, errs.join(" | "));
 
 await browser.close();

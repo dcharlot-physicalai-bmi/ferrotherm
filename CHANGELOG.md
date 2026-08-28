@@ -59,6 +59,14 @@ eleventh MCP tool, whose description says outright when to prefer it over a thre
 objective term in `ferrotherm_solve` and what the alternative costs. **Six surfaces**, then: Rust,
 Python, Zig, Julia, HTTP and MCP.
 
+And a seventh, in a browser. The workbench's Model pane took two request shapes -- `graph` for a
+set of spins, `variables` for a problem -- and now takes a third: **`terms`**, a higher-order model
+minimised natively through the wasm, with a shipped preset. It reports the ancillas a reduction
+*would* have spent beside the zero this path spent, which is the comparison in a form a reader can
+run rather than a claim they have to take. There is no `.ftp` pane for it, and the pane says why:
+the portable program format is pairwise and this model is not, which is the whole point of the
+operation. Two shapes at once is refused as two operations rather than merged.
+
 `scripts/check-hubo-answers.sh` is the gate that makes those doors mean the same thing. Its model
 is a **three-body parity term** — the smallest model that cannot be expressed pairwise at all, so a
 surface that quietly routed it through the reduction would still answer −1 and be caught by the
