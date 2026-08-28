@@ -359,6 +359,60 @@ const run = (body) => page.evaluate((json) => {
   check("but the bounds survive, because they are about the graph", after.shown);
 }
 
+// --- a model arriving from the node editor ---------------------------------------------------------
+//
+// "Open in workbench" in graph.html is a link into this page carrying the model in the fragment.
+// Both pages take the same JSON -- the Model pane says so -- so the handoff is a link rather than a
+// translation, and this is the assertion that it stays one.
+{
+  const MODEL = {
+    variables: [{ name: "west", values: 3 }, { name: "middle", values: 3 }, { name: "east", values: 3 }],
+    constraints: [{ type: "all_different", of: [{ var: "west" }, { var: "middle" }, { var: "east" }] }],
+  };
+  const b64 = Buffer.from(JSON.stringify(MODEL)).toString("base64url");
+
+  const linked = await browser.newPage();
+  const linkedErrs = [];
+  linked.on("pageerror", e => linkedErrs.push(e.message));
+  await linked.goto(`${base}/ide.html#model=${b64}`);
+  await linked.waitForFunction(() => document.getElementById("wasminfo").textContent.includes("loaded"));
+
+  const seeded = await linked.evaluate(() => {
+    try { return JSON.parse(document.getElementById("src").value); } catch { return null; }
+  });
+  check("a linked model seeds the workbench, not the default lattice",
+        seeded?.variables?.length === 3 && !seeded.graph,
+        JSON.stringify(seeded?.variables?.map(v => v.name) ?? seeded));
+
+  // A `variables` spec is SOLVED as it is applied -- a problem has no lattice, so the answer is
+  // drawn where the lattice view would be, and #viewhint is the readable trace of that.
+  const hint = await linked.evaluate(() => document.getElementById("viewhint").textContent);
+  check("and the workbench solves it on arrival", /3 variables over \d+ spins/.test(hint),
+        hint.slice(0, 70));
+
+  // A fragment pasted into an already-open workbench: only the hash changes, so the browser does
+  // not reload and the page has to look for itself.
+  const second = Buffer.from(JSON.stringify({
+    variables: [{ name: "solo", values: 4 }, { name: "duo", values: 4 }],
+    constraints: [{ type: "not_equal", a: "solo", b: "duo" }],
+  })).toString("base64url");
+  await linked.evaluate(h => { location.hash = h; }, `#model=${second}`);
+  const swapped = await linked.evaluate(() => JSON.parse(document.getElementById("src").value));
+  check("a link pasted into an open workbench is followed",
+        swapped.variables.length === 2 && swapped.variables[0].name === "solo",
+        JSON.stringify(swapped.variables.map(v => v.name)));
+
+  // A fragment that is not a model must not take the page down with it.
+  await linked.goto(`${base}/ide.html#model=not-base64-at-all!!`);
+  await linked.reload();
+  await linked.waitForFunction(() => document.getElementById("wasminfo").textContent.includes("loaded"));
+  const fell = await linked.evaluate(() => JSON.parse(document.getElementById("src").value));
+  check("a fragment that does not decode falls back to the preset", !!fell.graph,
+        "not an error page");
+  check("and no page error escapes the linked route", linkedErrs.length === 0, linkedErrs.join(" | "));
+  await linked.close();
+}
+
 check("no page errors", errs.length === 0, errs.join(" | "));
 
 await browser.close();

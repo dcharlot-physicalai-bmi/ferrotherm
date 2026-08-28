@@ -56,6 +56,16 @@ Two things it refuses rather than approximates, both by name:
 - a variable **no constraint or objective mentions** is not reachable from Solve, so `toModel` would
   drop it. Caught on the way in rather than lost on the way out.
 
+### The two halves of the toolchain now meet
+
+The workbench's Model pane already said it takes *the same JSON the API and the MCP tools take*, so
+the handoff between the two pages is a link rather than a translation. **Open in workbench** in the
+editor opens `ide.html#model=…` with the model in the fragment; the workbench reads it instead of
+its default lattice, solves it on arrival, and follows a link pasted into an already-open page. A
+fragment that does not decode falls back to the preset on both pages rather than opening on an
+error. The editor is about what the problem *is* and the workbench about what the machine *does*
+with it, and a modeller crossing between them used to retype the model.
+
 ### Two gates, each of which had to fail first
 
 - **`scripts/check-editor-parity.sh`** — every `Constraint` variant is reachable from a node, every

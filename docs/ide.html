@@ -359,11 +359,54 @@ async function boot() {
     W = r.instance.exports;
     mem = W.memory;
     $("wasminfo").textContent = "ferrotherm.wasm loaded";
-    load("lattice");
+    // A model in the fragment wins over the default preset: someone came here from the node editor
+    // or from a link an agent handed them to see THAT model, and showing them a 2D lattice instead
+    // would be answering a question nobody asked. A fragment that does not decode says so and falls
+    // back, rather than opening on an error.
+    const linked = modelFromHash();
+    if (linked) {
+      $("src").value = JSON.stringify(linked, null, 2);
+      apply();
+      status("from the link. This is the same JSON the API and the MCP tools take.", "");
+    } else {
+      load("lattice");
+    }
   } catch (err) {
     status("could not load the sampler: " + err + "\nServe this page over http rather than opening the file directly.", "bad");
   }
 }
+
+// ---- a model in a link ---------------------------------------------------------------------------
+//
+// The node editor's "Open in workbench" arrives here. The two pages take the SAME JSON -- the pane
+// above says so -- so the handoff is a link rather than a translation, and a modeller crossing from
+// what the problem IS to what the machine DOES with it no longer retypes it.
+//
+// base64url of UTF-8, matching graph.html. The model rides in the FRAGMENT, which browsers do not
+// send to a server, so opening somebody's problem does not put it in a log.
+function decodeModel(frag) {
+  const pad = frag.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(pad + "=".repeat((4 - (pad.length % 4)) % 4));
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0))));
+}
+
+/** The model this page was opened with, or null. Never throws: a bad link is not a crash. */
+function modelFromHash() {
+  const h = location.hash;
+  if (!h.startsWith("#model=")) return null;
+  try { return decodeModel(h.slice(7)); } catch { return null; }
+}
+
+// Pasting a link into an already-open workbench changes only the fragment, and a browser does not
+// reload for that -- so without this the link silently did nothing, which reads as a broken link
+// rather than as a page that never looked.
+window.addEventListener("hashchange", () => {
+  const m = modelFromHash();
+  if (!m) return;
+  $("src").value = JSON.stringify(m, null, 2);
+  apply();
+  status("from the link.", "");
+});
 
 // ---- model construction ----------------------------------------------------------------------
 

@@ -104,6 +104,7 @@
   <button id="tomodel" title="The model as the HTTP and MCP APIs take it">Copy model</button>
   <button id="frommodel" title="Lay out a model an agent wrote">Paste model</button>
   <button id="link" title="A link that opens this model in this editor">Copy link</button>
+  <button id="bench" title="The same model, in the sampler workbench">Open in workbench</button>
   <button id="undo" title="Ctrl+Z">Undo</button>
   <button id="redo" title="Ctrl+Shift+Z">Redo</button>
   <button id="fit">Fit</button>
@@ -1306,6 +1307,15 @@ $("link").onclick = async () => {
       + (u.length > 2000 ? "\n\nThis one is long enough that some clients will cut it; send the "
                          + "model JSON instead if it does not survive the trip." : "");
   } catch (err) { $("out").textContent = "could not copy: " + (err.message || err); }
+};
+// The workbench takes the SAME JSON -- its Model pane says so -- so the handoff is a link rather
+// than a translation. This is where the two halves of the toolchain meet: the editor is about what
+// the problem IS, the workbench about what the machine DOES with it, and until now a modeller had
+// to retype the model to cross between them.
+$("bench").onclick = () => {
+  const u = location.origin + location.pathname.replace(/graph\.html$/, "ide.html")
+          + "#model=" + encodeModel(toModel());
+  window.open(u, "_blank", "noopener");
 };
 $("frommodel").onclick = async () => {
   try {
