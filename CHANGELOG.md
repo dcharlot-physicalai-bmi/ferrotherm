@@ -44,6 +44,46 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The parity gate was checking 118 of 130 symbols and reporting perfect parity
+
+`check-parity.sh` discovers exported symbols by grepping `src/ffi.rs` for `pub extern "C" fn`.
+Twelve of them are not written that way: `cert_field!` and `model_cert_field!` each expand to a
+`#[no_mangle] pub extern "C" fn $name`, so the exported name is a macro argument and the literal
+text never appears. **Those twelve — every certificate accessor: effective beta and its interval,
+integrated autocorrelation time, ESS, TV from the exact distribution, the sampling noise floor —
+were checked against no binding at all**, while the gate said every symbol reached every surface.
+
+Teaching it to see them turned up the same blind spot on the other side. Python declares those
+accessors as `{n: _sig("ft_cert_" + n, ...) for n in ("beta_eff", "tau", ...)}`, so the string
+`ft_cert_beta_eff` never appears there either, and the newly-visible symbols came back as twelve
+false failures. A gate that can cry wolf is one people re-run instead of believing — which this
+script had already learned once, from a raced `grep -q`. It now matches a name the binding
+**builds** as well as one it writes, and says how many of each in its summary line.
+
+The gate had no `--selftest`. It has one: strip one literal binding and one constructed one from a
+copy of the tree and demand a failure. A checker whose coverage silently shrinks reads exactly like
+a codebase with no gaps.
+
+Fixed while in there, all verified against the code before changing anything:
+
+- **`ft_model_close` refused kind 5 in its own error message.** All-different has been implemented
+  since 0.30.0 and neither the doc comment nor the "unknown counting kind" text mentioned it, so the
+  ABI told callers the constraint it implements does not exist. The node editor shipped on kind 5
+  this same release.
+- **`ft_energy` and `ft_magnetization` answered 0.0 on a null handle**, against the NaN convention
+  every later section of the file follows. Zero is a legal energy and zero is the ordinary
+  magnetisation of an unmagnetised model, so a caller could not tell a null handle from an answer.
+- **`ft_free`'s exemption reason described a different function** — "frees a string this library
+  allocated", which is `ft_model_error`'s two-call text protocol. The verdict was right and the
+  reason was about something else, which is precisely the failure a table of written-down reasons
+  exists to prevent.
+- **An apostrophe in that table broke the script.** It was read with `EXEMPT=$(cat <<'TABLE' ...)`,
+  and inside a command substitution bash 3.2 tracks single quotes even through a quoted heredoc, so
+  an odd number of apostrophes anywhere in the table swallowed the rest of the file and died on a
+  `case` fifty lines below. Reasons are prose and prose has apostrophes: the construct was wrong,
+  not the writing. Both exemption tables are now read with `read` from a heredoc that is not inside
+  `$( )`.
+
 ### `Hubo::ancillas_avoided` was overstating, and its doc claimed something false
 
 It returns `Σ (k−2)` over the terms and its doc said "ancillas a pairwise reduction of this model

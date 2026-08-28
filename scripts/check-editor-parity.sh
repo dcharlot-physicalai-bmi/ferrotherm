@@ -44,10 +44,21 @@ fi
 EDITOR="${EDITOR:-docs/graph.html}"
 
 # what|why it is not in the editor
-EXEMPT=$(cat <<'TABLE'
+# HOW THIS TABLE IS READ, and the trap in the way it used to be.
+#
+# It was `EXEMPT=$(cat <<'TABLE' ... TABLE)`. Inside a command substitution bash 3.2 tracks single
+# quotes even through a QUOTED heredoc, so an odd number of APOSTROPHES anywhere in the table --
+# "ft_model_error's protocol", "a caller's own memory" -- silently swallows the rest of the file and
+# the script dies with a syntax error pointing at a `case` fifty lines below, which is nowhere near
+# the cause. Reasons are prose and prose has apostrophes; the construct was wrong, not the writing.
+#
+# Reading it with `read` from a heredoc that is NOT inside $( ) has no such rule. Verified: with the
+# old construct "a's b" fails and "a's b's" parses, which is a parity bug nobody should have to know.
+EXEMPT=""
+while IFS= read -r __line; do EXEMPT="$EXEMPT$__line
+"; done <<'TABLE'
 Encoding::Binary|The compiler refuses a binary-encoded variable in any constraint or objective: a binary indicator is a product of every bit, so its degree grows with the domain. A binary variable in the editor could be declared and never used, so the picker would be offering a guaranteed refusal rather than a capability.
 TABLE
-)
 exempt_why() { printf '%s\n' "$EXEMPT" | awk -F'|' -v k="$1" '$1 == k { print $2 }'; }
 
 # Constraint variant : the node type that states it. The editor names things in its own vocabulary,

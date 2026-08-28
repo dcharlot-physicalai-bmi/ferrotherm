@@ -32,7 +32,10 @@ jobs:
       - name: One version across every package
         run: scripts/check-versions.sh
       - name: Every C ABI symbol reaches every binding, or the gap is written down
-        run: scripts/check-parity.sh
+        # --selftest first. This gate discovered symbols by grepping for `pub extern "C" fn`, which
+        # cannot see the twelve certificate accessors a macro generates -- so twelve exports were
+        # never checked against any binding while it reported perfect parity.
+        run: scripts/check-parity.sh --selftest && scripts/check-parity.sh
       # The node editor is a surface like any other, and check-parity.sh does not look at it. That
       # gap was real: the model layer had nine constraints and the editor offered six, for as long
       # as nobody compared the lists. --selftest first, because this gate is a pile of greps over a

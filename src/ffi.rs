@@ -11,7 +11,7 @@
 //!
 //! # Why `not_unsafe_ptr_arg_deref` is allowed here, and what was checked before allowing it
 //!
-//! Clippy's `not_unsafe_ptr_arg_deref` is deny-by-default, and these 93 `extern "C"` entry points
+//! Clippy's `not_unsafe_ptr_arg_deref` is deny-by-default, and these `extern "C"` entry points
 //! all trip it. That mattered far more than the lint itself: `cargo clippy --workspace
 //! --all-targets` **aborted on this file with exit 101**, so `ferrotherm-gpu`, `-meter`, `-cloud`,
 //! `-serve`, `-silicon` and all 21 examples were never linted at all. Suppressing a lint to make a
@@ -200,15 +200,22 @@ pub extern "C" fn ft_spins(sim: *const Sim) -> *const i8 {
 /// Mean magnetization of the current state.
 #[no_mangle]
 pub extern "C" fn ft_magnetization(sim: *const Sim) -> f64 {
-    unsafe { sim.as_ref() }.map_or(0.0, |s| {
+    // NaN on a null handle, for the reason spelled out on [`ft_energy`]: zero magnetisation is the
+    // ordinary state of any unmagnetised model, so 0.0 cannot mean "there is no handle".
+    unsafe { sim.as_ref() }.map_or(f64::NAN, |s| {
         s.sampler_state.iter().map(|&v| v as i64).sum::<i64>() as f64 / s.graph.n as f64
     })
 }
 
-/// Energy of the current state.
+/// Energy of the current state, or NaN if the handle is null.
+///
+/// NaN rather than 0.0, which is what this returned until it was noticed: zero is a legal energy —
+/// it is the energy of any state of an empty model, and of a balanced one — so a caller could not
+/// tell a null handle from an answer. Every later section of this file already answered NaN for a
+/// real-valued result on a refusal; this one and [`ft_magnetization`] were the two that did not.
 #[no_mangle]
 pub extern "C" fn ft_energy(sim: *const Sim) -> f64 {
-    unsafe { sim.as_ref() }.map_or(0.0, |s| s.graph.energy(&s.sampler_state))
+    unsafe { sim.as_ref() }.map_or(f64::NAN, |s| s.graph.energy(&s.sampler_state))
 }
 
 /// Joules this simulation WOULD have cost on a Z1-class device (vendor SPICE prices, pre-silicon).
@@ -1627,9 +1634,14 @@ pub extern "C" fn ft_model_lits(m: *const ModelHandle) -> u32 {
 
 /// Close the pending list as a counting constraint. See [`ft_model_cardinality`] for the meanings.
 ///
-/// `kind` is 0 for exactly, 1 for at-most, 2 for at-least, 3 for exactly-one, 4 for at-most-one.
-/// The last two ignore `k`. Clears the pending list whether it succeeds or not, so a refused
-/// constraint cannot silently join the next one.
+/// `kind` is 0 for exactly, 1 for at-most, 2 for at-least, 3 for exactly-one, 4 for at-most-one,
+/// 5 for all-different. The last three ignore `k`; 5 reads the VARIABLES out of the pending
+/// literals and ignores their values, so `ft_model_var` is the natural way to build its list.
+/// Clears the pending list whether it succeeds or not, so a refused constraint cannot silently join
+/// the next one.
+///
+/// Kind 5 shipped without appearing in this comment or in the refusal below, so the ABI's own
+/// error message told callers that the constraint it implements does not exist.
 #[no_mangle]
 pub extern "C" fn ft_model_close(m: *mut ModelHandle, kind: u32, k: u32) -> u32 {
     close_counting(m, kind, k, None)
@@ -1686,7 +1698,7 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
         other => {
             h.last_error = format!(
                 "unknown counting kind {other}; 0 exactly, 1 at-most, 2 at-least, \
-                 3 exactly-one, 4 at-most-one"
+                 3 exactly-one, 4 at-most-one, 5 all-different"
             );
             return 0;
         }

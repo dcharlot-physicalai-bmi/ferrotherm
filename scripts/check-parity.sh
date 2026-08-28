@@ -22,11 +22,58 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
+# --selftest runs this gate against a DAMAGED tree -- one binding stripped of one symbol -- and
+# demands a failure.
+#
+# It exists because this gate was quietly under-covering. It discovered symbols by grepping for
+# `pub extern "C" fn`, which cannot see the twelve certificate accessors that `cert_field!` and
+# `model_cert_field!` GENERATE, so twelve exports were never checked against any binding and the
+# gate stayed green the whole time. That is the failure mode a self-test catches and a passing run
+# does not: a checker whose coverage silently shrinks reads exactly like a codebase with no gaps.
+if [[ "${1:-}" == "--selftest" ]]; then
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  mkdir -p "$tmp/python/ferrotherm" "$tmp/src" "$tmp/include" "$tmp/zig" "$tmp/julia/Ferrotherm/src"
+  cp src/ffi.rs "$tmp/src/"
+  cp include/ferrotherm.h "$tmp/include/"
+  cp zig/ferrotherm.zig "$tmp/zig/"
+  cp julia/Ferrotherm/src/Ferrotherm.jl "$tmp/julia/Ferrotherm/src/"
+  # Take out one ordinary binding, and one that is only reachable through a BUILT name -- both, so a
+  # regression in either the literal path or the constructed-name path is caught.
+  sed -e 's/_sig("ft_model_not_equal"/_sig("ft_REMOVED_not_equal"/' \
+      -e 's/"beta_eff", //' \
+      python/ferrotherm/__init__.py > "$tmp/python/ferrotherm/__init__.py"
+  if diff -q python/ferrotherm/__init__.py "$tmp/python/ferrotherm/__init__.py" >/dev/null; then
+    echo "SELFTEST FAILED: the damage did not apply -- the binding no longer looks the way this expects"
+    exit 1
+  fi
+  if ( cd "$tmp" && cp "$here/scripts/check-parity.sh" . 2>/dev/null; \
+       mkdir -p scripts && cp "$here/scripts/check-parity.sh" scripts/; \
+       bash scripts/check-parity.sh ) >/dev/null 2>&1; then
+    echo "SELFTEST FAILED: the gate passed a binding with two symbols removed"
+    exit 1
+  fi
+  echo "selftest ok: removing a literal binding and a constructed one both make the gate fail"
+  exit 0
+fi
+
 # symbol|surfaces it is exempt from|why
 #
 # Surfaces: header python zig julia. Use "all" for a symbol no binding should wrap.
-EXEMPT=$(cat <<'TABLE'
-ft_free|all|Frees a string this library allocated. Every binding copies into its own memory before returning, so a caller never holds one of these; exposing it would be handing out a way to double-free.
+# HOW THIS TABLE IS READ, and the trap in the way it used to be.
+#
+# It was `EXEMPT=$(cat <<'TABLE' ... TABLE)`. Inside a command substitution bash 3.2 tracks single
+# quotes even through a QUOTED heredoc, so an odd number of APOSTROPHES anywhere in the table --
+# "ft_model_error's protocol", "a caller's own memory" -- silently swallows the rest of the file and
+# the script dies with a syntax error pointing at a `case` fifty lines below, which is nowhere near
+# the cause. Reasons are prose and prose has apostrophes; the construct was wrong, not the writing.
+#
+# Reading it with `read` from a heredoc that is NOT inside $( ) has no such rule. Verified: with the
+# old construct "a's b" fails and "a's b's" parses, which is a parity bug nobody should have to know.
+EXEMPT=""
+while IFS= read -r __line; do EXEMPT="$EXEMPT$__line
+"; done <<'TABLE'
+ft_free|all|Frees a simulation handle this library allocated (a *mut Sim), NOT a string. Every binding owns its handle through its own type and frees it in a destructor, so a caller never calls this directly; exposing it would be handing out a way to double-free. This line used to say "frees a string this library allocated", which describes ft_model_error's two-call text protocol and not this function -- the verdict was right and the reason was about a different function, which is the failure mode a table of written-down reasons is supposed to prevent.
 ft_scratch|header python zig julia|A wasm-only bump allocator for passing strings into the module. Native callers pass their own pointers, so there is nothing for it to do off the web.
 ft_model_cardinality|zig julia|A fixed-arity form taking up to four variables positionally, for the node graph: a browser has no allocator to build a variadic call across this boundary. Zig and Julia use ft_model_lit + ft_model_close, which is the same constraint with no arity ceiling.
 ft_model_at_most|zig julia|Same fixed-arity node-graph form as ft_model_cardinality; superseded by ft_model_lit + ft_model_close.
@@ -48,7 +95,6 @@ ft_gpu_class_ptr|python zig julia|Part of the device-buffer view of the graph; s
 ft_gpu_class_len|python zig julia|Part of the device-buffer view of the graph; see ft_gpu_k.
 ft_cert_passed|zig|Zig's Certificate.passed() reads its own findings count, which is the same number by the same rule. Calling across the boundary for a comparison it already holds would let the two answers disagree.
 TABLE
-)
 
 exempt_reason() {  # symbol surface -> reason on stdout, empty if not exempt
   while IFS='|' read -r sym surfaces why; do
@@ -58,10 +104,24 @@ exempt_reason() {  # symbol surface -> reason on stdout, empty if not exempt
 }
 
 # Every exported symbol, from the one place that defines them.
+#
+# TWO sources, because there are two ways this file exports a symbol. Most are written out as
+# `pub extern "C" fn ft_...`. Twelve are GENERATED: `cert_field!` and `model_cert_field!` each
+# expand to a `#[no_mangle] pub extern "C" fn $name`, so the exported name is the macro's first
+# argument and the literal text this gate greps for never appears. Those twelve were invisible to
+# their own parity gate -- a coverage hole in the checker rather than in the thing checked, which is
+# the harder kind to notice, because the gate stays green while it happens.
+#
+# Assigned to a variable first rather than piped through a process substitution: bash 3.2 cannot
+# parse a `{ ...; }` group containing comments inside `<(...)` and fails with "bad substitution".
+SYM_LITERAL=$(grep -oE 'pub extern "C" fn (ft_[a-z0-9_]+)' src/ffi.rs | awk '{print $NF}')
+SYM_MACRO=$(grep -oE '^[a-z_]*cert_field!\(ft_[a-z0-9_]+' src/ffi.rs | sed 's/.*(//')
+ALL_SYMBOLS=$(printf '%s\n%s\n' "$SYM_LITERAL" "$SYM_MACRO" | grep -v '^$' | sort -u)
+
 symbols=()
 while IFS= read -r s; do
   [[ -n "$s" ]] && symbols+=("$s")
-done < <(grep -oE 'pub extern "C" fn (ft_[a-z0-9_]+)' src/ffi.rs | awk '{print $NF}' | sort -u)
+done <<< "$ALL_SYMBOLS"
 
 if [[ ${#symbols[@]} -lt 50 ]]; then
   # A floor, not a formality: if the grep above stops matching -- a rustfmt change, an attribute
@@ -97,6 +157,38 @@ pattern_for() {
   esac
 }
 
+# A SECOND pattern, for a name the binding BUILDS rather than writes.
+#
+# Python declares the certificate accessors as `{n: _sig("ft_cert_" + n, ...) for n in ("beta_eff",
+# "tau", ...)}`, so the string `ft_cert_beta_eff` never appears in the file and the pattern above
+# cannot find it. Those twelve bindings are real and `check-answers.sh` exercises them.
+#
+# This is the SAME blind spot, on the other side, as the one that hid twelve exports from symbol
+# discovery: a checker that greps for literal text cannot see a name that is assembled. Finding it
+# on the Rust side and not looking for it on the binding side would have turned a fixed gate into a
+# gate that reports twelve false failures -- and a gate that can cry wolf is one people re-run
+# instead of believing, which this script already learned once from a raced `grep -q`.
+#
+# The rule: a symbol counts as bound if some PREFIX of it is passed to _sig with a `+`, and the
+# remaining SUFFIX appears as a quoted word in the same file. Narrow enough that it cannot match by
+# accident, general enough that it does not name any particular accessor.
+built_pattern_for() {
+  case "$1" in
+    python)
+      local sym="$2" i pre suf
+      for (( i=${#sym}; i>3; i-- )); do
+        pre="${sym:0:i}"
+        suf="${sym:i}"
+        [[ -n "$suf" ]] || continue
+        grep -qE "_sig\\(\"$pre\" *\\+" "$3" || continue
+        grep -qE "\"$suf\"" "$3" || continue
+        return 0
+      done
+      return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
 # An exemption naming a symbol that does not exist is a lie in the table, and a table of reasons
 # nobody can check is the thing this script replaced. I wrote one on the first pass -- an entry for
 # ft_abi_version, a function that has never existed here.
@@ -119,10 +211,16 @@ done <<< "$EXEMPT"
 
 missing=0
 exempted=0
+built=0
 for sym in "${symbols[@]}"; do
   for surface in "${SURFACES[@]}"; do
     f="$(file_for "$surface")"
     if grep -qE "$(pattern_for "$surface" "$sym")" "$f"; then
+      continue
+    fi
+    # Written literally is the common case; assembled from a prefix is the other one.
+    if built_pattern_for "$surface" "$sym" "$f"; then
+      built=$((built + 1))
       continue
     fi
     why="$(exempt_reason "$sym" "$surface")"
@@ -189,7 +287,8 @@ for c in $(ls -d */ 2>/dev/null | tr -d /); do
 done
 
 echo
-echo "checked ${#symbols[@]} C ABI symbols across ${#SURFACES[@]} surfaces ($exempted documented gaps)"
+echo "checked ${#symbols[@]} C ABI symbols across ${#SURFACES[@]} surfaces \
+($exempted documented gaps, $built reached by a name the binding builds rather than writes)"
 if [[ $stale -gt 0 ]]; then
   echo
   echo "$stale EXEMPT entries name symbols that do not exist. Remove them." >&2
