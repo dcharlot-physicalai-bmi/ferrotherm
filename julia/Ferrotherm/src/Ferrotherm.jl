@@ -63,7 +63,8 @@ export node_updates, joules_z1, onsager, library_path, close!
 export tabu!, tabu_iterations, breakout!, population_anneal!, branch!, bounds, gap
 export BreakoutRun
 export PopulationRun, BranchResult, Bounds, PlanarCut, trustworthy, best, tightest
-export exact_planar!, toroidal_bound!
+export exact_planar!, toroidal_bound!, goemans_williamson!, cluster_anneal!, quantum_anneal!
+export Rounded, ClusterRun
 export ToroidalBound
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
@@ -220,6 +221,11 @@ const BldPtr = Ptr{Cvoid}
 @cfn ft_planar_faces Culonglong SimPtr
 @cfn ft_planar_odd_faces Culonglong SimPtr
 @cfn ft_planar_error Cuint SimPtr Ptr{UInt8} Cuint
+@cfn ft_gw_round Cdouble SimPtr Cuint Culonglong
+@cfn ft_gw_guaranteed Cuint SimPtr
+@cfn ft_icm Cdouble SimPtr Cuint Cuint Cdouble Cdouble
+@cfn ft_icm_moves Culonglong SimPtr
+@cfn ft_sqa Cdouble SimPtr Cuint Cdouble Cdouble Cdouble Cuint
 @cfn ft_bls Cdouble SimPtr Cuint
 @cfn ft_bls_descents Culonglong SimPtr
 @cfn ft_bls_iterations Culonglong SimPtr
@@ -645,6 +651,66 @@ function toroidal_bound!(s::Simulation; scale::Real = 1.0)
     v = ft_toroidal_bound(s.handle, Cdouble(scale))
     isnan(v) && error("not a toroidal grid, or the weights do not scale to integers")
     ToroidalBound(v, ft_toroidal_attained(s.handle) != 0)
+end
+
+"""A state rounded out of the semidefinite relaxation, and whether the guarantee covers it."""
+struct Rounded
+    cut::Float64
+    energy::Float64
+    "False on most instances people care about: the ratio needs non-negative edge weights."
+    guaranteed::Bool
+end
+
+"""A PT+ICM run. `moves` of zero means the replicas never disagreed and the move did nothing."""
+struct ClusterRun
+    energy::Float64
+    moves::Int
+end
+
+"""
+    goemans_williamson!(s; hyperplanes = 64, seed = 1)
+
+Round the semidefinite relaxation to a state — **the only worst-case guarantee in max-cut**.
+
+`bounds` uses the relaxation from the dual side for a bound; this uses it from the primal side for
+a solution. Check `guaranteed`: the 0.87856 ratio is stated for non-negative edge weights, which
+here means non-positive couplings and no fields, and it is false on most real instances.
+"""
+function goemans_williamson!(s::Simulation; hyperplanes::Integer = 64, seed::Integer = 1)
+    _live(s)
+    cut = ft_gw_round(s.handle, Cuint(max(1, hyperplanes)), Culonglong(seed))
+    Rounded(cut, energy(s), ft_gw_guaranteed(s.handle) != 0)
+end
+
+"""
+    cluster_anneal!(s; rungs = 16, rounds = 400, beta_min = 0.1, beta_max = 6.0)
+
+Parallel tempering with **isoenergetic cluster moves** — the baseline the field measures against.
+
+Throws on a graph with fields: the move preserves the pair's energy only at `h = 0`, and accepting
+it anyway would be silently wrong.
+"""
+function cluster_anneal!(s::Simulation; rungs::Integer = 16, rounds::Integer = 400,
+                         beta_min::Real = 0.1, beta_max::Real = 6.0)
+    _live(s)
+    e = ft_icm(s.handle, Cuint(max(2, rungs)), Cuint(max(1, rounds)), Cdouble(beta_min), Cdouble(beta_max))
+    isnan(e) && error("the isoenergetic argument holds only at h = 0; a graph with fields is refused")
+    ClusterRun(e, Int(ft_icm_moves(s.handle)))
+end
+
+"""
+    quantum_anneal!(s; trotter = 4, beta = 10.0, gamma_max = 3.0, gamma_min = 0.05, steps = 200)
+
+Simulated quantum annealing: path-integral Monte Carlo, not a quantum computer. `trotter = 1` drops
+the Trotter coupling and is exactly classical annealing — the honest control.
+"""
+function quantum_anneal!(s::Simulation; trotter::Integer = 4, beta::Real = 10.0,
+                         gamma_max::Real = 3.0, gamma_min::Real = 0.05, steps::Integer = 200)
+    _live(s)
+    e = ft_sqa(s.handle, Cuint(max(1, trotter)), Cdouble(beta), Cdouble(gamma_max),
+               Cdouble(gamma_min), Cuint(max(1, steps)))
+    isnan(e) && error("need beta > 0 and gamma_max >= gamma_min >= 0")
+    e
 end
 
 """A breakout-local-search run, with the evidence that it actually broke out."""

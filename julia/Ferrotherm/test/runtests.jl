@@ -422,4 +422,22 @@ end
     close!(t)
 end
 
+@testset "the closed gaps carry their own caveats" begin
+    # A 6x6 ANTIferromagnet is bipartite and inside the GW hypothesis: 72 cuttable edges.
+    anti = lattice2d(6; J = -1.0, beta = 1.0, seed = 3)
+    r = goemans_williamson!(anti; hyperplanes = 64, seed = 5)
+    @test r.guaranteed
+    @test r.cut == 72.0
+    close!(anti)
+
+    ferro = lattice2d(6; J = 1.0, beta = 1.0, seed = 3)
+    # A ferromagnet is OUTSIDE the hypothesis, and the flag must say so.
+    @test !goemans_williamson!(ferro; hyperplanes = 16, seed = 5).guaranteed
+    c = cluster_anneal!(ferro; rungs = 8, rounds = 200, beta_min = 0.1, beta_max = 4.0)
+    @test isapprox(c.energy, -72.0; atol = 1e-9)
+    @test c.moves > 0
+    @test isapprox(quantum_anneal!(ferro; trotter = 4, steps = 200), -72.0; atol = 1e-9)
+    close!(ferro)
+end
+
 include("readme.jl")

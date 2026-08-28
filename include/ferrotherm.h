@@ -224,6 +224,36 @@ double ft_toroidal_bound(ft_sim *sim, double scale);
    only be larger. */
 uint32_t ft_toroidal_attained(const ft_sim *sim);
 
+/* Goemans-Williamson: round the semidefinite relaxation to a state. THE ONLY WORST-CASE GUARANTEE
+   IN MAX-CUT. ft_bound_sdp uses the relaxation from the dual side for a bound; this uses it from
+   the primal side for a solution. Returns the cut under w = -J and leaves the state on the sim.
+
+   The 0.87856 ratio DOES NOT APPLY IN GENERAL -- it is stated for non-negative edge weights, which
+   here means non-positive couplings and no fields. Ask ft_gw_guaranteed, because a guarantee that
+   is always claimed is not a guarantee. */
+double ft_gw_round(ft_sim *sim, uint32_t hyperplanes, uint64_t seed);
+uint32_t ft_gw_guaranteed(const ft_sim *sim);
+
+/* Parallel tempering with ISOENERGETIC CLUSTER MOVES -- the baseline the field measures against.
+   Two ladders of `rungs` replicas; every round a connected component of the disagreement subgraph
+   between the two replicas at each temperature is flipped in BOTH. The move preserves the pair's
+   energy exactly and is therefore always accepted, which is what makes it a cluster algorithm for
+   a spin glass.
+
+   NaN when the graph carries a FIELD: the isoenergetic argument holds only at h = 0, and accepting
+   the move anyway would be silently wrong. */
+double ft_icm(ft_sim *sim, uint32_t rungs, uint32_t rounds, double beta_min, double beta_max);
+
+/* Cluster moves that actually fired in the last ft_icm. A move that never fires is not a move. */
+uint64_t ft_icm_moves(const ft_sim *sim);
+
+/* Simulated quantum annealing: path-integral Monte Carlo on the transverse-field Ising model.
+   `trotter` slices at fixed beta, transverse field annealed from gamma_max to gamma_min over
+   `steps`. ONE SLICE IS CLASSICAL, which is the honest control rather than a degenerate case.
+   gamma_min is clamped away from zero, where the Trotter coupling diverges. */
+double ft_sqa(ft_sim *sim, uint32_t trotter, double beta, double gamma_max, double gamma_min,
+              uint32_t steps);
+
 /* Breakout local search -- the algorithm that holds the max-cut record on most of G-set. Steepest
    descent with an adaptive perturbation between local optima. Returns the best energy found, or NaN
    on NULL. One iteration is one SPIN FLIP, which is what ft_tabu counts too, so passing the same

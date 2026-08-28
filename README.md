@@ -78,7 +78,7 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
-- `cargo test --workspace` — 676 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 699 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -190,6 +190,35 @@ thermodynamic-computing corpus currently leaves empty.
   is flips, not seconds** — a wall-clock comparison needs a quiet machine, and the asymmetry it
   hides is stated in the example: tempering pays `O(degree)` to make a flip where tabu and BLS pay
   `O(n)` to choose one.
+- `cargo test --lib icm:: sqa:: hubo:: sdp::` — **the four gaps the toolchain survey named, closed.**
+  `icm` is parallel tempering with **isoenergetic cluster moves**, the baseline the Ising-machine
+  literature measures against. The move flips a whole connected component of the disagreement
+  between two replicas at once and is *always accepted*, because the pair's energy is preserved
+  exactly: a boundary edge joins a site where the replicas disagree to one where they agree, so its
+  contribution `−J(a_i a_j + b_i b_j)` is zero before and after. That equality is asserted to `1e-9`
+  on every move rather than argued. It holds only at `h = 0`, so a graph with fields is refused with
+  the reason. Measured against the identical ladder with the move switched off, on periodic 2D
+  glasses — and the advantage **grows with size**, which is the literature's actual claim:
+
+  | lattice | spins | ICM wins | loses | mean ΔE |
+  |---|---|---|---|---|
+  | 8×8 | 64 | 0 | 0 | 0.00 |
+  | 16×16 | 256 | 9 | 0 | −1.80 |
+  | 24×24 | 576 | **19** | 0 | **−8.00** |
+
+  At 8×8 both arms tie on all twenty instances — a 64-spin glass is solved by either, so the unit
+  test runs at 16 and `examples/icm_scaling` measures where the separation opens. `sqa` is simulated
+  quantum annealing by Suzuki–Trotter: `M` classical slices coupled at
+  `J⊥ = −(M/2β)·ln tanh(βΓ/M)`, with `Γ` annealed down but **never to zero**, where `J⊥` diverges.
+  One slice drops the coupling and *is* classical annealing — the honest control, compared at
+  matched work rather than matched steps. `sdp::goemans_williamson` rounds the relaxation from the
+  primal side: **the only worst-case guarantee in max-cut**, and `guaranteed` is false on most
+  instances people care about, because 0.87856 needs non-negative edge weights. Checked against
+  proved optima from `branch` on 24 instances where it does apply. `hubo` solves higher-order models
+  **without quadratising**: `ΔE_i = 2·Σ_{T∋i} w_T·Π s_j` costs `O(terms containing i)`, so a `k`-body
+  model is no harder to sample — only harder to put on pairwise hardware, and those are different
+  problems. Verified against exhaustive enumeration over `2¹⁴`, with the ancillas it avoided
+  reported as a number.
 - `cargo test --lib tabu:: bls:: popanneal:: branch::` — **the four solvers a max-cut result is expected
   to be measured against.** `tabu` is the mandatory baseline in the literature, with the incremental
   gain `Δ_i = 2 s_i (h_i + Σ_j J_ij s_j)` updating in `O(degree)` per flip. `bls` is breakout local

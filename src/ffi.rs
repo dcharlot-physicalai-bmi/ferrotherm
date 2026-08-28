@@ -61,6 +61,10 @@ pub struct Sim {
     pc: Option<Result<crate::planarcut::Outcome, String>>,
     /// The last toroidal bound, for [`ft_toroidal_attained`].
     tor: Option<crate::planarcut::SurfaceBound>,
+    /// The last Goemans-Williamson rounding, for [`ft_gw_guaranteed`].
+    gw: Option<crate::sdp::Rounding>,
+    /// The last cluster-move run, for [`ft_icm_moves`].
+    ic: Option<crate::icm::Outcome>,
     /// The last population-annealing outcome, for the `ft_popanneal_*` accessors.
     pa: Option<crate::popanneal::Outcome>,
     /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
@@ -77,7 +81,7 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, pa: None, bb: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None }))
     }
 }
 
@@ -2595,6 +2599,115 @@ pub extern "C" fn ft_toroidal_attained(sim: *const Sim) -> u32 {
     }
 }
 
+/// Goemans–Williamson: round the semidefinite relaxation to a state.
+///
+/// **The only worst-case guarantee in max-cut.** [`ft_bound_sdp`] uses the relaxation from the dual
+/// side to produce a bound; this uses it from the primal side to produce a solution, by cutting the
+/// sphere the relaxation placed the nodes on with a random hyperplane. Returns the cut under
+/// `w = −J`, or NaN on a null handle, and leaves the state on the simulation.
+///
+/// **The 0.87856 ratio does not apply in general** — it is stated for non-negative edge weights,
+/// which here means non-positive couplings and no fields. [`ft_gw_guaranteed`] says which case this
+/// was, because a guarantee that is always claimed is not a guarantee.
+#[no_mangle]
+pub extern "C" fn ft_gw_round(sim: *mut Sim, hyperplanes: u32, seed: u64) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let r = crate::sdp::goemans_williamson(&s.graph, &crate::sdp::Params::default(), seed, hyperplanes.max(1) as usize);
+    if r.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&r.state);
+    }
+    let c = r.cut;
+    s.gw = Some(r);
+    c
+}
+
+/// 1 if the last [`ft_gw_round`] was inside the hypothesis of the 0.87856 guarantee, else 0.
+#[no_mangle]
+pub extern "C" fn ft_gw_guaranteed(sim: *const Sim) -> u32 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.gw.as_ref()) {
+        Some(r) => u32::from(r.guaranteed),
+        None => 0,
+    }
+}
+
+/// Parallel tempering with **isoenergetic cluster moves** — the baseline the field measures against.
+///
+/// Two ladders of `rungs` replicas from `beta_min` to `beta_max`; every round, a connected component
+/// of the disagreement subgraph between the two replicas at each temperature is flipped in both. The
+/// move preserves the pair's energy exactly and is therefore always accepted, which is what makes it
+/// a cluster algorithm for a spin glass.
+///
+/// Returns the best energy found, or NaN when the graph carries a **field** — the isoenergetic
+/// argument holds only at `h = 0`, and accepting the move anyway would be silently wrong.
+#[no_mangle]
+pub extern "C" fn ft_icm(sim: *mut Sim, rungs: u32, rounds: u32, beta_min: f64, beta_max: f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    if !(beta_min > 0.0 && beta_max > beta_min) {
+        return f64::NAN;
+    }
+    let p = crate::icm::Params {
+        betas: crate::tempering::geometric_ladder(beta_min, beta_max, rungs.max(2) as usize),
+        rounds: rounds.max(1) as usize,
+        sweeps_per_round: 1,
+        swap_every: 1,
+        icm_every: 1,
+    };
+    match crate::icm::run_metered(&s.graph, &p, s.seed, Some(&mut s.ledger)) {
+        Ok(o) => {
+            if o.state.len() == s.sampler_state.len() {
+                s.sampler_state.copy_from_slice(&o.state);
+            }
+            let e = o.energy;
+            s.ic = Some(o);
+            e
+        }
+        Err(_) => f64::NAN,
+    }
+}
+
+/// Cluster moves that actually fired in the last [`ft_icm`]. 0 if there was none.
+///
+/// Reported because a move that never fires is not a move: two replicas that agree everywhere have
+/// no disagreement subgraph and nothing to exchange.
+#[no_mangle]
+pub extern "C" fn ft_icm_moves(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.ic.as_ref()).map_or(0, |o| o.icm_moves as u64)
+}
+
+/// Simulated quantum annealing: path-integral Monte Carlo on the transverse-field Ising model.
+///
+/// `trotter` slices at fixed `beta`, with the transverse field annealed from `gamma_max` down to
+/// `gamma_min` over `steps`. **One slice is classical**, which is the honest control rather than a
+/// degenerate case. `gamma_min` must not be zero: `J⊥` diverges there, and it is clamped rather than
+/// divided by. Returns the best classical energy found and leaves that state on the simulation.
+#[no_mangle]
+pub extern "C" fn ft_sqa(
+    sim: *mut Sim,
+    trotter: u32,
+    beta: f64,
+    gamma_max: f64,
+    gamma_min: f64,
+    steps: u32,
+) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    if !(beta > 0.0 && gamma_max > 0.0 && gamma_min >= 0.0 && gamma_max >= gamma_min) {
+        return f64::NAN;
+    }
+    let p = crate::sqa::Params {
+        trotter: trotter.max(1) as usize,
+        beta,
+        gamma_max,
+        gamma_min,
+        steps: steps.max(1) as usize,
+        sweeps_per_step: 1,
+    };
+    let o = crate::sqa::run_metered(&s.graph, &p, s.seed, Some(&mut s.ledger));
+    if o.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&o.state);
+    }
+    o.energy
+}
+
 /// Breakout local search — the algorithm that holds the max-cut record on most of G-set.
 ///
 /// Steepest descent with an adaptive perturbation between local optima; see [`crate::bls`] for what
@@ -2991,6 +3104,43 @@ mod solver_ffi_tests {
         ft_free(planar);
     }
 
+    /// The three algorithms the toolchain survey named as missing, crossing the boundary.
+    #[test]
+    fn the_closed_gaps_reach_this_boundary_and_report_their_own_caveats() {
+        // A 6x6 ANTIferromagnet: non-positive couplings, so the GW guarantee applies.
+        let anti = ft_ising2d_new(6, -1.0, 1.0, 3);
+        let cut = ft_gw_round(anti, 64, 5);
+        assert!(cut.is_finite());
+        assert_eq!(ft_gw_guaranteed(anti), 1, "an antiferromagnet is inside the hypothesis");
+        // Bipartite: every one of the 72 edges can be cut, and GW should find it.
+        assert_eq!(cut, 72.0);
+        assert_eq!(ft_energy(anti), -72.0, "the state left behind is the one that cut them");
+        ft_free(anti);
+
+        // A ferromagnet is OUTSIDE the hypothesis, and the flag has to say so.
+        let ferro = ft_ising2d_new(6, 1.0, 1.0, 3);
+        assert!(ft_gw_round(ferro, 16, 5).is_finite());
+        assert_eq!(ft_gw_guaranteed(ferro), 0, "positive couplings are outside the theorem");
+
+        // Cluster moves fire, and simulated quantum annealing finds the ferromagnetic ground state.
+        let e = ft_icm(ferro, 8, 200, 0.1, 4.0);
+        assert!((e + 72.0).abs() < 1e-9, "icm reached {e}");
+        assert!(ft_icm_moves(ferro) > 0, "the cluster move never fired");
+        let q = ft_sqa(ferro, 4, 10.0, 3.0, 0.05, 200);
+        assert!((q + 72.0).abs() < 1e-9, "sqa reached {q}");
+        ft_free(ferro);
+
+        // A field breaks the isoenergetic argument, and ICM must decline rather than accept.
+        let b = ft_builder_new(6);
+        for i in 0..6u32 {
+            ft_builder_couple(b, i, (i + 1) % 6, 1.0);
+        }
+        ft_builder_bias(b, 2, 0.5);
+        let fielded = ft_builder_build(b, 1.0, 1);
+        assert!(ft_icm(fielded, 4, 50, 0.1, 4.0).is_nan(), "a field is not isoenergetic");
+        ft_free(fielded);
+    }
+
     /// A null handle is a caller error, not a crash, and NaN is how this ABI says so.
     #[test]
     fn a_null_handle_returns_rather_than_dereferencing() {
@@ -2999,6 +3149,11 @@ mod solver_ffi_tests {
         assert!(ft_bls(n, 10).is_nan());
         assert!(ft_planar_cut(n, 1.0).is_nan());
         assert!(ft_toroidal_bound(n, 1.0).is_nan());
+        assert!(ft_gw_round(n, 8, 1).is_nan());
+        assert_eq!(ft_gw_guaranteed(n), 0);
+        assert!(ft_icm(n, 8, 10, 0.1, 4.0).is_nan());
+        assert_eq!(ft_icm_moves(n), 0);
+        assert!(ft_sqa(n, 4, 1.0, 3.0, 0.05, 10).is_nan());
         assert_eq!(ft_toroidal_attained(n), 0);
         assert_eq!(ft_planar_faces(n), 0);
         assert_eq!(ft_planar_odd_faces(n), 0);

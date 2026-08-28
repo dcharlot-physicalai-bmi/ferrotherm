@@ -36,6 +36,8 @@ __all__ = [
     "Certificate",
     "PlanarCut",
     "PopulationRun",
+    "Rounded",
+    "ClusterRun",
     "ToroidalBound",
     "Literal",
     "Model",
@@ -58,7 +60,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.29.0"
+__version__ = "0.30.0"
 
 
 # ---- library loading ------------------------------------------------------------------------
@@ -155,6 +157,11 @@ _toroidal_attained = _sig("ft_toroidal_attained", c_uint32, [_p])
 _planar_faces = _sig("ft_planar_faces", c_uint64, [_p])
 _planar_odd_faces = _sig("ft_planar_odd_faces", c_uint64, [_p])
 _planar_error = _sig("ft_planar_error", c_uint32, [_p, ctypes.POINTER(ctypes.c_ubyte), c_uint32])
+_gw_round = _sig("ft_gw_round", c_double, [_p, c_uint32, c_uint64])
+_gw_guaranteed = _sig("ft_gw_guaranteed", c_uint32, [_p])
+_icm = _sig("ft_icm", c_double, [_p, c_uint32, c_uint32, c_double, c_double])
+_icm_moves = _sig("ft_icm_moves", c_uint64, [_p])
+_sqa = _sig("ft_sqa", c_double, [_p, c_uint32, c_double, c_double, c_double, c_uint32])
 _bls = _sig("ft_bls", c_double, [_p, c_uint32])
 _bls_descents = _sig("ft_bls_descents", c_uint64, [_p])
 _bls_iterations = _sig("ft_bls_iterations", c_uint64, [_p])
@@ -325,6 +332,32 @@ class ToroidalBound:
     def __repr__(self) -> str:
         what = "MAXIMUM (attained)" if self.attained else "upper bound"
         return f"<ToroidalBound {self.cut:.6g} — {what}>"
+
+
+class Rounded:
+    """A state rounded out of the semidefinite relaxation, and whether the guarantee covers it."""
+
+    __slots__ = ("cut", "energy", "guaranteed")
+
+    def __init__(self, cut: float, energy: float, guaranteed: bool) -> None:
+        self.cut, self.energy, self.guaranteed = cut, energy, guaranteed
+
+    def __repr__(self) -> str:
+        g = "0.87856 guaranteed" if self.guaranteed else "no ratio (mixed-sign or fielded)"
+        return f"<Rounded cut={self.cut:.6g} energy={self.energy:.6g} — {g}>"
+
+
+class ClusterRun:
+    """A PT+ICM run. ``moves`` is how many cluster moves actually fired — none means the replicas
+    never disagreed, and the move was doing nothing."""
+
+    __slots__ = ("energy", "moves")
+
+    def __init__(self, energy: float, moves: int) -> None:
+        self.energy, self.moves = energy, moves
+
+    def __repr__(self) -> str:
+        return f"<ClusterRun {self.energy:.6g} after {self.moves} cluster moves>"
 
 
 class BreakoutRun:
@@ -752,6 +785,48 @@ is how a dropped GPU dispatch turns into a believable energy.
                 "not a toroidal grid, or the weights do not scale to integers"
             )
         return ToroidalBound(cut=cut, attained=bool(_toroidal_attained(self._h)))
+
+    def goemans_williamson(self, hyperplanes: int = 64, seed: int = 1) -> "Rounded":
+        """Round the semidefinite relaxation to a state — the only guarantee in max-cut.
+
+        :meth:`bounds` uses the relaxation from the dual side to produce a bound; this uses it from
+        the primal side to produce a solution. Check :attr:`Rounded.guaranteed`: the 0.87856 ratio
+        is stated for non-negative edge weights, which here means non-positive couplings and no
+        fields, and it is false on most instances people care about.
+        """
+        self._live()
+        cut = float(_gw_round(self._h, int(hyperplanes), int(seed)))
+        return Rounded(cut=cut, energy=self.energy, guaranteed=bool(_gw_guaranteed(self._h)))
+
+    def cluster_anneal(self, rungs: int = 16, rounds: int = 400,
+                       beta_min: float = 0.1, beta_max: float = 6.0) -> "ClusterRun":
+        """Parallel tempering with isoenergetic cluster moves — the field's baseline.
+
+        Raises :class:`ValueError` on a graph with fields: the move preserves the pair energy only
+        at ``h = 0``, and accepting it anyway would be silently wrong.
+        """
+        self._live()
+        e = float(_icm(self._h, int(rungs), int(rounds), float(beta_min), float(beta_max)))
+        if e != e:
+            raise ValueError(
+                "the isoenergetic argument holds only at h = 0, so a graph with fields is refused; "
+                "use anneal() or tabu(), or check that 0 < beta_min < beta_max"
+            )
+        return ClusterRun(energy=e, moves=int(_icm_moves(self._h)))
+
+    def quantum_anneal(self, trotter: int = 4, beta: float = 10.0, gamma_max: float = 3.0,
+                       gamma_min: float = 0.05, steps: int = 200) -> float:
+        """Simulated quantum annealing: path-integral Monte Carlo, not a quantum computer.
+
+        ``trotter=1`` drops the Trotter coupling and is exactly classical annealing — the honest
+        control to compare against, rather than a degenerate case.
+        """
+        self._live()
+        e = float(_sqa(self._h, int(trotter), float(beta), float(gamma_max), float(gamma_min),
+                       int(steps)))
+        if e != e:
+            raise ValueError("need beta > 0 and gamma_max >= gamma_min >= 0")
+        return e
 
     def breakout(self, iterations: int = 50_000) -> "BreakoutRun":
         """Breakout local search: steepest descent, with an adaptive perturbation between optima.

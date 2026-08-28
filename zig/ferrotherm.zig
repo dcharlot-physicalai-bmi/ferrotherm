@@ -222,6 +222,32 @@ pub const Sim = struct {
         return .{ .cut = v, .attained = c.ft_toroidal_attained(self.h) != 0 };
     }
 
+    /// Goemans-Williamson: round the semidefinite relaxation to a state.
+    ///
+    /// THE ONLY WORST-CASE GUARANTEE IN MAX-CUT -- and `guaranteed` is false on most instances
+    /// people care about, because the 0.87856 ratio is stated for non-negative edge weights.
+    pub fn goemansWilliamson(self: Sim, hyperplanes: u32, seed: u64) Rounded {
+        const cut = c.ft_gw_round(self.h, hyperplanes, seed);
+        return .{ .cut = cut, .energy = self.energy(), .guaranteed = c.ft_gw_guaranteed(self.h) != 0 };
+    }
+
+    /// Parallel tempering with isoenergetic cluster moves -- the baseline the field measures
+    /// against. `error.BadSchedule` on a graph with fields: the move preserves the pair's energy
+    /// only at h = 0, and accepting it anyway would be silently wrong.
+    pub fn clusterAnneal(self: Sim, rungs: u32, rounds: u32, beta_min: f64, beta_max: f64) Error!ClusterRun {
+        const e = c.ft_icm(self.h, rungs, rounds, beta_min, beta_max);
+        if (std.math.isNan(e)) return Error.BadSchedule;
+        return .{ .energy = e, .moves = c.ft_icm_moves(self.h) };
+    }
+
+    /// Simulated quantum annealing. `trotter = 1` drops the Trotter coupling and is exactly
+    /// classical annealing -- the honest control, not a degenerate case.
+    pub fn quantumAnneal(self: Sim, trotter: u32, beta: f64, gamma_max: f64, gamma_min: f64, steps: u32) Error!f64 {
+        const e = c.ft_sqa(self.h, trotter, beta, gamma_max, gamma_min, steps);
+        if (std.math.isNan(e)) return Error.BadSchedule;
+        return e;
+    }
+
     /// Breakout local search -- the algorithm that holds the max-cut record on most of G-set.
     ///
     /// Steepest descent with an adaptive perturbation between local optima. One iteration is one
@@ -301,6 +327,20 @@ pub const ToroidalBound = struct {
     cut: f64,
     /// True when the relaxation's optimum is itself a genuine cut, so the bound IS the maximum.
     attained: bool,
+};
+
+/// A state rounded out of the semidefinite relaxation, and whether the guarantee covers it.
+pub const Rounded = struct {
+    cut: f64,
+    energy: f64,
+    /// False on most instances people care about: the ratio needs non-negative edge weights.
+    guaranteed: bool,
+};
+
+/// A PT+ICM run. `moves` of zero means the replicas never disagreed and the move did nothing.
+pub const ClusterRun = struct {
+    energy: f64,
+    moves: u64,
 };
 
 /// A breakout-local-search run, with the evidence that it actually broke out.
@@ -1624,6 +1664,28 @@ test "branch and bound withholds a proof when the budget runs out" {
     const r = sim.branch(200);
     try std.testing.expect(!r.proved);
     try std.testing.expect(r.nodes <= 201);
+}
+
+test "the three closed gaps, and the caveats they carry" {
+    // A 6x6 ANTIferromagnet: non-positive couplings, so the GW guarantee applies and the graph is
+    // bipartite, so all 72 edges are cuttable.
+    var anti = try Sim.lattice2d(6, -1.0, 1.0, 3);
+    defer anti.deinit();
+    const r = anti.goemansWilliamson(64, 5);
+    try std.testing.expect(r.guaranteed);
+    try std.testing.expectEqual(@as(f64, 72.0), r.cut);
+
+    // A ferromagnet is OUTSIDE the hypothesis and the flag must say so.
+    var ferro = try Sim.lattice2d(6, 1.0, 1.0, 3);
+    defer ferro.deinit();
+    try std.testing.expect(!ferro.goemansWilliamson(16, 5).guaranteed);
+
+    // Cluster moves fire, and quantum annealing finds the ferromagnetic ground state.
+    const cr = try ferro.clusterAnneal(8, 200, 0.1, 4.0);
+    try std.testing.expectApproxEqAbs(@as(f64, -72.0), cr.energy, 1e-9);
+    try std.testing.expect(cr.moves > 0);
+    const q = try ferro.quantumAnneal(4, 10.0, 3.0, 0.05, 200);
+    try std.testing.expectApproxEqAbs(@as(f64, -72.0), q, 1e-9);
 }
 
 test "the toroidal bound bounds, and a search cannot beat it" {

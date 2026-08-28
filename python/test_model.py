@@ -638,3 +638,29 @@ def test_the_toroidal_bound_is_the_other_end_of_the_bracket():
     e = hard.breakout(iterations=100_000).energy
     cut = (-50.0 - e) / 2.0     # W = sum of -J over 50 edges of J = +1
     assert cut <= hb.cut + 1e-9, f"a search reached {cut}, above the bound {hb.cut}"
+
+
+def test_the_closed_gaps_carry_their_own_caveats():
+    """Three algorithms the toolchain survey named as missing, and the caveat each must carry."""
+    # A 6x6 ANTIferromagnet is bipartite and inside the GW hypothesis: 72 cuttable edges.
+    anti = ft.lattice2d(6, j=-1.0, beta=1.0, seed=3)
+    r = anti.goemans_williamson(hyperplanes=64, seed=5)
+    assert r.guaranteed and r.cut == 72.0
+    assert anti.energy == -72.0, "the state left behind is the one that cut them"
+
+    # A ferromagnet is OUTSIDE it. A guarantee that is always claimed is not a guarantee.
+    ferro = ft.lattice2d(6, j=1.0, beta=1.0, seed=3)
+    assert not ferro.goemans_williamson(hyperplanes=16, seed=5).guaranteed
+
+    # Cluster moves fire and find the ground state; quantum annealing does too.
+    c = ferro.cluster_anneal(rungs=8, rounds=200, beta_min=0.1, beta_max=4.0)
+    assert abs(c.energy + 72.0) < 1e-9 and c.moves > 0
+    assert abs(ferro.quantum_anneal(trotter=4, steps=200) + 72.0) < 1e-9
+
+    # A field breaks the isoenergetic argument, and it is refused rather than accepted.
+    m = ft.Model(8)
+    for i in range(8):
+        m.couple(i, (i + 1) % 8, 1.0)
+    m.bias(3, 0.5)
+    with pytest.raises(ValueError, match="h = 0"):
+        m.build(beta=1.0, seed=1).cluster_anneal()

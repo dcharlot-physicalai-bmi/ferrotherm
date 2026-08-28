@@ -637,6 +637,11 @@ pub fn toroidal_bound(req: &Json) -> Result<Json, String> {
     Ok(Json::Obj(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
 }
 
+/// Identity on a state, so every arm of `optimize` returns the same shape.
+fn o_state(s: Vec<i8>) -> Vec<i8> {
+    s
+}
+
 /// Minimise by a named method: tabu search, population annealing, or branch and bound.
 ///
 /// `anneal` runs one chain down a ladder and hands back the best state it saw. These are the three
@@ -712,6 +717,136 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                             ("directed_two", Json::n(pert.directed_two as f64)),
                             ("random", Json::n(pert.random as f64)),
                         ]),
+                    ),
+                ],
+            )
+        }
+        "cluster" => {
+            // Parallel tempering with isoenergetic cluster moves: the baseline the field measures
+            // against. Two ladders, so every temperature has a partner to exchange a cluster with.
+            let rungs = opt_usize(req, "rungs", 16).clamp(2, 512);
+            let rounds = opt_usize(req, "rounds", 400).clamp(1, 1_000_000);
+            let bmin = opt_f64(req, "beta_min", 0.1);
+            let bmax = opt_f64(req, "beta_max", 6.0);
+            if !(bmin > 0.0 && bmax > bmin) {
+                return Err("need 0 < beta_min < beta_max".into());
+            }
+            // Two ladders of `rungs` replicas, each doing `rounds` sweeps.
+            let budget = (g.n as u64)
+                .saturating_mul(rungs as u64)
+                .saturating_mul(rounds as u64)
+                .saturating_mul(2);
+            if budget > MAX_NODE_UPDATES {
+                return Err(format!(
+                    "{budget} node updates requested, over the {MAX_NODE_UPDATES} ceiling"
+                ));
+            }
+            let p = ferrotherm::icm::Params {
+                betas: ferrotherm::tempering::geometric_ladder(bmin, bmax, rungs),
+                rounds,
+                sweeps_per_round: 1,
+                swap_every: 1,
+                icm_every: 1,
+            };
+            let o = ferrotherm::icm::run_metered(&g, &p, seed, Some(&mut led))
+                // A field breaks the isoenergetic argument; the reason is the reply.
+                .map_err(|e| e.to_string())?;
+            (
+                o.state,
+                vec![
+                    ("rungs", Json::n(rungs as f64)),
+                    ("rounds", Json::n(rounds as f64)),
+                    // A move that never fires is not a move: two replicas that agree everywhere
+                    // have no disagreement subgraph and nothing to exchange.
+                    ("cluster_moves", Json::n(o.icm_moves as f64)),
+                    (
+                        "mean_cluster_size",
+                        Json::n(if o.icm_moves == 0 { 0.0 } else { o.icm_spins as f64 / o.icm_moves as f64 }),
+                    ),
+                ],
+            )
+        }
+        "quantum" => {
+            // Path-integral Monte Carlo on the transverse-field Ising model. NOT a quantum
+            // computer: the word describes what is modelled, not what runs.
+            let trotter = opt_usize(req, "trotter", 4).clamp(1, 1024);
+            let beta = opt_f64(req, "beta", 10.0);
+            let gmax = opt_f64(req, "gamma_max", 3.0);
+            let gmin = opt_f64(req, "gamma_min", 0.05);
+            let steps = opt_usize(req, "steps", 200).clamp(1, 1_000_000);
+            if !(beta > 0.0 && gmax >= gmin && gmin >= 0.0) {
+                return Err("need beta > 0 and gamma_max >= gamma_min >= 0".into());
+            }
+            let budget = (g.n as u64)
+                .saturating_mul(trotter as u64)
+                .saturating_mul(steps as u64);
+            if budget > MAX_NODE_UPDATES {
+                return Err(format!(
+                    "{budget} spin proposals requested, over the {MAX_NODE_UPDATES} ceiling"
+                ));
+            }
+            let p = ferrotherm::sqa::Params {
+                trotter,
+                beta,
+                gamma_max: gmax,
+                gamma_min: gmin,
+                steps,
+                sweeps_per_step: 1,
+            };
+            let o = ferrotherm::sqa::run_metered(&g, &p, seed, Some(&mut led));
+            (
+                o.state,
+                vec![
+                    ("trotter", Json::n(trotter as f64)),
+                    ("proposals", Json::n(o.proposals as f64)),
+                    ("accepted", Json::n(o.accepted as f64)),
+                    // The quantity that diverges if gamma_min is set to zero, so a reader can see
+                    // how close the schedule got to the classical limit.
+                    ("max_j_perp", Json::n(o.max_j_perp)),
+                    (
+                        "note",
+                        Json::s(if trotter == 1 {
+                            "one Trotter slice: this is CLASSICAL annealing, the control"
+                        } else {
+                            "path-integral Monte Carlo; a classical state, no quantum claim"
+                        }),
+                    ),
+                ],
+            )
+        }
+        "goemans_williamson" => {
+            // The relaxation from the PRIMAL side. `optimize` returns a state, so this belongs
+            // here rather than beside the bounds.
+            let hyperplanes = opt_usize(req, "hyperplanes", 64).clamp(1, 100_000);
+            const SDP_MAX_NODES: usize = 2_048;
+            if g.n > SDP_MAX_NODES {
+                return Err(format!(
+                    "{} nodes, over the {SDP_MAX_NODES} ceiling: the relaxation is O(n^3) dense",
+                    g.n
+                ));
+            }
+            let r = ferrotherm::sdp::goemans_williamson(
+                &g,
+                &ferrotherm::sdp::Params::default(),
+                seed,
+                hyperplanes,
+            );
+            (
+                o_state(r.state),
+                vec![
+                    ("cut", Json::n(r.cut)),
+                    ("hyperplanes", Json::n(r.hyperplanes as f64)),
+                    // FALSE on most instances people care about. A guarantee field that were
+                    // always true would be a lie in the shape of a guarantee.
+                    ("guaranteed", Json::Bool(r.guaranteed)),
+                    (
+                        "guarantee_note",
+                        Json::s(if r.guaranteed {
+                            "0.87856 of the SDP optimum in expectation: non-negative edge weights"
+                        } else {
+                            "no ratio applies: the 0.87856 bound needs non-negative edge weights, \
+                             which means non-positive couplings and no fields"
+                        }),
                     ),
                 ],
             )
@@ -799,8 +934,8 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
         }
         other => {
             return Err(format!(
-                "unknown method {other:?}; expected \"tabu\", \"breakout\", \"population\" \
-                 or \"branch\""
+                "unknown method {other:?}; expected \"tabu\", \"breakout\", \"cluster\", \
+                 \"quantum\", \"goemans_williamson\", \"population\" or \"branch\""
             ))
         }
     };
@@ -924,7 +1059,7 @@ pub fn capabilities() -> Json {
                 op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
                 op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
                 op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
-                op("optimize", "Minimise by tabu search, breakout local search, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
+                op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
             ]),
         ),
@@ -1643,6 +1778,52 @@ mod tests {
         let err = dispatch("toroidal_bound", &parse(&format!(r#"{{"graph":{open}}}"#)).unwrap())
             .unwrap_err();
         assert!(err.contains("not a toroidal grid"), "{err}");
+    }
+
+    /// The three algorithms the toolchain survey named as missing, over HTTP, each carrying the
+    /// caveat that makes it honest.
+    #[test]
+    fn the_closed_gaps_report_their_own_caveats_over_http() {
+        // A 6x6 ANTIferromagnet is bipartite and inside the GW hypothesis: 72 cuttable edges.
+        let anti = r#"{"builtin":"lattice2d","l":6,"j":-1.0}"#;
+        let r = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{anti},"method":"goemans_williamson","hyperplanes":64}}"#)).unwrap()).unwrap();
+        assert_eq!(r.get("guaranteed").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(r.get("cut").and_then(|v| v.as_f64()), Some(72.0));
+
+        // A ferromagnet is OUTSIDE it, and the reply must say so rather than claim a ratio.
+        let ferro = r#"{"builtin":"lattice2d","l":6,"j":1.0}"#;
+        let f = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{ferro},"method":"goemans_williamson"}}"#)).unwrap()).unwrap();
+        assert_eq!(f.get("guaranteed").and_then(|v| v.as_bool()), Some(false));
+        assert!(f.get("guarantee_note").unwrap().as_str().unwrap().contains("no ratio"));
+
+        // Cluster moves fire and find the ferromagnetic ground state.
+        let c = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{ferro},"method":"cluster","rungs":8,"rounds":200}}"#)).unwrap()).unwrap();
+        assert_eq!(c.get("best_energy").and_then(|v| v.as_f64()), Some(-72.0));
+        assert!(c.get("cluster_moves").unwrap().as_f64().unwrap() > 0.0);
+
+        // Simulated quantum annealing, and the note that says what it is not.
+        let q = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{ferro},"method":"quantum","trotter":4,"steps":200}}"#)).unwrap()).unwrap();
+        assert_eq!(q.get("best_energy").and_then(|v| v.as_f64()), Some(-72.0));
+        assert!(q.get("note").unwrap().as_str().unwrap().contains("no quantum claim"));
+        // One slice is the CONTROL and says so, rather than being a silent degenerate case.
+        let one = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{ferro},"method":"quantum","trotter":1}}"#)).unwrap()).unwrap();
+        assert!(one.get("note").unwrap().as_str().unwrap().contains("CLASSICAL"));
+        assert_eq!(one.get("max_j_perp").and_then(|v| v.as_f64()), Some(0.0));
+
+        // A field breaks the isoenergetic argument, and the reason is the reply.
+        let mut e = Vec::new();
+        for i in 0..8usize {
+            e.push(format!("[{i},{},1]", (i + 1) % 8));
+        }
+        let fielded = format!(r#"{{"n":8,"couplings":[{}],"biases":[[3,0.5]]}}"#, e.join(","));
+        let err = dispatch("optimize", &parse(&format!(
+            r#"{{"graph":{fielded},"method":"cluster"}}"#)).unwrap()).unwrap_err();
+        assert!(err.contains("isoenergetic"), "{err}");
     }
 
     /// Each method reports the thing only it can report, and a bad name is refused rather than

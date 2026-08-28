@@ -317,8 +317,12 @@ fn gershgorin_verified(cost: &Cost) -> Option<(Vec<f64>, f64)> {
     None
 }
 
-/// Mixing-method sweeps, returning the dual read-off `y_a = ⟨v_a, g_a⟩`.
-fn mixing(cost: &Cost, rank: usize, sweeps: usize, seed: u64) -> Vec<f64> {
+/// Mixing-method sweeps, returning the dual read-off `y_a = ⟨v_a, g_a⟩` **and** the rank-`k`
+/// factorisation `V` it came from.
+///
+/// `V` is returned because it is the only thing [`goemans_williamson`] needs and it is expensive to
+/// recompute. The bound path uses `y` alone and ignores it.
+fn mixing(cost: &Cost, rank: usize, sweeps: usize, seed: u64) -> (Vec<f64>, Vec<f64>, usize) {
     let n = cost.n;
     let k = rank.clamp(1, n.max(1));
     let mut rng = Pcg::new(seed, 0x5D_9A);
@@ -356,12 +360,13 @@ fn mixing(cost: &Cost, rank: usize, sweeps: usize, seed: u64) -> Vec<f64> {
         }
     }
     // One final pass so `y` matches the final `V` exactly.
-    (0..n)
+    let y = (0..n)
         .map(|a| {
             cost.gather(a, &v, k, &mut g);
             (0..k).map(|t| v[a * k + t] * g[t]).sum::<f64>()
         })
-        .collect()
+        .collect();
+    (y, v, k)
 }
 
 /// Snap `y + shift` down onto a power-of-two grid.
@@ -454,6 +459,95 @@ fn lanczos_min(cost: &Cost, y: &[f64], steps: usize, seed: u64) -> f64 {
     (0..k).map(|i| t[i * k + i]).fold(f64::INFINITY, f64::min)
 }
 
+/// A state rounded out of the semidefinite relaxation, and whether the guarantee applies to it.
+#[derive(Clone, Debug)]
+pub struct Rounding {
+    /// The state. `±1`, length `g.n`.
+    pub state: Vec<i8>,
+    /// Its cut under the max-cut weights `w = −J`, the convention [`crate::planarcut`] uses.
+    pub cut: f64,
+    /// `E(s)`, recomputed from the state by the graph.
+    pub energy: f64,
+    /// Hyperplanes actually drawn.
+    pub hyperplanes: usize,
+    /// **Whether the 0.878 guarantee applies at all.**
+    ///
+    /// It does not, in general. Goemans–Williamson bounds the expected cut below `0.87856 ×` the
+    /// SDP optimum **for non-negative edge weights**. With a mixed-sign instance — which is every
+    /// G-set spin glass — the analysis does not hold and the rounding is a heuristic like any
+    /// other. A flag that were always true would be a lie in the shape of a guarantee.
+    pub guaranteed: bool,
+}
+
+/// Round the semidefinite relaxation to an actual state: Goemans–Williamson.
+///
+/// **The only worst-case guarantee in max-cut, and the reason to build the SDP machinery at all.**
+/// [`certified`] uses the relaxation from the dual side to produce a bound; this uses it from the
+/// primal side to produce a solution. The mixing method has already placed a unit vector `v_a` on a
+/// sphere for every node; a uniformly random hyperplane through the origin cuts that sphere in two,
+/// and the sides are the partition. The probability that an edge is cut is the angle between its
+/// endpoints over `π`, and the ratio of that to the relaxation's own contribution is never worse
+/// than `0.87856…` — for non-negative weights.
+///
+/// `hyperplanes` draws are taken and the best kept. The guarantee is about the **expectation** of a
+/// single draw, so keeping the best can only help; it does not make the guarantee apply where it
+/// otherwise would not, and [`Rounding::guaranteed`] says which case this was.
+pub fn goemans_williamson(g: &Graph, p: &Params, seed: u64, hyperplanes: usize) -> Rounding {
+    let n = g.n;
+    if n == 0 {
+        return Rounding { state: Vec::new(), cut: 0.0, energy: 0.0, hyperplanes: 0, guaranteed: true };
+    }
+    // The guarantee is stated for non-negative max-cut weights, and this crate's max-cut weight is
+    // `−J`. So it applies exactly when every coupling is non-positive: an antiferromagnet.
+    let guaranteed = g.w.iter().all(|&w| w <= 0.0) && g.h.iter().all(|&h| h == 0.0);
+
+    let cost = Cost::build(g);
+    let rank = p.rank.unwrap_or_else(|| ((2.0 * cost.n as f64).sqrt().ceil() as usize + 1).min(cost.n));
+    let (_y, v, k) = mixing(&cost, rank, p.sweeps, seed);
+
+    let mut rng = Pcg::new(seed, 0x060E_3A15);
+    let draws = hyperplanes.max(1);
+    let mut best: Vec<i8> = vec![1; n];
+    let mut best_e = f64::INFINITY;
+    let mut s = vec![1i8; n];
+    for _ in 0..draws {
+        // A Gaussian hyperplane normal, so the direction is uniform on the sphere. A cube-shaped
+        // draw would bias the partition towards the axes, which is exactly the structure the
+        // relaxation has just spent its sweeps removing.
+        let r: Vec<f64> = (0..k)
+            .map(|_| {
+                let u1 = rng.f64().max(1e-12);
+                let u2 = rng.f64();
+                (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()
+            })
+            .collect();
+        // The homogenising gauge spin, when there is one, sits at index 0 of the cost matrix and
+        // has no node behind it; the states are read from the offset entries.
+        let off = usize::from(cost.homogenised);
+        for i in 0..n {
+            let a = i + off;
+            let dot: f64 = (0..k).map(|t| v[a * k + t] * r[t]).sum();
+            s[i] = if dot >= 0.0 { 1 } else { -1 };
+        }
+        let e = g.energy(&s);
+        if e < best_e {
+            best_e = e;
+            best.copy_from_slice(&s);
+        }
+    }
+    let mut cut = 0.0f64;
+    for u in 0..n {
+        for kk in g.offset[u]..g.offset[u + 1] {
+            let vtx = g.nbr[kk] as usize;
+            if vtx > u && best[u] != best[vtx] {
+                cut -= g.w[kk];
+            }
+        }
+    }
+    let energy = g.energy(&best);
+    Rounding { state: best, cut, energy, hyperplanes: draws, guaranteed }
+}
+
 /// How hard to try.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
@@ -497,7 +591,7 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
     };
     let mut best_val: f64 = best_y.iter().sum();
 
-    let y = mixing(&cost, rank, p.sweeps, seed);
+    let (y, _v, _k) = mixing(&cost, rank, p.sweeps, seed);
     let theta = lanczos_min(&cost, &y, p.lanczos, seed);
 
     // Grow the shift until the Cholesky verifies, then bisect back to recover the overshoot.
@@ -720,6 +814,96 @@ mod tests {
         let (_, c2) = certified(&with_h, &Params { sweeps: 10, rank: Some(4), lanczos: 8 }, 1);
         assert!(!c1.homogenised && c1.y.len() == no_h.n);
         assert!(c2.homogenised && c2.y.len() == with_h.n + 1, "a gauge spin is prepended");
+    }
+
+    /// THE GUARANTEE, CHECKED AGAINST A PROVED OPTIMUM.
+    ///
+    /// 0.87856 is the only worst-case ratio in max-cut, and it is easy to build a rounding that
+    /// merely *looks* like Goemans–Williamson — a sign of a random projection of anything produces
+    /// a partition. What makes it the GW algorithm is that the vectors came from the relaxation.
+    /// So this compares against the true maximum, proved by branch and bound in the spin domain,
+    /// on instances where the guarantee actually applies: non-negative max-cut weights, which in
+    /// this crate's convention means every coupling non-positive.
+    #[test]
+    fn the_guarantee_holds_where_the_guarantee_applies() {
+        let mut worst = f64::INFINITY;
+        for seed in 0..24u64 {
+            let mut rng = Pcg::new(seed, 0x0000_60E3);
+            let n = 14;
+            let mut gb = GraphBuilder::new(n);
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if rng.f64() < 0.4 {
+                        // NON-POSITIVE couplings only: max-cut weights -J are then non-negative,
+                        // which is the hypothesis of the theorem.
+                        gb.couple(i, j, -(rng.f64() + 0.05));
+                    }
+                }
+            }
+            let g = gb.build();
+            let r = goemans_williamson(&g, &Params::default(), seed, 64);
+            assert!(r.guaranteed, "seed {seed}: an antiferromagnet must be inside the hypothesis");
+            assert_eq!(r.state.len(), n);
+            assert!(r.state.iter().all(|&v| v == 1 || v == -1));
+            assert!((r.energy - g.energy(&r.state)).abs() < 1e-9);
+
+            let o = crate::branch::solve(&g, &crate::branch::Params::default());
+            assert!(o.proved_optimal);
+            let w: f64 = (0..n)
+                .flat_map(|u| (g.offset[u]..g.offset[u + 1]).map(move |k| (u, k)))
+                .filter(|&(u, k)| (g.nbr[k] as usize) > u)
+                .map(|(_, k)| -g.w[k])
+                .sum();
+            let max_cut = (w - o.energy) / 2.0;
+            if max_cut > 1e-9 {
+                let ratio = r.cut / max_cut;
+                worst = worst.min(ratio);
+                assert!(
+                    ratio >= 0.87856,
+                    "seed {seed}: rounded {} against a proved maximum of {max_cut} is {ratio:.4}, \
+                     below the Goemans-Williamson ratio",
+                    r.cut
+                );
+            }
+        }
+        // And the bound is not vacuous: if every instance rounded to the exact optimum the test
+        // would pass without ever exercising the ratio.
+        assert!(worst < 1.0 - 1e-12 || worst.is_infinite(), "worst ratio was {worst}");
+    }
+
+    /// The flag must be able to say NO, and must say no on the instances the field actually cares
+    /// about. A guarantee field that is always true is a lie in the shape of a guarantee.
+    #[test]
+    fn the_guarantee_flag_refuses_a_mixed_sign_instance() {
+        let g = random_graph(12, 0.5, 3, false); // couplings of both signs
+        let r = goemans_williamson(&g, &Params::default(), 3, 32);
+        assert!(!r.guaranteed, "a mixed-sign instance is outside the theorem's hypothesis");
+        // It is still a valid state and still an honest cut, just without the ratio.
+        assert!((r.energy - g.energy(&r.state)).abs() < 1e-9);
+        assert!(r.state.iter().all(|&v| v == 1 || v == -1));
+
+        // A field also puts it outside: the relaxation homogenises, and the guarantee is stated
+        // for a graph without one.
+        let fielded = random_graph(10, 0.5, 4, true);
+        assert!(!goemans_williamson(&fielded, &Params::default(), 4, 8).guaranteed);
+    }
+
+    /// More hyperplanes may never make it worse, because the best is kept.
+    #[test]
+    fn more_hyperplanes_never_lose() {
+        for seed in 0..8u64 {
+            let g = random_graph(20, 0.35, seed, false);
+            let few = goemans_williamson(&g, &Params::default(), seed, 1);
+            let many = goemans_williamson(&g, &Params::default(), seed, 128);
+            assert_eq!(few.hyperplanes, 1);
+            assert_eq!(many.hyperplanes, 128);
+            assert!(
+                many.energy <= few.energy + 1e-9,
+                "seed {seed}: 128 draws gave {} against 1 draw's {}",
+                many.energy,
+                few.energy
+            );
+        }
     }
 
     #[test]

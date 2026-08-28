@@ -1,5 +1,86 @@
 # Changelog
 
+## 0.30.0
+
+### The four gaps the toolchain survey named, closed
+
+TR-2026-47 surveyed the software layer of thermodynamic computing across five language ecosystems
+and placed this stack in it, gaps first. Four algorithms were named as missing. All four are here.
+
+**Isoenergetic cluster moves** (`icm`) are the one that mattered most, because parallel tempering
+with them is the baseline the Ising-machine literature measures against — having PT and not the
+cluster moves is having the name of the baseline. The move takes a connected component of the
+disagreement between two replicas and flips it in **both at once**, and it is always accepted
+because the pair's energy is preserved *exactly*: a boundary edge joins a site where the replicas
+disagree to one where they agree, so its contribution `−J(a_i·a_j + b_i·b_j)` is zero on both sides
+of the flip. That is an equality, so it is asserted as one, to `1e-9`, on every move.
+
+Measured against the identical ladder with the move switched off — same seeds, same budget, two
+replica sets either way:
+
+| lattice | spins | ICM wins | loses | ties | mean ΔE |
+|---|---|---|---|---|---|
+| 8×8 | 64 | 0 | 0 | **20** | 0.00 |
+| 12×12 | 144 | 1 | 1 | 18 | 0.00 |
+| 16×16 | 256 | 9 | 0 | 11 | −1.80 |
+| 20×20 | 400 | 15 | 0 | 5 | −4.00 |
+| 24×24 | 576 | **19** | 0 | 1 | **−8.00** |
+
+The advantage grows with size, which is the literature's actual claim rather than "ICM is faster".
+The first version of the unit test for this ran at 8×8 and asserted `wins > losses` over **0 and
+0** — a comparison where both arms tie on every instance is not a weak test, it is a test of
+nothing, and it read as passing. It runs at 16 now, and `examples/icm_scaling` measures the trend.
+
+**Simulated quantum annealing** (`sqa`) is Suzuki–Trotter path-integral Monte Carlo: `M` classical
+slices, each carrying the problem at `J/M`, coupled along the Trotter direction at
+`J⊥ = −(M/2β)·ln tanh(βΓ/M)`. Two things it does not hide. `Γ` is never annealed to zero, because
+`tanh(0) = 0` makes `J⊥` infinite — that is a division, not a strong classical limit. And **one
+Trotter slice is not the classical limit**: with `M = 1` a site's two Trotter neighbours are itself,
+so the term becomes a constant that suppresses every flip equally. `M = 1` therefore drops the term,
+which *is* classical annealing, and is the control the quantum arm is compared against at **matched
+work** — one slice at four sweeps per step against four slices at one.
+
+**Goemans–Williamson rounding** (`sdp::goemans_williamson`) was the cheapest and the most
+embarrassing: all the semidefinite machinery was already here and used only from the dual side, for
+a bound. The primal side is the solution, and it carries the only worst-case guarantee in max-cut.
+Verified against optima *proved* by branch-and-bound on 24 instances where the hypothesis holds.
+`Rounding::guaranteed` is false on most instances anyone cares about — 0.87856 is stated for
+non-negative edge weights, which here means non-positive couplings and no fields — and a guarantee
+field that were always true would be a lie in the shape of a guarantee.
+
+**Higher-order models** (`hubo`) are now solved without quadratising. `ΔE_i = 2·Σ_{T∋i} w_T·Π s_j`
+costs `O(terms containing i)`, the same shape as the pairwise update with degree replaced by
+term-incidence — so a `k`-body model is not harder to *sample*, only harder to put on *pairwise
+hardware*, and the reduction pass conflates those two whenever the hardware is not the constraint.
+`Outcome::ancillas_avoided` reports what the reduction would have cost. Verified against exhaustive
+enumeration over `2¹⁴`.
+
+Five C ABI symbols (`ft_gw_round`, `ft_gw_guaranteed`, `ft_icm`, `ft_icm_moves`, `ft_sqa`) on
+header, Python, Zig and Julia, plus `cluster`, `quantum` and `goemans_williamson` methods on HTTP
+and MCP. **118 C ABI symbols reach every surface.**
+
+### A "formatting-only" lint fix changed two constants
+
+Clippy asked for `unusual_byte_groupings` on seven hex literals and I regrouped all seven. Two of
+them I regrouped **wrong**: `0x4_0B0` is four hex digits and I wrote five, `0x0004_00B0`, turning
+16560 into 262320; the same slip took `0x60E_3` from 24803 to 396848. Both are RNG stream constants,
+so nothing failed to compile and nothing looked different — a sampler simply ran on a different
+stream, and a `hubo` test that had been asserting the exact optimum on all twelve seeds stopped
+finding it on one.
+
+Two things came out of that. The constants are restored and **checked numerically** rather than by
+eye: `int(a) == int(b)` for every pair, which takes a second and is the only way to know a
+regrouping preserved a value. And the test itself was wrong to be that brittle — it asserted a
+stochastic sampler as if it were deterministic, so an unrelated edit anywhere in the RNG could trip
+it. It now asserts **soundness on every seed** (an energy below the exhaustive minimum would mean
+the model and the enumeration disagree about what energy *is*) and **quality as a majority**. Its
+failure message was also describing the opposite failure from the one the assertion catches.
+
+**Still open, and named rather than left invisible:** `hubo` has no C ABI. It needs a
+model-*building* surface rather than a solver call on an existing handle, which is a different shape
+from the other four, and half-doing it is how a capability ends up reachable from one place — the
+exact failure 0.25.0 was about.
+
 ## 0.29.0
 
 ### G11's best-known max-cut has stood for twenty-five years. It is optimal, and this proves it.
