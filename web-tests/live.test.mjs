@@ -36,5 +36,58 @@ const refusal = await p.evaluate(() => {
   return F.run();
 });
 console.log('refusal:', refusal.split('\n')[0].slice(0, 92));
+// The vocabulary this page could not state until it could: one all_different rather than three
+// pairwise inequalities, and a constraint priced as a preference rather than imposed as a rule.
+const said = await p.evaluate(() => {
+  const F = window.ferrotherm;
+  F.clear();
+  const vs = ['west', 'middle', 'east'].map((n, i) =>
+    F.add('categorical', 40, 40 + i * 100, { name: n, values: 3 }));
+  const ad = F.add('alldifferent', 320, 90);
+  vs.forEach(v => F.connect(v, ad));
+  const s = F.add('solve', 620, 90); F.connect(ad, s);
+  F.connect(s, F.add('report', 900, 90), 'result');
+  const txt = F.run();
+  return { got: [...txt.matchAll(/(west|middle|east) = (\d)/g)].map(m => m[2]),
+           feasible: txt.includes('feasible  yes') };
+});
+console.log('all_different ->', JSON.stringify(said.got),
+            new Set(said.got).size === 3 ? '| all distinct' : '| NOT DISTINCT',
+            said.feasible ? '| feasible' : '| INFEASIBLE');
+
+const traded = await p.evaluate(() => {
+  const F = window.ferrotherm;
+  F.clear();
+  const a = F.add('binary', 40, 40, { name: 'a' }), b = F.add('binary', 40, 160, { name: 'b' });
+  const ne = F.add('notequal', 300, 60, { soft: 1 });
+  F.connect(a, ne, 'a'); F.connect(b, ne, 'b');
+  const s = F.add('solve', 620, 60); F.connect(ne, s);
+  for (const v of [a, b]) {
+    const o = F.add('prefer', 320, 300 + v * 60, { value: 1, weight: 20, maximize: 1 });
+    F.connect(v, o, 'var'); F.connect(o, s);
+  }
+  F.connect(s, F.add('report', 900, 60), 'result');
+  const txt = F.run();
+  return { traded: /traded:/.test(txt), broken: /broken:/.test(txt),
+           feasible: txt.includes('feasible  yes') };
+});
+console.log('a priced preference ->', traded.traded ? 'traded' : 'NOT TRADED',
+            traded.broken ? '| reported as BROKEN' : '| not called broken',
+            traded.feasible ? '| still feasible' : '| INFEASIBLE');
+
+// The round trip, on the deployed bytes: the model an agent writes, the picture, and back.
+const trip = await p.evaluate(() => {
+  const F = window.ferrotherm;
+  const m = { variables: [{ name: 'x', values: 3 }, { name: 'y', values: 3 }],
+              constraints: [{ type: 'not_equal', a: 'x', b: 'y', soft: 2 }],
+              objective: { maximize: true, terms: [{ var: 'x', value: 2, weight: 5 }] } };
+  F.fromModel(m);
+  const back = F.toModel();
+  return { link: F.link().length, soft: back.constraints[0]?.soft,
+           weight: back.objective?.terms[0]?.weight };
+});
+console.log('round trip -> soft', trip.soft, '| weight', trip.weight,
+            '| link', trip.link, 'chars');
+
 console.log(errs.length ? 'ERRORS: ' + errs.join(' | ') : 'no page errors');
 await b.close();
