@@ -73,6 +73,8 @@ pub struct Sim {
     beta: f64,
     seed: u64,
     sweeps_done: u64,
+    /// Threads the last `ft_sweep_par` actually used. See [`ft_threads_used`].
+    threads_used: u32,
     ledger: Ledger,
 }
 
@@ -81,7 +83,8 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None }))
+        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None }))
     }
 }
 
@@ -175,6 +178,59 @@ pub extern "C" fn ft_sweep(sim: *mut Sim, n: u32) -> u64 {
     s.sampler_state.copy_from_slice(&smp.s);
     s.sweeps_done += n as u64;
     s.sweeps_done
+}
+
+/// How many threads this machine can actually run at once, or 1 when that cannot be known.
+///
+/// So a caller does not have to guess. An 18-core machine running a sampler on one core is the
+/// commonest way this library is left slow, and the fix is a number the caller has no way to obtain
+/// from the C ABI otherwise. Returns 1 in a browser, which is the truth there.
+#[no_mangle]
+pub extern "C" fn ft_hardware_threads() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        1
+    }
+}
+
+/// Sweep across `threads` OS threads, returning total sweeps done. Same contract as [`ft_sweep`].
+///
+/// Within a colour class no two nodes are adjacent, so the class splits into disjoint chunks and
+/// each thread reads other-colour spins nobody is writing. The result is bit-reproducible for a
+/// fixed `(seed, threads)` -- and a DIFFERENT thread count is a different, equally valid sample
+/// path, so record the thread count next to the seed or the run is not reproducible from what you
+/// wrote down. [`ft_threads_used`] reports what actually ran.
+///
+/// `threads` of 0 means "ask the machine", which is [`ft_hardware_threads`].
+#[no_mangle]
+pub extern "C" fn ft_sweep_par(sim: *mut Sim, n: u32, threads: u32) -> u64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+    let threads = if threads == 0 { ft_hardware_threads() } else { threads }.max(1) as usize;
+    let mut smp = Sampler::new(
+        &s.graph,
+        s.beta,
+        s.seed ^ s.sweeps_done.wrapping_mul(0x9E3779B97F4A7C15),
+    );
+    smp.s.copy_from_slice(&s.sampler_state);
+    smp.sweeps_par(n as usize, threads, Some(&mut s.ledger));
+    s.sampler_state.copy_from_slice(&smp.s);
+    s.threads_used = smp.threads_used() as u32;
+    s.sweeps_done += n as u64;
+    s.sweeps_done
+}
+
+/// How many threads the last [`ft_sweep_par`] actually used, or 0 before one.
+///
+/// Not the number you passed in. A browser has no threads to spread across and answers 1 whatever
+/// was asked, and a colour class with three nodes cannot occupy eight workers. A caller reporting
+/// throughput per thread needs the number that ran, and this is the only place it exists.
+#[no_mangle]
+pub extern "C" fn ft_threads_used(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }.map_or(0, |s| s.threads_used)
 }
 
 /// Set the inverse temperature (annealing from the host side).
@@ -3709,5 +3765,95 @@ mod hubo_ffi_tests {
         assert!(ft_hubo_joules_z1(n).is_nan());
         assert_eq!(ft_hubo_error(n, core::ptr::null_mut(), 0), 0);
         assert!(ft_hubo_new(0).is_null(), "a model with no variables can hold no term");
+    }
+}
+
+#[cfg(test)]
+mod parallel_sweep_tests {
+    use super::*;
+
+    fn lattice(l: u32, beta: f64, seed: u64) -> *mut Sim {
+        let s = ft_ising2d_new(l, 1.0, beta, seed);
+        assert!(!s.is_null());
+        s
+    }
+
+    #[test]
+    fn a_parallel_sweep_reproduces_bit_for_bit_at_a_fixed_thread_count() {
+        // The promise is per (seed, threads), not per seed. Two runs at the same pair must agree;
+        // asserting only the first would pass on a sampler that ignored `threads` entirely.
+        let a = lattice(16, 0.5, 0xABC);
+        let b = lattice(16, 0.5, 0xABC);
+        assert_eq!(ft_sweep_par(a, 40, 4), 40);
+        assert_eq!(ft_sweep_par(b, 40, 4), 40);
+        let (na, nb) = (ft_len(a) as usize, ft_len(b) as usize);
+        let sa = unsafe { core::slice::from_raw_parts(ft_spins(a), na) };
+        let sb = unsafe { core::slice::from_raw_parts(ft_spins(b), nb) };
+        assert_eq!(sa, sb, "same (seed, threads) must reproduce bit-identically");
+        ft_free(a);
+        ft_free(b);
+    }
+
+    #[test]
+    fn the_thread_count_is_part_of_the_run_and_the_abi_says_which_ran() {
+        // A different thread count is a different sample path. If these agreed, `threads` would be
+        // decorative and the reproducibility note on ft_sweep_par would be false.
+        let a = lattice(16, 0.5, 0xABC);
+        let b = lattice(16, 0.5, 0xABC);
+        ft_sweep_par(a, 40, 1);
+        ft_sweep_par(b, 40, 4);
+        let n = ft_len(a) as usize;
+        let sa = unsafe { core::slice::from_raw_parts(ft_spins(a), n) }.to_vec();
+        let sb = unsafe { core::slice::from_raw_parts(ft_spins(b), n) }.to_vec();
+        assert_ne!(sa, sb, "one thread and four are different paths, not the same one");
+
+        assert_eq!(ft_threads_used(a), 1);
+        assert!(ft_threads_used(b) >= 1, "the ABI reports what RAN, not what was asked");
+        ft_free(a);
+        ft_free(b);
+    }
+
+    #[test]
+    fn zero_threads_asks_the_machine_and_the_answer_is_at_least_one() {
+        assert!(ft_hardware_threads() >= 1, "a machine has at least one thread");
+        let s = lattice(12, 0.4, 5);
+        assert_eq!(ft_threads_used(s), 0, "nothing parallel has run yet");
+        ft_sweep_par(s, 10, 0);
+        assert!(ft_threads_used(s) >= 1, "0 means ask the machine, not run on nothing");
+        ft_free(s);
+    }
+
+    #[test]
+    fn the_parallel_path_samples_the_same_physics_as_the_serial_one() {
+        // Not bit-identical -- the RNG streams differ by construction -- but the same DISTRIBUTION.
+        // Onsager is the referee, so a parallel sweep that raced would show up as a wrong
+        // magnetisation rather than as a crash nobody sees.
+        let beta = 0.6;
+        let want = ft_onsager(beta);
+        for threads in [1u32, 4] {
+            let s = lattice(48, beta, 0x9A7);
+            // Start ORDERED, as src/gibbs.rs's own version of this test does. Below the critical
+            // point a random start on 48x48 coarsens into domains and stays there for far longer
+            // than any test will wait: the first draft of this measured |M| = 0.12 against
+            // Onsager's 0.97 and was measuring domain walls, not a broken sampler.
+            let up = vec![1i8; ft_len(s) as usize];
+            assert_eq!(ft_set_spins(s, up.as_ptr(), up.len() as u32), 1);
+            ft_sweep_par(s, 2000, threads);
+            let mut acc = 0.0;
+            for _ in 0..400 {
+                ft_sweep_par(s, 1, threads);
+                acc += ft_magnetization(s).abs();
+            }
+            let m = acc / 400.0;
+            assert!((m - want).abs() < 0.02, "threads={threads}: |M| {m:.4} vs Onsager {want:.4}");
+            ft_free(s);
+        }
+    }
+
+    #[test]
+    fn every_parallel_call_is_inert_on_a_null_handle() {
+        let n: *mut Sim = core::ptr::null_mut();
+        assert_eq!(ft_sweep_par(n, 10, 4), 0);
+        assert_eq!(ft_threads_used(core::ptr::null()), 0);
     }
 }

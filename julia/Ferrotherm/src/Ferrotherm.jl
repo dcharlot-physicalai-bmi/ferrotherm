@@ -57,6 +57,7 @@ export hubo, add!, anneal!, delta, terms, max_arity, ancillas_avoided, proposals
 export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
+export threads_used, hardware_threads
 export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
@@ -180,6 +181,10 @@ const SimPtr = Ptr{Cvoid}
 const BldPtr = Ptr{Cvoid}
 
 const HuboPtr = Ptr{Cvoid}
+
+@cfn ft_sweep_par Culonglong SimPtr Cuint Cuint
+@cfn ft_threads_used Cuint SimPtr
+@cfn ft_hardware_threads Cuint
 
 @cfn ft_hubo_new HuboPtr Cuint
 @cfn ft_hubo_free Cvoid HuboPtr
@@ -459,11 +464,31 @@ function ring(n::Integer; J::Real = 1.0, h::Real = 0.0, beta::Real = 1.0, seed::
 end
 
 """Run `n` chromatic block-Gibbs sweeps. Returns the simulation."""
-function sweep!(s::Simulation, n::Integer = 1)
+function sweep!(s::Simulation, n::Integer = 1; threads::Integer = 1)
     _live(s)
-    ft_sweep(s.handle, Cuint(n))
+    if threads == 1
+        ft_sweep(s.handle, Cuint(n))
+    else
+        ft_sweep_par(s.handle, Cuint(n), Cuint(threads))
+    end
     s
 end
+
+"""
+How many threads the last parallel sweep actually used, or 0 before one.
+
+Not the number you passed in: a browser has no threads to spread across, and a colour class of
+three nodes cannot occupy eight workers.
+"""
+threads_used(s::Simulation) = (_live(s); Int(ft_threads_used(s.handle)))
+
+"""
+How many threads this machine can run at once, or 1 when that cannot be known.
+
+An 18-core machine sampling on one core is the commonest way this library is left slow; `threads = 0`
+on [`sweep!`](@ref) asks for this number rather than making you look it up.
+"""
+hardware_threads() = Int(ft_hardware_threads())
 
 """
     anneal!(s, beta_min, beta_max; stages = 60, per = 40)

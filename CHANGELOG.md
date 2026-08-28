@@ -44,6 +44,33 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### Every binding was sampling on one core of eighteen
+
+`Sampler::sweep_par` has been here for a long time: it splits each colour class across OS threads,
+which is race-free by construction of the colouring, and `src/gibbs.rs` tests it against Onsager and
+for bit-reproducibility at a fixed `(seed, threads)`. It reached **Rust and the HTTP API**. Not the C
+ABI, so not Python, not Zig, not Julia, not the browser. Every one of those callers ran one core, and
+nothing anywhere said so.
+
+Three entry points close it — `ft_sweep_par`, `ft_threads_used`, `ft_hardware_threads` — with
+wrappers in all three bindings. On this machine `hardware_threads()` returns **18** and
+`threads=0` means *ask the machine* rather than making a caller look it up.
+
+Two things it refuses to do quietly:
+
+- **The thread count is part of the run.** A different count is a different, equally valid sample
+  path, so the docs say to record it beside the seed, and a test asserts that one thread and four
+  do NOT agree — without it, `threads` could be decorative and every check would still pass.
+- **`ft_threads_used` reports what RAN, not what was asked.** `wasm32-unknown-unknown` has a std
+  whose `thread::spawn` compiles and then panics at runtime, so `sweep_par` is now cfg'd to run
+  serially in a browser — and to say `1`. Running serially and reporting eight would be the silent
+  downgrade this whole codebase is built to avoid.
+
+The first draft of the physics test measured `|M| = 0.12` against Onsager's `0.97` and looked like a
+race. It was a random start: below the critical point a 48×48 lattice coarsens into domains and sits
+there for longer than any test will wait. `src/gibbs.rs`'s own version starts fully magnetised, and
+so does this one now.
+
 ### `hubo` reaches every surface, and one gate proves they agree
 
 The native higher-order path had reached exactly one surface, Rust. It now has a C ABI --

@@ -31,6 +31,7 @@ from typing import Any, Iterable, Sequence
 __all__ = [
     "Answer",
     "Hubo",
+    "hardware_threads",
     "Bounds",
     "BranchResult",
     "BreakoutRun",
@@ -181,6 +182,9 @@ _free = _sig("ft_free", None, [_p])
 
 # the modelling layer
 _u8p = ctypes.POINTER(ctypes.c_ubyte)
+_sweep_par = _sig("ft_sweep_par", ctypes.c_uint64, [_p, c_uint32, c_uint32])
+_threads_used = _sig("ft_threads_used", c_uint32, [_p])
+_hardware_threads = _sig("ft_hardware_threads", c_uint32, [])
 _hubo_new = _sig("ft_hubo_new", _p, [c_uint32])
 _hubo_free = _sig("ft_hubo_free", None, [_p])
 _hubo_from_sim = _sig("ft_hubo_from_sim", _p, [_p])
@@ -258,6 +262,14 @@ _model_cert_f = {n: _sig("ft_model_cert_" + n, c_double, [_p])
                  for n in ("beta", "ess", "tau", "tv", "floor")}
 _model_error = _sig("ft_model_error", c_uint32, [_p, _u8p, c_uint32])
 _model_ftp = _sig("ft_model_ftp", c_uint32, [_p, _u8p, c_uint32])
+
+
+def hardware_threads() -> int:
+    """How many threads this machine can run at once, or 1 when that cannot be known.
+
+    1 in a browser, which is the truth there rather than a failure to detect.
+    """
+    return int(_hardware_threads())
 
 
 def _read_text_idx(fn: Any, handle: Any, i: int) -> str:
@@ -700,10 +712,34 @@ class Sim:
 
     # -- running --
 
-    def sweep(self, n: int = 1) -> int:
-        """Run `n` chromatic block-Gibbs sweeps. Returns total sweeps so far."""
+    def sweep(self, n: int = 1, threads: int = 1) -> int:
+        """Run `n` chromatic block-Gibbs sweeps. Returns total sweeps so far.
+
+        ``threads`` above 1 spreads each colour class across OS threads -- no two nodes in a class
+        are adjacent, so the split is race-free by construction of the colouring. ``threads=0``
+        means *ask the machine*, which is :func:`hardware_threads`; on an 18-core box that is the
+        difference between one core and eighteen, and one core is the commonest way this library
+        is left slow.
+
+        **The thread count is part of the run.** The result is bit-reproducible for a fixed
+        ``(seed, threads)`` pair, and a different thread count is a different -- equally valid --
+        sample path. Record the thread count beside the seed, or the run is not reproducible from
+        what you wrote down. :attr:`threads_used` reports what actually ran.
+        """
         self._live()
-        return int(_sweep(self._h, int(n)))
+        if threads == 1:
+            return int(_sweep(self._h, int(n)))
+        return int(_sweep_par(self._h, int(n), int(threads)))
+
+    @property
+    def threads_used(self) -> int:
+        """How many threads the last parallel sweep actually used, or 0 before one.
+
+        Not the number you passed in: a browser has no threads to spread across, and a colour class
+        of three nodes cannot occupy eight workers.
+        """
+        self._live()
+        return int(_threads_used(self._h))
 
     def anneal(
         self,

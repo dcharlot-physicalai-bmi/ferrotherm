@@ -92,6 +92,14 @@ pub const Model = struct {
     }
 };
 
+/// How many threads this machine can run at once, or 1 when that cannot be known.
+///
+/// An 18-core machine sampling on one core is the commonest way this library is left slow, and
+/// this is where a caller learns the number instead of guessing it.
+pub fn hardwareThreads() u32 {
+    return c.ft_hardware_threads();
+}
+
 /// A running simulation.
 pub const Sim = struct {
     h: *c.ft_sim,
@@ -109,6 +117,23 @@ pub const Sim = struct {
     /// Run `n` chromatic block-Gibbs sweeps. Returns total sweeps so far.
     pub fn sweep(self: Sim, n: u32) u64 {
         return c.ft_sweep(self.h, n);
+    }
+
+    /// Sweep across `threads` OS threads. Within a colour class no two nodes are adjacent, so the
+    /// split is race-free by construction of the colouring.
+    ///
+    /// THE THREAD COUNT IS PART OF THE RUN. Bit-reproducible for a fixed (seed, threads), and a
+    /// different count is a different, equally valid sample path -- record it beside the seed or
+    /// the run is not reproducible from what you wrote down. `threads = 0` asks the machine, which
+    /// is `hardwareThreads()`. `threadsUsed()` reports what actually ran.
+    pub fn sweepPar(self: Sim, n: u32, threads: u32) u64 {
+        return c.ft_sweep_par(self.h, n, threads);
+    }
+
+    /// How many threads the last `sweepPar` actually used, or 0 before one. Not the number asked
+    /// for: a browser answers 1, and a colour class of three cannot occupy eight workers.
+    pub fn threadsUsed(self: Sim) u32 {
+        return c.ft_threads_used(self.h);
     }
 
     /// Anneal down a geometric ladder, keeping the best state found. Returns its energy.
@@ -400,6 +425,38 @@ pub fn onsager(beta: f64) f64 {
 }
 
 // ---- tests ---------------------------------------------------------------------------------
+
+test "a parallel sweep reproduces itself and reports what ran" {
+    try std.testing.expect(hardwareThreads() >= 1);
+
+    // The promise is per (seed, threads), not per seed.
+    var ma = try Model.init(64);
+    defer ma.deinit();
+    var mb = try Model.init(64);
+    defer mb.deinit();
+    for (0..64) |i| {
+        try ma.couple(@intCast(i), @intCast((i + 1) % 64), 1.0);
+        try mb.couple(@intCast(i), @intCast((i + 1) % 64), 1.0);
+    }
+    var a = try ma.build(0.7, 0x2244);
+    defer a.deinit();
+    var b = try mb.build(0.7, 0x2244);
+    defer b.deinit();
+
+    _ = a.sweepPar(60, 4);
+    _ = b.sweepPar(60, 4);
+    try std.testing.expectApproxEqAbs(a.energy(), b.energy(), 1e-12);
+    try std.testing.expect(a.threadsUsed() >= 1);
+
+    // And 0 means ask the machine rather than run on nothing.
+    var mc = try Model.init(64);
+    defer mc.deinit();
+    for (0..64) |i| try mc.couple(@intCast(i), @intCast((i + 1) % 64), 1.0);
+    var d = try mc.build(0.7, 1);
+    defer d.deinit();
+    _ = d.sweepPar(10, 0);
+    try std.testing.expect(d.threadsUsed() >= 1);
+}
 
 test "a higher-order term is solved without ancillas" {
     // The module doc's own example: a three-body parity term, minimised when the product is +1.

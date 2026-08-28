@@ -757,3 +757,73 @@ def test_a_bad_ladder_is_refused_and_a_nan_is_not_read_as_a_default():
         h.anneal(beta_min=float("nan"), beta_max=8.0)
     # Zeros DO mean "use the default", which is why NaN has to be refused before that test.
     assert h.anneal(seed=1) == -1.0
+
+
+# ---- parallel sweeps -------------------------------------------------------------------------
+#
+# The library has had a threaded chromatic sweep for a long time; it reached Rust and the HTTP API
+# and no binding. On an 18-core machine that is 1/18th of the hardware, silently.
+
+
+def test_a_parallel_sweep_reproduces_itself_at_a_fixed_thread_count():
+    def ring(seed):
+        m = ft.Model(128)
+        for i in range(128):
+            m.couple(i, (i + 1) % 128, 1.0)
+        return m.build(beta=0.7, seed=seed)
+
+    # The promise is per (seed, threads), not per seed. Asserting only the first would pass on a
+    # sampler that ignored `threads` entirely.
+    a, b = ring(0x2244), ring(0x2244)
+    a.sweep(60, threads=4)
+    b.sweep(60, threads=4)
+    assert a.spins == b.spins, "same (seed, threads) must reproduce bit-identically"
+    assert a.threads_used >= 1
+
+
+def test_the_thread_count_is_part_of_the_run():
+    def ring(seed):
+        m = ft.Model(128)
+        for i in range(128):
+            m.couple(i, (i + 1) % 128, 1.0)
+        return m.build(beta=0.7, seed=seed)
+
+    a, b = ring(0x99), ring(0x99)
+    a.sweep(60, threads=1)
+    b.sweep(60, threads=4)
+    assert a.spins != b.spins, "one thread and four are different sample paths, not the same one"
+
+
+def test_zero_threads_asks_the_machine():
+    assert ft.hardware_threads() >= 1
+    m = ft.Model(64)
+    for i in range(64):
+        m.couple(i, (i + 1) % 64, 1.0)
+    sim = m.build(beta=0.5, seed=3)
+    assert sim.threads_used == 0, "nothing parallel has run yet"
+    sim.sweep(20, threads=0)
+    assert sim.threads_used == ft.hardware_threads() or sim.threads_used >= 1
+
+
+def test_a_parallel_sweep_samples_the_same_physics():
+    # Onsager is the referee: a sweep that raced would show up as a wrong magnetisation rather
+    # than as a crash nobody sees. Started ORDERED, because below the critical point a random
+    # start coarsens into domains and stays there far longer than a test will wait.
+    L, beta = 32, 0.6
+    for threads in (1, 4):
+        m = ft.Model(L * L)
+        for y in range(L):
+            for x in range(L):
+                i = y * L + x
+                m.couple(i, y * L + (x + 1) % L, 1.0)
+                m.couple(i, ((y + 1) % L) * L + x, 1.0)
+        sim = m.build(beta=beta, seed=0x9A7)
+        sim.spins = [1] * (L * L)
+        sim.sweep(1500, threads=threads)
+        acc = 0.0
+        for _ in range(300):
+            sim.sweep(1, threads=threads)
+            acc += abs(sim.magnetization)
+        got = acc / 300
+        want = ft.onsager(beta)
+        assert abs(got - want) < 0.03, f"threads={threads}: |M| {got:.4f} vs Onsager {want:.4f}"

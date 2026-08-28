@@ -23,6 +23,8 @@ pub struct Sampler<'g> {
     pub beta: f64,
     pub s: Vec<i8>,
     pub rng: Pcg,
+    /// How many threads the last parallel sweep actually used. See [`Sampler::threads_used`].
+    threads_used: usize,
     /// Nodes whose value is held fixed (conditioning / "clamping"); sweeps skip them.
     pub clamped: Vec<bool>,
     /// Base seed for the parallel path's per-(sweep, class, chunk) RNG streams.
@@ -35,7 +37,16 @@ impl<'g> Sampler<'g> {
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x5EED);
         let s = (0..g.n).map(|_| rng.spin(0.5)).collect();
-        Sampler { g, beta, s, rng, clamped: vec![false; g.n], par_seed: seed, par_sweeps: 0 }
+        Sampler {
+            g,
+            beta,
+            s,
+            rng,
+            clamped: vec![false; g.n],
+            par_seed: seed,
+            par_sweeps: 0,
+            threads_used: 1,
+        }
     }
 
     /// Clamp node i to value v (observation / conditioning input).
@@ -88,6 +99,7 @@ impl<'g> Sampler<'g> {
     /// Determinism: each (sweep, class, chunk) gets its own counter-derived RNG stream, so the
     /// result is bit-reproducible for a fixed (seed, threads). A different thread count is a
     /// different, equally valid sample path (document the thread count next to the seed).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn sweep_par(&mut self, threads: usize, ledger: Option<&mut Ledger>) {
         assert!(threads >= 1);
         let beta = self.beta;
@@ -134,9 +146,36 @@ impl<'g> Sampler<'g> {
             updated += class.iter().filter(|&&iu| !self.clamped[iu as usize]).count() as u64;
         }
         self.par_sweeps += 1;
+        self.threads_used = threads.min(g.classes.iter().map(|c| c.len()).max().unwrap_or(1).max(1));
         if let Some(l) = ledger {
             l.samples += updated;
         }
+    }
+
+    /// The wasm twin: serial, because there are no threads to spread across.
+    ///
+    /// `wasm32-unknown-unknown` has a std whose `thread::spawn` COMPILES and then panics at
+    /// runtime with "operation not supported on this platform" — the worst of both, since nothing
+    /// stops you shipping it and the failure arrives in a browser rather than in a build. So the
+    /// browser gets the serial sweep, and [`Self::threads_used`] reports 1 so a caller learns what
+    /// actually ran instead of trusting the number it asked for.
+    ///
+    /// This is not a silent downgrade. Running serially and SAYING one thread is a different thing
+    /// from running serially and reporting eight.
+    #[cfg(target_arch = "wasm32")]
+    pub fn sweep_par(&mut self, threads: usize, ledger: Option<&mut Ledger>) {
+        assert!(threads >= 1);
+        self.sweep(ledger);
+        self.par_sweeps += 1;
+        self.threads_used = 1;
+    }
+
+    /// How many threads the last [`Self::sweep_par`] actually used.
+    ///
+    /// Always 1 in a browser, whatever was asked for. A caller that reports throughput per thread
+    /// needs this number rather than the one it passed in.
+    pub fn threads_used(&self) -> usize {
+        self.threads_used
     }
 
     /// Run `n` parallel sweeps.

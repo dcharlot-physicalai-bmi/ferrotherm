@@ -671,6 +671,26 @@ double ft_hubo_joules_z1(const ft_hubo *h);
 /* The last refusal as UTF-8. Two-call protocol: pass a NULL buf for the length, then a buffer. */
 uint32_t ft_hubo_error(const ft_hubo *h, uint8_t *buf, uint32_t cap);
 
+/* Sweep across `threads` OS threads, returning total sweeps done -- same contract as ft_sweep.
+ *
+ * Within a colour class no two nodes are adjacent, so the class splits into disjoint chunks and
+ * each thread reads other-colour spins nobody is writing. Bit-reproducible for a fixed
+ * (seed, threads): a DIFFERENT thread count is a different, equally valid sample path, so record
+ * the thread count beside the seed or the run is not reproducible from what you wrote down.
+ *
+ * `threads` of 0 means "ask the machine", which is ft_hardware_threads(). A browser has no threads
+ * to spread across and runs serially whatever is asked -- ft_threads_used says what actually ran. */
+uint64_t ft_sweep_par(ft_sim *sim, uint32_t n, uint32_t threads);
+
+/* How many threads the last ft_sweep_par ACTUALLY used, or 0 before one. Not the number passed in:
+ * a browser answers 1, and a colour class of three nodes cannot occupy eight workers. */
+uint32_t ft_threads_used(const ft_sim *sim);
+
+/* How many threads this machine can run at once, or 1 when that cannot be known (a browser).
+ * An 18-core machine sampling on one core is the commonest way this library is left slow, and this
+ * is the only place a C caller can learn the number without guessing. */
+uint32_t ft_hardware_threads(void);
+
 /* Release a simulation. */
 void ft_free(ft_sim *sim);
 
