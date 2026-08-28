@@ -327,6 +327,18 @@ double ft_exact_log_z(const ft_sim *sim, double beta, uint32_t max_width);
 /* Exact ground STATE by variable elimination, written into `out` as -1/+1. Returns 1 on success,
  * 0 on NULL, a wrong length, or a graph wider than max_width. A caller that must return a solution
  * rather than a bound needs this, not just the energy. */
+/* Exact single-site marginals P(s_i = +1), written into `out`. 1 on success; 0 on a null handle, a
+ * wrong length, a non-finite beta, or a graph wider than max_width -- and a refusal writes nothing.
+ *
+ * This is the referee. A sampler's histogram can be compared against these on a graph far past
+ * where enumeration stops: a 42-spin strip is 2^42 states and width 3. ft_verify_tv compares
+ * against exhaustive enumeration and stops near twenty spins; this does not.
+ *
+ * COST: 2n eliminations, so O(n * 2^width) against the single O(2^width) of ft_exact_log_z. Ask
+ * ft_exact_width first. */
+uint32_t ft_exact_marginals(const ft_sim *sim, double beta, uint32_t max_width,
+                            double *out, uint32_t len);
+
 uint32_t ft_exact_ground_state(const ft_sim *sim, uint32_t max_width, int8_t *out, uint32_t len);
 
 /* Induced width of the elimination order. */

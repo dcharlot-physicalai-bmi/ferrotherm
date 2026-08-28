@@ -148,6 +148,8 @@ _cert_finding = _sig("ft_cert_finding", c_uint32, [_p, c_uint32, ctypes.POINTER(
 _cert_f = {n: _sig("ft_cert_" + n, c_double, [_p]) for n in
            ("beta_eff", "beta_lo", "beta_hi", "tau", "ess", "tv", "floor")}
 _exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
+_exact_marginals = _sig("ft_exact_marginals", c_uint32,
+                        [_p, c_double, c_uint32, ctypes.POINTER(c_double), c_uint32])
 _exact_log_z = _sig("ft_exact_log_z", c_double, [_p, c_double, c_uint32])
 _exact_width = _sig("ft_exact_width", c_uint32, [_p])
 _exact_ground_state = _sig("ft_exact_ground_state", c_uint32, [_p, c_uint32, POINTER(c_int8), c_uint32])
@@ -929,6 +931,23 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         v = float(_exact_log_z(self._h, float(beta), int(max_width)))
         return None if v != v else v
+
+    def exact_marginals(self, beta: float = 1.0, max_width: int = 22) -> "list[float] | None":
+        """Exact single-site ``P(s_i = +1)``, or ``None`` if the graph is too wide.
+
+        **The referee.** Compare a sampler's histogram against these on a graph far past where
+        enumeration stops: a 42-spin strip is 2^42 states and width 3. :meth:`verify` compares
+        against exhaustive enumeration and stops near twenty spins; this does not.
+
+        Costs ``2n`` eliminations -- ``O(n * 2^width)`` against the single ``O(2^width)`` of
+        :meth:`exact_log_z` -- so read :attr:`treewidth` before asking for it on anything wide.
+        """
+        self._live()
+        n = int(_len(self._h))
+        buf = (c_double * n)()
+        if _exact_marginals(self._h, float(beta), int(max_width), buf, n) == 0:
+            return None
+        return [float(v) for v in buf]
 
     # ---- solvers ---------------------------------------------------------------------------
     #

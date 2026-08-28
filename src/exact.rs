@@ -190,6 +190,55 @@ impl Elimination {
         self.run(g, beta, false)
     }
 
+    /// Exact single-site marginals `P(s_i = +1)` at inverse temperature `beta`.
+    ///
+    /// The module says sum-product gives log Z "and with it exact marginals, which is what lets a
+    /// sampler be checked against truth on graphs far too large to enumerate". It gave log Z. This
+    /// is the rest of that sentence.
+    ///
+    /// # How, and what it costs
+    ///
+    /// Condition, do not differentiate. For each node, `log Z` is computed twice on the graph with
+    /// that node pinned to `+1` and to `-1`, and
+    ///
+    /// ```text
+    ///     P(s_i = +1) = sigma( log Z(s_i = +1) - log Z(s_i = -1) )
+    /// ```
+    ///
+    /// which is a sigmoid of a difference: the total `log Z` cancels, so it never has to be
+    /// accurate, and neither does the `ln 2` from the pinned node being left in the graph as an
+    /// isolated free spin. Pinning `s_i = v` means dropping node `i`'s couplings and folding each
+    /// into its neighbour's field as `h_j += J_ij * v`, plus the `beta * h_i * v` the node itself
+    /// contributes — and those two constants differ between the `+1` and `-1` runs by exactly
+    /// `2 * beta * h_i`, which is why the field appears in the difference below.
+    ///
+    /// **The cost is `2n` eliminations**, so `O(n * 2^w)` rather than the single `O(2^w)` of
+    /// [`Self::log_partition`]. That is the price of an exact answer per node from a routine that
+    /// returns one number; a message-passing formulation would get all of them from two passes and
+    /// is a different algorithm. Refused, not approximated, when the width is too large: the same
+    /// [`TooWide`] the other two return, from the same order.
+    ///
+    /// Conditioning changes the graph but never its width — pinning a node only REMOVES edges — so
+    /// a model whose `log_partition` succeeds cannot have a marginal that is refused for width.
+    pub fn marginals(&self, g: &Graph, beta: f64) -> Result<Vec<f64>, TooWide> {
+        // Refuse up front on the unconditioned graph, so a caller learns the width before paying
+        // for 2n eliminations rather than after the first one.
+        let w = self.width(g);
+        if w > self.max_width {
+            return Err(TooWide::Width { width: w, max: self.max_width });
+        }
+        let mut out = Vec::with_capacity(g.n);
+        for i in 0..g.n {
+            let plus = self.log_partition(&pin(g, i, 1.0), beta)?.log_z.expect("sum-product was run");
+            let minus = self.log_partition(&pin(g, i, -1.0), beta)?.log_z.expect("sum-product was run");
+            // The pinned node is left in the graph as an isolated free spin in both runs, so its
+            // factor of two cancels along with everything else that does not depend on v.
+            let delta = 2.0 * beta * g.h[i] + plus - minus;
+            out.push(1.0 / (1.0 + (-delta).exp()));
+        }
+        Ok(out)
+    }
+
     /// Induced width of the order this would use, without running anything.
     pub fn width(&self, g: &Graph) -> usize {
         min_fill_order(g.n, &adjacency(g)).1
@@ -290,8 +339,166 @@ impl Elimination {
     }
 }
 
+/// The graph with node `i` pinned to `v`: its couplings removed and folded into its neighbours'
+/// fields, and its own field zeroed so it contributes an identical constant factor whatever `v` is.
+///
+/// The node is kept rather than deleted so every other index is unchanged — renumbering would make
+/// the returned marginals line up with a different graph than the one asked about, which is the
+/// kind of error that produces a plausible answer.
+fn pin(g: &Graph, i: usize, v: f64) -> Graph {
+    let mut b = crate::graph::GraphBuilder::new(g.n);
+    for a in 0..g.n {
+        let mut h = if a == i { 0.0 } else { g.h[a] };
+        for k in g.offset[a]..g.offset[a + 1] {
+            let c = g.nbr[k] as usize;
+            if a == i || c == i {
+                // An edge touching the pinned node becomes a field on the other end.
+                if a != i {
+                    h += g.w[k] * v;
+                }
+            } else if c > a {
+                b.couple(a, c, g.w[k]);
+            }
+        }
+        if h != 0.0 {
+            b.bias(a, h);
+        }
+    }
+    b.build()
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// Marginals against BRUTE FORCE, which is the only referee that leaves nothing to argue about.
+    ///
+    /// Enumerating 2^n states and summing the Boltzmann weights is a completely different
+    /// computation from eliminating variables, so agreement to 1e-12 is not two implementations of
+    /// one idea agreeing with themselves.
+    #[test]
+    fn marginals_match_exhaustive_enumeration() {
+        for (seed, n) in [(1u64, 6usize), (7, 8), (99, 10)] {
+            let mut rng = crate::rng::Pcg::new(seed, 0xE7AC);
+            let mut b = GraphBuilder::new(n);
+            for i in 0..n {
+                b.bias(i, rng.f64() * 2.0 - 1.0);
+                for j in (i + 1)..n {
+                    if rng.f64() < 0.45 {
+                        b.couple(i, j, rng.f64() * 2.0 - 1.0);
+                    }
+                }
+            }
+            let g = b.build();
+            let beta = 0.8;
+
+            let got = Elimination::default().marginals(&g, beta).expect("narrow enough");
+
+            // Brute force: sum exp(-beta E) over every state, and over the states with s_i = +1.
+            let mut z = 0.0f64;
+            let mut zi = vec![0.0f64; n];
+            for mask in 0..(1u32 << n) {
+                let s: Vec<i8> =
+                    (0..n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let wgt = (-beta * g.energy(&s)).exp();
+                z += wgt;
+                for i in 0..n {
+                    if s[i] == 1 {
+                        zi[i] += wgt;
+                    }
+                }
+            }
+            for i in 0..n {
+                let want = zi[i] / z;
+                assert!(
+                    (got[i] - want).abs() < 1e-12,
+                    "seed {seed}, n {n}, node {i}: elimination {} vs enumeration {want}",
+                    got[i]
+                );
+            }
+        }
+    }
+
+    /// The one case with a closed form, so a systematic error in BOTH of the above would show.
+    #[test]
+    fn a_single_spin_in_a_field_matches_the_sigmoid() {
+        for h in [-1.5, -0.3, 0.0, 0.7, 2.0] {
+            for beta in [0.1, 1.0, 3.0] {
+                let mut b = GraphBuilder::new(1);
+                b.bias(0, h);
+                let g = b.build();
+                let got = Elimination::default().marginals(&g, beta).unwrap()[0];
+                // P(+1) = e^{beta h} / (e^{beta h} + e^{-beta h}) = sigma(2 beta h)
+                let want = 1.0 / (1.0 + (-2.0 * beta * h).exp());
+                assert!((got - want).abs() < 1e-13, "h {h}, beta {beta}: {got} vs {want}");
+            }
+        }
+    }
+
+    /// Marginals are the referee this module exists to be, so check a SAMPLER against them on a
+    /// graph far past where enumeration stops -- which is the sentence in the module doc that had
+    /// no code behind it.
+    #[test]
+    fn a_sampler_can_be_checked_against_truth_past_where_enumeration_stops() {
+        // A 3x14 strip: 42 spins, so 2^42 states -- unenumerable -- and width 3.
+        let (w, l) = (3usize, 14usize);
+        let mut b = GraphBuilder::new(w * l);
+        for y in 0..l {
+            for x in 0..w {
+                let i = y * w + x;
+                if x + 1 < w {
+                    b.couple(i, i + 1, 0.6);
+                }
+                if y + 1 < l {
+                    b.couple(i, i + w, 0.6);
+                }
+            }
+        }
+        let g = b.build();
+        let beta = 0.35;
+        let e = Elimination::default();
+        assert!(e.width(&g) <= 4, "a strip is narrow: width {}", e.width(&g));
+        let truth = e.marginals(&g, beta).unwrap();
+
+        let mut smp = crate::gibbs::Sampler::new(&g, beta, 0xC0FFEE);
+        smp.sweeps(2000, None);
+        let draws = 40_000;
+        let mut up = vec![0u64; g.n];
+        for _ in 0..draws {
+            smp.sweep(None);
+            for i in 0..g.n {
+                if smp.s[i] == 1 {
+                    up[i] += 1;
+                }
+            }
+        }
+        let worst = (0..g.n)
+            .map(|i| (up[i] as f64 / draws as f64 - truth[i]).abs())
+            .fold(0.0f64, f64::max);
+        // Three sigma on 40k correlated draws is comfortably inside this; the point is that the
+        // comparison is possible at all on 42 spins.
+        assert!(worst < 0.02, "worst |sampled - exact| marginal = {worst:.4}");
+    }
+
+    #[test]
+    fn a_graph_too_wide_for_marginals_is_refused_with_the_same_reason_as_log_z() {
+        // Dense on 30 nodes: width far past the default ceiling.
+        let mut b = GraphBuilder::new(30);
+        for i in 0..30 {
+            for j in (i + 1)..30 {
+                b.couple(i, j, 0.4);
+            }
+        }
+        let g = b.build();
+        let e = Elimination::default();
+        let m = e.marginals(&g, 1.0);
+        assert!(matches!(m, Err(TooWide::Width { .. })), "{m:?}");
+        // And it refuses BEFORE paying for 2n eliminations, which is why the width is checked up
+        // front rather than being discovered inside the loop.
+        // Refused for the SAME reason and from the same order: a caller that got a log Z cannot
+        // then be told its marginals are too wide, because conditioning only removes edges.
+        assert_eq!(m.unwrap_err(), e.log_partition(&g, 1.0).unwrap_err());
+    }
+
     use super::*;
     use crate::graph::GraphBuilder;
     use crate::oracle::{Exhaustive, Solver};

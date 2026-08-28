@@ -126,6 +126,20 @@ pub const Sim = struct {
     /// different count is a different, equally valid sample path -- record it beside the seed or
     /// the run is not reproducible from what you wrote down. `threads = 0` asks the machine, which
     /// is `hardwareThreads()`. `threadsUsed()` reports what actually ran.
+    /// Exact single-site marginals `P(s_i = +1)`, written into `out` (which must be `n` long).
+    ///
+    /// THE REFEREE. A sampler's histogram can be compared against these on a graph far past where
+    /// enumeration stops: a 42-spin strip is 2^42 states and width 3.
+    ///
+    /// Costs `2n` eliminations -- `O(n * 2^width)` against the single `O(2^width)` of `exactLogZ`
+    /// -- so ask `exactWidth()` before requesting it on anything wide. Refused, not approximated,
+    /// when the graph is too wide.
+    pub fn exactMarginals(self: Sim, beta: f64, max_width: u32, out: []f64) Error!void {
+        if (c.ft_exact_marginals(self.h, beta, max_width, out.ptr, @intCast(out.len)) == 0) {
+            return Error.RejectedEntry;
+        }
+    }
+
     pub fn sweepPar(self: Sim, n: u32, threads: u32) u64 {
         return c.ft_sweep_par(self.h, n, threads);
     }

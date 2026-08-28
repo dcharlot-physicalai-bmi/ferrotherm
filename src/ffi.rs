@@ -871,6 +871,96 @@ pub extern "C" fn ft_exact_ground_state(
     }
 }
 
+/// Exact single-site marginals `P(s_i = +1)`, written into `out`.
+///
+/// Returns 1 on success, 0 on a null handle, a wrong length, or a graph wider than `max_width`.
+///
+/// This is the referee. A sampler's histogram can be compared against these on a graph far past
+/// where enumeration stops -- a 42-spin strip is 2^42 states and width 3 -- which is the only way
+/// to check a sampler at a size anyone actually runs. [`ft_verify_tv`] and the certificate compare
+/// against exhaustive enumeration and stop at about twenty spins; this does not.
+///
+/// COST: `2n` eliminations, so `O(n * 2^width)` rather than the single `O(2^width)` of
+/// [`ft_exact_log_z`]. Check [`ft_exact_width`] first.
+#[no_mangle]
+pub extern "C" fn ft_exact_marginals(
+    sim: *const Sim,
+    beta: f64,
+    max_width: u32,
+    out: *mut f64,
+    len: u32,
+) -> u32 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+    if out.is_null() || len as usize != s.graph.n || !beta.is_finite() {
+        return 0;
+    }
+    let el = crate::exact::Elimination { max_width: max_width as usize };
+    match el.marginals(&s.graph, beta) {
+        Ok(m) => {
+            unsafe { core::ptr::copy_nonoverlapping(m.as_ptr(), out, m.len()) };
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
+#[cfg(test)]
+mod exact_marginal_ffi {
+    use super::*;
+
+    #[test]
+    fn the_marginals_are_a_referee_a_sampler_can_be_checked_against() {
+        // A 5-ring, small enough that the ABI's own sampler can be run against it here.
+        let b = ft_builder_new(5);
+        for i in 0..5u32 {
+            assert_eq!(ft_builder_couple(b, i, (i + 1) % 5, -1.0), 1);
+        }
+        assert_eq!(ft_builder_bias(b, 0, 0.4), 1);
+        let sim = ft_builder_build(b, 0.7, 11);
+        let n = ft_len(sim) as usize;
+
+        let mut m = vec![0.0f64; n];
+        assert_eq!(ft_exact_marginals(sim, 0.7, 24, m.as_mut_ptr(), n as u32), 1);
+        assert!(m.iter().all(|p| (0.0..=1.0).contains(p)), "{m:?}");
+        // The biased node must lean the way its field points, or the sign convention is inverted
+        // and every comparison built on this would inherit it.
+        assert!(m[0] > 0.5, "a positive field must favour +1: {}", m[0]);
+
+        ft_sweep(sim, 2000);
+        let draws = 20_000;
+        let mut up = vec![0u64; n];
+        for _ in 0..draws {
+            ft_sweep(sim, 1);
+            let st = unsafe { core::slice::from_raw_parts(ft_spins(sim), n) };
+            for i in 0..n {
+                if st[i] == 1 {
+                    up[i] += 1;
+                }
+            }
+        }
+        for i in 0..n {
+            let got = up[i] as f64 / draws as f64;
+            assert!((got - m[i]).abs() < 0.03, "node {i}: sampled {got:.4} vs exact {:.4}", m[i]);
+        }
+        ft_free(sim);
+    }
+
+    #[test]
+    fn a_wrong_length_or_a_too_wide_graph_is_refused_rather_than_partly_written() {
+        let sim = ft_ising2d_new(4, 1.0, 0.5, 1);
+        let n = ft_len(sim) as usize;
+        let mut m = vec![0.0f64; n];
+        assert_eq!(ft_exact_marginals(sim, 0.5, 24, m.as_mut_ptr(), (n - 1) as u32), 0);
+        assert_eq!(ft_exact_marginals(sim, 0.5, 24, core::ptr::null_mut(), n as u32), 0);
+        assert_eq!(ft_exact_marginals(sim, f64::NAN, 24, m.as_mut_ptr(), n as u32), 0);
+        // max_width 0 refuses everything that is not already trivial.
+        assert_eq!(ft_exact_marginals(sim, 0.5, 0, m.as_mut_ptr(), n as u32), 0);
+        assert!(m.iter().all(|&x| x == 0.0), "a refusal must not write");
+        assert_eq!(ft_exact_marginals(core::ptr::null(), 0.5, 24, m.as_mut_ptr(), n as u32), 0);
+        ft_free(sim);
+    }
+}
+
 #[cfg(test)]
 mod exact_state_ffi {
     use super::*;

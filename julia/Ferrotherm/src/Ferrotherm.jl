@@ -57,7 +57,7 @@ export hubo, add!, anneal!, delta, terms, max_arity, ancillas_avoided, proposals
 export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
-export threads_used, hardware_threads
+export threads_used, hardware_threads, exact_marginals
 export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
@@ -182,6 +182,7 @@ const BldPtr = Ptr{Cvoid}
 
 const HuboPtr = Ptr{Cvoid}
 
+@cfn ft_exact_marginals Cuint SimPtr Cdouble Cuint Ptr{Cdouble} Cuint
 @cfn ft_sweep_par Culonglong SimPtr Cuint Cuint
 @cfn ft_threads_used Cuint SimPtr
 @cfn ft_hardware_threads Cuint
@@ -483,6 +484,23 @@ Not the number you passed in: a browser has no threads to spread across, and a c
 three nodes cannot occupy eight workers.
 """
 threads_used(s::Simulation) = (_live(s); Int(ft_threads_used(s.handle)))
+
+"""
+    exact_marginals(s; beta = 1.0, max_width = 22)
+
+Exact single-site `P(s_i = +1)`, or `nothing` when the graph is too wide.
+
+**The referee.** Compare a sampler's histogram against these on a graph far past where enumeration
+stops: a 42-spin strip is 2^42 states and width 3. Costs `2n` eliminations, so read
+[`treewidth`](@ref) before asking for it on anything wide.
+"""
+function exact_marginals(s::Simulation; beta::Real = 1.0, max_width::Integer = 22)
+    _live(s)
+    n = Int(ft_len(s.handle))
+    buf = Vector{Float64}(undef, n)
+    ok = ft_exact_marginals(s.handle, Cdouble(beta), Cuint(max_width), pointer(buf), Cuint(n))
+    ok == 0 ? nothing : buf
+end
 
 """
 How many threads this machine can run at once, or 1 when that cannot be known.

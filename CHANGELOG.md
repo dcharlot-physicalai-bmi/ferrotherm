@@ -44,6 +44,41 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### `exact` promised marginals and shipped log Z
+
+The module doc says sum-product gives the exact log partition function "**and with it exact
+marginals, which is what lets a sampler be checked against truth on graphs far too large to
+enumerate**". The public surface was `ground_state`, `log_partition`, `width`. The sentence had no
+code behind it, and it names the thing this module exists to be.
+
+`Elimination::marginals` conditions rather than differentiates: for each node, `log Z` twice with
+that node pinned to +1 and to −1, and
+
+```text
+P(s_i = +1) = sigma( log Z(s_i = +1) - log Z(s_i = -1) )
+```
+
+A sigmoid of a difference, so the total `log Z` cancels and never has to be accurate, and so does
+the `ln 2` from leaving the pinned node in the graph as an isolated free spin. **The cost is `2n`
+eliminations**, `O(n · 2^w)` against the single `O(2^w)` of `log_partition` — the price of an exact
+per-node answer from a routine that returns one number, and it is written on the method.
+Conditioning only ever REMOVES edges, so a model whose `log_partition` succeeds can never have a
+marginal refused for width; a test asserts the two refusals are the same value.
+
+Checked three ways, because one of them agreeing with itself would prove nothing:
+
+- **against exhaustive enumeration** on random graphs at n = 6, 8, 10 — a completely different
+  computation, agreeing to 1e-12;
+- **against the closed form** for one spin in a field, `P(+1) = σ(2βh)`, across five fields and
+  three temperatures, which would catch a systematic error present in both of the others;
+- **against a sampler**, on a 3×14 strip: **42 spins, 2⁴² states, width 3**. Worst
+  |sampled − exact| over 40,000 draws is under 0.02. That comparison is the sentence in the module
+  doc, and it is now runnable.
+
+`ft_exact_marginals` on the C ABI, `exact_marginals` in Python, `exactMarginals` in Zig,
+`exact_marginals` in Julia. The existing referee — `verify` and the certificate — compares against
+exhaustive enumeration and stops near twenty spins. This does not.
+
 ### An answer now says what it is worth
 
 A model's answer carried exactly one number: `energy`, which is `graph.energy(state)` — the
