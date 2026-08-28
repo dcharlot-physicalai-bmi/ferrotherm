@@ -21,10 +21,24 @@
 //!
 //! # The measurable claim
 //!
-//! Ancillas. A model with `t` terms of arity `k` needs roughly `t·(k−2)` of them to become
+//! Ancillas. A model with `t` terms of arity `k` needs **at most** `t·(k−2)` of them to become
 //! pairwise, and every one is a spin the search has to get right for the answer to mean anything.
 //! Solved natively there are none, and [`Hubo::from_graph`] exists so the two paths can be run
 //! against each other on the same model rather than argued about.
+//!
+//! **At most, not roughly.** [`crate::reduce`] substitutes the commonest pair first, so one ancilla
+//! serves every term containing that pair; on random 3-body instances it spends 20–39% fewer than
+//! `t·(k−2)`, and on three terms sharing one pair it spends **one** where the formula says three.
+//! An earlier version of this paragraph said "roughly", and the example measured the reduction's
+//! own figure rather than this one, which is how the discrepancy stayed invisible.
+//!
+//! `examples/hubo_vs_reduction` runs the two paths against each other. The result is not the one
+//! this module doc anticipated: the reduced path is worse at OPTIMISATION, not only at sampling,
+//! and stays worse at **1024x the budget**. The mechanism is the penalty — chosen as the sum of
+//! every coefficient's magnitude, so ~1300 against term weights of 1 — which makes the landscape
+//! rigid, since any single flip that would move the search must first pay it. Zero ancilla
+//! violations across every run confirms it: the search is stuck inside the feasible region rather
+//! than wandering out of it.
 //!
 //! ```
 //! use ferrotherm::hubo::{Hubo, Params, anneal};
@@ -82,6 +96,17 @@ impl Hubo {
     ///
     /// Each term of arity `k > 2` needs `k − 2` products built up. Reported so the cost the native
     /// path avoids is a number rather than a claim.
+    /// An UPPER BOUND on the ancillas a pairwise reduction would have spent, and this path did not.
+    ///
+    /// `Σ (k−2)` over the terms, which assumes every term needs its own substitutions.
+    /// [`crate::reduce::to_pairwise`] does better than that: it substitutes the commonest pair
+    /// first, so a single ancilla serves every term containing that pair. On three terms sharing
+    /// one pair the reduction spends **one** ancilla where this returns three, and on random
+    /// 3-body instances it spends 20–39% fewer.
+    ///
+    /// So this is the ceiling, not the cost. Reduce the model and read [`crate::reduce::Reduction`]
+    /// for what a reduction actually costs; `examples/hubo_vs_reduction` does exactly that, which
+    /// is why its table is right and this doc comment was wrong until it was checked.
     pub fn ancillas_avoided(&self) -> usize {
         self.terms.iter().map(|(v, _)| v.len().saturating_sub(2)).sum()
     }
@@ -167,7 +192,9 @@ pub struct Outcome {
     pub energy: f64,
     pub proposals: u64,
     pub accepted: u64,
-    /// Ancillas a pairwise reduction of this model would have needed, and this path did not.
+    /// An UPPER BOUND on the ancillas a pairwise reduction would have needed, and this path did
+    /// not. See [`Hubo::ancillas_avoided`]: the reduction shares one ancilla across every term
+    /// containing the same pair, so it usually spends fewer than this.
     pub ancillas_avoided: usize,
 }
 
@@ -382,5 +409,49 @@ mod tests {
 
         let out = anneal(&Hubo::new(0), &Params::default(), 1);
         assert!(out.state.is_empty() && out.energy == 0.0);
+    }
+
+    #[test]
+    fn ancillas_avoided_is_a_ceiling_and_the_reduction_beats_it() {
+        // The claim this method used to make -- "ancillas a pairwise reduction WOULD HAVE NEEDED"
+        // -- is false, and false in a direction that flatters this module. `reduce::to_pairwise`
+        // substitutes the commonest pair first, so one ancilla serves every term containing it.
+        //
+        // Pinned as an INEQUALITY plus one exact case, because the exact case is what makes the
+        // inequality bite: a bound that is only ever tested where it happens to be tight is not
+        // tested at all.
+        use crate::ftp::Program;
+
+        let mut h = Hubo::new(5);
+        for third in [2, 3, 4] {
+            h.add(&[0, 1, third], 1.0).expect("distinct in-range variables");
+        }
+        let p = Program::from_ftp("ftp 1\nspins 5\nfactor 1 0 1 2\nfactor 1 0 1 3\nfactor 1 0 1 4\n")
+            .expect("a well-formed program");
+        let red = crate::reduce::to_pairwise(&p).expect("a reducible program");
+
+        assert_eq!(h.ancillas_avoided(), 3, "the per-term ceiling: three terms of arity 3");
+        assert_eq!(red.ancillas, 1, "one ancilla for the pair (0,1) serves all three terms");
+        assert!(
+            red.ancillas < h.ancillas_avoided(),
+            "the reduction spent {} where the ceiling says {}; if these ever agree on THIS model \
+             the sharing has been lost",
+            red.ancillas,
+            h.ancillas_avoided()
+        );
+
+        // And it is a ceiling rather than an estimate: never below what the reduction spends.
+        let mut wide = Hubo::new(6);
+        wide.add(&[0, 1, 2, 3], 1.0).expect("distinct in-range variables");
+        wide.add(&[2, 3, 4, 5], -1.0).expect("distinct in-range variables");
+        let wp = Program::from_ftp("ftp 1\nspins 6\nfactor 1 0 1 2 3\nfactor -1 2 3 4 5\n")
+            .expect("a well-formed program");
+        let wr = crate::reduce::to_pairwise(&wp).expect("a reducible program");
+        assert!(
+            wr.ancillas <= wide.ancillas_avoided(),
+            "the bound must never be exceeded: reduction {} against ceiling {}",
+            wr.ancillas,
+            wide.ancillas_avoided()
+        );
     }
 }

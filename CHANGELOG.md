@@ -2,9 +2,59 @@
 
 ## Unreleased
 
-No Rust source changed, so no crate version moved. What changed is the **visual editor**, which is
-shipped from `docs/` to the site rather than to crates.io, and the two gates that now hold it to the
-library.
+What changed is the **visual editor**, shipped from `docs/` to the site rather than to crates.io,
+the two gates that now hold it to the library, and one measurement that corrected a claim this
+changelog itself made.
+
+### Correction: "higher-order terms cannot be built from any non-Rust surface" was wrong
+
+The 0.30.0 entry named `hubo` having no C ABI as an open gap, and it is one — but the gap is not the
+one that sentence describes, and an adversarial reading of the code found it. A cubic objective term
+**is** expressible from every surface today, through `ft_model_objective_product` into
+`reduce::to_pairwise`, and `python/test_model.py` asserts the result: `ancillas == 1`, `spins == 7`
+for a three-way product over binaries. So the capability is reachable. What is missing is the
+**native** path, and the difference between them turned out to be much larger than "pays ancillas".
+
+`examples/hubo_vs_reduction` runs the two against each other on the same terms, which the `hubo`
+module doc had promised (`Hubo::from_graph` "exists so the two paths can be run against each other
+rather than argued about") and nothing had done. Mean best energy of the ORIGINAL model over 16
+seeds, native at its budget against the reduction at multiples of it:
+
+| n | k | terms | reduced spins | ancillas | penalty/weight | native 1x | reduced 1x | reduced 1024x |
+|---|---|---|---|---|---|---|---|---|
+| 24 | 3 | 32 | 44 | 20 | 1260 | **−26.88** | −16.62 | −24.00 |
+| 32 | 3 | 48 | 67 | 35 | 1928 | **−38.38** | −18.12 | −29.62 |
+| 24 | 4 | 24 | 57 | 33 | 3132 | **−21.88** | −11.88 | −19.38 |
+| 40 | 3 | 60 | 86 | 46 | 2584 | **−48.12** | −18.62 | −34.00 |
+
+**At a thousand times the budget the reduced path does not reach the native path at one.** That is
+an optimisation result, not a sampling one, and it is stronger than anything either module doc
+claims — `reduce` only ever warned that the Boltzmann distribution is not preserved at finite
+temperature, which is a statement about sampling.
+
+The mechanism is the penalty, and it is visible in the table. `reduce` chooses it as the sum of
+every coefficient's magnitude, so it is ~1300 against term weights of 1: any single flip that would
+move the search must first pay it, and the landscape is rigid. **Zero ancilla violations across all
+384 runs** is the confirmation rather than a null result — the search is stuck *inside* the feasible
+region, not wandering out of it.
+
+The first version of this measurement was wrong in the other direction and is worth recording. Run
+at the native model's beta ladder the reduced arm scored −11.50 against −26.88, and the table read
+as a rout; it was measuring the ladder, since a ladder suited to weights of 1 never melts penalty
+terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
+comparison uses the best of that sweep, so the reduction is measured at its best.
+
+### `Hubo::ancillas_avoided` was overstating, and its doc claimed something false
+
+It returns `Σ (k−2)` over the terms and its doc said "ancillas a pairwise reduction of this model
+would have needed". The reduction does better: it substitutes the commonest pair first, so one
+ancilla serves every term containing that pair. On three terms sharing one pair it spends **one**
+where the method returns three, and on random 3-body instances 20–39% fewer. It is a ceiling, now
+documented as one and pinned by a test that asserts the strict inequality on the shared-pair case —
+because a bound only ever tested where it happens to be tight is not tested.
+
+The measurement above was unaffected: it reads `Reduction::ancillas`, the reduction's own figure,
+which is how the discrepancy stayed invisible.
 
 ### The editor could say six of the nine constraints the model layer has
 
