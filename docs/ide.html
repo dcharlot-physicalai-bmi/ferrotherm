@@ -124,6 +124,25 @@
             font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
   .brlabels #brmid{color:var(--warn)}
   .certnote{margin:11px 0 0;font-size:12.5px;color:var(--ink-dim);line-height:1.5}
+  /* ---- what the fit learned ----
+     Same visual grammar as the bracket above, because it answers the same KIND of question: not
+     "what is the number" but "where does this number sit between the two ends that are known".
+     A raw log-likelihood of -3.8 tells a reader nothing; -3.8 shown two thirds of the way from
+     "learned nothing" to "learned everything" tells them the whole thing. */
+  .fitfill{position:absolute;top:0;bottom:0;left:0;
+           background:linear-gradient(90deg,rgba(122,184,147,.35),rgba(122,184,147,.75))}
+  .fitmark{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);
+           box-shadow:0 0 0 1px rgba(11,18,32,.9)}
+  .fittrack{position:relative;height:16px;border-radius:8px;overflow:hidden;
+            background:rgba(122,184,147,.10)}
+  .fitgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;
+           margin-top:12px;font-family:var(--mono);font-size:11.5px}
+  .fitgrid div{color:var(--ink-faint)}
+  .fitgrid b{display:block;font-weight:500;color:var(--ink-dim);font-size:13px;margin-top:2px}
+  @media (prefers-reduced-motion:no-preference){
+    .fitfill{transition:width .3s ease}
+    .fitmark{transition:left .3s ease}
+  }
   .btab{width:100%;margin-top:11px;border-collapse:collapse;font-family:var(--mono);font-size:11.5px}
   .btab td{padding:3px 0;color:var(--ink-faint);border-top:1px solid var(--line)}
   .btab td:last-child{text-align:right;color:var(--ink-dim)}
@@ -150,6 +169,7 @@
       <option value="solve">a problem, not a graph</option>
       <option value="hubo">higher-order, no ancillas</option>
       <option value="z1">Z1 grid 24&times;24</option>
+      <option value="machine">fit a machine to data</option>
     </select>
   </label>
   <label class="ctl">&beta;
@@ -218,6 +238,28 @@
         </div>
         <p class="certnote" id="certnote"></p>
         <table class="btab" id="btab"></table>
+      </section>
+
+      <section id="fit" class="cert" hidden>
+        <div class="certtop">
+          <span class="certtitle">What the fit learned</span>
+          <span class="certverdict" id="fitverdict"></span>
+        </div>
+        <div class="fittrack" role="img" aria-label="How much of the distance from an untrained model to a perfect one this fit travelled">
+          <div class="fitfill" id="fitfill"></div>
+          <div class="fitmark" id="fitmark"></div>
+        </div>
+        <div class="brlabels">
+          <span id="fitlo">&mdash;</span>
+          <span id="fithi">&mdash;</span>
+        </div>
+        <div class="fitgrid">
+          <div>log-likelihood, exact<b id="fit-ll">&mdash;</b></div>
+          <div>before fitting<b id="fit-before">&mdash;</b></div>
+          <div>rows in the data<b id="fit-rows">&mdash;</b></div>
+          <div>spins<b id="fit-spins">&mdash;</b></div>
+        </div>
+        <p class="certnote" id="fitnote"></p>
       </section>
 
       <details>
@@ -294,6 +336,16 @@ const PRESETS = {
     graph: { builtin: "lattice2d", l: 24, j: 1.0 },
     beta: 0.44, sweeps: 1, seed: 1
   },
+  machine: {
+    // The one preset that PRODUCES a model instead of consuming one. Nine visible units on 3x3
+    // bars-and-stripes, twelve hidden in a single layer: wide enough to reach ~96% of the way to a
+    // perfect fit, which `examples/trained_tradeoff` measures against the deep arrangements of the
+    // same twelve units.
+    machine: { visible: 9, hidden: [12] },
+    data: "bars-and-stripes-3",
+    fit: { epochs: 400, k: 10, seed: 3 },
+    beta: 1.0, sweeps: 1, seed: 1
+  },
   glass: null,   // generated below, needs randomness
   maxcut: null
 };
@@ -354,6 +406,8 @@ const PRESETS = {
 // ---- wasm ------------------------------------------------------------------------------------
 let W = null, mem = null, sim = 0, running = false, raf = 0, gpuDiag = "";
 let spec = null, nodes = 0, layout = null, lattice = 0;
+// What the last fit learned, or null when the live model was not fitted to anything.
+let fitted = null;
 
 const $ = (id) => document.getElementById(id);
 const status = (msg, kind) => {
@@ -434,13 +488,14 @@ function parseSpec(text) {
   // THREE request shapes, and the operation is decided by which one you wrote. "graph" is a set
   // of spins for sample and anneal, "variables" is a problem for solve, and "terms" is a
   // HIGHER-ORDER model for hubo -- terms of any arity, solved with no ancillas and no penalty.
-  const shapes = ["graph", "variables", "terms"].filter(k => v[k] !== undefined);
+  const shapes = ["graph", "variables", "terms", "machine"].filter(k => v[k] !== undefined);
   if (shapes.length === 0) {
     throw new Error('give "graph" for a set of spins to sample, "variables" for a problem to '
-      + 'solve, or "terms" for a higher-order model to minimise natively');
+      + 'solve, "terms" for a higher-order model to minimise natively, or "machine" for a model '
+      + 'to FIT to data');
   }
   if (shapes.length > 1) {
-    throw new Error(`give one of "graph", "variables" or "terms", not ${shapes.length} `
+    throw new Error(`give one of "graph", "variables", "terms" or "machine", not ${shapes.length} `
       + `("${shapes.join('", "')}"): they are different operations`);
   }
   return v;
@@ -494,6 +549,155 @@ function build(v, beta, seed) {
   cv.width = 900;
   cv.height = lattice ? 900 : 620;
   return nodes;
+}
+
+// ---- fitting a machine to data ----------------------------------------------------------------
+//
+// The fourth request shape, and the only one that PRODUCES a model rather than consuming one. Every
+// other shape here hands the sampler something already written down; this one hands it data and the
+// sampler writes the model. That is the difference between a solver and a computing paradigm, and
+// until now it was reachable from Rust, C, Python, Zig and Julia but from no interface at all.
+//
+// The fit REPLACES the model, so everything else on this page -- Run, Anneal, Solve, Certify --
+// then applies to the fitted machine with no export step. That composition is the point.
+
+/** The named datasets a spec can ask for, and the width each row has. */
+function datasetFor(spec) {
+  if (typeof spec === "string") {
+    const m = /^bars-and-stripes-(\d+)$/.exec(spec);
+    if (!m) throw new Error('the only named dataset is "bars-and-stripes-N"; otherwise give rows of -1 and +1');
+    const side = m[1] | 0;
+    if (!(side >= 1 && side <= 8)) throw new Error('"bars-and-stripes-N" needs N between 1 and 8');
+    const n = W.ft_ebm_bars_and_stripes(side, 0, 0);
+    if (!n) throw new Error(ebmWhy() || "that dataset could not be built");
+    const width = side * side, need = n * width;
+    const p = W.ft_scratch(need);
+    const got = W.ft_ebm_bars_and_stripes(side, p, need);
+    if (!got) throw new Error(ebmWhy() || "that dataset could not be written");
+    // Copy out: ft_scratch is one shared buffer and the next call would overwrite it.
+    return { rows: Array.from(new Int8Array(W.memory.buffer, p, need)), width, count: got };
+  }
+  if (!Array.isArray(spec) || spec.length === 0) throw new Error('"data" must be a dataset name or a non-empty array of rows');
+  const width = spec[0].length | 0;
+  const flat = [];
+  spec.forEach((row, i) => {
+    if (!Array.isArray(row) || row.length !== width) {
+      throw new Error(`row ${i} has ${(row || []).length} entries, and the first row has ${width}`);
+    }
+    row.forEach((val, j) => {
+      if (val !== 1 && val !== -1) throw new Error(`row ${i} position ${j} is ${val}, and a spin is -1 or +1`);
+      flat.push(val);
+    });
+  });
+  return { rows: flat, width, count: spec.length };
+}
+
+function ebmWhy() {
+  const need = W.ft_ebm_error(0, 0);
+  if (!need) return "";
+  const p = W.ft_scratch(need);
+  const got = W.ft_ebm_error(p, need);
+  return new TextDecoder().decode(new Uint8Array(W.memory.buffer, p, got));
+}
+
+/** Write a dataset into wasm memory and return [pointer, rowCount]. */
+function pushRows(d) {
+  const p = W.ft_scratch(d.rows.length);
+  new Int8Array(W.memory.buffer, p, d.rows.length).set(d.rows);
+  return [p, d.count];
+}
+
+/** Build the machine's structure, fit it to the data, and leave it as the live sampler. */
+function buildMachine(v, beta, seed) {
+  const mc = v.machine;
+  const visible = mc.visible | 0;
+  if (!(visible >= 1)) throw new Error('"visible" must be at least 1');
+  const hidden = mc.hidden === undefined ? [] : (Array.isArray(mc.hidden) ? mc.hidden : [mc.hidden]);
+  if (hidden.some(w => !((w | 0) >= 1))) throw new Error('every hidden layer needs at least one unit');
+
+  freeSim();
+  lattice = 0;
+  if (hidden.length === 0) {
+    throw new Error('a machine needs at least one hidden layer; "hidden": [8] is an RBM');
+  } else if (hidden.length === 1) {
+    sim = W.ft_ebm_rbm(visible, hidden[0] | 0, beta, BigInt(seed));
+  } else {
+    // A DataView rather than a Uint32Array: ft_scratch hands back a Vec<u8> pointer, which carries
+    // no 4-byte alignment guarantee, and a typed-array view on an unaligned offset THROWS.
+    const p = W.ft_scratch(hidden.length * 4);
+    const dv = new DataView(W.memory.buffer, p, hidden.length * 4);
+    hidden.forEach((w, i) => dv.setUint32(i * 4, w | 0, true));
+    sim = W.ft_ebm_dbm(visible, p, hidden.length, beta, BigInt(seed));
+  }
+  if (!sim) throw new Error(ebmWhy() || "the sampler refused that machine");
+  nodes = visible + hidden.reduce((a, b) => a + (b | 0), 0);
+
+  fitted = null;
+  if (v.data !== undefined) {
+    const d = datasetFor(v.data);
+    if (d.width !== visible) {
+      throw new Error(`the data has ${d.width} entries per row and the machine has ${visible} `
+        + `visible units; they have to match, because a row is clamped onto them`);
+    }
+    // Untrained first: every weight is zero, so this is exactly -visible*ln2 and it is the honest
+    // zero of the scale the fit is judged on.
+    const [p0, n0] = pushRows(d);
+    const before = W.ft_ebm_log_likelihood(sim, d.width, p0, n0);
+
+    const f = v.fit || {};
+    const [p1, n1] = pushRows(d);
+    const ok = W.ft_ebm_train(sim, d.width, p1, n1, f.epochs | 0, f.k | 0,
+      f.positive_sweeps | 0, f.learning_rate === undefined ? 0 : +f.learning_rate,
+      f.batch | 0, BigInt(f.seed === undefined ? seed : f.seed));
+    if (!ok) throw new Error(ebmWhy() || "that dataset could not be fitted");
+
+    const [p2, n2] = pushRows(d);
+    const after = W.ft_ebm_log_likelihood(sim, d.width, p2, n2);
+    // The scale has fixed ends and needs no calibration: a model that has learned nothing scores
+    // -visible*ln2, and one reproducing n equiprobable rows scores -ln n. Reporting the raw
+    // likelihood alone would leave a reader with no way to know whether -3.8 is good.
+    const floor = -visible * Math.LN2, ceiling = -Math.log(d.count);
+    fitted = {
+      before, after, floor, ceiling, rows: d.count,
+      learned: (after - floor) / (ceiling - floor) * 100,
+      exact: Number.isFinite(after),
+      why: Number.isFinite(after) ? "" : ebmWhy(),
+    };
+  }
+
+  layout = layeredLayout(visible, hidden);
+  cv.width = 900;
+  cv.height = 620;
+  return nodes;
+}
+
+/** Visible units along the bottom, each hidden layer stacked above it, with every edge.
+ *
+ * A circle layout would draw a machine as a ring of anonymous dots and hide the one thing its shape
+ * means. Depth is the variable the mixing-expressivity tradeoff is about, so the picture shows
+ * depth: the data sits on the bottom row and every layer above it is one more step from the data.
+ *
+ * Points are normalised to roughly [-1, 1] because that is the contract `draw` expects. */
+function layeredLayout(visible, hidden) {
+  const rows = [visible, ...hidden.map(w => w | 0)];
+  const pts = [], edges = [];
+  const spread = (count, i) => count === 1 ? 0 : -1 + 2 * i / (count - 1);
+  rows.forEach((count, r) => {
+    // r = 0 is the visible row and sits LOWEST: canvas y grows downward.
+    const y = rows.length === 1 ? 0 : 1 - 2 * r / (rows.length - 1);
+    for (let i = 0; i < count; i++) pts.push([spread(count, i) * 0.92, y * 0.86]);
+  });
+  // Complete bipartite between consecutive rows -- the same edge set ft_ebm_dbm builds, so the
+  // picture is of the model rather than of an idea of it.
+  let base = 0;
+  for (let r = 0; r + 1 < rows.length; r++) {
+    const below = base, above = base + rows[r];
+    for (let a = 0; a < rows[r]; a++) {
+      for (let b = 0; b < rows[r + 1]; b++) edges.push([below + a, above + b, 1]);
+    }
+    base = above;
+  }
+  return { pts, edges };
 }
 
 function ringEdges(v) {
@@ -1079,12 +1283,18 @@ function apply() {
     if (spec.variables) return applySolve();
     if (spec.terms) return applyHubo();
     const beta = +$("beta").value / 100, seed = +$("seed").value;
-    const n = build(spec, beta, seed);
+    fitted = null;
+    const n = spec.machine ? buildMachine(spec, beta, seed) : build(spec, beta, seed);
     sweepsDone = 0;
     $("viewhint").textContent = lattice
       ? lattice + "×" + lattice + " lattice, gold is +1"
-      : n + " nodes, green bonds satisfied, red frustrated";
-    status("model built: " + n + " nodes. Press Run to sample, or Anneal to minimise.", "good");
+      : spec.machine
+        ? n + " spins: visible along the bottom, hidden above"
+        : n + " nodes, green bonds satisfied, red frustrated";
+    showFit();
+    status(fitted
+      ? fitMessage()
+      : "model built: " + n + " nodes. Press Run to sample, or Anneal to minimise.", "good");
     exports_();
     draw();
   } catch (err) {

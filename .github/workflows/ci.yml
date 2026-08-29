@@ -246,6 +246,14 @@ jobs:
       # in a click handler leaves the page looking fine and doing nothing.
       - name: the committed wasm exports everything the pages call
         run: scripts/check-wasm-exports.sh
+      # A page that loads is not a page that works. This instantiates the committed binary and
+      # fits a model through it, then requires the answer to match the native library EXACTLY --
+      # so a stale wasm, or a marshalling bug in the fitting path, fails here rather than in a
+      # click handler where nobody sees it.
+      - name: fitting agrees between the browser binary and the native library
+        run: |
+          cargo build --release --lib
+          scripts/check-fit.sh
 
   zig:
     runs-on: ubuntu-latest

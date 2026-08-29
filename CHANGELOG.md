@@ -44,6 +44,54 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The workbench can fit a machine, and the browser agrees with the machine exactly
+
+Fitting reached five language surfaces and no interface at all. The workbench now takes a **fourth
+request shape** — the only one that *produces* a model rather than consuming one:
+
+```json
+{ "machine": { "visible": 9, "hidden": [12] },
+  "data": "bars-and-stripes-3",
+  "fit": { "epochs": 400, "k": 10, "seed": 3 } }
+```
+
+The fit replaces the live model, so **Run, Anneal, Solve and Certify then all apply to it** with no
+export step. That composition is the whole argument for putting fitting on the ABI.
+
+The picture changed with it. A circle layout would draw a machine as a ring of anonymous dots and
+hide the one thing its shape means, so machines get a **layered layout** — visible units along the
+bottom, each hidden layer stacked above — built from the same edge set `ft_ebm_dbm` builds.
+
+**What the fit learned** is shown the way the optimality bracket is, because it answers the same
+kind of question: not *what is the number* but *where does it sit between two known ends*. A raw
+log-likelihood of −2.79 tells a reader nothing; −2.79 shown 95.8% of the way from "learned nothing"
+(−9 ln 2, exactly, because an untrained model is uniform) to "learned everything" (−ln 14) tells
+them the whole thing. Both ends are derived, not calibrated.
+
+#### `scripts/check-fit.sh` — the browser and the machine must fit alike
+
+A page that loads is not a page that works, and every gate here was satisfied by a wasm that
+exported the right names. This one instantiates **the committed binary** and fits through it, then
+requires the answer to match the native library **exactly**:
+
+```
+browser and native agree exactly: wide -2.790527845062607 (95.8% learned),
+                                  deep -2.9042325078642195 (92.6% learned)
+```
+
+No tolerance, and no Playwright — `ferrotherm.wasm` takes no imports, so node instantiates it
+directly, which also means a **stale committed wasm** fails here instead of silently serving an
+older sampler. Contrastive divergence is scalar IEEE-754 over a seeded PCG stream with no threading,
+no reductions and no kernel selection, so the two arms have no licence to differ at all; a tolerance
+would hide exactly the marshalling bug this exists to catch. The selftest fits from another seed and
+requires the comparison to fail.
+
+Caught while writing it: the page marshalled hidden-layer widths through a `Uint32Array` view on an
+`ft_scratch` pointer. `ft_scratch` returns a `Vec<u8>` pointer, which carries no 4-byte alignment
+guarantee, and **a typed-array view on an unaligned offset throws** — in a click handler, where
+nobody would see it. It goes through a `DataView` now, and the gate's deep arm exists to exercise
+that path.
+
 ### Fitting reaches every surface, and the fit drops what it invalidates
 
 `ebm` was Rust-only, and a capability that stops at Rust is the exact failure `check-parity.sh`

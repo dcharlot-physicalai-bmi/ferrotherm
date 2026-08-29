@@ -51,6 +51,11 @@ compiles through the same code, so an answer does not depend on which door you c
 - ffi: C ABI (ft_*) for wasm and host languages, including the whole modelling layer (ft_model_*)
   and the native higher-order path (ft_hubo_*)
 - hubo: higher-order models solved WITHOUT quadratising -- no ancillas, no penalty to get right
+- ebm: FITS a model to data (contrastive divergence) and scores it by the EXACT log-likelihood via
+  enumeration -- never an ELBO or a reconstruction error, each of which is worst exactly where
+  sampling is worst. `rbm`/`dbm` build the structure; the fit replaces the weights, so every solver,
+  sampler, certificate and bound in this crate then applies to a TRAINED model with no export step.
+  This is the only module that produces a model rather than consuming one
 
 ## Examples (each is a verification gate, exit code = pass/fail)
 
@@ -59,6 +64,12 @@ compiles through the same code, so an answer does not depend on which door you c
 - grad_check, gibbs_grad, lqr_energy: gradient cross-validation; trained controller vs provable optimum
 - compile_chain, reach_on_z1: compilation error bound verified exactly; the control-workload boundary
 - flips_bench: CPU throughput anchor
+- mixing_expressivity, trained_tradeoff: the field's central open problem, measured independently on
+  both halves. Structural half: the claim holds weakly coupled and goes U-SHAPED strongly coupled,
+  and past beta 2 the standard estimator stops being one (so every row carries draws/tau and prints
+  `unusable`). Fitted half: latents without connectivity buy less expressivity (confirmed), but they
+  do NOT cost more mixing -- the deep arms mix FASTER. Spearman of tau against what a model LEARNED
+  is +0.81; against how DEEP it is, -0.17. A model that has not learned has nothing to get stuck in
 
 ## Servers, for an agent
 
@@ -66,6 +77,11 @@ compiles through the same code, so an answer does not depend on which door you c
   (sample, anneal, energy, verify, bound, exact_planar, toroidal_bound, optimize, solve, hubo,
   capabilities); reach for `ferrotherm_solve` first, since every other tool wants a graph of spins
   and returns an array of +/-1. `/v1/capabilities` describes the HTTP side, by GET or POST.
+- The workbench takes FOUR request shapes and the operation is decided by which one you wrote:
+  "graph" to sample, "variables" to solve, "terms" for a higher-order model, and "machine" to FIT
+  one to data. A machine spec is `{"machine": {"visible": 9, "hidden": [12]}, "data":
+  "bars-and-stripes-3", "fit": {"epochs": 400, "k": 10, "seed": 3}}`; the fit becomes the live
+  model, so Run, Anneal, Solve and Certify then all apply to it.
 - The node editor exposes `window.ferrotherm` for scripted use: `ready`, `types()`, `add`, `set`,
   `connect`, `find`, `run()`, `toJson`/`fromJson`, `check()`. See web-tests/editor.test.mjs, which
   drives exactly that surface.
