@@ -5,9 +5,15 @@
 // claim is that a block move steps over any barrier living entirely inside the block, where a
 // single-flip method has to pay to climb it.
 //
-// THE ANSWER HERE IS MOSTLY NO, AND THAT IS THE POINT OF RUNNING IT. On a two-dimensional spin
-// glass at these sizes, HFS run on its own loses to tabu and to breakout local search on a matched
-// budget. It is worth having anyway, for a reason the last column shows and the first four do not.
+// THE ANSWER IS NO, ON BOTH FAMILIES, AND THAT IS THE POINT OF RUNNING IT. HFS on its own loses to
+// tabu at every size -- including on Chimera, which is the structure it exploits and where the
+// literature's result was obtained. Swept before that was believed: block size from 8 to n moves
+// the answer by under 1%, and restart counts from 1 to 256 never close the gap. The hubo comparison
+// in this repository once published a wrong negative because its beta ladder had not been swept.
+//
+// What this module has is the block MOVE plus random block selection. Selby's algorithm is that
+// plus a specific schedule over subgraphs, at C_16,16,4 and budgets far past these. The gap between
+// "has the move" and "is the algorithm" is where the difference plausibly lives.
 //
 // WHAT IS MATCHED, and why it is spin flips rather than seconds. The machine this was written on
 // sat above load average 120 all day, so no wall-clock figure here would mean anything; and even on
@@ -24,16 +30,13 @@
 // so charging one flip per spin understates its cost. It loses anyway on the standalone columns,
 // which means it is not losing on bookkeeping.
 //
-// WHY A TWO-DIMENSIONAL GLASS IS NOT HFS'S BEST CASE, stated because the result is negative and it
-// would be easy to leave the reason out. The algorithm exploits graphs that DECOMPOSE into
-// low-treewidth pieces: Selby's implementation beat the hardware it was compared against on
-// Chimera, whose blocks are 4x4 bipartite cells joined sparsely, so a block can cover a whole
-// region of the problem. A periodic 2D lattice has treewidth equal to its side, and an induced tree
-// on it is a thin filament through a dense neighbourhood -- the frozen boundary of the block is
-// nearly as large as the block. This crate has no Chimera generator (`src/ising.rs` has ring, grid
-// and lattice; `src/embed.rs` builds a King's graph only in its tests), so the structure HFS is
-// actually for cannot be built here yet. That is a gap in the instance library, not a verdict on
-// the algorithm, and it is written down rather than worked around by picking a friendlier instance.
+// TWO INSTANCE FAMILIES, because the first one is not the structure HFS is for. A periodic 2D
+// lattice has treewidth equal to its side and does not decompose; an induced tree on it is a thin
+// filament through a dense neighbourhood, so the block's frozen boundary is nearly as large as the
+// block. CHIMERA is what Selby's implementation beat the hardware on: an m x n grid of K_{t,t}
+// cells joined only between matching shores, so each shore induces a forest and half the graph is
+// exactly solvable in one move. Running only the lattice would have measured HFS away from home
+// and reported the number as though it were the algorithm.
 //
 // NOT run in CI: the largest size takes minutes.
 //
@@ -41,9 +44,10 @@
 
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
-use ferrotherm::{bls, gibbs, hfs, tabu, tempering};
+use ferrotherm::{bls, gibbs, hfs, ising, tabu, tempering};
 
-/// A periodic 2D spin glass: couplings uniform in {-1, +1}, no fields.
+/// A periodic 2D spin glass: couplings uniform in {-1, +1}, no fields. Treewidth = the side, so it
+/// does not decompose and a block is always mostly boundary.
 fn glass(l: usize, seed: u64) -> Graph {
     let mut rng = Pcg::new(seed, 0x0F5A_C0DE);
     let mut b = GraphBuilder::new(l * l);
@@ -81,104 +85,131 @@ const BLOCK: usize = 64;
 /// Share of the budget the composition arm leaves for the block polish.
 const POLISH: usize = 10;
 
+/// The instance families, each a label and a builder. Both are +/-1 glasses on the same number of
+/// spins where possible, so the two rows of a size are comparable to each other and not only down
+/// their own column.
+fn instance(family: usize, size: usize, seed: u64) -> (String, Graph) {
+    if family == 0 {
+        let l = [12usize, 20, 28][size];
+        (format!("lattice {l}x{l}"), glass(l, seed))
+    } else {
+        let (m, t) = [(4usize, 4usize), (6, 4), (8, 4)][size];
+        (format!("chimera C_{m},{m},{t}"), ising::chimera_glass(m, m, t, seed))
+    }
+}
+
 fn main() {
     println!("HFS against three single-flip arms, on a matched budget of spin updates\n");
     println!(
         "Mean best energy over {SEEDS} seeds; lower is better. Budget {BUDGET_PER_NODE} flips per\n\
-         node. The last column spends {}% of that budget on tabu and the rest on block moves\n\
-         starting from tabu's answer.\n",
+         node. `tabu+hfs` spends {}% of that on tabu and the rest on block moves from tabu's answer.\n",
         100 - 100 / POLISH
     );
     println!(
-        "{:>4} {:>6} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9}  {:>16}",
-        "l", "spins", "sweeps", "tabu", "breakout", "hfs", "tabu+hfs", "delta", "improving moves"
+        "{:>16} {:>6} {:>9} {:>9} {:>9} {:>9} {:>9} {:>8}  {:>7}",
+        "instance", "spins", "sweeps", "tabu", "breakout", "hfs", "tabu+hfs", "delta", "improving"
     );
 
-    for l in [12usize, 20, 28] {
-        let n = l * l;
-        let budget = BUDGET_PER_NODE * n;
-        let (mut sw, mut tb, mut bl, mut hf, mut comp) = (0.0, 0.0, 0.0, 0.0, 0.0);
-        let (mut improving, mut helped) = (0usize, 0usize);
+    for family in 0..2 {
+        for size in 0..3 {
+            let (label, probe) = instance(family, size, 0);
+            let n = probe.n;
+            let budget = BUDGET_PER_NODE * n;
+            let (mut sw, mut tb, mut bl, mut hf, mut comp) = (0.0, 0.0, 0.0, 0.0, 0.0);
+            let (mut improving, mut helped) = (0usize, 0usize);
 
-        for seed in 0..SEEDS {
-            let g = glass(l, seed);
-            let start: Vec<i8> = {
-                let mut r = Pcg::new(seed, 0xC0FD);
-                (0..n).map(|_| r.spin(0.5)).collect()
-            };
+            for seed in 0..SEEDS {
+                let (_, g) = instance(family, size, seed);
+                let start: Vec<i8> = {
+                    let mut r = Pcg::new(seed, 0xC0FD);
+                    (0..n).map(|_| r.spin(0.5)).collect()
+                };
 
-            sw += sweeps_from(&g, &start, budget, seed);
-            bl += bls::search(&g, &bls::Params { iterations: budget, ..Default::default() }, seed)
+                sw += sweeps_from(&g, &start, budget, seed);
+                bl += bls::search(
+                    &g,
+                    &bls::Params { iterations: budget, ..Default::default() },
+                    seed,
+                )
                 .energy;
 
-            let hp = hfs::Params {
-                steps: (budget / BLOCK).max(1),
-                block: BLOCK,
-                ..hfs::Params::default()
-            };
-            hf += hfs::run_from(&g, start.clone(), &hp, seed).energy;
+                let hp = hfs::Params {
+                    steps: (budget / BLOCK).max(1),
+                    block: BLOCK,
+                    ..hfs::Params::default()
+                };
+                hf += hfs::run_from(&g, start.clone(), &hp, seed).energy;
 
-            // The composition the C ABI advertises: tabu leaves a state, HFS starts from it. Tabu
-            // gets the same budget the standalone column measures MINUS what the polish spends, so
-            // the two tabu figures are not the same run and the comparison is not free.
-            let full = tabu::search(
-                &g,
-                &tabu::Params { iterations: budget, ..Default::default() },
-                seed,
-            );
-            tb += full.energy;
+                // The composition the C ABI advertises: tabu leaves a state, HFS starts from it.
+                // Tabu gets the standalone column's budget MINUS what the polish spends, so the two
+                // tabu figures are not the same run and the comparison is not free.
+                tb += tabu::search(
+                    &g,
+                    &tabu::Params { iterations: budget, ..Default::default() },
+                    seed,
+                )
+                .energy;
 
-            let short = tabu::search(
-                &g,
-                &tabu::Params {
-                    iterations: budget - budget / POLISH,
-                    ..Default::default()
-                },
-                seed,
-            );
-            let polish = hfs::Params {
-                steps: (budget / POLISH / BLOCK).max(1),
-                block: BLOCK,
-                ..hfs::Params::default()
-            };
-            let out = hfs::run_from(&g, short.state.clone(), &polish, seed);
-            comp += out.energy;
-            improving += out.improving;
-            if out.energy < short.energy - 1e-9 {
-                helped += 1;
+                let short = tabu::search(
+                    &g,
+                    &tabu::Params {
+                        iterations: budget - budget / POLISH,
+                        ..Default::default()
+                    },
+                    seed,
+                );
+                let polish = hfs::Params {
+                    steps: (budget / POLISH / BLOCK).max(1),
+                    block: BLOCK,
+                    ..hfs::Params::default()
+                };
+                let out = hfs::run_from(&g, short.state.clone(), &polish, seed);
+                comp += out.energy;
+                improving += out.improving;
+                if out.energy < short.energy - 1e-9 {
+                    helped += 1;
+                }
             }
-        }
 
-        let m = SEEDS as f64;
-        println!(
-            "{l:>4} {n:>6} {:>9.1} {:>9.1} {:>9.1} {:>9.1} {:>9.1} {:>9.1}  {improving:>7} \
-             ({helped}/{SEEDS} seeds)",
-            sw / m,
-            tb / m,
-            bl / m,
-            hf / m,
-            comp / m,
-            comp / m - tb / m,
-        );
+            let m = SEEDS as f64;
+            println!(
+                "{label:>16} {n:>6} {:>9.1} {:>9.1} {:>9.1} {:>9.1} {:>9.1} {:>8.1}  {improving:>4} \
+                 ({helped}/{SEEDS})",
+                sw / m,
+                tb / m,
+                bl / m,
+                hf / m,
+                comp / m,
+                comp / m - tb / m,
+            );
+        }
+        if family == 0 {
+            println!();
+        }
     }
 
     println!(
-        "\nSTANDALONE, HFS LOSES. It is a descent -- the energy never rises -- so from a random\n\
-         start it falls into the first block-local minimum and stops. It has no temperature and no\n\
-         way back out. That is not a defect to be fixed; it is what the algorithm is, and it is why\n\
-         the literature runs it from a schedule of restarts rather than once."
+        "\nSTANDALONE, HFS LOSES ON THE LATTICE. It is a descent -- the energy never rises -- so\n\
+         from a random start it falls into the first block-local minimum and stops. It has no\n\
+         temperature and no way back out. That is what the algorithm is, and it is why the\n\
+         literature runs it from a schedule of restarts rather than once."
     );
     println!(
-        "\nAS A POLISH, IT DEPENDS ON SIZE, and the `improving moves` column is where that shows.\n\
-         At l = 12 and l = 20 it makes zero improving moves on tabu's answer: tabu has already\n\
-         found a state no induced tree can better, and no energy figure alone would tell you that.\n\
-         At l = 28 it makes them, and the delta column turns negative. A block move sees barriers a\n\
-         flip cannot, and there have to be barriers left for that to matter."
+        "\nCHIMERA IS THE STRUCTURE IT IS FOR, AND IT DOES NOT RESCUE IT. Chimera's shores each\n\
+         induce a forest, so half the graph is exactly solvable in one move, where a periodic\n\
+         lattice of treewidth l has no such split. HFS is still about 4% behind tabu on every\n\
+         Chimera row -- and the polish gains 1.2 there against 21.5 on the 28x28 lattice, which is\n\
+         the opposite of the ordering the structural argument predicts."
     );
     println!(
-        "\nTABU AND BREAKOUT TAKE NO STARTING STATE. `branch::Params` carries an `incumbent` and\n\
-         these two have no equivalent, so the composition above had to be built by handing HFS\n\
-         tabu's OUTPUT rather than by handing tabu a warm start. That asymmetry is a real gap in\n\
-         those two, not in this comparison."
+        "\nTHE `improving` COLUMN IS THE DIAGNOSTIC, not the energy. A polish that makes zero\n\
+         improving moves has been handed a state no block of its shape can better, and no energy\n\
+         figure says that. Zero with a good energy means tabu already won; zero with a bad one\n\
+         means the blocks are wrong for the graph."
+    );
+    println!(
+        "\nTABU AND BREAKOUT NOW TAKE A STARTING STATE, so the composition above could equally be\n\
+         built the other way round -- anneal, block-descend, then tabu from there. It is written\n\
+         as tabu-then-polish because that is the order the C ABI's `ft_hfs` doc recommends."
     );
 }

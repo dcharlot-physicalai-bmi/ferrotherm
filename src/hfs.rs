@@ -21,6 +21,24 @@
 //! had. A stack that means to make honest comparisons has to be able to run the algorithm the
 //! comparisons turned on.
 //!
+//! # What this is NOT, measured rather than assumed
+//!
+//! **It loses to [`crate::tabu`], including on Chimera.** `examples/hfs_reach` gives four arms the
+//! same budget of spin updates on both a 2D glass and `C_{m,m,4}` for m = 4, 6, 8, and HFS is behind
+//! at every size — about 4% behind on Chimera, which is the structure it is for. Swept before that
+//! was believed: block size from 8 to `n` moved the answer by under 1%, and restart counts from 1 to
+//! 256 never closed the gap (many short restarts made it much worse). The hubo comparison in this
+//! repository published a wrong negative because its beta ladder had not been swept, so those two
+//! sweeps happened before this sentence was written.
+//!
+//! What this module implements is **the block move** plus random block selection. Selby's algorithm
+//! is that plus a specific schedule over subgraphs, at C_{16,16,4} and budgets far past these. The
+//! gap between "has the move" and "is the algorithm" is where the difference plausibly lives, and
+//! naming it is more useful than a table that implies the move alone was the claim.
+//!
+//! Where it does earn its place is as a **polish**: on the 28×28 lattice, 90% of a budget on tabu
+//! plus 10% on block moves beats 100% on tabu by 21.5. On Chimera the same composition gains 1.2.
+//!
 //! # The conditioning, written out
 //!
 //! With `E(s) = −Σ h_i s_i − Σ J_ij s_i s_j` and a block `B` whose complement is held fixed,
@@ -160,6 +178,60 @@ pub fn tree_block(g: &Graph, seed: usize, target: usize, rng: &mut Pcg) -> Vec<u
     block
 }
 
+/// Grow an induced FOREST from `seed`, up to `target` nodes.
+///
+/// A node joins when at most one of its neighbours is already inside: zero starts a new component,
+/// one extends an existing one, and two would close a cycle. So the induced subgraph is acyclic by
+/// construction exactly as [`tree_block`]'s is — same width 1, same free exact solve — but it is not
+/// confined to one connected piece, and that is the whole difference.
+///
+/// **It is not bigger than a tree, and it is not better.** That was the guess this was written on
+/// and the measurement refused it: on `C_{4,4,4}` a tree block reaches 65 nodes and a forest 63,
+/// because [`tree_block`] grows a spanning tree rather than the single path the guess assumed. On a
+/// `C_{8,8,4}` glass, 200 moves from a random start, tree blocks reach a mean of −831.0 and forest
+/// blocks −821.0 — the forest makes MORE improving moves (174 against 132) and lands higher, which
+/// is what a search taking many small steps into a nearby minimum looks like.
+///
+/// It is kept because it is a different search and because a forest is the right shape when the
+/// blocks are supplied rather than grown. It is not the default.
+pub fn forest_block(g: &Graph, seed: usize, target: usize, rng: &mut Pcg) -> Vec<usize> {
+    if g.n == 0 || target == 0 {
+        return Vec::new();
+    }
+    let start = seed % g.n;
+    let mut inside = vec![false; g.n];
+    let mut block = Vec::with_capacity(target.min(g.n));
+    let mut touching = vec![0usize; g.n];
+
+    // Candidates in a shuffled order, so successive calls cover different parts of the graph --
+    // block variety is what makes a descent that never rises keep moving. Walking in index order
+    // would build the same block from every seed on a regularly-labelled graph, which Chimera is.
+    let mut order: Vec<usize> = (0..g.n).collect();
+    order.swap(0, start);
+    for i in 1..g.n {
+        let at = i + (rng.f64() * (g.n - i) as f64) as usize % (g.n - i);
+        order.swap(i, at);
+    }
+
+    for &cand in &order {
+        if block.len() >= target {
+            break;
+        }
+        // The invariant: joining with at most one neighbour inside cannot close a cycle, because
+        // closing one needs two edges into the existing set.
+        if touching[cand] > 1 {
+            continue;
+        }
+        inside[cand] = true;
+        block.push(cand);
+        for k in g.offset[cand]..g.offset[cand + 1] {
+            touching[g.nbr[k] as usize] += 1;
+        }
+    }
+    let _ = inside;
+    block
+}
+
 /// Grow a block without the tree restriction, and MEASURE its width.
 ///
 /// Returns `None` when the block that grew is wider than `max_width`. A wider block is a strictly
@@ -218,6 +290,26 @@ pub fn grown_block(
     Some(block)
 }
 
+/// How [`run`] chooses each block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blocks {
+    /// One induced subtree, grown outward from a seed. Width 1, connected. **The default**, on
+    /// measurement rather than on principle: see [`forest_block`] for the numbers it beat.
+    Tree,
+    /// An induced FOREST. Width 1 like a tree and not confined to one component.
+    ///
+    /// Measured WORSE than `Tree` on a Chimera glass, and it is not larger either — see
+    /// [`forest_block`], which records both numbers. Kept because it is a different search and the
+    /// right shape for supplied blocks, not because it wins.
+    Forest,
+    /// Grown without restriction and MEASURED, refused when wider than `max_width`.
+    ///
+    /// A wider block is a strictly stronger move and costs `2^w` to solve. A block that measures
+    /// too wide is skipped and counted in `Outcome::refused`, so a run that mostly skipped is
+    /// visible rather than merely disappointing.
+    Grown,
+}
+
 /// How to run the descent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
@@ -229,17 +321,13 @@ pub struct Params {
     /// Width ceiling for the exact solve. Only bites for blocks from [`grown_block`]; a tree is
     /// width 1.
     pub max_width: usize,
-    /// Attempt blocks that are grown freely and measured, rather than grown as trees.
-    ///
-    /// A wider block is a strictly stronger move. It is also refusable: a grown block that measures
-    /// too wide is skipped, and `Outcome::refused` counts how often that happened, so a run that
-    /// mostly skipped is visible rather than merely disappointing.
-    pub grown: bool,
+    /// How blocks are chosen. See [`Blocks`].
+    pub blocks: Blocks,
 }
 
 impl Default for Params {
     fn default() -> Self {
-        Params { steps: 400, block: 64, max_width: 12, grown: false }
+        Params { steps: 400, block: 64, max_width: 12, blocks: Blocks::Tree }
     }
 }
 
@@ -282,16 +370,16 @@ pub fn run_from(g: &Graph, start: Vec<i8>, p: &Params, seed: u64) -> Outcome {
             break;
         }
         let seed_node = (rng.f64() * g.n as f64) as usize % g.n;
-        let block = if p.grown {
-            match grown_block(g, seed_node, p.block, p.max_width, &mut rng) {
+        let block = match p.blocks {
+            Blocks::Tree => tree_block(g, seed_node, p.block, &mut rng),
+            Blocks::Forest => forest_block(g, seed_node, p.block, &mut rng),
+            Blocks::Grown => match grown_block(g, seed_node, p.block, p.max_width, &mut rng) {
                 Some(b) => b,
                 None => {
                     refused += 1;
                     continue;
                 }
-            }
-        } else {
-            tree_block(g, seed_node, p.block, &mut rng)
+            },
         };
         match step(g, &mut s, &block, &el) {
             Ok(d) => {
@@ -309,6 +397,81 @@ pub fn run_from(g: &Graph, start: Vec<i8>, p: &Params, seed: u64) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+
+    /// A forest block is a forest — and is NOT bigger than a tree, which is what this was written
+    /// expecting.
+    ///
+    /// The guess was that a tree walks one path on Chimera while a forest covers a shore. It does
+    /// not: `tree_block` grows a spanning tree. Both reach about half the graph, both are width 1,
+    /// and the assertion here is the one that survived measurement.
+    #[test]
+    fn a_forest_block_is_a_forest_and_is_about_the_size_of_a_tree() {
+        let g = crate::ising::chimera(4, 4, 4, 1.0);
+        let mut rng = Pcg::new(11, 1);
+
+        for seed in 0..8usize {
+            let f = forest_block(&g, seed, g.n, &mut rng);
+            let inside: std::collections::BTreeSet<usize> = f.iter().copied().collect();
+            assert_eq!(inside.len(), f.len(), "a block is a set");
+
+            // A forest on v vertices with c components has v - c edges, so edges < v is the
+            // acyclicity test that needs no component count.
+            let mut edges = 0usize;
+            for &i in &f {
+                for k in g.offset[i]..g.offset[i + 1] {
+                    let jj = g.nbr[k] as usize;
+                    if jj > i && inside.contains(&jj) {
+                        edges += 1;
+                    }
+                }
+            }
+            assert!(edges < f.len(), "{} vertices and {edges} edges is not acyclic", f.len());
+
+            let mut map = vec![usize::MAX; g.n];
+            for (a, &i) in f.iter().enumerate() {
+                map[i] = a;
+            }
+            let mut gb = GraphBuilder::new(f.len());
+            for (a, &i) in f.iter().enumerate() {
+                for k in g.offset[i]..g.offset[i + 1] {
+                    let jj = g.nbr[k] as usize;
+                    if map[jj] != usize::MAX && jj > i {
+                        gb.couple(a, map[jj], g.w[k]);
+                    }
+                }
+            }
+            assert!(Elimination::default().width(&gb.build()) <= 1);
+        }
+
+        // Both reach roughly a shore. Measured: 65 and 63 on this graph. The assertion is that
+        // neither dwarfs the other, which is what the first version of this test got wrong.
+        let mut r1 = Pcg::new(4, 1);
+        let mut r2 = Pcg::new(4, 1);
+        let tree = tree_block(&g, 0, g.n, &mut r1).len();
+        let forest = forest_block(&g, 0, g.n, &mut r2).len();
+        assert!(tree >= g.n / 4 && forest >= g.n / 4, "tree {tree}, forest {forest} of {}", g.n);
+        assert!(
+            (tree as i64 - forest as i64).abs() < g.n as i64 / 4,
+            "neither should dwarf the other: tree {tree}, forest {forest}"
+        );
+    }
+
+    /// The three strategies are three different searches, so `blocks` is not decorative.
+    #[test]
+    fn the_block_strategies_differ() {
+        let g = crate::ising::chimera_glass(4, 4, 4, 7);
+        let base = Params { steps: 60, block: 96, ..Params::default() };
+        let tree = run(&g, &Params { blocks: Blocks::Tree, ..base }, 3);
+        let forest = run(&g, &Params { blocks: Blocks::Forest, ..base }, 3);
+        assert!(
+            tree.energy != forest.energy || tree.state != forest.state,
+            "tree and forest blocks must be different searches"
+        );
+        // NOT asserted: that forest beats tree. It does not -- see `forest_block`. Asserting the
+        // guess here would have made this test a second copy of the belief rather than a check on
+        // it, which is exactly how a wrong design survives a green suite.
+    }
+
     use super::*;
     use crate::graph::GraphBuilder;
 

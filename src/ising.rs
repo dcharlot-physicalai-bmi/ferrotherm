@@ -40,6 +40,126 @@ pub fn lattice2d(l: usize, j: f64) -> Graph {
     gb.build()
 }
 
+/// A **Chimera** graph `C_{m,n,t}`: an `m × n` grid of unit cells, each a complete bipartite
+/// `K_{t,t}`, with cells joined between their matching shores.
+///
+/// This is D-Wave's 2000Q topology (`C_{16,16,4}`, 2048 qubits) and the graph almost every published
+/// annealer-versus-classical comparison was run on. This crate could not build one until now:
+/// `ring`, `lattice2d` and `grid2d` are all lattices of degree 4, `embed`'s King's graph lives only
+/// in its tests, and [`crate::hfs`] — the algorithm those comparisons turned on — had never been
+/// measured on the structure it exploits.
+///
+/// # The indexing, which is D-Wave's
+///
+/// A qubit is `(i, j, u, k)`: cell row `i`, cell column `j`, shore `u ∈ {0, 1}`, index `k ∈ [0, t)`.
+/// Linearised as
+///
+/// ```text
+///     index = ((i * n) + j) * 2t  +  u * t  +  k
+/// ```
+///
+/// so `dwave_networkx.chimera_graph(m, n, t)` with its default linear labelling gives the same
+/// numbers. Getting this wrong would produce a graph with the right SHAPE and the wrong labels,
+/// which no count would catch and every embedding would inherit.
+///
+/// Edges:
+///
+/// - **within a cell**, every shore-0 qubit to every shore-1 qubit: `t²` per cell;
+/// - **vertically**, shore 0 to shore 0 between `(i, j)` and `(i+1, j)` at matching `k`;
+/// - **horizontally**, shore 1 to shore 1 between `(i, j)` and `(i, j+1)` at matching `k`.
+///
+/// So `|V| = 2·t·m·n` and `|E| = m·n·t² + (m−1)·n·t + m·(n−1)·t`.
+///
+/// # Why the shores matter
+///
+/// Shore 0 touches shore 1 only *inside* a cell, and shore 0 touches shore 0 only *vertically*. So
+/// **the subgraph induced on all of shore 0 is a disjoint union of paths** — one per `(j, k)`, of
+/// length `m` — and therefore a forest of width 1. Shore 1 is the same, horizontally. Two blocks,
+/// each exactly solvable, together covering every vertex.
+///
+/// That is the decomposition Selby's HFS implementation exploits, and a periodic square lattice has
+/// no such split: its treewidth is its side.
+///
+/// **It does not follow that block methods win here, and measuring it said they do not.**
+/// `examples/hfs_reach` runs [`crate::hfs`] against tabu on `C_{4,4,4}` through `C_{8,8,4}` at a
+/// matched budget and HFS loses by about 4% at every size — after sweeping block size from 8 to
+/// `n` and restart counts from 1 to 256, neither of which moved it. Recorded here because this
+/// paragraph originally asserted the opposite from the literature rather than from a run.
+///
+/// `j` is the uniform coupling. For the spin-glass instances these comparisons actually use, build
+/// with `j = 1.0` and rewrite the weights, or use [`chimera_glass`].
+pub fn chimera(m: usize, n: usize, t: usize, j: f64) -> Graph {
+    let cells = m * n;
+    if cells == 0 || t == 0 {
+        return GraphBuilder::new(0).build();
+    }
+    let idx = |i: usize, jj: usize, u: usize, k: usize| ((i * n) + jj) * 2 * t + u * t + k;
+    let mut gb = GraphBuilder::new(2 * t * cells);
+    for i in 0..m {
+        for jj in 0..n {
+            // The cell: K_{t,t} between the shores.
+            for a in 0..t {
+                for b in 0..t {
+                    gb.couple(idx(i, jj, 0, a), idx(i, jj, 1, b), j);
+                }
+            }
+            // Shore 0 runs vertically, shore 1 runs horizontally. Each edge once, forward only.
+            if i + 1 < m {
+                for k in 0..t {
+                    gb.couple(idx(i, jj, 0, k), idx(i + 1, jj, 0, k), j);
+                }
+            }
+            if jj + 1 < n {
+                for k in 0..t {
+                    gb.couple(idx(i, jj, 1, k), idx(i, jj + 1, 1, k), j);
+                }
+            }
+        }
+    }
+    gb.build()
+}
+
+/// A Chimera **spin glass**: the same graph with couplings drawn uniformly from `{−1, +1}`.
+///
+/// The instance family the annealer-versus-classical literature is written about. Uniform ±1 rather
+/// than Gaussian because that is what the D-Wave benchmark sets used, and the point of having this
+/// is to be able to run the same comparisons rather than adjacent ones.
+pub fn chimera_glass(m: usize, n: usize, t: usize, seed: u64) -> Graph {
+    let g = chimera(m, n, t, 1.0);
+    let mut rng = crate::rng::Pcg::new(seed, 0x00C1_1E5A);
+    let mut gb = GraphBuilder::new(g.n);
+    for i in 0..g.n {
+        for k in g.offset[i]..g.offset[i + 1] {
+            let jj = g.nbr[k] as usize;
+            if jj > i {
+                gb.couple(i, jj, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+            }
+        }
+    }
+    gb.build()
+}
+
+/// The qubits of one Chimera shore, which induce a **forest** and so are exactly solvable.
+///
+/// `u = 0` is the vertical shore, `u = 1` the horizontal one. Together the two cover every vertex
+/// and neither induces a cycle, which is what makes them the natural blocks for [`crate::hfs`].
+///
+/// Returns an empty list when the arguments do not describe a graph.
+pub fn chimera_shore(m: usize, n: usize, t: usize, u: usize) -> Vec<usize> {
+    if m * n == 0 || t == 0 || u > 1 {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(t * m * n);
+    for i in 0..m {
+        for jj in 0..n {
+            for k in 0..t {
+                out.push(((i * n) + jj) * 2 * t + u * t + k);
+            }
+        }
+    }
+    out
+}
+
 /// Exact Boltzmann distribution over all 2^n states (n <= 24). Returns probabilities indexed by
 /// bitmask (bit b set => spin b = +1).
 /// A `w × h` grid with **open** boundaries: the planar one.
@@ -132,6 +252,142 @@ pub fn tv(p: &[f64], q: &[f64]) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Counts first, because they are cheap and they catch a whole class of wrong.
+    #[test]
+    fn chimera_has_the_vertices_and_edges_the_formula_says() {
+        for (m, n, tt) in [(1usize, 1usize, 4usize), (2, 3, 4), (4, 4, 4), (16, 16, 4), (3, 3, 2)] {
+            let g = chimera(m, n, tt, 1.0);
+            assert_eq!(g.n, 2 * tt * m * n, "C_{{{m},{n},{tt}}} vertices");
+            let want = m * n * tt * tt + (m - 1) * n * tt + m * (n - 1) * tt;
+            assert_eq!(g.n_edges, want, "C_{{{m},{n},{tt}}} edges");
+        }
+        // The one everyone quotes: D-Wave 2000Q.
+        let dw = chimera(16, 16, 4, 1.0);
+        assert_eq!(dw.n, 2048, "C_16,16,4 is 2048 qubits");
+        assert_eq!(dw.n_edges, 6016);
+    }
+
+    /// The DEGREE PROFILE, which is what a wrong wiring changes and a count does not.
+    ///
+    /// In `C_{m,n,t}` every qubit has `t` intra-cell neighbours plus one inter-cell neighbour per
+    /// direction it is not on the boundary of. So the interior degree is `t + 2` and a corner cell's
+    /// qubits sit at `t + 1`. Getting the shores backwards -- wiring shore 0 horizontally -- leaves
+    /// every count above identical and this distribution unchanged too, which is why the shore test
+    /// below exists as well.
+    #[test]
+    fn chimera_degrees_are_t_plus_the_directions_a_qubit_is_not_on_the_edge_of() {
+        let (m, n, tt) = (4usize, 5usize, 4usize);
+        let g = chimera(m, n, tt, 1.0);
+        for i in 0..m {
+            for jj in 0..n {
+                for u in 0..2 {
+                    for k in 0..tt {
+                        let q = ((i * n) + jj) * 2 * tt + u * tt + k;
+                        let deg = g.offset[q + 1] - g.offset[q];
+                        // Shore 0 runs vertically (rows), shore 1 horizontally (columns).
+                        let inter = if u == 0 {
+                            usize::from(i > 0) + usize::from(i + 1 < m)
+                        } else {
+                            usize::from(jj > 0) + usize::from(jj + 1 < n)
+                        };
+                        assert_eq!(
+                            deg,
+                            tt + inter,
+                            "({i},{jj},{u},{k}) index {q}: degree {deg}, expected {} + {inter}",
+                            tt
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// THE PROPERTY THE WHOLE THING IS FOR: each shore induces a FOREST.
+    ///
+    /// Shore 0 touches shore 1 only inside a cell and shore 0 only vertically, so the subgraph it
+    /// induces is a disjoint union of `n·t` paths of length `m` -- acyclic, width 1, exactly
+    /// solvable. Two such blocks cover every vertex. If the shores were wired the same way as each
+    /// other, or a cell's `K_{t,t}` leaked a same-shore edge, this is what would catch it.
+    #[test]
+    fn each_chimera_shore_induces_a_forest_and_the_two_cover_everything() {
+        let (m, n, tt) = (4usize, 5usize, 4usize);
+        let g = chimera(m, n, tt, 1.0);
+        let mut seen = vec![false; g.n];
+
+        for u in 0..2 {
+            let shore = chimera_shore(m, n, tt, u);
+            assert_eq!(shore.len(), tt * m * n, "a shore is half the graph");
+            let inside: std::collections::BTreeSet<usize> = shore.iter().copied().collect();
+            assert_eq!(inside.len(), shore.len(), "a shore is a set");
+
+            let mut edges = 0usize;
+            for &q in &shore {
+                seen[q] = true;
+                for k in g.offset[q]..g.offset[q + 1] {
+                    let r = g.nbr[k] as usize;
+                    if r > q && inside.contains(&r) {
+                        edges += 1;
+                    }
+                }
+            }
+            // A forest of `c` components on `v` vertices has exactly `v - c` edges. Shore 0 is
+            // `n*t` vertical paths; shore 1 is `m*t` horizontal ones.
+            let components = if u == 0 { n * tt } else { m * tt };
+            assert_eq!(
+                edges,
+                shore.len() - components,
+                "shore {u}: {} vertices, {edges} edges, {components} paths is not a forest",
+                shore.len()
+            );
+
+            // And the exact solver agrees: width 1.
+            let mut map = vec![usize::MAX; g.n];
+            for (a, &q) in shore.iter().enumerate() {
+                map[q] = a;
+            }
+            let mut gb = GraphBuilder::new(shore.len());
+            for (a, &q) in shore.iter().enumerate() {
+                for k in g.offset[q]..g.offset[q + 1] {
+                    let r = g.nbr[k] as usize;
+                    if map[r] != usize::MAX && r > q {
+                        gb.couple(a, map[r], g.w[k]);
+                    }
+                }
+            }
+            assert_eq!(crate::exact::Elimination::default().width(&gb.build()), 1);
+        }
+        assert!(seen.iter().all(|&x| x), "the two shores must cover every vertex");
+    }
+
+    /// A glass has the same graph and different weights, and the weights are actually mixed.
+    #[test]
+    fn a_chimera_glass_is_the_same_graph_with_signs() {
+        let plain = chimera(3, 3, 4, 1.0);
+        let g = chimera_glass(3, 3, 4, 11);
+        assert_eq!(g.n, plain.n);
+        assert_eq!(g.n_edges, plain.n_edges);
+        assert!(g.w.iter().all(|w| w.abs() == 1.0), "couplings are +/-1");
+        let pos = g.w.iter().filter(|w| **w > 0.0).count();
+        assert!(pos > 0 && pos < g.w.len(), "a glass is frustrated, not a ferromagnet: {pos}");
+        // Same seed, same instance -- otherwise no comparison across arms means anything.
+        assert_eq!(g.w, chimera_glass(3, 3, 4, 11).w);
+        assert_ne!(g.w, chimera_glass(3, 3, 4, 12).w);
+    }
+
+    #[test]
+    fn a_degenerate_chimera_is_empty_rather_than_a_panic() {
+        assert_eq!(chimera(0, 4, 4, 1.0).n, 0);
+        assert_eq!(chimera(4, 0, 4, 1.0).n, 0);
+        assert_eq!(chimera(4, 4, 0, 1.0).n, 0);
+        assert!(chimera_shore(0, 4, 4, 0).is_empty());
+        assert!(chimera_shore(4, 4, 4, 2).is_empty(), "there are two shores");
+        // A single cell is a legitimate K_{t,t} with no inter-cell edges at all.
+        let one = chimera(1, 1, 4, 1.0);
+        assert_eq!(one.n, 8);
+        assert_eq!(one.n_edges, 16);
+    }
+
     use super::*;
 
     #[test]

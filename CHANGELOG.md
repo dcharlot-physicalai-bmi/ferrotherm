@@ -44,6 +44,63 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### Chimera, and HFS measured on the structure it is for — where it also loses
+
+The HFS entry below closed with a written-down gap: this crate could not build a Chimera graph, so
+the algorithm could only be measured away from home. `ising::chimera(m, n, t, j)` builds it now, with
+D-Wave's linear labelling — `C_{16,16,4}` comes out at **2048 vertices and 6016 edges**, which are
+the 2000Q's own numbers. `chimera_glass` is the ±1 instance family the annealer-versus-classical
+literature is written about, and `chimera_shore` returns either shore.
+
+The labelling is the part no count would catch, so it is tested three ways: vertex and edge counts
+against the closed form at five shapes; the **degree profile** per `(i, j, u, k)`, which changes if
+the shores are wired the wrong way round while every count stays identical; and the property the
+whole thing exists for — **each shore induces a forest** of exactly `n·t` (or `m·t`) disjoint paths,
+covering every vertex between them, confirmed at width 1 by the exact solver.
+
+**And then HFS was run on it, and it loses there too.**
+
+| instance | spins | sweeps | tabu | breakout | hfs | tabu+hfs | delta | improving |
+|---|---|---|---|---|---|---|---|---|
+| lattice 12×12 | 144 | −199.5 | **−202.5** | −201.0 | −196.5 | −202.5 | 0.0 | 0 (0/8) |
+| lattice 20×20 | 400 | −546.5 | **−555.0** | −551.5 | −541.0 | −555.0 | 0.0 | 0 (0/8) |
+| lattice 28×28 | 784 | −1063.2 | −1041.8 | **−1068.8** | −1055.2 | −1063.2 | **−21.5** | 42 (7/8) |
+| chimera C_4,4,4 | 128 | −212.2 | **−215.2** | −213.0 | −210.2 | −215.2 | 0.0 | 0 (0/8) |
+| chimera C_6,6,4 | 288 | −482.8 | −493.0 | −485.8 | −477.2 | **−493.5** | −0.5 | 2 (1/8) |
+| chimera C_8,8,4 | 512 | −867.5 | −868.2 | −866.8 | −845.8 | **−869.5** | −1.2 | 5 (3/8) |
+
+About 4% behind tabu on every Chimera row — and the polish gains **1.2** there against **21.5** on
+the 28×28 lattice, which is the *opposite* of the ordering the structural argument predicts.
+
+Two sweeps happened before that was believed, because the `hubo` comparison in this repository
+published a wrong negative once already by not sweeping its beta ladder:
+
+- **block size** from 8 to `n`: moves the answer by under 1% at every value;
+- **restarts** from 1 to 256 independent starts at the same total budget: 8 restarts helps a little
+  (−205.0 → −213.8 on `C_{4,4,4}`), 256 is far worse, and none closes the gap.
+
+So the negative holds. What this module has is **the block move plus random block selection**;
+Selby's algorithm is that plus a specific schedule over subgraphs, at `C_{16,16,4}` and budgets far
+past these. Naming the gap between *has the move* and *is the algorithm* is more useful than a table
+implying the move alone was the claim.
+
+Two of my own unmeasured assertions were corrected rather than left standing: `ising::chimera`'s doc
+said Chimera is "the graph where block methods beat single-flip ones", and `hfs`'s said the same in
+other words. Both came from the literature rather than from a run, and both now carry the run.
+
+**A block strategy that did not work out, kept and labelled.** `forest_block` grows an induced
+forest rather than one tree, on the guess that a tree walks one Chimera path while a forest covers a
+shore. Both halves were wrong: `tree_block` grows a *spanning* tree, so on `C_{4,4,4}` a tree reaches
+65 nodes and a forest 63; and on a `C_{8,8,4}` glass tree blocks reach −831.0 against the forest's
+−821.0, with the forest making *more* improving moves (174 against 132) and landing higher. `Tree`
+is the default, on measurement. The test that asserted the guess was rewritten to assert what
+survived it — asserting the guess would have made the test a second copy of the belief.
+
+Worth recording separately: **the textbook shore decomposition is the worst of the three.**
+Alternating the two shores — exactly the pair Selby's structure suggests — reaches −769.7 against
+tree blocks' −831.0, making 37 improving moves in 1200. Two fixed blocks converge to a fixed point
+of that pair and then have nowhere to go; block *variety* is doing the work, not block *quality*.
+
 ### Two CI runs failed on one broken doc link, and I built the wrong scope
 
 `RUSTDOCFLAGS='-D warnings' cargo doc` is a CI gate and an intra-doc link to `ft_verify_tv` — a
