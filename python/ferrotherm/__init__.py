@@ -167,6 +167,9 @@ _icm = _sig("ft_icm", c_double, [_p, c_uint32, c_uint32, c_double, c_double])
 _icm_moves = _sig("ft_icm_moves", c_uint64, [_p])
 _sqa = _sig("ft_sqa", c_double, [_p, c_uint32, c_double, c_double, c_double, c_uint32])
 _bls = _sig("ft_bls", c_double, [_p, c_uint32])
+_hfs = _sig("ft_hfs", c_double, [_p, c_uint32, c_uint32])
+_hfs_moves = _sig("ft_hfs_moves", ctypes.c_uint64, [_p])
+_hfs_improving = _sig("ft_hfs_improving", ctypes.c_uint64, [_p])
 _bls_descents = _sig("ft_bls_descents", c_uint64, [_p])
 _bls_iterations = _sig("ft_bls_iterations", c_uint64, [_p])
 _bls_max_jump = _sig("ft_bls_max_jump", c_uint32, [_p])
@@ -965,6 +968,36 @@ is how a dropped GPU dispatch turns into a believable energy.
         """
         self._live()
         return float(_tabu(self._h, int(iterations), int(tenure), int(restart_after)))
+
+    def hfs(self, steps: int = 400, block: int = 0) -> float:
+        """Hamze-de Freitas-Selby: solve a low-treewidth **block** exactly, repeatedly.
+
+        Every other local search here flips one spin and asks whether that helped.
+        This takes the exact best assignment of a whole subgraph with everything outside it held
+        fixed, so it steps over any barrier living entirely inside the block rather than paying to
+        climb it. It is the algorithm that turned the first generation of quantum-annealer speedup
+        claims.
+
+        Starts from this simulation's **current** state, so it composes — anneal, then
+        :meth:`tabu`, then this — and being a descent it can never undo what found that state.
+        ``block=0`` takes the default. Blocks are grown as induced trees, width 1 by construction,
+        so nothing here is refused for width.
+
+        Read :meth:`hfs_improving` afterwards: a run whose blocks all land on a minimum they already
+        sit in has stopped, and the energy alone does not show that.
+        """
+        self._live()
+        return float(_hfs(self._h, int(steps), int(block)))
+
+    def hfs_moves(self) -> int:
+        """Block moves the last :meth:`hfs` ran, or 0 if there was none."""
+        self._live()
+        return int(_hfs_moves(self._h))
+
+    def hfs_improving(self) -> int:
+        """Block moves that strictly lowered the energy, or 0 if there was none."""
+        self._live()
+        return int(_hfs_improving(self._h))
 
     def tabu_iterations(self) -> int:
         """Iterations the last :meth:`tabu` actually ran, or 0 if there was none."""

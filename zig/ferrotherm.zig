@@ -134,6 +134,30 @@ pub const Sim = struct {
     /// Costs `2n` eliminations -- `O(n * 2^width)` against the single `O(2^width)` of `exactLogZ`
     /// -- so ask `exactWidth()` before requesting it on anything wide. Refused, not approximated,
     /// when the graph is too wide.
+    /// Hamze-de Freitas-Selby: solve a low-treewidth BLOCK exactly, repeatedly.
+    ///
+    /// Every other local search here flips one spin and asks whether that helped. This takes the
+    /// exact best assignment of a whole subgraph with everything outside it held fixed, so it steps
+    /// over any barrier that lives entirely inside the block rather than paying to climb it.
+    ///
+    /// Starts from this simulation's CURRENT state, so it composes -- anneal, then tabu, then this
+    /// -- and being a descent it can never undo what found that state. `block = 0` takes the
+    /// default. Read `hfsImproving()` after: a run whose blocks all land on a minimum they already
+    /// sit in has stopped, and the energy alone does not show that.
+    pub fn hfs(self: Sim, steps: u32, block: u32) f64 {
+        return c.ft_hfs(self.h, steps, block);
+    }
+
+    /// Block moves the last `hfs` ran.
+    pub fn hfsMoves(self: Sim) u64 {
+        return c.ft_hfs_moves(self.h);
+    }
+
+    /// Block moves that strictly LOWERED the energy.
+    pub fn hfsImproving(self: Sim) u64 {
+        return c.ft_hfs_improving(self.h);
+    }
+
     pub fn exactMarginals(self: Sim, beta: f64, max_width: u32, out: []f64) Error!void {
         if (c.ft_exact_marginals(self.h, beta, max_width, out.ptr, @intCast(out.len)) == 0) {
             return Error.RejectedEntry;
@@ -439,6 +463,27 @@ pub fn onsager(beta: f64) f64 {
 }
 
 // ---- tests ---------------------------------------------------------------------------------
+
+test "a block descent composes after annealing and never undoes it" {
+    var m = try Model.init(64);
+    defer m.deinit();
+    var i: u32 = 0;
+    while (i < 64) : (i += 1) {
+        try m.couple(i, (i + 1) % 64, if (i % 3 == 0) 1.0 else -1.0);
+    }
+    var s = try m.build(1.0, 0x5A);
+    defer s.deinit();
+    _ = try s.anneal(0.05, 4.0, 40, 20);
+    const after = s.energy();
+
+    const e = s.hfs(200, 24);
+    // A descent cannot rise, which is what every claim about composing this rests on.
+    try std.testing.expect(e <= after + 1e-9);
+    // And the number returned is the energy of the state left behind, not one carried along.
+    try std.testing.expectApproxEqAbs(s.energy(), e, 1e-9);
+    try std.testing.expect(s.hfsMoves() > 0);
+    try std.testing.expect(s.hfsImproving() <= s.hfsMoves());
+}
 
 test "an answer is scored in the modeller's own units" {
     var p = try Problem.init();

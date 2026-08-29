@@ -44,6 +44,63 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### Hamze-de Freitas-Selby, and what measuring it actually showed
+
+A survey of this stack against the literature named six missing algorithms. An adversarial pass
+killed five — four "real but not worth it", one not missing at all. **HFS was the one that
+survived**, and both halves it needs were already here and had never been put together:
+`exact::Elimination` solves a graph in `2^w`, and `branch` already computes the residual field a
+fixed neighbourhood exerts.
+
+`src/hfs.rs` is the observation that those compose. Condition on the complement of a block, and what
+is left is small enough to solve outright — so instead of flipping one spin and asking whether that
+helped, it takes the **exact best** assignment of a whole subgraph. Blocks are grown as induced
+**trees**, which makes them width 1 *by construction*: nothing computes a width, searches for an
+order, or can be surprised by one. `grown_block` offers the unrestricted version, which measures the
+width and refuses rather than approximating.
+
+The conditioning is the only place a sign error could hide, so `step` is tested against **brute force
+over the block** — enumerating `2^|B|` assignments and scoring each with the whole graph's energy,
+which is a different computation from folding frozen neighbours into fields and eliminating
+variables. Also tested: that a tree block has exactly `k−1` induced edges, that the descent never
+raises the energy across 60 moves, and that block moves beat single-flip steepest descent from
+identical starts.
+
+**And then it was measured, and standalone it loses.** `examples/hfs_reach` gives four arms the same
+budget of single-spin updates on a 2D glass — with HFS charged one flip per spin in every block,
+which understates a block move's arithmetic and so is generous to the others:
+
+| l | spins | sweeps | tabu | breakout | hfs | tabu+hfs | delta | improving moves |
+|---|---|---|---|---|---|---|---|---|
+| 12 | 144 | −199.5 | **−202.5** | −201.0 | −196.5 | −202.5 | 0.0 | 0 (0/8 seeds) |
+| 20 | 400 | −546.5 | **−555.0** | −551.5 | −541.0 | −555.0 | 0.0 | 0 (0/8 seeds) |
+| 28 | 784 | −1063.2 | −1041.8 | **−1068.8** | −1055.2 | −1063.2 | **−21.5** | 42 (7/8 seeds) |
+
+It loses at every size, and that is the honest headline. It is a **descent** — the energy never
+rises — so from a random start it falls into the first block-local minimum and stops, with no
+temperature and no way back out.
+
+**As a polish it depends on size, and the improving-moves column is where that shows.** At l = 12
+and l = 20 it makes *zero* improving moves on tabu's answer: tabu has already found a state no
+induced tree can better, and no energy figure alone would say so. At l = 28 it makes 42, and 90% of
+the budget spent on tabu plus 10% on block moves beats 100% on tabu by **21.5**. The polish more
+than repays the budget it took.
+
+Why a 2D glass is not HFS's best case is stated in the example rather than left out because the
+result is negative: the algorithm exploits graphs that DECOMPOSE into low-treewidth pieces, and
+Chimera does while a periodic lattice of treewidth `l` does not. **This crate has no Chimera
+generator** — `ising.rs` has ring, grid and lattice; `embed.rs` builds a King's graph only in its
+tests — so the structure HFS is actually for cannot be built here yet. That is a gap in the instance
+library, written down rather than worked around by choosing a friendlier instance.
+
+`ft_hfs`, `ft_hfs_moves` and `ft_hfs_improving` on the C ABI, with wrappers in Python, Zig and
+Julia. It starts from the simulation's current state, so it composes after an anneal or after tabu,
+and being a descent it can never undo what found that state.
+
+One gap it surfaced and did not close: **`tabu::Params` and `bls::Params` take no starting state**,
+where `branch::Params` carries an `incumbent`. The composition above had to be built by handing HFS
+tabu's output rather than by handing tabu a warm start.
+
 ### `exact` promised marginals and shipped log Z
 
 The module doc says sum-product gives the exact log partition function "**and with it exact

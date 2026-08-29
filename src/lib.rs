@@ -103,6 +103,7 @@ pub mod tabu;
 pub mod bls;
 pub mod icm;
 pub mod sqa;
+pub mod hfs;
 pub mod hubo;
 pub mod matching;
 pub mod planar;

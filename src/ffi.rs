@@ -69,6 +69,8 @@ pub struct Sim {
     pa: Option<crate::popanneal::Outcome>,
     /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
     bb: Option<crate::branch::Outcome>,
+    /// The last HFS descent, for the `ft_hfs_*` accessors.
+    hf: Option<crate::hfs::Outcome>,
     sampler_state: Vec<i8>,
     beta: f64,
     seed: u64,
@@ -84,7 +86,7 @@ impl Sim {
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
         Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None }))
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None }))
     }
 }
 
@@ -2917,6 +2919,52 @@ pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
     e
 }
 
+/// Hamze-de Freitas-Selby: solve a low-treewidth BLOCK exactly, repeatedly.
+///
+/// Every other local search here flips one spin and asks whether that helped. This takes the exact
+/// best assignment of a whole subgraph given everything outside it held fixed, so it steps over any
+/// barrier living entirely inside the block rather than paying to climb it. It is the algorithm
+/// that turned the first generation of quantum-annealer speedup claims, and a stack that means to
+/// make honest comparisons has to be able to run it.
+///
+/// Starts from THIS SIMULATION'S CURRENT STATE, so it composes: anneal, then tabu, then this. It is
+/// a descent -- the energy never rises -- so it cannot undo whatever found the state it starts from.
+///
+/// `block` of 0 takes the default. Blocks are grown as induced TREES, whose width is 1 by
+/// construction, so nothing here can be refused for width. Returns the best energy found, or NaN on
+/// a null handle.
+#[no_mangle]
+pub extern "C" fn ft_hfs(sim: *mut Sim, steps: u32, block: u32) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let p = crate::hfs::Params {
+        steps: steps.max(1) as usize,
+        block: if block == 0 { crate::hfs::Params::default().block } else { block as usize },
+        ..crate::hfs::Params::default()
+    };
+    let out = crate::hfs::run_from(&s.graph, s.sampler_state.clone(), &p, s.seed);
+    if out.state.len() == s.sampler_state.len() {
+        s.sampler_state.copy_from_slice(&out.state);
+    }
+    let e = out.energy;
+    s.hf = Some(out);
+    e
+}
+
+/// Block moves the last [`ft_hfs`] actually ran. 0 if there was none.
+#[no_mangle]
+pub extern "C" fn ft_hfs_moves(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.hf.as_ref()).map_or(0, |o| o.moves as u64)
+}
+
+/// Block moves that strictly LOWERED the energy. 0 if there was none.
+///
+/// The number that says whether the descent is still going: a run whose blocks all land on a
+/// minimum they already sit in has stopped, and no energy figure shows that.
+#[no_mangle]
+pub extern "C" fn ft_hfs_improving(sim: *const Sim) -> u64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.hf.as_ref()).map_or(0, |o| o.improving as u64)
+}
+
 /// Local optima the last [`ft_bls`] visited. 0 if there was none.
 ///
 /// The number that says whether the search had room to work: a run with a handful of descents spent
@@ -4001,5 +4049,63 @@ mod parallel_sweep_tests {
         let n: *mut Sim = core::ptr::null_mut();
         assert_eq!(ft_sweep_par(n, 10, 4), 0);
         assert_eq!(ft_threads_used(core::ptr::null()), 0);
+    }
+}
+
+#[cfg(test)]
+mod hfs_ffi {
+    use super::*;
+
+    #[test]
+    fn a_block_descent_composes_after_annealing_and_never_undoes_it() {
+        // The composition claim on ft_hfs, tested rather than asserted: it starts from the
+        // simulation's CURRENT state, and being a descent it cannot make that state worse.
+        let sim = ft_planted_frustrated(6, 40, 3, 1.0);
+        assert!(!sim.is_null());
+        ft_anneal(sim, 0.05, 4.0, 60, 40);
+        let after_anneal = ft_energy(sim);
+
+        let e = ft_hfs(sim, 200, 32);
+        assert!(e <= after_anneal + 1e-9, "a descent cannot rise: {after_anneal} -> {e}");
+        // The returned energy is the energy of the state left behind, not a number carried along.
+        assert!((ft_energy(sim) - e).abs() < 1e-9);
+        assert!(ft_hfs_moves(sim) > 0, "a run that made no move is not a run");
+        assert!(ft_hfs_improving(sim) <= ft_hfs_moves(sim));
+        ft_free(sim);
+    }
+
+    #[test]
+    fn block_moves_reach_lower_energy_than_the_same_budget_of_sweeps() {
+        // Not a speed claim -- the machine is loaded and no rate here is quotable. A claim about
+        // REACH: a block move sees barriers a single flip cannot, so from the same start it should
+        // land lower on a frustrated instance more often than not.
+        let (mut better, mut worse) = (0, 0);
+        for seed in 0..8u64 {
+            let a = ft_planted_frustrated(6, 40, 3 + seed, 1.0);
+            let b = ft_planted_frustrated(6, 40, 3 + seed, 1.0);
+            ft_anneal(a, 0.05, 4.0, 40, 20);
+            ft_anneal(b, 0.05, 4.0, 40, 20);
+            let hfs = ft_hfs(a, 150, 32);
+            let swept = {
+                ft_sweep(b, 150 * 32);
+                ft_energy(b)
+            };
+            if hfs < swept - 1e-9 {
+                better += 1;
+            } else if hfs > swept + 1e-9 {
+                worse += 1;
+            }
+            ft_free(a);
+            ft_free(b);
+        }
+        assert!(better >= worse, "block moves reached lower {better} times, higher {worse}");
+    }
+
+    #[test]
+    fn every_hfs_call_is_inert_on_a_null_handle() {
+        let n: *mut Sim = core::ptr::null_mut();
+        assert!(ft_hfs(n, 10, 8).is_nan());
+        assert_eq!(ft_hfs_moves(core::ptr::null()), 0);
+        assert_eq!(ft_hfs_improving(core::ptr::null()), 0);
     }
 }

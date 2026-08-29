@@ -58,6 +58,7 @@ export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
+export hfs!, hfs_moves, hfs_improving
 export certify, findings, passed
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
@@ -182,6 +183,9 @@ const BldPtr = Ptr{Cvoid}
 
 const HuboPtr = Ptr{Cvoid}
 
+@cfn ft_hfs Cdouble SimPtr Cuint Cuint
+@cfn ft_hfs_moves Culonglong SimPtr
+@cfn ft_hfs_improving Culonglong SimPtr
 @cfn ft_exact_marginals Cuint SimPtr Cdouble Cuint Ptr{Cdouble} Cuint
 @cfn ft_sweep_par Culonglong SimPtr Cuint Cuint
 @cfn ft_threads_used Cuint SimPtr
@@ -484,6 +488,31 @@ Not the number you passed in: a browser has no threads to spread across, and a c
 three nodes cannot occupy eight workers.
 """
 threads_used(s::Simulation) = (_live(s); Int(ft_threads_used(s.handle)))
+
+"""
+    hfs!(s; steps = 400, block = 0)
+
+Hamze-de Freitas-Selby: solve a low-treewidth **block** exactly, repeatedly.
+
+Every other local search here flips one spin and asks whether that helped. This takes the exact best
+assignment of a whole subgraph with everything outside it held fixed, so it steps over any barrier
+living entirely inside the block rather than paying to climb it.
+
+Starts from the simulation's **current** state, so it composes -- anneal, then tabu, then this --
+and being a descent it can never undo what found that state. Read [`hfs_improving`](@ref) after: a
+run whose blocks all land on a minimum they already sit in has stopped, and the energy does not
+show that.
+"""
+function hfs!(s::Simulation; steps::Integer = 400, block::Integer = 0)
+    _live(s)
+    ft_hfs(s.handle, Cuint(steps), Cuint(block))
+end
+
+"""Block moves the last [`hfs!`](@ref) ran."""
+hfs_moves(s::Simulation) = (_live(s); Int(ft_hfs_moves(s.handle)))
+
+"""Block moves that strictly LOWERED the energy."""
+hfs_improving(s::Simulation) = (_live(s); Int(ft_hfs_improving(s.handle)))
 
 """
     exact_marginals(s; beta = 1.0, max_width = 22)

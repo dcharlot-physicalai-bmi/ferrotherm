@@ -262,6 +262,23 @@ double ft_bls(ft_sim *sim, uint32_t iterations);
 
 /* Local optima the last ft_bls visited. A run with a handful of descents spent its budget inside
    one basin and is a descent, not a breakout search. */
+/* Hamze-de Freitas-Selby: solve a low-treewidth BLOCK exactly, repeatedly.
+ *
+ * Every other local search here flips one spin and asks whether that helped. This takes the exact
+ * best assignment of a whole subgraph with everything outside it held fixed, so it steps over any
+ * barrier that lives entirely inside the block rather than paying to climb it. It is the algorithm
+ * that turned the first generation of quantum-annealer speedup claims.
+ *
+ * Starts from the simulation's CURRENT state, so it composes: anneal, then tabu, then this. It is a
+ * descent -- the energy never rises -- so it cannot undo what found the state it starts from.
+ * `block` of 0 takes the default. Blocks are grown as induced TREES, width 1 by construction, so
+ * nothing here is refused for width. NaN on a null handle. */
+double ft_hfs(ft_sim *sim, uint32_t steps, uint32_t block);
+uint64_t ft_hfs_moves(const ft_sim *sim);
+/* Block moves that strictly LOWERED the energy: a descent whose blocks all land on a minimum they
+ * already sit in has stopped, and no energy figure shows that. */
+uint64_t ft_hfs_improving(const ft_sim *sim);
+
 uint64_t ft_bls_descents(const ft_sim *sim);
 
 /* Flips the last ft_bls actually made, which is not always the budget it was given. */
