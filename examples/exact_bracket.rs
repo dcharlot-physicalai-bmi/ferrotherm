@@ -57,7 +57,7 @@ fn main() {
             // root; without one it spends its first descent finding what tabu found in milliseconds.
             let t = tabu::search(
                 &g,
-                &tabu::Params { iterations: 20_000, tenure: n / 4, restart_after: Some(2_000) },
+                &tabu::Params { iterations: 20_000, tenure: n / 4, restart_after: Some(2_000) , start: None },
                 seed,
             );
             let pa = popanneal::run(

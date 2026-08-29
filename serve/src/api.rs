@@ -671,6 +671,9 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                 iterations,
                 tenure,
                 restart_after: (restart > 0).then_some(restart),
+                // The same "incumbent" branch has always taken. Tabu could not accept one until
+                // now, so a caller with a good state had to run tabu FIRST or not at all.
+                start: start_from(req, g.n)?,
             };
             let o = ferrotherm::tabu::search_metered(&g, &p, seed, Some(&mut led));
             let ran = o.iterations_run;
@@ -696,7 +699,11 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                     "{budget} move evaluations requested, over the {MAX_NODE_UPDATES} ceiling"
                 ));
             }
-            let p = ferrotherm::bls::Params { iterations, ..ferrotherm::bls::Params::default() };
+            let p = ferrotherm::bls::Params {
+                iterations,
+                start: start_from(req, g.n)?,
+                ..ferrotherm::bls::Params::default()
+            };
             let o = ferrotherm::bls::search_metered(&g, &p, seed, Some(&mut led));
             let pert = o.perturbations;
             (
@@ -1059,7 +1066,7 @@ pub fn capabilities() -> Json {
                 op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
                 op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
                 op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
-                op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent, sdp_depth, return_state"),
+                op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent (branch, tabu and breakout all take one now), sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
                 op("hubo", "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.", "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed"),
             ]),
@@ -1618,6 +1625,25 @@ pub fn hubo(req: &Json) -> Result<Json, String> {
             ),
         ),
     ]))
+}
+
+/// A starting state from the request, in the shape `branch`'s `incumbent` already uses.
+///
+/// `None` when absent. A wrong length is REFUSED here rather than ignored: over an HTTP boundary a
+/// caller cannot see that their state was dropped, and a search that silently started from noise
+/// would return a worse answer with nothing to say why. The library ignores it because a Rust
+/// caller can read the field back; a request cannot.
+fn start_from(req: &Json, n: usize) -> Result<Option<Vec<i8>>, String> {
+    let Some(sv) = req.get("incumbent").and_then(|s| s.as_arr()) else { return Ok(None) };
+    if sv.len() != n {
+        return Err(format!(
+            "\"incumbent\" has {} entries but the graph has {n} nodes",
+            sv.len()
+        ));
+    }
+    Ok(Some(
+        sv.iter().map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 }).collect(),
+    ))
 }
 
 pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {

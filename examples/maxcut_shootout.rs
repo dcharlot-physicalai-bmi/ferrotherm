@@ -87,7 +87,7 @@ fn main() {
     // measuring a different thing. See the note at the top.
     let iters = budget.max(1);
     {
-        let p = tabu::Params { iterations: iters, tenure: 0, restart_after: Some(iters / 10 + 1) };
+        let p = tabu::Params { iterations: iters, tenure: 0, restart_after: Some(iters / 10 + 1) , start: None };
         let (cuts, t) = Timing::around(|| {
             (0..8u64).map(|seed| inst.cut(&tabu::search(&inst.graph, &p, seed).state)).collect::<Vec<f64>>()
         });

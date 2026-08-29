@@ -57,7 +57,7 @@ fn main() {
                 let g = instance(n, p, seed);
                 let inc = tabu::search(
                     &g,
-                    &tabu::Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000) },
+                    &tabu::Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000) , start: None },
                     seed,
                 );
                 let (out, t) = Timing::around(|| {

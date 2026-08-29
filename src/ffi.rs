@@ -879,7 +879,7 @@ pub extern "C" fn ft_exact_ground_state(
 ///
 /// This is the referee. A sampler's histogram can be compared against these on a graph far past
 /// where enumeration stops -- a 42-spin strip is 2^42 states and width 3 -- which is the only way
-/// to check a sampler at a size anyone actually runs. [`ft_verify_tv`] and the certificate compare
+/// to check a sampler at a size anyone actually runs. The exhaustive referee and the certificate compare
 /// against exhaustive enumeration and stop at about twenty spins; this does not.
 ///
 /// COST: `2n` eliminations, so `O(n * 2^width)` rather than the single `O(2^width)` of
@@ -2625,6 +2625,10 @@ pub extern "C" fn ft_tabu(sim: *mut Sim, iterations: u32, tenure: u32, restart_a
         iterations: iterations.max(1) as usize,
         tenure: tenure as usize,
         restart_after: (restart_after > 0).then_some(restart_after as usize),
+        // Start from THIS SIMULATION'S state, so tabu composes the way every other solver here
+        // does. It used to discard it and start from noise, which meant anneal-then-tabu threw the
+        // anneal away without saying so.
+        start: Some(s.sampler_state.clone()),
     };
     let out = crate::tabu::search_metered(&s.graph, &p, s.seed, Some(&mut s.ledger));
     if out.state.len() == s.sampler_state.len() {
@@ -2908,6 +2912,8 @@ pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let p = crate::bls::Params {
         iterations: iterations.max(1) as usize,
+        // Same as `ft_tabu`: start from this simulation's state rather than discarding it.
+        start: Some(s.sampler_state.clone()),
         ..crate::bls::Params::default()
     };
     let out = crate::bls::search_metered(&s.graph, &p, s.seed, Some(&mut s.ledger));
@@ -4107,5 +4113,37 @@ mod hfs_ffi {
         assert!(ft_hfs(n, 10, 8).is_nan());
         assert_eq!(ft_hfs_moves(core::ptr::null()), 0);
         assert_eq!(ft_hfs_improving(core::ptr::null()), 0);
+    }
+}
+
+#[cfg(test)]
+mod warm_start_ffi {
+    use super::*;
+
+    #[test]
+    fn tabu_and_breakout_build_on_the_state_they_are_given() {
+        // Both used to DISCARD the simulation's state and start from noise, so anneal-then-tabu
+        // threw the anneal away without saying so. Every other solver here composes; these did not.
+        //
+        // The assertion is that the handed state is never lost, which is the property that makes
+        // composition safe: both searches track the best state ever seen, and the handed one is the
+        // first they see.
+        for solver in 0..2 {
+            let sim = ft_planted_frustrated(6, 40, 7, 1.0);
+            assert!(!sim.is_null());
+            ft_anneal(sim, 0.05, 4.0, 60, 40);
+            let annealed = ft_energy(sim);
+
+            let after = if solver == 0 {
+                ft_tabu(sim, 5_000, 0, 0)
+            } else {
+                ft_bls(sim, 5_000)
+            };
+            assert!(
+                after <= annealed + 1e-9,
+                "solver {solver}: handed {annealed}, returned {after} -- the start was discarded"
+            );
+            ft_free(sim);
+        }
     }
 }

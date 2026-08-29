@@ -40,7 +40,10 @@ use crate::ledger::Ledger;
 use crate::rng::Pcg;
 
 /// How the search is run.
-#[derive(Clone, Copy, Debug)]
+// NOT `Copy`: `start` holds a state, and a search that can be handed one is worth more
+// than a Params a caller can pass twice without saying `.clone()`. `branch::Params` has
+// carried a `Vec` incumbent since it existed, so this is the crate's own precedent.
+#[derive(Clone, Debug)]
 pub struct Params {
     /// Iterations to run. One iteration is one flip.
     pub iterations: usize,
@@ -54,13 +57,26 @@ pub struct Params {
     ///
     /// `None` never restarts.
     pub restart_after: Option<usize>,
+    /// A state to start from, if one is already known -- from an anneal, or from [`crate::hfs`].
+    ///
+    /// `None` starts from noise, which is what this did and only did. [`crate::branch::Params`] has
+    /// carried an `incumbent` all along and these did not, so a caller holding a good state had no
+    /// way to hand it over: composing meant running this FIRST and something else after, never the
+    /// other way round.
+    ///
+    /// A wrong length is ignored and the search starts from noise, rather than returning a `Result`
+    /// on a search that cannot otherwise fail.
+    ///
+    /// Restarts still go to noise. A restart exists to leave the basin the search is in, and
+    /// restarting to the state it was handed would put it back where it could not escape from.
+    pub start: Option<Vec<i8>>,
 }
 
 impl Default for Params {
     fn default() -> Self {
         // Tenure scaled to the instance is the usual advice; a fixed tenure is either too sticky on
         // small graphs or too loose on large ones. Set at call time by `search` when this is used.
-        Params { iterations: 50_000, tenure: 0, restart_after: Some(5_000) }
+        Params { iterations: 50_000, tenure: 0, restart_after: Some(5_000), start: None }
     }
 }
 
@@ -115,7 +131,10 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
     let tenure = tenure.min(n.saturating_sub(1)).max(1);
     let mut rng = Pcg::new(seed, 0x7AB0);
 
-    let mut s: Vec<i8> = (0..n).map(|_| rng.spin(0.5)).collect();
+    let mut s: Vec<i8> = match &p.start {
+        Some(st) if st.len() == n => st.clone(),
+        _ => (0..n).map(|_| rng.spin(0.5)).collect(),
+    };
     let mut delta = gains(g, &s);
     let mut energy = g.energy(&s);
     let mut best = s.clone();
@@ -227,6 +246,56 @@ pub(crate) fn flip(g: &Graph, s: &mut [i8], delta: &mut [f64], i: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A search handed a state must actually begin there, and must never lose it.
+    ///
+    /// Both halves matter. Beginning there is what makes composition mean anything; never losing it
+    /// is what makes a warm start safe, because the search tracks the best state ever seen and the
+    /// handed state is the first one it sees.
+    #[test]
+    fn a_handed_state_is_where_the_search_starts_and_is_never_lost() {
+        let g = crate::ising::lattice2d(8, 1.0);
+        let optimum = vec![1i8; g.n];
+        let e_opt = g.energy(&optimum);
+
+        let p = Params {
+            iterations: 500,
+            tenure: 0,
+            restart_after: None,
+            start: Some(optimum.clone()),
+        };
+        let r = search(&g, &p, 5);
+        assert!(r.energy <= e_opt + 1e-9, "handed the optimum, returned {} vs {e_opt}", r.energy);
+        assert_eq!(r.found_at, 0, "the handed state IS the best, found before any flip");
+
+        // And a wrong length is ignored rather than panicking or truncating: the search runs from
+        // noise, which is what it did before `start` existed.
+        let bad = Params { start: Some(vec![1i8; g.n + 3]), ..p.clone() };
+        let r2 = search(&g, &bad, 5);
+        assert!(r2.energy.is_finite());
+        assert_eq!(r2.state.len(), g.n);
+    }
+
+    /// Warm and cold are different runs, so `start` is not decorative.
+    #[test]
+    fn a_warm_start_is_a_different_run_from_a_cold_one() {
+        let mut rng = Pcg::new(3, 1);
+        let mut b = crate::graph::GraphBuilder::new(64);
+        for i in 0..64usize {
+            b.couple(i, (i + 1) % 64, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+            b.couple(i, (i + 7) % 64, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+        }
+        let g = b.build();
+        let warm: Vec<i8> = (0..g.n).map(|i| if i % 3 == 0 { 1 } else { -1 }).collect();
+        let p = Params { iterations: 300, tenure: 4, restart_after: None, start: None };
+        let cold = search(&g, &p, 9);
+        let hot = search(&g, &Params { start: Some(warm), ..p.clone() }, 9);
+        assert!(
+            cold.state != hot.state || (cold.energy - hot.energy).abs() > 1e-12,
+            "same seed and a different start must be a different run, or `start` does nothing"
+        );
+    }
+
     use super::*;
     use crate::graph::GraphBuilder;
     use crate::ising::lattice2d;
@@ -300,7 +369,11 @@ mod tests {
         // energy the returned STATE actually has, or the whole result is unfalsifiable.
         for seed in 0..20u64 {
             let g = random_graph(14, 0.35, seed);
-            let r = search(&g, &Params { iterations: 3_000, tenure: 0, restart_after: Some(400) }, seed);
+            let r = search(
+                &g,
+                &Params { iterations: 3_000, tenure: 0, restart_after: Some(400), start: None },
+                seed,
+            );
             assert!((r.energy - g.energy(&r.state)).abs() < 1e-9, "seed {seed}");
         }
     }
@@ -342,7 +415,7 @@ mod tests {
         for seed in 0..30u64 {
             let g = random_graph(16, 0.4, seed + 100);
             let descent = steepest_descent(&g, seed);
-            let tabu = search(&g, &Params { iterations: 2_000, tenure: 0, restart_after: None }, seed);
+            let tabu = search(&g, &Params { iterations: 2_000, tenure: 0, restart_after: None, start: None }, seed);
             if tabu.energy < descent - 1e-9 {
                 wins += 1;
             } else if tabu.energy > descent + 1e-9 {
@@ -368,7 +441,7 @@ mod tests {
         for n in [3usize, 4, 6, 8, 9, 10, 11, 40] {
             let g = random_graph(n, 0.5, n as u64);
             for tenure in [50usize, 0, 1] {
-                let p = Params { iterations: 3_000, tenure, restart_after: None };
+                let p = Params { iterations: 3_000, tenure, restart_after: None, start: None };
                 let r = search(&g, &p, 1);
                 assert_eq!(
                     r.iterations_run, p.iterations,
@@ -386,7 +459,7 @@ mod tests {
         for n in [4usize, 6, 8, 9, 10] {
             let g = random_graph(n, 0.5, n as u64 + 7);
             let truth = brute_min(&g);
-            let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(200) }, 3);
+            let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(200), start: None }, 3);
             assert!(
                 r.energy <= truth + 1e-9,
                 "n={n}: got {} against a true minimum of {truth} after {} iterations",
@@ -400,7 +473,7 @@ mod tests {
         for seed in 0..25u64 {
             let g = random_graph(12, 0.45, seed + 500);
             let truth = brute_min(&g);
-            let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(500) }, seed);
+            let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(500), start: None }, seed);
             assert!(
                 r.energy <= truth + 1e-9,
                 "seed {seed}: found {} against a true minimum of {truth}",
@@ -412,7 +485,7 @@ mod tests {
     #[test]
     fn the_ferromagnet_reaches_its_ground_state() {
         let g = lattice2d(8, 1.0);
-        let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000) }, 7);
+        let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000), start: None }, 7);
         // 64 nodes, 2 bonds each on a periodic lattice: -128 with every bond satisfied.
         assert!((r.energy - (-128.0)).abs() < 1e-9, "got {}", r.energy);
     }
@@ -424,7 +497,7 @@ mod tests {
         let g = lattice2d(6, 1.0);
         let mut led = Ledger::default();
         let iters = 100;
-        search_metered(&g, &Params { iterations: iters, tenure: 4, restart_after: None }, 1, Some(&mut led));
+        search_metered(&g, &Params { iterations: iters, tenure: 4, restart_after: None, start: None }, 1, Some(&mut led));
         assert_eq!(led.samples, (g.n * iters) as u64);
     }
 

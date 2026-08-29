@@ -75,7 +75,10 @@ use crate::rng::Pcg;
 use crate::tabu::{flip, gains};
 
 /// How the search is run. Defaults are the paper's Table 1.
-#[derive(Clone, Copy, Debug, PartialEq)]
+// NOT `Copy`: `start` holds a state, and a search that can be handed one is worth more
+// than a Params a caller can pass twice without saying `.clone()`. `branch::Params` has
+// carried a `Vec` incumbent since it existed, so this is the crate's own precedent.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     /// Total moves. One move is one spin flip, in descent or in a perturbation.
     ///
@@ -99,6 +102,13 @@ pub struct Params {
     /// where the random branch is the stagnation case alone. See the module note — this is a real
     /// ambiguity in the source, and a parameter is the honest way to carry one.
     pub random_after_improvement: bool,
+    /// A state to start from, if one is already known -- from an anneal, or from [`crate::hfs`].
+    ///
+    /// `None` starts from noise, which is what this did and only did. See
+    /// [`crate::tabu::Params::start`]: the same gap, for the same reason, closed the same way. A
+    /// wrong length is ignored and the search starts from noise; perturbations still go where they
+    /// were going, because their whole job is to leave where the search already is.
+    pub start: Option<Vec<i8>>,
 }
 
 impl Default for Params {
@@ -111,6 +121,7 @@ impl Default for Params {
             q: 0.5,
             tenure: None,
             random_after_improvement: true,
+            start: None,
         }
     }
 }
@@ -169,7 +180,10 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
         };
     }
     let mut rng = Pcg::new(seed, 0x000B_155E);
-    let mut s: Vec<i8> = (0..n).map(|_| rng.spin(0.5)).collect();
+    let mut s: Vec<i8> = match &p.start {
+        Some(st) if st.len() == n => st.clone(),
+        _ => (0..n).map(|_| rng.spin(0.5)).collect(),
+    };
     let mut delta = gains(g, &s);
     let mut energy = g.energy(&s);
 
@@ -384,6 +398,27 @@ fn pick_eligible(
 
 #[cfg(test)]
 mod tests {
+
+    /// Handed the optimum, a search must not hand back something worse.
+    ///
+    /// Weaker than tabu's version on purpose: breakout perturbs from wherever it is, so it will not
+    /// sit still on a good state -- but it tracks the best it has seen, so it cannot LOSE one.
+    #[test]
+    fn a_handed_state_is_used_and_never_lost() {
+        let g = crate::ising::lattice2d(8, 1.0);
+        let optimum = vec![1i8; g.n];
+        let e_opt = g.energy(&optimum);
+        let p = Params { iterations: 2_000, start: Some(optimum), ..Params::default() };
+        let r = search(&g, &p, 5);
+        assert!(r.energy <= e_opt + 1e-9, "handed the optimum, returned {} vs {e_opt}", r.energy);
+
+        // A wrong length is ignored rather than panicking: the search runs from noise.
+        let bad = Params { start: Some(vec![1i8; g.n + 2]), ..Params::default() };
+        let r2 = search(&g, &bad, 5);
+        assert_eq!(r2.state.len(), g.n);
+        assert!(r2.energy.is_finite());
+    }
+
     use super::*;
     use crate::graph::GraphBuilder;
     use crate::ising::lattice2d;

@@ -44,6 +44,54 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### Two CI runs failed on one broken doc link, and I built the wrong scope
+
+`RUSTDOCFLAGS='-D warnings' cargo doc` is a CI gate and an intra-doc link to `ft_verify_tv` — a
+function that does not exist — failed it on both the marginals and the HFS commits. Fixed.
+
+The second one is the lesson: `cargo build --all-targets` builds the ROOT crate's targets, not the
+workspace's, so `serve/src/api.rs` constructing a `tabu::Params` went unnoticed until the doc build
+tried to compile it. `--workspace` is the flag, and every check in this entry was re-run with it.
+
+### tabu and breakout discarded the state they were handed
+
+`branch::Params` has carried an `incumbent` since it existed. `tabu::Params` and `bls::Params` had
+no equivalent, so a caller holding a good state had no way to hand it over — composing meant running
+those two **first** and something else after, never the other way round. Through the C ABI it was
+worse than an omission: `ft_tabu` and `ft_bls` took the simulation's state, ignored it, and started
+from noise, so anneal-then-tabu threw the anneal away and said nothing.
+
+Both now take `start: Option<Vec<i8>>`, and both ABI entry points pass the simulation's current
+state, so they compose the way `ft_hfs` and `ft_branch` already do. A wrong length is ignored and
+the search runs from noise rather than returning a `Result` on a search that cannot otherwise fail.
+Restarts and perturbations still go where they were going — their whole job is to leave where the
+search already is, and restarting to the handed state would put it back somewhere it could not
+escape.
+
+It reaches the server too. `optimize` has always taken an `incumbent` for `branch`; the same field
+now warm-starts `tabu` and `breakout`, and the MCP tool description says which of the three does
+what with it — including that breakout's result is mixed. Over HTTP a wrong length is **refused by
+name** rather than ignored, which is the opposite of the library's behaviour and deliberately so: a
+Rust caller can read the field back and see it was dropped, and a request cannot.
+
+Both `Params` lose `Copy`, because a `Vec` cannot be one. `branch::Params` has never been `Copy` for
+exactly this reason, so this follows the crate's own precedent rather than setting one.
+
+**Measured before being believed**, 12 seeds, warm start from a short anneal:
+
+| l | spins | anneal | tabu cold | tabu warm | | breakout cold | breakout warm |
+|---|---|---|---|---|---|---|---|
+| 12 | 144 | −195.2 | −201.5 | −201.5 | 0 better, 0 worse | −198.5 | **−199.8** (4 better, 1 worse) |
+| 20 | 400 | −536.7 | −551.0 | **−553.0** (3 better, 0 worse) | | −552.7 | −551.0 (5 better, **6 worse**) |
+| 28 | 784 | −1042.5 | −1045.8 | **−1062.8** (7 better, 0 worse) | | −1069.2 | −1070.2 (7 better, 3 worse) |
+
+**Tabu is a clear win and never worse.** Breakout is genuinely mixed — at l = 20 it is a wash, six
+seeds better and six worse — and that is recorded rather than averaged into a headline. It makes
+sense from the algorithm: BLS perturbs from wherever it is and calibrates its jump against how long
+it has stalled, so dropping it into a deep basin changes the schedule it thinks it is on. The
+composition is still the right default because it is what every other solver here does and because
+the handed state can never be *lost*, which is what the tests assert.
+
 ### Hamze-de Freitas-Selby, and what measuring it actually showed
 
 A survey of this stack against the literature named six missing algorithms. An adversarial pass
