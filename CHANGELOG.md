@@ -44,6 +44,62 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The embedding layer cannot build a chain, and nothing had ever asked it to
+
+Going after the last ingest item — COPY-gate sparsification — found it already subsumed by `embed`,
+which splits a high-degree variable into a chain. Checking *that* found something worse.
+
+**`embed::apply` is called from its own tests and from nowhere else.** No example, no server, no
+FFI. The layer whose own docs call it *"the layer this crate has been missing"* had never had a
+problem put through it end to end. So its one magic constant — chains held at `2×` the largest
+logical coefficient — had never been checked, and its docstring said it was *"reported rather than
+hidden so it can be tuned"* while `apply` took no parameter to tune it with. There is now
+`apply_with`, and `worst_coefficient` is public.
+
+#### ⛔ And then the placer turned out not to work
+
+`embed` does **not** place a **star with eight leaves** onto a 512-site Chimera — the simplest graph
+that cannot fit on a degree-6 machine without exactly one chain, using ~10 of those sites. Every
+clique past `K_7` fails, and `K_7` is precisely the largest needing no chain:
+
+| | C₆,₆,₄ (288) | C₈,₈,₄ (512) | C₁₂,₁₂,₄ (1152) |
+|---|---|---|---|
+| K₆ | 8/8 seeds | 8/8 | 8/8 |
+| **K₈** | **0/8** | **0/8** | **0/8** |
+
+A bigger machine does not help, and neither does 20× the rip-up rounds. From the inside every chain
+stays **one site long** while the same three sites stay shared, round after round. The placer *can*
+build a long chain when asked early — `K_6` gets one nine sites long — it just never grows one to
+relieve a neighbour with nowhere left to sit, which is the move minor embedding exists to make.
+
+The module docs blamed the weakness on a full machine. **That was wrong and had never been checked**
+— the machine is 98% empty in every case above. Corrected, with two tests pinning the behaviour and
+saying what to do when it is fixed.
+
+**A ramped overlap penalty was tried and measured not to help**, so it is not shipped. It is the
+published fix for a rip-up loop that will not converge and the obvious diagnosis here; it fails
+because both options a congested variable has pay the penalty, so scaling it leaves their order
+unchanged. The repair is a redesign of the placement step, not a constant, and it is not attempted
+here rather than half-done.
+
+#### The constant, measured on what does embed
+
+`examples/chain_strength` sweeps it against an optimum **branch and bound proved**, on K₆ whose
+embedding still carries chains up to nine sites:
+
+| chain × | broken | gap above optimum | found |
+|---|---|---|---|
+| 0.25 | 27.1% | 1.25 | 6/8 |
+| 1.00 | 10.4% | 0.00 | 8/8 |
+| **2.00** (default) | **0.0%** | **0.00** | **8/8** |
+| 16.00 | 0.0% | 0.00 | 8/8 |
+
+The default survives and is the smallest multiple that does. **The other half of the trade-off did
+not appear** — nothing degrades even at 8× the default — and that is not evidence the failure is
+imaginary but that a six-variable clique is too easy to exhibit it. The instance that would exhibit
+it cannot be built, because the placer cannot place it. **The two findings are one finding: a layer
+that cannot build chains cannot be asked what chains cost.**
+
 ### Chimera was costing a sweep an extra pass, and DSATUR was the wrong tool
 
 The colour count of a graph is the number of **sequential barriers** in a chromatic sweep, and on

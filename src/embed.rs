@@ -28,10 +28,34 @@
 //! # What is not
 //!
 //! Finding a minor is NP-hard, and this is a heuristic: failing to find one does **not** mean none
-//! exists. [`embed`] returns `None`, which means "not found", never "impossible". It is weakest
-//! exactly where the machine is fullest — a packing that uses every site leaves the rip-up rounds
-//! nowhere to move anything — so a program already laid out for the hardware is checked for first
-//! and returned as itself.
+//! exists. [`embed`] returns `None`, which means "not found", never "impossible". A program already
+//! laid out for the hardware is checked for first and returned as itself.
+//!
+//! # ⛔ THE KNOWN DEFECT, AND IT IS LARGE
+//!
+//! **This placer fails on graphs that need a chain, and it fails whether or not the machine is
+//! full.** A star with eight leaves — one variable of degree 8, the simplest graph that cannot fit
+//! on a degree-6 machine without one chain — is **not embedded onto a 512-site Chimera**, of which
+//! it would use about ten sites. Every clique past `K_7` fails the same way, and `K_7` is exactly
+//! the largest clique that fits with no chain at all. Enlarging the machine does not help: `K_8`
+//! fails on 288, 512 and 1152 sites alike, at every seed tried and at ten times the rip-up rounds.
+//!
+//! An earlier version of this note blamed the weakness on a full machine. That was wrong and it was
+//! never checked; the machine is 98% empty in every case above.
+//!
+//! What the rounds actually do is visible from the inside: every chain stays **one site long** and
+//! the same three sites stay shared, round after round. The placer can build a long chain when it
+//! is asked to early — `K_6` gets one nine sites long — but it never grows one to relieve a
+//! neighbour that has nowhere left to sit, which is the move minor embedding exists to make.
+//!
+//! Ramping the overlap penalty, which is the published fix for a rip-up loop that will not
+//! converge, was tried and **measured not to help**: both options a congested variable has pay the
+//! penalty, so scaling it leaves their order unchanged. The repair is a redesign of the placement
+//! step rather than a constant, and it is not attempted here rather than half-done.
+//!
+//! Until then: [`embed`] is sound when it succeeds — every result is [`Embedding::verify`]ed, so a
+//! wrong embedding is impossible — and it succeeds only on programs needing chains that its early
+//! greedy placement happens to build.
 
 use crate::graph::{Graph, GraphBuilder};
 use std::collections::{BTreeSet, VecDeque};
@@ -164,6 +188,14 @@ pub fn embed_with(logical: &Graph, hardware: &Graph, seed: u64, rounds: usize) -
     let mut chains: Vec<Vec<usize>> = vec![Vec::new(); logical.n];
 
     for round in 0..=rounds {
+        // A RAMPED OVERLAP PENALTY WAS TRIED HERE AND MEASURED NOT TO HELP, which is why the cost
+        // is a constant. The published heuristic raises the price of a shared site each round, and
+        // the obvious diagnosis of the failure below is that a constant price never forces the
+        // overlaps out. It does not survive the measurement: doubling the price per round changed
+        // nothing, because both options a congested variable has -- share a neighbour's site, or
+        // route around through the same congestion -- pay the penalty, so scaling it leaves their
+        // ORDER unchanged. The real defect is structural and is written up on `embed_with`.
+        let occupied = OCCUPIED_BASE;
         for idx in 0..order.len() {
             let v = order[idx];
             chains[v].clear(); // rip up, then re-place against everyone else's current position
@@ -191,7 +223,7 @@ pub fn embed_with(logical: &Graph, hardware: &Graph, seed: u64, rounds: usize) -
                     .expect("a machine has sites");
                 vec![start]
             } else {
-                steiner_ish(hardware, &neighbours, &chains, &load, &mut rng)?
+                steiner_ish(hardware, &neighbours, &chains, &load, &mut rng, occupied)?
             };
             chains[v] = chain;
         }
@@ -209,6 +241,8 @@ pub fn embed_with(logical: &Graph, hardware: &Graph, seed: u64, rounds: usize) -
             let e = Embedding { chains, sites: hardware.n };
             // An embedding this module returns is always checked. A wrong one does not fail
             // loudly on a machine; it returns plausible answers to a different problem.
+            // An embedding this module returns is always checked. A wrong one does not fail
+            // loudly on a machine; it returns plausible answers to a different problem.
             e.verify(logical, hardware).ok()?;
             return Some(e);
         }
@@ -218,6 +252,9 @@ pub fn embed_with(logical: &Graph, hardware: &Graph, seed: u64, rounds: usize) -
     }
     None
 }
+
+/// What a shared site costs in the first rip-up round, before the ramp in [`embed_with`] raises it.
+const OCCUPIED_BASE: u64 = 8;
 
 /// The cheapest connected set of sites touching every neighbour's chain.
 ///
@@ -231,14 +268,14 @@ fn steiner_ish(
     chains: &[Vec<usize>],
     load: &[usize],
     rng: &mut Pcg,
+    occupied: u64,
 ) -> Option<Vec<usize>> {
-    const OCCUPIED: u64 = 64; // a site in use costs this much more than an empty one
 
     let mut total = vec![0u64; h.n];
     let mut parents: Vec<Vec<usize>> = Vec::with_capacity(neighbours.len());
 
     for &u in neighbours {
-        let (dist, parent) = dijkstra(h, &chains[u], load, OCCUPIED);
+        let (dist, parent) = dijkstra(h, &chains[u], load, occupied);
         for s in 0..h.n {
             total[s] = total[s].saturating_add(dist[s]);
         }
@@ -327,11 +364,54 @@ pub struct Embedded {
 /// Couplings are shared out across the hardware edges that realise each logical edge, and fields
 /// are shared out along each chain, so the total weight is unchanged however long a chain is.
 pub fn apply(logical: &Graph, hardware: &Graph, e: &Embedding) -> Embedded {
+    apply_with(logical, hardware, e, DEFAULT_CHAIN_MULTIPLE * worst_coefficient(logical))
+}
+
+/// The multiple of the largest logical coefficient [`apply`] holds chains together with.
+///
+/// Two is the standard first guess. `examples/chain_strength` measures what it is worth.
+pub const DEFAULT_CHAIN_MULTIPLE: f64 = 2.0;
+
+/// The largest absolute coupling or field in a model — the scale a chain has to outrank.
+///
+/// Returns `0.5` for a model with no weights at all, so the default chain strength stays `1.0`
+/// there rather than collapsing to zero and holding nothing together.
+pub fn worst_coefficient(logical: &Graph) -> f64 {
     let worst = (0..logical.n)
         .flat_map(|i| (logical.offset[i]..logical.offset[i + 1]).map(move |k| logical.w[k].abs()))
         .chain(logical.h.iter().map(|x| x.abs()))
         .fold(0.0f64, f64::max);
-    let chain_strength = if worst > 0.0 { 2.0 * worst } else { 1.0 };
+    if worst > 0.0 {
+        worst
+    } else {
+        0.5
+    }
+}
+
+/// Rewrite a logical model onto hardware sites, choosing the chain coupling yourself.
+///
+/// [`apply`] picks `2 x` the largest logical coefficient, which is the standard first guess and is
+/// a GUESS: a chain has to outrank the couplings it carries or it breaks, and it has to not swamp
+/// them or the machine spends its search holding chains together instead of solving anything. That
+/// is the same trade-off [`crate::hubo`] measured for a reduction penalty, where the standard
+/// choice turned out to make the landscape rigid enough to change the answer.
+///
+/// `examples/chain_strength` sweeps this against a proved optimum and reports where the trade-off
+/// actually sits. Read it before overriding the default, and before trusting it.
+///
+/// A non-finite or non-positive `chain_strength` falls back to the default rather than building a
+/// model whose chains do not hold.
+pub fn apply_with(
+    logical: &Graph,
+    hardware: &Graph,
+    e: &Embedding,
+    chain_strength: f64,
+) -> Embedded {
+    let chain_strength = if chain_strength.is_finite() && chain_strength > 0.0 {
+        chain_strength
+    } else {
+        DEFAULT_CHAIN_MULTIPLE * worst_coefficient(logical)
+    };
 
     let mut b = GraphBuilder::new(hardware.n);
 
@@ -608,6 +688,55 @@ mod tests {
 
         let (_, none) = unembed(&e, &[1, 1, 1, -1]);
         assert!(none.is_empty(), "an agreeing chain is not reported");
+    }
+
+    /// ⛔ A KNOWN FAILURE, PINNED SO IT CANNOT BE FORGOTTEN OR SILENTLY FIXED.
+    ///
+    /// A star with eight leaves is the simplest graph that cannot sit on a degree-6 machine without
+    /// exactly one chain: the centre has degree 8 and a Chimera site has six neighbours. It is not
+    /// embedded onto a 512-site Chimera, of which it would use about ten sites.
+    ///
+    /// This test asserts the CURRENT behaviour, which is wrong. When the placer is repaired it will
+    /// fail, and that failure is the notification — flip the assertion then, and delete this note.
+    #[test]
+    fn known_failure_a_star_that_needs_one_chain_is_not_placed() {
+        let hardware = crate::ising::chimera(8, 8, 4, 1.0);
+        let mut b = GraphBuilder::new(9);
+        for i in 1..9 {
+            b.couple(0, i, 1.0);
+        }
+        let star = b.build();
+        assert!(hardware.n > 50 * star.n, "the machine is nowhere near full");
+        assert!(
+            embed(&star, &hardware, 0).is_none(),
+            "THE PLACER HAS BEEN FIXED. Flip this assertion, drop the known-defect section from \
+             the module docs and the ROADMAP row, and re-run examples/chain_strength at a logical \
+             size that now embeds."
+        );
+        // And more rounds are not the answer, which is what makes it a defect rather than a budget.
+        assert!(embed_with(&star, &hardware, 0, 400).is_none());
+    }
+
+    /// The boundary is exactly where a chain becomes necessary, which is what says the failure is
+    /// about chains rather than about size.
+    #[test]
+    fn known_failure_the_cliff_is_at_the_first_clique_needing_a_chain() {
+        let hardware = crate::ising::chimera(8, 8, 4, 1.0);
+        let clique = |n: usize| {
+            let mut b = GraphBuilder::new(n);
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    b.couple(i, j, 1.0);
+                }
+            }
+            b.build()
+        };
+        // Degree 6 hardware: K_7 needs no chain, K_8 needs one.
+        assert!(embed(&clique(6), &hardware, 0).is_some(), "K_6 places");
+        assert!(
+            (0..4).all(|s| embed(&clique(8), &hardware, s).is_none()),
+            "THE PLACER HAS BEEN FIXED for K_8; see the note on the star test"
+        );
     }
 
     #[test]

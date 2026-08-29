@@ -478,7 +478,7 @@ What we port to Rust, and why each is worth owning.
 
 | Source | State today | Our port |
 |---|---|---|
-| COPY-gate sparsification (OPUSLab) | ~102 lines MATLAB, no adoption | First-class pass |
+| COPY-gate sparsification (OPUSLab) | ~102 lines MATLAB, no adoption | ❌ NOT PORTED — subsumed by `embed`, which already splits a high-degree variable into a chain. Going after it uncovered a larger problem: **the placer cannot embed a graph that needs a chain**, see below |
 | DSATUR coloring | Scattered | ❌ NOT PORTED, and measured to be the wrong tool: every graph this crate builds is bipartite, greedy already hits the optimum on all but Chimera, and the fix there was a bipartiteness check (3 colours → 2, +32–56% on the parallel path). DSATUR wins on dense irregular graphs; this review did not locate one here that greedy colours suboptimally |
 | 2D adaptive PT over (β, W0) | One MATLAB file, June 2025 | ✅ `adaptive` — ladder respacing measured to work; the second axis measured NOT to earn its replicas, including where it was predicted to |
 | Lattice Random Walk integrator (arXiv:2508.20883) | **Paper, no code** | Binary/ternary SDE increments, no Gaussian RNG in the datapath, robust to quantisation |
@@ -491,6 +491,33 @@ What we port to Rust, and why each is worth owning.
 
 Three of these are papers with no code. Publishing working Rust for them is, on its own, a
 contribution the field currently lacks.
+
+### ⛔ Open defect: the minor-embedding placer cannot build a chain when one is needed
+
+`src/embed.rs` does not embed a **star with eight leaves** onto a 512-site Chimera — the simplest
+graph that cannot fit on a degree-6 machine without exactly one chain, using about ten of those
+sites. Every clique past `K_7` fails the same way, and `K_7` is precisely the largest that needs no
+chain. Enlarging the machine does not help: `K_8` fails on 288, 512 and 1152 sites alike, at every
+seed and at twenty times the rip-up rounds.
+
+From the inside, every chain stays **one site long** and the same three sites stay shared round
+after round. The placer *can* build a long chain when asked early — `K_6` gets one nine sites long —
+but never grows one to relieve a neighbour with nowhere left to sit, which is the move minor
+embedding exists to make.
+
+Ramping the overlap penalty, the published fix for a rip-up loop that will not converge, was tried
+and **measured not to help**: both options a congested variable has pay the penalty, so scaling it
+leaves their order unchanged. The repair is a redesign of the placement step, not a constant.
+
+Two tests pin the current behaviour and say what to do when it is fixed. Until then `embed` is
+sound when it succeeds — every result is verified — and succeeds only where its early greedy
+placement happens to build the chains needed.
+
+**This blocks measurement, not just capability.** `examples/chain_strength` calibrates the chain
+coupling against a proved optimum and finds the default `2×` is the smallest multiple with no broken
+chains. It cannot test the *other* failure — a chain strength so large it swamps the model — because
+exhibiting that needs a logical problem hard enough for a swamped search to lose, which needs more
+variables and longer chains, which the placer cannot deliver.
 
 ---
 
