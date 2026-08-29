@@ -44,6 +44,54 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The shootout compared three of nine solvers
+
+`examples/maxcut_shootout` is this crate's head-to-head, and it ran parallel tempering, tabu and
+breakout. Six shipped optimisers had **no matched-budget comparative evidence at all** — which is a
+different way of not having a comparison than not having the file.
+
+All of them now: isoenergetic cluster moves, simulated quantum annealing, both simulated-bifurcation
+variants, population annealing, HFS block descent, and the tabu-then-block composition the new warm
+start makes possible. Ten arms.
+
+The budget accounting is where this file went wrong once before — it gave tempering `budget` flips
+and the deterministic searches `budget / n`, handing them 500 flips against 320,000 — so each new
+arm divides by what it actually multiplies:
+
+- **ICM** runs *two replica sets* over a ladder, so it divides by `2 × |betas|`. Charging it a single
+  ladder's total would have handed it 16× the work.
+- **SQA** simulates `M × n` spins, so a sweep costs `M` classical ones and the budget divides by the
+  Trotter count too.
+- **Population annealing** sweeps `R` replicas at every rung: divide by both.
+- **HFS** is charged one flip per spin in every block, which *understates* a block move's arithmetic
+  — deliberately the generous direction for the algorithm this repository just wrote, rather than
+  the flattering one.
+
+On a 400-node ±1 instance at 200,000 flips, 8 seeds:
+
+| solver | best | mean |
+|---|---|---|
+| tabu | **514** | 513.2 |
+| tabu then HFS polish | **514** | **513.5** |
+| breakout | 514 | 508.8 |
+| parallel tempering | 513 | 508.1 |
+| simulated bifurcation bSB | 512 | 511.9 |
+| isoenergetic cluster | 512 | 507.5 |
+| simulated bifurcation dSB | 512 | 507.0 |
+| population annealing | 506 | 494.8 |
+| HFS block descent | 491 | 484.0 |
+| simulated quantum | 460 | 454.6 |
+
+**Goemans–Williamson and branch-and-bound are deliberately not in it.** GW returns a rounding with a
+0.87856 worst-case *guarantee*, and branch returns a *proof* or nothing; neither is "a heuristic
+given some flips", and putting them in a table of matched-budget heuristics would be a category
+error. `examples/exact_bracket` is where they belong, and the reason is written in the file rather
+than left to be inferred from their absence.
+
+Also fixed: passing a best-known cut of `0` — the normal case for an instance you generated yourself
+— divided by it and printed **"reached inf% of it"** for every solver. It now says the percentages
+are omitted and why, because a comparison *between* solvers needs no external number to be read.
+
 ### Chimera, and HFS measured on the structure it is for — where it also loses
 
 The HFS entry below closed with a written-down gap: this crate could not build a Chimera graph, so
