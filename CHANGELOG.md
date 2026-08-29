@@ -44,6 +44,39 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### An agent can now train a model, not only ask one questions
+
+`ferrotherm_fit` — the twelfth MCP tool, the first HTTP operation and the only one anywhere in this
+server that **produces** a model rather than consuming one. Every other tool takes a model as given.
+That is the difference between a solver behind an API and a computing paradigm: the argument for
+this class of hardware is that it samples Boltzmann distributions cheaply, and the distributions
+anyone actually wants are *fitted*.
+
+**The round trip is the feature.** The reply's `graph` is in exactly the shape `sample`, `anneal`,
+`bound` and `optimize` already take, so an agent fits and then anneals the result with no export
+step and no second format:
+
+```
+fit    -> 95.8% learned, 21 spins, 108 couplings
+anneal -> best_energy -31.898        (on the returned graph, unmodified)
+bound  -> best -33.534 via sdp       (sound: never exceeds an attained energy)
+sample -> energy -31.660
+```
+
+A reply that merely *contains* a `"graph"` key satisfies any schema check and can still be unusable,
+so the test takes one operation's output and hands it to the next ones — and a fitted machine is
+dense compared with the lattices the rest of the suite produces, so it exercises marshalling at a
+shape nothing else reaches.
+
+The tool description tells a caller to read `learned_percent` rather than the raw likelihood, and
+says why: −2.79 alone means nothing, while the same number 95.8% of the way from an untrained
+machine to a perfect one means everything. It also carries the shape advice the measurement earned —
+`[12]` beats `[6,6]` beats `[4,4,4]` at the same latent count, 96.3% against 93.1% against 65.5% —
+so an agent picking a topology is picking from a measurement rather than a guess.
+
+Above 22 spins the likelihood comes back **null** rather than cheaper. A fit whose score is null
+still produced a real model; only its quality is unmeasured, and the reply says so.
+
 ### A generated type stub, because a ctypes package is opaque to whatever writes against it
 
 `python/ferrotherm/__init__.pyi` — 31 top-level names over 422 lines: every public class, method and

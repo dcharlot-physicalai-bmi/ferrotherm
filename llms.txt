@@ -79,10 +79,18 @@ into telling you a signature that no longer exists.
 
 ## Servers, for an agent
 
-- `ferrotherm-serve`: an HTTP API and an MCP server over the same operations. Eleven MCP tools
-  (sample, anneal, energy, verify, bound, exact_planar, toroidal_bound, optimize, solve, hubo,
+- `ferrotherm-serve`: an HTTP API and an MCP server over the same operations. Twelve MCP tools
+  (sample, anneal, energy, verify, bound, exact_planar, toroidal_bound, optimize, solve, fit, hubo,
   capabilities); reach for `ferrotherm_solve` first, since every other tool wants a graph of spins
   and returns an array of +/-1. `/v1/capabilities` describes the HTTP side, by GET or POST.
+- `ferrotherm_fit` is the only tool that PRODUCES a model rather than consuming one, and its reply's
+  `graph` is in exactly the shape the consuming tools take -- fit, then anneal or bound or sample
+  the result, with no export step and no second format. Read `learned_percent`, not the raw
+  likelihood: -2.79 says nothing alone, and the same number 95.8% of the way from an untrained
+  machine (-visible*ln2, exactly, since it is uniform) to a perfect one (-ln rows) says everything.
+  The likelihood is EXACT by enumeration and comes back null above 22 spins, where it REFUSES
+  rather than substituting an ELBO or a reconstruction error -- each of those is worst exactly
+  where sampling is worst.
 - The workbench takes FOUR request shapes and the operation is decided by which one you wrote:
   "graph" to sample, "variables" to solve, "terms" for a higher-order model, and "machine" to FIT
   one to data. A machine spec is `{"machine": {"visible": 9, "hidden": [12]}, "data":

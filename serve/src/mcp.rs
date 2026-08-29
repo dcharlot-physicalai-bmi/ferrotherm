@@ -239,6 +239,46 @@ pub fn tools() -> Json {
             vec!["variables"],
         ),
         tool(
+            "ferrotherm_fit",
+            "FIT a Boltzmann machine to data, and get the trained model back as a graph you can \
+             feed straight to any other tool here. Every other tool takes a model as given -- this \
+             is the one that PRODUCES one, which is what makes this a computing paradigm rather \
+             than a solver behind an API: the argument for thermodynamic hardware is that it \
+             samples Boltzmann distributions cheaply, and the distributions anyone actually wants \
+             are fitted to data. The reply's \"graph\" is in exactly the shape ferrotherm_sample, \
+             ferrotherm_anneal, ferrotherm_bound and ferrotherm_verify take, so there is no export \
+             step and no second format. \
+             READ \"learned_percent\", NOT the raw likelihood. A log-likelihood of -2.79 says \
+             nothing on its own; the same number placed 95.8% of the way from an untrained model \
+             to a perfect one says everything, and both ends need no calibration -- an untrained \
+             machine is uniform over 2^visible images and scores exactly -visible*ln2, and a \
+             perfect one is uniform over the rows you gave and scores -ln(rows). \
+             The likelihood is EXACT, by enumeration, and comes back null above 22 spins, where \
+             this REFUSES rather than substituting a cheaper estimate. That refusal is deliberate: \
+             an ELBO, a reconstruction error and a pseudo-likelihood are each worst exactly where \
+             sampling is worst, so a caller comparing two machines on one would be reading the \
+             proxy's failure and calling it expressivity. A fit whose likelihood is null still \
+             produced a real model -- only its quality is unmeasured. \
+             ON SHAPE: \"hidden\": [12] is a restricted Boltzmann machine, where every latent unit \
+             touches every visible one. \"hidden\": [6, 6] is a two-layer deep machine with the \
+             same twelve latents and FEWER EDGES. Measured in this repository, deeper arrangements \
+             of the same latent count learn strictly LESS at every count tried -- 96.3% wide \
+             against 93.1% and 65.5% deep at twelve latents -- so prefer one wide layer unless you \
+             have a reason not to.",
+            vec![
+                ("visible", prop("integer", "How many visible units the machine has. Must equal the width of a data row, because a row is CLAMPED onto them: the first `visible` spins hold the data and the rest are latent.")),
+                ("hidden", prop("array", "Layer widths, outermost last. [12] is an RBM; [6, 6] is two layers of six. Every layer is fully connected to the one below it and to nothing else.")),
+                ("data", prop("array", "Rows of -1 and +1, all the same width. Or the string \"bars-and-stripes-N\" for the standard tiny benchmark at N x N, which is what to reach for when you want to see the operation work before wiring your own data in: \"bars-and-stripes-3\" is 14 images over 9 visible units.")),
+                ("epochs", prop("integer", "Passes over the data. Default 300.")),
+                ("k", prop("integer", "k in CD-k: negative-phase sweeps started from the positive-phase state. Default 5. One is the biased extreme and larger is closer to the true gradient at proportional cost -- which is why the reply reports the EXACT likelihood rather than a training loss, since the training objective is biased by construction and cannot tell you it went wrong.")),
+                ("positive_sweeps", prop("integer", "Sweeps used to settle the latent units with the visible ones clamped to a data row. Default 5.")),
+                ("learning_rate", prop("number", "Starting step, default 0.05. It DECAYS to a tenth of this over the run, and that decay is not a refinement: the gradient's model term is one sample per row, so without it the weights random-walk around the optimum forever and the fit sits a constant distance from its own fixed point however long you run.")),
+                ("batch", prop("integer", "Rows per gradient step. Default 8.")),
+                ("seed", prop("integer", "Same seed reproduces the fit exactly. Default 1.")),
+            ],
+            vec!["visible", "hidden", "data"],
+        ),
+        tool(
             "ferrotherm_hubo",
             "Minimise a HIGHER-ORDER model natively: terms over any number of variables, with no \
              ancillas and no penalty weight to get right. Reach for this INSTEAD of a three-or-more \

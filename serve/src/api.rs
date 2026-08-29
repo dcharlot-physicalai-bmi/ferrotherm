@@ -1069,6 +1069,7 @@ pub fn capabilities() -> Json {
                 op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent (branch, tabu and breakout all take one now), sdp_depth, return_state"),
                 op("solve", "State a problem with named variables and constraints; get named values back. \"method\" chooses the solver -- anneal (default), tabu, breakout, or branch, which is the only one that PROVES its answer.", "variables, constraints, objective, tries, penalty, schedule, method, effort"),
                 op("hubo", "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.", "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed"),
+                op("fit", "FIT a Boltzmann machine to data and get the trained model back as a graph. The only operation here that produces a model rather than consuming one; its \"graph\" is the shape every other operation takes, so fit then sample, anneal, bound or verify with no export step.", "visible, hidden, data, epochs, k, positive_sweeps, learning_rate, batch, seed"),
             ]),
         ),
         (
@@ -1659,6 +1660,209 @@ pub fn hubo(req: &Json) -> Result<Json, String> {
     ]))
 }
 
+/// Fit a Boltzmann machine to data, and hand back the fitted model as a graph.
+///
+/// EVERY OTHER OPERATION HERE CONSUMES A MODEL. This one produces one, and it is the operation that
+/// makes this server a computing paradigm rather than a solver behind HTTP: the argument for this
+/// class of hardware is that it samples Boltzmann distributions cheaply, and the distributions
+/// anyone actually wants are FITTED.
+///
+/// The reply carries the fitted weights in the same `graph` shape every other operation TAKES, so
+/// an agent can fit here and then sample, anneal, bound or certify the result with no export step
+/// and no second format. That round trip is the whole point of returning a graph rather than an
+/// opaque handle.
+pub fn fit(req: &Json) -> Result<Json, String> {
+    let visible = value_of(req, "visible", 0, "fit")?;
+    if visible < 1 {
+        return Err("\"visible\" must be at least 1: a machine with no visible units has nothing \
+                    to clamp data onto"
+            .into());
+    }
+    let visible = visible as usize;
+
+    let hidden: Vec<usize> = match req.get("hidden") {
+        Some(h) => {
+            let arr = h
+                .as_arr()
+                .ok_or("\"hidden\" is an array of layer widths, outermost last: [12] is an RBM, \
+                        [6, 6] is two layers")?;
+            let mut out = Vec::with_capacity(arr.len());
+            for (i, w) in arr.iter().enumerate() {
+                let w = w
+                    .as_i64()
+                    .ok_or_else(|| format!("hidden[{i}] must be a whole number"))?;
+                if w < 1 {
+                    return Err(format!("hidden[{i}] is {w}, and a layer needs at least one unit"));
+                }
+                out.push(w as usize);
+            }
+            out
+        }
+        None => return Err("missing \"hidden\": [12] for a restricted Boltzmann machine of twelve \
+                            hidden units, [6, 6] for a two-layer deep one".into()),
+    };
+    if hidden.is_empty() {
+        return Err("\"hidden\" is empty; a machine with no latent units can only learn the \
+                    independent statistics of each visible unit"
+            .into());
+    }
+
+    let rows = dataset_from(req, visible)?;
+    let structure = ferrotherm::ebm::dbm(visible, &hidden);
+    let data = ferrotherm::ebm::Dataset { visible, rows };
+
+    let d = ferrotherm::ebm::Params::default();
+    let p = ferrotherm::ebm::Params {
+        epochs: opt_usize(req, "epochs", d.epochs),
+        k: opt_usize(req, "k", d.k),
+        positive_sweeps: opt_usize(req, "positive_sweeps", d.positive_sweeps),
+        learning_rate: opt_f64(req, "learning_rate", d.learning_rate),
+        batch: opt_usize(req, "batch", d.batch),
+    };
+    if !(p.learning_rate > 0.0) || !p.learning_rate.is_finite() {
+        return Err(format!(
+            "\"learning_rate\" must be a positive real; got {}",
+            p.learning_rate
+        ));
+    }
+    let seed = value_of(req, "seed", 1, "fit")? as u64;
+
+    // The untrained score is not measured, it is DERIVED: every weight starts at zero, so the model
+    // is uniform and can only score -visible*ln2. Reporting it beside the fit is what makes the
+    // fitted number readable -- a log-likelihood alone tells a caller nothing about whether it is
+    // good, and a caller that cannot tell will either trust a bad fit or discard a good one.
+    let before = ferrotherm::ebm::exact_log_likelihood(&structure, &data).ok();
+    let out = ferrotherm::ebm::train(&structure, &data, &p, seed).map_err(|e| e.to_string())?;
+    let g = &out.graph;
+
+    let floor = -(visible as f64) * core::f64::consts::LN_2;
+    let ceiling = -(data.rows.len() as f64).ln();
+    let learned = out.log_likelihood.map(|v| (v - floor) / (ceiling - floor) * 100.0);
+
+    let mut couplings = Vec::new();
+    for i in 0..g.n {
+        for k in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[k] as usize;
+            if j > i {
+                couplings.push(Json::Arr(vec![
+                    Json::n(i as f64),
+                    Json::n(j as f64),
+                    Json::n(g.w[k]),
+                ]));
+            }
+        }
+    }
+    let biases: Vec<Json> = g
+        .h
+        .iter()
+        .enumerate()
+        .filter(|(_, &b)| b != 0.0)
+        .map(|(i, &b)| Json::Arr(vec![Json::n(i as f64), Json::n(b)]))
+        .collect();
+
+    let num = |v: Option<f64>| v.map(Json::n).unwrap_or(Json::Null);
+    Ok(Json::obj(vec![
+        ("log_likelihood", num(out.log_likelihood)),
+        ("log_likelihood_untrained", num(before)),
+        ("learned_percent", num(learned)),
+        (
+            "scale",
+            Json::obj(vec![
+                ("learned_nothing", Json::n(floor)),
+                ("learned_everything", Json::n(ceiling)),
+            ]),
+        ),
+        ("visible", Json::n(visible as f64)),
+        ("hidden", Json::Arr(hidden.iter().map(|&w| Json::n(w as f64)).collect())),
+        ("spins", Json::n(g.n as f64)),
+        ("edges", Json::n(g.n_edges as f64)),
+        ("rows", Json::n(data.rows.len() as f64)),
+        (
+            "graph",
+            Json::obj(vec![
+                ("n", Json::n(g.n as f64)),
+                ("couplings", Json::Arr(couplings)),
+                ("biases", Json::Arr(biases)),
+            ]),
+        ),
+        (
+            "note",
+            Json::s(
+                "\"graph\" is the fitted model in the shape every other operation TAKES: pass it \
+                 to sample, anneal, bound or verify with no export step. The likelihood is EXACT, \
+                 by enumeration, and is null above 22 spins where enumerating is refused rather \
+                 than replaced by a cheaper estimate -- an ELBO, a reconstruction error or a \
+                 pseudo-likelihood is worst exactly where sampling is worst, so comparing machines \
+                 on one reads the proxy's failure and calls it expressivity. \"learned_percent\" \
+                 places the fit between two ends that need no calibration: an untrained model is \
+                 uniform over 2^visible images, and a perfect one is uniform over the rows you gave.",
+            ),
+        ),
+    ]))
+}
+
+/// The dataset a fit request names, either by benchmark or written out.
+fn dataset_from(req: &Json, visible: usize) -> Result<Vec<Vec<i8>>, String> {
+    let d = req.get("data").ok_or(
+        "missing \"data\": either rows of -1 and +1, or the name \"bars-and-stripes-N\"",
+    )?;
+    if let Some(name) = d.as_str() {
+        let side = name
+            .strip_prefix("bars-and-stripes-")
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or_else(|| {
+                format!(
+                    "{name:?} is not a dataset this server knows; the only named one is \
+                     \"bars-and-stripes-N\", and otherwise give rows of -1 and +1"
+                )
+            })?;
+        if !(1..=8).contains(&side) {
+            return Err(format!("\"bars-and-stripes-{side}\" needs N between 1 and 8"));
+        }
+        let ds = ferrotherm::ebm::bars_and_stripes(side);
+        if ds.visible != visible {
+            return Err(format!(
+                "\"bars-and-stripes-{side}\" has {} entries per row and the machine has {visible} \
+                 visible units; they have to match, because a row is clamped onto them",
+                ds.visible
+            ));
+        }
+        return Ok(ds.rows);
+    }
+    let arr = d.as_arr().ok_or(
+        "\"data\" is either an array of rows or the name \"bars-and-stripes-N\"",
+    )?;
+    if arr.is_empty() {
+        return Err("\"data\" is empty; there is nothing to fit".into());
+    }
+    let mut rows = Vec::with_capacity(arr.len());
+    for (i, row) in arr.iter().enumerate() {
+        let cells = row
+            .as_arr()
+            .ok_or_else(|| format!("data[{i}] must be an array of -1 and +1"))?;
+        if cells.len() != visible {
+            return Err(format!(
+                "data[{i}] has {} entries and the machine has {visible} visible units",
+                cells.len()
+            ));
+        }
+        let mut out = Vec::with_capacity(visible);
+        for (j, c) in cells.iter().enumerate() {
+            match c.as_f64() {
+                Some(1.0) => out.push(1i8),
+                Some(-1.0) => out.push(-1i8),
+                _ => {
+                    return Err(format!(
+                        "data[{i}][{j}] must be -1 or +1; a spin has no other values"
+                    ))
+                }
+            }
+        }
+        rows.push(out);
+    }
+    Ok(rows)
+}
+
 /// A starting state from the request, in the shape `branch`'s `incumbent` already uses.
 ///
 /// `None` when absent. A wrong length is REFUSED here rather than ignored: over an HTTP boundary a
@@ -1690,6 +1894,7 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
         "toroidal_bound" => toroidal_bound(req),
         "solve" => solve(req),
         "hubo" => hubo(req),
+        "fit" => fit(req),
         "capabilities" => Ok(capabilities()),
         other => Err(format!(
             "unknown operation {other:?}; call \"capabilities\" for the list"
@@ -1708,6 +1913,84 @@ pub fn parse_body(body: &str) -> Result<Json, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE ROUND TRIP IS THE FEATURE. `fit` returns a graph in the shape every other operation
+    /// takes, and the only way to know that is still true is to take one operation's output and
+    /// hand it to the next ones unmodified. A reply that merely CONTAINS a "graph" key satisfies
+    /// any schema check and can still be unusable.
+    #[test]
+    fn a_fitted_model_is_accepted_by_the_operations_that_consume_models() {
+        let req = crate::json::parse(
+            r#"{"visible":9,"hidden":[12],"data":"bars-and-stripes-3","epochs":200,"k":10,"seed":3}"#,
+        )
+        .unwrap();
+        let out = fit(&req).expect("a 21-spin machine on 14 rows must fit");
+
+        // Both ends of the scale are DERIVED, not measured: every weight starts at zero, so an
+        // untrained machine is uniform over 2^9 images and can only score -9 ln 2.
+        let untrained = out.get("log_likelihood_untrained").and_then(|v| v.as_f64()).unwrap();
+        assert!((untrained + 9.0 * core::f64::consts::LN_2).abs() < 1e-12, "{untrained}");
+        let learned = out.get("learned_percent").and_then(|v| v.as_f64()).unwrap();
+        assert!(learned > 85.0, "a wide machine on this data reaches the nineties: {learned}");
+
+        let g = out.get("graph").expect("the fit must return its model");
+        assert_eq!(g.get("n").and_then(|v| v.as_f64()), Some(21.0));
+        assert_eq!(g.get("couplings").and_then(|v| v.as_arr()).map(|a| a.len()), Some(108));
+
+        // Now the round trip, through the same `graph_from` every consuming operation uses. A
+        // fitted model is DENSE compared with the lattices these operations usually see, so this
+        // also checks the marshalling at a shape the rest of the suite never produces.
+        let with_graph = |extra: &str| {
+            crate::json::parse(&format!(
+                "{{\"graph\":{}{}}}",
+                crate::json::write(g),
+                extra
+            ))
+            .unwrap()
+        };
+        let annealed = anneal(&with_graph(r#","seed":1"#)).expect("anneal takes a fitted model");
+        let e = annealed.get("best_energy").and_then(|v| v.as_f64()).unwrap();
+
+        let bounded = bound(&with_graph("")).expect("bound takes a fitted model");
+        let b = bounded.get("best").and_then(|v| v.as_f64()).unwrap();
+        // One-sided and the only direction that can be asserted: a sound bound never exceeds an
+        // energy actually attained.
+        assert!(b <= e + 1e-9, "bound {b} must not exceed an attained energy {e}");
+
+        let sampled = sample(&with_graph(r#","beta":1.0,"sweeps":200,"seed":2"#))
+            .expect("sample takes a fitted model");
+        assert!(sampled.get("energy").and_then(|v| v.as_f64()).unwrap().is_finite());
+    }
+
+    /// A fit request that cannot be honoured says which part, in the caller's own terms.
+    #[test]
+    fn a_bad_fit_request_names_the_part_that_is_wrong() {
+        let bad = |body: &str| fit(&crate::json::parse(body).unwrap()).unwrap_err();
+
+        let e = bad(r#"{"visible":9,"data":"bars-and-stripes-3"}"#);
+        assert!(e.contains("hidden"), "{e}");
+        let e = bad(r#"{"visible":9,"hidden":[12]}"#);
+        assert!(e.contains("data"), "{e}");
+        // The commonest real mistake: a machine whose visible width does not match the data's.
+        let e = bad(r#"{"visible":4,"hidden":[8],"data":"bars-and-stripes-3"}"#);
+        assert!(e.contains("clamped"), "it says WHY they must match: {e}");
+        let e = bad(r#"{"visible":9,"hidden":[12],"data":"mnist"}"#);
+        assert!(e.contains("bars-and-stripes"), "{e}");
+        let e = bad(r#"{"visible":2,"hidden":[2],"data":[[1,0]]}"#);
+        assert!(e.contains("-1 or +1"), "{e}");
+        let e = bad(r#"{"visible":2,"hidden":[0],"data":[[1,-1]]}"#);
+        assert!(e.contains("at least one unit"), "{e}");
+
+        // Above the enumeration ceiling the fit still runs; only its SCORE is refused, and it is
+        // refused by returning null rather than by substituting something cheaper.
+        let big = crate::json::parse(
+            r#"{"visible":16,"hidden":[12],"data":[[1,-1,1,-1,1,-1,1,-1,1,-1,1,-1,1,-1,1,-1]],"epochs":5}"#,
+        )
+        .unwrap();
+        let out = fit(&big).expect("a 28-spin machine still fits");
+        assert!(matches!(out.get("log_likelihood"), Some(Json::Null)));
+        assert!(out.get("graph").is_some(), "the model is real even when its score is not taken");
+    }
 
     #[test]
     fn a_quadratic_model_is_refused_by_coupling_count_not_node_count() {
