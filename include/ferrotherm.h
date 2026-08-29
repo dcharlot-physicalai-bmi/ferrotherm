@@ -745,6 +745,63 @@ uint32_t ft_threads_used(const ft_sim *sim);
  * is the only place a C caller can learn the number without guessing. */
 uint32_t ft_hardware_threads(void);
 
+/* ---- fitting a model to data ------------------------------------------------------------------
+ *
+ * Every other family here takes a model as given: it samples one, optimises one, bounds one. This
+ * one PRODUCES one. A thermodynamic stack that can only consume models is half a paradigm -- the
+ * argument for this class of hardware is that it samples Boltzmann distributions cheaply, the
+ * distributions anyone wants are FITTED, and a C caller who cannot fit one has to leave for a
+ * Python training stack and come back, which is the seam the hardware exists to remove.
+ *
+ * The composition is the point: ft_ebm_train REPLACES the simulation's graph, so every solver,
+ * sampler, certificate and bound on this ABI immediately applies to a trained model. */
+
+/* An RBM's STRUCTURE: `visible` + `hidden` spins, complete bipartite, every weight zero. Visible
+ * units are spins 0..visible, which is what the two dataset calls assume when they clamp a row on.
+ * Returns NULL with ft_ebm_error set. */
+ft_sim *ft_ebm_rbm(uint32_t visible, uint32_t hidden, double beta, uint64_t seed);
+
+/* A deep Boltzmann machine's structure: `visible` spins, then each of `n_layers` widths, chained.
+ * One layer is exactly ft_ebm_rbm. More layers add latent units WITHOUT scaling any unit's
+ * connectivity, which is the arrangement the mixing-expressivity tradeoff is a claim about. */
+ft_sim *ft_ebm_dbm(uint32_t visible, const uint32_t *layers, uint32_t n_layers,
+                   double beta, uint64_t seed);
+
+/* Fit the simulation's graph to `rows` by contrastive divergence. Returns 1, or 0 with the reason
+ * in ft_ebm_error. `rows` is n_rows*visible entries of -1 or +1, row-major. The graph's EDGE SET is
+ * kept and its weights are overwritten.
+ *
+ * THIS REPLACES THE SIMULATION'S MODEL, so every cached result about the old one is dropped --
+ * certificates, tabu and branch outcomes, the GPU model. A certificate proved against the weights
+ * before training is a true statement about a model that no longer exists, and handing it back
+ * after a fit would be the most confident way this ABI could lie. The spin state survives; it is a
+ * state of the same spins and a fine start for sampling the fitted model.
+ *
+ * Zero means "the documented default" for epochs, k, positive_sweeps, batch and learning_rate. The
+ * rate DECAYS to a tenth across training; without that decay the fit has a noise floor and never
+ * reaches its own fixed point. */
+uint32_t ft_ebm_train(ft_sim *sim, uint32_t visible, const int8_t *rows, uint32_t n_rows,
+                      uint32_t epochs, uint32_t k, uint32_t positive_sweeps,
+                      double learning_rate, uint32_t batch, uint64_t seed);
+
+/* Mean log-likelihood per row under the current model, EXACT, by enumeration. NaN with the reason
+ * in ft_ebm_error -- including above 22 spins, where it REFUSES rather than returning something
+ * cheaper. An ELBO, a reconstruction error or a pseudo-likelihood is worst exactly where sampling is
+ * worst, so a caller comparing models on one reads the proxy's failure and calls it expressivity.
+ *
+ * The scale has fixed ends and needs no calibration: a model that learned nothing scores
+ * -visible*ln2, and one reproducing n equiprobable rows scores -ln n. */
+double ft_ebm_log_likelihood(ft_sim *sim, uint32_t visible, const int8_t *rows, uint32_t n_rows);
+
+/* The side x side bars-and-stripes dataset, the standard tiny benchmark for fitting an EBM. Writes
+ * 2^(side+1)-2 rows of side*side entries into `out`, row-major, and returns the row count. With a
+ * NULL `out` it returns the count and writes nothing, so a caller can size its buffer first. */
+uint32_t ft_ebm_bars_and_stripes(uint32_t side, int8_t *out, uint32_t cap);
+
+/* Why the last ft_ebm_* call failed, empty after a success. Same two-call protocol as
+ * ft_ommx_error: NULL buffer for the length, then a buffer that size. Not null-terminated. */
+uint32_t ft_ebm_error(uint8_t *buf, uint32_t cap);
+
 /* Release a simulation. */
 void ft_free(ft_sim *sim);
 

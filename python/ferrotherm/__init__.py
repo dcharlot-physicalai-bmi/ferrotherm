@@ -7,6 +7,7 @@ compile anything on your machine.
     >>> import ferrotherm as ft
     >>> sim = ft.lattice2d(32, beta=0.44)
     >>> sim.sweep(500)
+    500
     >>> sim.magnetization           # doctest: +SKIP
     0.83...
 
@@ -55,6 +56,9 @@ __all__ = [
     "ring",
     "z1_grid",
     "from_spec",
+    "rbm",
+    "dbm",
+    "bars_and_stripes",
     "onsager",
     "library_path",
     "__version__",
@@ -270,6 +274,16 @@ _model_cert_finding = _sig("ft_model_cert_finding", c_uint32, [_p, c_uint32, _u8
 _model_cert_f = {n: _sig("ft_model_cert_" + n, c_double, [_p])
                  for n in ("beta", "ess", "tau", "tv", "floor")}
 _model_error = _sig("ft_model_error", c_uint32, [_p, _u8p, c_uint32])
+_ebm_rbm = _sig("ft_ebm_rbm", _p, [c_uint32, c_uint32, c_double, c_uint64])
+_ebm_dbm = _sig("ft_ebm_dbm", _p,
+                [c_uint32, POINTER(c_uint32), c_uint32, c_double, c_uint64])
+_ebm_train = _sig("ft_ebm_train", c_uint32,
+                  [_p, c_uint32, POINTER(c_int8), c_uint32, c_uint32, c_uint32, c_uint32,
+                   c_double, c_uint32, c_uint64])
+_ebm_log_likelihood = _sig("ft_ebm_log_likelihood", c_double,
+                           [_p, c_uint32, POINTER(c_int8), c_uint32])
+_ebm_bars_and_stripes = _sig("ft_ebm_bars_and_stripes", c_uint32, [c_uint32, POINTER(c_int8), c_uint32])
+_ebm_error = _sig("ft_ebm_error", c_uint32, [_u8p, c_uint32])
 _model_ftp = _sig("ft_model_ftp", c_uint32, [_p, _u8p, c_uint32])
 
 
@@ -1001,6 +1015,65 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         return int(_hfs_improving(self._h))
 
+    # ---- fitting a model to data ---------------------------------------------------------------
+
+    def fit(self, rows: Sequence[Sequence[int]], visible: int = 0, epochs: int = 0,
+            k: int = 0, positive_sweeps: int = 0, learning_rate: float = 0.0,
+            batch: int = 0, seed: int = 0) -> "Sim":
+        """Fit this model's weights to ``rows`` by contrastive divergence. Returns ``self``.
+
+        Every other method here takes the model as given and samples, optimises or bounds it. This
+        one **produces** one, and it is why a thermodynamic stack is a paradigm rather than a
+        solver: the argument for this hardware is that it samples Boltzmann distributions cheaply,
+        and the distributions anyone wants are *fitted*.
+
+        ``rows`` is a sequence of ``±1`` rows; ``visible`` defaults to the row width. The edge set
+        is kept and the weights are overwritten, so build the structure with :func:`rbm`,
+        :func:`dbm`, or any graph of your own.
+
+        **This replaces the model, so every cached result about the old one is dropped** —
+        certificates, tabu and branch outcomes, the GPU model. A certificate proved against the
+        weights before training is a true statement about a model that no longer exists. The spin
+        state survives; it is a state of the same spins and a fine start for sampling the fit.
+
+        Zero means the documented default for every knob. The learning rate **decays to a tenth**
+        across training — without that the fit has a noise floor and never reaches its own fixed
+        point.
+
+        >>> import ferrotherm as ft
+        >>> data = ft.bars_and_stripes(2)
+        >>> m = ft.rbm(4, 4, seed=11)
+        >>> before = m.log_likelihood(data)
+        >>> after = m.fit(data, epochs=600, k=10, seed=3).log_likelihood(data)
+        >>> after > before
+        True
+        """
+        self._live()
+        flat, width, n = _flatten_rows(rows, visible)
+        ok = _ebm_train(self._h, width, flat, n, int(epochs), int(k), int(positive_sweeps),
+                        float(learning_rate), int(batch), int(seed))
+        if not ok:
+            raise ValueError(_ebm_why() or "that dataset could not be fitted")
+        return self
+
+    def log_likelihood(self, rows: Sequence[Sequence[int]], visible: int = 0) -> float:
+        """Mean log-likelihood per row under this model, **exact**, by enumeration.
+
+        Never an ELBO, a reconstruction error or a pseudo-likelihood: each of those is worst
+        exactly where sampling is worst, so comparing models on one reads the proxy's failure and
+        calls it expressivity. Above 22 spins this **raises** rather than returning something
+        cheaper.
+
+        The scale has fixed ends and needs no calibration — a model that has learned nothing scores
+        ``-visible * ln 2``, and one reproducing ``n`` equiprobable rows scores ``-ln n``.
+        """
+        self._live()
+        flat, width, n = _flatten_rows(rows, visible)
+        v = float(_ebm_log_likelihood(self._h, width, flat, n))
+        if v != v:
+            raise ValueError(_ebm_why() or "that likelihood could not be computed")
+        return v
+
     def tabu_iterations(self) -> int:
         """Iterations the last :meth:`tabu` actually ran, or 0 if there was none."""
         self._live()
@@ -1639,6 +1712,87 @@ def from_ommx(data: bytes, beta: float = 1.0, seed: int = 0) -> "tuple[Sim, floa
             why = bytes(bytearray(eb)[:got]).decode("utf-8", "replace")
         raise ValueError(why or "that is not an instance this sampler can read")
     return Sim(h), float(constant.value)
+
+
+# ---- fitting a model to data ---------------------------------------------------------------------
+
+
+def _ebm_why() -> str:
+    """The reason the last ``ft_ebm_*`` call refused, in the caller's own terms."""
+    need = _ebm_error(None, 0)
+    if not need:
+        return ""
+    buf = (ctypes.c_ubyte * need)()
+    got = _ebm_error(buf, need)
+    return bytes(bytearray(buf)[:got]).decode("utf-8", "replace")
+
+
+def _flatten_rows(rows: Sequence[Sequence[int]], visible: int) -> tuple:
+    """Rows of ±1 into one C array, with the width checked here rather than across the boundary."""
+    rows = [list(r) for r in rows]
+    if not rows:
+        raise ValueError("no data rows; there is nothing to fit")
+    width = int(visible) or len(rows[0])
+    for i, r in enumerate(rows):
+        if len(r) != width:
+            raise ValueError(f"row {i} has {len(r)} entries, and the dataset declares {width}")
+        for j, v in enumerate(r):
+            if v not in (-1, 1):
+                raise ValueError(f"row {i} position {j} is {v}, and a spin is -1 or +1")
+    flat = (c_int8 * (len(rows) * width))()
+    for i, r in enumerate(rows):
+        for j, v in enumerate(r):
+            flat[i * width + j] = int(v)
+    return flat, width, len(rows)
+
+
+def rbm(visible: int, hidden: int, beta: float = 1.0, seed: int = 0) -> Sim:
+    """A restricted Boltzmann machine's **structure**: complete bipartite, every weight zero.
+
+    Give the weights meaning with :meth:`Sim.fit`. Visible units are spins ``0..visible``, which is
+    what :meth:`Sim.fit` and :meth:`Sim.log_likelihood` assume when they clamp a row on.
+    """
+    h = _ebm_rbm(int(visible), int(hidden), float(beta), int(seed))
+    if not h:
+        raise ValueError(_ebm_why() or "that is not a machine this library can build")
+    return Sim(h)
+
+
+def dbm(visible: int, layers: Sequence[int], beta: float = 1.0, seed: int = 0) -> Sim:
+    """A deep Boltzmann machine's structure: ``visible`` spins, then each layer, chained.
+
+    One layer is exactly :func:`rbm`. More layers add latent units **without** scaling any unit's
+    connectivity, which is the arrangement the mixing-expressivity tradeoff is a claim about —
+    ``examples/trained_tradeoff`` measures the two against each other and finds that the claim's
+    two halves do not both survive.
+    """
+    widths = [int(w) for w in layers]
+    if not widths:
+        raise ValueError("no hidden layers were given")
+    arr = (c_uint32 * len(widths))(*widths)
+    h = _ebm_dbm(int(visible), arr, len(widths), float(beta), int(seed))
+    if not h:
+        raise ValueError(_ebm_why() or "that is not a machine this library can build")
+    return Sim(h)
+
+
+def bars_and_stripes(side: int) -> list:
+    """The ``side x side`` bars-and-stripes dataset, the standard tiny benchmark for fitting an EBM.
+
+    >>> import ferrotherm as ft
+    >>> rows = ft.bars_and_stripes(3)
+    >>> len(rows), len(rows[0])
+    (14, 9)
+    """
+    n = _ebm_bars_and_stripes(int(side), None, 0)
+    if not n:
+        raise ValueError(_ebm_why() or "that side is not one this library can build")
+    width = int(side) * int(side)
+    buf = (c_int8 * (n * width))()
+    got = _ebm_bars_and_stripes(int(side), buf, n * width)
+    if not got:
+        raise ValueError(_ebm_why() or "the dataset could not be written")
+    return [[int(buf[r * width + c]) for c in range(width)] for r in range(got)]
 
 
 class Problem:

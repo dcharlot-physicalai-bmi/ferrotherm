@@ -60,6 +60,7 @@ export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
 export certify, findings, passed
+export rbm, dbm, fit!, log_likelihood, bars_and_stripes
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
 export node_updates, joules_z1, onsager, library_path, close!
@@ -307,6 +308,12 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_ommx Cuint ModPtr Ptr{UInt8} Cuint
 @cfn ft_ommx_read SimPtr Ptr{UInt8} Cuint Cdouble Culonglong Ptr{Cdouble}
 @cfn ft_ommx_error Cuint Ptr{UInt8} Cuint
+@cfn ft_ebm_rbm SimPtr Cuint Cuint Cdouble Culonglong
+@cfn ft_ebm_dbm SimPtr Cuint Ptr{Cuint} Cuint Cdouble Culonglong
+@cfn ft_ebm_train Cuint SimPtr Cuint Ptr{Int8} Cuint Cuint Cuint Cuint Cdouble Cuint Culonglong
+@cfn ft_ebm_log_likelihood Cdouble SimPtr Cuint Ptr{Int8} Cuint
+@cfn ft_ebm_bars_and_stripes Cuint Cuint Ptr{Int8} Cuint
+@cfn ft_ebm_error Cuint Ptr{UInt8} Cuint
 @cfn ft_model_ommx_constant Cdouble ModPtr
 @cfn ft_model_caveat Cuint ModPtr Cuint Ptr{UInt8} Cuint
 @cfn ft_model_compile Cuint ModPtr
@@ -1793,6 +1800,129 @@ function from_ommx(data::AbstractVector{UInt8}; beta::Real = 1.0, seed::Integer 
         error(why)
     end
     (Simulation(h, "a simulation from that OMMX instance"), constant[])
+end
+
+# ---- fitting a model to data ---------------------------------------------------------------------
+#
+# Every other family here takes a model as given: it samples one, optimises one, bounds one. This one
+# PRODUCES one, and it is why a thermodynamic stack is a paradigm rather than a solver -- the
+# argument for this class of hardware is that it samples Boltzmann distributions cheaply, and the
+# distributions anyone wants are FITTED.
+
+function _ebm_why(fallback::AbstractString)
+    need = ft_ebm_error(C_NULL, Cuint(0))
+    need == 0 && return fallback
+    buf = Vector{UInt8}(undef, need)
+    got = ft_ebm_error(pointer(buf), Cuint(need))
+    String(buf[1:got])
+end
+
+"""
+    rbm(visible, hidden; beta = 1.0, seed = 0)
+
+A restricted Boltzmann machine's **structure**: complete bipartite, every weight zero. Give the
+weights meaning with [`fit!`](@ref). Visible units are spins `1..visible`, which is what `fit!` and
+[`log_likelihood`](@ref) assume when they clamp a data row on.
+"""
+function rbm(visible::Integer, hidden::Integer; beta::Real = 1.0, seed::Integer = 0)
+    h = ft_ebm_rbm(Cuint(visible), Cuint(hidden), Cdouble(beta), Culonglong(seed))
+    h == C_NULL && error(_ebm_why("that is not a machine this library can build"))
+    Simulation(h, "a restricted Boltzmann machine")
+end
+
+"""
+    dbm(visible, layers; beta = 1.0, seed = 0)
+
+A deep Boltzmann machine's structure: `visible` spins, then each layer, chained.
+
+One layer is exactly [`rbm`](@ref). More layers add latent units **without** scaling any unit's
+connectivity, which is the arrangement the mixing-expressivity tradeoff is a claim about.
+"""
+function dbm(visible::Integer, layers::AbstractVector{<:Integer}; beta::Real = 1.0,
+             seed::Integer = 0)
+    isempty(layers) && error("no hidden layers were given")
+    w = Cuint[Cuint(x) for x in layers]
+    h = ft_ebm_dbm(Cuint(visible), pointer(w), Cuint(length(w)), Cdouble(beta), Culonglong(seed))
+    h == C_NULL && error(_ebm_why("that is not a machine this library can build"))
+    Simulation(h, "a deep Boltzmann machine")
+end
+
+function _flat_rows(rows)
+    isempty(rows) && error("no data rows; there is nothing to fit")
+    width = length(first(rows))
+    flat = Vector{Int8}(undef, width * length(rows))
+    for (i, r) in enumerate(rows)
+        length(r) == width || error("row $i has $(length(r)) entries, and the first row has $width")
+        for (j, v) in enumerate(r)
+            (v == 1 || v == -1) || error("row $i position $j is $v, and a spin is -1 or +1")
+            flat[(i - 1) * width + j] = Int8(v)
+        end
+    end
+    (flat, width, length(rows))
+end
+
+"""
+    fit!(sim, rows; epochs = 0, k = 0, positive_sweeps = 0, learning_rate = 0.0, batch = 0, seed = 0)
+
+Fit this model's weights to `rows` by contrastive divergence. Returns `sim`.
+
+The edge set is kept and the weights are overwritten, so build the structure with [`rbm`](@ref),
+[`dbm`](@ref), or any graph of your own.
+
+**This replaces the model, so every cached result about the old one is dropped** — certificates,
+tabu and branch outcomes, the GPU model. A certificate proved against the weights before training is
+a true statement about a model that no longer exists. The spin state survives; it is a state of the
+same spins and a fine start for sampling the fit.
+
+Zero means the documented default for every knob. The learning rate **decays to a tenth** across
+training — without that the fit has a noise floor and never reaches its own fixed point.
+"""
+function fit!(sim::Simulation, rows; epochs::Integer = 0, k::Integer = 0,
+              positive_sweeps::Integer = 0, learning_rate::Real = 0.0, batch::Integer = 0,
+              seed::Integer = 0)
+    flat, width, n = _flat_rows(rows)
+    _live(sim)
+    ok = ft_ebm_train(sim.handle, Cuint(width), pointer(flat), Cuint(n), Cuint(epochs), Cuint(k),
+                      Cuint(positive_sweeps), Cdouble(learning_rate), Cuint(batch),
+                      Culonglong(seed))
+    ok == 0 && error(_ebm_why("that dataset could not be fitted"))
+    sim
+end
+
+"""
+    log_likelihood(sim, rows)
+
+Mean log-likelihood per row under this model, **exact**, by enumeration.
+
+Never an ELBO, a reconstruction error or a pseudo-likelihood: each of those is worst exactly where
+sampling is worst, so comparing models on one reads the proxy's failure and calls it expressivity.
+Above 22 spins this **errors** rather than returning something cheaper.
+
+The scale has fixed ends and needs no calibration — a model that has learned nothing scores
+`-visible * log 2`, and one reproducing `n` equiprobable rows scores `-log n`.
+"""
+function log_likelihood(sim::Simulation, rows)
+    flat, width, n = _flat_rows(rows)
+    _live(sim)
+    v = ft_ebm_log_likelihood(sim.handle, Cuint(width), pointer(flat), Cuint(n))
+    isnan(v) && error(_ebm_why("that likelihood could not be computed"))
+    v
+end
+
+"""
+    bars_and_stripes(side)
+
+The `side` × `side` bars-and-stripes dataset, the standard tiny benchmark for fitting an EBM.
+Returns a vector of `±1` rows.
+"""
+function bars_and_stripes(side::Integer)
+    n = ft_ebm_bars_and_stripes(Cuint(side), C_NULL, Cuint(0))
+    n == 0 && error(_ebm_why("that side is not one this library can build"))
+    width = Int(side) * Int(side)
+    buf = Vector{Int8}(undef, n * width)
+    got = ft_ebm_bars_and_stripes(Cuint(side), pointer(buf), Cuint(length(buf)))
+    got == 0 && error(_ebm_why("the dataset could not be written"))
+    [Int.(buf[(r - 1) * width + 1 : r * width]) for r in 1:got]
 end
 
 """

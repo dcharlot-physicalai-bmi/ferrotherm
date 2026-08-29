@@ -44,6 +44,33 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### Fitting reaches every surface, and the fit drops what it invalidates
+
+`ebm` was Rust-only, and a capability that stops at Rust is the exact failure `check-parity.sh`
+exists to catch. Six symbols now reach the C header, Python, Zig and Julia: `ft_ebm_rbm`,
+`ft_ebm_dbm`, `ft_ebm_train`, `ft_ebm_log_likelihood`, `ft_ebm_bars_and_stripes`, `ft_ebm_error`.
+169 ABI symbols across four surfaces, all reachable.
+
+**The composition is the point.** `ft_ebm_train` *replaces* the simulation's graph, so every solver,
+sampler, certificate and bound already on the ABI immediately applies to a trained model — fit an
+RBM, then anneal it, certify it, or hand it to branch and bound, with no new API and no export step.
+
+**And that is exactly why the fit drops every cached result about the old weights** — certificates,
+tabu and branch outcomes, the GPU model, the planted ground energy. A certificate proved against the
+weights before training is a true statement about a model that no longer exists, and handing it back
+after a fit would be the most confident way this ABI could lie. The spin state survives: same spins,
+and a fine start for sampling the fit. Rust, Zig and Julia each assert the invalidation directly.
+
+Textual parity says a symbol is *reachable*, which is not the same as correct — so each surface
+proves its own binding rather than trusting the gate. That caught a real one: the Julia binding read
+`sim.ptr` when the field is `sim.handle`, which parity passed and the test did not.
+
+The error convention follows `ft_ommx_error` (null buffer for the length, then a buffer that size)
+rather than inventing a second one for the same job.
+
+Unrelated and found on the way: the Python module docstring — the first example a Python user reads
+— asserted that `sim.sweep(500)` returns nothing. It returns 500.
+
 ### The stack can now fit a model, and the field's tradeoff sentence splits in two
 
 `mixing_expressivity` measured the structural half of the mixing-expressivity tradeoff. It could not

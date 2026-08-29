@@ -66,6 +66,7 @@ score. Scoring it found three defects on the first run.
 | Thermodynamic linear algebra (Aifer et al. / Normal Computing) | `tla` — OU-network SPD solves + bias-free exact-transition integrator | **shipped, verified** |
 | Torx gradient estimators (Extropic) | `program` — REINFORCE + parameter-shift + **EBM-kernel** (one trajectory + one auxiliary draw) | **shipped, verified** |
 | DTM — denoising thermodynamic models (Extropic's flagship architecture) | `dtm` — forward kernels, pattern grids, contrastive chain training, ACP, TC penalty | **shipped, verified** |
+| **Fitting an EBM to data (the training half every EBM stack needs)** | `ebm` — contrastive divergence + **exact** likelihood by enumeration | **shipped, verified** — the fixed point is moment matching, checked against enumeration rather than against more sampling |
 | Lattice Random Walk (Normal Computing CN101 algorithm) | `lrw` — ternary-increment SDE integration, exact-moment identities | **shipped, verified** |
 | Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
 | Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped**; the page verifies itself against Onsager in your browser before reporting a rate |
@@ -409,6 +410,34 @@ thermodynamic-computing corpus currently leaves empty.
   sampler on consumer silicon and the vendor's pre-silicon projection is **2–3 orders of
   magnitude**, not the marketed four — with both biases stated: package watts cover the whole
   platform; the SPICE figure excludes I/O and its own appendix revised the coarse model ~10× worse.
+
+### The mixing-expressivity tradeoff, measured on both halves
+
+The field states one sentence as its central open problem — *"scaling the number of latent variables
+only improves performance if the connectivity of the graph is also scaled; otherwise... increasing
+latent variables increases the depth of the Boltzmann machine, making sampling more difficult."*
+This review did not locate an independent, cross-topology measurement of it. There are now two.
+
+`examples/mixing_expressivity` is the **structural** half: shapes of a fixed spin count, random
+couplings, τ_int by Sokal windowing rather than an exponential fit. The claim **holds weakly coupled
+and goes U-shaped strongly coupled** — at β = 2 the shallowest shape is slow (26.30), the middle
+shapes are fast (~5), the deepest slower still (65.95). And past β = 2 the estimator stops being
+one: the same shape returns 285.6, 18.7, 42.6, and at β = 8 returns *small* numbers from a chain
+that has stopped moving. Ruggedness needs cold; cold is where the measurement dissolves. Every row
+carries `draws/τ` and prints `unusable` below 200×.
+
+`examples/trained_tradeoff` is the **fitted** half, and it splits the sentence in two. Same latent
+count wired one, two or three layers deep; both axes exact.
+
+- **Latents without connectivity buy less expressivity — confirmed**, monotone in depth at every
+  latent count.
+- **They therefore cost more mixing — not as stated.** The deep arms mix *faster*; at six latents
+  the *wide* model is the slowest thing in the table.
+
+Spearman of τ_int against **what the model learned: ρ = +0.81**; against **how deep it is: −0.17**.
+τ_int = 0.5 is the floor — independent draws — and the deep arms sit on it. **They are fast because
+they failed.** Depth does not make sampling harder; depth makes *learning* harder, and what a model
+learned is what makes sampling harder.
 
 ## Positions this crate takes
 

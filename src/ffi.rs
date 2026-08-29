@@ -4271,3 +4271,328 @@ mod model_method_ffi {
         assert_eq!(ft_model_proved(core::ptr::null()), 0);
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// FITTING A MODEL TO DATA
+//
+// Every other family here takes a model as given: it samples one, optimises one, bounds one. This
+// family PRODUCES one, and the reason it belongs on the ABI rather than in Rust alone is that a
+// thermodynamic stack that can only consume models is half a paradigm. The argument for this class
+// of hardware is that it samples Boltzmann distributions cheaply; the distributions anyone actually
+// wants are FITTED, and a caller in C, Python, Zig or Julia who cannot fit one has to leave for
+// PyTorch and come back, which is exactly the seam the hardware is supposed to remove.
+//
+// The composition is the point. `ft_ebm_train` REPLACES the simulation's graph with the fitted one,
+// so every solver, sampler, certificate and bound already on this ABI immediately applies to a
+// trained model. Fit an RBM, then anneal it, certify it, or hand it to branch and bound -- with no
+// new API and no export step.
+
+thread_local! {
+    /// Per-thread for the same reason [`ft_ommx_error`]'s is: these are free-standing calls whose
+    /// failures must not explain another thread's success.
+    static EBM_ERROR: core::cell::RefCell<String> = const { core::cell::RefCell::new(String::new()) };
+}
+
+fn set_ebm_error(s: &str) {
+    EBM_ERROR.with(|e| *e.borrow_mut() = s.to_string());
+}
+
+/// Why the last `ft_ebm_*` call failed, in the caller's own terms. Empty after a success.
+///
+/// Copies at most `cap` bytes into `buf` and returns how many were written; with a null `buf`,
+/// returns the length needed and writes nothing. Not null-terminated. Same shape as
+/// [`ft_ommx_error`], because a second convention for the same job is a second thing to get wrong.
+#[no_mangle]
+pub extern "C" fn ft_ebm_error(buf: *mut u8, cap: u32) -> u32 {
+    EBM_ERROR.with(|e| {
+        let e = e.borrow();
+        let b = e.as_bytes();
+        if buf.is_null() {
+            return b.len() as u32;
+        }
+        let n = b.len().min(cap as usize);
+        unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+        n as u32
+    })
+}
+
+/// A restricted Boltzmann machine's STRUCTURE: `visible` + `hidden` spins, complete bipartite,
+/// every weight zero. Feed it to [`ft_ebm_train`] to give the weights meaning.
+///
+/// Visible units are spins `0..visible`, which is what [`ft_ebm_train`] and
+/// [`ft_ebm_log_likelihood`] assume when they clamp a data row on.
+#[no_mangle]
+pub extern "C" fn ft_ebm_rbm(visible: u32, hidden: u32, beta: f64, seed: u64) -> *mut Sim {
+    set_ebm_error("");
+    if visible == 0 {
+        set_ebm_error("an RBM needs at least one visible unit");
+        return core::ptr::null_mut();
+    }
+    Sim::new(crate::ebm::rbm(visible as usize, hidden as usize), beta, seed)
+}
+
+/// A deep Boltzmann machine's structure: `visible` spins, then each layer in `layers`, chained.
+///
+/// One layer is exactly [`ft_ebm_rbm`]. More layers add latent units WITHOUT scaling any unit's
+/// connectivity, which is the arrangement the mixing-expressivity tradeoff is a claim about --
+/// `examples/trained_tradeoff` measures the two against each other and finds the claim's two halves
+/// do not both survive.
+#[no_mangle]
+pub extern "C" fn ft_ebm_dbm(
+    visible: u32,
+    layers: *const u32,
+    n_layers: u32,
+    beta: f64,
+    seed: u64,
+) -> *mut Sim {
+    set_ebm_error("");
+    if visible == 0 {
+        set_ebm_error("a Boltzmann machine needs at least one visible unit");
+        return core::ptr::null_mut();
+    }
+    if layers.is_null() || n_layers == 0 {
+        set_ebm_error("no hidden layers were given");
+        return core::ptr::null_mut();
+    }
+    let widths: Vec<usize> = unsafe { core::slice::from_raw_parts(layers, n_layers as usize) }
+        .iter()
+        .map(|&w| w as usize)
+        .collect();
+    Sim::new(crate::ebm::dbm(visible as usize, &widths), beta, seed)
+}
+
+/// Fit the simulation's graph to `rows` by contrastive divergence. Returns 1, or 0 with the reason
+/// in [`ft_ebm_error`].
+///
+/// `rows` is `n_rows * visible` entries of `-1` or `+1`, row-major. The graph's EDGE SET is kept and
+/// its weights are overwritten, so the structure comes from [`ft_ebm_rbm`], [`ft_ebm_dbm`], or any
+/// graph the caller built.
+///
+/// **This replaces the simulation's model, so every cached result about the old one is dropped** --
+/// certificates, tabu and branch outcomes, the GPU model. A certificate proved against the weights
+/// before training is a true statement about a model that no longer exists, and returning it after a
+/// fit would be the most confident way this ABI could lie. The spin state survives: it is a state of
+/// the same spins, and it is a perfectly good starting point for sampling the fitted model.
+///
+/// `epochs`, `k`, `positive_sweeps` and `batch` clamp up from 0 to the documented defaults of
+/// [`crate::ebm::Params`]. The learning rate DECAYS to a tenth of `learning_rate` across training;
+/// without that decay the fit has a noise floor and never reaches its own fixed point.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn ft_ebm_train(
+    sim: *mut Sim,
+    visible: u32,
+    rows: *const i8,
+    n_rows: u32,
+    epochs: u32,
+    k: u32,
+    positive_sweeps: u32,
+    learning_rate: f64,
+    batch: u32,
+    seed: u64,
+) -> u32 {
+    set_ebm_error("");
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        set_ebm_error("no simulation was given");
+        return 0;
+    };
+    let Some(data) = read_dataset(visible, rows, n_rows) else { return 0 };
+    let d = crate::ebm::Params::default();
+    let p = crate::ebm::Params {
+        epochs: if epochs == 0 { d.epochs } else { epochs as usize },
+        k: if k == 0 { d.k } else { k as usize },
+        positive_sweeps: if positive_sweeps == 0 {
+            d.positive_sweeps
+        } else {
+            positive_sweeps as usize
+        },
+        learning_rate: if learning_rate == 0.0 { d.learning_rate } else { learning_rate },
+        batch: if batch == 0 { d.batch } else { batch as usize },
+    };
+    match crate::ebm::train(&s.graph, &data, &p, seed) {
+        Ok(t) => {
+            *s.graph = t.graph;
+            // Everything derived from the OLD weights is now false. Dropping it is not tidiness.
+            s.gpu = None;
+            s.cert = None;
+            s.tb = None;
+            s.bl = None;
+            s.pc = None;
+            s.tor = None;
+            s.gw = None;
+            s.ic = None;
+            s.pa = None;
+            s.bb = None;
+            s.hf = None;
+            s.ground = None;
+            1
+        }
+        Err(e) => {
+            set_ebm_error(&e.to_string());
+            0
+        }
+    }
+}
+
+/// Mean log-likelihood per row under the simulation's current model, EXACT, by enumeration.
+///
+/// Returns NaN with the reason in [`ft_ebm_error`] -- including when the model has more than
+/// [`crate::ebm::MAX_ENUMERATED`] spins, where it refuses rather than returning something cheaper.
+/// That refusal is deliberate: an ELBO, a reconstruction error or a pseudo-likelihood is worst
+/// exactly where sampling is worst, so a caller comparing models on one would be reading the
+/// proxy's failure and calling it expressivity.
+///
+/// The scale has fixed ends and needs no calibration. A model that has learned nothing scores
+/// `-visible * ln 2`; one that reproduces `n` equiprobable rows scores `-ln n`.
+#[no_mangle]
+pub extern "C" fn ft_ebm_log_likelihood(
+    sim: *mut Sim,
+    visible: u32,
+    rows: *const i8,
+    n_rows: u32,
+) -> f64 {
+    set_ebm_error("");
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        set_ebm_error("no simulation was given");
+        return f64::NAN;
+    };
+    let Some(data) = read_dataset(visible, rows, n_rows) else { return f64::NAN };
+    match crate::ebm::exact_log_likelihood(&s.graph, &data) {
+        Ok(v) => v,
+        Err(e) => {
+            set_ebm_error(&e.to_string());
+            f64::NAN
+        }
+    }
+}
+
+/// The `side` x `side` bars-and-stripes dataset, the standard tiny benchmark for fitting an EBM.
+///
+/// Writes `2^(side+1) - 2` rows of `side*side` entries each into `out`, row-major, and returns the
+/// row count. Returns the row count WITHOUT writing when `out` is null, so a caller can size its
+/// buffer first; returns 0 if `cap` is too small to hold every row.
+#[no_mangle]
+pub extern "C" fn ft_ebm_bars_and_stripes(side: u32, out: *mut i8, cap: u32) -> u32 {
+    set_ebm_error("");
+    if side == 0 || side > 8 {
+        set_ebm_error("side must be between 1 and 8");
+        return 0;
+    }
+    let d = crate::ebm::bars_and_stripes(side as usize);
+    let need = d.rows.len() * d.visible;
+    if out.is_null() {
+        return d.rows.len() as u32;
+    }
+    if (cap as usize) < need {
+        set_ebm_error("the buffer is too small for every row");
+        return 0;
+    }
+    let dst = unsafe { core::slice::from_raw_parts_mut(out, need) };
+    for (r, row) in d.rows.iter().enumerate() {
+        dst[r * d.visible..(r + 1) * d.visible].copy_from_slice(row);
+    }
+    d.rows.len() as u32
+}
+
+/// Shared argument check for the two calls that take a dataset. Sets the error and returns `None`.
+fn read_dataset(visible: u32, rows: *const i8, n_rows: u32) -> Option<crate::ebm::Dataset> {
+    if rows.is_null() {
+        set_ebm_error("no data rows were given");
+        return None;
+    }
+    if visible == 0 || n_rows == 0 {
+        set_ebm_error("a dataset needs at least one row and one visible unit");
+        return None;
+    }
+    let flat =
+        unsafe { core::slice::from_raw_parts(rows, n_rows as usize * visible as usize) };
+    Some(crate::ebm::Dataset {
+        visible: visible as usize,
+        rows: flat.chunks(visible as usize).map(|c| c.to_vec()).collect(),
+    })
+}
+
+#[cfg(test)]
+mod ebm_ffi_tests {
+    use super::*;
+
+    /// The whole ABI family, end to end, and the invalidation that makes it safe to compose.
+    #[test]
+    fn fitting_through_the_abi_learns_and_drops_what_it_invalidates() {
+        // Size the buffer first, the way a C caller must.
+        let n_rows = ft_ebm_bars_and_stripes(2, core::ptr::null_mut(), 0);
+        assert_eq!(n_rows, 6, "2x2 bars and stripes is 2*2^2 - 2 rows");
+        let mut rows = vec![0i8; n_rows as usize * 4];
+        assert_eq!(ft_ebm_bars_and_stripes(2, rows.as_mut_ptr(), rows.len() as u32), n_rows);
+        assert!(rows.iter().all(|&v| v == 1 || v == -1));
+
+        let sim = ft_ebm_rbm(4, 4, 1.0, 11);
+        assert!(!sim.is_null());
+        assert_eq!(ft_len(sim), 8);
+
+        // An untrained model with every weight zero is uniform, so its likelihood is exactly
+        // -visible * ln 2 and nothing else it could be.
+        let before = ft_ebm_log_likelihood(sim, 4, rows.as_ptr(), n_rows);
+        assert!((before - (-4.0 * 2f64.ln())).abs() < 1e-9, "{before}");
+
+        // Prove something about the OLD weights, so there is a cached result to invalidate.
+        ft_sweep(sim, 50);
+        assert!(ft_tabu(sim, 2000, 0, 0).is_finite());
+        assert!(unsafe { sim.as_ref() }.unwrap().tb.is_some());
+
+        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 600, 10, 5, 0.05, 6, 3), 1);
+        let after = ft_ebm_log_likelihood(sim, 4, rows.as_ptr(), n_rows);
+        assert!(after > before + 0.05, "training must help: {before:.4} -> {after:.4}");
+        assert!(after < 0.0, "a log-likelihood is negative: {after}");
+
+        // A tabu outcome proved against weights that no longer exist is the most confident way
+        // this ABI could lie, so the fit drops it.
+        let s = unsafe { sim.as_ref() }.unwrap();
+        assert!(s.tb.is_none(), "the fit must drop results about the old weights");
+        assert!(s.cert.is_none() && s.gpu.is_none() && s.ground.is_none());
+        // The spin state survives: same spins, and a fine start for sampling the fitted model.
+        assert_eq!(s.sampler_state.len(), 8);
+
+        // And the fitted model composes with everything already on this ABI.
+        assert!(ft_tabu(sim, 2000, 0, 0).is_finite());
+        ft_free(sim);
+    }
+
+    #[test]
+    fn a_refusal_says_why_in_the_callers_terms() {
+        let read = || {
+            let n = ft_ebm_error(core::ptr::null_mut(), 0) as usize;
+            let mut b = vec![0u8; n];
+            let got = ft_ebm_error(b.as_mut_ptr(), n as u32) as usize;
+            String::from_utf8_lossy(&b[..got]).to_string()
+        };
+        assert!(ft_ebm_rbm(0, 4, 1.0, 1).is_null());
+        assert!(read().contains("visible"));
+
+        let sim = ft_ebm_rbm(4, 2, 1.0, 1);
+        let rows = [1i8, -1, 1, -1];
+        assert_eq!(ft_ebm_train(sim, 4, core::ptr::null(), 1, 10, 1, 1, 0.05, 1, 1), 0);
+        assert!(read().contains("no data rows"));
+        assert_eq!(ft_ebm_train(core::ptr::null_mut(), 4, rows.as_ptr(), 1, 10, 1, 1, 0.05, 1, 1), 0);
+        assert!(read().contains("simulation"));
+        // A successful call clears it.
+        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), 1, 10, 1, 1, 0.05, 1, 1), 1);
+        assert_eq!(read(), "");
+        ft_free(sim);
+
+        // Too large to enumerate is a refusal, not a cheaper answer.
+        let big = ft_ebm_rbm(20, 8, 1.0, 1);
+        let wide = [1i8; 20];
+        assert!(ft_ebm_log_likelihood(big, 20, wide.as_ptr(), 1).is_nan());
+        assert!(read().contains("28"), "the message names the size it refused: {}", read());
+        ft_free(big);
+
+        // A dbm with no layers is refused rather than silently becoming a bare visible layer.
+        assert!(ft_ebm_dbm(4, core::ptr::null(), 0, 1.0, 1).is_null());
+        assert!(read().contains("hidden layers"));
+        let layers = [3u32, 3];
+        let deep = ft_ebm_dbm(4, layers.as_ptr(), 2, 1.0, 1);
+        assert_eq!(ft_len(deep), 10);
+        ft_free(deep);
+    }
+}

@@ -6,6 +6,44 @@ using Ferrotherm, Test
     @test !isempty(library_path())
 end
 
+@testset "fitting a model to data" begin
+    # This surface binds the fitting family, so this surface proves it works. Textual parity says a
+    # symbol is REACHABLE, which is not the same as correct.
+    rows = bars_and_stripes(2)
+    @test length(rows) == 6            # 2*2^2 - 2
+    @test all(r -> length(r) == 4 && all(v -> v in (-1, 1), r), rows)
+
+    s = rbm(4, 4; seed = 11)
+    @test length(s) == 8
+    # Every weight is zero, so the model is uniform and the likelihood is exactly -4 log 2.
+    before = log_likelihood(s, rows)
+    @test isapprox(before, -4 * log(2); atol = 1e-9)
+
+    # Prove something about the OLD weights, so there is a cached result for the fit to drop.
+    sweep!(s, 50)
+    tabu!(s; iterations = 2000)
+    @test tabu_iterations(s) > 0
+
+    fit!(s, rows; epochs = 600, k = 10, seed = 3)
+    after = log_likelihood(s, rows)
+    @test after > before + 0.05
+    @test after < 0.0
+    # A tabu outcome proved against weights that no longer exist is dropped, not handed back.
+    @test tabu_iterations(s) == 0
+    close!(s)
+
+    d = dbm(4, [3, 3]; seed = 1)
+    @test length(d) == 10
+    close!(d)
+
+    # A refusal names its reason rather than returning something cheaper.
+    @test_throws ErrorException rbm(0, 4)
+    @test_throws ErrorException dbm(4, Int[])
+    big = rbm(20, 8)
+    @test_throws ErrorException log_likelihood(big, [fill(1, 20)])
+    close!(big)
+end
+
 @testset "1-based indices at the boundary" begin
     # Julia is 1-based and the C ABI is 0-based. Getting this wrong shifts every coupling by one
     # and still runs, which is the worst kind of bug.

@@ -27,6 +27,9 @@ pub const Error = error{
     BadState,
     /// An OMMX instance this sampler cannot represent. `ommxError` says which part.
     Unreadable,
+    /// A dataset or a machine this library will not fit. `ebmError` says which -- a malformed row,
+    /// a model too small for the data, or a model too large to score exactly.
+    Unfittable,
     /// The exact planar solver cannot take this graph. `planarError` says which of the four
     /// reasons it was -- fields, non-planar, a cut vertex, or weights that do not scale to
     /// integers -- and they are four different things to do next.
@@ -112,6 +115,50 @@ pub const Sim = struct {
     /// Z1-topology grid, degree 16, open boundaries.
     pub fn z1Grid(w: u32, ht: u32, j: f64, hb: f64, beta: f64, seed: u64) Error!Sim {
         return .{ .h = c.ft_z1_new(w, ht, j, hb, beta, seed) orelse return Error.OutOfMemory };
+    }
+
+    /// A restricted Boltzmann machine's STRUCTURE: complete bipartite, every weight zero. Give
+    /// the weights meaning with `fit`. Visible units are spins `0..visible`.
+    pub fn rbm(visible: u32, hidden: u32, beta: f64, seed: u64) Error!Sim {
+        return .{ .h = c.ft_ebm_rbm(visible, hidden, beta, seed) orelse return Error.Unfittable };
+    }
+
+    /// A deep Boltzmann machine's structure: `visible` spins, then each layer, chained. One layer
+    /// is exactly `rbm`; more add latent units WITHOUT scaling connectivity, which is the
+    /// arrangement the mixing-expressivity tradeoff is a claim about.
+    pub fn dbm(visible: u32, layers: []const u32, beta: f64, seed: u64) Error!Sim {
+        const h = c.ft_ebm_dbm(visible, layers.ptr, @intCast(layers.len), beta, seed);
+        return .{ .h = h orelse return Error.Unfittable };
+    }
+
+    /// Fit this model's weights to `rows` by contrastive divergence.
+    ///
+    /// Every other method here takes the model as given and samples, optimises or bounds it. This
+    /// one PRODUCES one. `rows` is `n_rows * visible` entries of -1 or +1, row-major; the edge set
+    /// is kept and the weights are overwritten.
+    ///
+    /// THIS REPLACES THE MODEL, so every cached result about the old one is dropped -- a
+    /// certificate proved against the weights before training is a true statement about a model
+    /// that no longer exists. The spin state survives. Zero means the documented default for each
+    /// knob; the learning rate decays to a tenth across training, and without that decay the fit
+    /// has a noise floor and never reaches its own fixed point.
+    pub fn fit(self: Sim, visible: u32, rows: []const i8, p: FitParams) Error!void {
+        const n_rows: u32 = @intCast(rows.len / visible);
+        const ok = c.ft_ebm_train(self.h, visible, rows.ptr, n_rows, p.epochs, p.k,
+            p.positive_sweeps, p.learning_rate, p.batch, p.seed);
+        if (ok == 0) return Error.Unfittable;
+    }
+
+    /// Mean log-likelihood per row under this model, EXACT, by enumeration.
+    ///
+    /// Never an ELBO, a reconstruction error or a pseudo-likelihood: each is worst exactly where
+    /// sampling is worst, so comparing models on one reads the proxy's failure and calls it
+    /// expressivity. Above 22 spins this REFUSES rather than returning something cheaper.
+    pub fn logLikelihood(self: Sim, visible: u32, rows: []const i8) Error!f64 {
+        const n_rows: u32 = @intCast(rows.len / visible);
+        const v = c.ft_ebm_log_likelihood(self.h, visible, rows.ptr, n_rows);
+        if (v != v) return Error.Unfittable;
+        return v;
     }
 
     /// Run `n` chromatic block-Gibbs sweeps. Returns total sweeps so far.
@@ -762,6 +809,37 @@ pub fn ommxError(buf: []u8) []const u8 {
     const need = c.ft_ommx_error(null, 0);
     const n = @min(need, @as(u32, @intCast(buf.len)));
     const got = c.ft_ommx_error(buf.ptr, n);
+    return buf[0..got];
+}
+
+/// How a fit is run. Zero means the documented default, so `.{}` is a working fit.
+pub const FitParams = struct {
+    epochs: u32 = 0,
+    k: u32 = 0,
+    positive_sweeps: u32 = 0,
+    learning_rate: f64 = 0.0,
+    batch: u32 = 0,
+    seed: u64 = 0,
+};
+
+/// The `side` x `side` bars-and-stripes dataset, written row-major into `out`. Returns the rows it
+/// wrote. Call with an empty slice to learn the row count before sizing the buffer.
+pub fn barsAndStripes(side: u32, out: []i8) Error!u32 {
+    if (out.len == 0) {
+        const n = c.ft_ebm_bars_and_stripes(side, null, 0);
+        if (n == 0) return Error.Unfittable;
+        return n;
+    }
+    const n = c.ft_ebm_bars_and_stripes(side, out.ptr, @intCast(out.len));
+    if (n == 0) return Error.Unfittable;
+    return n;
+}
+
+/// Why the last `ft_ebm_*` call on this thread failed, in the caller's own terms.
+pub fn ebmError(buf: []u8) []const u8 {
+    const need = c.ft_ebm_error(null, 0);
+    const n = @min(need, @as(u32, @intCast(buf.len)));
+    const got = c.ft_ebm_error(buf.ptr, n);
     return buf[0..got];
 }
 
@@ -2115,4 +2193,57 @@ test "no bound exceeds a ground energy the same object can prove" {
     try std.testing.expect(b.best() <= truth + 1e-9);
     // On a ring with no fields `forest` cannot beat `decoupled`: a tree is never frustrated.
     try std.testing.expectApproxEqAbs(b.decoupled, b.forest, 1e-9);
+}
+
+test "fitting a model to data, and what the fit invalidates" {
+    // The C ABI's fitting family, end to end. This surface binds it, so this surface proves it
+    // works -- textual parity says a symbol is REACHABLE, which is not the same as correct.
+    const n_rows = try barsAndStripes(2, &[_]i8{});
+    try std.testing.expectEqual(@as(u32, 6), n_rows);
+    var rows: [24]i8 = undefined;
+    try std.testing.expectEqual(n_rows, try barsAndStripes(2, &rows));
+    for (rows) |v| try std.testing.expect(v == 1 or v == -1);
+
+    var sim = try Sim.rbm(4, 4, 1.0, 11);
+    defer sim.deinit();
+    try std.testing.expectEqual(@as(u32, 8), sim.len());
+
+    // Every weight is zero, so the model is uniform and its likelihood is exactly -4 ln 2.
+    const before = try sim.logLikelihood(4, &rows);
+    try std.testing.expectApproxEqAbs(-4.0 * @log(2.0), before, 1e-9);
+
+    // Prove something about the OLD weights, so there is a cached result for the fit to drop.
+    _ = sim.sweep(50);
+    try std.testing.expect(sim.tabuIterations() == 0);
+    _ = sim.tabu(2000, 0, 0);
+    try std.testing.expect(sim.tabuIterations() > 0);
+
+    try sim.fit(4, &rows, .{ .epochs = 600, .k = 10, .seed = 3 });
+    const after = try sim.logLikelihood(4, &rows);
+    try std.testing.expect(after > before + 0.05);
+    try std.testing.expect(after < 0.0);
+    // A tabu outcome proved against weights that no longer exist is dropped, not handed back.
+    try std.testing.expectEqual(@as(u32, 0), sim.tabuIterations());
+    // And the fitted model composes with everything else on this surface.
+    try std.testing.expect(!std.math.isNan(sim.tabu(2000, 0, 0)));
+
+    var deep = try Sim.dbm(4, &[_]u32{ 3, 3 }, 1.0, 1);
+    defer deep.deinit();
+    try std.testing.expectEqual(@as(u32, 10), deep.len());
+}
+
+test "a refused fit says why in the caller's own terms" {
+    var buf: [128]u8 = undefined;
+    try std.testing.expectError(Error.Unfittable, Sim.rbm(0, 4, 1.0, 1));
+    try std.testing.expect(std.mem.indexOf(u8, ebmError(&buf), "visible") != null);
+
+    try std.testing.expectError(Error.Unfittable, Sim.dbm(4, &[_]u32{}, 1.0, 1));
+    try std.testing.expect(std.mem.indexOf(u8, ebmError(&buf), "hidden layers") != null);
+
+    // Too large to enumerate is a refusal, not a cheaper answer.
+    var big = try Sim.rbm(20, 8, 1.0, 1);
+    defer big.deinit();
+    const wide = [_]i8{1} ** 20;
+    try std.testing.expectError(Error.Unfittable, big.logLikelihood(20, &wide));
+    try std.testing.expect(std.mem.indexOf(u8, ebmError(&buf), "28 spins") != null);
 }
