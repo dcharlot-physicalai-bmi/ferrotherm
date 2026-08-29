@@ -171,7 +171,7 @@ jobs:
           FERROTHERM_ALLOW_BUSY: "1"
         run: |
           set -euo pipefail
-          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact toroidal_bound icm_scaling hubo_vs_reduction hfs_reach"
+          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact toroidal_bound icm_scaling hubo_vs_reduction hfs_reach mixing_expressivity"
           ran=0
           for f in examples/*.rs; do
             n=$(basename "$f" .rs)

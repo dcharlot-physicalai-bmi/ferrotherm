@@ -44,6 +44,55 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The mixing-expressivity tradeoff, measured — and it is not monotone
+
+A survey of the field put the **mixing-expressivity tradeoff** at the centre of thermodynamic
+computing's open problems. Extropic's DTM paper names it: as an energy-based model's expressivity
+rises its mixing time rises with it, until sampling becomes "glacial". This review did not locate an
+independent, cross-topology measurement of it. `examples/mixing_expressivity` is one.
+
+The testable half is structural and needs no trained model, because the claim itself is structural:
+
+> "Scaling the number of latent variables only improves performance if the connectivity of the graph
+> is also scaled; otherwise… increasing latent variables increases the depth of the Boltzmann
+> machine, making sampling more difficult."
+
+τ_int by **Sokal's automatic windowing** rather than an exponential fit to the autocorrelation tail,
+which is what the source measurement uses and which is the more fragile of the two. Couplings are
+±1/√(fan-in) throughout — the control that makes it a measurement, because without it a deeper model
+at fixed spin count has fewer edges per node, a shallower landscape, and the table would show depth
+*helping*.
+
+**Weakly coupled, the claim holds cleanly.** At a fixed 144 spins, reshaping 2 layers into 12:
+
+| β | 2×72 | 3×48 | 4×36 | 6×24 | 12×12 |
+|---|---|---|---|---|---|
+| 0.5 | 0.63 | 0.73 | 0.76 | 0.80 | **0.84** |
+| 1.0 | 1.33 | 2.09 | 2.77 | **3.23** | 2.90 |
+| 2.0 | **26.30** | 4.91 | 5.23 | 6.19 | **65.95** |
+
+Monotone at β = 0.5, spreads of a few percent.
+
+**Strongly coupled, it is not.** The β = 2 row is **U-shaped**: the *shallowest* shape — a dense
+restricted Boltzmann machine — is slow at 26.30, the middle shapes are fast at ~5, and only the
+deepest is slower still. A monotone reading of "depth makes sampling harder" does not survive into
+the regime where the tradeoff is supposed to bite. Offered as a reading and not a result: the two
+slow ends are plausibly slow for *different* reasons — collective modes in a dense bipartite layer,
+barriers in a deep narrow stack — and nothing here separates them.
+
+**And the regime that matters is the one this cannot measure.** Past β = 2 at 40,000 draws the
+estimator stops being one: the same shape returns 285.6, then 18.7, then 42.6; at β = 8 it returns
+*small* numbers from a chain that has stopped moving. Earlier drafts of this example reported
+`221 ± 218` — a spread larger than the mean — and `τ = ∞` beside a total variation of exactly
+0.5000, which is a frozen chain and not slow mixing.
+
+So every row carries `draws/τ` and prints **`unusable`** below 200×. That column is as much the
+contribution as the table: ruggedness needs cold, cold is where the standard measurement dissolves,
+and an exponential fit to a tail returns a number there with no validity condition to fail.
+
+Two methodological errors were made and fixed before any of this was believed — a single seed, and a
+single β. This repository published a wrong negative once already from an unswept β ladder.
+
 ### The modelling layer could not certify its own answer
 
 Every `solve*` on `Compiled` annealed. Tabu, breakout local search, branch and bound and the three
