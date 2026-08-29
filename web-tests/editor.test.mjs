@@ -706,6 +706,88 @@ const counting = (kind, k, reward = "up") => page.evaluate(([kind, k, reward]) =
         `objective ${obj}, energy ${energy}`);
 }
 
+// --- drawing a machine and fitting it ----------------------------------------------------------------
+//
+// Every other graph in this editor DESCRIBES a model. A Train chain hands the sampler data and gets
+// a model back, which is the only path here that produces one. The gates that pass on this page
+// check that a symbol is REACHABLE; this drives the chain a person would draw.
+{
+  const wide = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const d = F.add("dataset", 40, 300, { images: "bars-and-stripes-3" });
+    const h = F.add("hidden", 300, 160, { units: 12 });
+    F.connect(d, h, "below");
+    const t = F.add("train", 580, 60, { epochs: 400, k: 10, seed: 3 });
+    F.connect(h, t, "top");
+    F.connect(t, F.add("report", 840, 60), "result");
+    return F.run();
+  });
+  const pct = +(wide.match(/learned\s+([\d.]+)%/)?.[1] ?? NaN);
+  const before = +(wide.match(/before fitting\s+(-?[\d.]+)/)?.[1] ?? NaN);
+  check("a drawn machine fits", pct > 85, `learned ${pct}%; a wide machine reaches the nineties`);
+  // Derived, not measured: every weight starts at zero, so the machine is uniform over 2^9 images.
+  check("the untrained end of the scale is exact", Math.abs(before + 9 * Math.LN2) < 5e-4,
+        `before ${before}, and -9 ln 2 is ${(-9 * Math.LN2).toFixed(4)}`);
+  check("the machine's shape is reported", /9 - 12/.test(wide) && /21 spins/.test(wide), wide.slice(0, 120));
+
+  // Depth is drawn as chain length, so a deeper chain is a different machine and must score lower
+  // at the same latent count -- the ordering this repository measured.
+  const deep = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const d = F.add("dataset", 40, 420, { images: "bars-and-stripes-3" });
+    const h1 = F.add("hidden", 300, 300, { units: 6 });
+    const h2 = F.add("hidden", 300, 160, { units: 6 });
+    F.connect(d, h1, "below"); F.connect(h1, h2, "below");
+    const t = F.add("train", 580, 60, { epochs: 400, k: 10, seed: 3 });
+    F.connect(h2, t, "top");
+    F.connect(t, F.add("report", 840, 60), "result");
+    return F.run();
+  });
+  const deepPct = +(deep.match(/learned\s+([\d.]+)%/)?.[1] ?? NaN);
+  check("stacking layers is a different machine", /9 - 6 - 6/.test(deep), deep.slice(0, 120));
+  check("and the same latents learn less when stacked", deepPct < pct,
+        `one layer of 12 reached ${pct}%, two of 6 reached ${deepPct}%`);
+
+  // The picture and the JSON are one document, which is a claim this page makes in llms.txt and
+  // which a machine would quietly falsify if toModel only knew about problems.
+  const round = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    const m = F.toModel();
+    F.clear();
+    F.fromModel(m);
+    return { m, back: F.toModel(), types: F.nodes.map(n => n.type).sort() };
+  });
+  check("a machine round-trips through the model", JSON.stringify(round.m) === JSON.stringify(round.back),
+        JSON.stringify(round.m) + " vs " + JSON.stringify(round.back));
+  check("and comes back as the chain a person drew",
+        round.types.join(",") === "dataset,hidden,hidden,report,train", round.types.join(","));
+
+  // A chain with no data is refused before anything runs, and it names the NODE and the PORT rather
+  // than the chain -- "Hidden layer#7: unwired input: below" points at what to fix, where "this
+  // chain does not reach a Dataset" would leave a person hunting for which link is missing.
+  const bad = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    F.clear();
+    const t = F.add("train", 580, 60);
+    F.connect(F.add("hidden", 300, 160, { units: 4 }), t, "top");
+    F.connect(t, F.add("report", 840, 60), "result");
+    return F.run();
+  });
+  check("a chain with no data is refused before it runs",
+        /fix these first/.test(bad) && /Hidden layer/.test(bad) && /below/.test(bad),
+        bad.slice(0, 140));
+  check("and a Train with nothing wired in says which port",
+        /wire a Hidden layer in/.test(await page.evaluate(() => {
+          const F = window.ferrotherm;
+          F.clear();
+          const t = F.add("train", 580, 60);
+          F.connect(t, F.add("report", 840, 60), "result");
+          return F.run();
+        })));
+}
+
 // --- nothing threw along the way ---------------------------------------------------------------------
 check("no page errors", errs.length === 0, errs.join(" | "));
 

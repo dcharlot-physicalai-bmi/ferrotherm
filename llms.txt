@@ -100,6 +100,21 @@ into telling you a signature that no longer exists.
   `connect`, `find`, `run()`, `toJson`/`fromJson`, `check()`. See web-tests/editor.test.mjs, which
   drives exactly that surface.
 
+## The node editor also DRAWS a machine, and drawing it is how you see its shape
+
+Alongside the constraint families the editor carries three nodes that go the other way: `dataset`,
+`hidden` (stackable) and `train`. Wire Dataset -> Hidden -> Train -> Report and Run fits a Boltzmann
+machine to the data, reporting the EXACT log-likelihood and, more usefully, where it sits between an
+untrained machine (-visible*ln2, derived, since every weight starts at zero) and a perfect one
+(-ln rows). This is the only path in the editor that produces a model rather than describing one.
+
+A machine is a CHAIN and not a settings panel because its shape is the thing under measurement:
+depth is what the field's mixing-expressivity claim is about, and here depth is literally how many
+Hidden layers you stacked. At twelve latent units this repository measures one layer of 12 reaching
+96.3%, two layers of 6 reaching 93.1%, and three of 4 reaching 65.5% -- so stack them to SEE that,
+not because stacking helps. `toModel()` emits the workbench's `machine` shape and `fromModel()` reads
+it back, so a machine crosses between picture and JSON the same way a problem does.
+
 ## The model you write and the picture a person edits are the same document
 
 `window.ferrotherm.fromModel(m)` lays out the SAME JSON `ferrotherm_solve` takes -- variables,

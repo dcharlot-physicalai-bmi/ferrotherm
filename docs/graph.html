@@ -132,6 +132,10 @@
     <h3>Objective</h3>
     <button class="add" data-t="prefer">Prefer value</button>
     <button class="add" data-t="agree">Prefer a = b</button>
+    <h3>Learn from data</h3>
+    <button class="add" data-t="dataset">Dataset</button>
+    <button class="add" data-t="hidden">Hidden layer</button>
+    <button class="add" data-t="train">Train</button>
     <h3>Solve</h3>
     <button class="add" data-t="solve">Solve</button>
     <button class="add" data-t="report">Report</button>
@@ -267,7 +271,32 @@ const TYPES = {
                          ["stages", 120, "int"], ["sweeps", 40, "int"]] },
   certify:    { title: "Certificate",  kind: null, ins: [["result", "result"]],
                 fields: [["beta", 0.5, "num"], ["draws", 800, "int"], ["thin", 4, "int"]] },
-  report:     { title: "Report",       kind: null, ins: [["result", "result"]], fields: [] },
+
+  // --- learning from data ----------------------------------------------------------------------
+  //
+  // The other families in this editor DESCRIBE a model: you write down what you already know and
+  // the sampler answers questions about it. These three go the other way -- you supply data and the
+  // sampler writes the model. That is the difference between a solver and a computing paradigm, and
+  // it is why a chain of them ends in a Report the same way a Solve does.
+  //
+  // A machine is drawn as a CHAIN rather than as a settings panel, because its shape is the thing
+  // under measurement. Depth is what the field's mixing-expressivity claim is about, and here depth
+  // is literally how many Hidden layers you stacked -- visible without reading a number. Measured
+  // in this repository at twelve latent units: one layer of 12 learns 96.3% of the way to a perfect
+  // fit, two layers of 6 reach 93.1%, three layers of 4 reach 65.5%. Stack them to SEE that, not
+  // because stacking helps.
+  dataset:    { title: "Dataset",      kind: "data", ins: [],
+                fields: [["images", "bars-and-stripes-3",
+                          "pick:bars-and-stripes-2|bars-and-stripes-3|bars-and-stripes-4"]] },
+  hidden:     { title: "Hidden layer", kind: "layer", ins: [["below", ["data", "layer"]]],
+                fields: [["units", 12, "int"]] },
+  train:      { title: "Train",        kind: "fit", ins: [["top", "layer"]],
+                fields: [["epochs", 400, "int"], ["k", 10, "int"], ["seed", 3, "int"]] },
+
+  // Report takes either, so one graph shape reads a solved problem and another reads a fitted
+  // machine. Certificate deliberately still takes only "result": it certifies a SAMPLER against a
+  // model it was given, and pointing it at a fit would ask a question about the wrong object.
+  report:     { title: "Report",       kind: null, ins: [["result", ["result", "fit"]]], fields: [] },
 };
 
 /** Node types that close the pending literal list, and the kind code each closes with. */
@@ -562,7 +591,10 @@ function runGraph() {
   const rep = nodes.find(n => n.type === "report");
   if (!rep) { $("out").textContent = "Add a Report node - a graph with no output computes nothing."; return; }
   const solveNode = inputOf(rep.id, "result");
-  if (!solveNode) { $("out").textContent = "Connect a Solve node into the Report."; return; }
+  if (!solveNode) { $("out").textContent = "Connect a Solve or a Train node into the Report."; return; }
+  // A Train chain is a different operation reaching the same Report, so it branches here rather
+  // than being threaded through a model builder that has no notion of data.
+  if (solveNode.type === "train") return runTrain(solveNode);
 
   // Say what is wrong before doing any work; an editor that only complains after a failed run
   // makes the user hunt for what it already knew.
@@ -832,6 +864,141 @@ function label(n) {
   return T.title + "#" + n.id;
 }
 
+// ---- running a Train chain ----------------------------------------------------------------------
+//
+// Every other path in this editor DESCRIBES a model and asks the sampler about it. This one hands
+// the sampler data and gets a model back, which is the only operation here that produces one.
+
+/** Why the last ft_ebm_* call refused, in the caller's own terms. */
+function ebmWhy() {
+  const need = W.ft_ebm_error(0, 0);
+  if (!need) return "";
+  const ptr = W.ft_scratch(need);
+  const got = W.ft_ebm_error(ptr, need);
+  return new TextDecoder().decode(new Uint8Array(mem.buffer, ptr, got));
+}
+
+/** Walk down from a Train node to its Dataset, collecting layer widths bottom-up. */
+function machineOf(trainNode) {
+  const widths = [];
+  let n = inputOf(trainNode.id, "top");
+  const seen = new Set();
+  while (n && n.type === "hidden") {
+    if (seen.has(n.id)) return { error: "the layers loop back on themselves" };
+    seen.add(n.id);
+    widths.unshift(n.vals.units | 0);
+    n = inputOf(n.id, "below");
+  }
+  // Both of these are guards for a document that was edited by hand or arrived through a link:
+  // through the UI a Hidden layer's "below" port only accepts a Dataset or another Hidden layer,
+  // and an unwired one is caught earlier by `problems`, which names the node and the port and is
+  // the better message for a person to read.
+  if (!n) return { error: "the chain does not reach a Dataset; wire Hidden layers down to one" };
+  if (n.type !== "dataset") {
+    return { error: `a machine is built from Hidden layers over a Dataset, and this chain reaches ${TYPES[n.type].title}` };
+  }
+  if (!widths.length) {
+    return { error: "add at least one Hidden layer between the Dataset and Train; a machine with no latent units can only learn each pixel on its own" };
+  }
+  return { widths, dataset: n };
+}
+
+function runTrain(trainNode) {
+  const broken = nodes.map(n => [n, problems(n)]).filter(([, p]) => p);
+  if (broken.length) {
+    $("out").textContent = "fix these first:\n\n" +
+      broken.map(([n, p]) => "  " + TYPES[n.type].title + "#" + n.id + ": " + p).join("\n");
+    draw();
+    return;
+  }
+  const m = machineOf(trainNode);
+  if (m.error) { $("out").textContent = m.error; return; }
+
+  const side = (/-(\d+)$/.exec(m.dataset.vals.images) || [0, 0])[1] | 0;
+  const visible = side * side;
+  const rowCount = W.ft_ebm_bars_and_stripes(side, 0, 0);
+  if (!rowCount) { $("out").textContent = ebmWhy() || "that dataset could not be built"; return; }
+  const need = rowCount * visible;
+  const dp = W.ft_scratch(need);
+  if (!W.ft_ebm_bars_and_stripes(side, dp, need)) {
+    $("out").textContent = ebmWhy() || "that dataset could not be written";
+    return;
+  }
+  // Copy out at once: ft_scratch is one shared buffer, and the very next call reuses it.
+  const rows = Array.from(new Int8Array(mem.buffer, dp, need));
+  const push = () => {
+    const q = W.ft_scratch(rows.length);
+    new Int8Array(mem.buffer, q, rows.length).set(rows);
+    return q;
+  };
+
+  let sim;
+  if (m.widths.length === 1) {
+    sim = W.ft_ebm_rbm(visible, m.widths[0], 1.0, 1n);
+  } else {
+    // A DataView, not a Uint32Array: ft_scratch hands back a Vec<u8> pointer with no 4-byte
+    // alignment guarantee, and a typed-array view on an unaligned offset throws.
+    const q = W.ft_scratch(m.widths.length * 4);
+    const dv = new DataView(mem.buffer, q, m.widths.length * 4);
+    m.widths.forEach((w, i) => dv.setUint32(i * 4, w, true));
+    sim = W.ft_ebm_dbm(visible, q, m.widths.length, 1.0, 1n);
+  }
+  if (!sim) { $("out").textContent = ebmWhy() || "the sampler refused that machine"; return; }
+
+  try {
+    const t = trainNode.vals;
+    // Untrained first. Every weight is zero, so this is exactly -visible*ln2 -- the honest zero of
+    // the scale the fit is read against, derived rather than measured.
+    const before = W.ft_ebm_log_likelihood(sim, visible, push(), rowCount);
+    const t0 = performance.now();
+    const ok = W.ft_ebm_train(sim, visible, push(), rowCount,
+      t.epochs | 0, t.k | 0, 0, 0, 0, BigInt(t.seed | 0));
+    const ms = performance.now() - t0;
+    if (!ok) { $("out").textContent = ebmWhy() || "that dataset could not be fitted"; return; }
+    const after = W.ft_ebm_log_likelihood(sim, visible, push(), rowCount);
+
+    const floor = -visible * Math.LN2, ceiling = -Math.log(rowCount);
+    const spins = W.ft_len(sim);
+    const shape = [visible, ...m.widths].join(" - ");
+    const out = [];
+    out.push(`machine   ${shape}   (${spins} spins, ${m.widths.length} hidden layer${m.widths.length > 1 ? "s" : ""})`);
+    out.push(`data      ${m.dataset.vals.images}: ${rowCount} images of ${visible} pixels`);
+    out.push(`fitted in ${ms.toFixed(0)} ms`);
+    out.push("");
+    if (Number.isFinite(after)) {
+      const pct = (after - floor) / (ceiling - floor) * 100;
+      const cells = 40, on = Math.max(0, Math.min(cells, Math.round(pct / 100 * cells)));
+      out.push(`learned   ${pct.toFixed(1)}%  [${"#".repeat(on)}${"-".repeat(cells - on)}]`);
+      out.push("");
+      out.push(`log-likelihood, exact   ${after.toFixed(4)}`);
+      out.push(`  before fitting        ${before.toFixed(4)}   (learned nothing)`);
+      out.push(`  a perfect fit         ${ceiling.toFixed(4)}   (learned everything)`);
+      out.push("");
+      out.push("Both ends of that scale are DERIVED, not calibrated. An untrained machine has every");
+      out.push(`weight at zero, so it is uniform over 2^${visible} images and can only score`);
+      out.push(`${floor.toFixed(4)}; a perfect one is uniform over the ${rowCount} real images and scores`);
+      out.push(`${ceiling.toFixed(4)}. The likelihood is EXACT, by enumeration -- never an ELBO or a`);
+      out.push("reconstruction error, because each of those is worst exactly where sampling is");
+      out.push("worst, and a reader comparing machines on one would be reading the proxy's failure");
+      out.push("and calling it expressivity.");
+    } else {
+      out.push("The machine fitted, but scoring it exactly means enumerating every state and this");
+      out.push(`one has ${spins} spins, past the 22 this refuses above. The model is real; only its`);
+      out.push("expressivity is unmeasured. Fewer hidden units, or a smaller dataset, will score.");
+    }
+    if (m.widths.length > 1) {
+      out.push("");
+      out.push("STACKED. Measured here at twelve latent units: one layer of 12 reaches 96.3%, two");
+      out.push("layers of 6 reach 93.1%, three layers of 4 reach 65.5%. Depth costs expressivity at");
+      out.push("a fixed latent count, because a deeper machine has fewer edges -- that is what the");
+      out.push("stack is, not a side effect of it.");
+    }
+    $("out").textContent = out.join("\n");
+  } finally {
+    W.ft_free(sim);
+  }
+}
+
 /** Read a wasm string through the two-call protocol: ask the length, then fill a buffer. */
 function readText(fn, handle) {
   const need = fn(handle, 0, 0);
@@ -906,6 +1073,7 @@ const CONS_API = Object.fromEntries(Object.entries(API_CONS).map(([a, b]) => [b,
 function toModel() {
   const rep = nodes.find(n => n.type === "report");
   const solveNode = rep && inputOf(rep.id, "result");
+  if (solveNode && solveNode.type === "train") return machineModel(solveNode);
   // Without a Solve there is no model, only nodes. Everything reachable from it is the model, which
   // is the same rule Run uses -- so what you copy is what would have been solved, not what happens
   // to be lying on the canvas.
@@ -984,7 +1152,59 @@ function toModel() {
   return m;
 }
 
+/** Lay out a "machine" request as a Dataset, a stack of Hidden layers, a Train and a Report. */
+function fromMachine(d) {
+  const mc = d.machine || {};
+  const visible = mc.visible | 0;
+  const side = Math.round(Math.sqrt(visible));
+  if (side * side !== visible) {
+    throw new Error(`this editor draws square image datasets, and ${visible} visible units is not a square`);
+  }
+  const hidden = Array.isArray(mc.hidden) ? mc.hidden : (mc.hidden === undefined ? [] : [mc.hidden]);
+  if (!hidden.length) throw new Error('a machine needs "hidden": [12] is one layer of twelve');
+
+  nodes = []; links = []; nextId = 1;
+  // Bottom to top, which is how the machine is drawn and how the chain reads: the data is under
+  // the layers, not beside them.
+  const bottom = 30 + hidden.length * 120;
+  const ds = addNode("dataset", 40, bottom);
+  ds.vals.images = typeof d.data === "string" ? d.data : `bars-and-stripes-${side}`;
+  let below = ds;
+  hidden.forEach((w, i) => {
+    const n = addNode("hidden", 300, bottom - (i + 1) * 120);
+    n.vals.units = w | 0;
+    links.push({ from: below.id, to: n.id, port: "below", kind: TYPES[below.type].kind });
+    below = n;
+  });
+  const f = d.fit || {};
+  const tr = addNode("train", 580, 30);
+  if (f.epochs !== undefined) tr.vals.epochs = f.epochs | 0;
+  if (f.k !== undefined) tr.vals.k = f.k | 0;
+  if (f.seed !== undefined) tr.vals.seed = f.seed | 0;
+  links.push({ from: below.id, to: tr.id, port: "top", kind: "layer" });
+  const rep = addNode("report", 840, 30);
+  links.push({ from: tr.id, to: rep.id, port: "result", kind: "fit" });
+  draw();
+}
+
+/** A Train chain as the workbench's "machine" request, so the picture and the JSON stay one document. */
+function machineModel(trainNode) {
+  const m = machineOf(trainNode);
+  if (m.error) throw new Error(m.error);
+  const side = (/-(\d+)$/.exec(m.dataset.vals.images) || [0, 0])[1] | 0;
+  const V = trainNode.vals;
+  return {
+    machine: { visible: side * side, hidden: m.widths },
+    data: m.dataset.vals.images,
+    fit: { epochs: V.epochs | 0, k: V.k | 0, seed: V.seed | 0 },
+    beta: 1.0, seed: V.seed | 0,
+  };
+}
+
 function fromModel(d) {
+  // A machine is the other document this editor holds, so it is read before the variables check
+  // below -- which would otherwise reject one for having no variables, which is true and useless.
+  if (d && d.machine) return fromMachine(d);
   if (!d || !Array.isArray(d.variables)) {
     throw new Error('a model is {"variables": [...], "constraints": [...]}; this had no variables');
   }
@@ -1381,6 +1601,13 @@ function problems(n) {
   if ((+n.vals.soft || 0) < 0) return "a soft price is positive, or zero for a rule";
   if (n.type === "categorical" && (n.vals.values | 0) < 2) return "a categorical needs at least 2 values";
   if (n.type === "integer" && (n.vals.hi | 0) <= (n.vals.lo | 0)) return "an integer needs hi > lo";
+  if (n.type === "hidden" && (n.vals.units | 0) < 1) return "a layer needs at least one unit";
+  if (n.type === "train") {
+    if ((n.vals.epochs | 0) < 1) return "epochs must be at least 1";
+    if ((n.vals.k | 0) < 1) return "k must be at least 1: CD-k needs a negative phase";
+    if (!inputOf(n.id, "top")) return "wire a Hidden layer in";
+    return null;
+  }
   if (n.type === "solve" && !links.some(l => l.to === n.id)) return "wire a constraint or objective in";
   if (n.type === "solve") return null;
   if (n.type === "certify" && !inputOf(n.id, "result")) return "wire it to the same Solve as the Report";

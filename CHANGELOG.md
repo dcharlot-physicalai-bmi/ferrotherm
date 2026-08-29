@@ -44,6 +44,39 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### You can draw a Boltzmann machine now, and drawing it is how you see its shape
+
+The node editor's families all *described* a model: you write down what you know and the sampler
+answers questions about it. Three new nodes go the other way — **Dataset**, **Hidden layer**
+(stackable) and **Train**. Wire them into a Report and Run fits a machine to the data.
+
+**A machine is a chain, not a settings panel**, because its shape is the thing under measurement.
+Depth is what the field's mixing-expressivity claim is about, and here depth is literally how many
+Hidden layers you stacked — visible without reading a number. The editor says what that costs, from
+this repository's own measurement: one layer of 12 reaches 96.3%, two of 6 reach 93.1%, three of 4
+reach 65.5%. Stack them to *see* that, not because stacking helps.
+
+The report leads with **where the fit sits between two derived ends** rather than the raw
+likelihood, and prints the bar so the answer is legible before the numbers:
+
+```
+machine   9 - 12   (21 spins, 1 hidden layer)
+learned   95.8%  [######################################--]
+```
+
+`toModel()` emits the workbench's `machine` shape and `fromModel()` reads it back, so a machine
+crosses between picture and JSON the way a problem does — otherwise the "same document" claim in
+`llms.txt` would have quietly become false for half the editor. Certificate deliberately still
+takes only a solved result: it certifies a *sampler* against a model it was given, and pointing it
+at a fit asks a question about the wrong object.
+
+Six new cases in `web-tests/editor.test.mjs` drive the chain a person would draw, because the editor
+gates check that a node type is *reachable*, which is not the same as working. One of them caught
+that my own assertion was wrong: I expected "the chain does not reach a Dataset" and the editor says
+**"Hidden layer#7: unwired input: below"** — which names the node and the port instead of the chain,
+and is the better message. The test now asserts what the product does, and the unreachable branch is
+labelled as a guard for hand-edited documents rather than left looking like a UI path.
+
 ### The browser binary is 62 KB smaller, and wasm SIMD does not help
 
 `docs/ferrotherm.wasm` is built with `-C strip=symbols`: **536,334 bytes from 598,401** — 62 KB raw
