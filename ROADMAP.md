@@ -480,7 +480,7 @@ What we port to Rust, and why each is worth owning.
 |---|---|---|
 | COPY-gate sparsification (OPUSLab) | ~102 lines MATLAB, no adoption | First-class pass |
 | DSATUR coloring | Scattered | First-class pass |
-| 2D adaptive PT over (β, W0) | One MATLAB file, June 2025 | Core capability |
+| 2D adaptive PT over (β, W0) | One MATLAB file, June 2025 | ✅ `adaptive` — ladder respacing measured to work; the second axis measured NOT to earn its replicas, including where it was predicted to |
 | Lattice Random Walk integrator (arXiv:2508.20883) | **Paper, no code** | Binary/ternary SDE increments, no Gaussian RNG in the datapath, robust to quantisation |
 | Thermalizers KL chain-rule bound (arXiv:2608.01615) | **Published without code** | The compile-pass error bound; hardware-independent mathematics |
 | Domain-wall encoding (Chancellor 2019) | Published, scattered implementations | Compiler pass: k−1 spins, no penalty term |

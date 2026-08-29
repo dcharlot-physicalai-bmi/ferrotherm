@@ -51,6 +51,12 @@ into telling you a signature that no longer exists.
 - device: published degree-16 grid topology of Z1-class thermodynamic chips
 - ledger: joules accounting (samples/reads/writes x device Prices; Z1_SPICE = vendor pre-silicon estimates)
 - tempering: simulated annealing + parallel tempering (replica exchange), ladder-health diagnostics
+- adaptive: respaces a ladder's INTERIOR betas until every adjacent pair accepts alike, closing the
+  loop on the swap_rates diagnostic that nothing ever acted on; plus a 2D (beta, coupling-scale)
+  grid. MEASURED: the mechanism works (spread falls hard on every family) and the payoff is absent
+  (energies unchanged), and the second axis did not earn its replicas anywhere. ⚠ NEVER read
+  `spread` alone -- a ladder too short for its range has every pair at zero, which is perfectly
+  EVEN and scores better on that column than a healthy ladder with one weak link
 - tla: thermodynamic linear algebra (OU network solves SPD systems, samples N(A^-1 b, A^-1/beta))
 - program: stochastic differentiable circuits; REINFORCE + parameter-shift + FD-referee gradients
 - compile: variational compilation of conditionals onto device patches; chain-rule KL error bound

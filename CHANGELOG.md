@@ -44,6 +44,61 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The ladder can fix itself now — and an even ladder is not a healthy one
+
+`parallel_tempering` has reported `swap_rates` since the beginning: the acceptance of each adjacent
+pair, which decides whether a ladder is a ladder or eight independent anneals. **Nothing ever acted
+on it.** A user was told their ladder was broken and left to fix it by retyping numbers.
+
+`adaptive` closes that loop. Between epochs it reads the measured rates as gap *lengths* and
+re-spaces the interior betas at equal cumulative length, so every pair converges on the same
+acceptance. No density of states, which is the usual apparatus and the usual place to be wrong. The
+**ends never move** — they are the physics the caller asked for, and a method that quietly widened
+the hot end would buy acceptance by answering an easier question.
+
+This is the roadmap's *"2D adaptive PT over (β, W₀) — one MATLAB file, June 2025"* ingest item.
+
+**The mechanism works and the payoff is absent.** Two claims, and only the first survives:
+
+| family | geometric | adapted | spread |
+|---|---|---|---|
+| ferromagnet | −512.0 | −512.0 | 0.99 → **0.47** |
+| glass | −360.3 ± 6.5 | −360.3 ± 7.8 | 0.77 → **0.22** |
+| glass+fields | −505.3 ± 13.2 | −505.0 ± 13.4 | 0.56 → **0.18** |
+
+Spread falls hard everywhere; energies do not move at all. On these families this is a **diagnostic
+that can fix itself, not a faster optimiser** — and printing the spread column without that sentence
+would let a reader assume otherwise.
+
+#### And the second table found something better than what it was built to find
+
+It was meant to show adaptation rescuing a dead pair: four replicas over the same wide range. It
+does not — the worst pair is 0.000 before *and* after, because no placement of two interior betas
+makes that range crossable. The ladder is too short for the question, which is not a placement
+problem. What it shows instead is a trap:
+
+**The spread fell anyway — 0.07 → 0.01 on the glass, 0.75 → 0.12 on the ferromagnet.**
+
+A spread near zero means every pair accepts *alike*. It does not mean every pair accepts. **All-dead
+is perfectly even**, and scores better on that column than a healthy ladder with one weak link. So
+`Outcome::spread` now carries a NEVER-READ-IT-ALONE warning pointing at the minimum of `swap_rates`,
+and a test pins the trap. This is the same shape of error as a frozen chain returning a small
+autocorrelation time — the second time this repository has met it.
+
+#### The second axis did not earn its replicas, and the hypothesis was mine
+
+`adapt_2d` tempers over (β, coupling scale), swapping along both axes — the scale-axis criterion
+scores each state under *both* graphs, since the two replicas obey different Hamiltonians. I
+predicted it would pay on a model with strong fields: warming enough to cross a coupling barrier
+also erases the field that says which side to land on, and scaling couplings does not.
+
+On glass+fields it came back **−502.3 against the 1D arm's −505.3** — worse, inside a between-seed
+spread of 13. It is not better anywhere in the table. Four betas over the same range means wider
+gaps and lower acceptance, and the coupling axis did not buy that back. It stays because the move is
+correct and the refusal it carries is worth having — a grid that never visits scale 1.0 is answering
+about a different model, and it says so rather than returning that answer. **It is not a
+recommendation.**
+
 ### The metric the flagship workload reports orders models backwards
 
 `WORKLOADS.md` reported per-pixel MAE 0.128 against a noise baseline of 0.474 — "72.9% closer to the
