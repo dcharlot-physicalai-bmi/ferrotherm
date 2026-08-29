@@ -243,7 +243,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: wasm cdylib builds clean
-        run: cargo build --release --lib --target wasm32-unknown-unknown
+        run: RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown
       # Not a byte comparison against a fresh build: a wasm binary is not reproducible across
       # toolchain versions, so that fails on a runner whose rustc differs from the author's and
       # says nothing about whether the artefact works. What matters is that every symbol the pages

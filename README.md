@@ -378,8 +378,17 @@ thermodynamic-computing corpus currently leaves empty.
   second run began at the first's answer and handed it back. The fabric now also declares
   `Precision::Float { mantissa: 24 }`: the shader's buffers are f32 while the CPU path is f64, and
   an undeclared difference is one nothing downstream can reason about.
-- `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
-  the cdylib is a **567 KB .wasm** (203 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
+**wasm SIMD does not help this sampler, and it was measured before it was believed.** Building with
+`-C target-feature=+simd128` produced 110.4 M flips/s against the baseline's 110.3 on a 128×128
+lattice — indistinguishable, on a machine noisy enough that a single baseline run dipped to 65.8 —
+and cost 5 KB. The mechanism is plain in hindsight: chromatic block-Gibbs is a scatter/gather over a
+CSR neighbour list with one RNG draw and one transcendental per spin, so there is no wide arithmetic
+for an autovectoriser to find. The flag is not enabled. Energy was bit-identical either way, which
+is the check that says the comparison was of the same computation.
+
+- `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
+  compiles with **zero changes**; the cdylib is a **523 KB .wasm** (195 KB gzipped) exposing the
+  `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against

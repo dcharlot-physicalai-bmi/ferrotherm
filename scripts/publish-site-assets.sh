@@ -31,7 +31,10 @@ fi
 
 if [[ $check_only -eq 0 ]]; then
   echo "building wasm"
-  (cd "$here" && cargo build --release --lib --target wasm32-unknown-unknown)
+  # Stripped: the name section costs 62 KB raw and 12 KB gzipped on every page load for something
+  # only the browser's own devtools read, and check-wasm-exports.sh refuses an unstripped artefact.
+  # Rebuild without the flag when you need named frames in a wasm stack trace.
+  (cd "$here" && RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown)
   cp "$here/target/wasm32-unknown-unknown/release/ferrotherm.wasm" "$here/docs/ferrotherm.wasm"
 fi
 

@@ -44,6 +44,27 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The browser binary is 62 KB smaller, and wasm SIMD does not help
+
+`docs/ferrotherm.wasm` is built with `-C strip=symbols`: **536,334 bytes from 598,401** — 62 KB raw
+and 12 KB gzipped off every page load, for a name section whose only consumer is the browser's own
+devtools. Rebuild without the flag when you need named frames in a wasm stack trace.
+
+The size figures in the README carry a ±10% band so a human-retyped number does not rot on every
+rebuild — **and an unstripped binary sits inside that band**, so the number could not enforce this.
+`check-wasm-exports.sh` now walks the section table and refuses a binary carrying `name` or a
+`.debug_*` section, which is the question itself rather than a proxy for it.
+
+`check-fit.sh` passed against the stripped binary unchanged, which is what says the strip changed
+nothing but the bytes.
+
+**And a negative, measured before it was believed:** `-C target-feature=+simd128` gives 110.4 M
+flips/s against the baseline's 110.3 on a 128×128 lattice — indistinguishable, on a machine noisy
+enough that one baseline run dipped to 65.8 — while costing 5 KB. Chromatic block-Gibbs is a
+scatter/gather over a CSR neighbour list with one RNG draw and one transcendental per spin, so
+there is no wide arithmetic for an autovectoriser to find. Not enabled. Energy was bit-identical
+either way, which is what says the two builds computed the same thing.
+
 ### An agent can now train a model, not only ask one questions
 
 `ferrotherm_fit` — the twelfth MCP tool, the first HTTP operation and the only one anywhere in this

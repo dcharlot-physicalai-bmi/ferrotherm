@@ -91,7 +91,45 @@ if [[ -f "$readme" ]]; then
     echo "A size a human retypes is a size that rots. Update README.md, or rebuild docs/*.wasm." >&2
     exit 1
   fi
-  printf 'README size figures agree: %s KB raw, %s KB gzipped\n' "$raw_kb" "$gz_kb"
+  # AND THE ARTEFACT MUST BE STRIPPED, which the size figures above cannot enforce: they carry a
+  # +/-10% band so a human-retyped number does not rot on every rebuild, and an unstripped binary is
+  # inside that band. It costs 62 KB raw and 12 KB gzipped on every page load, forever, for a name
+  # section nobody reads -- the browser's own devtools are the only consumer, and a developer
+  # debugging the sampler rebuilds without the flag anyway.
+  if ! python3 - "$wasm" <<'PYEOF'
+import sys
+
+def uleb(b, i):
+    v = s = 0
+    while True:
+        c = b[i]; i += 1
+        v |= (c & 0x7F) << s
+        if not c & 0x80:
+            return v, i
+        s += 7
+
+b = open(sys.argv[1], "rb").read()
+if b[:4] != b"\0asm":
+    print("not a wasm binary", file=sys.stderr); sys.exit(2)
+i, found = 8, []
+while i < len(b):
+    sid = b[i]; i += 1
+    size, i = uleb(b, i)
+    if sid == 0:                      # custom section: payload begins with its own name
+        n, j = uleb(b, i)
+        found.append(b[j:j + n].decode("utf-8", "replace"))
+    i += size
+bad = [n for n in found if n in ("name", ".debug_info", ".debug_line")]
+if bad:
+    print("carries " + ", ".join(repr(n) for n in bad) + " -- build it with "
+          "RUSTFLAGS='-C strip=symbols'", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+  then
+    echo "the committed wasm was not stripped, which costs every visitor bytes for nothing" >&2
+    exit 1
+  fi
+  printf 'README size figures agree: %s KB raw, %s KB gzipped (stripped)\n' "$raw_kb" "$gz_kb"
 fi
 
 if [[ ${#missing[@]} -gt 0 ]]; then
