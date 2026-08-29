@@ -530,6 +530,21 @@ double ft_model_ommx_constant(const ft_model *m);
  * Distinct from ft_model_energy, which is the compiled Ising energy with every penalty and the
  * constant folded in -- a number about SPINS that compares two answers to one model and nothing
  * else, and that moves when the penalty does. */
+/* Solve the compiled model by a chosen METHOD rather than always annealing.
+ * `method`: 0 anneal, 1 tabu, 2 breakout, 3 branch and bound. `effort` is that method's budget --
+ * iterations for tabu and breakout, a node ceiling for branch -- and 0 takes a default.
+ * 1 on success; 0 on a null handle, an unknown method, or a model that has not compiled. */
+uint32_t ft_model_solve_by(ft_model *m, uint32_t method, uint64_t effort);
+
+/* Whether the last solve PROVED its answer optimal. Only method 3 can set it.
+ *
+ * Read it with ft_model_feasible. Branch proves a statement about the compiled energy; it becomes a
+ * statement about YOUR model exactly when the answer is also feasible, because a feasible
+ * assignment pays no penalty and its compiled energy is the objective plus a constant. Proved AND
+ * feasible is a real optimality proof, and the argument needs nothing from the penalty being large
+ * enough. Proved and INFEASIBLE says the penalty is too small and no longer search will fix it. */
+uint32_t ft_model_proved(const ft_model *m);
+
 double ft_model_objective(const ft_model *m);
 uint32_t ft_model_has_objective(const ft_model *m);
 

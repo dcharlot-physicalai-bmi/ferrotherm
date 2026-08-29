@@ -850,3 +850,40 @@ def test_no_objective_reports_none_rather_than_zero():
     v = p.categorical("v", 2)
     p.fix(v, 1)
     assert p.solve(tries=4).objective is None
+
+
+# ---- the model layer can prove -------------------------------------------------------------------
+#
+# Every solve on the modelling layer was an anneal, so tabu, breakout and branch-with-proof were
+# reachable only from a spin graph. The layer every document says to reach for first was the one
+# that could not certify anything.
+
+
+def test_the_model_layer_can_prove_an_answer_optimal():
+    def problem():
+        p = ft.Problem()
+        a = p.categorical("a", 3)
+        b = p.categorical("b", 3)
+        p.not_equal(a, b)
+        p.maximize(5 * a.is_(1) + 4 * b.is_(2))
+        return p
+
+    proved = problem().solve(method="branch", effort=5_000_000)
+    assert proved.proved_optimal, proved
+    assert proved.feasible
+    # a != b permits a = 1 and b = 2, so the optimum in the modeller's units is 9.
+    assert proved.objective == 9.0, proved.values
+
+    # And nothing else claims a proof, whatever it finds.
+    for method in ("anneal", "tabu", "breakout"):
+        ans = problem().solve(method=method, effort=50_000)
+        assert not ans.proved_optimal, method
+        assert ans.feasible, method
+
+
+def test_an_unknown_method_is_refused_by_name():
+    p = ft.Problem()
+    v = p.categorical("v", 2)
+    p.fix(v, 1)
+    with pytest.raises(ValueError, match="unknown method"):
+        p.solve(method="magic")

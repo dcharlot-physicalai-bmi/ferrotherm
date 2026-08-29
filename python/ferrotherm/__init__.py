@@ -237,6 +237,8 @@ _model_solve_with = _sig("ft_model_solve_with", c_uint32,
                          [_p, c_uint32, c_double, c_double, c_uint32, c_uint32])
 _model_value = _sig("ft_model_value", ctypes.c_int64, [_p, c_uint32])
 _model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
+_model_solve_by = _sig("ft_model_solve_by", c_uint32, [_p, c_uint32, ctypes.c_uint64])
+_model_proved = _sig("ft_model_proved", c_uint32, [_p])
 _model_objective = _sig("ft_model_objective", c_double, [_p])
 _model_has_objective = _sig("ft_model_has_objective", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
@@ -1550,6 +1552,13 @@ class Answer:
     ``None`` when no objective was written, when both senses were used and there is no single
     direction to report, or when a variable did not decode and there is only half an answer.
 
+    :attr:`proved_optimal` is ``True`` only when :meth:`Problem.solve` was asked for ``"branch"``
+    and it exhausted the tree. **Read it with** :attr:`feasible`: branch proves a statement about the
+    compiled energy, and it becomes a statement about *your* model exactly when the answer is also
+    feasible — a feasible assignment pays no penalty, so its compiled energy is the objective plus a
+    constant. Proved and feasible is a real optimality proof and needs nothing from the penalty being
+    large enough. Proved and *infeasible* says the penalty is too small and no longer search fixes it.
+
     :attr:`caveats` lists what the compiler knows is wrong with the model and cannot fix — today,
     an encoding no penalty can make exact. Empty is the normal case; a non-empty one means a value
     that reads back fine may still have come from a codeword the penalty never excluded.
@@ -1560,8 +1569,8 @@ class Answer:
     ground state.
     """
 
-    __slots__ = ("values", "feasible", "energy", "objective", "spins", "penalty", "violated",
-                 "soft_cost", "ancillas", "caveats")
+    __slots__ = ("values", "feasible", "energy", "objective", "proved_optimal", "spins", "penalty",
+                 "violated", "soft_cost", "ancillas", "caveats")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -1868,6 +1877,9 @@ class Problem:
 
     # -- solving --------------------------------------------------------------------------------
 
+    #: The solvers :meth:`solve` can be pointed at, and the code the C ABI uses for each.
+    _METHODS = {"anneal": 0, "tabu": 1, "breakout": 2, "branch": 3}
+
     def solve(
         self,
         tries: int = 12,
@@ -1875,21 +1887,51 @@ class Problem:
         beta_cold: float = 0.0,
         stages: int = 0,
         sweeps: int = 0,
+        method: str = "anneal",
+        effort: int = 0,
     ) -> Answer:
         """Compile and solve, keeping the best of ``tries`` anneals.
 
         The four ladder parameters default to the library's own; a zero means "use that default", so
         a caller who has measured their own instance can override only what they measured.
+
+        ``method`` points the solve at something other than annealing:
+
+        ==============  ==========================================================================
+        ``"anneal"``    Simulated annealing down a ladder. The default, and the only one there was.
+        ``"tabu"``      Tabu search — the strongest single arm in this crate's own shootout.
+        ``"breakout"``  Breakout local search: descent plus an adaptive perturbation.
+        ``"branch"``    Branch and bound — **the only one that returns a proof**.
+        ==============  ==========================================================================
+
+        ``effort`` is that method's budget (iterations, or a node ceiling for ``"branch"``); 0 takes
+        a default. The ladder parameters apply to ``"anneal"`` only, and ``"branch"`` warm-starts
+        itself from a short anneal because a good incumbent prunes from the first node.
+
+        Check :attr:`Answer.proved_optimal` after ``"branch"``.
         """
+        if method not in self._METHODS:
+            raise ValueError(
+                f"unknown method {method!r}; one of "
+                + ", ".join(repr(k) for k in self._METHODS)
+            )
         spins = _model_compile(self._h)
         if spins == 0:
             raise ValueError(self._error() or "this problem did not compile")
+        if method != "anneal":
+            if not _model_solve_by(self._h, self._METHODS[method], int(effort)):
+                raise ValueError(self._error() or f"could not solve by {method}")
+            return self._answer(spins)
         if not _model_solve_with(self._h, max(1, int(tries)), float(beta_hot), float(beta_cold),
                                  int(stages), int(sweeps)):
             raise ValueError(
                 "that annealing ladder is not usable: beta_cold must exceed beta_hot, and both "
                 "must be real numbers. Pass 0 for any of the four to use the default."
             )
+        return self._answer(spins)
+
+    def _answer(self, spins: int) -> Answer:
+        """Read the last solve back, whichever method produced it."""
         # A variable that did not decode is reported as None rather than raised on. Its encoding was
         # violated, which means a penalty lost to the objective -- and knowing WHICH variable lost is
         # the whole diagnosis. An exception would throw that away and leave the caller with nothing.
@@ -1912,6 +1954,7 @@ class Problem:
                       spins=int(spins), penalty=float(_model_penalty(self._h)),
                       soft_cost=float(_model_soft_cost(self._h)),
                       ancillas=int(_model_ancillas(self._h)),
+                      proved_optimal=bool(_model_proved(self._h)),
                       caveats=[_read_text_idx(_model_caveat, self._h, i)
                                for i in range(_model_caveats(self._h))])
 

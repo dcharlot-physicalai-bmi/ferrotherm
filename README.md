@@ -148,7 +148,14 @@ thermodynamic-computing corpus currently leaves empty.
   | 100×100 | 10,000 | 4,848 | **7,040** | 6,864 | 2.50% |
 
   For scale: branch and bound with a certified SDP bound *proves* 76 spins. This proves 10,000,
-  because the structure is there. The whole pipeline — blossom, embedding, dual, `T`-join,
+  because the structure is there — and that clause is the whole result. Mandrà, Katzgraber and Thomas
+  showed in 2017 that quantum-annealer speedup claims on planar gadget problems were measured on
+  instances **minimum-weight perfect matching solves exactly in polynomial time**, which is to say on
+  instances that are easy. This module is that observation implemented, so read the table the same
+  way: breakout local search falling 2.5% short is not evidence that our search is behind the field,
+  it is evidence that a heuristic which does not know the graph is planar cannot use the one fact
+  that makes it tractable. A planar result is a statement about structure, never a benchmark of
+  solvers. The whole pipeline — blossom, embedding, dual, `T`-join,
   two-colouring — is five pieces none of which raises anything when subtly wrong, so it is checked
   against `branch::solve` on small instances (a completely different argument, enumeration in the
   spin domain), and it **checks itself twice** on every run: the recovered edge set must two-colour,
@@ -371,7 +378,7 @@ thermodynamic-computing corpus currently leaves empty.
   `Precision::Float { mantissa: 24 }`: the shader's buffers are f32 while the CPU path is f64, and
   an undeclared difference is one nothing downstream can reason about.
 - `cargo build --release --lib --target wasm32-unknown-unknown` — compiles with **zero changes**;
-  the cdylib is a **509 KB .wasm** (181 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
+  the cdylib is a **567 KB .wasm** (203 KB gzipped) exposing the `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
 - `web/gibbs_bench.html` — the impedance-tax instrument. The WGSL sampler **verifies itself against

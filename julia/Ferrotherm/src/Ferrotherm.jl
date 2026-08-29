@@ -315,6 +315,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_value Clonglong ModPtr Cuint
 @cfn ft_model_feasible Cuint ModPtr
 @cfn ft_model_energy Cdouble ModPtr
+@cfn ft_model_solve_by Cuint ModPtr Cuint Culonglong
+@cfn ft_model_proved Cuint ModPtr
 @cfn ft_model_objective Cdouble ModPtr
 @cfn ft_model_has_objective Cuint ModPtr
 @cfn ft_model_penalty Cdouble ModPtr
@@ -1158,6 +1160,14 @@ struct Answer
     that compares two answers to one model and nothing else.
     """
     objective::Union{Float64, Nothing}
+    """`true` only when [`solve!`](@ref) was asked for `:branch` and it exhausted the tree.
+
+    Read it with `feasible`: branch proves a statement about the compiled energy, and it becomes a
+    statement about YOUR model exactly when the answer is also feasible -- a feasible assignment
+    pays no penalty, so its compiled energy is the objective plus a constant. The argument needs
+    nothing from the penalty being large enough.
+    """
+    proved_optimal::Bool
     spins::Int
     penalty::Float64
     soft_cost::Float64
@@ -1691,15 +1701,26 @@ caller who measured their instance can override only what they measured. Lengthe
 model stays infeasible at a large penalty — that is a model not being annealed enough, and no
 penalty fixes it.
 """
+const _METHODS = Dict(:anneal => 0, :tabu => 1, :breakout => 2, :branch => 3)
+
 function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::Real = 0,
-                stages::Integer = 0, sweeps::Integer = 0)
+                stages::Integer = 0, sweeps::Integer = 0,
+                method::Symbol = :anneal, effort::Integer = 0)
     _live(p)
+    haskey(_METHODS, method) ||
+        error("unknown method $method; one of " * join(sort(collect(keys(_METHODS))), ", "))
     spins = ft_model_compile(p.handle)
     spins == 0 && error(isempty(_why(p)) ? "this problem did not compile" : _why(p))
+    if method != :anneal
+        # `:branch` is the only one that returns a proof; read `proved_optimal` on the answer.
+        ft_model_solve_by(p.handle, Cuint(_METHODS[method]), Culonglong(effort)) == 0 &&
+            error(isempty(_why(p)) ? "could not solve by $method" : _why(p))
+    else
     ok = ft_model_solve_with(p.handle, Cuint(max(1, tries)), Cdouble(beta_hot), Cdouble(beta_cold),
                              Cuint(stages), Cuint(sweeps))
     ok == 0 && error("that annealing ladder is not usable: beta_cold must exceed beta_hot, and " *
                      "both must be real numbers. Pass 0 for any of the four to use the default.")
+    end
 
     vals = Dict{String, Union{Int64, Nothing}}()
     for v in p.vars
@@ -1722,7 +1743,8 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
     end
     obj = ft_model_has_objective(p.handle) == 1 ? ft_model_objective(p.handle) : nothing
     Answer(vals, ft_model_feasible(p.handle) == 1, broken,
-           ft_model_energy(p.handle), obj, Int(spins), ft_model_penalty(p.handle),
+           ft_model_energy(p.handle), obj, ft_model_proved(p.handle) == 1,
+           Int(spins), ft_model_penalty(p.handle),
            ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
            [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)])
 end

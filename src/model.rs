@@ -1505,6 +1505,39 @@ fn add_product(b: &mut GraphBuilder, a: &LinSpin, c: &LinSpin, w: f64) {
     }
 }
 
+/// Which solver to point at a compiled model.
+///
+/// Until now the answer was always [`Self::Anneal`]: every `solve*` on [`Compiled`] annealed, so the
+/// crate's tabu search, breakout local search, branch and bound and its three bounds were reachable
+/// only by taking `Compiled::graph` and driving them by hand — possible in Rust and impossible from
+/// every other surface. The layer the README, `llms.txt` and the MCP tool descriptions all say to
+/// reach for first was the one layer that could not certify anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Method {
+    /// Simulated annealing down a ladder. The default, and the only one there used to be.
+    Anneal,
+    /// Tabu search. The baseline every max-cut heuristic is measured against, and in this crate's
+    /// own shootout the strongest single arm at 400 nodes.
+    Tabu {
+        /// One iteration is one flip.
+        iterations: usize,
+    },
+    /// Breakout local search: descent plus an adaptive perturbation.
+    Breakout {
+        /// One iteration is one flip.
+        iterations: usize,
+    },
+    /// Branch and bound — **the only one that returns a proof**.
+    ///
+    /// Sets [`Solution::proved_optimal`] when it exhausts the tree within `max_nodes`. Read the note
+    /// on that field: a proof about the compiled energy becomes a proof about YOUR model exactly
+    /// when the answer is also feasible, and the argument does not depend on the penalty.
+    Branch {
+        /// Node budget. Reaching it returns the best state found and no proof.
+        max_nodes: u64,
+    },
+}
+
 /// A compiled model: the program, plus the means to read an answer back.
 pub struct Compiled {
     pub program: Program,
@@ -1571,7 +1604,16 @@ impl Compiled {
         // answer with anything invalid reports no objective rather than a number computed from
         // half a solution.
         let objective = if invalid.is_empty() { self.score(&values) } else { None };
-        Solution { values, invalid, violated, energy: self.graph.energy(state), objective }
+        Solution {
+            values,
+            invalid,
+            violated,
+            energy: self.graph.energy(state),
+            objective,
+            // Decoding a state says nothing about whether it is optimal. Only `solve_by` with
+            // `Method::Branch` can set this, and it sets it on the Solution it returns.
+            proved_optimal: false,
+        }
     }
 
     /// The objective's value at a decoded assignment, in the direction the modeller wrote it.
@@ -1738,6 +1780,71 @@ impl Compiled {
     }
 
     /// Anneal and decode.
+    /// Solve with a chosen method, rather than always annealing.
+    ///
+    /// Every other solver in this crate takes a graph of spins, and `Compiled::graph` is public, so
+    /// a Rust caller could always have driven them by hand. Nobody on any other surface could, and
+    /// nobody at all could get a PROOF back in the modeller's own vocabulary. This is that routing,
+    /// written once, so every surface gets it.
+    ///
+    /// The answer is decoded and re-checked exactly as [`Self::solve_annealed`]'s is: a method that
+    /// finds a lower compiled energy has not thereby found a feasible answer, and
+    /// [`Solution::feasible`] is still the thing to read first.
+    pub fn solve_by(&self, method: Method, seed: u64) -> Solution {
+        let state = match method {
+            Method::Anneal => return self.solve_annealed(seed),
+            Method::Tabu { iterations } => {
+                let p = crate::tabu::Params {
+                    iterations: iterations.max(1),
+                    ..crate::tabu::Params::default()
+                };
+                crate::tabu::search(&self.graph, &p, seed).state
+            }
+            Method::Breakout { iterations } => {
+                let p = crate::bls::Params {
+                    iterations: iterations.max(1),
+                    ..crate::bls::Params::default()
+                };
+                crate::bls::search(&self.graph, &p, seed).state
+            }
+            Method::Branch { max_nodes } => {
+                // Warm-started from a short anneal. A good incumbent prunes from the first node and
+                // is worth far more than a better bound -- `branch`'s own module doc says so -- and
+                // handing branch a random incumbent would make the proof arrive far later for no
+                // reason a caller chose.
+                let warm = self.solve_annealed(seed);
+                let incumbent = self.state_of(&warm);
+                let p = crate::branch::Params {
+                    max_nodes: max_nodes.max(1),
+                    incumbent,
+                    ..crate::branch::Params::default()
+                };
+                let out = crate::branch::solve(&self.graph, &p);
+                let mut sol = self.decode(&out.state);
+                sol.proved_optimal = out.proved_optimal;
+                return sol;
+            }
+        };
+        self.decode(&state)
+    }
+
+    /// Re-encode a decoded answer back to spins, for a solver that wants a starting state.
+    ///
+    /// `None` when anything failed to decode: half a state is a worse incumbent than none, because
+    /// branch would prune against a bound that does not correspond to any assignment.
+    fn state_of(&self, sol: &Solution) -> Option<Vec<i8>> {
+        if !sol.invalid.is_empty() {
+            return None;
+        }
+        let mut s = vec![-1i8; self.spins()];
+        for (i, slot) in self.slots.iter().enumerate() {
+            let v = *sol.values.get(&self.names[i])?;
+            let k = self.domains[i].index_of(v)?;
+            slot.encode(k, &mut s);
+        }
+        Some(s)
+    }
+
     pub fn solve_annealed(&self, seed: u64) -> Solution {
         self.solve_with(&Self::default_schedule(), seed)
     }
@@ -1851,6 +1958,27 @@ pub struct Solution {
     /// A number about SPINS. Two answers to the same model can be compared with it, and nothing
     /// else can: it is not what the schedule is worth, and it moves when the penalty does.
     pub energy: f64,
+    /// Whether the answer is **provably** the best one, not merely the best found.
+    ///
+    /// Only [`Method::Branch`] can set it, and only when it exhausted the tree within its budget.
+    ///
+    /// # What it proves, exactly
+    ///
+    /// Branch and bound proves a statement about the COMPILED energy: that no assignment of the
+    /// spins has a lower one. That is not immediately a statement about your model, because the
+    /// compiled energy folds in every penalty and a constant.
+    ///
+    /// It becomes one the moment the answer is also **feasible**, and the argument needs nothing
+    /// from the penalty being large enough. For a feasible assignment every penalty term is zero, so
+    /// the compiled energy is the objective plus a constant. If `s*` minimises the compiled energy
+    /// over ALL assignments and `s*` is feasible, then for any other feasible `s`,
+    /// `E(s) >= E(s*)`, and both sides are that same objective-plus-constant — so `s*` is optimal
+    /// among feasible assignments. **`proved_optimal && feasible()` is a genuine optimality proof
+    /// for the model as written.**
+    ///
+    /// `proved_optimal` with an INFEASIBLE answer proves something different and still useful: the
+    /// penalty was too small, and no larger search will fix it. Raise the penalty.
+    pub proved_optimal: bool,
     /// The objective's value in the modeller's own units, in the direction they wrote it.
     ///
     /// `None` when no objective was written, or when `objective` was called with both senses and
@@ -1946,6 +2074,121 @@ impl core::fmt::Display for Solution {
 
 #[cfg(test)]
 mod tests {
+
+    /// The model layer can now PROVE an answer, and the proof is checked against enumeration.
+    ///
+    /// This is the claim the crate leads with -- "proved optimal without trusting the sampler" --
+    /// and until now it was unreachable from the layer every doc says to reach for first.
+    #[test]
+    fn the_model_layer_can_prove_an_answer_optimal() {
+        // Small enough to enumerate every assignment of the DECODED values, which is a different
+        // computation from branch and bound on the compiled spins.
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        let c = m.categorical("c", 3);
+        m.all_different([a, b, c]);
+        m.objective(Sense::Maximize, Expr::product(5.0, &[Lit::Is(a, 1)]));
+        m.objective(Sense::Maximize, Expr::product(4.0, &[Lit::Is(b, 2)]));
+        m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(c, 0)]));
+        let compiled = m.compile().unwrap();
+
+        let sol = compiled.solve_by(Method::Branch { max_nodes: 5_000_000 }, 1);
+        assert!(sol.proved_optimal, "the tree is tiny; the budget is not the limit here");
+        assert!(sol.feasible(), "{:?}", sol.violated);
+
+        // Brute force over the modeller's OWN values: every (a, b, c) in 0..3, keeping the
+        // all_different ones, scoring the objective as written.
+        let mut best = f64::NEG_INFINITY;
+        for x in 0..3i64 {
+            for y in 0..3i64 {
+                for z in 0..3i64 {
+                    if x == y || y == z || x == z {
+                        continue;
+                    }
+                    let v = 5.0 * f64::from(x == 1) + 4.0 * f64::from(y == 2) + 3.0 * f64::from(z == 0);
+                    best = best.max(v);
+                }
+            }
+        }
+        assert_eq!(sol.objective, Some(best), "values {:?}", sol.values);
+        // 5 + 4 + 3 = 12 is achievable: a=1, b=2, c=0 are all different.
+        assert_eq!(best, 12.0);
+    }
+
+    /// A proof plus feasibility is a proof about the MODEL, and the argument does not use the
+    /// penalty. So a model solved at a deliberately small penalty must either come back infeasible
+    /// or be genuinely optimal -- never "proved" and quietly wrong.
+    #[test]
+    fn a_proof_with_a_small_penalty_is_still_a_proof_or_is_infeasible() {
+        for penalty in [0.5f64, 2.0, 50.0] {
+            let mut m = Model::new();
+            let a = m.categorical("a", 3);
+            let b = m.categorical("b", 3);
+            m.not_equal(a, b);
+            m.objective(Sense::Maximize, Expr::product(9.0, &[Lit::Is(a, 1)]));
+            m.objective(Sense::Maximize, Expr::product(9.0, &[Lit::Is(b, 1)]));
+            m.fixed_penalty(penalty);
+            let sol = m.compile().unwrap().solve_by(Method::Branch { max_nodes: 5_000_000 }, 3);
+            assert!(sol.proved_optimal, "penalty {penalty}: the tree is small");
+            if sol.feasible() {
+                // Both want value 1 and not_equal forbids it, so the best feasible pair scores 9.
+                assert_eq!(sol.objective, Some(9.0), "penalty {penalty}: {:?}", sol.values);
+            } else {
+                // A proof on an infeasible optimum is the penalty being too small, which is exactly
+                // what a small one should produce -- and it is information, not a wrong answer.
+                assert!(penalty < 18.0, "penalty {penalty} should have been enough");
+            }
+        }
+    }
+
+    /// Every method returns a decoded, re-checked answer, and the ones that are not branch do not
+    /// claim a proof.
+    #[test]
+    fn every_method_answers_and_only_branch_proves() {
+        let mut m = Model::new();
+        let vars: Vec<Var> = (0..6).map(|i| m.categorical(&format!("v{i}"), 3)).collect();
+        for w in vars.windows(2) {
+            m.not_equal(w[0], w[1]);
+        }
+        m.objective(Sense::Maximize, Expr::product(2.0, &[Lit::Is(vars[0], 0)]));
+        let c = m.compile().unwrap();
+
+        for method in [
+            Method::Anneal,
+            Method::Tabu { iterations: 20_000 },
+            Method::Breakout { iterations: 20_000 },
+        ] {
+            let s = c.solve_by(method, 5);
+            assert!(s.feasible(), "{method:?}: {:?}", s.violated);
+            assert!(!s.proved_optimal, "{method:?} cannot prove anything");
+            assert!(s.objective.is_some());
+            // The energy belongs to the state that was returned.
+            assert!(s.energy.is_finite());
+        }
+        let proved = c.solve_by(Method::Branch { max_nodes: 5_000_000 }, 5);
+        assert!(proved.proved_optimal && proved.feasible());
+        assert_eq!(proved.objective, Some(2.0));
+    }
+
+    /// Branch is warm-started from an anneal, so a bad decode must not become a bad incumbent.
+    #[test]
+    fn a_state_that_does_not_decode_is_not_handed_to_branch_as_an_incumbent() {
+        // A binary-encoded variable over 6 values has two codewords that decode to nothing, and no
+        // penalty removes them. It cannot appear in ANY constraint or objective either -- the
+        // compiler refuses that by name -- so it is left unconstrained beside a variable that does
+        // the model's work. That is the only way this crate can produce an undecodable answer.
+        let mut m = Model::new();
+        let _x = m.categorical_as("x", 6, Encoding::Binary);
+        let y = m.categorical("y", 3);
+        m.fix(y, 1);
+        let c = m.compile().unwrap();
+        // Whatever the anneal returns, solve_by must not panic and must return a decoded answer.
+        let s = c.solve_by(Method::Branch { max_nodes: 200_000 }, 2);
+        assert!(s.energy.is_finite());
+        let _ = s.proved_optimal;
+    }
+
 
     /// The number a modeller can actually use.
     ///

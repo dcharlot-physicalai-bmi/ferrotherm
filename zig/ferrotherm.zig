@@ -1338,6 +1338,28 @@ pub const Problem = struct {
         return c.ft_model_energy(self.h);
     }
 
+    /// Which solver to point at a compiled model. Only `branch` returns a proof.
+    pub const Method = enum(u32) { anneal = 0, tabu = 1, breakout = 2, branch = 3 };
+
+    /// Solve by a chosen METHOD rather than always annealing.
+    ///
+    /// `effort` is that method's budget -- iterations for tabu and breakout, a node ceiling for
+    /// branch -- and 0 takes a default. Compile first. Read `proved()` after `.branch`.
+    pub fn solveBy(self: *Problem, method: Method, effort: u64) Error!void {
+        if (c.ft_model_solve_by(self.h, @intFromEnum(method), effort) == 0) return Error.NotSolved;
+        self.solved = true;
+    }
+
+    /// Whether the last solve PROVED its answer optimal. Only `.branch` can set it.
+    ///
+    /// Read it with `feasible()`. Branch proves a statement about the compiled energy; it becomes a
+    /// statement about YOUR model exactly when the answer is also feasible, because a feasible
+    /// assignment pays no penalty and its compiled energy is the objective plus a constant. The
+    /// argument needs nothing from the penalty being large enough.
+    pub fn proved(self: *Problem) bool {
+        return c.ft_model_proved(self.h) == 1;
+    }
+
     /// The objective's value in your own units, in the direction you wrote it.
     ///
     /// Null when no objective was written, when both senses were used and there is no single

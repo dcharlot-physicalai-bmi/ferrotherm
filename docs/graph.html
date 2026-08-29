@@ -744,6 +744,14 @@ function runGraph() {
     const cost = W.ft_model_soft_cost ? W.ft_model_soft_cost(m) : 0;
     if (cost) txt += "traded   " + cost.toFixed(4) + " of preference\n";
     txt += "feasible  " + (feasible ? "yes" : "NO");
+    // Only a branch-and-bound solve can set this, and the Solve node anneals -- so it is read
+    // rather than assumed absent, and it will start reporting the moment a method choice reaches
+    // this editor.
+    if (W.ft_model_proved && W.ft_model_proved(m) === 1) {
+      txt += "\nPROVED    " + (feasible
+        ? "optimal for this model"
+        : "optimal for the COMPILED energy, and infeasible: the penalty is too small");
+    }
     // Which part was not delivered. "NO" on its own leaves the modeller to work out whether an
     // encoding broke or a constraint was outbid, and those want different remedies.
     //

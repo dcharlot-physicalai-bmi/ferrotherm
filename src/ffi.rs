@@ -1363,6 +1363,66 @@ pub extern "C" fn ft_model_caveats(m: *const ModelHandle) -> u32 {
     }
 }
 
+/// Solve the compiled model by a chosen METHOD, rather than always annealing.
+///
+/// `method` is 0 anneal, 1 tabu, 2 breakout, 3 branch and bound. `effort` is the method's budget --
+/// iterations for tabu and breakout, a node ceiling for branch -- and 0 takes a default.
+///
+/// Returns 1 on success, 0 on a null handle, an unknown method, or a model that has not compiled.
+/// Read [`ft_model_proved`] afterwards: only branch can prove anything, and it is the reason this
+/// exists. Every other solver in this crate takes a graph of spins, so the modelling layer -- the
+/// one every document here tells a caller to reach for first -- was the one layer that could not
+/// certify its own answer.
+#[no_mangle]
+pub extern "C" fn ft_model_solve_by(m: *mut ModelHandle, method: u32, effort: u64) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(c) = h.compiled.as_ref() else {
+        h.last_error = "compile the model before solving it".into();
+        return 0;
+    };
+    let meth = match method {
+        0 => crate::model::Method::Anneal,
+        1 => crate::model::Method::Tabu {
+            iterations: if effort == 0 { 50_000 } else { effort as usize },
+        },
+        2 => crate::model::Method::Breakout {
+            iterations: if effort == 0 { 50_000 } else { effort as usize },
+        },
+        3 => crate::model::Method::Branch {
+            max_nodes: if effort == 0 { 20_000_000 } else { effort },
+        },
+        other => {
+            h.last_error =
+                format!("unknown method {other}; 0 anneal, 1 tabu, 2 breakout, 3 branch");
+            return 0;
+        }
+    };
+    let sol = c.solve_by(meth, 1);
+    h.solution = Some(sol);
+    h.last_error.clear();
+    1
+}
+
+/// Whether the last solve PROVED its answer optimal, rather than merely finding it.
+///
+/// Only [`ft_model_solve_by`] with method 3 can set it, and only when branch and bound exhausted
+/// the tree inside its node budget.
+///
+/// **Read it together with [`ft_model_feasible`].** Branch proves a statement about the compiled
+/// energy; it becomes a statement about the caller's MODEL exactly when the answer is also feasible,
+/// because a feasible assignment pays no penalty and its compiled energy is the objective plus a
+/// constant. Proved and feasible is a real optimality proof for the model as written, and the
+/// argument uses nothing about the penalty being large enough. Proved and INFEASIBLE proves
+/// something else and still useful: the penalty is too small, and no longer search will fix it.
+#[no_mangle]
+pub extern "C" fn ft_model_proved(m: *const ModelHandle) -> u32 {
+    u32::from(
+        unsafe { m.as_ref() }
+            .and_then(|h| h.solution.as_ref())
+            .is_some_and(|s| s.proved_optimal),
+    )
+}
+
 /// The objective's value in the modeller's own units, in the direction they wrote it.
 ///
 /// NaN when no objective was written, when both senses were used and there is no single direction
@@ -4145,5 +4205,69 @@ mod warm_start_ffi {
             );
             ft_free(sim);
         }
+    }
+}
+
+#[cfg(test)]
+mod model_method_ffi {
+    use super::*;
+
+    /// The claim this crate leads with, reachable from the modelling layer for the first time.
+    #[test]
+    fn the_model_layer_can_prove_an_answer_through_the_abi() {
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+        assert_eq!(ft_model_not_equal(m, a, b), 1);
+        assert_eq!(ft_model_objective_term(m, 1, 5.0, a, 1), 1);
+        assert_eq!(ft_model_objective_term(m, 1, 4.0, b, 2), 1);
+        assert!(ft_model_compile(m) > 0);
+
+        // Annealing cannot prove, whatever it finds.
+        assert_eq!(ft_model_solve_by(m, 0, 0), 1);
+        assert_eq!(ft_model_proved(m), 0, "an anneal proves nothing");
+
+        // Branch can.
+        assert_eq!(ft_model_solve_by(m, 3, 5_000_000), 1);
+        assert_eq!(ft_model_proved(m), 1, "the tree is tiny");
+        assert_eq!(ft_model_feasible(m), 1);
+        // a != b permits a = 1 and b = 2, so the optimum is 9 in the modeller's units.
+        assert!((ft_model_objective(m) - 9.0).abs() < 1e-9, "{}", ft_model_objective(m));
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn every_method_runs_and_an_unknown_one_is_refused_by_name() {
+        let m = ft_model_new();
+        let v = ft_model_categorical(m, 3);
+        assert_eq!(ft_model_fix(m, v, 1), 1);
+        assert!(ft_model_compile(m) > 0);
+        for method in 0..4u32 {
+            assert_eq!(ft_model_solve_by(m, method, 2_000), 1, "method {method}");
+            assert_eq!(ft_model_feasible(m), 1, "method {method}");
+        }
+        assert_eq!(ft_model_solve_by(m, 9, 0), 0);
+        let need = ft_model_error(m, core::ptr::null_mut(), 0);
+        let mut buf = vec![0u8; need as usize];
+        ft_model_error(m, buf.as_mut_ptr(), need);
+        let msg = String::from_utf8(buf).unwrap();
+        assert!(msg.contains("unknown method 9"), "{msg}");
+        ft_model_free(m);
+    }
+
+    #[test]
+    fn solving_before_compiling_is_refused_with_the_reason() {
+        let m = ft_model_new();
+        let _ = ft_model_categorical(m, 3);
+        assert_eq!(ft_model_solve_by(m, 3, 0), 0, "nothing has been compiled");
+        let need = ft_model_error(m, core::ptr::null_mut(), 0);
+        let mut buf = vec![0u8; need as usize];
+        ft_model_error(m, buf.as_mut_ptr(), need);
+        assert!(String::from_utf8(buf).unwrap().contains("compile the model"));
+        ft_model_free(m);
+
+        let n: *mut ModelHandle = core::ptr::null_mut();
+        assert_eq!(ft_model_solve_by(n, 0, 0), 0);
+        assert_eq!(ft_model_proved(core::ptr::null()), 0);
     }
 }

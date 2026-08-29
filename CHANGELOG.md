@@ -44,6 +44,43 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The modelling layer could not certify its own answer
+
+Every `solve*` on `Compiled` annealed. Tabu, breakout local search, branch and bound and the three
+bounds all take a **graph of spins**, so they were reachable in Rust only by taking `Compiled::graph`
+and driving them by hand, and from every other surface not at all. The layer the README, `llms.txt`
+and the MCP tool descriptions all say to reach for **first** was the one layer that could not prove
+anything — while "proved optimal without trusting the sampler" is what this crate leads with.
+
+`Method` and `Compiled::solve_by` route it: anneal, tabu, breakout, branch. `Solution` gains
+`proved_optimal`, and `Method::Branch` warm-starts itself from a short anneal, because `branch`'s own
+module doc says a good incumbent prunes from the first node and is worth more than a better bound.
+
+**What the proof proves, exactly**, because a flag called `proved_optimal` on a model whose energy
+carries penalties is a trap otherwise:
+
+> Branch proves a statement about the **compiled** energy — that no assignment of the spins has a
+> lower one. That becomes a statement about the modeller's problem the moment the answer is also
+> **feasible**, and the argument needs nothing from the penalty being large enough. A feasible
+> assignment pays no penalty, so its compiled energy is the objective plus a constant; if `s*`
+> minimises the compiled energy over *all* assignments and `s*` is feasible, then every other
+> feasible `s` has `E(s) ≥ E(s*)`, and both sides are that same objective-plus-constant. **Proved
+> and feasible is a genuine optimality proof for the model as written.**
+>
+> Proved and *infeasible* proves something else and still useful: the penalty is too small, and no
+> longer search will fix it.
+
+A test pins that reasoning rather than restating it — the same model at penalties 0.5, 2.0 and 50.0
+must come back either proved-and-optimal or infeasible, never proved and quietly wrong. And the
+proof itself is checked against **enumeration over the modeller's own values**, which is a different
+computation from branch and bound over compiled spins.
+
+Every surface: `ft_model_solve_by` and `ft_model_proved`, `Problem.solve(method=…)` in Python,
+`solveBy`/`proved` in Zig, `solve!(; method=:branch)` in Julia, `"method"` and `"proved_optimal"` in
+the HTTP reply and the MCP schema, and both browser pages — where a proof is printed as
+`PROVED = optimal for this model` only when the answer is feasible, and otherwise says the penalty is
+too small. An unknown method is refused **by name** on every one of them.
+
 ### The shootout compared three of nine solvers
 
 `examples/maxcut_shootout` is this crate's head-to-head, and it ran parallel tempering, tabu and

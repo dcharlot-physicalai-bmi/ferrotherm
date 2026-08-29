@@ -808,6 +808,7 @@ function solveProblem(v) {
       // when both senses were used, or when a variable did not decode -- the ABI answers that
       // question separately rather than making a reader test for NaN.
       objective: W.ft_model_has_objective(m) ? W.ft_model_objective(m) : null,
+      proved: W.ft_model_proved ? W.ft_model_proved(m) === 1 : false,
       penalty: W.ft_model_penalty(m),
       // The same program as an ommx.v1.Instance. The editor shows its size rather than the bytes:
       // a base64 blob in a status pane teaches nobody anything, and the point is that the program
@@ -892,6 +893,16 @@ function applySolve() {
        + "\n  " + "energy".padEnd(pad) + " = " + r.energy.toFixed(4) + "   (compiled Ising)"
        + "\n  " + "penalty".padEnd(pad) + " = " + r.penalty.toFixed(2)
        + "\n  " + "feasible".padEnd(pad) + " = " + (r.feasible ? "yes" : "NO");
+  // A proof outranks everything else on this panel, and it only means what it means WITH
+  // feasibility: branch proves a statement about the compiled energy, and that becomes a statement
+  // about the modeller's problem exactly when the answer pays no penalty.
+  if (r.proved) {
+    txt += "\n  " + "PROVED".padEnd(pad) + " = "
+         + (r.feasible ? "optimal for this model" : "optimal for the COMPILED energy, and infeasible");
+    if (!r.feasible) {
+      txt += "\n           the penalty is too small, and no longer search will fix it";
+    }
+  }
   for (const b of r.violated) txt += "\n  broken: " + b;
   for (const b of r.traded) txt += "\n  traded: " + b;
   for (const c of r.caveats) txt += "\n  caveat: " + c;

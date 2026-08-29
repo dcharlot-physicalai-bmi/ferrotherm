@@ -1067,7 +1067,7 @@ pub fn capabilities() -> Json {
                 op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
                 op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
                 op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent (branch, tabu and breakout all take one now), sdp_depth, return_state"),
-                op("solve", "State a problem with named variables and constraints; get named values back.", "variables, constraints, objective, tries, penalty, schedule"),
+                op("solve", "State a problem with named variables and constraints; get named values back. \"method\" chooses the solver -- anneal (default), tabu, breakout, or branch, which is the only one that PROVES its answer.", "variables, constraints, objective, tries, penalty, schedule, method, effort"),
                 op("hubo", "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.", "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed"),
             ]),
         ),
@@ -1441,9 +1441,36 @@ pub fn solve(req: &Json) -> Result<Json, String> {
     bound_updates(compiled.spins(), sweeps_total.saturating_mul(tries), 0, 1)?;
 
     let t0 = Instant::now();
-    let sol = match &sched {
-        Some(s) => compiled.solve_best_with(s, tries as u64),
-        None => compiled.solve_best_of(tries as u64),
+    // A method choice, defaulting to the anneal this always did. Only "branch" returns a proof, and
+    // it is the reason this exists: the modelling layer -- the one every document here says to
+    // reach for first -- was the one layer that could not certify its own answer.
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("anneal");
+    let effort = req.get("effort").and_then(|v| v.as_usize()).unwrap_or(0);
+    let chosen = match method {
+        "anneal" => None,
+        "tabu" => Some(ferrotherm::model::Method::Tabu {
+            iterations: if effort == 0 { 50_000 } else { effort },
+        }),
+        "breakout" => Some(ferrotherm::model::Method::Breakout {
+            iterations: if effort == 0 { 50_000 } else { effort },
+        }),
+        "branch" => Some(ferrotherm::model::Method::Branch {
+            max_nodes: if effort == 0 { 20_000_000 } else { effort as u64 },
+        }),
+        other => {
+            return Err(format!(
+                "unknown method {other:?}; one of \"anneal\", \"tabu\", \"breakout\", \"branch\""
+            ))
+        }
+    };
+    let sol = match chosen {
+        // A chosen method runs once: `tries` is the anneal's restart count and means nothing to a
+        // deterministic search or to a proof.
+        Some(m) => compiled.solve_by(m, 1),
+        None => match &sched {
+            Some(s) => compiled.solve_best_with(s, tries as u64),
+            None => compiled.solve_best_of(tries as u64),
+        },
     };
     let wall = t0.elapsed().as_secs_f64();
 
@@ -1492,6 +1519,11 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         // does. Null when no objective was written, when both senses were used and there is no
         // single direction to report, or when a variable did not decode.
         ("objective", sol.objective.map_or(Json::Null, Json::n)),
+        // Only "branch" can set this. Read it WITH "feasible": branch proves a statement about the
+        // compiled energy, and it becomes a statement about the caller's model exactly when the
+        // answer is also feasible, because a feasible assignment pays no penalty and its compiled
+        // energy is the objective plus a constant.
+        ("proved_optimal", Json::Bool(sol.proved_optimal)),
         // What the traded-away preferences cost, separated from the objective on purpose: telling
         // those apart is the whole point of saying a constraint is soft.
         ("soft_cost", Json::n(sol.soft_cost())),
