@@ -134,9 +134,38 @@ noise baseline of **0.474**, so samples land 72.9% closer to the data than noise
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.
 
-⚠ **Calibrate this one.** Per-pixel marginals are a weak metric — a model can match them without
-capturing structure — and this is *not* the published FID ≈ 28. Reaching that needs K ≈ 1000 and
+⚠ **Calibrate this one.** This is *not* the published FID ≈ 28. Reaching that needs K ≈ 1000 and
 ≥100 epochs: roughly 2,170 CPU-hours, or ~14 hours on the WebGPU path.
+
+⛔ **And the metric orders models backwards — measured, not argued.** This row used to warn that
+"per-pixel marginals are a weak metric: a model can match them without capturing structure". That
+warning was an *assertion*, written because the argument is obvious rather than because anyone had
+measured it. `examples/metric_calibration` measures it, on datasets small enough for the exact
+log-likelihood to be computed beside the marginal MAE.
+
+Against a **bias-only model** — nine pixels, no hidden units, no couplings, so matching the
+marginals is the whole of what it can do — on bars-only images, which are made entirely of
+correlation:
+
+| arm | per-pixel MAE vs noise | actually learned |
+|---|---|---|
+| marginals-only | **87.3% closer** | **2.1%** |
+| wide (12 hidden) | −39.8% closer, i.e. worse than noise | **95.4%** |
+
+The model that learned almost nothing wins the metric by a wide margin; the model that learned
+nearly everything scores *worse than noise* on it. On the symmetric bars-and-stripes set it is worse
+still — every true marginal is exactly zero, so a model that has learned **nothing** scores a
+perfect 0.0000.
+
+The mechanism is ordinary, not exotic: a maximum-likelihood fit *would* match first moments, since
+moment matching is the gradient's fixed point. Contrastive divergence is a biased gradient by
+construction, and hidden units give a model somewhere else to spend capacity — so the metric rewards
+the model that optimises *it*. What is worth knowing is the size of that effect, and here it is
+large enough to flip the ranking.
+
+**This does not make the 72.9% above wrong** — it is what it says it is, and it was measured. It
+means the number cannot carry the weight a reader would put on it. Read a per-pixel figure as a
+**floor** (a model failing it has certainly not learned) and never as evidence that one has.
 
 ---
 

@@ -44,6 +44,46 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The metric the flagship workload reports orders models backwards
+
+`WORKLOADS.md` reported per-pixel MAE 0.128 against a noise baseline of 0.474 — "72.9% closer to the
+data than noise" — and warned in the same breath that per-pixel marginals are a weak metric because
+"a model can match them without capturing structure".
+
+**That warning was an assertion.** It was written because the argument is obvious, not because
+anyone had measured it, and an obvious caveat with no number attached is one a reader skips.
+`examples/metric_calibration` measures it, on datasets small enough for the exact log-likelihood to
+sit beside the marginal MAE — with a **bias-only** model, nine pixels and no hidden units and no
+couplings, so matching the marginals is the whole of what it can do.
+
+On bars-only images, which are made entirely of correlation:
+
+| arm | per-pixel MAE vs noise | actually learned |
+|---|---|---|
+| marginals-only | **87.3% closer** | **2.1%** |
+| wide (12 hidden) | −39.8% closer — *worse than noise* | **95.4%** |
+
+The model that learned almost nothing wins the metric by a wide margin, and the model that learned
+nearly everything scores worse than noise. **That is not a weak ordering; it is the reverse of the
+true one.** On the symmetric bars-and-stripes set it is worse still: every true marginal is exactly
+zero, so a model that has learned *nothing* scores a perfect 0.0000.
+
+That symmetry is why the experiment runs two datasets. The first result was too strong to
+generalise from — a blind metric is a property of that dataset, not of marginals in general, and
+Fashion-MNIST is not symmetric — so the asymmetric set is the number that carries over.
+
+The mechanism is ordinary: a maximum-likelihood fit *would* match first moments, since moment
+matching is the gradient's fixed point. Contrastive divergence is biased by construction and hidden
+units give a model somewhere else to spend capacity, so the metric rewards the model optimising
+*it*. What is worth knowing is the size, and here it flips the ranking.
+
+**This does not make the 72.9% wrong.** It means the number cannot carry the weight a reader would
+put on it: read a per-pixel figure as a floor, never as evidence that structure was learned.
+
+Correcting the record: two earlier entries said these measurement examples were "in CI". They were
+added to CI's **skip** list. `metric_calibration` (3 s) and `trained_tradeoff` (16 s) now genuinely
+run there; `mixing_expressivity` is four minutes and stays skipped, with the reason written down.
+
 ### You can draw a Boltzmann machine now, and drawing it is how you see its shape
 
 The node editor's families all *described* a model: you write down what you know and the sampler

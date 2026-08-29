@@ -171,7 +171,11 @@ jobs:
           FERROTHERM_ALLOW_BUSY: "1"
         run: |
           set -euo pipefail
-          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact toroidal_bound icm_scaling hubo_vs_reduction hfs_reach mixing_expressivity trained_tradeoff"
+          # mixing_expressivity is the only NEW skip: it draws 40,000 samples at each of four betas
+          # over five shapes and three seeds, which is four minutes. trained_tradeoff (16 s) and
+          # metric_calibration (3 s) RUN here -- both assert an ordering, so a run that exits 0 is
+          # worth having on every commit.
+          skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact toroidal_bound icm_scaling hubo_vs_reduction hfs_reach mixing_expressivity"
           ran=0
           for f in examples/*.rs; do
             n=$(basename "$f" .rs)
