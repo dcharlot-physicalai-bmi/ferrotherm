@@ -110,7 +110,7 @@ impl GraphBuilder {
             w[cursor[b as usize]] = j;
             cursor[b as usize] += 1;
         }
-        let colors = color_greedy(n, &offset, &nbr);
+        let colors = color_for(n, &offset, &nbr);
         let n_colors = colors.iter().copied().max().map_or(1, |c| c as usize + 1);
         let mut classes: Vec<Vec<u32>> = vec![Vec::new(); n_colors];
         for i in 0..n {
@@ -168,6 +168,70 @@ impl Graph {
 /// Greedy coloring in vertex order. For bipartite graphs presented in any order this may exceed
 /// two colors; callers with known structure (e.g. the Z1 grid) can verify with
 /// [`Graph::colors`].len-of-classes or construct order so greedy finds the checkerboard.
+/// A proper colouring, and as few colours as this crate's graphs actually need.
+///
+/// A chromatic sweep runs one pass per colour, so the colour count is the number of SEQUENTIAL
+/// barriers in a sweep and, on the GPU path, the number of dispatches. Fewer colours is strictly
+/// better: the same spins, updated in fewer synchronised waves.
+///
+/// Greedy in index order is already optimal on almost everything here, because almost everything
+/// here is bipartite -- lattices, grids, rings of even length, every RBM and every deep machine.
+/// CHIMERA IS THE EXCEPTION AND IT IS NOT A SMALL ONE: it is bipartite, and greedy spends THREE
+/// colours on it, so every Chimera sweep paid an extra pass for nothing. It is also the topology
+/// the hardware comparisons in this crate use.
+///
+/// So: greedy first, and only when greedy needed three or more is a two-colouring looked for.
+/// That ordering is deliberate rather than tidy. Replacing an already-two-coloured graph's
+/// assignment would change the order spins are visited in, which changes every seeded trajectory
+/// in the repository for no gain at all -- the colour COUNT would be identical. This way the only
+/// graphs whose results move are the ones that were being coloured badly.
+///
+/// A graph that is not bipartite keeps greedy's answer. Greedy is not optimal in general -- an odd
+/// ring needs three and gets three, but a crafted graph can defeat it -- and DSATUR or a
+/// largest-first order would do better on dense irregular graphs. This review did not locate a
+/// non-bipartite graph in this crate that greedy colours suboptimally, so that work is not done
+/// here rather than done speculatively.
+fn color_for(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
+    let greedy = color_greedy(n, offset, nbr);
+    let used = greedy.iter().max().map_or(0, |&c| c as usize + 1);
+    if used < 3 {
+        return greedy;
+    }
+    match two_color(n, offset, nbr) {
+        Some(c) => c,
+        None => greedy,
+    }
+}
+
+/// Breadth-first two-colouring, or `None` when an edge joins two nodes of the same part.
+///
+/// Every component is coloured independently, since a disconnected graph is bipartite exactly when
+/// each of its components is.
+fn two_color(n: usize, offset: &[usize], nbr: &[u32]) -> Option<Vec<u16>> {
+    const UNSET: u16 = u16::MAX;
+    let mut color = vec![UNSET; n];
+    let mut stack = Vec::new();
+    for s in 0..n {
+        if color[s] != UNSET {
+            continue;
+        }
+        color[s] = 0;
+        stack.push(s);
+        while let Some(v) = stack.pop() {
+            for k in offset[v]..offset[v + 1] {
+                let u = nbr[k] as usize;
+                if color[u] == UNSET {
+                    color[u] = 1 - color[v];
+                    stack.push(u);
+                } else if color[u] == color[v] {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(color)
+}
+
 fn color_greedy(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
     let mut colors = vec![u16::MAX; n];
     let mut used: Vec<bool> = Vec::new();
@@ -192,6 +256,61 @@ fn color_greedy(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CHIMERA IS BIPARTITE AND GREEDY DID NOT NOTICE, which cost every Chimera sweep an extra
+    /// sequential pass and left the classes lopsided.
+    #[test]
+    fn chimera_takes_two_colours_and_even_classes() {
+        let g = crate::ising::chimera(8, 8, 4, 1.0);
+        let nc = g.colors.iter().max().map_or(0, |&c| c as usize + 1);
+        assert_eq!(nc, 2, "chimera is bipartite; three colours is a wasted pass");
+        let mut sizes = vec![0usize; nc];
+        for &c in &g.colors {
+            sizes[c as usize] += 1;
+        }
+        // Even classes are the half of this that the parallel path feels: an undersized class
+        // leaves threads idle behind a barrier they still have to wait at.
+        assert_eq!(sizes, vec![256, 256], "and the two parts are the same size");
+        // Still a proper colouring, which is the only thing that makes the sweep correct at all.
+        for i in 0..g.n {
+            for k in g.offset[i]..g.offset[i + 1] {
+                assert_ne!(g.colors[i], g.colors[g.nbr[k] as usize]);
+            }
+        }
+    }
+
+    /// A graph that is NOT bipartite keeps greedy's answer rather than getting a wrong one.
+    #[test]
+    fn an_odd_ring_is_not_forced_into_two_colours() {
+        let g = crate::ising::ring(7, 1.0, 0.0);
+        let nc = g.colors.iter().max().map_or(0, |&c| c as usize + 1);
+        assert_eq!(nc, 3, "an odd cycle needs three, and asking for two must not succeed");
+        for i in 0..g.n {
+            for k in g.offset[i]..g.offset[i + 1] {
+                assert_ne!(g.colors[i], g.colors[g.nbr[k] as usize], "still proper");
+            }
+        }
+    }
+
+    /// THE BLAST RADIUS IS THE PROMISE. Replacing an already-two-coloured graph's assignment would
+    /// change the order spins are visited in, and so every seeded trajectory in this repository,
+    /// for a colour COUNT that was already identical. This asserts the rule directly rather than
+    /// trusting the comment that states it: where greedy used fewer than three, its exact output
+    /// survives byte for byte.
+    #[test]
+    fn a_graph_greedy_already_two_coloured_keeps_greedys_exact_assignment() {
+        let cases = [
+            crate::ising::lattice2d(16, 1.0),
+            crate::ising::ring(8, 1.0, 0.0),
+            crate::ising::grid2d(9, 7, 1.0),
+        ];
+        for g in &cases {
+            let greedy = color_greedy(g.n, &g.offset, &g.nbr);
+            let used = greedy.iter().max().map_or(0, |&c| c as usize + 1);
+            assert!(used < 3, "this case is meant to test the untouched path, not the other one");
+            assert_eq!(g.colors, greedy, "an already-good colouring must not be rewritten");
+        }
+    }
 
     #[test]
     fn coloring_is_proper() {

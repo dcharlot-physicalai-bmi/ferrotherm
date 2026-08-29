@@ -44,6 +44,50 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### Chimera was costing a sweep an extra pass, and DSATUR was the wrong tool
+
+The colour count of a graph is the number of **sequential barriers** in a chromatic sweep, and on
+the GPU path the number of **dispatches**. The roadmap listed DSATUR as an ingest item. Measuring
+first showed it would not have helped:
+
+| graph | colours (greedy) | bipartite? |
+|---|---|---|
+| lattice 32², glass, grid, ring, RBM, DBM | 2 | yes |
+| **Chimera C₈,₈,₄** | **3** | **yes** |
+
+Every graph this crate builds is bipartite, and greedy already hits the optimum on all of them
+except Chimera — which is the topology the hardware comparisons use. So the fix is a **bipartiteness
+check**, not DSATUR: greedy first, and only when greedy needed three or more is a two-colouring
+looked for.
+
+That ordering is deliberate rather than tidy. Rewriting an already-two-coloured graph's assignment
+would change the order spins are visited in, and so **every seeded trajectory in the repository**,
+for a colour count that was already identical. A test asserts the rule directly: where greedy used
+fewer than three, its exact output survives byte for byte.
+
+**The payoff, measured on both paths, because they disagree:**
+
+| | 3 colours | 2 colours | |
+|---|---|---|---|
+| serial sweep, C₁₆,₁₆,₄ | 71.3 M flips/s | 72.0 M flips/s | +1% |
+| **parallel sweep, C₁₆,₁₆,₄** | 3.1 M flips/s | **4.1 M flips/s** | **+32%** |
+| **parallel sweep, C₃₂,₃₂,₄** | 11.2 M flips/s | **17.5 M flips/s** | **+56%** |
+
+A serial sweep does the same work however it is split, so the colour count costs it a loop
+iteration and nothing else. The parallel path pays per barrier, and it also pays for the lopsided
+classes greedy left — `[3072, 3072, 2048]` becomes `[4096, 4096]`, so the undersized third class
+that left threads idle behind a barrier is gone. The GPU path gets the same structural win as a
+dispatch count: three round trips per sweep become two.
+
+**Stated against itself:** the parallel path is *slower in absolute terms* than the serial one at
+these sizes — 4.1 against 72.0 M flips/s — because thread spawn dominates. This is a 32–56%
+improvement to a path that is losing anyway at 2,048 spins, and a reader should not take the
+percentage as a speedup to the sampler they are actually using.
+
+DSATUR stays unported, with the reason written into the roadmap rather than left as an open item:
+it wins on dense irregular graphs, and this review did not locate one here that greedy colours
+suboptimally.
+
 ### The ladder can fix itself now — and an even ladder is not a healthy one
 
 `parallel_tempering` has reported `swap_rates` since the beginning: the acceptance of each adjacent

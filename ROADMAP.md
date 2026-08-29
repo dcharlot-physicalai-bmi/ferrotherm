@@ -479,7 +479,7 @@ What we port to Rust, and why each is worth owning.
 | Source | State today | Our port |
 |---|---|---|
 | COPY-gate sparsification (OPUSLab) | ~102 lines MATLAB, no adoption | First-class pass |
-| DSATUR coloring | Scattered | First-class pass |
+| DSATUR coloring | Scattered | ❌ NOT PORTED, and measured to be the wrong tool: every graph this crate builds is bipartite, greedy already hits the optimum on all but Chimera, and the fix there was a bipartiteness check (3 colours → 2, +32–56% on the parallel path). DSATUR wins on dense irregular graphs; this review did not locate one here that greedy colours suboptimally |
 | 2D adaptive PT over (β, W0) | One MATLAB file, June 2025 | ✅ `adaptive` — ladder respacing measured to work; the second axis measured NOT to earn its replicas, including where it was predicted to |
 | Lattice Random Walk integrator (arXiv:2508.20883) | **Paper, no code** | Binary/ternary SDE increments, no Gaussian RNG in the datapath, robust to quantisation |
 | Thermalizers KL chain-rule bound (arXiv:2608.01615) | **Published without code** | The compile-pass error bound; hardware-independent mathematics |
