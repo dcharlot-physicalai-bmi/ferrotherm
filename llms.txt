@@ -30,6 +30,12 @@ Reachable from Rust, C (include/ferrotherm.h), Python (python/ferrotherm), Zig (
 Julia (julia/Ferrotherm), wasm, the node editor, an HTTP API and an MCP server. Every one of them
 compiles through the same code, so an answer does not depend on which door you came in.
 
+If you are WRITING code against this library, the Python package ships a full type stub
+(`python/ferrotherm/__init__.pyi`, with a `py.typed` marker so checkers use it): every public name,
+its parameters, their types and defaults, and the first line of each docstring. It is GENERATED from
+the runtime API by `scripts/gen-stubs.py` and diffed by `scripts/check-stubs.sh`, so it cannot drift
+into telling you a signature that no longer exists.
+
 ## Key modules
 
 - model: variables, constraints (not_equal, equal, fix, cardinality, at_most, at_least, exactly-one,

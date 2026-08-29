@@ -229,6 +229,11 @@ jobs:
         run: |
           pip install pytest
           python -m pytest python/test_model.py python/test_readme.py -q
+      # The stub is the surface an editor, a type checker and any model writing code against this
+      # package actually read. It is generated, so this regenerates and diffs -- renaming a
+      # parameter without regenerating fails here rather than autocompleting a lie.
+      - name: the type stub matches the library it describes
+        run: scripts/check-stubs.sh
 
   wasm:
     runs-on: ubuntu-latest

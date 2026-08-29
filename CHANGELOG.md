@@ -44,6 +44,28 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### A generated type stub, because a ctypes package is opaque to whatever writes against it
+
+`python/ferrotherm/__init__.pyi` — 31 top-level names over 422 lines: every public class, method and
+property, with parameter names, types, defaults and the first line of each docstring. Plus a
+`py.typed` marker, without which a type checker ignores the stub entirely and the package goes back
+to being opaque callables; shipping one without the other is the same as shipping neither.
+
+This package binds a C ABI through ctypes, so before this an editor saw a module of nameless
+callables — no parameters, no types, no defaults, no docstrings where a reader is looking. Guessing
+at a numeric API produces code that runs and is wrong.
+
+**It is generated, not written.** A hand-kept stub starts correct and drifts one signature at a
+time, and every drift is a confident lie told to an editor, a type checker and any model writing
+code — nobody notices, because a wrong stub still autocompletes. `scripts/gen-stubs.py` derives it
+from the runtime API; `scripts/check-stubs.sh` regenerates and diffs, so renaming a parameter
+without regenerating fails CI. Its selftest renames one and requires the diff to catch it.
+
+One thing the first draft got wrong and worth naming: `inspect.getdoc` walks up to `object`, so
+every class without its own `__init__` docstring inherited *"Initialize self. See help(type(self))
+for accurate signature."* Emitting that put fake documentation on hover across half the API — worse
+than nothing, because it looks like documentation and says only that documentation is absent.
+
 ### The workbench can fit a machine, and the browser agrees with the machine exactly
 
 Fitting reached five language surfaces and no interface at all. The workbench now takes a **fourth

@@ -43,4 +43,7 @@ Changelog = "https://github.com/dcharlot-physicalai-bmi/ferrotherm/blob/main/CHA
 packages = ["ferrotherm"]
 # The compiled library rides in the package directory, which is the first place _candidates() looks
 # after FERROTHERM_LIB. That is what makes `pip install ferrotherm` work with nothing else present.
-package-data = { ferrotherm = ["*.so", "*.dylib", "*.dll"] }
+# The stub and the PEP 561 marker ride along too. Without `py.typed` a type checker ignores the stub
+# entirely and this package goes back to being opaque callables -- the marker is what makes the
+# stub count, and shipping one without the other is the same as shipping neither.
+package-data = { ferrotherm = ["*.so", "*.dylib", "*.dll", "*.pyi", "py.typed"] }
