@@ -118,6 +118,7 @@ pub mod oracle;
 pub mod planted;
 pub mod reduce;
 pub mod program;
+pub mod ebm;
 pub mod compile;
 pub mod tempering;
 pub mod wgsl;

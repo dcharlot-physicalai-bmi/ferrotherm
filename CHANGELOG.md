@@ -44,6 +44,65 @@ as a rout; it was measuring the ladder, since a ladder suited to weights of 1 ne
 terms of 1300. Sweeping the ladder's cold end from 5e-2 to 5e-6 moved it to −16.62. The published
 comparison uses the best of that sweep, so the reduction is measured at its best.
 
+### The stack can now fit a model, and the field's tradeoff sentence splits in two
+
+`mixing_expressivity` measured the structural half of the mixing-expressivity tradeoff. It could not
+touch the other half, because expressivity is a property of a model **fitted to data** and nothing
+here could fit one. `ebm` is contrastive divergence, and it closes that gap.
+
+The gradient is a difference of two correlations — `⟨s_i s_j⟩_data − ⟨s_i s_j⟩_model` — so **at a
+fixed point the two are equal**. That is not an approximation, and it is the test: train a
+fully-visible model, then check its pairwise correlations against the data's **by exhaustive
+enumeration**, not by more sampling. A check that compares a sampler's average to a sampler's
+average agrees with itself whatever it is doing.
+
+The learning rate decays to a tenth over training, and that is not a refinement. Without it the fit
+has a noise floor and never reaches its own fixed point — the first version of the moment-matching
+test failed at 0.15 with a tolerance of 0.05, which was the noise floor and not the fit.
+
+`exact_log_likelihood` enumerates: `log p(v) = log Σ_h exp(−E(v,h)) − log Z`. Never an ELBO, never a
+reconstruction error, never a pseudo-likelihood — every one of those proxies is worst exactly where
+mixing is worst, so using one would fold the thing being measured into the measurement.
+
+#### The experiment: depth against width at matched latent count
+
+`examples/trained_tradeoff` puts the same L latent units in one layer, two, or three, over 9 visible
+units on 3×3 bars-and-stripes. Both axes exact, and the expressivity scale is pinned at both ends:
+−6.238 is a model that learned nothing, −2.639 one that learned everything.
+
+| latents | arm | edges | learned | τ_int |
+|---|---|---|---|---|
+| 4 | wide | 36 | 67.4% | 0.9 |
+| 4 | deep | 22 | 27.4% | **0.5** |
+| 6 | wide | 54 | 92.1% | **2.0** |
+| 6 | deep | 36 | 46.8% | 0.7 |
+| 6 | deeper | 26 | 26.6% | 0.8 |
+| 12 | wide | 108 | 96.3% | 1.5 |
+| 12 | deep | 90 | 93.1% | 1.7 |
+| 12 | deeper | 68 | 65.5% | 1.4 |
+
+**(A) Latents without connectivity buy less expressivity — confirmed, and not marginally.** Monotone
+in depth at every latent count, spreads under a point.
+
+**(B) They therefore cost more mixing time — not as stated.** The deep arms mix *faster*. At six
+latents the **wide** model is the slowest thing in the table.
+
+Spearman rank correlation of τ_int against **what the model learned: ρ = +0.81**. Against **how deep
+it is: ρ = −0.17**.
+
+**Because a model that has not learned has nothing to get stuck in.** τ_int = 0.5 is the *floor* —
+the value for independent draws — and the deep arms sit on it. They are fast because they failed.
+
+So the tradeoff is real and its mechanism runs the other way round from the sentence: depth does not
+make sampling harder, depth makes **learning** harder, and what a model has learned is what makes
+sampling harder. The one place the two separate is twelve latents, where wide and deep land within
+three points of each other — and there the deep model *is* slower, 1.7 against 1.5. That effect is in
+the direction claimed and is a tenth the size of the one expressivity alone accounts for.
+
+Stated against itself: edge count is not controlled and cannot be, because the difference between
+wide and deep *is* the edge count. Nine visible units is an easy distribution; nothing here is
+glacial, and the validity gate never fires.
+
 ### The mixing-expressivity tradeoff, measured — and it is not monotone
 
 A survey of the field put the **mixing-expressivity tradeoff** at the centre of thermodynamic
