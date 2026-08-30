@@ -57,6 +57,15 @@ pub enum Error {
     NotASpin { row: usize, at: usize, value: i8 },
     /// The model has fewer spins than the data has visible units.
     TooSmall { spins: usize, visible: usize },
+    /// The model has more spins than [`MAX_ENUMERATED`], so its exact likelihood cannot be taken.
+    ///
+    /// **This used to be reported as [`Error::TooSmall`]**, whose message reads "the model has 24
+    /// spins and the data needs 16 visible" -- true, irrelevant, and the exact opposite of what
+    /// went wrong. It never named the limit and never said the model was too large. Fitting to 4x4
+    /// data therefore lost its only quality metric somewhere past six hidden units, silently,
+    /// because [`train`] takes the likelihood with `.ok()` and a mislabelled error looks the same
+    /// as an absent one.
+    TooLarge { spins: usize, limit: usize },
 }
 
 impl core::fmt::Display for Error {
@@ -69,6 +78,14 @@ impl core::fmt::Display for Error {
             Error::NotASpin { row, at, value } => {
                 write!(f, "row {row} position {at} is {value}, and a spin is -1 or +1")
             }
+            Error::TooLarge { spins, limit } => write!(
+                f,
+                "this model has {spins} spins and the exact likelihood enumerates every state, \
+                 which is refused above {limit}. It is refused rather than estimated because a \
+                 likelihood is what expressivity is JUDGED by here, and an estimate is worst \
+                 exactly where sampling is worst. Fit fewer hidden units, or score the model by \
+                 something other than the exact likelihood."
+            ),
             Error::TooSmall { spins, visible } => {
                 write!(f, "the model has {spins} spins and the data needs {visible} visible")
             }
@@ -111,7 +128,16 @@ impl Default for Params {
 pub struct Trained {
     /// The fitted model. Its edge set is the structure it was given; only weights moved.
     pub graph: Graph,
-    /// Mean log-likelihood per row, exact, or `None` when the model is too large to enumerate.
+    /// Mean log-likelihood per row, exact.
+    ///
+    /// `None` means the model has more than [`MAX_ENUMERATED`] spins, and nothing else: every other
+    /// way of failing is caught before training starts. The fit still happened and the model is
+    /// real; only its quality is unmeasured. Call [`exact_log_likelihood`] directly to get the
+    /// reason as an [`Error::TooLarge`] naming the limit — this field swallows it, which is why the
+    /// limit is written down here.
+    ///
+    /// Fitting to 4x4 data crosses that line at around seven hidden units, which is sooner than it
+    /// looks: the ceiling counts VISIBLE PLUS HIDDEN spins, not hidden ones.
     pub log_likelihood: Option<f64>,
     pub epochs_run: usize,
 }
@@ -240,7 +266,7 @@ pub const MAX_ENUMERATED: usize = 22;
 pub fn exact_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     check(g, data)?;
     if g.n > MAX_ENUMERATED {
-        return Err(Error::TooSmall { spins: g.n, visible: data.visible });
+        return Err(Error::TooLarge { spins: g.n, limit: MAX_ENUMERATED });
     }
     // log-sum-exp over every state, and over the states agreeing with each row on the visible part.
     let mut max_neg_e = f64::NEG_INFINITY;
@@ -508,6 +534,18 @@ mod tests {
     fn an_enumeration_too_large_is_refused_rather_than_attempted() {
         let g = rbm(20, 10);
         let d = Dataset { visible: 20, rows: vec![vec![1i8; 20]] };
-        assert!(matches!(exact_log_likelihood(&g, &d), Err(Error::TooSmall { .. })));
+        match exact_log_likelihood(&g, &d) {
+            Err(Error::TooLarge { spins, limit }) => {
+                assert_eq!((spins, limit), (30, MAX_ENUMERATED));
+                let msg = Error::TooLarge { spins, limit }.to_string();
+                // The message must say the model is too LARGE and name the limit. It used to be
+                // Error::TooSmall, whose text -- "the model has 28 spins and the data needs 20
+                // visible" -- is true, irrelevant, and says the opposite of what went wrong.
+                assert!(msg.contains("30 spins"), "names the size: {msg}");
+                assert!(msg.contains(&limit.to_string()), "and the limit: {msg}");
+                assert!(msg.contains("refused"), "and that it refused rather than estimated: {msg}");
+            }
+            other => panic!("an oversized model must be TooLarge, got {other:?}"),
+        }
     }
 }

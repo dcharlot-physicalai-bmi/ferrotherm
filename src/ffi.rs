@@ -1188,8 +1188,37 @@ pub extern "C" fn ft_model_objective_pair(
     bv: i64,
 ) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    let (Some(x), Some(y)) = (var_of(h, a), var_of(h, b)) else { return 0 };
-    if !coeff.is_finite() || a == b || !check_value(h, x, av) || !check_value(h, y, bv) {
+    // FIVE CAUSES USED TO SHARE ONE SILENT `return 0`. Python surfaced them all as the fallback
+    // text "the library refused that objective", which names nothing a caller can act on, while
+    // this function's own sibling `ft_model_objective_product` sets a reason for every refusal.
+    let (x, y) = match (var_of(h, a), var_of(h, b)) {
+        (Some(x), Some(y)) => (x, y),
+        (None, _) => {
+            h.last_error = format!("there is no variable {a} in this model");
+            return 0;
+        }
+        (_, None) => {
+            h.last_error = format!("there is no variable {b} in this model");
+            return 0;
+        }
+    };
+    if !coeff.is_finite() {
+        h.last_error = format!("an objective coefficient must be a real number, not {coeff}");
+        return 0;
+    }
+    // THE SAME VARIABLE TWICE IS LEGAL AND USED TO BE REFUSED HERE.
+    //
+    // `a == b` was rejected outright, and the Rust path has always handled it correctly: the square
+    // of an indicator IS the indicator, so `5.0 * x.is(1) * x.is(1)` scores 5 when x is 1; and
+    // `x.is(1) * x.is(2)` contributes 0, because one variable cannot hold two values. Both compile
+    // and solve to the right answer through `Model` today. The guard made a term expressible from
+    // Rust and inexpressible from C, Python, Zig and Julia -- and said nothing about why.
+    if !check_value(h, x, av) {
+        h.last_error = format!("{av} is not a value variable {a} can take");
+        return 0;
+    }
+    if !check_value(h, y, bv) {
+        h.last_error = format!("{bv} is not a value variable {b} can take");
         return 0;
     }
     let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
@@ -4588,6 +4617,55 @@ mod ebm_ffi_tests {
         // And the fitted model composes with everything already on this ABI.
         assert!(ft_tabu(sim, 2000, 0, 0).is_finite());
         ft_free(sim);
+    }
+
+    /// EVERY REFUSAL FROM `ft_model_objective_pair` MUST NAME ITSELF, and none of them did.
+    ///
+    /// Five causes shared one silent `return 0`, so Python raised the fallback "the library refused
+    /// that objective" for all of them. And one of the five was not a refusal at all: the same
+    /// variable twice is legal, the Rust path solves it correctly, and the C ABI rejected it -- a
+    /// term expressible from Rust and from nowhere else.
+    #[test]
+    fn every_objective_pair_refusal_names_itself_and_the_legal_case_is_allowed() {
+        let read = |m: *mut ModelHandle| {
+            let n = ft_model_error(m, core::ptr::null_mut(), 0) as usize;
+            let mut b = vec![0u8; n];
+            let got = ft_model_error(m, b.as_mut_ptr(), n as u32) as usize;
+            String::from_utf8_lossy(&b[..got]).to_string()
+        };
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+
+        // A variable that does not exist, named on each side separately.
+        assert_eq!(ft_model_objective_pair(m, 1, 1.0, 99, 0, b, 0), 0);
+        assert!(read(m).contains("99"), "names the missing variable: {}", read(m));
+        assert_eq!(ft_model_objective_pair(m, 1, 1.0, a, 0, 99, 0), 0);
+        assert!(read(m).contains("99"), "on the second side too: {}", read(m));
+
+        // A coefficient that is not a real number.
+        assert_eq!(ft_model_objective_pair(m, 1, f64::NAN, a, 0, b, 0), 0);
+        assert!(read(m).contains("real number"), "{}", read(m));
+
+        // A value the variable cannot take, named on each side separately.
+        assert_eq!(ft_model_objective_pair(m, 1, 1.0, a, 7, b, 0), 0);
+        assert!(read(m).contains('7'), "names the bad value: {}", read(m));
+        assert_eq!(ft_model_objective_pair(m, 1, 1.0, a, 0, b, 9), 0);
+        assert!(read(m).contains('9'), "on the second side too: {}", read(m));
+
+        // AND THE LEGAL CASE IS NOW ACCEPTED. x.is(1)*x.is(1) is the square of an indicator, which
+        // is the indicator; maximising it at 5.0 must drive the variable to 1.
+        assert_eq!(
+            ft_model_objective_pair(m, 1, 5.0, a, 1, a, 1),
+            1,
+            "the same variable twice is a legal term and Model solves it correctly"
+        );
+        // compile returns the SPIN COUNT: two 3-value one-hots is six.
+        assert_eq!(ft_model_compile(m), 6);
+        assert_eq!(ft_model_solve(m, 0), 1);
+        assert_eq!(ft_model_value(m, a), 1, "the square rewards a = 1");
+        assert!((ft_model_objective(m) - 5.0).abs() < 1e-9, "and it is worth 5");
+        ft_model_free(m);
     }
 
     #[test]

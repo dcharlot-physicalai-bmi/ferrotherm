@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### A term expressible from Rust and from nowhere else, and a refusal that named nothing
+
+`ft_model_objective_pair` rejected any term whose two literals name the same variable — and that
+term is **legal**. The square of an indicator *is* the indicator, so `5.0 * x.is(1) * x.is(1)`
+scores 5 when `x` is 1; and `x.is(1) * x.is(2)` contributes 0, because one variable cannot hold two
+values. Both compile and solve correctly through `Model` today, verified directly. The guard made
+that expressible from Rust and inexpressible from C, Python, Zig and Julia.
+
+Worse, it said nothing. **Five different causes shared one silent `return 0`** — null handle,
+unknown variable, non-finite coefficient, same variable twice, out-of-range value — with no
+`last_error` set, while this function's own sibling `ft_model_objective_product` sets a reason for
+every refusal it makes. Python surfaced all five as the fallback text *"the library refused that
+objective"*, which names nothing a caller can act on.
+
+Each cause now names itself, on each side of the pair separately, and the legal case is accepted.
+
+### `ebm` reported a model that was too LARGE as `TooSmall`
+
+`exact_log_likelihood` refused a model above `MAX_ENUMERATED` (22 spins) by returning
+`Error::TooSmall`, whose message reads *"the model has 30 spins and the data needs 20 visible"* —
+true, irrelevant, and the opposite of what went wrong. It never named the limit and never said the
+model was too large.
+
+That matters more than a wording slip because `train` takes the likelihood with `.ok()`, so a
+mislabelled error and an absent one look identical from outside. Fitting to 4×4 data loses its only
+quality metric somewhere past six hidden units — silently, with the field just going `None`.
+
+There is now `Error::TooLarge { spins, limit }` naming the ceiling and saying why it refuses rather
+than estimates: a likelihood is what expressivity is *judged* by here, and an estimate is worst
+exactly where sampling is worst. `Trained::log_likelihood` documents that `None` means this and
+nothing else, and that the ceiling counts visible **plus** hidden spins — which is sooner than it
+looks.
+
 ### Two checks that could not fail, and a fixture that took three attempts
 
 **`the_convergence_check_sees_a_drifting_trace` never called `certify`.** It built two synthetic
