@@ -991,6 +991,22 @@ pub const Counting = enum(u32) {
     all_different = 5,
 };
 
+/// A literal and the coefficient it carries in a weighted linear row.
+pub const Weighted = struct {
+    lit: Lit,
+    coeff: f64,
+};
+
+/// How the two sides of a weighted linear row compare.
+pub const Rel = enum(u32) {
+    /// `sum w*l <= rhs`
+    le = 0,
+    /// `sum w*l >= rhs`
+    ge = 1,
+    /// `sum w*l = rhs`
+    eq = 2,
+};
+
 /// How a variable is stored.
 ///
 /// The trade is the difference between a model that fits a machine and one that does not.
@@ -1272,6 +1288,51 @@ pub const Problem = struct {
             if (c.ft_model_var(self.h, v.idx) == 0) return Error.BadValue;
         }
         if (c.ft_model_close(self.h, @intFromEnum(Counting.all_different), 0) == 0) {
+            return Error.RejectedConstraint;
+        }
+    }
+
+    /// A WEIGHTED linear row: `3a + 4b + 5c <= 7`, which no counting constraint can say.
+    ///
+    /// Every `Counting` kind counts UNWEIGHTED literals, so a row with coefficients could not be
+    /// stated at all, and the advice the LP reader used to give -- "add it to the objective" -- is
+    /// the defect rather than the workaround: an objective term is not a constraint, so `feasible`
+    /// and the violation list stop knowing about the row.
+    ///
+    /// WHAT IT COSTS. An equality adds no spins. An inequality adds `ceil(log2(S+1))` slack spins,
+    /// where S is the residual span after dividing the row through by the gcd of its weights -- so
+    /// `1000a + 1000b <= 1500` costs one spin, not 1500. Either way the row is a clique on its own
+    /// n literals plus its m slack bits: `(n+m)(n+m-1)/2` couplings. The bill is n, not the weights.
+    ///
+    /// WHAT IT REFUSES, at `compile`, by name: a non-integer coefficient or right-hand side on an
+    /// INEQUALITY, because there is no integer residual for the slack to range over and rounding
+    /// would change which answers are answers (an EQUALITY takes any finite coefficient, because it
+    /// needs no slack); and a row nothing can satisfy, by arithmetic rather than by annealing.
+    pub fn linear(self: *Problem, rel: Rel, rhs: f64, terms: []const Weighted) Error!void {
+        _ = c.ft_model_lits_clear(self.h);
+        for (terms) |t| {
+            if (c.ft_model_lit_weighted(self.h, t.lit.v.idx, t.lit.value, t.coeff) == 0) {
+                return Error.BadValue;
+            }
+        }
+        if (c.ft_model_close_linear(self.h, @intFromEnum(rel), rhs) == 0) {
+            return Error.RejectedConstraint;
+        }
+    }
+
+    /// `linear`, but as a PREFERENCE priced at `weight` rather than a rule.
+    ///
+    /// Breaking it costs `weight * amount^2` in the modeller's own units -- exactly the energy the
+    /// compiled row contributes -- and leaves the answer feasible. `softCost` totals what was
+    /// traded.
+    pub fn linearSoft(self: *Problem, rel: Rel, rhs: f64, terms: []const Weighted, weight: f64) Error!void {
+        _ = c.ft_model_lits_clear(self.h);
+        for (terms) |t| {
+            if (c.ft_model_lit_weighted(self.h, t.lit.v.idx, t.lit.value, t.coeff) == 0) {
+                return Error.BadValue;
+            }
+        }
+        if (c.ft_model_close_linear_soft(self.h, @intFromEnum(rel), rhs, weight) == 0) {
             return Error.RejectedConstraint;
         }
     }
@@ -2246,4 +2307,60 @@ test "a refused fit says why in the caller's own terms" {
     const wide = [_]i8{1} ** 20;
     try std.testing.expectError(Error.Unfittable, big.logLikelihood(20, &wide));
     try std.testing.expect(std.mem.indexOf(u8, ebmError(&buf), "28 spins") != null);
+}
+
+test "a weighted linear row is a constraint, not a preference" {
+    // 3a + 4b + 5c <= 7, which no counting constraint can say: they all count UNWEIGHTED literals.
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.binary("a");
+    const b = try p.binary("b");
+    const d = try p.binary("c");
+    try p.prefer(.maximize, 1.0, a.is(1));
+    try p.prefer(.maximize, 1.0, b.is(1));
+    try p.prefer(.maximize, 1.0, d.is(1));
+    try p.linear(.le, 7.0, &.{
+        .{ .lit = a.is(1), .coeff = 3.0 },
+        .{ .lit = b.is(1), .coeff = 4.0 },
+        .{ .lit = d.is(1), .coeff = 5.0 },
+    });
+    _ = try p.compile();
+    try p.solve(32);
+    try std.testing.expect(p.feasible());
+    const load = 3 * (try p.value(a)).? + 4 * (try p.value(b)).? + 5 * (try p.value(d)).?;
+    // The row BINDS: it is a constraint, and 3 + 4 is the best that fits under it.
+    try std.testing.expectEqual(@as(i64, 7), load);
+
+    // A row nothing can satisfy is refused when the model compiles, by arithmetic rather than by
+    // annealing and returning a confident infeasible answer.
+    var q = try Problem.init();
+    defer q.deinit();
+    const x = try q.binary("x");
+    const y = try q.binary("y");
+    try q.linear(.ge, 9.0, &.{
+        .{ .lit = x.is(1), .coeff = 3.0 },
+        .{ .lit = y.is(1), .coeff = 4.0 },
+    });
+    try std.testing.expectError(Error.WillNotCompile, q.compile());
+}
+
+test "a soft weighted row is priced in the modeller's own units" {
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.binary("a");
+    const b = try p.binary("b");
+    try p.prefer(.maximize, 10.0, a.is(1));
+    try p.prefer(.maximize, 10.0, b.is(1));
+    try p.linearSoft(.le, 3.0, &.{
+        .{ .lit = a.is(1), .coeff = 3.0 },
+        .{ .lit = b.is(1), .coeff = 4.0 },
+    }, 0.5);
+    _ = try p.compile();
+    try p.solve(32);
+    try std.testing.expect(p.feasible()); // a soft row leaves the answer an answer
+    try std.testing.expectEqual(@as(i64, 1), (try p.value(a)).?);
+    try std.testing.expectEqual(@as(i64, 1), (try p.value(b)).?);
+    // 3 + 4 = 7 against a bound of 3 is 4 over, priced at 0.5 * 4^2 = 8 -- less than the 10 that
+    // taking the second one is worth, which is why the trade happens at all.
+    try std.testing.expectEqual(@as(f64, 8.0), p.softCost());
 }

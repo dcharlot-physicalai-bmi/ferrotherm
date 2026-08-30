@@ -436,6 +436,10 @@ uint32_t ft_model_at_least(ft_model *m, uint32_t count, uint32_t k, int64_t valu
  * constraint cannot bleed into the next one. */
 uint32_t ft_model_lits_clear(ft_model *m);
 uint32_t ft_model_lit(ft_model *m, uint32_t var, int64_t value);
+/* Append a WEIGHTED literal, for ft_model_close_linear below. ft_model_lit is the same call with a
+ * coefficient of 1, so the two mix freely and an unweighted list closed as a linear row means
+ * exactly the counting row it looks like. Refuses a coefficient that is not a real number. */
+uint32_t ft_model_lit_weighted(ft_model *m, uint32_t var, int64_t value, double coeff);
 /* Append a VARIABLE, for constraints that are about variables rather than literals -- all_different
  * (kind 5) is the only one today. The library picks a value from the variable's own domain, because
  * a caller has no reason to know one and a placeholder passed through ft_model_lit is refused for
@@ -456,6 +460,35 @@ uint32_t ft_model_lits(const ft_model *m);   /* how many are pending */
  * pigeonhole principle, checked rather than annealed, because a model with no answer returns
  * infeasible for a reason no penalty and no longer ladder will fix. */
 uint32_t ft_model_close(ft_model *m, uint32_t kind, uint32_t k);
+
+/* WEIGHTED LINEAR ROWS: 3a + 4b + 5c <= 7, which no counting constraint can say.
+ *
+ * Every kind above counts UNWEIGHTED literals, so a row with coefficients could not be stated
+ * anywhere in this library, and the LP reader refused one by name with the advice "add it to the
+ * objective". Following that advice is the defect rather than the workaround: an objective term is
+ * not a constraint, so ft_model_feasible and the violation list stop knowing about the row, and a
+ * caller who took the documented advice lost the thing that tells them whether their answer is
+ * valid.
+ *
+ * Build the list with ft_model_lit_weighted (or ft_model_lit, which weights by 1) and close it
+ * here. rel is 0 for <=, 1 for >=, 2 for =.
+ *
+ * WHAT IT COSTS. An equality is a squared penalty and adds no spins. An inequality adds
+ * ceil(log2(S+1)) slack spins, where S is the residual span after dividing the row through by the
+ * gcd of its weights -- so 1000a + 1000b <= 1500 costs ONE spin, not 1500. Either way the row is a
+ * clique on its own n literals plus its m slack bits: (n+m)(n+m-1)/2 couplings and degree n+m-1.
+ * The bill is n, not the weights: a 200-item capacity row is 19,900 couplings however cheap its
+ * slack is.
+ *
+ * WHAT IT REFUSES, at ft_model_compile, with the reason in ft_model_error: a non-integer
+ * coefficient or right-hand side on an INEQUALITY (there is no integer residual for the slack to
+ * range over, and rounding it would change which answers are answers -- an EQUALITY takes any
+ * finite coefficient, because it needs no slack); a row nothing can satisfy, by arithmetic rather
+ * than by annealing; and a binary- or domain-wall-encoded variable, which every constraint here
+ * refuses for the same reason. A row that constrains nothing compiles to nothing and says so
+ * through ft_model_caveats. */
+uint32_t ft_model_close_linear(ft_model *m, uint32_t rel, double rhs);
+uint32_t ft_model_close_linear_soft(ft_model *m, uint32_t rel, double rhs, double weight);
 
 /* SOFT constraints: a preference with a price, rather than a rule.
  *

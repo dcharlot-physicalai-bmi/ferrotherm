@@ -73,6 +73,7 @@ export ToroidalBound
 export Problem, Variable, Literal, Answer
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
+export linear!
 export all_different!
 export maximize!, minimize!, penalty!, solve!, certify!, ftp, violated, feasible
 export soften_last!, soft_cost, traded, amounts, ancillas, caveats, ommx, from_ommx
@@ -292,6 +293,9 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_fix Cuint ModPtr Cuint Clonglong
 @cfn ft_model_lits_clear Cuint ModPtr
 @cfn ft_model_lit Cuint ModPtr Cuint Clonglong
+@cfn ft_model_lit_weighted Cuint ModPtr Cuint Clonglong Cdouble
+@cfn ft_model_close_linear Cuint ModPtr Cuint Cdouble
+@cfn ft_model_close_linear_soft Cuint ModPtr Cuint Cdouble Cdouble
 @cfn ft_model_var Cuint ModPtr Cuint
 @cfn ft_model_close Cuint ModPtr Cuint Cuint
 @cfn ft_model_objective_term Cuint ModPtr Cuint Cdouble Cuint Clonglong
@@ -1574,6 +1578,59 @@ function _counting(p::Problem, kind::Integer, of, k::Integer, value::Integer, wh
         _must(p, ft_model_close(p.handle, Cuint(kind), Cuint(k)), what)
     else
         _must(p, ft_model_close_soft(p.handle, Cuint(kind), Cuint(k), Cdouble(soft)), what)
+    end
+    nothing
+end
+
+"""
+    linear!(p, terms, rel, rhs; soft = nothing)
+
+A **weighted** linear row: `3a + 4b + 5c ≤ 7`, which no counting constraint can say.
+
+`exactly!`, `at_most!`, `at_least!`, `exactly_one!` and `at_most_one!` all count UNWEIGHTED
+literals, so a row with coefficients could not be stated at all — and the advice the LP reader used
+to give, "add it to the objective", is the defect rather than the workaround: an objective term is
+not a constraint, so `feasible` and the violation list stop knowing about the row.
+
+`terms` is a collection of `(variable-or-literal, coefficient)` pairs. `rel` is `:le`, `:ge` or
+`:eq` (or the strings `"<="`, `">="`, `"="`). `soft` prices the row instead of enforcing it, at
+`weight × amount²` in your own units.
+
+WHAT IT COSTS. An equality adds no spins. An inequality adds `ceil(log2(S+1))` slack spins, where
+`S` is the residual span after dividing the row through by the gcd of its weights — so
+`1000a + 1000b ≤ 1500` costs one spin, not 1500. Either way the row is a clique on its own `n`
+literals plus its `m` slack bits: `(n+m)(n+m-1)/2` couplings. The bill is `n`, not the weights.
+
+WHAT IT REFUSES, when the model compiles, by name: a non-integer coefficient or right-hand side on
+an INEQUALITY, because there is no integer residual for the slack to range over and rounding would
+change which answers are answers (an EQUALITY takes any finite coefficient, because it needs no
+slack); and a row nothing can satisfy, by arithmetic rather than by annealing.
+"""
+function linear!(p::Problem, terms, rel, rhs::Real; soft::Union{Real, Nothing} = nothing)
+    _live(p)
+    code = rel === :le || rel == "<=" || rel == "\u2264" ? 0 :
+           rel === :ge || rel == ">=" || rel == "\u2265" ? 1 :
+           rel === :eq || rel == "="  || rel == "=="      ? 2 :
+           error("a linear row compares with :le, :ge or :eq, not $rel")
+    items = collect(terms)
+    isempty(items) && error("a linear row needs at least one term")
+    ft_model_lits_clear(p.handle)
+    for it in items
+        thing, coeff = try
+            first(it), last(it)
+        catch
+            error("linear! takes (literal, coefficient) pairs, not $it")
+        end
+        lit = thing isa Literal ? thing :
+              thing isa Variable ? Literal(thing, Int64(1)) :
+              error("a linear row weights variables or literals, not $(typeof(thing))")
+        _must(p, ft_model_lit_weighted(p.handle, lit.var.idx, lit.value, Cdouble(coeff)), "linear")
+    end
+    if soft === nothing
+        _must(p, ft_model_close_linear(p.handle, Cuint(code), Cdouble(rhs)), "linear")
+    else
+        _must(p, ft_model_close_linear_soft(p.handle, Cuint(code), Cdouble(rhs), Cdouble(soft)),
+              "linear")
     end
     nothing
 end

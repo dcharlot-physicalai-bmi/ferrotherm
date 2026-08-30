@@ -168,13 +168,30 @@ saving for the right answer.
 `ancillas_avoided` is an UPPER BOUND, not a cost: the reduction shares one ancilla across every term
 containing the same pair, so on three terms sharing one it spends one where the count reports three.
 
-## Constraints, all nine of them
+## Constraints, all ten of them
 
 not_equal, equal, fix, cardinality (exactly k), at_most, at_least, exactly_one, at_most_one,
-all_different. Reach for `all_different` for assignment, scheduling, colouring and puzzles: it
-lowers per shared value rather than per pair, so it needs no slack and costs nothing where two
+all_different, linear. Reach for `all_different` for assignment, scheduling, colouring and puzzles:
+it lowers per shared value rather than per pair, so it needs no slack and costs nothing where two
 domains do not overlap. Prefer exactly_one / at_most_one over k = 1 -- at_most with k = 1 buys a
 slack variable it does not need, and the compiler says so in `caveats`.
+
+`linear` is the WEIGHTED row -- `3a + 4b + 5c <= 7`, `>=`, or `=` -- and it is the only one of the
+ten that is not a count. The nine above all count UNWEIGHTED literals, so a weighted row could not
+be stated anywhere in this library and the LP reader refused one by name with the advice "add it to
+the objective". That advice was the defect rather than the workaround: an objective term is not a
+constraint, so `feasible` and `violated` stop knowing about the row.
+
+WHAT IT COSTS: an equality adds no spins; an inequality adds ceil(log2(S+1)) slack spins, where S is
+the residual span after dividing the row through by the gcd of its weights -- so `1000a + 1000b <=
+1500` is ONE spin, not 1500. Either way the row is a clique on its own n literals plus its m slack
+bits: (n+m)(n+m-1)/2 couplings and degree n+m-1. The bill is n, not the weights.
+
+WHAT IT REFUSES, by name, at compile: a non-integer coefficient or right-hand side on an INEQUALITY
+(there is no integer residual for the slack to range over, and rounding would change which answers
+are answers -- an EQUALITY takes any finite coefficient, because it needs no slack); and a row
+nothing can satisfy, by arithmetic rather than by annealing. A row that constrains nothing compiles
+to nothing and says so in `caveats`.
 
 ANY constraint takes `soft: w`, which makes it a PREFERENCE priced at w rather than a rule. The
 solver may trade it away, the answer stays feasible, and the reply reports it under `violated` with

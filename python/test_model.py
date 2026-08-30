@@ -887,3 +887,67 @@ def test_an_unknown_method_is_refused_by_name():
     p.fix(v, 1)
     with pytest.raises(ValueError, match="unknown method"):
         p.solve(method="magic")
+
+
+def test_a_weighted_linear_row_is_a_constraint_not_a_preference():
+    """`3a + 4b + 5c <= 7`, which no counting constraint can say.
+
+    Every counting form counts UNWEIGHTED literals, so a weighted row could not be stated here at
+    all -- and the advice the LP reader used to give, "add it to the objective", is the defect
+    rather than the workaround: an objective term is not a constraint, so `feasible` and
+    `violated` stop knowing about the row.
+    """
+    p = ft.Problem()
+    a, b, c = (p.binary(n) for n in "abc")
+    p.linear(3 * a.is_(1) + 4 * b.is_(1) + 5 * c.is_(1), "<=", 7)
+    p.maximize(a.is_(1) + b.is_(1) + c.is_(1))
+    ans = p.solve()
+    assert ans.feasible, ans
+    assert 3 * ans["a"] + 4 * ans["b"] + 5 * ans["c"] <= 7, ans
+    assert ans.objective == 2, "3 + 4 = 7 fits and nothing better does: %s" % (ans,)
+
+    # The pair form says the same thing, and a bare variable means "it holds".
+    q = ft.Problem()
+    a, b, c = (q.binary(n) for n in "abc")
+    q.linear([(a, 3), (b, 4), (c, 5)], "<=", 7)
+    q.maximize(a.is_(1) + b.is_(1) + c.is_(1))
+    assert q.solve().objective == 2
+
+
+def test_a_weighted_row_refuses_what_it_cannot_represent():
+    # A non-integer coefficient on an INEQUALITY: there is no integer residual for the slack.
+    p = ft.Problem()
+    a, b = p.binary("a"), p.binary("b")
+    p.linear([(a, 2.5), (b, 1)], "<=", 4)
+    with pytest.raises(ValueError) as e:
+        p.solve()
+    assert "common denominator" in str(e.value)
+
+    # A row nothing can satisfy is refused by arithmetic rather than annealed.
+    q = ft.Problem()
+    a, b = q.binary("a"), q.binary("b")
+    q.linear([(a, 3), (b, 4)], ">=", 9)
+    with pytest.raises(ValueError) as e:
+        q.solve()
+    assert "no answer" in str(e.value)
+
+    # And a relation nobody defined is refused before anything is built.
+    r = ft.Problem()
+    a = r.binary("a")
+    with pytest.raises(ValueError):
+        r.linear([(a, 1)], "<", 1)
+
+
+def test_a_soft_weighted_row_is_priced_in_the_modellers_own_units():
+    """The identity that makes a soft row readable: cost == weight x amount squared."""
+    p = ft.Problem()
+    a, b = p.binary("a"), p.binary("b")
+    p.linear([(a, 3), (b, 4)], "<=", 3, soft=0.5)
+    p.maximize(10 * a.is_(1) + 10 * b.is_(1))
+    ans = p.solve()
+    assert ans.feasible, "a soft row leaves the answer an answer"
+    assert (ans["a"], ans["b"]) == (1, 1), ans
+    # 3 + 4 = 7 against a bound of 3 is 4 over, priced at 0.5 x 4^2 = 8, against the 10 that
+    # taking the second one is worth.
+    assert ans.soft_cost == 8.0, ans
+    assert any("left side comes to 7" in str(v) for v in ans.violated), ans.violated

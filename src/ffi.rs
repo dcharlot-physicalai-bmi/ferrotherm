@@ -1001,7 +1001,7 @@ mod exact_state_ffi {
 // graph already knows what it called each node, and marshalling strings both ways to tell it
 // something it knows would be work for nothing.
 
-use crate::model::{Compiled, Constraint, Expr, Lit, Model, Sense, Solution};
+use crate::model::{Compiled, Constraint, Expr, Lit, Model, Rel, Sense, Solution};
 
 /// A model under construction, plus whatever it last compiled and solved.
 pub struct ModelHandle {
@@ -1011,6 +1011,12 @@ pub struct ModelHandle {
     last_error: String,
     /// Literals accumulating for the next variable-length counting constraint.
     lits: Vec<Lit>,
+    /// The coefficient each pending literal carries, kept exactly in step with `lits`.
+    ///
+    /// A parallel vector rather than a second list: `ft_model_lit` pushes 1.0, so a list built the
+    /// way every existing caller builds it closes as a WEIGHTED row that means exactly the
+    /// counting row -- and no binding has to learn two ways to append a literal.
+    coeffs: Vec<f64>,
     cert: Option<crate::certify::Certificate>,
 }
 
@@ -1022,6 +1028,7 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
         solution: None,
         last_error: String::new(),
         lits: Vec::new(),
+        coeffs: Vec::new(),
         cert: None,
     }))
 }
@@ -1248,6 +1255,7 @@ pub extern "C" fn ft_model_objective_product(
 ) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let lits = core::mem::take(&mut h.lits);
+    h.coeffs.clear();
     if lits.is_empty() {
         h.last_error = "an objective term needs at least one literal".into();
         return 0;
@@ -1851,6 +1859,7 @@ fn encoding_of(code: u32, h: &mut ModelHandle) -> Option<crate::encode::Encoding
 pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     h.lits.clear();
+    h.coeffs.clear();
     1
 }
 
@@ -1875,6 +1884,7 @@ pub extern "C" fn ft_model_var(m: *mut ModelHandle, var: u32) -> u32 {
         return 0;
     };
     h.lits.push(Lit::Is(v, value));
+    h.coeffs.push(1.0);
     1
 }
 
@@ -1885,6 +1895,39 @@ pub extern "C" fn ft_model_lit(m: *mut ModelHandle, var: u32, value: i64) -> u32
     match var_of(h, var) {
         Some(x) if check_value(h, x, value) => {
             h.lits.push(Lit::Is(x, value));
+            h.coeffs.push(1.0);
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Append "`var` takes `value`, weighted by `coeff`" to the pending list.
+///
+/// The only thing this adds over [`ft_model_lit`] is the coefficient, and it is the whole reason
+/// [`ft_model_close_linear`] exists: `3a + 4b + 5c <= 7` could not be stated anywhere in this
+/// library, because every counting constraint counts UNWEIGHTED literals and the LP reader refused
+/// a weighted row by name. A list built with `ft_model_lit` carries a coefficient of 1 on every
+/// literal, so the two can be mixed freely and an unweighted list closed as a linear row means
+/// exactly the counting row it looks like.
+///
+/// Refuses a value the variable cannot take, and a coefficient that is not a real number.
+#[no_mangle]
+pub extern "C" fn ft_model_lit_weighted(
+    m: *mut ModelHandle,
+    var: u32,
+    value: i64,
+    coeff: f64,
+) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    if !coeff.is_finite() {
+        h.last_error = format!("a linear coefficient must be a real number, not {coeff}");
+        return 0;
+    }
+    match var_of(h, var) {
+        Some(x) if check_value(h, x, value) => {
+            h.lits.push(Lit::Is(x, value));
+            h.coeffs.push(coeff);
             1
         }
         _ => 0,
@@ -1921,10 +1964,12 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
         if !(w > 0.0) || !w.is_finite() {
             h.last_error = format!("a soft constraint needs a positive price, not {w}");
             h.lits.clear();
+            h.coeffs.clear();
             return 0;
         }
     }
     let lits = core::mem::take(&mut h.lits);
+    h.coeffs.clear();
     if lits.len() < 2 {
         h.last_error = format!(
             "a counting constraint needs at least two literals; {} were given",
@@ -1995,6 +2040,78 @@ pub extern "C" fn ft_model_close_soft(
     weight: f64,
 ) -> u32 {
     close_counting(m, kind, k, Some(weight))
+}
+
+/// Close the pending literal list as a **weighted linear row**: `Σ wᵢ·lᵢ ≤ rhs`, `≥` or `=`.
+///
+/// `rel` is 0 for `<=`, 1 for `>=`, 2 for `=`. Each literal carries the coefficient it was appended
+/// with -- 1.0 through [`ft_model_lit`], anything finite through [`ft_model_lit_weighted`].
+///
+/// The constraint none of the counting kinds can express, and the one whose absence made the LP
+/// reader tell callers to "add it to the objective" -- which is not a constraint, so
+/// [`ft_model_feasible`] and the violation list stop knowing about the row.
+///
+/// Costs `ceil(log2(S+1))` slack spins for an inequality and none for an equality; see
+/// `Constraint::Linear` for the whole cost model and for what it refuses. Clears the pending list
+/// whether it succeeds or not, so a refused row cannot silently join the next one. The refusals
+/// that depend on the row's arithmetic -- a fractional coefficient on an inequality, a row nothing
+/// can satisfy -- are raised by `ft_model_compile`, and `ft_model_error` carries the reason.
+#[no_mangle]
+pub extern "C" fn ft_model_close_linear(m: *mut ModelHandle, rel: u32, rhs: f64) -> u32 {
+    close_linear(m, rel, rhs, None)
+}
+
+/// Close the pending literal list as a **soft** weighted linear row, at a price.
+///
+/// Same `rel` codes as [`ft_model_close_linear`]. The difference is what breaking it means: a hard
+/// row says which answers are answers at all, so breaking one makes [`ft_model_feasible`] zero; a
+/// soft one is a preference with a number on it, and breaking it costs `weight × amount²` in the
+/// modeller's own units -- exactly the energy the compiled row contributes -- and leaves the answer
+/// feasible. [`ft_model_soft_cost`] totals what was traded.
+#[no_mangle]
+pub extern "C" fn ft_model_close_linear_soft(
+    m: *mut ModelHandle,
+    rel: u32,
+    rhs: f64,
+    weight: f64,
+) -> u32 {
+    close_linear(m, rel, rhs, Some(weight))
+}
+
+fn close_linear(m: *mut ModelHandle, rel: u32, rhs: f64, soft: Option<f64>) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let lits = core::mem::take(&mut h.lits);
+    let coeffs = core::mem::take(&mut h.coeffs);
+    debug_assert_eq!(lits.len(), coeffs.len());
+    if let Some(w) = soft {
+        if !(w > 0.0) || !w.is_finite() {
+            h.last_error = format!("a soft constraint needs a positive price, not {w}");
+            return 0;
+        }
+    }
+    if lits.is_empty() {
+        h.last_error = "a linear row needs at least one term".into();
+        return 0;
+    }
+    if !rhs.is_finite() {
+        h.last_error = format!("a right-hand side must be a real number, not {rhs}");
+        return 0;
+    }
+    let relation = match rel {
+        0 => Rel::Le,
+        1 => Rel::Ge,
+        2 => Rel::Eq,
+        other => {
+            h.last_error = format!("unknown relation {other}; 0 is <=, 1 is >=, 2 is =");
+            return 0;
+        }
+    };
+    let terms: Vec<(Lit, f64)> = lits.into_iter().zip(coeffs).collect();
+    match soft {
+        Some(w) => h.model.linear_soft(terms, relation, rhs, w),
+        None => h.model.linear(terms, relation, rhs),
+    };
+    1
 }
 
 /// Make the last constraint added a soft one, at `weight`.
@@ -2244,6 +2361,87 @@ mod cardinality_ffi {
         assert_eq!(ft_model_feasible(m), 0, "a broken hard constraint is infeasible");
         assert_eq!(ft_model_violation_is_hard(m, 0), 1);
         assert_eq!(ft_model_soft_cost(m), 0.0, "a hard constraint has no price");
+        ft_model_free(m);
+    }
+
+    /// The last error a model handle recorded, as text.
+    fn model_error(m: *mut ModelHandle) -> String {
+        let mut buf = [0u8; 1024];
+        let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        String::from_utf8_lossy(&buf[..n.min(buf.len())]).into_owned()
+    }
+
+    /// The row that could not be stated across this boundary at all.
+    ///
+    /// Every counting kind counts UNWEIGHTED literals, so `3a + 4b + 5c <= 7` had no form here.
+    #[test]
+    fn a_weighted_linear_row_crosses_the_boundary_and_constrains_the_answer() {
+        let m = ft_model_new();
+        let v: Vec<u32> = (0..3).map(|_| ft_model_binary(m)).collect();
+        for &i in &v {
+            ft_model_objective_term(m, 1, 1.0, i, 1); // maximise how many are taken
+        }
+        for (i, w) in v.iter().zip([3.0, 4.0, 5.0]) {
+            assert_eq!(ft_model_lit_weighted(m, *i, 1, w), 1);
+        }
+        assert_eq!(ft_model_lits(m), 3);
+        assert_eq!(ft_model_close_linear(m, 0, 7.0), 1); // 0 is <=
+        assert_eq!(ft_model_lits(m), 0, "closing clears the pending list");
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 32);
+        assert_eq!(ft_model_feasible(m), 1, "{}", model_error(m));
+        let taken: f64 = v
+            .iter()
+            .zip([3.0, 4.0, 5.0])
+            .filter(|(i, _)| ft_model_value(m, **i) == 1)
+            .map(|(_, w)| w)
+            .sum();
+        assert!(taken <= 7.0, "the row is a CONSTRAINT, not a preference: got {taken}");
+        assert_eq!(taken, 7.0, "and 3 + 4 is the best that fits");
+        ft_model_free(m);
+
+        // A list built with the unweighted append means exactly the counting row it looks like.
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        ft_model_lit(m, a, 1);
+        ft_model_lit(m, b, 1);
+        assert_eq!(ft_model_close_linear(m, 1, 2.0), 1, "a + b >= 2");
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 16);
+        assert_eq!((ft_model_value(m, a), ft_model_value(m, b)), (1, 1));
+        ft_model_free(m);
+
+        // Every refusal returns zero and says why, rather than aborting or compiling something else.
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        assert_eq!(ft_model_lit_weighted(m, a, 1, f64::NAN), 0, "a coefficient must be real");
+        assert_eq!(ft_model_close_linear(m, 0, 1.0), 0, "an empty row is not a row");
+        ft_model_lit_weighted(m, a, 1, 2.5);
+        assert_eq!(ft_model_close_linear(m, 7, 1.0), 0, "7 is not a relation");
+        assert_eq!(ft_model_lits(m), 0, "and a refused row clears the list");
+        ft_model_lit_weighted(m, a, 1, 2.5);
+        assert_eq!(ft_model_close_linear(m, 0, 4.0), 1);
+        assert_eq!(ft_model_compile(m), 0, "a fractional coefficient on an inequality is refused");
+        assert!(model_error(m).contains("common denominator"), "{}", model_error(m));
+        ft_model_free(m);
+
+        // And a SOFT row is priced rather than enforced.
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        ft_model_objective_term(m, 1, 10.0, a, 1);
+        ft_model_objective_term(m, 1, 10.0, b, 1);
+        ft_model_lit_weighted(m, a, 1, 3.0);
+        ft_model_lit_weighted(m, b, 1, 4.0);
+        assert_eq!(ft_model_close_linear_soft(m, 0, 3.0, 0.5), 1);
+        assert!(ft_model_compile(m) > 0);
+        ft_model_solve(m, 32);
+        assert_eq!((ft_model_value(m, a), ft_model_value(m, b)), (1, 1), "the price is worth paying");
+        assert_eq!(ft_model_feasible(m), 1, "a soft row leaves the answer an answer");
+        // 3 + 4 = 7 against a bound of 3 is 4 over, priced at 0.5 × 4² = 8 -- less than the 10
+        // that taking the second one is worth, which is why the trade happens at all.
+        assert_eq!(ft_model_soft_cost(m), 8.0);
         ft_model_free(m);
     }
 

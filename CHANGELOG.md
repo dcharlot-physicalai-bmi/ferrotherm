@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### `3a + 4b + 5c ≤ 7` can be stated now, on every surface
+
+A weighted linear row was inexpressible anywhere in the stack. Every counting constraint —
+`Cardinality`, `AtMost`, `AtLeast`, `ExactlyOne`, `AtMostOne` — is over *unweighted* literals, and
+the LP importer refused weighted rows by name, advising *"rewrite it as a counting constraint, or add
+it to the objective"*.
+
+**Following that advice was the defect.** An objective term is not a constraint, so
+`Solution::feasible()` and `Solution::violated` stop knowing about the row — a user who took the
+documented workaround lost the thing that tells them whether their answer is valid, which is
+precisely what they needed it for.
+
+`Constraint::Linear { terms, rel, rhs }` now takes `Le`, `Ge` and `Eq` over arbitrary `f64` weights,
+reaching Rust, the C ABI, Python, Zig, Julia, HTTP and MCP. The LP importer accepts weighted rows.
+
+**Cost, and it is not free.** The row divides through by the gcd of its weights and the bound, then
+takes a truncated-binary slack: `⌈log₂(S+1)⌉` spins where `S` is the reduced residual span. That is
+logarithmic in the bound's *numeric value* and **independent of the term count** — `1000a + 1000b ≤
+1500` is **one** slack spin, because gcd 1000 divides it to `a + b ≤ 1`. Change one weight to 1001
+and the gcd is 1 and it is 11. An `Eq` row needs no slack at all.
+
+The bill is `n`, not the weights: the `n(n−1)/2` literal–literal clique is irreducible for any
+quadratic penalty on a weighted row, so a 200-item capacity row carries 19,900 irreducible couplings
+and **21,115 in total**. Cheap in slack spins is not cheap.
+
+#### How it was checked
+
+Adversarially, against exhaustive enumeration, by an agent told to refute it and using weights the
+implementer never tried. **>4,000 models compiled, ~40,000 decoded states inspected.** For every
+model: enumerate every spin state of the compiled graph, decode, group by logical assignment, take
+the min energy per assignment, and decide feasibility from the arithmetic directly. In every case
+the feasible floor was **flat** and every forbidden state cost strictly more — smallest gap over all
+of them exactly 2.0, the default penalty.
+
+That sweep covered zero weights, duplicate literals, negative weights, targets past both ends of the
+reachable range, integer variables, and **multi-row models carrying two or three `Linear` rows plus
+an `at_most` that allocates its own slack** — the place a slack-block collision would be silent. It
+also re-checked all **1,554 refusals** by enumeration: zero false refusals.
+
+#### Four defects found in it, and fixed
+
+1. The flagship doc example claimed `1000a + 1000b ≤ 1500` costs **2** slack spins. It costs **one**
+   — contradicting the crate's own cost test two hundred lines away.
+2. `LinearNotInteger` fired for coefficients that are **whole numbers** above 2⁵³, calling `1e16`
+   "a non-integer coefficient" and advising "multiply through by the common denominator", which
+   cannot help a number that is already integral. Both halves false while the refusal itself was
+   right. Split into `LinearHugeCoefficient`, which names the real reason: past 2⁵³ an `f64` stops
+   holding every integer, so the gcd and floor arithmetic the slack depends on stops being exact.
+3. The published coupling count understated the measured one (19,900 against 21,115).
+4. **The shipped browser wasm did not export the new symbols** — and `check-wasm-exports` and the
+   wasm arm of `check-semantics` both passed, because nothing they drive uses a weighted row. A
+   stale surface that *works* is the failure mode this repository keeps finding. Rebuilt.
+
+The node editor does **not** get it, with the reason written into the gate's exemption table rather
+than left as a silence: a weighted row needs a coefficient *per wire*, and the editor's model puts
+fields on nodes and wires on ports. A positional list keyed by wire order would silently change
+which term carries which weight when you drag a wire — and still compile, and still answer.
+
 ### A term expressible from Rust and from nowhere else, and a refusal that named nothing
 
 `ft_model_objective_pair` rejected any term whose two literals name the same variable — and that

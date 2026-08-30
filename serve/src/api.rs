@@ -9,7 +9,7 @@ use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising;
 use ferrotherm::certify::{certify, Certificate};
-use ferrotherm::model::{Constraint, Expr, Lit, Model, Sense};
+use ferrotherm::model::{Constraint, Expr, Lit, Model, Rel, Sense};
 use ferrotherm::ledger::{Ledger, Prices, Z1_SPICE};
 use std::time::Instant;
 
@@ -1067,7 +1067,7 @@ pub fn capabilities() -> Json {
                 op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
                 op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
                 op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent (branch, tabu and breakout all take one now), sdp_depth, return_state"),
-                op("solve", "State a problem with named variables and constraints; get named values back. \"method\" chooses the solver -- anneal (default), tabu, breakout, or branch, which is the only one that PROVES its answer.", "variables, constraints, objective, tries, penalty, schedule, method, effort"),
+                op("solve", "State a problem with named variables and constraints; get named values back. Constraint types: not_equal, equal, fix, cardinality, at_most, at_least, exactly_one, at_most_one, all_different, and linear -- a WEIGHTED row (3a + 4b + 5c <= 7), which no counting constraint can express. \"method\" chooses the solver -- anneal (default), tabu, breakout, or branch, which is the only one that PROVES its answer.", "variables, constraints, objective, tries, penalty, schedule, method, effort"),
                 op("hubo", "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.", "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed"),
                 op("fit", "FIT a Boltzmann machine to data and get the trained model back as a graph. The only operation here that produces a model rather than consuming one; its \"graph\" is the shape every other operation takes, so fit then sample, anneal, bound or verify with no export step.", "visible, hidden, data, epochs, k, positive_sweeps, learning_rate, batch, seed"),
             ]),
@@ -1312,10 +1312,54 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     }
                     m.cardinality(lits, k);
                 }
+                "linear" => {
+                    // A WEIGHTED row: {"type":"linear","of":[{"var":"a","coeff":3},...],
+                    //                  "rel":"<=","rhs":7}
+                    //
+                    // The constraint none of the counting kinds above can express. They all count
+                    // UNWEIGHTED literals, so `3a + 4b + 5c <= 7` could not be said here at all,
+                    // and the only advice available was to add it to the objective -- which is not
+                    // a constraint, so "feasible" and "violated" stop knowing about the row.
+                    let rel = match c.get("rel").and_then(|x| x.as_str()).unwrap_or("<=") {
+                        "<=" | "le" | "\u{2264}" => Rel::Le,
+                        ">=" | "ge" | "\u{2265}" => Rel::Ge,
+                        "=" | "==" | "eq" => Rel::Eq,
+                        other => {
+                            return Err(format!(
+                                "linear: \"rel\" is \"<=\", \">=\" or \"=\", not {other:?}"
+                            ))
+                        }
+                    };
+                    let rhs = c
+                        .get("rhs")
+                        .and_then(|x| x.as_f64())
+                        .ok_or("linear needs a numeric \"rhs\"")?;
+                    let items =
+                        c.get("of").and_then(|x| x.as_arr()).ok_or("linear needs \"of\"")?;
+                    if items.is_empty() {
+                        return Err("linear needs at least one term in \"of\"".into());
+                    }
+                    let mut terms = Vec::new();
+                    for it in items {
+                        let vn = it.get("var").and_then(|x| x.as_str()).unwrap_or("");
+                        let vv = value_of(it, "value", 1, "linear")?;
+                        // A missing coefficient is 1, so an unweighted row is still sayable and
+                        // means what it looks like.
+                        let w = match it.get("coeff") {
+                            Some(x) => x.as_f64().ok_or_else(|| {
+                                format!("linear: \"coeff\" on {vn:?} must be a number")
+                            })?,
+                            None => 1.0,
+                        };
+                        terms.push((Lit::Is(handles[find(vn)?], vv), w));
+                    }
+                    m.linear(terms, rel, rhs);
+                }
                 other => {
                     return Err(format!(
                         "unknown constraint {other:?}; known: not_equal, equal, fix, \
-                         cardinality, at_most, at_least, exactly_one, at_most_one, all_different"
+                         cardinality, at_most, at_least, exactly_one, at_most_one, \
+                         all_different, linear"
                     ))
                 }
             }
@@ -2912,6 +2956,59 @@ mod silent_wrongness {
             .unwrap_err();
             assert!(e.contains("soft"), "{bad} should be refused by name, got: {e}");
         }
+    }
+
+    /// The weighted row this surface could not state at all.
+    #[test]
+    fn a_weighted_linear_row_crosses_the_wire_and_binds() {
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
+                                 {"name":"c","values":2}],
+                    "constraints":[{"type":"linear","rel":"<=","rhs":7,"of":[
+                       {"var":"a","value":1,"coeff":3},{"var":"b","value":1,"coeff":4},
+                       {"var":"c","value":1,"coeff":5}]}],
+                    "objective":{"maximize":true,"terms":[
+                       {"weight":1,"of":[{"var":"a","value":1}]},
+                       {"weight":1,"of":[{"var":"b","value":1}]},
+                       {"weight":1,"of":[{"var":"c","value":1}]}]},
+                    "tries":32}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true), "{r:?}");
+        let vals = r.get("values").unwrap();
+        let at = |k: &str| vals.get(k).unwrap().as_f64().unwrap();
+        let load = 3.0 * at("a") + 4.0 * at("b") + 5.0 * at("c");
+        assert_eq!(load, 7.0, "the row BINDS, and 3 + 4 is the best that fits: {r:?}");
+
+        // A row nothing can satisfy is refused by arithmetic, with the reason.
+        let e = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],
+                    "constraints":[{"type":"linear","rel":">=","rhs":9,"of":[
+                       {"var":"a","value":1,"coeff":3},{"var":"b","value":1,"coeff":4}]}]}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(e.contains("no answer"), "must say why: {e}");
+
+        // And a relation nobody defined is named rather than assumed.
+        let e = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":2}],
+                    "constraints":[{"type":"linear","rel":"<","rhs":1,
+                                    "of":[{"var":"a","value":1,"coeff":1}]}]}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(e.contains("rel"), "{e}");
     }
 
     #[test]

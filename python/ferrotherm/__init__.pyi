@@ -199,6 +199,9 @@ class Problem:
     def integer(self, name: str, lo: int, hi: int, encoding: str = 'one-hot') -> Variable:
         """A variable over the inclusive range ``lo``..``hi``."""
         ...
+    def linear(self, terms: Any, rel: str, rhs: float, soft: 'float | None' = None) -> None:
+        """A **weighted** linear row: ``3*a + 4*b + 5*c <= 7``."""
+        ...
     def maximize(self, term: Any) -> None:
         """Prefer states where ``term`` is large."""
         ...

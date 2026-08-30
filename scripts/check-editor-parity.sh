@@ -57,6 +57,7 @@ EDITOR="${EDITOR:-docs/graph.html}"
 EXEMPT=""
 while IFS= read -r __line; do EXEMPT="$EXEMPT$__line
 "; done <<'TABLE'
+Constraint::Linear|A weighted row needs a COEFFICIENT PER WIRE, and the editor's node model has no place to put one: fields belong to a node and wires belong to a port, so every variadic constraint it draws today (cardinality, at_most, all_different) applies ONE shared "value" field across every input wired into it. The two ways to fake it are both worse than the gap. A positional coefficient list -- "3,4,5" in a text field -- is keyed by WIRE ORDER in a graph whose whole point is that you can rewire it, so dragging one wire silently changes which term carries which weight and the model still compiles and still answers. One node per term makes a ten-item capacity row ten nodes plus a join. The row is reachable from Rust, the C ABI, Python, Zig, Julia, and the HTTP and MCP surfaces through {"type":"linear"}; closing it here needs a per-wire field in the editor, which is a change to the editor's model rather than a node type.
 Encoding::Binary|The compiler refuses a binary-encoded variable in any constraint or objective: a binary indicator is a product of every bit, so its degree grows with the domain. A binary variable in the editor could be declared and never used, so the picker would be offering a guaranteed refusal rather than a capability.
 TABLE
 exempt_why() { printf '%s\n' "$EXEMPT" | awk -F'|' -v k="$1" '$1 == k { print $2 }'; }

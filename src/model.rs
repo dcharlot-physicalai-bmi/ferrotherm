@@ -455,6 +455,28 @@ fn shared_values(a: &Domain, b: &Domain) -> Vec<i64> {
     a.values().filter(|v| b.index_of(*v).is_some()).collect()
 }
 
+/// How the two sides of a weighted linear row compare.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Rel {
+    /// `Σ wᵢ·lᵢ ≤ rhs`
+    Le,
+    /// `Σ wᵢ·lᵢ ≥ rhs`
+    Ge,
+    /// `Σ wᵢ·lᵢ = rhs`
+    Eq,
+}
+
+impl Rel {
+    /// The symbol a modeller wrote, for reporting a row back in their own notation.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Rel::Le => "≤",
+            Rel::Ge => "≥",
+            Rel::Eq => "=",
+        }
+    }
+}
+
 /// A statement that must hold.
 #[derive(Clone, Debug)]
 pub enum Constraint {
@@ -496,6 +518,81 @@ pub enum Constraint {
     /// and the pigeonhole check — more variables than shared values is unsatisfiable, and the
     /// compiler says so by name instead of annealing and returning a confident infeasible answer.
     AllDifferent(Vec<Var>),
+    /// A **weighted** linear row: `Σ wᵢ·lᵢ ≤ rhs`, `≥ rhs`, or `= rhs`.
+    ///
+    /// The thing none of the counting constraints above can say. `Cardinality`, `AtMost`,
+    /// `AtLeast`, `ExactlyOne` and `AtMostOne` all count *unweighted* literals, so `3a + 4b + 5c
+    /// ≤ 7` could not be stated anywhere in this crate — and the LP reader's advice, "add it to
+    /// the objective", is the defect rather than the workaround: an objective term is not a
+    /// constraint, so [`Solution::feasible`] and [`Solution::violated`] stop knowing about the row
+    /// at all.
+    ///
+    /// # How it is lowered
+    ///
+    /// An equality is a squared penalty and needs nothing else: `p·(Σ wᵢxᵢ − rhs)²`.
+    ///
+    /// An inequality needs **slack**, the same idea [`Constraint::AtMost`] uses, with the
+    /// coefficients carried. The row is normalised to `Σ aᵢxᵢ ≤ t` (a `Ge` row is negated),
+    /// divided through by a `g` that divides every weight, and a slack `σ ∈ [0, S]` — where
+    /// `S = ⌊t/g⌋ − Σ min(aᵢ/g, 0)` — turns it into the equality `Σ (aᵢ/g)xᵢ + σ = ⌊t/g⌋`.
+    ///
+    /// A **hard** row takes `g = gcd(|a₁|, …, |aₙ|)` and floors the target, which is exact because
+    /// the left side is a multiple of `g`, and which is the strongest reduction available:
+    /// `1000a + 1000b ≤ 1501` becomes `a + b ≤ 1`, one slack spin instead of eleven. A **soft** row
+    /// takes `g = gcd(|a₁|, …, |aₙ|, |t|)` instead, so that nothing is thrown away by the floor and
+    /// the energy it contributes stays exactly the `weight × amount²` that [`Violation::cost`]
+    /// reports in the modeller's own units.
+    ///
+    /// The slack is **truncated binary**: `m = ⌈log₂(S+1)⌉` spins with coefficients
+    /// `1, 2, 4, …, 2^(m−2), S+1−2^(m−1)`. That expansion covers `{0 … S}` exactly — nothing
+    /// more and nothing less — so every spin pattern is a legal slack value and the block needs no
+    /// encoding penalty and no exclusion couplings. (It is 2-to-1 on a window of size
+    /// `2^m − (S+1)`, empty exactly when `S+1` is a power of two. That changes no argmin and
+    /// biases a Boltzmann marginal over logical states by at most 2×; it is reported as a caveat.)
+    ///
+    /// # What it costs, exactly
+    ///
+    /// With `n` terms after merging duplicates and dropping zero weights, and `m` slack spins:
+    ///
+    /// ```text
+    /// spins added  = m = ⌈log₂(S+1)⌉    — 0 for an equality, at most 62 for any i64 row
+    /// couplings    = (n+m)(n+m−1)/2      — a clique on the row's literals plus its slack
+    /// max degree   = n+m−1
+    /// ```
+    ///
+    /// The slack is logarithmic in the *numeric value* of the bound, so `1000a + 1000b ≤ 1500` is
+    /// **one** slack spin (gcd 1000 divides it through to `a + b ≤ 1`), and `1000a + 1001b ≤ 1500`
+    /// is 11. **The bill is `n`, not the weights**: the `n(n−1)/2` literal–literal clique is
+    /// irreducible for any quadratic penalty on a weighted row, so a 200-item capacity row carries
+    /// **19,900 irreducible literal–literal couplings, and 21,115 in total once the slack's own
+    /// clique and its cross terms are counted**. "Cheap in slack spins" is not "cheap".
+    ///
+    /// Couplings carry `p·aᵢaⱼ`, so the graph's dynamic range grows *quadratically* in the reduced
+    /// weights. A row spanning 1…1000 spans six orders of magnitude in `J` under one global β;
+    /// that is intrinsic to any squared-penalty lowering of a weighted row, and the gcd reduction
+    /// is the only mitigation available. A caveat is emitted when the row's own coefficient spread
+    /// exceeds 100× (a coupling spread of 10⁴).
+    ///
+    /// # What it refuses, by name
+    ///
+    /// * A non-integer coefficient or right-hand side on an **inequality** —
+    ///   [`CompileError::LinearNotInteger`]. There is no finite slack for a non-lattice left side.
+    ///   An **equality** takes any finite coefficient, because it needs no slack at all.
+    /// * A row nothing can satisfy — [`CompileError::LinearUnsatisfiable`], checked by arithmetic
+    ///   rather than annealed, on the same principle as [`CompileError::Pigeonhole`].
+    /// * A slack wider than 62 spins — [`CompileError::LinearTooLarge`].
+    /// * A `Binary`- or `DomainWall`-encoded variable — [`CompileError::NeedsOneHot`], inherited.
+    ///
+    /// A row that constrains nothing (`3a + 4b ≤ 12`) compiles to nothing and says so in
+    /// `caveats`, matching how `at_most(lits, k ≥ lits.len())` reads.
+    Linear {
+        /// `(literal, coefficient)` pairs. Repeats are merged and zero weights dropped.
+        terms: Vec<(Lit, f64)>,
+        /// Which way the row compares.
+        rel: Rel,
+        /// The right-hand side, in the modeller's own units.
+        rhs: f64,
+    },
 }
 
 struct Decl {
@@ -565,6 +662,43 @@ pub enum CompileError {
     /// too low or their ladder too short — neither of which is true, and both of which cost an
     /// afternoon.
     Pigeonhole { vars: usize, values: usize },
+    /// A non-integer coefficient or right-hand side on a weighted linear **inequality**.
+    ///
+    /// The structural refusal, and the one that keeps the penalty argument sound. An inequality is
+    /// lowered with a slack variable ranging over the integer residual; with real coefficients the
+    /// achievable left-hand sides are not a lattice, so the smallest overshoot is an arbitrary
+    /// positive real, the separation gap `p·δ²` collapses toward zero, and no penalty at any finite
+    /// precision orders the states correctly.
+    ///
+    /// Refused rather than auto-scaled. Recovering a denominator from an f64 is a guess — 0.1 is
+    /// not 1/10 — and multiplying a row through by a denominator nobody wrote is how a two-decimal
+    /// price list silently becomes a 100× wider slack that reads as the library being slow.
+    LinearNotInteger { row: String, what: String, value: f64 },
+    /// A weighted row whose coefficient is a whole number but too large for `f64` to hold every
+    /// integer near it.
+    ///
+    /// Split from [`CompileError::LinearNotInteger`], which used to cover this and said two false
+    /// things while doing it: that the coefficient was "non-integer" when `1e16` plainly is one,
+    /// and that the fix was to "multiply the row through by its common denominator", which cannot
+    /// help a number that is already integral. The refusal was right and its stated reason was not.
+    ///
+    /// Above 2^53 the doubles stop representing consecutive integers, so the slack arithmetic --
+    /// gcd, floor division, the residual span -- can no longer be trusted to be exact, and an
+    /// inexact slack silently admits or forbids the wrong assignments.
+    LinearHugeCoefficient { row: String, what: String, value: f64, limit: f64 },
+    /// A weighted linear row no assignment can satisfy, checked by arithmetic rather than annealed.
+    ///
+    /// The [`CompileError::Pigeonhole`] principle applied to a row: the best the left side can do
+    /// is on one side of the comparison and the right-hand side is on the other. Annealing this
+    /// returns `feasible: false`, which tells a modeller their penalty was too low or their ladder
+    /// too short — neither of which is true, and both of which cost an afternoon.
+    LinearUnsatisfiable { row: String, best: f64 },
+    /// A weighted linear inequality whose slack needs more than 62 spins.
+    ///
+    /// The slack spans `S+1` values in `⌈log₂(S+1)⌉` spins, so this is reached only by a row whose
+    /// span does not fit an `i64` — a genuine overflow rather than a budget. The message shows its
+    /// arithmetic, because "too large" without the number is not actionable.
+    LinearTooLarge { row: String, span: i128, spins: usize },
 }
 
 impl core::fmt::Display for CompileError {
@@ -620,6 +754,43 @@ impl core::fmt::Display for CompileError {
             CompileError::BadValue { var, value, domain } => {
                 write!(f, "'{var}' takes {}; {value} is not one of them", domain.describe())
             }
+            CompileError::LinearHugeCoefficient { row, what, value, limit } => write!(
+                f,
+                "the weighted row {row} has a {what} of {value}, which is a whole number but larger \
+                 than {limit} (2^53), past which an f64 no longer holds every integer. The slack \
+                 arithmetic -- gcd, floor division, the residual span -- would stop being exact, \
+                 and an inexact slack admits or forbids the wrong assignments silently. Scale the \
+                 row down, or state it as an EQUALITY, which needs no slack."
+            ),
+            CompileError::LinearNotInteger { row, what, value } => write!(
+                f,
+                "the weighted row {row} has a non-integer {what} of {value}. An inequality is \
+                 lowered with a slack variable that ranges over the INTEGER residual, and a \
+                 coefficient of {value} leaves no integer residual for it to range over: the \
+                 smallest overshoot becomes an arbitrary positive real, so the gap between the \
+                 allowed states and the forbidden ones shrinks toward zero and no penalty orders \
+                 them correctly. Multiply the row through by its common denominator and state it \
+                 in whole numbers -- and note that doing so multiplies the slack span by the same \
+                 factor: 2.5a + 1.5b <= 4 becomes 5a + 3b <= 8. This is not done for you, because \
+                 recovering a denominator from a float is a guess and solving a nearby problem \
+                 silently is the failure this compiler exists to refuse. An EQUALITY takes any \
+                 finite coefficient, because it needs no slack at all."
+            ),
+            CompileError::LinearUnsatisfiable { row, best } => write!(
+                f,
+                "the weighted row {row} has no answer: the best the left side can reach on the \
+                 constrained side is {best}. Refused rather than annealed, for the same reason as \
+                 the pigeonhole check -- a model with no answer returns infeasible for a reason no \
+                 penalty and no longer ladder will fix."
+            ),
+            CompileError::LinearTooLarge { row, span, spins } => write!(
+                f,
+                "the weighted row {row} needs a slack spanning {span} values, which is {spins} \
+                 spins. The slack is logarithmic in the numeric value of the bound, so reaching \
+                 this at all means the row's span does not fit an i64. Scale the row down, or \
+                 state it as an objective term -- knowing that an objective term is not a \
+                 constraint and feasible() will stop knowing about this row."
+            ),
             CompileError::Empty => write!(f, "a model with no variables compiles to nothing"),
             CompileError::DuplicateName(n) => write!(
                 f,
@@ -951,6 +1122,38 @@ impl Model {
         self.constrain(Constraint::AllDifferent(v))
     }
 
+    /// A **weighted** linear row: `Σ wᵢ·lᵢ ≤ rhs`, `≥ rhs` or `= rhs`.
+    ///
+    /// The constraint none of the counting forms can express. See [`Constraint::Linear`] for the
+    /// lowering, what it costs in spins and couplings, and what it refuses by name.
+    ///
+    /// ```
+    /// # use ferrotherm::model::{Model, Lit, Rel};
+    /// let mut m = Model::new();
+    /// let (a, b, c) = (m.binary("a"), m.binary("b"), m.binary("c"));
+    /// m.linear(vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0), (Lit::Is(c, 1), 5.0)], Rel::Le, 7.0);
+    /// let compiled = m.compile().unwrap();
+    /// assert_eq!(compiled.linear_slack, 3); // ⌈log₂ 8⌉
+    /// ```
+    pub fn linear(&mut self, terms: Vec<(Lit, f64)>, rel: Rel, rhs: f64) -> &mut Self {
+        self.constrain(Constraint::Linear { terms, rel, rhs })
+    }
+
+    /// A weighted linear row you are willing to break, at a price per unit² of overshoot.
+    ///
+    /// The energy this contributes at the sampler's own optimum is exactly `weight × amount²`, in
+    /// the modeller's own units — the same number [`Violation::cost`] reports. That identity is why
+    /// a soft row is priced at `weight·g²` on the gcd-reduced row rather than at `weight`.
+    pub fn linear_soft(
+        &mut self,
+        terms: Vec<(Lit, f64)>,
+        rel: Rel,
+        rhs: f64,
+        weight: f64,
+    ) -> &mut Self {
+        self.soft(Constraint::Linear { terms, rel, rhs }, weight)
+    }
+
     // ---- compiling ------------------------------------------------------------------------------
 
     /// Lower to a program and a decoder.
@@ -1027,6 +1230,22 @@ impl Model {
             }
         }
 
+        // Weighted linear rows are PLANNED before anything is laid out, because the plan is what
+        // decides how many slack spins the row needs -- a gcd and a bit length, not an arithmetic
+        // expression that can safely be recomputed. Computed once, here, and handed to
+        // `apply_constraint` below. See `LinearPlan`.
+        //
+        // `caveats` is opened here rather than further down so a plan can push one: a row that
+        // constrains nothing, or one whose coefficient spread is a numerical hazard, is something a
+        // modeller has to be told at COMPILE time.
+        let mut caveats: Vec<String> = Vec::new();
+        let mut plans: BTreeMap<usize, LinearPlan> = BTreeMap::new();
+        for (ci, (c, _, hard)) in self.constraints.iter().enumerate() {
+            if let Constraint::Linear { terms, rel, rhs } = c {
+                plans.insert(ci, self.plan_linear(terms, *rel, *rhs, *hard, &mut caveats)?);
+            }
+        }
+
         // Inequalities need slack, so the compiler declares variables of its own. They are laid out
         // after the user's, and the decoder never reports them: a slack variable is an artefact of
         // the lowering, not part of the answer.
@@ -1062,7 +1281,20 @@ impl Model {
             base += s.width();
             slots.push(s);
         }
-        let n = base;
+        // A weighted row's slack spins sit after every declared variable and every counting slack,
+        // and they are NOT slots. A truncated-binary slack over `{0..=S}` has no invalid codeword,
+        // so there is no encoding to penalise and nothing for `Slot::decode` to refuse -- making
+        // them a slot would buy an exclusion penalty for a block that needs none, and would put a
+        // `Domain::Categorical(2^m)` into the layout that a 32-bit `usize` cannot hold.
+        let mut linear_slack = 0usize;
+        for plan in plans.values_mut() {
+            let width = plan.spins();
+            if let LinearPlan::Integer { base: slack_base, .. } = plan {
+                *slack_base = base + linear_slack;
+            }
+            linear_slack += width;
+        }
+        let n = base + linear_slack;
 
         let mut b = GraphBuilder::new(n);
         let penalty = self.effective_penalty();
@@ -1072,7 +1304,6 @@ impl Model {
         // The returned bool is not decoration. `false` means invalid codewords remain exactly as
         // cheap as valid ones, so the sampler is free to land on one and `decode` is the only
         // thing between that and a wrong answer. Collected rather than discarded.
-        let mut caveats = Vec::new();
         // Patterns the modeller wrote longhand that have a cheaper form, and constraints that
         // constrain nothing. Reported, never rewritten: silently compiling something other than
         // what was written is the opposite of this compiler's discipline, and a modeller who meant
@@ -1124,7 +1355,11 @@ impl Model {
                      them -- an invalid state costs exactly what a valid one costs, so the sampler \
                      has no reason to prefer an answer. Use one-hot or domain-wall for an exact \
                      encoding, or a k that is a power of two.",
-                    self.decls[i].name,
+                    // A SLACK slot has no declaration, and indexing `decls` by a slot index was a
+                    // panic waiting for the first slack whose encoding could not be made exact.
+                    // The trap was armed and unreached; naming the slot is both the fix and the
+                    // more useful message.
+                    self.decls.get(i).map(|d| d.name.as_str()).unwrap_or("a compiler slack variable"),
                     s.encoding,
                     1usize << spins,
                 ));
@@ -1136,9 +1371,18 @@ impl Model {
         // and is lowered by `reduce` once the graph is built.
         let mut higher: Vec<(Vec<usize>, f64)> = Vec::new();
 
-        for (ci, (c, p, _hard)) in self.constraints.iter().enumerate() {
+        for (ci, (c, p, hard)) in self.constraints.iter().enumerate() {
             let p = if p.is_nan() { penalty } else { *p };
-            self.apply_constraint(&mut b, &mut higher, &slots, c, p, slack_for.get(&ci).copied())?;
+            self.apply_constraint(
+                &mut b,
+                &mut higher,
+                &slots,
+                c,
+                p,
+                *hard,
+                slack_for.get(&ci).copied(),
+                plans.get(&ci),
+            )?;
         }
 
         // The objective is already stored as "minimise this": `Model::objective` folded the sense
@@ -1202,6 +1446,7 @@ impl Model {
             program,
             graph,
             ancillas,
+            linear_slack,
             caveats,
             // only the user's variables are reported; slack is an artefact of the lowering
             slots: slots[..user_count].to_vec(),
@@ -1357,6 +1602,255 @@ impl Model {
         }
     }
 
+    /// A literal as a **0/1 indicator**, which is what arithmetic means by it.
+    ///
+    /// [`Model::linearise`] returns the ±1 SPIN for `Lit::Spin`, which is right for a counting
+    /// constraint written against it and wrong for a weighted row: `3·a` in a modeller's row means
+    /// three when `a` holds and zero when it does not, not ±3. `(1 + s)/2` is that indicator, and
+    /// it is the same shape `Lit::Is` already lowers to.
+    fn indicator(&self, slots: &[Slot], l: Lit) -> Result<LinSpin, CompileError> {
+        let d = &self.decls[lit_var(l).0];
+        if d.encoding != Encoding::OneHot {
+            // A domain-wall indicator is a PRODUCT of two spins, so a weighted sum of them inside
+            // a square reaches degree four and buys ancillas; a binary indicator is a product of
+            // every bit. Refused by name, exactly as the counting constraints refuse them.
+            return Err(CompileError::NeedsOneHot { var: d.name.clone(), encoding: d.encoding });
+        }
+        match l {
+            Lit::Spin(v) => {
+                let s = slots[v.0];
+                Ok(LinSpin { offset: 0.5, terms: vec![(s.base + 1, 0.5)] })
+            }
+            Lit::Is(..) => self.linearise(slots, l),
+        }
+    }
+
+    /// One row, written in the caller's own notation.
+    fn row_label(&self, terms: &[(Lit, f64)], rel: Rel, rhs: f64) -> String {
+        let parts: Vec<(String, f64)> = terms
+            .iter()
+            .map(|(l, c)| {
+                let d = &self.decls[lit_var(*l).0];
+                (lit_label(&d.name, d.domain, *l), *c)
+            })
+            .collect();
+        row_text(&parts, rel, rhs)
+    }
+
+    /// Decide, once, how a weighted linear row is lowered.
+    ///
+    /// Merges repeated literals, drops zero weights, normalises a `Ge` row by negation, divides
+    /// through by the gcd, and sizes the truncated-binary slack. Refuses what it cannot represent
+    /// by name; pushes a caveat for what it can represent and a modeller should still know.
+    fn plan_linear(
+        &self,
+        terms: &[(Lit, f64)],
+        rel: Rel,
+        rhs: f64,
+        hard: bool,
+        caveats: &mut Vec<String>,
+    ) -> Result<LinearPlan, CompileError> {
+        let row = self.row_label(terms, rel, rhs);
+        for (l, c) in terms {
+            if !c.is_finite() {
+                return Err(CompileError::NotFinite { what: "linear coefficient", value: *c });
+            }
+            // Reached here rather than at `apply_constraint` so a bad value is refused even when
+            // the row turns out to be vacuous and emits nothing at all.
+            let d = &self.decls[lit_var(*l).0];
+            if let Lit::Is(_, value) = l {
+                if d.domain.index_of(*value).is_none() {
+                    return Err(CompileError::BadValue {
+                        var: d.name.clone(),
+                        value: *value,
+                        domain: d.domain,
+                    });
+                }
+            }
+        }
+        if !rhs.is_finite() {
+            return Err(CompileError::NotFinite { what: "linear right-hand side", value: rhs });
+        }
+
+        // MERGE repeated literals and drop zero weights. The algebra survives duplicates unmerged
+        // -- `add_product(a, a, w)` applies x² = x correctly through the offsets -- but `check`'s
+        // arithmetic and the cost reported below are only honest on merged weights, and merging
+        // shrinks the clique this row pays for.
+        let mut lits: Vec<Lit> = Vec::new();
+        let mut ws: Vec<f64> = Vec::new();
+        for (l, c) in terms {
+            match lits.iter().position(|x| x == l) {
+                Some(i) => ws[i] += *c,
+                None => {
+                    lits.push(*l);
+                    ws.push(*c);
+                }
+            }
+        }
+        let keep: Vec<usize> = (0..lits.len()).filter(|i| ws[*i] != 0.0).collect();
+        let lits: Vec<Lit> = keep.iter().map(|i| lits[*i]).collect();
+        let ws: Vec<f64> = keep.iter().map(|i| ws[*i]).collect();
+
+        // Is every number an integer this crate can hold exactly?
+        let exact = |v: f64| v.fract() == 0.0 && v.abs() <= EXACT_INT;
+        let all_int = ws.iter().all(|c| exact(*c)) && exact(rhs);
+
+        if !all_int {
+            if rel != Rel::Eq {
+                // Name the offending number rather than the row alone: a fifty-term row with one
+                // 2.5 in it is a needle, and "some coefficient is not an integer" is not a message.
+                let (what, value) = match ws.iter().position(|c| !exact(*c)) {
+                    Some(i) => {
+                        let d = &self.decls[lit_var(lits[i]).0];
+                        (format!("coefficient on {}", lit_label(&d.name, d.domain, lits[i])), ws[i])
+                    }
+                    None => ("right-hand side".to_string(), rhs),
+                };
+                // WHICH refusal this is matters: a whole number too big for f64 to count with is
+                // a different problem from a fraction, and the advice for one cannot fix the other.
+                if value.fract() == 0.0 {
+                    return Err(CompileError::LinearHugeCoefficient {
+                        row,
+                        what,
+                        value,
+                        limit: EXACT_INT,
+                    });
+                }
+                return Err(CompileError::LinearNotInteger { row, what, value });
+            }
+            caveats.push(format!(
+                "the weighted row {row} has a non-integer coefficient, which an EQUALITY takes: it \
+                 is compiled as p·(lhs − rhs)² and needs no slack. What it does not get is the \
+                 guarantee an integer row gets. For integers the smallest nonzero |lhs − rhs| is 1, \
+                 so the gap is the penalty; here it can be arbitrarily small, computing it is \
+                 exponential, and this crate therefore cannot certify that the penalty is large \
+                 enough to stop the row being traded against the objective."
+            ));
+            return Ok(LinearPlan::Real { lits, w: ws, t: rhs });
+        }
+
+        // Normalise to `Σ a·x ≤ t`, or to `Σ a·x = t`.
+        let sgn: i64 = if rel == Rel::Ge { -1 } else { 1 };
+        let a: Vec<i64> = ws.iter().map(|c| sgn * (*c as i64)).collect();
+        let t: i64 = sgn * (rhs as i64);
+
+        // THE GCD, and the two arms take DIFFERENT ones, for a reason that is not tidiness.
+        //
+        // The left side is an integer multiple of `gw`, the gcd of the weights, so for `≤` the
+        // target can be FLOORED: `1000a + 1000b ≤ 1501` is exactly `a + b ≤ 1`. That is the
+        // strongest reduction available and it is worth a great deal -- the same row without the
+        // floor spans 1501 residual values and costs 11 slack spins instead of 1.
+        //
+        // A SOFT row cannot take it. Flooring throws away `t − gw·⌊t/gw⌋`, so the reduced residual
+        // stops being the modeller's own overshoot divided by anything, and `Violation::cost`
+        // (`weight × amount²`) stops matching the energy the sampler is actually trading against.
+        // Taking the target INTO the gcd keeps `amount = g × (reduced residual)` exactly, at the
+        // cost of a coarser reduction. A hard violation has no price to match, so each arm takes
+        // the reduction that is right for it.
+        let gw = a.iter().fold(0i64, |g, x| gcd_i64(g, *x));
+        let g = if gw == 0 {
+            1
+        } else if hard && rel != Rel::Eq {
+            gw
+        } else {
+            gcd_i64(gw, t).max(1)
+        };
+        let ar: Vec<i64> = a.iter().map(|x| x / g).collect();
+        // Floor division, not truncation: for `≤` the exact reduction of a negative target is
+        // ⌊t/g⌋, and `t / g` rounds toward zero, which for t = −1500, g = 1000 gives −1 where the
+        // row means −2. For `=` the divisibility check above has already established g | t, so the
+        // two agree.
+        let tr = t.div_euclid(g);
+
+        let lo: i128 = ar.iter().map(|x| (*x).min(0) as i128).sum();
+        let hi: i128 = ar.iter().map(|x| (*x).max(0) as i128).sum();
+
+        // The coefficient spread, which decides the COUPLING spread, which is a real numerical
+        // hazard under one global β on every fabric this crate targets.
+        let spread = |extra: &[i64]| {
+            let mut mx = 0i64;
+            let mut mn = i64::MAX;
+            for v in ar.iter().chain(extra.iter()) {
+                let v = v.abs();
+                if v == 0 {
+                    continue;
+                }
+                mx = mx.max(v);
+                mn = mn.min(v);
+            }
+            if mn == i64::MAX || mn == 0 { 1.0 } else { mx as f64 / mn as f64 }
+        };
+
+        if rel == Rel::Eq {
+            // Necessary, not sufficient: a target outside the reachable range, or one the weights'
+            // own gcd cannot reach, has no answer by arithmetic. Subset-sum is NP-hard, so a row
+            // that passes this can still have none, and claiming otherwise would be an absence
+            // claim this crate cannot support.
+            if (t != 0 && gw != 0 && t % gw != 0) || (tr as i128) < lo || (tr as i128) > hi {
+                let best = if (tr as i128) > hi { (hi * g as i128) as f64 } else { (lo * g as i128) as f64 };
+                return Err(CompileError::LinearUnsatisfiable { row, best });
+            }
+            let sp = spread(&[]);
+            if sp > 100.0 {
+                caveats.push(format!(
+                    "the weighted row {row} spans {sp:.0}× in its coefficients after dividing \
+                     through by {g}, so its couplings span {:.0}× — they carry p·wᵢwⱼ, which is \
+                     quadratic in the weights. One global β anneals all of them, and a fixed-point \
+                     fabric will quantise the smallest to nothing. Fabric::check reports what a \
+                     given device makes of it.",
+                    sp * sp,
+                ));
+            }
+            return Ok(LinearPlan::Integer { lits, w: ar, t: tr, g, coeffs: Vec::new(), base: 0 });
+        }
+
+        // `≤` from here. The smallest the left side can be is `lo`; if that already exceeds the
+        // target, nothing satisfies the row.
+        if lo > tr as i128 {
+            return Err(CompileError::LinearUnsatisfiable {
+                row,
+                best: (lo * g as i128) as f64 * sgn as f64,
+            });
+        }
+        // And if the LARGEST it can be already satisfies the row, the row says nothing. Emitting
+        // the squared penalty anyway would still be correct here -- the slack covers the whole
+        // range -- and would cost spins and couplings for a statement with no content.
+        if hi <= tr as i128 {
+            caveats.push(format!(
+                "the weighted row {row} constrains nothing: every assignment already satisfies it, \
+                 so it compiles to no terms and no slack at all. This is usually a right-hand side \
+                 that was meant to be tighter."
+            ));
+            return Ok(LinearPlan::Vacuous);
+        }
+
+        let span: i128 = tr as i128 - lo; // S, the number of residual values minus one
+        let m = if span == 0 { 0 } else { 128 - (span as u128).leading_zeros() as usize };
+        if m > 62 {
+            return Err(CompileError::LinearTooLarge { row, span: span + 1, spins: m });
+        }
+        // Truncated binary: the top digit carries the REMAINDER of the span, not another power of
+        // two. Verified by enumeration for every span up to 600: this covers {0…S} exactly, so
+        // there is no invalid codeword to exclude and the block costs no encoding penalty. The
+        // naive expansion is also sound for a one-sided row, and it wastes exactly where it hurts:
+        // at S = 8 its top coefficient is 8 where this one's is 1.
+        let coeffs = truncated_binary(span);
+        debug_assert_eq!(coeffs.len(), m);
+
+        let sp = spread(&coeffs);
+        if sp > 100.0 {
+            caveats.push(format!(
+                "the weighted row {row} spans {sp:.0}× in its coefficients after dividing through \
+                 by {g}, so its couplings span {:.0}× — they carry p·wᵢwⱼ, which is quadratic in \
+                 the weights. One global β anneals all of them, and a fixed-point fabric will \
+                 quantise the smallest to nothing. Fabric::check reports what a given device makes \
+                 of it.",
+                sp * sp,
+            ));
+        }
+        Ok(LinearPlan::Integer { lits, w: ar, t: tr, g, coeffs, base: 0 })
+    }
+
     fn apply_constraint(
         &self,
         b: &mut GraphBuilder,
@@ -1364,7 +1858,9 @@ impl Model {
         slots: &[Slot],
         c: &Constraint,
         p: f64,
+        hard: bool,
         slack: Option<usize>,
+        plan: Option<&LinearPlan>,
     ) -> Result<(), CompileError> {
         match c {
             Constraint::NotEqual(a, x) => {
@@ -1453,6 +1949,49 @@ impl Model {
                     }
                 }
             }
+            Constraint::Linear { .. } => {
+                // The plan was computed in `compile` and is the ONLY place the slack width is
+                // decided. Recomputing it here is the defect this shape exists to prevent.
+                let Some(plan) = plan else {
+                    // Unreachable: `compile` plans every Linear row before it lays anything out.
+                    // Refused rather than assumed, because a silent zero-term constraint is
+                    // exactly the failure this compiler exists to catch.
+                    return Err(CompileError::DegreeTooHigh { degree: 0 });
+                };
+                match plan {
+                    LinearPlan::Vacuous => {}
+                    LinearPlan::Real { lits, w, t } => {
+                        let mut parts: Vec<(LinSpin, f64)> = Vec::with_capacity(lits.len());
+                        for (l, c) in lits.iter().zip(w.iter()) {
+                            parts.push((self.indicator(slots, *l)?, *c));
+                        }
+                        add_squared(b, &parts, *t, p);
+                    }
+                    LinearPlan::Integer { lits, w, t, g, coeffs, base } => {
+                        // HARD rows are priced at `p` on the reduced row: a unit of violation then
+                        // costs exactly `p`, the same gap `Cardinality` has, so `effective_penalty`
+                        // needs no change -- and the coefficients stay as small as the row allows.
+                        // SOFT rows are priced at `p·g²`, which is what makes the energy this
+                        // contributes equal the `weight × amount²` that `Violation::cost` reports
+                        // in the modeller's own units. A hard violation has no price to match, so
+                        // each arm takes the scale that is right for it.
+                        let scale = if hard { p } else { p * (*g as f64) * (*g as f64) };
+                        let mut parts: Vec<(LinSpin, f64)> =
+                            Vec::with_capacity(lits.len() + coeffs.len());
+                        for (l, c) in lits.iter().zip(w.iter()) {
+                            parts.push((self.indicator(slots, *l)?, *c as f64));
+                        }
+                        for (j, c) in coeffs.iter().enumerate() {
+                            // The slack bit's own 0/1 indicator, (1 + s)/2, carrying its weight.
+                            parts.push((
+                                LinSpin { offset: 0.5, terms: vec![(base + j, 0.5)] },
+                                *c as f64,
+                            ));
+                        }
+                        add_squared(b, &parts, *t as f64, scale);
+                    }
+                }
+            }
             Constraint::ExactlyOne(lits) | Constraint::AtMostOne(lits) => {
                 // pairwise exclusion; ExactlyOne additionally rewards being on
                 for i in 0..lits.len() {
@@ -1468,6 +2007,145 @@ impl Model {
             }
         }
         Ok(())
+    }
+}
+
+/// The variable a literal is about.
+fn lit_var(l: Lit) -> Var {
+    match l {
+        Lit::Spin(v) | Lit::Is(v, _) => v,
+    }
+}
+
+/// A coefficient the way a modeller wrote it: `3`, not `3.0000000`.
+fn num(x: f64) -> String {
+    if x.fract() == 0.0 && x.abs() < 1e15 {
+        format!("{}", x as i64)
+    } else {
+        format!("{x}")
+    }
+}
+
+/// One literal, in the caller's own words. `a`, or `(shift=3)`.
+fn lit_label(name: &str, domain: Domain, l: Lit) -> String {
+    match l {
+        Lit::Spin(_) => name.to_string(),
+        Lit::Is(_, value) => match domain {
+            Domain::Binary | Domain::Spin if value == 1 => name.to_string(),
+            _ => format!("({name}={value})"),
+        },
+    }
+}
+
+/// A whole row, in the caller's own notation: `3·a + 4·b − 5·(shift=2) ≤ 7`.
+///
+/// Truncated past six terms, because a 200-item knapsack row printed in full is not a message
+/// anyone reads — and a violation nobody reads is the same as no violation.
+fn row_text(parts: &[(String, f64)], rel: Rel, rhs: f64) -> String {
+    if parts.is_empty() {
+        return format!("0 {} {}", rel.symbol(), num(rhs));
+    }
+    let mut s = String::new();
+    for (i, (nm, c)) in parts.iter().take(6).enumerate() {
+        if i == 0 {
+            if *c < 0.0 {
+                s.push('−');
+            }
+        } else {
+            s.push_str(if *c < 0.0 { " − " } else { " + " });
+        }
+        s.push_str(&format!("{}·{nm}", num(c.abs())));
+    }
+    if parts.len() > 6 {
+        s.push_str(&format!(" + … ({} terms)", parts.len()));
+    }
+    format!("{s} {} {}", rel.symbol(), num(rhs))
+}
+
+/// Slack coefficients spanning `{0 ..= span}` in `⌈log₂(span+1)⌉` spins, exactly.
+///
+/// `1, 2, 4, …, 2^(m−2), span+1−2^(m−1)`. The top digit carries the REMAINDER of the span
+/// rather than another power of two, and that is the whole point: the naive expansion
+/// `1, 2, …, 2^(m−1)` reaches past `span`, which is harmless for a one-sided row and wastes
+/// exactly where it hurts — at `span = 8` its top coefficient is 8 where this one's is 1, and the
+/// coupling that coefficient carries is quadratic in it.
+///
+/// Because the cover is exact there is no invalid codeword, so this block needs no encoding penalty
+/// and no exclusion couplings. What remains is a 2-to-1 map on a window of `2^m − (span+1)`
+/// values, empty exactly when `span+1` is a power of two: the ground state of a row is degenerate
+/// by at most 2 over those, which changes no argmin and biases a Boltzmann marginal over LOGICAL
+/// states by at most 2×.
+fn truncated_binary(span: i128) -> Vec<i64> {
+    if span <= 0 {
+        return Vec::new();
+    }
+    let m = 128 - (span as u128).leading_zeros() as usize;
+    let mut coeffs: Vec<i64> = Vec::with_capacity(m);
+    for j in 0..m - 1 {
+        coeffs.push(1i64 << j);
+    }
+    coeffs.push((span + 1 - (1i128 << (m - 1))) as i64);
+    coeffs
+}
+
+fn gcd_i64(a: i64, b: i64) -> i64 {
+    let (mut a, mut b) = (a.abs(), b.abs());
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
+
+/// The largest magnitude an f64 represents every integer below. Past it, `fract() == 0` says
+/// nothing useful and `as i64` saturates instead of failing, so it is the boundary of the integer
+/// path rather than a stylistic limit.
+const EXACT_INT: f64 = 9_007_199_254_740_992.0; // 2^53
+
+/// What [`Model::compile`] decided about one [`Constraint::Linear`] row, computed **once**.
+///
+/// The existing slack sizing recomputes `k + 1` in two places, which is safe for one arithmetic
+/// expression and is not safe for a gcd and a bit length: a second computation that disagrees with
+/// the first gives the slack block the wrong width, and nothing errors. So this is built once and
+/// handed to `apply_constraint`, and a test asserts the emitted spin count matches it.
+#[derive(Clone, Debug)]
+enum LinearPlan {
+    /// The row constrains nothing. Zero spins, zero terms, one caveat.
+    Vacuous,
+    /// The integer path: gcd-reduced weights, a reduced target, and a truncated-binary slack.
+    Integer {
+        lits: Vec<Lit>,
+        /// Reduced weights, normalised so the row reads `Σ w·x ≤ t` (a `Ge` row is negated).
+        w: Vec<i64>,
+        t: i64,
+        /// The gcd divided out.
+        ///
+        /// A **soft** row is priced at `weight·g²`, so the energy it contributes at the sampler's
+        /// own optimum is `weight × amount²` in the modeller's units — the number
+        /// [`Violation::cost`] reports. A **hard** row is priced at `p`, which is a gap of exactly
+        /// `p` per unit of violation — the same gap `Cardinality` has, so `effective_penalty`
+        /// needs no change — at the smallest coefficients the row admits. A hard violation has no
+        /// price to match, so the two choices are each right for their own arm.
+        g: i64,
+        /// Truncated-binary slack coefficients: `1, 2, …, 2^(m−2), S+1−2^(m−1)`.
+        /// Empty for an equality, and for an inequality with no room in it.
+        coeffs: Vec<i64>,
+        /// First slack spin. Filled in by `compile` once the layout is known.
+        base: usize,
+    },
+    /// A non-integer **equality**, squared directly in f64. It needs no slack, so it needs no
+    /// lattice.
+    Real { lits: Vec<Lit>, w: Vec<f64>, t: f64 },
+}
+
+impl LinearPlan {
+    /// Spins this row adds. The number the doc comment promises, read from the plan itself.
+    fn spins(&self) -> usize {
+        match self {
+            LinearPlan::Integer { coeffs, .. } => coeffs.len(),
+            _ => 0,
+        }
     }
 }
 
@@ -1565,6 +2243,13 @@ pub struct Compiled {
     pub all_slots: Vec<Slot>,
     names: Vec<String>,
     domains: Vec<Domain>,
+    /// Spins every [`Constraint::Linear`] row's slack added, in total.
+    ///
+    /// They sit after every declared variable and after any counting slack, and before any
+    /// ancilla. Exposed because it is the price of a weighted inequality and the doc comment on
+    /// [`Constraint::Linear`] makes a promise about it: `⌈log₂(S+1)⌉` per inequality row, zero for
+    /// an equality and zero for a row that constrains nothing.
+    pub linear_slack: usize,
     /// Spins the higher-order reduction added, if any.
     ///
     /// They sit after every declared variable and after any slack, and the decoder never reports
@@ -1741,6 +2426,38 @@ impl Compiled {
                         cost: 0.0,
                         detail: format!("at most one of {} may hold, and {n} do", lits.len()),
                         amount: (n - 1) as f64,
+                    })
+                }
+                Constraint::Linear { terms, rel, rhs } => {
+                    // RECOMPUTED FROM THE DECODED USER VALUES, never from the slack. That is the
+                    // load-bearing property of this arm: a slack bit the sampler left anywhere at
+                    // all cannot produce a false `feasible()`, because the slack is not consulted.
+                    // `feasible()` is false exactly when the arithmetic says the row is broken.
+                    let mut lhs = 0.0f64;
+                    let mut parts: Vec<(String, f64)> = Vec::with_capacity(terms.len());
+                    for (l, c) in terms {
+                        if holds(l) {
+                            lhs += *c;
+                        }
+                        let v = lit_var(*l);
+                        parts.push((lit_label(name(&v), self.domains[v.0], *l), *c));
+                    }
+                    let amount = match rel {
+                        Rel::Le => lhs - rhs,
+                        Rel::Ge => rhs - lhs,
+                        Rel::Eq => (lhs - rhs).abs(),
+                    };
+                    // A tolerance, not a rounding: an integer row lands exactly and a real-valued
+                    // equality should not be called broken by the last bit of a summation.
+                    (amount > 1e-9).then(|| Violation {
+                        hard: true,
+                        cost: 0.0,
+                        detail: format!(
+                            "{}, and the left side comes to {}",
+                            row_text(&parts, *rel, *rhs),
+                            num(lhs)
+                        ),
+                        amount,
                     })
                 }
                 Constraint::AllDifferent(vars) => {
@@ -2093,6 +2810,574 @@ impl core::fmt::Display for Solution {
 #[cfg(test)]
 mod tests {
 
+    /// A WHOLE NUMBER TOO BIG FOR f64 IS NOT A FRACTION, and the refusal used to say it was.
+    ///
+    /// `1e16` is integral. The old message called it "a non-integer coefficient" and advised
+    /// multiplying the row through by its common denominator -- a fix that cannot apply to a number
+    /// that is already whole. Both halves were false while the refusal itself was right.
+    #[test]
+    fn a_huge_integral_coefficient_is_refused_for_the_reason_it_actually_is() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        m.constrain(Constraint::Linear {
+            terms: vec![(a.is(1), 1e16), (b.is(1), 1.0)],
+            rel: Rel::Le,
+            rhs: 5.0,
+        });
+        match m.compile() {
+            Err(CompileError::LinearHugeCoefficient { value, limit, what, .. }) => {
+                assert_eq!(value, 1e16);
+                assert_eq!(limit, EXACT_INT);
+                assert!(what.contains('a'), "names which coefficient: {what}");
+                let msg = CompileError::LinearHugeCoefficient {
+                    row: "r".into(),
+                    what,
+                    value,
+                    limit,
+                }
+                .to_string();
+                assert!(msg.contains("whole number"), "must not call it a fraction: {msg}");
+                assert!(msg.contains("2^53"), "and must name the boundary: {msg}");
+                assert!(
+                    !msg.contains("common denominator"),
+                    "and must not advise a fix that cannot apply: {msg}"
+                );
+            }
+            Err(e) => panic!("expected LinearHugeCoefficient, got {e:?}"),
+            Ok(_) => panic!("a coefficient past 2^53 must be refused, not compiled"),
+        }
+
+        // An actual fraction still gets the other message, which is the one that fits it.
+        let mut m2 = Model::new();
+        let c = m2.binary("c");
+        m2.constrain(Constraint::Linear {
+            terms: vec![(c.is(1), 2.5)],
+            rel: Rel::Le,
+            rhs: 5.0,
+        });
+        assert!(matches!(m2.compile(), Err(CompileError::LinearNotInteger { .. })));
+    }
+    use super::*;
+
+    // ---- weighted linear rows -------------------------------------------------------------------
+    //
+    // The only trustworthy check on a constraint LOWERING at small sizes is brute force: enumerate
+    // every assignment of the logical variables, decide feasibility directly from the arithmetic,
+    // and demand that the compiled energy orders the states the way the row says. A lowering that
+    // happens to work on the example in the docstring is the failure mode here, so none of these
+    // tests contains a hand-picked row that is not ALSO drawn at random by the sweep below.
+
+    /// A row, in the terms the sweep draws and the arithmetic below decides.
+    struct Row {
+        /// `(variable index, weight)`, unmerged and possibly repeated, as a modeller would write it.
+        terms: Vec<(usize, i64)>,
+        rel: Rel,
+        rhs: i64,
+        n: usize,
+    }
+
+    impl Row {
+        fn lhs(&self, assign: u32) -> i64 {
+            self.terms
+                .iter()
+                .filter(|(v, _)| (assign >> v) & 1 == 1)
+                .map(|(_, w)| *w)
+                .sum()
+        }
+        fn holds(&self, assign: u32) -> bool {
+            let l = self.lhs(assign);
+            match self.rel {
+                Rel::Le => l <= self.rhs,
+                Rel::Ge => l >= self.rhs,
+                Rel::Eq => l == self.rhs,
+            }
+        }
+        fn build(&self) -> Model {
+            let mut m = Model::new();
+            let vars: Vec<Var> = (0..self.n).map(|i| m.binary(&format!("x{i}"))).collect();
+            let terms: Vec<(Lit, f64)> =
+                self.terms.iter().map(|(v, w)| (Lit::Is(vars[*v], 1), *w as f64)).collect();
+            m.linear(terms, self.rel, self.rhs as f64);
+            m
+        }
+    }
+
+    /// Write a logical assignment into the one-hot spins, leaving the slack block untouched.
+    fn write_logical(state: &mut [i8], n: usize, assign: u32) {
+        for i in 0..n {
+            let on = (assign >> i) & 1 == 1;
+            state[2 * i] = if on { -1 } else { 1 }; // slot 0 is value 0
+            state[2 * i + 1] = if on { 1 } else { -1 };
+        }
+    }
+
+    /// The lowest energy this logical assignment can reach, minimising over the slack block alone.
+    fn best_energy(c: &Compiled, n: usize, assign: u32) -> f64 {
+        let slack = c.linear_slack;
+        let mut state = vec![-1i8; c.graph.n];
+        write_logical(&mut state, n, assign);
+        let base = c.graph.n - slack;
+        let mut best = f64::INFINITY;
+        for pattern in 0..(1u32 << slack) {
+            for j in 0..slack {
+                state[base + j] = if (pattern >> j) & 1 == 1 { 1 } else { -1 };
+            }
+            best = best.min(c.graph.energy(&state));
+        }
+        best
+    }
+
+    /// THE CHECK THE BRIEF ASKS FOR, over many random weight/target combinations.
+    ///
+    /// For every drawn row: compile it, enumerate every assignment of its binaries, minimise the
+    /// compiled energy over the slack block, and require
+    ///
+    ///   * every assignment the arithmetic allows to reach the SAME energy (a flat feasible floor),
+    ///   * every assignment it forbids to cost strictly more, by at least the model's penalty,
+    ///   * a refusal to be justified by enumeration rather than taken on trust,
+    ///   * and the emitted spin count to be exactly what `Constraint::Linear` promises.
+    #[test]
+    fn a_weighted_row_orders_every_state_the_way_the_arithmetic_does() {
+        let mut rng = crate::rng::Pcg::new(0x_FEED_BEEF, 11);
+        let p = 2.0; // no objective, so `effective_penalty` is the model's default
+        let (mut compiled, mut refused, mut vacuous, mut with_slack) = (0usize, 0, 0, 0);
+        let mut smallest_gap = f64::INFINITY;
+
+        for _ in 0..12_000 {
+            let n = 1 + (rng.next_u32() % 4) as usize;
+            let nt = 1 + (rng.next_u32() % 5) as usize;
+            let terms: Vec<(usize, i64)> = (0..nt)
+                .map(|_| {
+                    let v = (rng.next_u32() as usize) % n;
+                    let w = (rng.next_u32() % 11) as i64 - 5; // −5 ..= 5, zeros included
+                    (v, w)
+                })
+                .collect();
+            // Sweep the bound across the WHOLE reachable range and two past each end, so vacuous
+            // rows, unsatisfiable rows and every tightness in between are all drawn.
+            let mag: i64 = terms.iter().map(|(_, w)| w.abs()).sum::<i64>() + 2;
+            let rhs = (rng.next_u32() % (2 * mag as u32 + 1)) as i64 - mag;
+            let rel = match rng.next_u32() % 3 {
+                0 => Rel::Le,
+                1 => Rel::Ge,
+                _ => Rel::Eq,
+            };
+            let row = Row { terms, rel, rhs, n };
+
+            let feasible_states: Vec<u32> = (0..(1u32 << n)).filter(|a| row.holds(*a)).collect();
+
+            let c = match row.build().compile() {
+                Ok(c) => c,
+                Err(CompileError::LinearUnsatisfiable { .. }) => {
+                    // A refusal is a CLAIM, and it is checked here rather than believed.
+                    assert!(
+                        feasible_states.is_empty(),
+                        "refused as unsatisfiable, but {} assignment(s) satisfy it",
+                        feasible_states.len()
+                    );
+                    refused += 1;
+                    continue;
+                }
+                Err(e) => panic!("unexpected refusal: {e}"),
+            };
+            compiled += 1;
+            if c.linear_slack == 0 {
+                vacuous += 1;
+            } else {
+                with_slack += 1;
+            }
+            assert_eq!(
+                c.graph.n,
+                2 * n + c.linear_slack,
+                "the graph is the one-hot blocks plus exactly the promised slack"
+            );
+
+            let energies: Vec<f64> = (0..(1u32 << n)).map(|a| best_energy(&c, n, a)).collect();
+            if feasible_states.is_empty() {
+                // The arithmetic check is necessary, not sufficient -- a subset-sum equality can
+                // pass it and still have no answer -- so this is a legitimate outcome and there is
+                // no floor to compare against.
+                continue;
+            }
+            let floor = feasible_states.iter().map(|a| energies[*a as usize]).fold(f64::INFINITY, f64::min);
+            for a in 0..(1u32 << n) {
+                let e = energies[a as usize];
+                if row.holds(a) {
+                    assert!(
+                        (e - floor).abs() < 1e-9,
+                        "two allowed states differ in energy by {:.6}: the row does not price \
+                         feasibility flatly",
+                        e - floor
+                    );
+                } else {
+                    let gap = e - floor;
+                    assert!(
+                        gap >= p - 1e-9,
+                        "a forbidden state costs only {gap:.6} more than the feasible floor, \
+                         where the penalty is {p}"
+                    );
+                    smallest_gap = smallest_gap.min(gap);
+                }
+            }
+        }
+
+        // Not a formality: a sweep that drew only vacuous rows, or only refusals, would pass every
+        // assertion above and check nothing at all.
+        assert!(compiled > 6_000, "only {compiled} rows compiled");
+        assert!(with_slack > 800, "only {with_slack} rows actually needed a slack");
+        assert!(refused > 100, "only {refused} rows were refused as unsatisfiable");
+        assert!(vacuous > 100, "only {vacuous} rows compiled without slack");
+        // The minimum unit of violation costs exactly the penalty -- the same gap `Cardinality`
+        // has, which is why `effective_penalty` needs no change for this constraint.
+        assert!(
+            (smallest_gap - p).abs() < 1e-9,
+            "the cheapest violation cost {smallest_gap}, not the penalty {p}"
+        );
+    }
+
+    /// The same sweep, asked the question `Solution::feasible()` answers.
+    ///
+    /// The point of the feature: a decoded answer that breaks the row must say so, name it, and say
+    /// BY HOW MUCH in the modeller's own units.
+    #[test]
+    fn a_broken_weighted_row_makes_the_answer_infeasible_and_says_by_how_much() {
+        let mut rng = crate::rng::Pcg::new(0x_C0FFEE, 3);
+        let mut violations = 0usize;
+        for _ in 0..2_000 {
+            let n = 1 + (rng.next_u32() % 4) as usize;
+            let nt = 1 + (rng.next_u32() % 5) as usize;
+            let terms: Vec<(usize, i64)> = (0..nt)
+                .map(|_| ((rng.next_u32() as usize) % n, (rng.next_u32() % 11) as i64 - 5))
+                .collect();
+            let mag: i64 = terms.iter().map(|(_, w)| w.abs()).sum::<i64>() + 2;
+            let rhs = (rng.next_u32() % (2 * mag as u32 + 1)) as i64 - mag;
+            let rel = match rng.next_u32() % 3 {
+                0 => Rel::Le,
+                1 => Rel::Ge,
+                _ => Rel::Eq,
+            };
+            let row = Row { terms, rel, rhs, n };
+            let Ok(c) = row.build().compile() else { continue };
+
+            for a in 0..(1u32 << n) {
+                let mut state = vec![-1i8; c.graph.n];
+                write_logical(&mut state, n, a);
+                // The slack block is left wherever it happens to be -- ALL DOWN, which for a
+                // violated row is not the slack the sampler would have chosen. `check` must not
+                // consult it, and this is what proves it does not.
+                let sol = c.decode(&state);
+                assert!(sol.invalid.is_empty());
+                let lhs = row.lhs(a);
+                let want = match row.rel {
+                    Rel::Le => (lhs - row.rhs).max(0),
+                    Rel::Ge => (row.rhs - lhs).max(0),
+                    Rel::Eq => (lhs - row.rhs).abs(),
+                };
+                assert_eq!(
+                    sol.feasible(),
+                    want == 0,
+                    "feasible() disagrees with the arithmetic on {:?} {} {}",
+                    row.terms,
+                    row.rel.symbol(),
+                    row.rhs
+                );
+                if want > 0 {
+                    violations += 1;
+                    assert_eq!(sol.violated.len(), 1);
+                    let v = &sol.violated[0];
+                    assert!(v.hard);
+                    assert_eq!(v.amount, want as f64, "{}", v.detail);
+                    assert!(
+                        v.detail.contains(row.rel.symbol()) && v.detail.contains("left side"),
+                        "the violation must report the row and its left side: {}",
+                        v.detail
+                    );
+                }
+            }
+        }
+        assert!(violations > 2_000, "only {violations} violations were exercised");
+    }
+
+    /// A soft weighted row is priced in the modeller's own units.
+    ///
+    /// The identity this asserts is what the `weight·g²` scale exists for: the energy the row
+    /// contributes at the sampler's own optimum equals the `weight × amount²` reported back.
+    #[test]
+    fn a_soft_weighted_row_costs_exactly_what_it_reports() {
+        let mut rng = crate::rng::Pcg::new(0x_5EED, 5);
+        let mut cases = 0usize;
+        for _ in 0..1_500 {
+            let n = 1 + (rng.next_u32() % 3) as usize;
+            let terms: Vec<(usize, i64)> = (0..2 + (rng.next_u32() % 3) as usize)
+                .map(|_| ((rng.next_u32() as usize) % n, (rng.next_u32() % 9) as i64 - 4))
+                .collect();
+            let mag: i64 = terms.iter().map(|(_, w)| w.abs()).sum::<i64>() + 1;
+            let rhs = (rng.next_u32() % (2 * mag as u32 + 1)) as i64 - mag;
+            let rel = if rng.next_u32().is_multiple_of(2) { Rel::Le } else { Rel::Ge };
+            let row = Row { terms, rel, rhs, n };
+
+            let mut m = Model::new();
+            let vars: Vec<Var> = (0..n).map(|i| m.binary(&format!("x{i}"))).collect();
+            let ts: Vec<(Lit, f64)> =
+                row.terms.iter().map(|(v, w)| (Lit::Is(vars[*v], 1), *w as f64)).collect();
+            m.linear_soft(ts, rel, rhs as f64, 3.0);
+            let Ok(c) = m.compile() else { continue };
+            if c.linear_slack == 0 {
+                continue; // a vacuous row has nothing to price
+            }
+            let feasible: Vec<u32> = (0..(1u32 << n)).filter(|a| row.holds(*a)).collect();
+            if feasible.is_empty() {
+                continue;
+            }
+            let floor = feasible
+                .iter()
+                .map(|a| best_energy(&c, n, *a))
+                .fold(f64::INFINITY, f64::min);
+            for a in 0..(1u32 << n) {
+                if row.holds(a) {
+                    continue;
+                }
+                let over = best_energy(&c, n, a) - floor;
+                let mut state = vec![-1i8; c.graph.n];
+                write_logical(&mut state, n, a);
+                let sol = c.decode(&state);
+                assert!(sol.feasible(), "a soft row must not make an answer infeasible");
+                assert!(
+                    (over - sol.soft_cost()).abs() < 1e-7,
+                    "the row cost {over} in the graph and reported {}",
+                    sol.soft_cost()
+                );
+                cases += 1;
+            }
+        }
+        assert!(cases > 500, "only {cases} soft violations were priced");
+    }
+
+    /// The slack expansion covers `{0..=S}` exactly -- nothing more and nothing less.
+    ///
+    /// The property the whole encoding rests on: an exact cover has no invalid codeword, so the
+    /// block needs no encoding penalty and no exclusion couplings. Checked by enumeration rather
+    /// than argued.
+    #[test]
+    fn the_truncated_binary_slack_covers_its_span_exactly() {
+        for span in 0i128..=600 {
+            let coeffs = truncated_binary(span);
+            let m = coeffs.len();
+            assert_eq!(m, if span == 0 { 0 } else { (128 - (span as u128).leading_zeros()) as usize });
+            let mut hits = vec![0u32; (span + 1) as usize];
+            for pattern in 0u64..(1u64 << m) {
+                let v: i64 = (0..m).filter(|j| (pattern >> j) & 1 == 1).map(|j| coeffs[j]).sum();
+                assert!(v >= 0 && v <= span as i64, "span {span}: {v} is outside {{0..={span}}}");
+                hits[v as usize] += 1;
+            }
+            assert!(hits.iter().all(|h| *h >= 1), "span {span}: a residual is unreachable");
+            // The only cost of the exact cover: a 2-to-1 window of a size the doc states exactly.
+            let doubled = hits.iter().filter(|h| **h == 2).count();
+            assert!(hits.iter().all(|h| *h <= 2));
+            assert_eq!(
+                doubled as i128,
+                (1i128 << m) - (span + 1),
+                "span {span}: the doubled window is not the size the doc claims"
+            );
+        }
+    }
+
+    /// What a weighted row costs, in the two numbers that are fabric-independent.
+    ///
+    /// Spins and couplings, measured on the built graph rather than predicted. The gcd is doing
+    /// real work in the second row and none at all in the last, and saying so is the difference
+    /// between a documented cost and a surprise.
+    #[test]
+    fn the_cost_of_a_weighted_row_is_the_number_the_doc_promises() {
+        let cases: &[(&[i64], i64, usize, usize)] = &[
+            // weights, rhs, expected slack spins, expected distinct couplings the row adds
+            (&[3, 4, 5], 7, 3, 15),
+            (&[1000, 1000], 1500, 1, 3),  // gcd 1000: `a + b ≤ 1`, span 1
+            (&[1000, 1001], 1500, 11, 78),
+            (&[1, 1, 1, 1, 1], 3, 2, 21),
+            (&[2, 3, 5, 7, 11], 13, 4, 36),
+            (&[1, 2, 4, 8, 16, 32], 40, 6, 66),
+        ];
+        for (w, rhs, spins, edges) in cases {
+            let mut m = Model::new();
+            let vars: Vec<Var> = (0..w.len()).map(|i| m.binary(&format!("x{i}"))).collect();
+            let terms: Vec<(Lit, f64)> =
+                w.iter().enumerate().map(|(i, c)| (Lit::Is(vars[i], 1), *c as f64)).collect();
+            m.linear(terms, Rel::Le, *rhs as f64);
+            let c = m.compile().unwrap();
+            assert_eq!(c.linear_slack, *spins, "slack spins for {w:?} ≤ {rhs}");
+
+            // The row's own couplings: the whole graph, minus what the one-hot blocks cost on
+            // their own. A binary variable's block is one edge.
+            let mut bare = Model::new();
+            for i in 0..w.len() {
+                bare.binary(&format!("x{i}"));
+            }
+            // A model with no constraints still lays out and penalises every encoding.
+            bare.fix(vars[0], 1);
+            let base = bare.compile().unwrap();
+            let n = w.len() + spins;
+            assert_eq!(
+                n * (n - 1) / 2,
+                *edges,
+                "the clique formula and the table must agree for {w:?}"
+            );
+            assert_eq!(
+                c.graph.n_edges - base.graph.n_edges,
+                *edges,
+                "couplings added for {w:?} ≤ {rhs}"
+            );
+        }
+    }
+
+    /// Every refusal, by name, with the reason in the message rather than in a comment.
+    #[test]
+    fn a_weighted_row_refuses_what_it_cannot_represent() {
+        // A non-integer coefficient on an INEQUALITY: there is no integer residual for a slack to
+        // range over, so it is refused rather than rounded.
+        let mut m = Model::new();
+        let (a, b) = (m.binary("a"), m.binary("b"));
+        m.linear(vec![(Lit::Is(a, 1), 2.5), (Lit::Is(b, 1), 1.0)], Rel::Le, 4.0);
+        match m.compile() {
+            Err(CompileError::LinearNotInteger { what, value, .. }) => {
+                assert_eq!(value, 2.5);
+                assert!(what.contains('a'), "{what}");
+                let text = CompileError::LinearNotInteger {
+                    row: "2.5·a + 1·b ≤ 4".into(),
+                    what,
+                    value,
+                }
+                .to_string();
+                assert!(text.contains("common denominator"), "{text}");
+                assert!(text.contains("EQUALITY"), "the message must say what IS allowed: {text}");
+            }
+            other => panic!("expected a refusal, got {other:?}", other = other.err()),
+        }
+
+        // The same coefficients on an EQUALITY are accepted, with a caveat that says what the
+        // integer path gets and this one does not.
+        let mut m = Model::new();
+        let (a, b) = (m.binary("a"), m.binary("b"));
+        m.linear(vec![(Lit::Is(a, 1), 2.5), (Lit::Is(b, 1), 1.5)], Rel::Eq, 4.0);
+        let c = m.compile().unwrap();
+        assert_eq!(c.linear_slack, 0, "an equality needs no slack at all");
+        assert!(c.caveats.iter().any(|w| w.contains("non-integer")), "{:?}", c.caveats);
+        // And it still works: only a = b = 1 sums to 4.
+        let s = c.solve_annealed(7);
+        assert!(s.feasible(), "{:?}", s.violated);
+        assert_eq!((s.value("a"), s.value("b")), (1, 1));
+
+        // A row nothing can satisfy is refused by arithmetic, not annealed.
+        let mut m = Model::new();
+        let (a, b) = (m.binary("a"), m.binary("b"));
+        m.linear(vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0)], Rel::Ge, 9.0);
+        assert!(matches!(m.compile(), Err(CompileError::LinearUnsatisfiable { .. })));
+
+        // A domain-wall variable is refused for the reason it has always been refused: its
+        // indicator is a PRODUCT, so a weighted sum of them inside a square is quartic.
+        let mut m = Model::new();
+        let t = m.categorical_as("t", 4, Encoding::DomainWall);
+        m.linear(vec![(Lit::Is(t, 1), 3.0)], Rel::Le, 2.0);
+        assert!(matches!(m.compile(), Err(CompileError::NeedsOneHot { .. })));
+
+        // A row that constrains nothing compiles to nothing and says so.
+        let mut m = Model::new();
+        let (a, b) = (m.binary("a"), m.binary("b"));
+        m.linear(vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0)], Rel::Le, 12.0);
+        let c = m.compile().unwrap();
+        assert_eq!(c.linear_slack, 0);
+        assert!(c.caveats.iter().any(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
+    }
+
+    /// The row the brief opens with, solved, and read back in the modeller's own words.
+    #[test]
+    fn the_row_that_could_not_be_stated_now_solves_and_reports_itself() {
+        let mut m = Model::new();
+        let (a, b, c) = (m.binary("a"), m.binary("b"), m.binary("c"));
+        m.objective(
+            Sense::Maximize,
+            Expr::lit(1.0, Lit::Is(a, 1))
+                + Expr::lit(1.0, Lit::Is(b, 1))
+                + Expr::lit(1.0, Lit::Is(c, 1)),
+        );
+        m.linear(
+            vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0), (Lit::Is(c, 1), 5.0)],
+            Rel::Le,
+            7.0,
+        );
+        let compiled = m.compile().unwrap();
+        assert_eq!(compiled.linear_slack, 3);
+        let s = compiled.solve_by(Method::Branch { max_nodes: 2_000_000 }, 4);
+        assert!(s.feasible(), "{:?}", s.violated);
+        assert!(s.proved_optimal);
+        // 3+4 = 7 fits; every other pair does not, and all three certainly do not.
+        assert_eq!((s.value("a"), s.value("b"), s.value("c")), (1, 1, 0));
+
+        // And the violation reads in the caller's own notation, with the magnitude in their units.
+        let mut all_on = vec![-1i8; compiled.graph.n];
+        write_logical(&mut all_on, 3, 0b111);
+        let bad = compiled.decode(&all_on);
+        assert!(!bad.feasible());
+        assert_eq!(bad.violated[0].amount, 5.0);
+        assert_eq!(
+            bad.violated[0].detail,
+            "3·a + 4·b + 5·c ≤ 7, and the left side comes to 12"
+        );
+    }
+
+    /// A hard weighted row is not outbid by an objective built in a loop.
+    ///
+    /// `effective_penalty` returns twice the largest SUMMED pull on one literal set, and the
+    /// argument that keeps a `Cardinality` row dominant is that a unit of violation costs the whole
+    /// penalty. A weighted row has the same property, and the gcd reduction does not weaken it:
+    /// after dividing through, one unit of violation is still one unit, and it still costs `p`.
+    #[test]
+    fn a_hard_weighted_row_outbids_an_objective_built_in_a_loop() {
+        let mut m = Model::new();
+        let (a, b) = (m.binary("a"), m.binary("b"));
+        // Four separate calls, each pulling 1 on the same literal set. Taking the largest single
+        // coefficient would measure 1 here; the pull is 4.
+        for _ in 0..4 {
+            m.objective(Sense::Maximize, Expr::lit(1.0, Lit::Is(a, 1)));
+            m.objective(Sense::Maximize, Expr::lit(1.0, Lit::Is(b, 1)));
+        }
+        // gcd 5 divides this through to `a + b ≤ 1`, so it is one slack spin -- and the penalty is
+        // applied to the REDUCED row, which is the arm where dominance has to still hold.
+        m.linear(vec![(Lit::Is(a, 1), 5.0), (Lit::Is(b, 1), 5.0)], Rel::Le, 5.0);
+        let c = m.compile().unwrap();
+        assert_eq!(c.linear_slack, 1, "gcd 5 turns 5a + 5b ≤ 5 into a + b ≤ 1");
+        let s = c.solve_by(Method::Branch { max_nodes: 1_000_000 }, 9);
+        assert!(s.feasible(), "the row lost to an accumulated objective: {:?}", s.violated);
+        assert_eq!(s.value("a") + s.value("b"), 1, "one of them, and the objective picks which");
+    }
+
+    /// Duplicated literals and negative weights, which a real row has and a docstring does not.
+    #[test]
+    fn repeated_literals_are_merged_and_negative_weights_shift_the_bound() {
+        // 3a + 4a − 2b ≤ 5 is 7a − 2b ≤ 5: a alone is 7, over; a and b together is 5, exactly on.
+        let mut m = Model::new();
+        let (a, b) = (m.binary("a"), m.binary("b"));
+        m.linear(
+            vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), -2.0), (Lit::Is(a, 1), 4.0)],
+            Rel::Le,
+            5.0,
+        );
+        let c = m.compile().unwrap();
+        for (av, bv, want) in [(0, 0, true), (0, 1, true), (1, 0, false), (1, 1, true)] {
+            let mut state = vec![-1i8; c.graph.n];
+            write_logical(&mut state, 2, (av as u32) | ((bv as u32) << 1));
+            let s = c.decode(&state);
+            assert_eq!(s.feasible(), want, "a={av} b={bv}: {:?}", s.violated);
+        }
+        // The merged row is what gets reported, not the three terms as written -- the reported
+        // magnitude has to be the arithmetic's, and the arithmetic merged them.
+        let mut state = vec![-1i8; c.graph.n];
+        write_logical(&mut state, 2, 0b01);
+        assert_eq!(c.decode(&state).violated[0].amount, 2.0);
+    }
+
+
     /// A HARD CONSTRAINT MUST SURVIVE AN OBJECTIVE BUILT IN A LOOP, and it did not.
     ///
     /// `Expr::plus` extends rather than merges and `objective` accumulates -- which is what makes
@@ -2356,7 +3641,7 @@ mod tests {
         let _ = x;
     }
 
-    use super::*;
+
 
     #[test]
     fn a_variable_comes_back_by_name_in_its_own_units() {

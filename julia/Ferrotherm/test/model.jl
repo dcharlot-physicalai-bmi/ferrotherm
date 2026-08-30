@@ -243,3 +243,36 @@ end
 
     @test_throws ErrorException categorical!(Problem(), "x", 3; encoding = :rot13)
 end
+
+@testset "a weighted linear row is a constraint, not a preference" begin
+    # 3a + 4b + 5c ≤ 7, which no counting constraint can say: they all count UNWEIGHTED literals.
+    p = Problem()
+    a = binary!(p, "a"); b = binary!(p, "b"); c = binary!(p, "c")
+    linear!(p, [(a, 3), (b, 4), (c, 5)], :le, 7)
+    maximize!(p, [(1.0, is(a, 1)), (1.0, is(b, 1)), (1.0, is(c, 1))])
+    ans = solve!(p; tries = 32)
+    @test feasible(ans)
+    @test 3 * ans["a"] + 4 * ans["b"] + 5 * ans["c"] == 7   # 3 + 4 is the best that fits
+
+    # A row nothing can satisfy is refused by arithmetic rather than annealed.
+    q = Problem()
+    x = binary!(q, "x"); y = binary!(q, "y")
+    linear!(q, [(x, 3), (y, 4)], ">=", 9)
+    @test_throws ErrorException solve!(q; tries = 4)
+
+    # A relation nobody defined is refused before anything is built.
+    r = Problem(); z = binary!(r, "z")
+    @test_throws ErrorException linear!(r, [(z, 1)], :lt, 1)
+end
+
+@testset "a soft weighted row is priced in the modeller's own units" begin
+    p = Problem()
+    a = binary!(p, "a"); b = binary!(p, "b")
+    linear!(p, [(a, 3), (b, 4)], :le, 3; soft = 0.5)
+    maximize!(p, [(10.0, is(a, 1)), (10.0, is(b, 1))])
+    ans = solve!(p; tries = 32)
+    @test feasible(ans)                 # a soft row leaves the answer an answer
+    @test ans["a"] == 1 && ans["b"] == 1
+    # 3 + 4 = 7 against a bound of 3 is 4 over, priced at 0.5 × 4² = 8.
+    @test soft_cost(ans) == 8.0
+end

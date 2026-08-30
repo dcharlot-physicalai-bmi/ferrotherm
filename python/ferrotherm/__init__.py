@@ -250,6 +250,11 @@ _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
 _model_var = _sig("ft_model_var", c_uint32, [_p, c_uint32])
 _model_lit = _sig("ft_model_lit", c_uint32, [_p, c_uint32, ctypes.c_int64])
+_model_lit_weighted = _sig("ft_model_lit_weighted", c_uint32,
+                           [_p, c_uint32, ctypes.c_int64, c_double])
+_model_close_linear = _sig("ft_model_close_linear", c_uint32, [_p, c_uint32, c_double])
+_model_close_linear_soft = _sig("ft_model_close_linear_soft", c_uint32,
+                                [_p, c_uint32, c_double, c_double])
 _model_lits_clear = _sig("ft_model_lits_clear", c_uint32, [_p])
 _model_objective_product = _sig("ft_model_objective_product", c_uint32, [_p, c_uint32, c_double])
 _model_close = _sig("ft_model_close", c_uint32, [_p, c_uint32, c_uint32])
@@ -1971,6 +1976,81 @@ class Problem:
         self._must(_model_close(self._h, 5, 0), "all_different")
         if soft is not None:
             self.soften_last(soft)
+
+    #: How a weighted row compares, and the code the C ABI uses for each.
+    _RELATIONS = {"<=": 0, "\u2264": 0, ">=": 1, "\u2265": 1, "=": 2, "==": 2}
+
+    def linear(self, terms: Any, rel: str, rhs: float,
+               soft: "float | None" = None) -> None:
+        """A **weighted** linear row: ``3*a + 4*b + 5*c <= 7``.
+
+        The constraint none of the counting forms can express. ``exactly``, ``at_most``,
+        ``at_least``, ``exactly_one`` and ``at_most_one`` all count *unweighted* literals, so a row
+        with coefficients could not be stated at all — and the advice the LP reader used to give,
+        "add it to the objective", is the defect rather than the workaround: an objective term is
+        not a constraint, so :attr:`Answer.feasible` and :attr:`Answer.violated` stop knowing
+        about the row.
+
+        ``terms`` is either an expression built with arithmetic — ``3*a.is_(1) + 4*b.is_(1)`` — or a
+        sequence of ``(variable-or-literal, coefficient)`` pairs. ``rel`` is ``"<="``, ``">="`` or
+        ``"="``. ``soft`` prices the row instead of enforcing it, at ``weight × amount²`` in your
+        own units.
+
+        **What it costs.** An equality adds no spins. An inequality adds ``ceil(log2(S+1))`` slack
+        spins, where ``S`` is the residual span after dividing the row through by the gcd of its
+        weights — so ``1000*a + 1000*b <= 1500`` costs one spin, not 1500. Either way the row is a
+        clique on its own ``n`` literals plus its ``m`` slack bits: ``(n+m)(n+m-1)/2`` couplings.
+        The bill is ``n``, not the weights.
+
+        **What it refuses**, when the model compiles, by name: a non-integer coefficient or
+        right-hand side on an *inequality* (there is no integer residual for the slack to range
+        over, and rounding would change which answers are answers — an *equality* takes any finite
+        coefficient, because it needs no slack); and a row nothing can satisfy, by arithmetic
+        rather than by annealing. A row that constrains nothing compiles to nothing and says so in
+        :attr:`Answer.caveats`.
+        """
+        code = self._RELATIONS.get(str(rel).strip())
+        if code is None:
+            raise ValueError(
+                f"a linear row compares with '<=', '>=' or '=', not {rel!r}"
+            )
+        pairs: "list[tuple[Literal, float]]" = []
+        if isinstance(terms, (Term, Literal)):
+            for coeff, lits in _as_term(terms).parts:
+                if len(lits) != 1:
+                    raise ValueError(
+                        "a linear row is a sum of single literals; "
+                        f"one term here is a product of {len(lits)}. A quadratic constraint is a "
+                        "different thing and this library does not read one."
+                    )
+                pairs.append((lits[0], float(coeff)))
+        else:
+            for item in terms:
+                try:
+                    lit, coeff = item
+                except (TypeError, ValueError):
+                    raise TypeError(
+                        "linear takes an expression, or a sequence of (literal, coefficient) "
+                        f"pairs; got {type(item).__name__}"
+                    ) from None
+                if isinstance(lit, Variable):
+                    lit = Literal(lit, 1)
+                if not isinstance(lit, Literal):
+                    raise TypeError(
+                        f"a linear row weights variables or literals, not {type(lit).__name__}"
+                    )
+                pairs.append((lit, float(coeff)))
+        if not pairs:
+            raise ValueError("a linear row needs at least one term")
+        _model_lits_clear(self._h)
+        for lit, coeff in pairs:
+            self._must(
+                _model_lit_weighted(self._h, lit.var._index, lit.value, coeff), "linear")
+        if soft is None:
+            self._must(_model_close_linear(self._h, code, float(rhs)), "linear")
+        else:
+            self._must(
+                _model_close_linear_soft(self._h, code, float(rhs), float(soft)), "linear")
 
     def _counting(self, kind: int, of: "Sequence[Any]", k: int, value: int, what: str,
                   soft: "float | None" = None) -> None:

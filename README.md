@@ -388,7 +388,7 @@ for an autovectoriser to find. The flag is not enabled. Energy was bit-identical
 is the check that says the comparison was of the same computation.
 
 - `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
-  compiles with **zero changes**; the cdylib is a **523 KB .wasm** (195 KB gzipped) exposing the
+  compiles with **zero changes**; the cdylib is a **591 KB .wasm** (220 KB gzipped) exposing the
   `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.

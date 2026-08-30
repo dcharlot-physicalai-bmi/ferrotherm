@@ -18,8 +18,16 @@
 //! # What is supported, and what is refused
 //!
 //! **Binary and bounded-integer variables**, linear objectives, and linear constraints with `<=`,
-//! `>=` or `=`. That is the subset an Ising machine can actually run, and it is roughly what
-//! `dimod` accepts too.
+//! `>=` or `=` — **weighted or not**. That is the subset an Ising machine can actually run, and it
+//! is roughly what `dimod` accepts too.
+//!
+//! A row with coefficients other than 1 used to be refused, with the advice "rewrite it as a
+//! counting constraint, or add it to the objective". Following that advice was the defect rather
+//! than the workaround: an objective term is not a constraint, so `Solution::feasible` and
+//! `Solution::violated` stop knowing about the row, and a modeller who took the documented advice
+//! lost the thing that tells them whether their answer is valid. A weighted row now becomes a
+//! [`crate::model::Constraint::Linear`], which is what it is. A row whose coefficients are all 1
+//! and whose bound is a count still becomes the cheaper counting constraint.
 //!
 //! Everything else is **refused by name with its line number** rather than approximated: a
 //! continuous variable has no encoding here, a quadratic term in an LP file means something this
@@ -28,7 +36,7 @@
 //! dropping any of them would return a confident answer to a different problem, and the whole point
 //! of reading someone else's file is that you did not write it and cannot check it by eye.
 
-use crate::model::{Expr, Lit, Model, Sense, Var};
+use crate::model::{Expr, Lit, Model, Rel, Sense, Var};
 use std::collections::BTreeMap;
 
 /// Why a file could not be read.
@@ -66,10 +74,11 @@ struct Atom {
 
 /// Parse an LP file into a [`Model`].
 ///
-/// Declared variables become binaries, or integers over their declared bounds. Inequalities become
-/// `at_most`/`at_least` over the terms; equalities become a cardinality when the coefficients allow
-/// it and are refused otherwise, because a weighted equality is not a counting constraint and
-/// pretending it is would change the problem.
+/// Declared variables become binaries, or integers over their declared bounds. A row whose
+/// coefficients are all 1 and whose bound is a count becomes `at_most`/`at_least`/`cardinality`,
+/// which is cheaper; every other row becomes a [`crate::model::Constraint::Linear`], carrying its
+/// coefficients. A fractional coefficient on an inequality, and a row nothing can satisfy, are
+/// refused here rather than at compile time, so the message keeps its line number.
 pub fn parse(src: &str) -> Result<Model, LpError> {
     let mut section = Section::None;
     let mut objective: Vec<Atom> = Vec::new();
@@ -225,6 +234,7 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
     // Constraints
     for (line, label, lhs, rel, rhs) in constraints {
         let mut lits = Vec::new();
+        let mut weighted: Vec<(Lit, f64)> = Vec::new();
         let mut constant = 0.0;
         let mut unit = true;
         for a in &lhs {
@@ -250,43 +260,105 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
                             ),
                         );
                     }
-                    lits.push(Lit::Is(find(nm, line)?, 1));
+                    let v = find(nm, line)?;
+                    lits.push(Lit::Is(v, 1));
+                    weighted.push((Lit::Is(v, 1), a.coeff));
                 }
             }
         }
         let target = rhs - constant;
-        if !unit {
+        let relation = match rel.as_str() {
+            "<=" => Rel::Le,
+            ">=" => Rel::Ge,
+            "=" => Rel::Eq,
+            other => return err(line, format!("unknown relation {other:?}")),
+        };
+
+        // A row whose coefficients are all 1 and whose bound is a count stays a COUNTING
+        // constraint. Not nostalgia: `at_most` over k of n needs no gcd, no slack arithmetic and
+        // no clique on the row's own literals, so routing it through the weighted lowering would
+        // make every LP file that already parsed more expensive in exchange for nothing.
+        if unit && target >= 0.0 && target.fract() == 0.0 && target as usize <= lits.len() {
+            let k = target as usize;
+            match relation {
+                Rel::Le => { m.at_most(lits, k); }
+                Rel::Ge => { m.at_least(lits, k); }
+                Rel::Eq => { m.cardinality(lits, k); }
+            }
+            continue;
+        }
+        // A unit row that is NOT a count, on a relation where that means the row has no answer.
+        // Refused here, where the line number is, rather than at compile time where it is not.
+        // (`<=` is deliberately absent: `a + b <= 5` over two binaries constrains nothing, and it
+        // used to be refused with "nothing can satisfy", which is the opposite of true. It falls
+        // through to the weighted row below, which compiles it to no terms and says so.)
+        if unit && relation == Rel::Ge && target > lits.len() as f64 {
             return err(
                 line,
                 format!(
-                    "constraint '{label}' has coefficients other than 1. A weighted linear \
-                     constraint is not a counting constraint, and treating it as one would change \
-                     the problem. Rewrite it as a counting constraint, or add it to the objective"
+                    "constraint '{label}' asks for {target} of {} terms, which nothing can satisfy",
+                    lits.len()
                 ),
             );
         }
-        if target < 0.0 || target.fract() != 0.0 {
+        if unit && relation == Rel::Eq && (target < 0.0 || target.fract() != 0.0) {
             return err(
                 line,
                 format!("constraint '{label}' compares against {target}, which is not a count"),
             );
         }
-        let k = target as usize;
-        if k > lits.len() {
+
+        // A WEIGHTED row. This used to be refused outright -- "rewrite it as a counting
+        // constraint, or add it to the objective" -- and following that advice was the defect
+        // rather than the workaround: an objective term is not a constraint, so `feasible()` and
+        // `violated` stop knowing about the row, and a modeller who took the documented advice
+        // lost the thing that tells them whether their answer is valid.
+        //
+        // Two conditions are checked HERE rather than at compile time, purely so the message keeps
+        // the line number this reader attaches to everything else it refuses.
+        if relation != Rel::Eq {
+            if let Some((_, c)) = weighted.iter().find(|(_, c)| c.fract() != 0.0) {
+                return err(
+                    line,
+                    format!(
+                        "constraint '{label}' has a coefficient of {c}. A weighted inequality is \
+                         lowered with a slack variable ranging over the INTEGER residual, and a \
+                         fractional coefficient leaves no integer residual for it to range over. \
+                         Multiply the row through by its common denominator and write it in whole \
+                         numbers -- an EQUALITY takes any coefficient, because it needs no slack"
+                    ),
+                );
+            }
+            if target.fract() != 0.0 {
+                return err(
+                    line,
+                    format!(
+                        "constraint '{label}' compares against {target}, and a weighted inequality \
+                         is lowered against an integer bound. Multiply the row through by its \
+                         common denominator"
+                    ),
+                );
+            }
+        }
+        let most: f64 = weighted.iter().map(|(_, c)| c.max(0.0)).sum();
+        let least: f64 = weighted.iter().map(|(_, c)| c.min(0.0)).sum();
+        let (best, impossible) = match relation {
+            Rel::Le => (least, least > target),
+            Rel::Ge => (most, most < target),
+            Rel::Eq => (most, target < least || target > most),
+        };
+        if impossible {
             return err(
                 line,
                 format!(
-                    "constraint '{label}' asks for {k} of {} terms, which nothing can satisfy",
-                    lits.len()
+                    "constraint '{label}' has no answer: the best its left side can reach on the \
+                     constrained side is {best}, against {target}. Refused here rather than \
+                     annealed -- a model with no answer comes back infeasible for a reason no \
+                     penalty and no longer ladder will fix"
                 ),
             );
         }
-        match rel.as_str() {
-            "<=" => { m.at_most(lits, k); }
-            ">=" => { m.at_least(lits, k); }
-            "=" => { m.cardinality(lits, k); }
-            other => return err(line, format!("unknown relation {other:?}")),
-        }
+        m.linear(weighted, relation, target);
     }
 
     Ok(m)
@@ -572,19 +644,6 @@ End
         let e = refusal(undeclared);
         assert!(e.message.contains("'y'") && e.message.contains("never declared"), "{e}");
 
-        let weighted = "\
-Maximize
-  obj: a + b
-Subject To
-  c: 3 a + 2 b <= 4
-Binary
-  a b
-End
-";
-        let e = refusal(weighted);
-        assert!(e.message.contains("other than 1"), "{e}");
-        assert_eq!(e.line, 4, "and says which line: {e}");
-
         let quadratic = "\
 Maximize
   obj: [ x * y ] / 2
@@ -616,6 +675,77 @@ Binary
 End
 ";
         assert!(refusal(range).message.contains("two constraints"));
+    }
+
+    /// A WEIGHTED row, which this reader used to refuse by name.
+    ///
+    /// The refusal said "rewrite it as a counting constraint, or add it to the objective", and
+    /// following that advice was the defect: an objective term is not a constraint, so
+    /// `Solution::feasible` and `Solution::violated` stop knowing about the row and a modeller who
+    /// took the documented advice lost the thing that tells them whether their answer is valid.
+    #[test]
+    fn a_weighted_row_is_read_as_a_constraint_rather_than_refused() {
+        let src = "\
+Maximize
+  obj: a + b + c
+Subject To
+  cap: 3 a + 4 b + 5 c <= 7
+Binary
+  a b c
+End
+";
+        let compiled = parse(src).unwrap().compile().unwrap();
+        // The row is a constraint, so it costs a slack -- and the number is the one the doc
+        // promises: the residual spans 0..=7, which is three bits.
+        assert_eq!(compiled.linear_slack, 3);
+        let s = compiled.solve_best_of(24);
+        assert!(s.feasible(), "{:?}", s.violated);
+        assert!(s.value("a") * 3 + s.value("b") * 4 + s.value("c") * 5 <= 7);
+        assert_eq!(s.objective, Some(2.0), "3 + 4 = 7 fits and nothing better does: {s}");
+
+        // A fractional coefficient on an inequality is refused WITH ITS LINE, because a slack over
+        // a non-integer residual is not a thing.
+        let fractional = "\
+Minimize
+  obj: a
+Subject To
+  c: 2.5 a + 1 b >= 1
+Binary
+  a b
+End
+";
+        let e = refusal(fractional);
+        assert!(e.message.contains("common denominator"), "{e}");
+        assert_eq!(e.line, 4, "and says which line: {e}");
+
+        // A weighted row nothing can satisfy is refused by arithmetic, also with its line.
+        let impossible = "\
+Minimize
+  obj: a
+Subject To
+  c: 3 a + 4 b >= 9
+Binary
+  a b
+End
+";
+        let e = refusal(impossible);
+        assert!(e.message.contains("no answer"), "{e}");
+        assert_eq!(e.line, 4);
+
+        // And `a + b <= 5` over two binaries constrains nothing. It used to be refused with
+        // "nothing can satisfy", which is the opposite of true.
+        let vacuous = "\
+Maximize
+  obj: a + b
+Subject To
+  c: a + b <= 5
+Binary
+  a b
+End
+";
+        let c = parse(vacuous).unwrap().compile().unwrap();
+        assert!(c.caveats.iter().any(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
+        assert_eq!(c.linear_slack, 0);
     }
 
     #[test]
