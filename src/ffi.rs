@@ -4027,19 +4027,35 @@ mod parallel_sweep_tests {
 
     #[test]
     fn the_thread_count_is_part_of_the_run_and_the_abi_says_which_ran() {
-        // A different thread count is a different sample path. If these agreed, `threads` would be
-        // decorative and the reproducibility note on ft_sweep_par would be false.
-        let a = lattice(16, 0.5, 0xABC);
-        let b = lattice(16, 0.5, 0xABC);
+        // A different thread count is a different sample path -- WHEN THE THREADS ACTUALLY RUN. The
+        // graph has to clear the MIN_CHUNK floor for that to be true, which a 16x16 lattice (128
+        // per class) does not: below the floor `sweep_par` IS the serial path, and asking for four
+        // threads there gives the same answer as asking for one because it is the same code. That
+        // is the whole point of the floor and it is worth pinning both halves of.
+        let small_a = lattice(16, 0.5, 0xABC);
+        let small_b = lattice(16, 0.5, 0xABC);
+        ft_sweep_par(small_a, 40, 1);
+        ft_sweep_par(small_b, 40, 4);
+        let n = ft_len(small_a) as usize;
+        let sa = unsafe { core::slice::from_raw_parts(ft_spins(small_a), n) }.to_vec();
+        let sb = unsafe { core::slice::from_raw_parts(ft_spins(small_b), n) }.to_vec();
+        assert_eq!(sa, sb, "below the floor, four threads and one are the same serial path");
+        assert_eq!(ft_threads_used(small_a), 1);
+        assert_eq!(ft_threads_used(small_b), 1, "the ABI reports what RAN, not what was asked");
+        ft_free(small_a);
+        ft_free(small_b);
+
+        // Above the floor they diverge, and the reproducibility note on ft_sweep_par depends on it.
+        let a = lattice(96, 0.5, 0xABC);
+        let b = lattice(96, 0.5, 0xABC);
         ft_sweep_par(a, 40, 1);
         ft_sweep_par(b, 40, 4);
         let n = ft_len(a) as usize;
         let sa = unsafe { core::slice::from_raw_parts(ft_spins(a), n) }.to_vec();
         let sb = unsafe { core::slice::from_raw_parts(ft_spins(b), n) }.to_vec();
-        assert_ne!(sa, sb, "one thread and four are different paths, not the same one");
-
+        assert_ne!(sa, sb, "one thread and four are different paths once four actually run");
         assert_eq!(ft_threads_used(a), 1);
-        assert!(ft_threads_used(b) >= 1, "the ABI reports what RAN, not what was asked");
+        assert_eq!(ft_threads_used(b), 4, "4608 per class clears the floor four times over");
         ft_free(a);
         ft_free(b);
     }
@@ -4062,15 +4078,27 @@ mod parallel_sweep_tests {
         assert!(used <= 3, "5 nodes over 2 colour classes cannot occupy 4 threads: {used}");
         ft_free(s);
 
-        // And a class big enough to fill them does report the full count.
-        let b2 = ft_builder_new(400);
-        for i in 0..400u32 {
-            assert_eq!(ft_builder_couple(b2, i, (i + 1) % 400, -1.0), 1);
-        }
-        let s2 = ft_builder_build(b2, 0.5, 1);
-        ft_sweep_par(s2, 2, 4);
-        assert_eq!(ft_threads_used(s2), 4, "200 nodes per class split four ways is four threads");
-        ft_free(s2);
+        // A class big enough to fill them reports the full count. "Big enough" is now a floor of
+        // MIN_CHUNK = 1024 nodes per thread, not one node per thread: a ring of 400 gives classes
+        // of 200, which four threads would slice into fifties -- and a fifty-node slice finishes
+        // faster than the barrier it then waits at, which is how asking for threads used to make a
+        // caller up to thirty-three times SLOWER. Below the floor the answer is one, and one is the
+        // truth: the serial path is what ran.
+        let ring = |n: u32, threads: u32| {
+            let b = ft_builder_new(n);
+            for i in 0..n {
+                assert_eq!(ft_builder_couple(b, i, (i + 1) % n, -1.0), 1);
+            }
+            let s = ft_builder_build(b, 0.5, 1);
+            ft_sweep_par(s, 2, threads);
+            let used = ft_threads_used(s);
+            ft_free(s);
+            used
+        };
+        assert_eq!(ring(400, 4), 1, "50 nodes a thread is below the floor, so it runs serially");
+        assert_eq!(ring(8192, 4), 4, "1024 a thread is exactly the floor, so all four run");
+        assert_eq!(ring(4096, 4), 2, "512 a thread is under it; two threads at 1024 each is not");
+        assert_eq!(ring(65536, 4), 4, "and the floor never asks for MORE than was requested");
     }
 
     #[test]

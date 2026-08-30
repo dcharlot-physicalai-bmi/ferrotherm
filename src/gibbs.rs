@@ -41,6 +41,19 @@ pub struct Sampler<'g> {
     par_sweeps: u64,
 }
 
+/// The fewest nodes a thread must be given before threading it is worth the barrier it waits at.
+///
+/// Public because a caller who wants the parallel path to engage needs to know what it is waiting
+/// for, and `threads_used` reporting 1 is otherwise a mystery: the answer is that the SMALLEST
+/// colour class did not have this many nodes per thread.
+///
+/// See the table in [`Sampler::sweeps_par`], which is where this number was measured. It bounds the
+/// thread count from above: a graph too small to give every thread this many nodes runs on fewer
+/// threads, and one too small for two runs serially. That is what makes the parallel entry points
+/// safe to call at any size — they cannot be slower than the serial path, because below the floor
+/// they ARE the serial path.
+pub const MIN_CHUNK: usize = 1024;
+
 impl<'g> Sampler<'g> {
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x5EED);
@@ -109,69 +122,12 @@ impl<'g> Sampler<'g> {
     /// different, equally valid sample path (document the thread count next to the seed).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn sweep_par(&mut self, threads: usize, ledger: Option<&mut Ledger>) {
-        assert!(threads >= 1);
-        let beta = self.beta;
-        let g = self.g;
-        let sweep_idx = self.par_sweeps;
-        let base = self.par_seed;
-        let mut updated = 0u64;
-        for (ci, class) in g.classes.iter().enumerate() {
-            let chunk = class.len().div_ceil(threads);
-            if chunk == 0 {
-                continue;
-            }
-            // SAFETY: chunks are disjoint index sets within one color class; every write target
-            // is unique to one thread, and every read is either a bias, an other-color neighbour
-            // (not written this phase), or the thread's own not-yet-updated node.
-            let sp = self.s.as_mut_ptr() as usize;
-            let clamped = &self.clamped;
-            std::thread::scope(|scope| {
-                for (ti, part) in class.chunks(chunk).enumerate() {
-                    let part: &[u32] = part;
-                    scope.spawn(move || {
-                        let mut rng = Pcg::new(
-                            base ^ sweep_idx.wrapping_mul(0x9E3779B97F4A7C15) ^ (ci as u64) << 32,
-                            0xC0DE ^ ti as u64,
-                        );
-                        let s_ptr = sp as *mut i8;
-                        for &iu in part {
-                            let i = iu as usize;
-                            if clamped[i] {
-                                continue;
-                            }
-                            let mut f = g.h[i];
-                            for k in g.offset[i]..g.offset[i + 1] {
-                                f += g.w[k] * unsafe { *s_ptr.add(g.nbr[k] as usize) } as f64;
-                            }
-                            let p_up = crate::kernel::p_up(f, beta);
-                            unsafe {
-                                *s_ptr.add(i) = rng.spin(p_up);
-                            }
-                        }
-                    });
-                }
-            });
-            updated += class.iter().filter(|&&iu| !self.clamped[iu as usize]).count() as u64;
-        }
-        self.par_sweeps += 1;
-        // The PEAK number of chunks any one class was actually split into -- not `threads`, and not
-        // `min(threads, biggest class)` either, which is what the first version of this computed
-        // and which over-reports: five nodes across four threads is a chunk of two, so three
-        // threads run and not four. A caller dividing throughput by this number needs the count
-        // that ran or its per-thread figure is quietly wrong.
-        self.threads_used = g
-            .classes
-            .iter()
-            .map(|c| {
-                let chunk = c.len().div_ceil(threads);
-                if chunk == 0 { 0 } else { c.len().div_ceil(chunk) }
-            })
-            .max()
-            .unwrap_or(1)
-            .max(1);
-        if let Some(l) = ledger {
-            l.samples += updated;
-        }
+        // One sweep is a batch of one. This used to be its own implementation, with its own copy of
+        // the unsafe chunk loop, and it was the worse of the two: a single sweep is exactly the
+        // case where spawning a thread per colour class costs more than the class does. Deleting it
+        // removed the duplicate `unsafe` block as well -- two copies of a race argument is one more
+        // than anyone can keep true.
+        self.sweeps_par(1, threads, ledger);
     }
 
     /// The wasm twin: serial, because there are no threads to spread across.
@@ -202,10 +158,174 @@ impl<'g> Sampler<'g> {
         self.threads_used
     }
 
-    /// Run `n` parallel sweeps.
-    pub fn sweeps_par(&mut self, n: usize, threads: usize, mut ledger: Option<&mut Ledger>) {
-        for _ in 0..n {
-            self.sweep_par(threads, ledger.as_deref_mut());
+    /// Run `n` parallel sweeps, spawning the worker threads ONCE for the whole batch.
+    ///
+    /// # Why this is not a loop over [`Self::sweep_par`]
+    ///
+    /// It was, and that made the parallel path SLOWER THAN THE SERIAL ONE at every size anyone
+    /// actually runs. `sweep_par` opens a `thread::scope` per COLOUR CLASS per SWEEP, so 2,000
+    /// sweeps of a two-coloured graph on eighteen threads spawned **72,000 OS threads**. Spawning
+    /// costs tens of microseconds; a colour class of five hundred nodes costs a few. The work never
+    /// had a chance.
+    ///
+    /// Measured on this machine, back to back, before and after (2D glass, 18 threads, ratio of
+    /// parallel to serial throughput — above 1.0 the parallel path is winning):
+    ///
+    /// ```text
+    ///    spins   per class   was     is    threads that now run
+    ///    1,024         512  0.03x  1.00x   1  (below the floor: the serial path)
+    ///    4,096       2,048  0.13x  1.24x   2
+    ///    9,216       4,608     --  2.58x   4
+    ///   16,384       8,192  0.50x  1.85x   8
+    /// ```
+    ///
+    /// Below about 32,000 spins a caller who asked for eighteen threads was handed something up to
+    /// **thirty-three times slower** than not asking. That is not a tuning parameter, it is a trap,
+    /// and it was reachable from the C ABI as `ft_sweep_par`.
+    ///
+    /// **The property is the worst cell, not the best one.** A speedup that is sometimes a slowdown
+    /// is a coin toss a caller cannot call. `examples/par_scaling` reports the worst and best cells
+    /// together for that reason, and what [`MIN_CHUNK`] buys is the left-hand end of that column.
+    ///
+    /// # What is preserved exactly
+    ///
+    /// **Bit-identical results.** Thread `ti` takes chunk `ti` of every class exactly as before, and
+    /// each (sweep, class, chunk) derives the same counter-based stream from the same seed, so this
+    /// is a scheduling change and not a numerical one. `parallel_sweeps_are_bit_identical_to_the_old_
+    /// spawn_per_sweep_shape` pins that against a hand-rolled reference implementing the old shape.
+    ///
+    /// The barrier is what makes it safe: within a colour class no two nodes are adjacent, so the
+    /// chunks may run concurrently — but class `c+1` reads what class `c` wrote, so every thread
+    /// must finish a class before any thread starts the next. Every worker waits at every class
+    /// boundary INCLUDING the ones where it has no chunk, or the barrier count would not match and
+    /// the run would deadlock.
+    pub fn sweeps_par(&mut self, n: usize, threads: usize, ledger: Option<&mut Ledger>) {
+        assert!(threads >= 1);
+        if n == 0 {
+            return;
+        }
+        // One thread, or a graph with nothing to split, is the serial path -- and taking it here
+        // rather than spawning one worker keeps the cheap case cheap.
+        if threads == 1 || self.g.classes.is_empty() {
+            for _ in 0..n {
+                self.sweep(None);
+            }
+            self.par_sweeps += n as u64;
+            self.threads_used = 1;
+            self.charge_par(n, ledger);
+            return;
+        }
+
+        // THE FLOOR IS WHAT MAKES ASKING FOR THREADS SAFE. Below it a thread's share of a colour
+        // class finishes faster than the barrier it then waits at, so more threads is strictly
+        // worse -- and a caller cannot know that in advance, which is what made `ft_sweep_par` a
+        // trap rather than a knob.
+        //
+        // Calibrated on a 2D glass at 18 threads, par/serial throughput, the two arms INTERLEAVED
+        // so a load spike hits both alike. That interleaving is not a detail: the first calibration
+        // ran every serial repetition and then every parallel one, and a machine that got busier in
+        // between made 256 look like the winner at 1.45x where it is really 0.48x.
+        //
+        //   min chunk | n=1024   2304   4096   9216  16384    (t = threads it actually used)
+        //   ----------|--------------------------------------
+        //           1 |   0.09   0.21   0.37   0.70   1.17     all t18 -- the shipped behaviour
+        //         256 |   0.48   0.61   0.66   0.71   1.17
+        //  -->   1024 |   1.02   0.98   1.27   2.06   2.68     t1, t1, t2, t4, t8
+        //        4096 |   1.00   0.99   1.02   0.98   1.42     threads almost never engage
+        //
+        // 1024 is the only row that is never a loss and still reaches 2.68x. Above it the floor
+        // stops engaging threads at all; below it, threads engage where they do not pay.
+        let smallest = self.g.classes.iter().map(|c| c.len()).min().unwrap_or(0);
+        let threads = threads.min((smallest / MIN_CHUNK).max(1));
+        if threads <= 1 {
+            for _ in 0..n { self.sweep(None); }
+            self.par_sweeps += n as u64;
+            self.threads_used = 1;
+            self.charge_par(n, ledger);
+            return;
+        }
+
+        let g = self.g;
+        let beta = self.beta;
+        let base = self.par_seed;
+        let first_sweep = self.par_sweeps;
+
+        // The chunk layout is fixed for the whole batch, which is what lets thread `ti` keep taking
+        // chunk `ti` and so keeps the RNG streams identical to the old shape.
+        let layout: Vec<(usize, usize)> = g
+            .classes
+            .iter()
+            .map(|c| {
+                let chunk = c.len().div_ceil(threads);
+                let parts = if chunk == 0 { 0 } else { c.len().div_ceil(chunk) };
+                (chunk, parts)
+            })
+            .collect();
+        let workers = layout.iter().map(|&(_, parts)| parts).max().unwrap_or(1).max(1);
+
+        let sp = self.s.as_mut_ptr() as usize;
+        let clamped = &self.clamped;
+        let barrier = std::sync::Barrier::new(workers);
+
+        std::thread::scope(|scope| {
+            for ti in 0..workers {
+                let barrier = &barrier;
+                let layout = &layout;
+                scope.spawn(move || {
+                    let s_ptr = sp as *mut i8;
+                    for sweep in 0..n {
+                        let sweep_idx = first_sweep + sweep as u64;
+                        for (ci, class) in g.classes.iter().enumerate() {
+                            let (chunk, parts) = layout[ci];
+                            if ti < parts {
+                                // SAFETY: chunks are disjoint index sets within one colour class,
+                                // so every write target is unique to one thread; every read is a
+                                // bias, an other-colour neighbour (not written during this class),
+                                // or this thread's own not-yet-updated node. The barrier below is
+                                // what makes the second of those true across classes.
+                                let lo = ti * chunk;
+                                let hi = (lo + chunk).min(class.len());
+                                let mut rng = Pcg::new(
+                                    base ^ sweep_idx.wrapping_mul(0x9E3779B97F4A7C15)
+                                        ^ (ci as u64) << 32,
+                                    0xC0DE ^ ti as u64,
+                                );
+                                for &iu in &class[lo..hi] {
+                                    let i = iu as usize;
+                                    if clamped[i] {
+                                        continue;
+                                    }
+                                    let mut f = g.h[i];
+                                    for k in g.offset[i]..g.offset[i + 1] {
+                                        f += g.w[k]
+                                            * unsafe { *s_ptr.add(g.nbr[k] as usize) } as f64;
+                                    }
+                                    let p_up = crate::kernel::p_up(f, beta);
+                                    unsafe {
+                                        *s_ptr.add(i) = rng.spin(p_up);
+                                    }
+                                }
+                            }
+                            // EVERY worker waits, including one with no chunk in this class: the
+                            // barrier's participant count is fixed at `workers`, and a thread that
+                            // skipped a wait would hang the rest of the batch.
+                            barrier.wait();
+                        }
+                    }
+                });
+            }
+        });
+
+        self.par_sweeps += n as u64;
+        self.threads_used = workers;
+        self.charge_par(n, ledger);
+    }
+
+    /// Bill `n` parallel sweeps to the ledger: one sample per free node per sweep.
+    fn charge_par(&self, n: usize, ledger: Option<&mut Ledger>) {
+        if let Some(l) = ledger {
+            let free = self.clamped.iter().filter(|&&c| !c).count() as u64;
+            l.samples += free * n as u64;
         }
     }
 

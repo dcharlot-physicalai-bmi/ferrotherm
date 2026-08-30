@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Asking for threads used to make you thirty-three times slower
+
+`sweep_par` opened a `thread::scope` **per colour class per sweep**. Two thousand sweeps of a
+two-coloured graph on eighteen threads spawned **72,000 OS threads**; spawning costs tens of
+microseconds and a colour class of five hundred nodes costs a few. The work never had a chance, and
+this was reachable from the C ABI as `ft_sweep_par` with nothing telling a caller the knob ran
+backwards.
+
+| spins | per class | was | is | threads that now run |
+|---|---|---|---|---|
+| 1,024 | 512 | **0.03×** | **1.00×** | 1 — below the floor, the serial path |
+| 4,096 | 2,048 | 0.13× | 1.24× | 2 |
+| 9,216 | 4,608 | — | **2.58×** | 4 |
+| 16,384 | 8,192 | 0.50× | 1.85× | 8 |
+
+Two changes. The threads are spawned **once for the whole batch**, with a `std::sync::Barrier` at
+every colour-class boundary — every worker waits at every boundary *including the ones where it has
+no chunk*, or the participant count would not match and the batch would deadlock. And a **floor**
+(`MIN_CHUNK = 1024`) caps the thread count so no thread is handed fewer nodes than the barrier costs
+to cross. Below the floor the parallel entry points *are* the serial code, so they cannot lose.
+
+**The property is the worst cell, not the best one.** A speedup that is sometimes a slowdown is a
+coin toss a caller cannot call. Worst cell went 0.03× → **1.00×**.
+
+`sweep_par` is now one line delegating to `sweeps_par(1, ..)`, which deleted the second copy of the
+unsafe chunk loop — two copies of a data-race argument is one more than anyone can keep true.
+
+#### The calibration was wrong the first time, and the reason is worth keeping
+
+The first sweep ran every serial repetition and *then* every parallel one. The machine got busier in
+between, and that alone made a floor of 256 look like a **1.45×** win where interleaved it is a
+**0.48× loss** — it would have shipped the wrong constant. Timing two things on a shared machine
+means timing them next to each other, or timing the machine instead.
+
+Two ABI tests asserted the old behaviour (a 200-node class across four threads). They now pin the
+floor from both sides — below it, four threads and one produce *identical* output because it is the
+same code path; above it they diverge, which is what the reproducibility note depends on.
+
+### The Julia JLL manifest pointed at the previous release's binaries
+
+`check-versions.sh` caught it immediately after 0.32.0 went out: `Artifacts.toml` still resolved to
+the **0.31.0** tarballs while `Project.toml` said 0.32.0. A Julia user installing `ferrotherm_jll`
+0.32.0 would have loaded the wrong library — resolving cleanly, with no error anywhere. Rebuilt
+against the published v0.32.0 tarballs for all three platforms.
+
+This is the second time this file has recorded that manifest going stale, and the gate that caught
+it is one of the seven that had no `--selftest` until this week.
+
 ## 0.32.0
 
 **The minor-embedding placer works.** It could not build a chain when one was needed — a star with
