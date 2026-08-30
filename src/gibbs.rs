@@ -28,6 +28,14 @@ pub struct Sampler<'g> {
     /// Nodes whose value is held fixed (conditioning / "clamping"); sweeps skip them.
     pub clamped: Vec<bool>,
     /// Base seed for the parallel path's per-(sweep, class, chunk) RNG streams.
+    ///
+    /// Kept on every target, including wasm32 where [`Sampler::sweep_par`] is the serial twin and
+    /// nothing reads it. Making the FIELD conditional would make the struct's shape depend on the
+    /// target, and the two things that then differ are exactly the things this crate promises do
+    /// not: a `Sampler` built the same way would not be the same object across a build boundary.
+    /// The dead-code allowance is the cheaper of the two, and it is scoped to the one target where
+    /// the field is genuinely unread.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     par_seed: u64,
     /// Sweeps completed via the parallel path (advances its stream derivation).
     par_sweeps: u64,
