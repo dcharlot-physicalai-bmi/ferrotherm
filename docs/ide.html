@@ -700,6 +700,52 @@ function layeredLayout(visible, hidden) {
   return { pts, edges };
 }
 
+/** The one-line verdict for the status bar. */
+function fitMessage() {
+  if (!fitted) return "";
+  if (!fitted.exact) {
+    return "fitted " + nodes + " spins, but the likelihood was refused: " + fitted.why;
+  }
+  return "fitted: log-likelihood " + fitted.after.toFixed(3) + ", "
+    + fitted.learned.toFixed(1) + "% of the way from an untrained model to a perfect one. "
+    + "Run, Anneal, Solve and Certify all apply to it now.";
+}
+
+/** Fill the panel, or hide it when the live model was not fitted.
+ *
+ * THIS AND `fitMessage` WERE DELETED BY A LATER EDIT OF MY OWN and shipped missing in two releases.
+ * A slice that rewrote the layout helper ran from one marker to `function ringEdges`, and these two
+ * sat between them. `apply()` calls both, so the workbench threw "showFit is not defined" the moment
+ * anything was run -- and every gate stayed green, because `check-editor-*` drives `graph.html` and
+ * the only suite that touches this file is `web-tests/workbench.test.mjs`, which I did not run.
+ */
+function showFit() {
+  const el = document.getElementById("fit");
+  if (!el) return;
+  if (!fitted) { el.hidden = true; return; }
+  el.hidden = false;
+  const pct = fitted.exact ? Math.max(0, Math.min(100, fitted.learned)) : 0;
+  document.getElementById("fitfill").style.width = pct + "%";
+  document.getElementById("fitmark").style.left = pct + "%";
+  document.getElementById("fitlo").textContent = "learned nothing  " + fitted.floor.toFixed(3);
+  document.getElementById("fithi").textContent = fitted.ceiling.toFixed(3) + "  learned everything";
+  document.getElementById("fit-ll").textContent = fitted.exact ? fitted.after.toFixed(4) : "refused";
+  document.getElementById("fit-before").textContent = fitted.before.toFixed(4);
+  document.getElementById("fit-rows").textContent = fitted.rows;
+  document.getElementById("fit-spins").textContent = nodes;
+  const v = document.getElementById("fitverdict");
+  v.textContent = fitted.exact ? pct.toFixed(1) + "% learned" : "not scored";
+  v.classList.toggle("proved", fitted.exact && pct > 90);
+  document.getElementById("fitnote").textContent = fitted.exact
+    ? "Both ends of this scale are known without calibration: an untrained model is uniform over "
+      + "2^visible images, and a perfect one is uniform over the " + fitted.rows + " real ones. The "
+      + "likelihood is EXACT, by enumeration -- never an ELBO or a reconstruction error, because "
+      + "each of those is worst exactly where sampling is worst, and a reader comparing machines on "
+      + "one would be reading the proxy's failure and calling it expressivity."
+    : "The machine fitted, but scoring it exactly needs enumerating every state and this one is too "
+      + "large. It still samples: the model is real, only its expressivity is unmeasured here.";
+}
+
 function ringEdges(v) {
   if (v.graph.builtin !== "ring") return [];
   const n = v.graph.n | 0, e = [];

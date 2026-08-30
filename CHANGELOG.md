@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### ⛔ The workbench's fit panel threw on every run, in two shipped releases
+
+`docs/ide.html` called `showFit()` and `fitMessage()` and defined neither. **I deleted them myself**:
+a later edit rewrote the layout helper by slicing from one marker to `function ringEdges`, and both
+functions sat between them. `apply()` calls both, so running *anything* in the workbench threw
+`showFit is not defined` — not only the machine-fitting path it was added for.
+
+It shipped in **0.32.0 and 0.33.0**, and to the live site.
+
+**Every gate stayed green.** `check-editor-parity` and `check-editor-model` drive `graph.html`; the
+only suite that touches this file is `web-tests/workbench.test.mjs`, and I had been running
+`node editor.test.mjs` by hand rather than `npm test`, which runs both. CI caught it on the first
+push and I had not read the run.
+
+Two process notes, since the fix is one paste and the lesson is not:
+
+* **A syntax check is not a smoke test.** I ran `new Function(...)` over the page's scripts after
+  that edit and it passed — a call to an undefined function is perfectly valid JavaScript until it
+  runs.
+* **Reading CI is part of pushing.** Three suites were red on the previous commit; one was the
+  Python thread test I had fixed on the Rust side only, and this was another.
+
+No crate is affected — `docs/ide.html` is a site asset, not part of any published crate — so there is
+nothing to republish. The site is redeployed.
+
 ## 0.33.0
 
 **Two things the library could not do, and one it was doing wrongly.**
