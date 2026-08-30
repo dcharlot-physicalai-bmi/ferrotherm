@@ -318,6 +318,11 @@ jobs:
       - name: Install
         working-directory: web-tests
         run: npm install && npx playwright install --with-deps chromium
-      - name: Browser tests
-        working-directory: web-tests
-        run: npm test
+      # Through the gate, not `npm test` directly, so the one command that covers BOTH pages is the
+      # same one a developer can run. `docs/ide.html` had no gate at all until this: the editor
+      # gates drive graph.html, and a hand-run of `node editor.test.mjs` looked like coverage while
+      # leaving the workbench untested through two releases.
+      - name: Browser pages run
+        env:
+          FERROTHERM_REQUIRE_ALL: "1"
+        run: scripts/check-pages.sh --selftest && scripts/check-pages.sh

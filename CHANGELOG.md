@@ -27,6 +27,25 @@ Two process notes, since the fix is one paste and the lesson is not:
 No crate is affected — `docs/ide.html` is a site asset, not part of any published crate — so there is
 nothing to republish. The site is redeployed.
 
+#### And the gap it went through is closed
+
+`scripts/check-pages.sh` runs **both** browser suites and is wired into CI in the house style
+(`--selftest && plain`). Its selftest deletes `showFit` from a copy of the page while leaving the
+call in place and requires the suite to go red — the exact defect, not a strawman.
+
+**The first version of this gate was thrown away, and the reason is the useful part.** It tried to
+resolve the linkage statically: collect every function each page defines, collect every one it
+calls, diff. These pages carry embedded CSS and long prose comments, so `rgba(`, `translateX(`,
+`@media (` and ordinary English inside a comment all read as calls — sixty-odd false names across
+three files on the first run. A gate needing thirty exemptions is a gate nobody reads, and one loose
+enough to avoid them would have let `showFit` through, which is the only thing it was written for.
+
+Running the page is what resolves a call into nothing. The check was never missing; the *coverage*
+was, because `web-tests/` ran only in CI and a hand-run of one suite looked like both.
+
+`FERROTHERM_REQUIRE_ALL=1` makes the missing-playwright skip a failure in CI, the same contract
+`check-answers.sh` uses.
+
 ## 0.33.0
 
 **Two things the library could not do, and one it was doing wrongly.**
