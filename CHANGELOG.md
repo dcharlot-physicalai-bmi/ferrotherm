@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### The automatic penalty measured the wrong quantity, and a hard constraint lost to it
+
+`Model::effective_penalty` chose `2 × max |coeff|` over the objective's individual terms. But
+`Expr::plus` **extends rather than merges**, and `objective` accumulates — which is exactly what
+makes writing an objective one term at a time work, and is the documented pattern the README example
+uses. So many terms land on the *same literal*, and what a constraint has to outbid is their **sum**.
+
+Three separate terms of `1.0 * a.is(1)` pull with strength 3 against an automatic penalty of 2, and
+a **hard** `Fix(a, 0)` beside them is traded away:
+
+| terms | summed pull | penalty | `a` | feasible |
+|---|---|---|---|---|
+| 1 | 1.0 | 2.0 | 0 | ✅ |
+| 2 | 2.0 | 2.0 | 0 | ✅ |
+| **3** | **3.0** | **2.0** | **1** | ❌ |
+| **5** | **5.0** | **2.0** | **1** | ❌ |
+
+Nothing lied — `feasible` came back false and `violated` named the constraint — but the automatic
+penalty exists precisely to prevent this, and the reasoning in its own comment ("a constraint that
+merely ties with the objective gets traded away") was right while being applied to the wrong number.
+
+It now groups by literal set and takes `2 × max |Σ coeff|`. Grouping is by the *set*, so `a*b` and
+`b*a` are one key and sum, while three distinct literals pulled once each stay at 1. `Lit` gained
+`Eq/Ord/Hash` to be a map key, which is the only reason those derives exist.
+
+After: the hard constraint holds at every repeat count tried.
+
 ### ⛔ Simulated quantum annealing was classical annealing wearing M copies of the spins
 
 `src/sqa.rs` computed the Trotter coupling as `J⊥ = −(M/2β)·ln tanh(βΓ/M)` while scaling the

@@ -262,7 +262,11 @@ pub enum Sense {
 }
 
 /// One thing an expression can refer to.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Ordered so a term's literal set can be a map key -- `effective_penalty` groups the objective by
+/// literal set to find the largest PULL rather than the largest single coefficient. The order has
+/// no meaning beyond making that grouping possible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Lit {
     /// The spin value of a `Spin` or `Binary` variable, as ±1.
     Spin(Var),
@@ -816,15 +820,29 @@ impl Model {
         if !self.auto_penalty {
             return self.penalty;
         }
-        let worst = self
-            .objective
-            .terms
-            .iter()
-            .map(|t| t.coeff.abs())
-            .fold(0.0f64, f64::max);
-        // Twice the largest objective coefficient. A constraint that merely ties with the objective
-        // gets traded away, and the result is a state that does not decode rather than one that
-        // scores badly -- which reads as a broken sampler rather than an under-weighted constraint.
+        // TWICE THE LARGEST PULL ON ONE LITERAL SET, NOT THE LARGEST SINGLE COEFFICIENT.
+        //
+        // `Expr::plus` extends rather than merges, and `objective` accumulates -- which is correct,
+        // and is what makes writing an objective in a loop work at all. It also means many terms
+        // land on the SAME literal, and what a constraint has to outbid is their sum.
+        //
+        // Taking the largest individual coefficient measured the wrong thing. Three separate terms
+        // of `1.0 * a.is(1)` -- an objective built in a loop, which is the documented pattern and
+        // what the README example does -- pull with strength 3 while the automatic penalty came out
+        // at 2, so a HARD `Fix(a, 0)` beside them was traded away: the answer came back with
+        // `a = 1` and `feasible = false`. The reasoning in this function was right and it was
+        // applied to the wrong number.
+        let mut pull: BTreeMap<Vec<Lit>, f64> = BTreeMap::new();
+        for term in &self.objective.terms {
+            // The literal set identifies the term; sorted so `a*b` and `b*a` are one entry.
+            let mut key = term.lits.clone();
+            key.sort();
+            *pull.entry(key).or_insert(0.0) += term.coeff;
+        }
+        let worst = pull.values().map(|c| c.abs()).fold(0.0f64, f64::max);
+        // A constraint that merely ties with the objective gets traded away, and the result is a
+        // state that does not decode rather than one that scores badly -- which reads as a broken
+        // sampler rather than an under-weighted constraint.
         self.penalty.max(2.0 * worst)
     }
 
@@ -2074,6 +2092,72 @@ impl core::fmt::Display for Solution {
 
 #[cfg(test)]
 mod tests {
+
+    /// A HARD CONSTRAINT MUST SURVIVE AN OBJECTIVE BUILT IN A LOOP, and it did not.
+    ///
+    /// `Expr::plus` extends rather than merges and `objective` accumulates -- which is what makes
+    /// writing an objective one term at a time work at all, and is the documented pattern. It also
+    /// puts many terms on the SAME literal, and what a constraint has to outbid is their sum.
+    /// `effective_penalty` took the largest single coefficient, so three separate terms of
+    /// `1.0 * a.is(1)` pulled with strength 3 against an automatic penalty of 2, and the hard
+    /// `Fix(a, 0)` beside them was traded away: `a = 1`, `feasible = false`.
+    ///
+    /// The answer WAS reported as infeasible, so nothing lied -- but the automatic penalty exists
+    /// precisely to stop this, and it was measuring the wrong quantity.
+    #[test]
+    fn a_hard_constraint_outbids_an_objective_accumulated_term_by_term() {
+        for repeats in 1..=6usize {
+            let mut m = Model::new();
+            let a = m.binary("a");
+            for _ in 0..repeats {
+                m.objective(Sense::Maximize, Expr::lit(1.0, a.is(1)));
+            }
+            m.constrain(Constraint::Fix(a, 0));
+            // The penalty must scale with the SUMMED pull, not stay at twice one coefficient.
+            let p = m.effective_penalty();
+            assert!(
+                p >= 2.0 * repeats as f64 - 1e-9,
+                "{repeats} terms of 1.0 pull with strength {repeats}, and the penalty was {p}"
+            );
+            let c = m.compile().expect("a binary and a fix compile");
+            let s = c.solve_by(Method::Branch { max_nodes: 2_000_000 }, 1);
+            assert!(
+                s.feasible(),
+                "{repeats} identical objective terms traded away a HARD constraint"
+            );
+            assert_eq!(s.value("a"), 0, "the fix says 0, whatever the objective wants");
+        }
+    }
+
+    /// And grouping is by the literal SET, so a quadratic term is not confused with its factors and
+    /// `a*b` is the same key as `b*a`.
+    #[test]
+    fn the_penalty_groups_by_literal_set_not_by_variable() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        // Three DIFFERENT literal sets, each pulled once at 1.0: the largest pull is 1, not 3.
+        m.objective(Sense::Maximize, Expr::lit(1.0, a.is(1)));
+        m.objective(Sense::Maximize, Expr::lit(1.0, b.is(1)));
+        m.objective(Sense::Maximize, Expr::pair(1.0, a.is(1), b.is(1)));
+        assert!(
+            (m.effective_penalty() - 2.0).abs() < 1e-9,
+            "distinct literal sets must not be summed together: {}",
+            m.effective_penalty()
+        );
+
+        // ...and the same pair written the other way round is the SAME set, so it does sum.
+        let mut m2 = Model::new();
+        let a2 = m2.binary("a");
+        let b2 = m2.binary("b");
+        m2.objective(Sense::Maximize, Expr::pair(1.0, a2.is(1), b2.is(1)));
+        m2.objective(Sense::Maximize, Expr::pair(1.0, b2.is(1), a2.is(1)));
+        assert!(
+            (m2.effective_penalty() - 4.0).abs() < 1e-9,
+            "a*b and b*a are one term and must sum: {}",
+            m2.effective_penalty()
+        );
+    }
 
     /// The model layer can now PROVE an answer, and the proof is checked against enumeration.
     ///
