@@ -782,16 +782,40 @@ def test_a_parallel_sweep_reproduces_itself_at_a_fixed_thread_count():
 
 
 def test_the_thread_count_is_part_of_the_run():
-    def ring(seed):
-        m = ft.Model(128)
-        for i in range(128):
-            m.couple(i, (i + 1) % 128, 1.0)
+    """A different thread count is a different sample path -- WHEN THE THREADS ACTUALLY RUN.
+
+    The library refuses to hand a thread fewer than ``gibbs::MIN_CHUNK`` (1024) nodes of the
+    smallest colour class, because below that a thread's share finishes faster than the barrier it
+    then waits at. Below the floor the parallel path IS the serial path, so asking for four threads
+    gives the same answer as asking for one -- it is the same code.
+
+    This test asserted the divergence on a 128-node ring, which is far below the floor, so it began
+    failing the moment the floor landed. Both halves are pinned now: identical below, different
+    above.
+    """
+
+    def ring(n, seed):
+        m = ft.Model(n)
+        for i in range(n):
+            m.couple(i, (i + 1) % n, 1.0)
         return m.build(beta=0.7, seed=seed)
 
-    a, b = ring(0x99), ring(0x99)
+    # 128 nodes: 64 per colour class, nowhere near the floor, so both take the serial path.
+    a, b = ring(128, 0x99), ring(128, 0x99)
     a.sweep(60, threads=1)
     b.sweep(60, threads=4)
-    assert a.spins != b.spins, "one thread and four are different sample paths, not the same one"
+    assert a.spins == b.spins, "below the floor, four threads and one are the same serial path"
+    # `a` is not compared on threads_used: `sweep(threads=1)` takes the plain serial entry point,
+    # which never touches the counter, so it stays at its initial 0. `b` DID go through the
+    # parallel entry point, and must report that one thread is what actually ran.
+    assert b.threads_used == 1, "and the library says one ran, not the four that were asked for"
+
+    # 8192 nodes: 4096 per class, four threads at 1024 each is exactly the floor, so they run.
+    c, d = ring(8192, 0x99), ring(8192, 0x99)
+    c.sweep(60, threads=1)
+    d.sweep(60, threads=4)
+    assert c.spins != d.spins, "above the floor they are different sample paths"
+    assert d.threads_used == 4, "and the library says four ran"
 
 
 def test_zero_threads_asks_the_machine():

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.33.0
+
+**Two things the library could not do, and one it was doing wrongly.**
+
+`3a + 4b + 5c ≤ 7` is expressible now, on every surface. A weighted linear row had no representation
+anywhere in the stack, and the documented workaround — put it in the objective — destroyed the very
+thing it was needed for: an objective term is not a constraint, so `feasible()` stops knowing about
+the row. Verified adversarially against exhaustive enumeration over **>4,000 models and ~40,000
+decoded states**, with zero false refusals across 1,554 refusals.
+
+**Simulated quantum annealing was classical annealing wearing M copies of the spins.** The
+Suzuki–Trotter coupling was M times too strong, which locked the slices rigid and made the
+transverse field — the one thing the module exists for — completely inert. Caught by a closed form
+and a 2×2 transfer matrix, no sampler and no timing involved.
+
+And the automatic penalty measured the largest single objective coefficient where it needed the
+largest *summed pull*, so three terms of `1.0` on one literal silently traded away a **hard**
+constraint.
+
+Also: two checks that could not fail (one never called the function it was named for), a C ABI term
+expressible from Rust and nowhere else, an error that called a too-large model "too small", and a
+Python test that had been red since the thread floor landed.
+
 ### `3a + 4b + 5c ≤ 7` can be stated now, on every surface
 
 A weighted linear row was inexpressible anywhere in the stack. Every counting constraint —

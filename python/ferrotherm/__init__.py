@@ -66,7 +66,7 @@ __all__ = [
 
 # Tracks the native library it binds, because they are released together out of one repository and
 # a binding whose version says nothing about the library underneath it is a version nobody can use.
-__version__ = "0.32.0"
+__version__ = "0.33.0"
 
 
 # ---- library loading ------------------------------------------------------------------------
