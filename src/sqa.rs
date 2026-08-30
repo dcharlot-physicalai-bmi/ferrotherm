@@ -14,7 +14,7 @@
 //! coupled to itself in the neighbouring slices at
 //!
 //! ```text
-//!   J⊥ = −(M / 2β) · ln tanh(βΓ / M)
+//!   J⊥ = −(1 / 2β) · ln tanh(βΓ / M)     equivalently   βJ⊥ = ½ ln coth(βΓ / M)
 //! ```
 //!
 //! which is large when the transverse field `Γ` is small — slices locked together, the classical
@@ -127,12 +127,17 @@ pub fn run_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Led
         // interesting dynamics are at small Γ and a linear ramp spends its budget at large Γ.
         let f = if steps == 1 { 1.0 } else { step as f64 / (steps - 1) as f64 };
         let gamma = gmax * (gmin / gmax).powf(f);
-        // J⊥ = −(M / 2β) ln tanh(βΓ / M). Only meaningful for M > 1: see the module note.
+        // J⊥ = −(1 / 2β) ln tanh(βΓ / M). Only meaningful for M > 1: see the module note.
         let j_perp = if m == 1 {
             0.0
         } else {
             let x = (p.beta * gamma / m as f64).tanh().max(1e-300);
-            -(m as f64 / (2.0 * p.beta)) * x.ln()
+            // NO FACTOR OF M. See the module note: with one, this whole module sampled a different
+            // model. The Trotter coupling that belongs beside an intra-slice term scaled by 1/M and
+            // a Boltzmann factor at full beta is J_perp = (1/2beta) ln coth(beta*Gamma/M), so that
+            // beta*J_perp = (1/2) ln coth(beta*Gamma/M) -- the dimensionless number Suzuki-Trotter
+            // actually fixes.
+            -(1.0 / (2.0 * p.beta)) * x.ln()
         };
         max_j_perp = max_j_perp.max(j_perp);
 
@@ -181,6 +186,97 @@ pub fn run_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Led
 
 #[cfg(test)]
 mod tests {
+
+    /// THE TROTTER COUPLING HAS AN EXACT ORACLE, AND THE SHIPPED ONE FAILED IT.
+    ///
+    /// For a single spin the transverse-field Ising model is solvable in closed form:
+    /// `<sz> = (h/E) tanh(beta E)` with `E = sqrt(h^2 + Gamma^2)`. And the classical (d+1)
+    /// system the Suzuki-Trotter mapping produces is, for n = 1, a ring of `M` spins with field
+    /// `h/M` and coupling `J_perp` -- which a 2x2 transfer matrix solves exactly, for any `M`, with
+    /// no sampling at all. So the mapping itself can be checked against the model it claims to
+    /// represent, without a sampler and without a stopwatch.
+    ///
+    /// It did not hold. With `J_perp = (M/2beta) ln coth(beta Gamma / M)` the ring's magnetisation
+    /// is `tanh(beta h)` -- the CLASSICAL value, identical at every `M` and completely independent
+    /// of `Gamma`. The slices were locked so rigidly that the transverse field did nothing, so this
+    /// module was running classical annealing on `M` redundant copies of the spins and calling it
+    /// quantum. The correct coupling satisfies `beta J_perp = (1/2) ln coth(beta Gamma / M)`, and
+    /// with it the ring converges to the quantum answer as `M` grows, which is what this asserts.
+    #[test]
+    fn the_trotter_mapping_converges_to_the_quantum_model_it_claims_to_represent() {
+        // Magnetisation of a ring of M spins, field h/M and coupling j_perp, by transfer matrix.
+        fn ring_mean(h: f64, beta: f64, m: usize, j_perp: f64) -> f64 {
+            let b = h / m as f64;
+            let sp = [1.0f64, -1.0];
+            let mut tm = [[0.0f64; 2]; 2];
+            for i in 0..2 {
+                for j in 0..2 {
+                    tm[i][j] = (beta * (j_perp * sp[i] * sp[j] + b * (sp[i] + sp[j]) / 2.0)).exp();
+                }
+            }
+            // T^m by repeated squaring, renormalised each step so large m cannot overflow -- the
+            // shipped coupling overflowed f64 at m = 64, which is its own signal.
+            let mut acc = [[1.0f64, 0.0], [0.0, 1.0]];
+            let mut base = tm;
+            let mut k = m;
+            while k > 0 {
+                if k & 1 == 1 {
+                    acc = mul_norm(acc, base);
+                }
+                base = mul_norm(base, base);
+                k >>= 1;
+            }
+            let z = acc[0][0] + acc[1][1];
+            (sp[0] * acc[0][0] + sp[1] * acc[1][1]) / z
+        }
+        fn mul_norm(a: [[f64; 2]; 2], b: [[f64; 2]; 2]) -> [[f64; 2]; 2] {
+            let mut c = [[0.0f64; 2]; 2];
+            for i in 0..2 {
+                for j in 0..2 {
+                    c[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j];
+                }
+            }
+            let s = c.iter().flatten().fold(0.0f64, |m, &x| m.max(x.abs())).max(1e-300);
+            for row in c.iter_mut() {
+                for v in row.iter_mut() {
+                    *v /= s;
+                }
+            }
+            c
+        }
+        // The coupling this module computes, extracted so the test uses the shipped formula.
+        fn j_perp(beta: f64, gamma: f64, m: usize) -> f64 {
+            let x = (beta * gamma / m as f64).tanh().max(1e-300);
+            -(1.0 / (2.0 * beta)) * x.ln()
+        }
+
+        for &(h, gamma, beta) in &[(0.5f64, 1.0f64, 1.0f64), (1.0, 2.0, 1.0), (0.5, 0.5, 2.0)] {
+            let e = (h * h + gamma * gamma).sqrt();
+            let quantum = (h / e) * (beta * e).tanh();
+            let classical = (beta * h).tanh();
+            // The two answers must be far apart, or converging to one says nothing about the other.
+            assert!(
+                (quantum - classical).abs() > 0.05,
+                "this case cannot tell the two apart: quantum {quantum:.4} classical {classical:.4}"
+            );
+
+            let mut prev = f64::INFINITY;
+            for &m in &[8usize, 32, 128, 512] {
+                let got = ring_mean(h, beta, m, j_perp(beta, gamma, m));
+                let err = (got - quantum).abs();
+                assert!(
+                    err < prev + 1e-12,
+                    "error must not grow with M: M={m} gave {got:.6} (err {err:.2e}), \
+                     previous error {prev:.2e}"
+                );
+                prev = err;
+            }
+            assert!(
+                prev < 2e-4,
+                "M=512 must reach the quantum answer {quantum:.6}, and the error was {prev:.2e}"
+            );
+        }
+    }
     use super::*;
     use crate::graph::GraphBuilder;
     use crate::ising::lattice2d;

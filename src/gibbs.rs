@@ -41,17 +41,31 @@ pub struct Sampler<'g> {
     par_sweeps: u64,
 }
 
-/// The fewest nodes a thread must be given before threading it is worth the barrier it waits at.
+/// The fewest nodes a thread must be given before it is worth a barrier.
+///
+/// # This is a guard, not a tuned optimum
+///
+/// The STRUCTURAL fact is fabric-independent and is the reason the constant exists at all: creating
+/// an OS thread costs microseconds on every platform anyone runs this on, and a colour-class chunk
+/// of a few dozen nodes costs less than that. Handing a thread less work than the synchronisation
+/// around it costs is a loss on any machine, and a caller asking for threads cannot know in advance
+/// that they are in that regime. Refusing to spread work that thin is the fix; it does not depend
+/// on which machine is running.
+///
+/// The NUMBER is a heuristic. 1024 was chosen from throughput ratios on one developer laptop, and a
+/// different fabric — more cores, a different memory system, a GPU-hosted queue, a many-core server
+/// — will have a different crossover. It is deliberately set where the parallel path is never a
+/// loss rather than where it is fastest, because the property worth guaranteeing is "asking for
+/// threads cannot hurt you", and that one survives being wrong about the exact crossover in a way
+/// that a performance-tuned value would not.
+///
+/// **So do not read this as a benchmark result.** A caller who knows their fabric should pass a
+/// thread count that suits it; this only bounds that count from above, and reports what it did
+/// through [`Sampler::threads_used`].
 ///
 /// Public because a caller who wants the parallel path to engage needs to know what it is waiting
-/// for, and `threads_used` reporting 1 is otherwise a mystery: the answer is that the SMALLEST
+/// for: `threads_used` reporting 1 otherwise looks like a bug, and the answer is that the SMALLEST
 /// colour class did not have this many nodes per thread.
-///
-/// See the table in [`Sampler::sweeps_par`], which is where this number was measured. It bounds the
-/// thread count from above: a graph too small to give every thread this many nodes runs on fewer
-/// threads, and one too small for two runs serially. That is what makes the parallel entry points
-/// safe to call at any size — they cannot be slower than the serial path, because below the floor
-/// they ARE the serial path.
 pub const MIN_CHUNK: usize = 1024;
 
 impl<'g> Sampler<'g> {
@@ -216,25 +230,23 @@ impl<'g> Sampler<'g> {
             return;
         }
 
-        // THE FLOOR IS WHAT MAKES ASKING FOR THREADS SAFE. Below it a thread's share of a colour
-        // class finishes faster than the barrier it then waits at, so more threads is strictly
-        // worse -- and a caller cannot know that in advance, which is what made `ft_sweep_par` a
-        // trap rather than a knob.
+        // THE FLOOR IS WHAT MAKES ASKING FOR THREADS SAFE, and the argument for having one is
+        // structural rather than measured: a thread costs microseconds to create on every platform,
+        // and a chunk of a few dozen nodes costs less, so spreading work thinner than the
+        // synchronisation around it is a loss on any fabric. See [`MIN_CHUNK`] on why the NUMBER is
+        // a guard and not a tuned optimum.
         //
-        // Calibrated on a 2D glass at 18 threads, par/serial throughput, the two arms INTERLEAVED
-        // so a load spike hits both alike. That interleaving is not a detail: the first calibration
-        // ran every serial repetition and then every parallel one, and a machine that got busier in
-        // between made 256 look like the winner at 1.45x where it is really 0.48x.
+        // One machine's ratios, recorded as the observation that set the guard and not as a claim
+        // about any other fabric (2D glass, 18 threads, arms interleaved so a load spike hits both
+        // alike -- the first attempt did not interleave and chose 256, which is a loss):
         //
-        //   min chunk | n=1024   2304   4096   9216  16384    (t = threads it actually used)
-        //   ----------|--------------------------------------
-        //           1 |   0.09   0.21   0.37   0.70   1.17     all t18 -- the shipped behaviour
+        //   min chunk | n=1024   2304   4096   9216  16384
+        //   ----------|-------------------------------------
+        //           1 |   0.09   0.21   0.37   0.70   1.17
         //         256 |   0.48   0.61   0.66   0.71   1.17
-        //  -->   1024 |   1.02   0.98   1.27   2.06   2.68     t1, t1, t2, t4, t8
-        //        4096 |   1.00   0.99   1.02   0.98   1.42     threads almost never engage
+        //  -->   1024 |   1.02   0.98   1.27   2.06   2.68
+        //        4096 |   1.00   0.99   1.02   0.98   1.42
         //
-        // 1024 is the only row that is never a loss and still reaches 2.68x. Above it the floor
-        // stops engaging threads at all; below it, threads engage where they do not pay.
         let smallest = self.g.classes.iter().map(|c| c.len()).min().unwrap_or(0);
         let threads = threads.min((smallest / MIN_CHUNK).max(1));
         if threads <= 1 {

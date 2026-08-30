@@ -67,35 +67,38 @@ pub struct TemperingResult {
 /// panics at runtime, so there is nothing to spread across and the same answer comes out either way.
 /// Node-updates a round must carry before spreading its replicas across threads is worth a spawn.
 ///
-/// `replicas x sweeps_between_swaps x nodes`. Below it the replicas run serially — which is what
-/// keeps parallel tempering from being slower than itself on the small graphs it is most used on.
+/// `replicas x sweeps_between_swaps x nodes`. Below it the replicas run serially.
+///
+/// **A guard, not a tuned optimum**, for the same reason as [`crate::gibbs::MIN_CHUNK`]. The
+/// structural fact holds on any fabric: this function spawns on EVERY round, thread creation costs
+/// microseconds everywhere, and `icm::Params::default()` asks for 12,800 spawns to cover 12,800
+/// single sweeps. Refusing to spawn for less work than the spawn costs is right regardless of
+/// machine. The specific number came from ratios on one developer laptop and a different fabric
+/// will cross over elsewhere; it is placed where threading is never a loss rather than where it is
+/// fastest, because that is the property worth guaranteeing.
 pub const MIN_REPLICA_WORK: usize = 30_000;
 
 pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&mut Ledger>) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // A FLOOR, for the same reason `gibbs::sweeps_par` has one: below it, spawning a thread per
-        // replica costs more than the replica's work, and this call spawns on EVERY round.
-        // `icm::Params::default()` is 400 rounds x 2 replica sets x 16 betas with
-        // `sweeps_per_round: 1` -- 12,800 spawns to cover 12,800 single sweeps.
+        // A FLOOR, for the same reason `gibbs::sweeps_par` has one, and see [`MIN_REPLICA_WORK`] on
+        // why the number is a guard rather than a tuning. `icm::Params::default()` is 400 rounds x
+        // 2 replica sets x 16 betas with `sweeps_per_round: 1` -- 12,800 spawns to cover 12,800
+        // single sweeps, which is wrong on any machine.
         //
-        // Measured with the two arms INTERLEAVED IN ONE PROCESS, threaded/serial, 400 rounds:
+        // One machine's ratios, threaded/serial, arms interleaved in one process, recorded as the
+        // observation that set the guard:
         //
         //     n   reps  swap_every   ratio
         //   256     16           1   0.29x
-        //   256     16           4   0.77x
         //   256      8           4   0.67x
         //  1024     16           1   0.93x
         //  1024     16           4   2.87x
-        //  2025     16           1   1.55x
         //  4096     16           4   4.17x
         //
-        // The crossover sits near 30,000 node-updates per call, which is what the constant is.
-        //
-        // AN EARLIER MEASUREMENT OF THIS SAID 4.4x AT n=256 AND WAS WRONG. It ran the two arms as
-        // separate processes while the machine was heavily loaded, so the serial arm was timed
-        // against a busier machine than the threaded one. Interleaved, the same configuration is a
-        // 0.67x LOSS. Timing two things on a shared machine means timing them next to each other.
+        // An earlier measurement said 4.4x at n=256 and was wrong: it ran the two arms as separate
+        // processes on a loaded machine. Timing two things on a shared machine means timing them
+        // next to each other, or timing the machine instead.
         let work = reps.len() * swap_every * reps.first().map_or(0, |r| r.s.len());
         if reps.len() > 1 && work >= MIN_REPLICA_WORK {
             let counted: Vec<u64> = std::thread::scope(|scope| {

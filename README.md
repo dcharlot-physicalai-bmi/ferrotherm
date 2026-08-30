@@ -218,7 +218,7 @@ thermodynamic-computing corpus currently leaves empty.
   At 8×8 both arms tie on all twenty instances — a 64-spin glass is solved by either, so the unit
   test runs at 16 and `examples/icm_scaling` measures where the separation opens. `sqa` is simulated
   quantum annealing by Suzuki–Trotter: `M` classical slices coupled at
-  `J⊥ = −(M/2β)·ln tanh(βΓ/M)`, with `Γ` annealed down but **never to zero**, where `J⊥` diverges.
+  `J⊥ = −(1/2β)·ln tanh(βΓ/M)`, with `Γ` annealed down but **never to zero**, where `J⊥` diverges.
   One slice drops the coupling and *is* classical annealing — the honest control, compared at
   matched work rather than matched steps. `sdp::goemans_williamson` rounds the relaxation from the
   primal side: **the only worst-case guarantee in max-cut**, and `guaranteed` is false on most

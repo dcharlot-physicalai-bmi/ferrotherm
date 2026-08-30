@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+### ⛔ Simulated quantum annealing was classical annealing wearing M copies of the spins
+
+`src/sqa.rs` computed the Trotter coupling as `J⊥ = −(M/2β)·ln tanh(βΓ/M)` while scaling the
+intra-slice field by `1/M` and accepting at full `β`. Those belong to two different Suzuki–Trotter
+conventions and cannot both hold: the dimensionless coupling the mapping actually fixes is
+`βJ⊥ = ½ ln coth(βΓ/M)`, and the shipped code produced `(M/2)·ln coth` — **M times too strong.**
+
+This is checkable exactly, with no sampler and no timing. A single spin in a transverse field has a
+closed form, `⟨sz⟩ = (h/E)·tanh(βE)` with `E = √(h²+Γ²)`; and for one site the classical (d+1)
+system the mapping produces is a ring of `M` spins, which a 2×2 transfer matrix solves exactly at
+any `M`. At `h = 0.5, Γ = 1.0, β = 1.0`, where the quantum answer is **0.3608**:
+
+| M | `J⊥ = 1/2β·ln coth` (fixed) | `J⊥ = M/2β·ln coth` (shipped) |
+|---|---|---|
+| 4 | 0.3679 | 0.4621 |
+| 8 | 0.3626 | 0.4621 |
+| 16 | 0.3613 | 0.4621 |
+| 64 | 0.3609 | overflows f64 |
+
+**0.4621 is `tanh(βh)` — the classical value, identical at every M and completely independent of
+Γ.** The slices were locked so rigidly that the transverse field did nothing at all. So this module
+was running classical annealing on M redundant copies of the spins, paying M× the work for it, and
+calling it quantum — and the transverse field, the one thing the module exists for, was inert.
+
+Fixed to `−(1/2β)·ln tanh(βΓ/M)`. A test now drives the transfer matrix and requires the error
+against the quantum answer to shrink monotonically in M and reach it by M = 512; with the old
+constant it fails at the first size. The module doc and the README both carried the wrong formula
+and are corrected.
+
+**Any previously published comparison involving SQA was measured on this.** The max-cut shootout
+computes its rows live, so its next run reflects the fix; a ranking that put SQA last was ranking an
+implementation whose transverse field did nothing.
+
+*Reported by an adversarial audit agent from the source alone. I confirmed it by derivation and by
+the transfer matrix, not by timing anything.*
+
+### Two thread floors relabelled: guards, not tuned optima
+
+`gibbs::MIN_CHUNK` and `tempering::MIN_REPLICA_WORK` were documented as though the numbers were
+results. They are not, and the docs now say so plainly.
+
+What is fabric-independent is the *structure*: creating an OS thread costs microseconds everywhere,
+a colour-class chunk of a few dozen nodes costs less, and `icm::Params::default()` asked for 12,800
+spawns to cover 12,800 single sweeps. Refusing to spread work thinner than the synchronisation
+around it is right on any machine. What is **not** fabric-independent is the crossover, and both
+numbers came from ratios on one developer laptop. They are placed where the parallel path is never a
+*loss* rather than where it is fastest, because that property survives being wrong about the exact
+crossover; a performance-tuned value would not. ferrotherm targets every compute fabric, and a
+constant fitted to one laptop is a guard at best.
+
 ### The flagship control number was a coordinate published as a property, and one cell was wrong
 
 `WORKLOADS.md`, `src/mppi.rs` and `ROADMAP.md` all led with **"7.1% above the provable optimum"**.
