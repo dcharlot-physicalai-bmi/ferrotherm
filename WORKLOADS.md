@@ -143,6 +143,20 @@ a sampler is for.
 visible sites, 247,904 parameters, real binarised Fashion-MNIST: per-pixel MAE **0.128** against a
 noise baseline of **0.474**, so samples land 72.9% closer to the data than noise.
 
+⛔ **That figure is not reproducible, and the reason is a defect in how it was taken.**
+`examples/dtm_scale` trained inside `while start.elapsed() < budget`, defaulting to **120 seconds**
+— so the quality it reported was a function of how fast the machine was and what else was running
+on it. A faster box takes more gradient steps and gets a better number from the identical command.
+That is a division by wall-clock time reported as a property of the method, which is exactly what
+this repository's `host` and `ledger` documentation warns against everywhere else. Neither the step
+count nor the machine was recorded, so **0.128 cannot be reproduced or refuted**.
+
+The example is step-bounded now (`dtm_scale <images> [steps]`, default 2000) and prints the step
+count, grid, layer count, image count and learning rate beside the MAE. The wall clock survives only
+as a safety stop, and a run it truncates says so loudly rather than reporting a quality figure as
+though the run had finished. **Regenerating this row needs the dataset and a real training run; the
+number above stands as an unreproducible historical claim until then, and should not be quoted.**
+
 **The total-correlation penalty is load-bearing, measured both ways.** Without it `|J|` grows
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.

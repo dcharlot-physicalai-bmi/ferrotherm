@@ -458,7 +458,7 @@ reporting what was measured against it, including where the method stops.
 | **Categorical optimisation** (`categorical.rs`) | exact feasibility | domain wall needs a **3× weaker** penalty |
 | **Thermodynamic linear algebra** (`tla.rs`) | Gaussian elimination | exact-transition integrator unbiased; EM bias law confirmed |
 | **Spin-glass physics** (`ising.rs`, `planted.rs`) | Onsager; planted optima | agrees to **0.0086**, annealed in |
-| **EBM training** (`dtm.rs`) | data statistics vs noise | **72.9%** closer to data than noise, at published scale |
+| **EBM training** (`dtm.rs`) | data statistics vs noise | ⛔ **72.9%** closer to data than noise — but taken under a 120-second WALL-CLOCK training budget, so it is a function of machine speed and cannot be reproduced. See WORKLOADS.md; the example is step-bounded now |
 
 The last row is calibrated in the file: per-pixel marginals are a weak metric and this is not the
 published FID. Reaching that is a known and affordable run, not a research problem.

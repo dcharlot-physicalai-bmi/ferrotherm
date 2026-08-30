@@ -35,15 +35,31 @@ fn main() {
     // caller having forgotten a path. Every other example in this directory runs with no arguments;
     // this one needs a dataset, and the difference should look deliberate.
     let Some(path) = a.first() else {
-        eprintln!("usage: dtm_scale <fmnist-images> [seconds] [L] [T]");
+        eprintln!("usage: dtm_scale <fmnist-images> [steps] [L] [T]");
         eprintln!();
         eprintln!("  <fmnist-images>  an idx3-ubyte file, e.g. train-images-idx3-ubyte");
-        eprintln!("  [seconds]        wall-clock budget for training      (default 120)");
+        eprintln!("  [steps]          TRAINING STEPS, not seconds          (default 2000)");
         eprintln!("  [L]              pattern-grid side                   (default 70)");
         eprintln!("  [T]              denoising steps                     (default 8)");
         std::process::exit(2);
     };
-    let budget = Duration::from_secs(a.get(1).and_then(|s| s.parse().ok()).unwrap_or(120));
+    // STEPS, NOT SECONDS, AND THE DIFFERENCE IS THE WHOLE POINT.
+    //
+    // This trained inside `while start.elapsed() < budget` with a default of 120 seconds, so the
+    // quality it reported -- the per-pixel MAE that WORKLOADS.md publishes as the flagship
+    // EBM-training result -- was a function of how fast the machine was and what else was running
+    // on it. A faster box took more gradient steps and got a better number for the same command.
+    // That is a division by wall-clock time reported as a property of the method, which is exactly
+    // what this crate's `host` and `ledger` documentation warns against everywhere else.
+    //
+    // A step count is reproducible on any fabric. The wall clock survives only as a SAFETY STOP, so
+    // an accidental five-million-step run on a slow machine can still be interrupted -- and it says
+    // loudly when it fires, because a truncated run reporting a quality figure is the original
+    // defect wearing a different hat.
+    let steps_wanted: usize = a.get(1).and_then(|s| s.parse().ok()).unwrap_or(2000);
+    let wall_cap = Duration::from_secs(
+        std::env::var("FT_DTM_WALL_CAP").ok().and_then(|s| s.parse().ok()).unwrap_or(3600),
+    );
     let l: usize = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(70);
     let t_steps: usize = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(8);
 
@@ -107,7 +123,7 @@ fn main() {
     }
 
     // ---- train within the budget ----
-    println!("\ntraining for {} s...", budget.as_secs());
+    println!("\ntraining for {steps_wanted} steps (wall cap {} s, a safety stop only)...", wall_cap.as_secs());
     let lr = 0.02;
     let start = Instant::now();
     let mut steps = 0usize;
@@ -118,7 +134,12 @@ fn main() {
     let all: Vec<usize> = (0..n).collect();
     let latents: Vec<usize> = (0..n).filter(|i| !visible.contains(i)).collect();
 
-    while start.elapsed() < budget {
+    let mut truncated = false;
+    while steps < steps_wanted {
+        if start.elapsed() >= wall_cap {
+            truncated = true;
+            break;
+        }
         let t = steps % t_steps;
         let dt = times[t + 1] - times[t];
         let gam = gamma_coupling(gamma_x, dt, 2);
@@ -230,10 +251,22 @@ fn main() {
     // just the data's own |mean| profile: that is the number to beat.
     let baseline: f64 = data_m.iter().map(|v| v.abs()).sum::<f64>() / px as f64;
     println!("\nper-pixel mean activation:  data {data_mean:+.3}   model {model_mean:+.3}");
+    // WHAT PRODUCED THIS NUMBER, printed beside it. A quality figure without its step count is not
+    // reproducible on another machine, and that is how the published one came to be a function of
+    // wall-clock speed rather than of the method.
+    println!("\nrun: {steps} steps, L={l}, T={t_steps}, {} images, lr {lr}", data.len());
     println!("per-pixel MAE vs data:      model {mae:.3}   untrained-noise baseline {baseline:.3}");
+    if truncated {
+        println!(
+            "\n*** TRUNCATED: the wall-clock safety stop fired at {:.0} s after {steps} of the\n\
+             *** {steps_wanted} steps asked for. THIS NUMBER IS NOT THE ONE THIS COMMAND NAMES.\n\
+             *** Quote it only with the step count above, or raise FT_DTM_WALL_CAP and re-run.",
+            start.elapsed().as_secs_f64()
+        );
+    }
     println!("verdict: {}", if mae < baseline {
         format!("the trained chain is closer to the data than noise by {:.1}%", 100.0 * (1.0 - mae / baseline))
     } else {
-        "no better than noise within this budget".to_string()
+        format!("no better than noise after {steps} steps")
     });
 }
