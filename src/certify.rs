@@ -469,29 +469,93 @@ mod tests {
 
     #[test]
     fn the_convergence_check_sees_a_drifting_trace() {
-        // The Geweke-style check, verified on a trace whose drift is known rather than hoped for.
+        // THIS TEST USED TO CALL NEITHER `certify` NOR ANYTHING IT TESTS.
         //
-        // It does fire on real chains, and this was written before that was demonstrated. Through
-        // the HTTP surface, a 24x24 lattice at beta 0.7 with no burn-in reports "early draws
-        // average -0.0197 and late ones -0.9846, a gap of 6.2 standard errors" -- a chain
-        // coarsening out domains and travelling from disorder to near-saturation while it is being
-        // sampled. beta_eff cannot see that, being a purely local statistic: a chain trapped in a
-        // metastable configuration still has locally correct conditionals.
-        let mut rng = Pcg::new(21, 0);
-        let n = 3000;
-        let drifting: Vec<f64> = (0..n)
-            .map(|i| i as f64 / n as f64 + 0.05 * (rng.f64() - 0.5))
+        // It built two synthetic traces and then asserted only that its own fixtures behaved --
+        // that the drifting one drifted and the steady one did not. It never constructed a
+        // `Certificate`, never mentioned `Finding::NotConverged`, and never touched the
+        // standard-error inflation or the z > 4 threshold it is named for. It was green for every
+        // possible implementation of the check, including no implementation at all.
+        //
+        // It drives `certify` now, and requires the finding to appear on a drifting chain and to
+        // stay away from a steady one. The graph is small enough that everything else in the
+        // certificate is computable, so a failure here is about convergence and not about setup.
+        // THE FIXTURE TOOK THREE ATTEMPTS AND EACH FAILURE WAS INFORMATIVE, so they are recorded.
+        //
+        // (1) A hand-built ramp of independent draws: `NotConverged` did not fire, correctly -- a
+        //     ramp is maximally autocorrelated, `tau_int` came out at 210, and the standard-error
+        //     inflation the check applies swallowed the gap. The check was right, the fixture was a
+        //     drift no honest statistic should call significant.
+        // (2) A real chain on a 4x4 lattice: sixteen spins equilibrate in a few sweeps, so there is
+        //     no drift to find.
+        // (3) A real chain on 16x16: the transient finishes inside the first third of the window, so
+        //     `early` is already at -0.96 and there is nothing left to compare.
+        //
+        // What works is a lattice big enough that coarsening is SLOW relative to the window: 32x32
+        // just below the critical point, sampled from a random start with no burn-in, over a window
+        // short enough that the transient spans it. early -0.27 -> late -0.87.
+        let g = crate::ising::lattice2d(32, 1.0);
+        let n = 200;
+
+        // A REAL CHAIN, not a synthetic ramp. The first attempt at this test built the drift by
+        // hand -- independent draws whose bias ramped upward -- and `NotConverged` did not fire,
+        // correctly: a hand-built ramp is maximally autocorrelated, `tau_int` came out at 210, and
+        // the standard-error inflation that the check applies swallowed the gap. The check was
+        // right and the fixture was wrong.
+        //
+        // So this is what the module doc describes instead: a lattice below its critical
+        // temperature, sampled from a random start with NO BURN-IN, coarsening out domains and
+        // travelling from disorder toward saturation while it is being sampled.
+        let mut smp = crate::gibbs::Sampler::new(&g, 0.5, 7);
+        let drifting: Vec<Vec<i8>> = (0..n)
+            .map(|_| {
+                smp.sweep(None);
+                smp.s.clone()
+            })
             .collect();
-        let steady: Vec<f64> = (0..n).map(|_| 0.5 + 0.05 * (rng.f64() - 0.5)).collect();
-        let m = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
-        let cut = n / 3;
+        let trace_d: Vec<f64> = drifting
+            .iter()
+            .map(|s| s.iter().map(|&x| x as f64).sum::<f64>() / g.n as f64)
+            .collect();
+        let cert = certify(&g, 0.5, &drifting, &trace_d);
+        let found = cert
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::NotConverged { .. }));
         assert!(
-            (m(&drifting[..cut]) - m(&drifting[n - cut..])).abs() > 0.5,
-            "the drifting trace must actually drift"
+            found,
+            "a chain travelling from disorder to saturation must be reported as not converged; \
+             findings were {:?}",
+            cert.findings
         );
+        // And the finding must carry numbers a reader can act on, not just fire.
+        if let Some(Finding::NotConverged { early, late, sigma }) = cert
+            .findings
+            .iter()
+            .find(|f| matches!(f, Finding::NotConverged { .. }))
+        {
+            assert!(late.abs() > early.abs(), "it leaves disorder: early {early} late {late}");
+            assert!(*sigma > 4.0, "and it must clear the threshold it uses: z = {sigma}");
+        }
+
+        // A steady chain must NOT trip it, or the check is an alarm that is always on.
+        let mut warm = crate::gibbs::Sampler::new(&g, 0.5, 11);
+        warm.sweeps(40_000, None); // burnt in, which is the whole difference
+        let steady: Vec<Vec<i8>> = (0..n)
+            .map(|_| {
+                warm.sweep(None);
+                warm.s.clone()
+            })
+            .collect();
+        let trace_s: Vec<f64> = steady
+            .iter()
+            .map(|s| s.iter().map(|&x| x as f64).sum::<f64>() / g.n as f64)
+            .collect();
+        let clean = certify(&g, 0.5, &steady, &trace_s);
         assert!(
-            (m(&steady[..cut]) - m(&steady[n - cut..])).abs() < 0.02,
-            "the steady trace must not"
+            !clean.findings.iter().any(|f| matches!(f, Finding::NotConverged { .. })),
+            "a stationary chain must not be reported as drifting; findings were {:?}",
+            clean.findings
         );
     }
 

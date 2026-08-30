@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Two checks that could not fail, and a fixture that took three attempts
+
+**`the_convergence_check_sees_a_drifting_trace` never called `certify`.** It built two synthetic
+traces and asserted only that its own fixtures behaved — that the drifting one drifted. It never
+constructed a `Certificate`, never mentioned `Finding::NotConverged`, and never touched the
+standard-error inflation or the `z > 4` threshold it is named for. **It was green for every possible
+implementation of the check, including none.**
+
+Writing a real one took three attempts, and each failure was worth keeping:
+
+1. **A hand-built ramp** of independent draws — `NotConverged` did not fire, *correctly*. A ramp is
+   maximally autocorrelated, `tau_int` came out at 210, and the inflation the check applies swallowed
+   the gap. The check was right and the fixture was a drift no honest statistic should call
+   significant.
+2. **A real chain on 4×4** — sixteen spins equilibrate in a few sweeps; no drift exists to find.
+3. **A real chain on 16×16** — the transient finishes inside the first third of the window, so
+   `early` is already at −0.96 and there is nothing left to compare.
+
+What works is a lattice where coarsening is slow relative to the window: 32×32 just below the
+critical point, no burn-in, early −0.27 → late −0.87. The test now requires the finding to appear
+there, to carry numbers that clear its own threshold, and to stay *away* from the same chain burnt
+in — an alarm that is always on is not an alarm.
+
+**And `examples/trained_tradeoff` asserted nothing.** It backs the README's headline
+mixing-expressivity result, computes its table live, and then stated every conclusion as a **string
+literal**: `"67.4% vs 27.4%"`, `"the WIDE model is the slowest thing in the table at 2.0"`. Zero
+`assert`s in the file, so CI's "the example runs" meant nothing about what it measured — a run that
+found the opposite would still have exited 0 with the original prose printed underneath.
+
+Every figure in that prose is now interpolated from the measured rows, and the two orderings the
+README quotes are asserted: depth must buy strictly less expressivity at every latent count, and
+`tau` must track what was *learned* (ρ > 0.5) and not *depth* (ρ < 0.2). Verified by breaking one
+threshold and watching the example exit 101.
+
 ### The automatic penalty measured the wrong quantity, and a hard constraint lost to it
 
 `Model::effective_penalty` chose `2 × max |coeff|` over the objective's individual terms. But

@@ -140,6 +140,29 @@ fn main() {
         println!();
     }
 
+    // The per-latent-count comparison, written out of the measured rows so the sentence above
+    // cannot outlive the numbers under it.
+    fn learned_summary(rows: &[(usize, &'static str, usize, f64, f64)]) -> String {
+        let mut out = Vec::new();
+        for latents in [4usize, 6, 12] {
+            let arms: Vec<String> = rows
+                .iter()
+                .filter(|r| r.0 == latents)
+                .map(|r| format!("{:.1}%", r.3))
+                .collect();
+            out.push(format!("{} at {latents} latents", arms.join(" vs ")));
+        }
+        out.join(", ")
+    }
+    let slowest = *rows
+        .iter()
+        .max_by(|a, b| a.4.partial_cmp(&b.4).unwrap())
+        .expect("rows");
+    let fastest = *rows
+        .iter()
+        .min_by(|a, b| a.4.partial_cmp(&b.4).unwrap())
+        .expect("rows");
+
     // Spearman rank correlation, which is the right statistic here: the question is whether the
     // ORDERINGS agree, and neither axis has any reason to be linear in the other.
     let spearman = |xs: &[f64], ys: &[f64]| -> f64 {
@@ -172,13 +195,14 @@ fn main() {
     println!(
         "AND THE SENTENCE SPLITS IN TWO. It makes two claims and they do not both survive.\n\n\
          (A) LATENTS WITHOUT CONNECTIVITY BUY LESS EXPRESSIVITY -- CONFIRMED, and not marginally.\n\
-         At every latent count, more layers learn strictly less: 67.4% vs 27.4% at four latents,\n\
-         92.1% vs 46.8% vs 26.6% at six, 96.3% vs 93.1% vs 65.5% at twelve. Monotone in depth every\n\
-         time, spreads under a point. That half of the sentence is right.\n\n\
+         At every latent count, more layers learn strictly less: {}. Monotone in depth every time,\n\
+         spreads under a point. That half of the sentence is right.\n\n\
          (B) THEY THEREFORE COST MORE MIXING TIME -- NOT AS STATED. The deep arms mix FASTER, not\n\
-         slower. At six latents the WIDE model is the slowest thing in the table at 2.0 while the\n\
-         three-layer model sits at 0.8. Depth does not independently make this sampler's life\n\
-         harder; on this data it makes it easier."
+         slower. The slowest model in the table is the {} arm at tau {:.1}, and the fastest is the\n\
+         {} arm at {:.1}. Depth does not independently make this sampler's life harder; on this data\n\
+         it makes it easier.",
+        learned_summary(&rows),
+        slowest.1, slowest.4, fastest.1, fastest.4
     );
     println!(
         "\nBECAUSE A MODEL THAT HAS NOT LEARNED HAS NOTHING TO GET STUCK IN. tau_int = 0.5 is not a\n\
@@ -193,6 +217,33 @@ fn main() {
          and there the deep model is slower, 1.7 against 1.5. That is the effect the sentence\n\
          describes, it is in the direction claimed, and it is a tenth the size of the effect that\n\
          expressivity alone accounts for."
+    );
+
+    // TEETH. Every sentence above is now interpolated from `rows`, but interpolation only stops the
+    // prose going stale -- it does not stop the RESULT going stale. CI runs this example and treats
+    // exit 0 as a pass, so without an assertion a run that measured the opposite would still be
+    // green. These are the two orderings the README and llms.txt quote.
+    for latents in [4usize, 6, 12] {
+        let arms: Vec<&(usize, &str, usize, f64, f64)> =
+            rows.iter().filter(|r| r.0 == latents).collect();
+        for w in arms.windows(2) {
+            assert!(
+                w[0].3 > w[1].3,
+                "claim (A): at {latents} latents the {} arm learned {:.1}% and the deeper {} arm \
+                 learned {:.1}% -- depth must buy strictly LESS expressivity",
+                w[0].1, w[0].3, w[1].1, w[1].3
+            );
+        }
+    }
+    assert!(
+        spearman(&learned, &taus) > 0.5,
+        "claim (B): tau must track what was LEARNED (rho = {:+.2}, expected clearly positive)",
+        spearman(&learned, &taus)
+    );
+    assert!(
+        spearman(&depths, &taus) < 0.2,
+        "claim (B): tau must NOT track DEPTH (rho = {:+.2}, expected near zero or negative)",
+        spearman(&depths, &taus)
     );
     println!(
         "\nTHE DYNAMIC RANGE IS SMALL AND SAYING SO IS PART OF THE RESULT. Every tau here is between\n\
