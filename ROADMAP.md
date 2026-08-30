@@ -492,32 +492,43 @@ What we port to Rust, and why each is worth owning.
 Three of these are papers with no code. Publishing working Rust for them is, on its own, a
 contribution the field currently lacks.
 
-### ⛔ Open defect: the minor-embedding placer cannot build a chain when one is needed
+### ✅ Closed: the minor-embedding placer could not build a chain when one was needed
 
-`src/embed.rs` does not embed a **star with eight leaves** onto a 512-site Chimera — the simplest
-graph that cannot fit on a degree-6 machine without exactly one chain, using about ten of those
-sites. Every clique past `K_7` fails the same way, and `K_7` is precisely the largest that needs no
-chain. Enlarging the machine does not help: `K_8` fails on 288, 512 and 1152 sites alike, at every
-seed and at twenty times the rip-up rounds.
+`src/embed.rs` did not embed a star with eight leaves onto a 512-site Chimera — the simplest graph
+needing exactly one chain — and failed on every clique past `K_7`, at every machine size and round
+budget. Two independent defects, both now fixed:
 
-From the inside, every chain stays **one site long** and the same three sites stay shared round
-after round. The placer *can* build a long chain when asked early — `K_6` gets one nine sites long —
-but never grows one to relieve a neighbour with nowhere left to sit, which is the move minor
-embedding exists to make.
+**The root choice collapsed the chain.** `steiner_ish` picked its root by minimum total
+shortest-path distance, which is precisely the site whose placed neighbours all sit one hop away —
+so every back-walk was a single edge and subtracting the neighbours' own sites left the singleton
+`{root}`. The union was seven sites; the *subtraction* collapsed it. The runner-up root would have
+given the two-site hub that is the fix, sitting second in the candidate list and unreachable.
 
-Ramping the overlap penalty, the published fix for a rip-up loop that will not converge, was tried
-and **measured not to help**: both options a congested variable has pay the penalty, so scaling it
-leaves their order unchanged. The repair is a redesign of the placement step, not a constant.
+**And cliques never reached round 1 at all.** The same subtraction removed sites merely *interior*
+to a path routed through a third neighbour's chain, severing the chain from the neighbour it was
+built to reach. The round then passed its only test — "is any site shared" — `verify` correctly
+rejected it, and `e.verify(...).ok()?` turned that rejection into an immediate `None` for the whole
+function. More rounds cannot help a search that quits in round 0, which is why enlarging the machine
+and multiplying the round budget were both measured to be irrelevant.
 
-Two tests pin the current behaviour and say what to do when it is fixed. Until then `embed` is
-sound when it succeeds — every result is verified — and succeeds only where its early greedy
-placement happens to build the chains needed.
+Measured on `chimera(8,8,4)`, 16 seeds, every result verified: a star of 8/12/20 leaves 0→16 of 16;
+`K_8`, `K_12`, `K_20` 0→16 of 16; `K_24` 0→15 of 16. On a 736-instance paired corpus the repair
+solves 141 instances the original could not and loses 2, with chain length shorter on 68 and longer
+on 43 (mean −0.19).
 
-**This blocks measurement, not just capability.** `examples/chain_strength` calibrates the chain
-coupling against a proved optimum and finds the default `2×` is the smallest multiple with no broken
-chains. It cannot test the *other* failure — a chain strength so large it swamps the model — because
-exhibiting that needs a logical problem hard enough for a swamped search to lose, which needs more
-variables and longer chains, which the placer cannot deliver.
+**Saying "no" is no longer free, so it is now bounded twice.** The old placer abandoned the search
+on the first unroutable variable, so a hopeless input returned instantly; repairing that meant
+`K_100` spent 95 s proving nothing. `site_lower_bound` is a counting argument — a chain of `L` sites
+on degree-`d` hardware offers at most `L(d−2)+2` ports — and when it exceeds the machine **no
+embedding exists**, which is the one place `None` is a proof. `K_60` and `K_100` are refused in
+microseconds; `K_33` and `K_40`, which it cannot rule out, are still searched properly.
+`DEFAULT_SEARCH_BUDGET` bounds the rest.
+
+**And repairing it unblocked a measurement that changed a shipped default.**
+`examples/chain_strength` could only run at six logical variables, which barely need chains, so the
+rigidity half of the trade-off never appeared. At twelve variables with 18-site chains it appears
+immediately, and the standard `2×` first guess turns out to break 9.7% of chains: the default is
+now `4×`, the first multiple that breaks none.
 
 ---
 

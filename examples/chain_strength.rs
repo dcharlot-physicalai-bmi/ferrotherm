@@ -36,19 +36,17 @@ use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 use ferrotherm::{branch, embed, ising, tempering};
 
-const SEEDS: u64 = 8;
-/// Logical variables.
+const SEEDS: u64 = 24;
+/// Logical variables. Twelve: dense enough that every one becomes a real chain on a degree-6
+/// machine, small enough that branch and bound proves the optimum for every instance.
 ///
-/// SIX, AND NOT MORE, FOR A REASON THAT IS ITSELF A FINDING. Chimera sites have degree 6, so K_7 is
-/// the largest clique that needs no chain at all and K_8 is the first that does -- and the placer in
-/// `src/embed.rs` FAILS on every clique past K_7, on machines it uses 3% of. That defect is written
-/// up on `embed_with` and pinned by two tests. K_6 is what this file can measure with, and it is
-/// enough: its embedding carries chains up to nine sites long, so the constant under test is doing
-/// real work here even though the logical problem is small.
-const NV: usize = 6;
-
-/// A dense logical problem: every pair coupled, +/-1. Dense is the point -- a model that already
-/// fits the hardware needs no chains and would measure nothing.
+/// THIS USED TO SAY SIX, AND THE REASON IT DID IS THE POINT. The placer could not embed any clique
+/// past K_7, so the only sizes this file could measure were ones whose chains barely existed --
+/// which meant the upper half of the sweep was untested rather than passed, because exhibiting a
+/// chain strength so large it swamps the model needs a problem hard enough for a swamped search to
+/// lose. The placer is repaired, so the question can now be asked at a size where it means
+/// something.
+const NV: usize = 12;
 fn logical(seed: u64) -> Graph {
     let mut rng = Pcg::new(seed, 0x0C4A_1234);
     let mut b = GraphBuilder::new(NV);
@@ -73,7 +71,7 @@ fn main() {
         hardware.n
     );
 
-    let multiples = [0.25f64, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+    let multiples = [0.25f64, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 16.0];
     println!(
         "{:>10} {:>10} {:>9} {:>10} {:>9}",
         "chain x", "strength", "broken", "gap", "found"
@@ -149,29 +147,27 @@ fn main() {
     }
 
     println!(
-        "\nTHE DEFAULT SURVIVES, AND IT IS THE SMALLEST MULTIPLE THAT DOES. Below 1x the chains\n\
-         break -- 27.1% of variables at 0.25x -- and the answer is 1.25 above the proved optimum. At\n\
-         1x a tenth of chains still break, though this family is easy enough that the majority vote\n\
-         happens to land on the optimum anyway, which is luck and not a result. At the default 2x\n\
-         nothing breaks and every instance is solved exactly. Two is the standard first guess and on\n\
-         this family it is right."
+        "\nTHE DEFAULT WAS WRONG, AND THIS IS THE MEASUREMENT THAT MOVED IT. Two is the standard\n\
+         first guess in the literature and it was this crate's default until this table existed. At\n\
+         two, a tenth of chains BREAK. Four is the first multiple that breaks none, and it ties the\n\
+         best gap and the best hit rate. DEFAULT_CHAIN_MULTIPLE is now four."
     );
     println!(
-        "\nAND THE OTHER HALF OF THE TRADE-OFF DID NOT APPEAR, WHICH IS THE HONEST HEADLINE. The\n\
-         reason to fear a large chain strength is that it swamps the model: every move that would\n\
-         explore the problem has to pay the chain first, so the search spends itself holding chains\n\
-         together. Nothing of the sort shows up to 16x -- eight times the default, and still 8 of 8\n\
-         exact. That is not evidence the failure is imaginary. It is evidence that a six-variable\n\
-         clique under a 120-stage anneal is too easy to exhibit it: a rigid landscape is still\n\
-         solved when the landscape is small."
+        "\nAND BOTH FAILURE MODES ARE HERE, WHICH IS THE WHOLE POINT OF THE SWEEP. They are not\n\
+         symmetric. Too weak ANNOUNCES ITSELF -- the broken column runs 69.8%, 58.0%, 32.6% as the\n\
+         chains give way. Too strong is SILENT: at sixteen nothing breaks at all, every chain holds,\n\
+         no warning fires anywhere, and the answer is nine times further from the optimum than at\n\
+         four. A caller watching only for broken chains would read the worst row in this table as\n\
+         the safest one."
     );
     println!(
-        "\nAND THE INSTANCE THAT WOULD EXHIBIT IT CANNOT BE BUILT, BECAUSE OF THE OTHER DEFECT.\n\
-         Showing rigidity needs a logical problem hard enough that a swamped search actually loses,\n\
-         which means more variables and longer chains -- and `src/embed.rs` cannot place any clique\n\
-         past K_7, on machines it fills 3% of. So the upper half of this sweep is untested rather\n\
-         than passed, and it will stay that way until the placer is repaired. The two findings are\n\
-         one finding: an embedding layer that cannot build chains cannot be asked what chains cost."
+        "\nTHIS COULD NOT BE MEASURED UNTIL THE PLACER WAS REPAIRED, and that is worth saying\n\
+         plainly because the previous version of this file said the opposite conclusion honestly and\n\
+         was still wrong. It ran at SIX logical variables, because the placer could not embed any\n\
+         clique past K_7. Six variables on a degree-6 machine barely needs chains, so the rigidity\n\
+         half never appeared, the sweep looked flat above the default, and the file correctly\n\
+         reported that it had not exhibited the failure rather than that the failure was absent.\n\
+         Twelve variables with chains of eighteen sites exhibit it immediately."
     );
     println!(
         "\nREAD THE BROKEN COLUMN FIRST. A row with broken chains has not answered the question at\n\

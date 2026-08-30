@@ -2,6 +2,81 @@
 
 ## Unreleased
 
+### The minor-embedding placer works, and repairing it moved a shipped default
+
+The placer did not embed a star with eight leaves onto a 512-site Chimera, and failed on every
+clique past `K_7`. **Two independent defects, and my published diagnosis of it was wrong.**
+
+**The root choice collapsed the chain.** `steiner_ish` picked its root by minimum total shortest-path
+distance — which is precisely the site whose placed neighbours all sit one hop away, so every
+back-walk was a single edge and subtracting the neighbours' sites left the singleton `{root}`. On the
+traced star the union was *seven* sites; the subtraction collapsed it. The runner-up root would have
+given the two-site hub that is the fix, sitting second in the candidate list and unreachable.
+
+**And cliques never reached round 1.** The same subtraction removed sites merely *interior* to a
+path routed through a third neighbour's chain, severing the chain from the neighbour it was built to
+reach. The round passed its only test — "is any site shared" — `verify` correctly rejected it, and
+`e.verify(...).ok()?` turned that rejection into an immediate `None` for the whole function. More
+rounds cannot help a search that quits in round 0, which is why 20× the rounds and 4× the machine
+were both measured to be irrelevant.
+
+My write-up blamed a single mechanism and put the cliff at `K_8`. The real cliff is `star(6)`/`K_7`,
+and the variance came from the first variable landing on one of the 128 boundary sites that have
+degree 5 rather than 6.
+
+| on chimera(8,8,4), 16 seeds, every result verified | was | is |
+|---|---|---|
+| star of 8, 12 or 20 leaves | 0/16 | **16/16** |
+| `K_8`, `K_12`, `K_20` | 0/16 | **16/16** |
+| `K_24` | 0/16 | **15/16** |
+
+On a 736-instance paired corpus the repair solves **141 instances the original could not and loses
+2**, with chain length shorter on 68 and longer on 43 (mean −0.19).
+
+#### Saying "no" stopped being free, so it is bounded twice
+
+The old placer abandoned the search on the first unroutable variable, so a hopeless input returned
+in microseconds — it never spent its rounds because it never reached round 1. Repairing that is most
+of why cliques embed at all, and it also meant `K_100` spent **95 seconds** proving nothing, on a
+path `crate::fabric` and the Hitachi driver both reach.
+
+`site_lower_bound` is a counting argument: a chain of `L` sites on degree-`d` hardware can offer at
+most `L(d−2)+2` ports, so a variable of degree `k` needs `ceil((k−2)/(d−2))` sites. When the sum
+exceeds the machine, **no embedding exists** — the one place in this module where `None` is a proof
+rather than a failure to find. `K_60` and `K_100` are now refused in microseconds; `K_33` and `K_40`,
+which the argument cannot rule out, are still searched properly. A test checks the bound against
+every embedding it admits, because a bound that overshot by one site would turn a solvable program
+into a permanent "impossible" with nothing visible from outside.
+
+#### And it unblocked a measurement that changed a default
+
+`examples/chain_strength` could only run at six logical variables, which barely need chains — so the
+*rigidity* half of the trade-off never appeared and the file honestly reported that it had failed to
+exhibit it. At twelve variables with 18-site chains it appears immediately. 24 instances, each scored
+against an optimum branch and bound **proved**:
+
+| chain × | broken | gap above optimum | optimum found |
+|---|---|---|---|
+| 1.00 | 32.6% | 5.42 | 7/24 |
+| 2.00 | 9.7% | 1.50 | 15/24 |
+| 3.00 | 2.1% | **0.42** | 20/24 |
+| **4.00** | **0.0%** | 0.50 | **20/24** |
+| 8.00 | 0.0% | 1.83 | 14/24 |
+| 16.00 | 0.0% | 4.67 | 5/24 |
+
+**`DEFAULT_CHAIN_MULTIPLE` is now 4.0, and it was 2.0.** Two is the standard first guess in the
+literature; here it breaks a tenth of all chains, and a broken chain is one variable holding two
+values resolved by a coin toss. The two failure modes are not symmetric: too weak **announces
+itself** in the broken column, and too strong is **silent** — sixteen breaks nothing, reports clean,
+and lands nine times further from the optimum. A caller watching only for broken chains would read
+the worst row in that table as the safest.
+
+Found by a four-way workflow: three independent diagnoses, four competing repairs in isolated
+worktrees, each adversarially verified by an agent told to refute it and re-measure rather than
+trust the report. All four repairs worked; the one shipped was chosen on the paired-corpus
+generality measurement, and one was rejected for regressing crowded machines (`cycle20` on `king(6)`,
+8/8 → 1/8).
+
 ### The version gate counted nested checkouts as crates
 
 `check-versions.sh` enumerated manifests with `find .` and `grep -r .`, which descend into **nested
