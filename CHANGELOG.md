@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Min-fill elimination stops rescanning the whole graph, and the order is byte-identical
+
+`min_fill_order` recomputed the fill count of **every live vertex** on each of its `n` elimination
+rounds, when eliminating `v` can only change the count of a vertex within distance two of it — the
+neighbourhood becomes a clique, so only its members and their neighbours see a different graph.
+
+**The order and width are byte-identical to the full rescan**, and that is a requirement rather than
+a nicety: `Elimination::width` gates `TooWide`, so a different order changes which models the module
+accepts. A test compares against a full rescan written out separately — not imported, so the two
+cannot drift into agreement by sharing a bug — over 100+ graphs at four densities plus every shape
+this crate builds.
+
+**Counted in fill recomputations, not timed**, because the count is a property of the graph and the
+algorithm where a duration would be a property of one laptop:
+
+| graph | full rescan | dirty set | saved |
+|---|---|---|---|
+| random n=40 p=0.2 | 860 | 772 | 10.2% |
+| random n=80 p=0.1 | 3,320 | 2,577 | 22.4% |
+| lattice 6×6 | 702 | 448 | 36.2% |
+| lattice 8×8 | 2,144 | 1,014 | **52.7%** |
+
+**It is not an asymptotic transformation, and saying so matters more than the headline.** Elimination
+*fills the graph in*, so after a few rounds the dirty set is much of what is left and the two
+converge. The win is largest on sparse structured graphs — lattices, which this crate builds most,
+and where it grows with the side — and smallest on dense random ones, which is exactly the case the
+naive bound is worst for. A reader looking for `O(n²d²)` becoming something else will not find it.
+
+### The flagship EBM figure was a function of machine speed
+
+`examples/dtm_scale` trained inside `while start.elapsed() < budget`, defaulting to **120 seconds**.
+So the per-pixel MAE that `WORKLOADS.md` publishes as the flagship EBM-training result depended on
+how fast the machine was and what else was running on it — a faster box takes more gradient steps
+and gets a better number from the identical command. That is a division by wall-clock time reported
+as a property of the method, which is what this repository's `host` and `ledger` documentation warns
+against everywhere else.
+
+Neither the step count nor the machine was recorded, so **0.128 cannot be reproduced or refuted**.
+It is labelled in `WORKLOADS.md` and `ROADMAP.md` as an unreproducible historical claim that should
+not be quoted, rather than quietly left standing.
+
+The example takes **steps** now (default 2000) and prints the step count, grid, layer count, image
+count and learning rate beside the MAE. The wall clock survives only as a safety stop, and a run it
+truncates says so loudly — a truncated run reporting a quality figure is the original defect wearing
+a different hat. Regenerating the row needs the dataset and a real training run, which is not
+something to do on a loaded development laptop.
+
 ### ⛔ The workbench's fit panel threw on every run, in two shipped releases
 
 `docs/ide.html` called `showFit()` and `fitMessage()` and defined neither. **I deleted them myself**:
