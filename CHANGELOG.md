@@ -69,23 +69,41 @@ constraints alongside the other three refusals.
 *Found by an adversarial audit agent, and confirmed by a second one that reproduced it from
 scratch.*
 
-### Replica threading in parallel tempering is NOT the same defect, measured
+### ⚠ CORRECTION: replica threading WAS the same defect, and my measurement of it was wrong
 
-`sweep_par` spawned a thread per colour class per sweep and was catastrophically slow, so
-`tempering::advance` — which spawns one thread per replica per round, 7,200 spawns in a typical run
-— was an obvious suspect. It is not:
+An entry above this one reported that `tempering::advance` — which spawns a thread per replica per
+round — was **4.4× to 8.1× faster than serial**, and concluded no change was needed. **That
+measurement was invalid and the conclusion was wrong.**
 
-| spins | threaded | serial | |
+It ran the two arms as **separate processes**, minutes apart, while five audit agents had the
+machine loaded. The serial arm was timed against a busier machine than the threaded one. This is
+precisely the trap written up two entries earlier, in the `sweep_par` calibration, and I walked into
+it in the same session.
+
+Interleaved in one process, at the settings `icm::Params::default()` actually uses
+(16 replicas, `sweeps_per_round: 1`):
+
+| n | reps | swap_every | threaded / serial |
 |---|---|---|---|
-| 256 | 0.483 s | 2.104 s | **4.4×** |
-| 1,024 | 1.835 s | 11.603 s | **6.3×** |
-| 4,096 | 1.481 s | 10.805 s | **7.3×** |
-| 16,384 | 4.725 s | 38.326 s | **8.1×** |
+| 256 | 16 | 1 | **0.29×** |
+| 256 | 16 | 4 | 0.77× |
+| 256 | 8 | 4 | 0.67× |
+| 1,024 | 16 | 1 | 0.93× |
+| 1,024 | 16 | 4 | 2.87× |
+| 4,096 | 16 | 4 | 4.17× |
 
-A replica does `swap_every` sweeps of the *whole graph* per spawn, where a colour-class chunk was a
-few hundred nodes — so the work per spawn is two to three orders of magnitude larger and the spawn
-cost disappears into it. The hypothesis was reasonable and the measurement refuted it; no change
-made.
+Threading **loses below about a thousand spins** — 3.4× slower at n=256 — and a default `icm::run`
+is 400 rounds × 2 replica sets × 16 replicas = **12,800 spawns to cover 12,800 single sweeps**.
+
+Fixed the same way `gibbs::sweeps_par` was: a work floor. `MIN_REPLICA_WORK = 30_000` node-updates
+(`replicas × sweeps_between_swaps × nodes`), below which the replicas run serially. Measured
+floored-versus-always-threaded in one process: **3.5× faster at n=256**, identical above the floor.
+
+A test pins that the floor is a *scheduling* decision and changes no answer — a run whose result
+depended on which side of the floor its graph landed would be far worse than the latency.
+
+*The audit agent that reported this was right and I had refuted it. The refutation is the error
+worth recording: I had just written the interleaving lesson into `gibbs.rs` and did not apply it.*
 
 ### Asking for threads used to make you thirty-three times slower
 

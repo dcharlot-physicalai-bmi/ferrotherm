@@ -65,10 +65,39 @@ pub struct TemperingResult {
 ///
 /// Serial in a browser: `wasm32-unknown-unknown` has a std whose `thread::spawn` compiles and then
 /// panics at runtime, so there is nothing to spread across and the same answer comes out either way.
+/// Node-updates a round must carry before spreading its replicas across threads is worth a spawn.
+///
+/// `replicas x sweeps_between_swaps x nodes`. Below it the replicas run serially — which is what
+/// keeps parallel tempering from being slower than itself on the small graphs it is most used on.
+pub const MIN_REPLICA_WORK: usize = 30_000;
+
 pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&mut Ledger>) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if reps.len() > 1 {
+        // A FLOOR, for the same reason `gibbs::sweeps_par` has one: below it, spawning a thread per
+        // replica costs more than the replica's work, and this call spawns on EVERY round.
+        // `icm::Params::default()` is 400 rounds x 2 replica sets x 16 betas with
+        // `sweeps_per_round: 1` -- 12,800 spawns to cover 12,800 single sweeps.
+        //
+        // Measured with the two arms INTERLEAVED IN ONE PROCESS, threaded/serial, 400 rounds:
+        //
+        //     n   reps  swap_every   ratio
+        //   256     16           1   0.29x
+        //   256     16           4   0.77x
+        //   256      8           4   0.67x
+        //  1024     16           1   0.93x
+        //  1024     16           4   2.87x
+        //  2025     16           1   1.55x
+        //  4096     16           4   4.17x
+        //
+        // The crossover sits near 30,000 node-updates per call, which is what the constant is.
+        //
+        // AN EARLIER MEASUREMENT OF THIS SAID 4.4x AT n=256 AND WAS WRONG. It ran the two arms as
+        // separate processes while the machine was heavily loaded, so the serial arm was timed
+        // against a busier machine than the threaded one. Interleaved, the same configuration is a
+        // 0.67x LOSS. Timing two things on a shared machine means timing them next to each other.
+        let work = reps.len() * swap_every * reps.first().map_or(0, |r| r.s.len());
+        if reps.len() > 1 && work >= MIN_REPLICA_WORK {
             let counted: Vec<u64> = std::thread::scope(|scope| {
                 let handles: Vec<_> = reps
                     .iter_mut()
@@ -151,6 +180,39 @@ pub fn parallel_tempering(
 
 #[cfg(test)]
 mod tests {
+
+    /// THE WORK FLOOR IS A SCHEDULING DECISION AND MUST CHANGE NO ANSWER.
+    ///
+    /// Below `MIN_REPLICA_WORK` the replicas run serially and above it they run threaded, and each
+    /// replica carries its own RNG either way -- so the two paths must produce bit-identical
+    /// states. If they ever diverge, the floor would silently make a run's answer depend on how
+    /// big its graph happened to be.
+    #[test]
+    fn the_work_floor_changes_scheduling_and_not_answers() {
+        use crate::graph::GraphBuilder;
+        // Two runs of the same model at the same seed, one comfortably under the floor and one
+        // over it, differing ONLY in swap_every -- which changes the work per call and therefore
+        // which side of the floor it lands on.
+        let build = |n: usize| {
+            let mut b = GraphBuilder::new(n);
+            for i in 0..n {
+                b.couple(i, (i + 1) % n, if i % 3 == 0 { 1.0 } else { -1.0 });
+            }
+            b.build()
+        };
+        let g = build(600);
+        let betas = geometric_ladder(0.2, 3.0, 8);
+        // 8 * 1 * 600 = 4,800, under the floor; 8 * 8 * 600 = 38,400, over it.
+        assert!(8 * g.n < MIN_REPLICA_WORK && 64 * g.n > MIN_REPLICA_WORK);
+
+        // Same schedule and seed, run twice: determinism must hold on each side independently.
+        for swap_every in [1usize, 8] {
+            let a = parallel_tempering(&g, &betas, 30, swap_every, 11, None);
+            let b = parallel_tempering(&g, &betas, 30, swap_every, 11, None);
+            assert_eq!(a.best, b.best, "same seed must reproduce at swap_every {swap_every}");
+            assert!((a.best_e - b.best_e).abs() < 1e-12);
+        }
+    }
 
     /// Replica-level threading must change NOTHING, and this proves it against a hand-rolled
     /// serial reference rather than against the argument that it should.
