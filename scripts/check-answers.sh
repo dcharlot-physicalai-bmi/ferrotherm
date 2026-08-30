@@ -16,7 +16,8 @@
 # So: one model, deliberately with a UNIQUE optimum, solved end to end through every surface. Same
 # answer or the surface is wrong.
 #
-#   scripts/check-answers.sh
+#   scripts/check-answers.sh              solve one model on every surface and require one answer
+#   scripts/check-answers.sh --selftest   prove this gate can fail
 #
 # A missing toolchain SKIPS. A toolchain that is present and produces nothing FAILS -- because that
 # means the binding broke, which is the distinction `check-semantics.sh` learned the hard way.
@@ -24,6 +25,74 @@
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
+
+# ---- --selftest: run this gate against a surface that has been DAMAGED ---------------------------
+#
+# WHY THIS EXISTS. A gate nobody has proved can fail is not a gate. `check-versions.sh` spent months
+# printing "all 54 crates are on crates.io" for a repository with six, because `find .` was walking
+# nested worktrees and nothing had ever demonstrated that it could say no. This gate has the same
+# exposure in a different shape: it prints a column of identical answers, and a column of identical
+# answers is exactly what it would print if the comparison had stopped comparing.
+#
+# WHY THIS DAMAGE. One surface -- python, the one binding that is present wherever python3 is -- has
+# ONE literal's value index moved by one: the objective term `3 * a.is_(1)` becomes `3 * a.is_(0)`.
+#
+# That is the regression this whole gate was built for, in the smallest form it takes. A literal
+# crossing the C ABI is a packed (variable, value) word, and getting the value wrong by one is the
+# ordinary mistake on that boundary: Julia indexes from 1 and the ABI from 0, the node graph packs
+# the value into the same word as the slot, and `fix(t, 12)` has already been shipped meaning "slot
+# twelve" in this project once. Nothing about the damaged program looks wrong. It compiles, it
+# solves, it satisfies every constraint, and it scores SEVEN -- the same optimum as the correct
+# model -- returning `a=0 b=2 t=12 feasible=true`. A surface reading its own output has no way to
+# tell that apart from success. Only the comparison across surfaces can, which is the claim this
+# gate makes about itself and the claim being tested here.
+#
+# It is deliberately NOT a crash and NOT an empty file: the gate catches those in a different branch
+# ("PRODUCED NOTHING"), so damage that crashes would prove that branch works and leave the ANSWER
+# comparison -- the only part that is load-bearing -- untested. The parent below therefore refuses to
+# pass on a non-zero exit alone; it requires the damaged surface to have printed a plausible,
+# feasible answer that the comparison then rejected.
+#
+# Nothing in the tree is touched: the child writes the python program into its own mktemp dir and
+# damages the copy there.
+if [ "${1:-}" = "--selftest" ]; then
+  st=$(mktemp -d)
+  trap 'rm -rf "$st"' EXIT
+  FERROTHERM_ANS_SELFTEST=1 bash "$here/scripts/check-answers.sh" > "$st/log" 2>&1
+  rc=$?
+
+  # The child asserts the sed matched and exits 3 saying so if it did not. That message must not be
+  # laundered into "the gate failed, so the damage was caught" -- a non-zero exit for the wrong
+  # reason is the vacuous selftest this is guarding against.
+  if grep -q '^SELFTEST FAILED:' "$st/log"; then
+    grep '^SELFTEST FAILED:' "$st/log" >&2
+    exit 1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    echo "SELFTEST FAILED: the gate exited 0 with the python surface solving an off-by-one model" >&2
+    sed 's/^/  /' "$st/log" >&2
+    exit 1
+  fi
+  if ! grep -q 'selftest: the python surface now maximises' "$st/log"; then
+    echo "SELFTEST FAILED: the damage did not apply, so the non-zero exit above is some other fault" >&2
+    sed 's/^/  /' "$st/log" >&2
+    exit 1
+  fi
+  # The positive assertion. Not "something failed" -- THIS surface answered, its answer was
+  # feasible and well formed, and the comparison is what rejected it.
+  if ! grep -Eq '^  python +a=[0-9]+ b=[0-9]+ t=[0-9]+ feasible=true +<- expected ' "$st/log"; then
+    echo "SELFTEST FAILED: the gate failed, but not by rejecting a wrong ANSWER from python" >&2
+    echo "  a crash or an empty surface is caught by a different branch; the answer comparison is" >&2
+    echo "  the part that must be shown to work." >&2
+    sed 's/^/  /' "$st/log" >&2
+    exit 1
+  fi
+  grep -E '^  python +a=' "$st/log" | sed 's/^  /  the gate saw: /'
+  echo "selftest ok: a surface that solves an off-by-one model to a feasible, equally-scoring, WRONG"
+  echo "assignment is rejected -- the answer comparison can fail"
+  exit 0
+fi
+
 out=$(mktemp -d)
 cleanup() { rm -rf "$out"; }
 trap cleanup EXIT
@@ -98,8 +167,13 @@ cargo run --release --quiet --example _ans > "$out/rust.txt" 2>/dev/null
 rm -f examples/_ans.rs
 
 # ---- python ---------------------------------------------------------------------------------------
+#
+# Written into the temp dir and run from there rather than piped on stdin, so that --selftest has ONE
+# copy to damage and no second transcription of this program exists anywhere. A selftest that keeps
+# its own copy of the thing it damages can drift away from the real one and go on printing a green
+# tick for a comparison it is no longer exercising.
 attempt python
-python3 - "$out" 2> "$out/python.err" <<'PY'
+cat > "$out/ans_python.py" <<'PY'
 import sys, os
 sys.path.insert(0, "python")
 import ferrotherm as ft
@@ -114,6 +188,23 @@ open(os.path.join(sys.argv[1], "python.txt"), "w").write(
     f"a={ans.values['a']} b={ans.values['b']} t={ans.values['t']} "
     f"feasible={str(ans.feasible).lower()}")
 PY
+
+# THE DAMAGE, applied to the copy above and only when --selftest asked for it. The reasoning for
+# this term rather than another is in the --selftest block at the top of this file.
+#
+# `grep` after `sed` because a sed that matched nothing exits 0 happily: without this assertion an
+# innocuous edit to the program above -- reformatting the objective, renaming a variable -- would
+# turn --selftest into a run of the UNDAMAGED gate that passes, quietly, forever.
+if [ "${FERROTHERM_ANS_SELFTEST:-0}" = "1" ]; then
+  sed 's/3 \* a\.is_(1)/3 * a.is_(0)/' "$out/ans_python.py" > "$out/ans_python.damaged"
+  mv "$out/ans_python.damaged" "$out/ans_python.py"
+  if ! grep -q '3 \* a\.is_(0)' "$out/ans_python.py"; then
+    echo "SELFTEST FAILED: the damage did not apply -- the python program above no longer contains the objective term this rewrites" >&2
+    exit 3
+  fi
+  echo "  selftest: the python surface now maximises 3*[a=0] + 4*[b=2] -- one literal's value index moved by one"
+fi
+python3 "$out/ans_python.py" "$out" 2> "$out/python.err"
 
 # ---- julia ----------------------------------------------------------------------------------------
 if command -v julia >/dev/null 2>&1; then

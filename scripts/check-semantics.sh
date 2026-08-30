@@ -21,11 +21,20 @@
 # that means "this machine lacks a compiler" is a suite people stop reading. The floor below is what
 # stops that becoming a check that passes over nothing.
 #
-#   scripts/check-semantics.sh
+#   scripts/check-semantics.sh              compile one model through every binding, compare bytes
+#   scripts/check-semantics.sh --selftest   prove the comparison can fail
+#
+# --selftest adds three EXTRA arms to the comparison, each built by a copy of the python package
+# with one field quietly dropped, and demands that all three are caught while every honest binding
+# still agrees. It exists because this gate's whole output is one hash repeated seven times: a
+# comparison that had stopped comparing -- a reference read from the wrong file, a `cmp` on two
+# empty files, a loop over an empty list -- prints exactly the same green line as a healthy tree.
 
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
+SELFTEST=0
+if [ "${1:-}" = "--selftest" ]; then SELFTEST=1; fi
 out=$(mktemp -d)
 cleanup() { rm -rf "$out"; pkill -f 'target/release/ferrotherm-serve' 2>/dev/null; }
 trap cleanup EXIT
@@ -108,17 +117,24 @@ rm -f examples/_sem.rs
 say "rust" "$(shasum -a 256 < "$out/rust.ftp" | cut -c1-16)  reference, $(wc -c < "$out/rust.ftp" | tr -d ' ') bytes"
 
 # ---- python ------------------------------------------------------------------------------------
-attempt python
-python3 - "$out" 2> "$out/python.err" <<'PY'
+#
+# Written to a FILE rather than fed on stdin because --selftest runs this same program against a
+# damaged copy of the package. A second, pasted copy of the model builder could drift from this one
+# -- and a selftest that builds a different model than the gate compares is proving nothing about
+# the gate. argv is (output directory, directory to import ferrotherm from, name of this arm);
+# passing "python" for the second reproduces the old `sys.path.insert(0, "python")` exactly.
+cat > "$out/build.py" <<'PY'
 import sys, os
-sys.path.insert(0, "python")
+sys.path.insert(0, sys.argv[2])
 import ferrotherm as ft
 p = ft.Problem()
 a = p.categorical("a", 3); b = p.categorical("b", 3); t = p.integer("t", 10, 13)
 p.not_equal(a, b); p.at_most([a.is_(0), b.is_(0)], 1); p.fix(t, 12)
 p.maximize(3 * a.is_(1) + 4 * b.is_(2)); p.solve(tries=1)
-open(os.path.join(sys.argv[1], "python.ftp"), "w").write(p.ftp())
+open(os.path.join(sys.argv[1], sys.argv[3] + ".ftp"), "w").write(p.ftp())
 PY
+attempt python
+python3 "$out/build.py" "$out" python python 2> "$out/python.err"
 
 # ---- julia -------------------------------------------------------------------------------------
 if command -v julia >/dev/null 2>&1; then
@@ -213,9 +229,72 @@ if node "$here/scripts/sem-wasm.mjs" --probe 2>/dev/null; then
   node "$here/scripts/sem-wasm.mjs" > "$out/wasm.ftp" 2> "$out/wasm.err" || true
 else skip wasm "playwright resolves from neither the repo root nor web-tests/"; fi
 
+# ---- the damaged arms, only under --selftest ---------------------------------------------------
+#
+# WHY THESE THREE DAMAGES, and not something louder.
+#
+# The bug this gate exists to catch is a binding that still WORKS and means something else. Every
+# example in the header is that shape: a literal carrying a slot index where every name said value,
+# a `maximize` that minimised, an `encoding` field read by nobody. None of them raise, none of them
+# fail to compile, and none of them are visible in a binding's own tests -- which is exactly why
+# symbol parity and a green test suite both pass straight over them. So the damage here is three
+# dropped fields, one per lowering path the model exercises:
+#
+#   k         the counting constraint closes with a constant 0 instead of the caller's k, the shape
+#             of a binding that forwards a default where it meant to forward an argument. The
+#             program is still valid; it is `at most none of these` where the caller said one.
+#   weight    every objective term is priced 1.0 instead of its coefficient. This is the field a
+#             binding drops most easily, because a wrong weight still solves and still returns an
+#             answer that looks like an answer -- it is just optimising a different problem.
+#   encoding  the integer is declared domain-wall while the caller asked for the default one-hot,
+#             the shape of a binding whose own default has drifted from the library's. Spin count
+#             and layout change; nothing errors.
+#
+# Each is applied to a COPY of the python package under $out, never to python/ in the tree, and
+# each becomes an extra arm that goes through the same comparison loop and the same `cmp` as every
+# real binding. FERROTHERM_LIB pins the copy to the very dylib the honest arms loaded, so a
+# difference can only come from the damaged source and never from a second library.
+#
+# Deliberately NOT chosen: deleting a method (the binding raises and writes nothing, which this
+# gate already reports as PRODUCED NOTHING), or emptying the file. Those prove only that a broken
+# binding is noticed. The verdict below refuses to accept a damaged arm that produced no program,
+# for that reason.
+damaged=""
+if [ "$SELFTEST" = 1 ]; then
+  while IFS='|' read -r dname dsed dmark; do
+    [ -n "$dname" ] || continue
+    pkg="$out/damaged/$dname"
+    mkdir -p "$pkg"
+    cp -R python/ferrotherm "$pkg/ferrotherm" || {
+      echo "SELFTEST FAILED: could not copy the python package to damage it" >&2; exit 1; }
+    rm -rf "$pkg/ferrotherm/__pycache__"
+    sed "$dsed" python/ferrotherm/__init__.py > "$pkg/ferrotherm/__init__.py"
+    # PROVE THE DAMAGE APPLIED. A sed whose pattern no longer matches leaves a pristine copy, the
+    # arm then agrees with the reference, and the selftest reports a failure that is really its own
+    # patch rotting. Both halves are checked: the injected text is there, and the file actually
+    # changed.
+    if ! grep -qF "$dmark" "$pkg/ferrotherm/__init__.py" ||
+       diff -q python/ferrotherm/__init__.py "$pkg/ferrotherm/__init__.py" >/dev/null; then
+      echo "SELFTEST FAILED: the damage did not apply. Damage '$dname' expected to find" >&2
+      echo "      $dmark" >&2
+      echo "  in the damaged copy, and python/ferrotherm/__init__.py no longer looks the way this" >&2
+      echo "  patch expects. Nothing was tested; fix the sed, not the gate." >&2
+      exit 1
+    fi
+    arm="damage-$dname"
+    attempt "$arm"
+    damaged="$damaged $arm"
+    FERROTHERM_LIB="$LIB" python3 "$out/build.py" "$out" "$pkg" "$arm" 2> "$out/$arm.err"
+  done <<'DAMAGE'
+k|s/_model_close(self._h, kind, int(k))/_model_close(self._h, kind, 0)/|_model_close(self._h, kind, 0)
+weight|s/_model_objective_term(self._h, m, coeff, /_model_objective_term(self._h, m, 1.0, /|_model_objective_term(self._h, m, 1.0,
+encoding|s/int(hi), _encoding(encoding)/int(hi), _encoding("domain-wall")/|_encoding("domain-wall")
+DAMAGE
+fi
+
 # ---- compare -------------------------------------------------------------------------------------
 echo
-bad=0; n=0
+bad=0; n=0; differed=""
 for name in $attempted; do
   f="$out/$name.ftp"
   if [ ! -s "$f" ]; then
@@ -236,11 +315,51 @@ for name in $attempted; do
   else
     say "$name" "$(shasum -a 256 < "$f" | cut -c1-16)  DIFFERS"
     diff <(sort "$out/rust.ftp") <(sort "$f") | head -8 | sed 's/^/      /'
-    bad=$((bad + 1))
+    bad=$((bad + 1)); differed="$differed $name"
   fi
 done
 
 echo
+# The selftest verdict, which INVERTS the usual one: the damaged arms must have been caught.
+#
+# It reads the same `differed` the comparison loop above fills in, so neutering that comparison --
+# making `cmp` always succeed, or pointing the reference at the wrong file -- turns this green
+# selftest red. That is the property being bought here, and it is worth checking by hand after any
+# edit to the loop: temporarily make the comparison always agree, and this must fail.
+if [ "$SELFTEST" = 1 ]; then
+  fail=0
+  for arm in $damaged; do
+    if [ ! -s "$out/$arm.ftp" ]; then
+      echo "SELFTEST FAILED: $arm produced no program at all, so this run shows only that a binding" >&2
+      echo "  which CRASHES is noticed -- never that one which silently means something else is." >&2
+      echo "  The damage has to leave a binding that still compiles. It said:" >&2
+      [ -s "$out/$arm.err" ] && sed 's/^/      /' "$out/$arm.err" | tail -6 >&2
+      fail=1; continue
+    fi
+    case " $differed " in
+      *" $arm "*) ;;
+      *) echo "SELFTEST FAILED: $arm compiled to the SAME bytes as the reference." >&2
+         echo "  A binding with that field dropped slipped through this comparison, so a green run" >&2
+         echo "  of this gate is not evidence that the surfaces agree." >&2
+         fail=1 ;;
+    esac
+  done
+  for arm in $differed; do
+    case " $damaged " in
+      *" $arm "*) ;;
+      *) echo "SELFTEST FAILED: $arm is undamaged and differs from the reference anyway." >&2
+         echo "  That is a real semantic break in this tree, not a selftest result. Run the gate" >&2
+         echo "  with no arguments." >&2
+         fail=1 ;;
+    esac
+  done
+  [ "$fail" = 0 ] || exit 1
+  echo "  selftest: a dropped k, a dropped objective weight and a dropped encoding each still"
+  echo "  compiled, each emitted a different program, and each was caught; every honest binding"
+  echo "  agreed. This comparison can fail."
+  exit 0
+fi
+
 # A floor. Without it, a machine missing every toolchain reports success having compared nothing --
 # which is the shape of a green check that means "nothing ran".
 if [ "$n" -lt 2 ]; then

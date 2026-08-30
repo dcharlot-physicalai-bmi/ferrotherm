@@ -8,7 +8,8 @@
 # places, and a wasm on the site that was not the wasm in the repo. A binding whose version says
 # nothing about the library underneath it is a version nobody can use.
 #
-#   scripts/check-versions.sh
+#   scripts/check-versions.sh              every manifest, every pin and crates.io agree
+#   scripts/check-versions.sh --selftest   prove the comparison can fail
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,6 +53,222 @@ files=(
   julia/Ferrotherm/Project.toml
   julia/ferrotherm_jll/Project.toml
 )
+
+# ---- --selftest: prove this gate can fail ------------------------------------------------------
+#
+# This gate spent its whole life green, and it was found reporting "all 54 crates are on crates.io
+# at their tree version" for a repository that has SIX -- it had been enumerating through eight
+# nested worktrees, inflating its own coverage 9x, and calling a correct release a regression
+# seconds after it happened. Nothing had ever demonstrated it could fail, so nobody looked. A gate
+# nobody has proved can fail is not a gate.
+#
+# So: damage a COPY of the tree in the two shapes this gate exists to catch, and require it to
+# object to each one, by name.
+#
+#   1. ONE SIBLING MANIFEST OUT OF STEP. The library, the wheel and the two Julia manifests are
+#      released together and bumped by hand in five places. Forgetting one -- or bumping one alone
+#      -- is the likeliest mistake anyone makes in this repository, and it ships a Python package
+#      whose version number describes a library it does not contain.
+#   2. A DEPENDENCY PIN LEFT AT THE PREVIOUS MINOR. This has already happened: bumping the library
+#      to 0.9.0 left cloud and silicon pinned at 0.8, and `cargo publish` then resolves the pin
+#      against crates.io and quietly ships a server built on the OLD library. The comment above the
+#      pin loop is the account of it. Nothing about that state is a build error.
+#
+# Neither is a strawman -- both are edits a person makes in one keystroke, and both leave every file
+# well-formed, parseable and plausible. Truncating a file is not damage, it is vandalism, and
+# everything catches it.
+#
+# The copy is a real git checkout (`git init` + `git add`), not a loose directory, because
+# `owned_manifests` enumerates through `git ls-files` and the selftest must exercise the SAME
+# enumeration the gate uses in anger -- the non-git fallback is not the code under test, and
+# enumeration is where this gate's own bug was.
+#
+# The undamaged copy is run FIRST and required to PASS. Without that control, a damaged run that
+# fails for an environmental reason -- a file the copy forgot, a broken interpreter -- reads as a
+# caught regression, which is exactly the self-congratulating green this mode exists to refuse.
+#
+# NOT COVERED, and worth saying rather than implying otherwise: the crates.io rows and the JLL
+# Artifacts.toml drift check both need state outside the tree (a live registry, and `gh` able to see
+# a real release carrying tarballs). A temp checkout has no remote, so those two arms cannot be
+# damaged into a deterministic failure here. This proves the local agreement comparisons can fail;
+# it does not prove the registry ones can.
+if [[ "${1:-}" == "--selftest" ]]; then
+  ver="$(read_version Cargo.toml)"
+  if [[ -z "$ver" ]]; then
+    echo "SELFTEST FAILED: could not read a version out of Cargo.toml to damage" >&2
+    exit 1
+  fi
+
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+
+  # Everything this gate reads, and nothing else. `${files[@]}` is reused rather than retyped, so a
+  # manifest added to the list above is automatically part of the selftest instead of quietly
+  # outside it.
+  manifests="$(owned_manifests | sed 's|^\./||' | sort)"
+  copy_list="$(printf '%s\n' "${files[@]}" julia/ferrotherm_jll/Artifacts.toml \
+                              scripts/check-versions.sh "$manifests")"
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    mkdir -p "$tmp/$(dirname "$f")"
+    cp "$f" "$tmp/$f"
+  done <<< "$copy_list"
+
+  if ! git -C "$tmp" init -q . >/dev/null 2>&1 || ! git -C "$tmp" add -A >/dev/null 2>&1; then
+    echo "SELFTEST FAILED: could not make the copy a git checkout, so the enumeration under test" >&2
+    echo "would not be the one this gate actually uses" >&2
+    exit 1
+  fi
+
+  run_copy() { ( bash "$tmp/scripts/check-versions.sh" ) 2>&1; }
+
+  if ! control="$(run_copy)"; then
+    echo "SELFTEST FAILED: the UNDAMAGED copy did not pass, so a failure on a damaged one would" >&2
+    echo "prove nothing about the comparison. The copy said:" >&2
+    printf '%s\n' "$control" >&2
+    exit 1
+  fi
+
+  # How many crates the CONTROL run counted, read out of its own success line rather than assumed.
+  # Damage 3 requires this number not to move; hardcoding six would stop being true the day a
+  # seventh crate lands, and a selftest that goes stale is the thing this file is arguing against.
+  n_owned="$(printf '%s\n' "$control" | sed -n 's/.*and all \([0-9][0-9]*\) crates.*/\1/p' | head -1)"
+  if [[ -z "$n_owned" ]]; then
+    echo "SELFTEST FAILED: could not read the crate count out of the control run, so damage 3" >&2
+    echo "cannot tell whether the enumeration moved. It said:" >&2
+    printf '%s\n' "$control" >&2
+    exit 1
+  fi
+
+  # Put every copied file back as it was, so one arm's damage cannot leak into the next.
+  restore_all() {
+    while IFS= read -r f; do
+      [[ -n "$f" && -f "$f" ]] || continue
+      cp "$f" "$tmp/$f"
+    done <<< "$copy_list"
+  }
+
+  # --- damage 1: the wheel one patch ahead of the crate -------------------------------------------
+  bumped="${ver%.*}.$(( ${ver##*.} + 1 ))"
+  py="$tmp/python/ferrotherm/__init__.py"
+  sed "s|^__version__ = \"$ver\"|__version__ = \"$bumped\"|" "$py" > "$py.tmp"
+  mv "$py.tmp" "$py"
+  if ! grep -q "^__version__ = \"$bumped\"" "$py"; then
+    echo "SELFTEST FAILED: the damage did not apply -- __version__ in the copied wheel is not" >&2
+    echo "$bumped, so the run below would have been vacuous" >&2
+    exit 1
+  fi
+  if out="$(run_copy)"; then
+    echo "SELFTEST FAILED: the gate passed a tree whose crate says $ver and whose Python package" >&2
+    echo "says $bumped -- exactly the drift it exists to catch" >&2
+    exit 1
+  fi
+  case "$out" in
+    *"python/ferrotherm/__init__.py"*"expected $ver"*) ;;
+    *) echo "SELFTEST FAILED: the damaged run failed, but not on the wheel version -- the failure" >&2
+       echo "came from somewhere else, so that comparison is still unproven. It said:" >&2
+       printf '%s\n' "$out" >&2
+       exit 1 ;;
+  esac
+  cp python/ferrotherm/__init__.py "$py"   # back to pristine before the second damage
+
+  # --- damage 2: a sibling still pinning the previous minor ---------------------------------------
+  pin="${ver%.*}"
+  pin_maj="${pin%.*}"; pin_min="${pin#*.}"
+  # The historical bug is a pin left BEHIND, so go back one minor. On an 0.0.x library there is no
+  # minor to go back to; a pin one minor AHEAD is the same disagreement read from the other side,
+  # and the gate has to object to it just as loudly.
+  if [[ "$pin_min" -gt 0 ]]; then stale="$pin_maj.$((pin_min - 1))"
+  elif [[ "$pin_maj" -gt 0 ]]; then stale="$((pin_maj - 1)).0"
+  else stale="$pin_maj.$((pin_min + 1))"; fi
+
+  dep_file=""
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$tmp/$f" ]] || continue
+    if grep -q '^ferrotherm = ' "$tmp/$f"; then dep_file="$f"; break; fi
+  done <<< "$manifests"
+  if [[ -z "$dep_file" ]]; then
+    echo "SELFTEST FAILED: no copied manifest pins ferrotherm, so there was nothing to damage" >&2
+    exit 1
+  fi
+
+  sed "/^ferrotherm = /s|version = \"$pin\"|version = \"$stale\"|" "$tmp/$dep_file" > "$tmp/$dep_file.tmp"
+  mv "$tmp/$dep_file.tmp" "$tmp/$dep_file"
+  if ! grep -q "^ferrotherm = .*version = \"$stale\"" "$tmp/$dep_file"; then
+    echo "SELFTEST FAILED: the damage did not apply -- $dep_file does not pin ferrotherm $stale," >&2
+    echo "so the run below would have been vacuous" >&2
+    exit 1
+  fi
+  if out="$(run_copy)"; then
+    echo "SELFTEST FAILED: the gate passed a workspace member pinning ferrotherm $stale against a" >&2
+    echo "library at $ver -- that publishes a crate built on the previous release" >&2
+    exit 1
+  fi
+  case "$out" in
+    *"depends on ferrotherm $stale"*"expected $pin"*) ;;
+    *) echo "SELFTEST FAILED: the damaged run failed, but not on the dependency pin -- the failure" >&2
+       echo "came from somewhere else, so that comparison is still unproven. It said:" >&2
+       printf '%s\n' "$out" >&2
+       exit 1 ;;
+  esac
+
+  # --- damage 3: a NESTED CHECKOUT, which is the bug this whole gate mode exists because of ------
+  #
+  # The two arms above prove the comparisons can fail. Neither proves the ENUMERATION is right, and
+  # enumeration is exactly where this gate's own bug was: `find .` descended into git worktrees, so
+  # eight of them one commit behind reported all six crates as "registry is AHEAD of this tree"
+  # seconds after a correct release, and inflated the coverage line to "all 54 crates" for a
+  # repository with six.
+  #
+  # This arm is INVERTED against the other two. It plants a stale manifest where a worktree would
+  # put one and requires the gate to STILL PASS, with its coverage count unmoved.
+  #
+  # HONESTLY, ON WHICH ARM ACTUALLY CATCHES A REGRESSION HERE. Both `find`-based enumerations tried
+  # -- the original CWD-relative one and an anchored `(cd "$here" && find .)` -- are caught by the
+  # CONTROL run above rather than by this arm, because a `find` that walks the real tree also
+  # misreads the temp copy. So the property the whole mode guarantees is "the selftest goes red when
+  # the enumeration regresses", and the control arm is what delivers it today. This arm is still
+  # worth its lines: it is the only one that states the requirement POSITIVELY -- a nested checkout
+  # must be invisible and must not move the count -- so an enumeration that happened to satisfy the
+  # control run and still counted worktrees would fail here and nowhere else.
+  restore_all
+  nested="$tmp/.claude/worktrees/w"
+  mkdir -p "$nested"
+  # A whole stale copy of the repository, which is what a worktree actually is.
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    mkdir -p "$nested/$(dirname "$rel")"
+    cp "$tmp/$rel" "$nested/$rel"
+  done <<< "$copy_list"
+  # ...pinned a minor behind, the way a worktree cut before the release bump is.
+  sed "s/^version = \"$ver\"/version = \"$stale.0\"/" "$tmp/Cargo.toml" > "$nested/Cargo.toml.tmp"
+  mv "$nested/Cargo.toml.tmp" "$nested/Cargo.toml"
+  if ! grep -q "^version = \"$stale.0\"" "$nested/Cargo.toml"; then
+    echo "SELFTEST FAILED: the damage did not apply -- the planted nested checkout does not carry" >&2
+    echo "a stale version, so this arm proved nothing about enumeration." >&2
+    exit 1
+  fi
+  if ! out="$(cd "$tmp" && "$here/scripts/check-versions.sh" 2>&1)"; then
+    echo "SELFTEST FAILED: a stale manifest planted at .claude/worktrees/ made the gate fail. It" >&2
+    echo "must be INVISIBLE: a git worktree is not tracked by its parent, and counting one is the" >&2
+    echo "bug this mode exists to prevent. The gate said:" >&2
+    printf '%s\n' "$out" >&2
+    exit 1
+  fi
+  case "$out" in
+    *"all $n_owned crates"*) : ;;
+    *) echo "SELFTEST FAILED: the gate passed, but its coverage count changed when a nested" >&2
+       echo "checkout was planted -- it is counting manifests it does not own. It said:" >&2
+       printf '%s\n' "$out" >&2
+       exit 1 ;;
+  esac
+
+  echo "selftest: a wheel at $bumped beside a crate at $ver was caught, and so was $dep_file"
+  echo "pinning ferrotherm $stale instead of $pin. A stale manifest planted where a git worktree"
+  echo "would put one stayed invisible and the coverage count held at $n_owned, so the enumeration"
+  echo "this gate was once wrong about is covered as well as its comparisons."
+  exit 0
+fi
 
 want="$(read_version Cargo.toml)"
 if [[ -z "$want" ]]; then

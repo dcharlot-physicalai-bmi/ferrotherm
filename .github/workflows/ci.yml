@@ -30,7 +30,7 @@ jobs:
       - name: Install icarus-verilog (RTL bit-exactness gate)
         run: sudo apt-get update && sudo apt-get install -y iverilog
       - name: One version across every package
-        run: scripts/check-versions.sh
+        run: scripts/check-versions.sh --selftest && scripts/check-versions.sh
       - name: Every C ABI symbol reaches every binding, or the gap is written down
         # --selftest first. This gate discovered symbols by grepping for `pub extern "C" fn`, which
         # cannot see the twelve certificate accessors a macro generates -- so twelve exports were
@@ -52,7 +52,7 @@ jobs:
       - name: Every binding compiles one model to the same bytes
         env:
           FERROTHERM_REQUIRE_ALL: "1"
-        run: scripts/check-semantics.sh
+        run: scripts/check-semantics.sh --selftest && scripts/check-semantics.sh
       # And SOLVES it to the same answer, which is a different question. check-semantics compares
       # the model BEFORE it is solved, and its harness calls compile() explicitly -- so it exercised
       # the exact step Zig's `solve` was skipping, and stayed green while that binding could not
@@ -60,7 +60,7 @@ jobs:
       - name: Every binding solves one model to the same answer
         env:
           FERROTHERM_REQUIRE_ALL: "1"
-        run: scripts/check-answers.sh
+        run: scripts/check-answers.sh --selftest && scripts/check-answers.sh
       # And one HIGHER-ORDER model, which is a different claim: the model above is pairwise, so a
       # surface that quietly routed a k-body term through the reduction would still answer it
       # correctly. The three-body parity term cannot be expressed pairwise at all, and the ancilla
@@ -69,7 +69,7 @@ jobs:
       - name: Every binding solves one higher-order model to the same answer
         env:
           FERROTHERM_REQUIRE_ALL: "1"
-        run: scripts/check-hubo-answers.sh
+        run: scripts/check-hubo-answers.sh --selftest && scripts/check-hubo-answers.sh
       # Parity proves a symbol is DECLARED in each binding. For Julia that is an @cfn line, which
       # says nothing about whether a function wraps it -- both OMMX functions were once declared and
       # exported with no body in between, and the module loaded fine.
@@ -157,6 +157,13 @@ jobs:
       # `crate::graph::GRAPH_BUILDS` name items that do not exist). All fixed in the same commit
       # that added this step, because a gate turned on over a failing tree is a gate that gets
       # turned off again.
+      # The landscape claims are FALSIFIABLE statements the 2026-08 survey staked, and re-running
+      # that survey is a day's work while checking whether it still holds is five seconds. It was
+      # never in CI, so the one gate whose whole purpose is to notice the world moving was the one
+      # thing nobody ran on a schedule.
+      - name: The competitive landscape has not moved out from under the survey
+        run: scripts/check-landscape.sh --selftest && scripts/check-landscape.sh
+
       - name: The published documentation has no broken links
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 
@@ -254,7 +261,7 @@ jobs:
       # reach for is present -- a missing export makes the call `undefined`, and calling undefined
       # in a click handler leaves the page looking fine and doing nothing.
       - name: the committed wasm exports everything the pages call
-        run: scripts/check-wasm-exports.sh
+        run: scripts/check-wasm-exports.sh --selftest && scripts/check-wasm-exports.sh
       # A page that loads is not a page that works. This instantiates the committed binary and
       # fits a model through it, then requires the answer to match the native library EXACTLY --
       # so a stale wasm, or a marshalling bug in the fitting path, fails here rather than in a
@@ -294,7 +301,7 @@ jobs:
       - name: Every exported binding name resolves
         env:
           FERROTHERM_REQUIRE_JULIA: "1"
-        run: scripts/check-exports.sh
+        run: scripts/check-exports.sh --selftest && scripts/check-exports.sh
       - name: Julia tests
         working-directory: julia/Ferrotherm
         env:

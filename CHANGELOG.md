@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Every gate can now prove it fails, and one of them could not
+
+Five of twelve gates had a `--selftest`. Seven did not, and `check-versions.sh` is why that mattered:
+it spent an unknown length of time reporting **"all 54 crates"** for a repository with six, because
+nothing had ever demonstrated it could go red. **A gate nobody has proved can fail is not a gate.**
+
+All seven now have one, each damaging the thing under test on a copy and requiring the comparison to
+fail — a renamed export, a flipped weight sign, a misread arity, a wheel one patch ahead, a sibling
+pinning the previous minor, an unstripped wasm. And every one was checked by an adversarial agent
+whose main job was the **tautology test**: neuter the gate's real comparison and see whether the
+selftest still passes. Seven of seven survived it, across 30-odd separate neuterings.
+
+**One of them found a hole in mine.** Reverting `check-versions.sh` from `git ls-files` back to
+`find .` — *literally the bug that started this* — passed its own selftest, because the temp copy
+contains no nested checkout for `find` to descend into. So there is now a third arm, and it is
+**inverted**: it plants a stale manifest exactly where a git worktree would put one and requires the
+gate to **still pass** with its coverage count unmoved.
+
+Stated against itself: both `find`-based enumerations I tried are actually caught by the *control*
+arm rather than the new one, because a `find` that walks the real tree also misreads the temp copy.
+The guarantee the mode delivers is "the selftest goes red when the enumeration regresses" — verified
+by reintroducing the original bug twice — and the third arm earns its lines by stating the
+requirement positively, which is the only form that catches an enumeration the control run happens
+to survive.
+
+**And the selftests are now run.** Every one was wired into CI in the house style
+(`--selftest && plain`) — six of them had a mode nothing invoked. `check-landscape.sh` was not in CI
+at all, which meant the one gate whose entire purpose is to notice the competitive landscape moving
+was the one thing nobody ran on a schedule.
+
 ### The minor-embedding placer works, and repairing it moved a shipped default
 
 The placer did not embed a star with eight leaves onto a 512-site Chimera, and failed on every

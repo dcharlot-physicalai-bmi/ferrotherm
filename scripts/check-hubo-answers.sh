@@ -22,14 +22,119 @@
 # claim, and a binding that reported it wrong would be reporting the wrong saving for the right
 # answer, which no energy comparison can see.
 #
-#   scripts/check-hubo-answers.sh
+#   scripts/check-hubo-answers.sh              every surface answers the same higher-order model
+#   scripts/check-hubo-answers.sh --selftest   prove the comparison can fail
 #
 # A missing toolchain SKIPS; a toolchain that is present and produces nothing FAILS.
 # FERROTHERM_REQUIRE_ALL=1 turns every skip into a refusal, and CI sets it.
 
 set -uo pipefail
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
+
+# Where the Python surface is imported from. Always the tree's own `python/`, except under
+# --selftest, which points it at a DAMAGED copy in a temp dir so this gate can be run against a
+# binding that is wrong on purpose. Nothing in the tree is ever edited.
+PYDIR="${FERROTHERM_SELFTEST_PYDIR:-python}"
+
+# ---- selftest -----------------------------------------------------------------------------------
+#
+# Run this whole gate against a binding that is WRONG ON PURPOSE, and require it to say so. A gate
+# nobody has watched fail is not a gate: `check-versions.sh` reported "all 54 crates" for a
+# repository with six for as long as anyone had looked, and it looked green throughout.
+#
+# WHY THESE TWO DAMAGES. This gate exists because a new family of higher-order entry points landed
+# on four bindings at once, and the way a family like that goes wrong is not that a surface stops
+# working -- it is that one surface reads the SAME C ABI slightly differently to the others. So both
+# damages are one binding misreading one thing, which is the mistake that actually gets made:
+#
+#   1. THE WEIGHT SIGN. `add([0,1,2], 1.0)` hands the weight straight to ft_hubo_add; a binding that
+#      negated it -- an off-by-a-minus in a marshalling layer, or a surface written against the
+#      opposite energy convention -- would still anneal, still converge, and still report energy=-1,
+#      because -s0*s1*s2 and +s0*s1*s2 have the same optimum. It shows up ONLY in the product being
+#      -1 instead of +1. That is exactly why the header says the state is checked for the invariant
+#      that decides it rather than only for the energy, and this damage is what proves the invariant
+#      load-bearing: an energy-only comparison would wave it straight through.
+#
+#   2. THE TERM ARITY. The accessors sit one line apart in the ctypes signature table, and each is a
+#      name bound to a string. Wiring ft_hubo_max_arity to ft_hubo_terms is a copy-paste away and
+#      raises nothing at import, at call, or in any test that does not compare the number against
+#      another surface -- both are u32, both are small, and on the one-term one-variable model a
+#      unit test reaches for first they are the same number. This is the "compiles everywhere,
+#      computes the same number nowhere" shape the gate was written for.
+#
+# Both are applied to a COPY of python/ in a temp dir, and only the Python surface's import path
+# moves; nothing in the tree is written, and the tree's own comparison logic runs untouched.
+if [ "${1:-}" = "--selftest" ]; then
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+
+  # The binding finds the shared library at ../../target/release relative to its own package
+  # directory, so a copy sitting in a temp dir would fail to LOAD rather than answer wrongly -- and
+  # a selftest that reads that as "caught" is testing dlopen, not the comparison. This is not
+  # hypothetical: it is what the first run of this selftest actually did, and only the "the gate
+  # must name the damaged surface" guard below told the difference. One symlink puts the copy back
+  # in the same relationship to the build directory that the tree's own package has. rm -rf unlinks
+  # a symlink rather than descending it, so the trap above cannot reach target/.
+  ln -s "$here/target" "$tmp/target"
+
+  # damage <label> <sed expression> <text the damage must leave behind> <what it stands for>
+  damage() {
+    rm -rf "$tmp/python"
+    cp -R python "$tmp/python" || { echo "SELFTEST FAILED: could not copy the binding" >&2; return 1; }
+    rm -rf "$tmp/python/ferrotherm/__pycache__"
+    sed "$2" python/ferrotherm/__init__.py > "$tmp/python/ferrotherm/__init__.py"
+
+    # Prove the damage LANDED. A sed that matched nothing leaves a pristine copy, the gate passes,
+    # and reading that pass as "the damage was caught" is the vacuous selftest this guards against.
+    if ! grep -qF -- "$3" "$tmp/python/ferrotherm/__init__.py"; then
+      echo "SELFTEST FAILED: the damage did not apply ($1) -- the binding no longer looks the way" >&2
+      echo "this expects, so nothing was tested. Fix the sed, not the gate." >&2
+      return 1
+    fi
+    if diff -q python/ferrotherm/__init__.py "$tmp/python/ferrotherm/__init__.py" >/dev/null 2>&1; then
+      echo "SELFTEST FAILED: the damage did not apply ($1) -- the copy is identical to the tree" >&2
+      return 1
+    fi
+
+    FERROTHERM_SELFTEST_PYDIR="$tmp/python" bash "$self" > "$tmp/$1.log" 2>&1
+    st=$?
+    if [ "$st" -eq 0 ]; then
+      echo "SELFTEST FAILED: $4 slipped through -- the gate still reported agreement" >&2
+      sed 's/^/      /' "$tmp/$1.log" >&2
+      return 1
+    fi
+    # Non-zero is not enough. A missing toolchain, a failed build or a surface that produced nothing
+    # also exits non-zero, and any of those would leave the real disagreement unmeasured while this
+    # printed a tick. Require that the DAMAGED surface is the one the comparison named.
+    if ! grep -q '^  python .*<- expected' "$tmp/$1.log"; then
+      echo "SELFTEST FAILED: the gate exited $st without ever naming the python surface, so it fell" >&2
+      echo "over for another reason and $4 was never actually compared" >&2
+      sed 's/^/      /' "$tmp/$1.log" >&2
+      return 1
+    fi
+    printf '  caught: %s\n' "$4"
+    return 0
+  }
+
+  echo
+  fail=0
+  damage sign 's/_hubo_add(self\._h, float(weight))/_hubo_add(self._h, -float(weight))/' \
+    '_hubo_add(self._h, -float(weight))' \
+    'one binding negating the weight it was handed -- invisible to the energy, caught by the product' \
+    || fail=1
+  damage arity 's/_hubo_max_arity = _sig("ft_hubo_max_arity"/_hubo_max_arity = _sig("ft_hubo_terms"/' \
+    '_hubo_max_arity = _sig("ft_hubo_terms"' \
+    'one binding reading the term arity off the wrong C symbol' \
+    || fail=1
+
+  echo
+  [ "$fail" -eq 0 ] || exit 1
+  echo "selftest: a flipped weight sign and a misread arity were both caught, so this gate can fail"
+  exit 0
+fi
+
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 
@@ -68,9 +173,9 @@ rm -f examples/_hans.rs
 
 # ---- python -----------------------------------------------------------------------------------
 attempt python
-python3 - "$out" 2> "$out/python.err" <<'PY'
+python3 - "$out" "$PYDIR" 2> "$out/python.err" <<'PY'
 import sys, os
-sys.path.insert(0, "python")
+sys.path.insert(0, sys.argv[2])
 import ferrotherm as ft
 h = ft.Hubo(3)
 h.add([0, 1, 2], 1.0)

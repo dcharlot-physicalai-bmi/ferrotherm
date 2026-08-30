@@ -12,9 +12,167 @@
 # calling undefined in a click handler leaves the page looking fine and doing nothing.
 #
 #   scripts/check-wasm-exports.sh [path/to/ferrotherm.wasm]
+#   scripts/check-wasm-exports.sh --selftest      prove both checks can fail
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# --selftest runs this gate against a DAMAGED COPY of the tree and demands a failure, twice, once
+# for each thing the gate claims to guard.
+#
+# It exists because both halves of this check are silent when they break. A page that calls a
+# symbol the wasm does not export still loads, still renders, and does nothing when clicked; an
+# unstripped binary is a working binary that quietly costs every visitor bytes. Neither shows up as
+# an error anywhere, which is exactly the condition under which a green tick has to be earned
+# rather than assumed -- and this gate had already been wrong once in the direction a passing run
+# cannot show: it matched export names as bare substrings, so 11 of 77 names passed on a hit inside
+# a longer symbol and the gate would have stayed green through a rename that broke every page.
+#
+# THE TWO DAMAGES, and why these:
+#
+#   1. One call site in docs/ide.html renamed to a symbol the wasm does not export. This is the
+#      regression this gate was written for and the one that actually happens: a symbol is renamed
+#      or split in src/ffi.rs, the page is updated to the new name, and the committed wasm is not
+#      rebuilt (or vice versa). Renaming the CALL rather than deleting it is the honest shape --
+#      the page still parses, the handler still runs, and W.ft_sweep_batch is `undefined`.
+#
+#   2. A `name` custom section appended to a copy of the wasm -- what a build without
+#      RUSTFLAGS='-C strip=symbols' leaves behind. Deliberately a SMALL one, a few KB of mangled
+#      Rust names rather than the full 62 KB, because the point is the claim in the comment below:
+#      the README size band is +/-10% and an unstripped binary fits inside it, so the size figures
+#      cannot enforce stripping and the section walk must. A 62 KB section would trip the size
+#      check first and prove the wrong thing.
+#
+# Both run the gate from a mktemp copy. Nothing in the repository is written to, transiently or
+# otherwise.
+if [[ "${1:-}" == "--selftest" ]]; then
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  mkdir -p "$tmp/scripts" "$tmp/docs"
+  cp "$here/scripts/check-wasm-exports.sh" "$tmp/scripts/"
+  cp "$here"/docs/*.html "$tmp/docs/"
+  cp "$here/docs/ferrotherm.wasm" "$tmp/docs/"
+  if [[ -f "$here/README.md" ]]; then cp "$here/README.md" "$tmp/"; fi
+
+  # Positive control. If the copy itself cannot pass, a failure below says nothing about the
+  # damage -- it says the harness is broken, which is the way a self-test lies.
+  if ! ( cd "$tmp" && bash scripts/check-wasm-exports.sh ) >"$tmp/control.out" 2>&1; then
+    echo "SELFTEST FAILED: the undamaged copy does not pass, so no failure below is attributable:" >&2
+    sed 's/^/  /' "$tmp/control.out" >&2
+    exit 1
+  fi
+
+  # ---- damage 1: a page calling a symbol that does not exist ------------------------------------
+  sed 's/W\.ft_sweep(/W.ft_sweep_batch(/g' "$here/docs/ide.html" > "$tmp/docs/ide.html"
+  if ! grep -q 'W\.ft_sweep_batch(' "$tmp/docs/ide.html"; then
+    echo "SELFTEST FAILED: the damage did not apply -- docs/ide.html has no W.ft_sweep( call to rename" >&2
+    exit 1
+  fi
+  if diff -q "$here/docs/ide.html" "$tmp/docs/ide.html" >/dev/null; then
+    echo "SELFTEST FAILED: the damage did not apply -- the damaged page is identical to the original" >&2
+    exit 1
+  fi
+  # And the name has to be genuinely absent from the wasm, or the gate is right to pass it.
+  if python3 -c 'import sys; b=open(sys.argv[1],"rb").read(); n=b"ft_sweep_batch"; sys.exit(0 if bytes([len(n)])+n in b else 1)' "$here/docs/ferrotherm.wasm"; then
+    echo "SELFTEST FAILED: the wasm exports ft_sweep_batch after all, so this damage is not damage" >&2
+    exit 1
+  fi
+  if ( cd "$tmp" && bash scripts/check-wasm-exports.sh ) >"$tmp/missing.out" 2>&1; then
+    echo "SELFTEST FAILED: the gate passed a page calling W.ft_sweep_batch, which the wasm does not export" >&2
+    exit 1
+  fi
+  if ! grep -q 'missing: .*ft_sweep_batch' "$tmp/missing.out"; then
+    echo "SELFTEST FAILED: the gate failed, but not on the missing export -- it said:" >&2
+    sed 's/^/  /' "$tmp/missing.out" >&2
+    exit 1
+  fi
+  cp "$here"/docs/*.html "$tmp/docs/"   # undamage the pages before the second run
+
+  # ---- damage 2: an unstripped binary ------------------------------------------------------------
+  if ! python3 - "$here/docs/ferrotherm.wasm" "$tmp/unstripped.wasm" <<'PY_UNSTRIP'
+import sys
+
+def uleb(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+def nstr(s):
+    b = s.encode()
+    return uleb(len(b)) + b
+
+src, dst = sys.argv[1], sys.argv[2]
+blob = open(src, "rb").read()
+
+# A real name section: subsection 0 is the module name, subsection 1 a vector of function names.
+# The names are the mangled shape rustc emits, so what the walker finds looks like what a
+# non-stripping build leaves, not like a marker planted for a test.
+mod = uleb(0) + uleb(len(nstr("ferrotherm"))) + nstr("ferrotherm")
+entries = bytearray(uleb(200))
+for i in range(200):
+    entries += uleb(i) + nstr("_ZN10ferrotherm7sampler5sweep17h%016xE" % (0x5eed0000 + i))
+fns = uleb(1) + uleb(len(entries)) + bytes(entries)
+payload = nstr("name") + mod + fns
+section = b"\x00" + uleb(len(payload)) + payload
+open(dst, "wb").write(blob + section)
+PY_UNSTRIP
+  then
+    echo "SELFTEST FAILED: the damage did not apply -- could not build an unstripped copy" >&2
+    exit 1
+  fi
+  # Prove the damage landed, by the same reading the gate itself does: a custom section named
+  # "name", with every original byte untouched ahead of it.
+  if ! python3 - "$here/docs/ferrotherm.wasm" "$tmp/unstripped.wasm" <<'PY_ASSERT'
+import sys
+
+def uleb(b, i):
+    v = s = 0
+    while True:
+        c = b[i]; i += 1
+        v |= (c & 0x7F) << s
+        if not c & 0x80:
+            return v, i
+        s += 7
+
+orig = open(sys.argv[1], "rb").read()
+dmg = open(sys.argv[2], "rb").read()
+if dmg[:len(orig)] != orig:
+    print("the damaged copy changed bytes of the original module", file=sys.stderr); sys.exit(1)
+i, names = 8, []
+while i < len(dmg):
+    sid = dmg[i]; i += 1
+    size, i = uleb(dmg, i)
+    if sid == 0:
+        n, j = uleb(dmg, i)
+        names.append(dmg[j:j + n].decode("utf-8", "replace"))
+    i += size
+if "name" not in names:
+    print("no custom section called name in the damaged copy: %r" % (names,), file=sys.stderr)
+    sys.exit(1)
+PY_ASSERT
+  then
+    echo "SELFTEST FAILED: the damage did not apply -- the copy carries no name section" >&2
+    exit 1
+  fi
+  if ( cd "$tmp" && bash scripts/check-wasm-exports.sh "$tmp/unstripped.wasm" ) >"$tmp/strip.out" 2>&1; then
+    echo "SELFTEST FAILED: the gate passed a wasm carrying a name section, so nothing enforces stripping" >&2
+    exit 1
+  fi
+  if ! grep -q 'was not stripped' "$tmp/strip.out"; then
+    # A size failure here would mean the injected section was big enough to trip the README band
+    # instead, which proves the size check and not this one.
+    echo "SELFTEST FAILED: the gate rejected the unstripped binary for another reason -- it said:" >&2
+    sed 's/^/  /' "$tmp/strip.out" >&2
+    exit 1
+  fi
+
+  echo "selftest: a page calling an unexported symbol was caught, and so was an unstripped wasm"
+  exit 0
+fi
 wasm="${1:-$here/docs/ferrotherm.wasm}"
 
 if [[ ! -f "$wasm" ]]; then
