@@ -34,16 +34,29 @@ The Riccati solution is itself checked twice before anything is scored against i
 a perturbation test confirming the gain is a minimum in both directions.
 
 **Measured.** **7.1% above the provable optimum** on a stable plant, at horizon 5 with 10 refinement
-passes.
+passes — **over a 200-step run**, and that last clause is load-bearing. See below.
 
 **Where it stops**, which is the more useful half:
 
-| plant | horizon | passes | excess |
-|---|---|---|---|
-| stable | 5 | **10** | **7.1%** |
-| stable | 5 | 1 | 28.7% |
-| stable | 15 | 10 | 19.9% |
-| unstable | 30 | 30 | **729%** |
+| plant | horizon | iters | excess @200 | @100 | @800 |
+|---|---|---|---|---|---|
+| stable, `a = 0.9` | 5 | 10 | **7.1%** | 3.4% | 22.6% |
+| stable, `a = 0.9` | 5 | 1 | 28.7% | 26.0% | 43.2% |
+| stable, `a = 0.9` | 15 | 10 | 19.9% | 10.6% | 78.8% |
+| unstable, `a = 1.1` | 10 | 30 | 15.1% | 7.2% | 61.2% |
+| unstable, `a = 1.1` | 30 | 30 | **1446%** | 733.5% | 5400% |
+
+**The step count is part of every number in that table, and it was missing.** Excess over the
+provable optimum is not a property of the method: MPPI injects `sigma` noise at every step forever,
+while the LQR oracle's `cost_to_go` is a finite infinite-horizon cost from `x0 = 1`, so the ratio
+grows without bound in the horizon it is measured over. The flagship 7.1% is **1.0% at 25 steps and
+22.6% at 800**. It is a coordinate — a number plus the run length it was taken over — and it was
+published as though it were a property.
+
+**And the 729% that used to sit in the last row was wrong.** At 200 steps, where all three stable
+rows reproduce to the printed digit, horizon 30 gives 1446%. 729% is what horizon 30 gives at *100*
+steps — but at 100 steps the row above it reads 7.2%, not the 15.7% that was published beside it.
+No single run produced both numbers.
 
 One refinement pass — the textbook receding-horizon form — is not converged. A longer horizon makes
 it *worse*, because rollouts are open-loop and noise compounds instead of being corrected inside

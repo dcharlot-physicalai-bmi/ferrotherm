@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### The flagship control number was a coordinate published as a property, and one cell was wrong
+
+`WORKLOADS.md`, `src/mppi.rs` and `ROADMAP.md` all led with **"7.1% above the provable optimum"**.
+The number is real. What was missing is that it is meaningless without the run length beside it:
+
+| steps | 25 | 50 | 100 | **200** | 400 | 800 |
+|---|---|---|---|---|---|---|
+| excess | 1.0% | 1.9% | 3.4% | **7.1%** | 11.7% | 22.6% |
+
+Excess over the provable optimum **grows without bound in run length**. MPPI injects `sigma` noise
+at every step forever; the LQR oracle's `cost_to_go` is a finite infinite-horizon cost from `x0 = 1`.
+So the ratio is a coordinate — a number plus the horizon it was taken over — and it was published as
+a property of the method.
+
+**And the 729% cell was wrong.** At 200 steps, where all three *stable* rows reproduce to the printed
+digit, horizon 30 gives **1446%**. 729% is what horizon 30 gives at *100* steps — but at 100 steps
+the row published beside it reads 7.2%, not 15.7%. **No single run produced both numbers.**
+
+The cited source could not have produced them either: `examples/mppi_probe.rs` swept horizons {5,15}
+and iters {1,10}, so neither unstable row came from any command in the repository. It now prints the
+published table directly, with `@100` and `@800` columns so the steps-dependence is visible in the
+output rather than only in prose.
+
+#### Two tests let this through, and both were the same shape
+
+`an_unstable_plant_is_much_harder` asserted `ex(30) > 1.0` — anything above 100%. The docs said 729%,
+the truth is 1446%, and **every value from 101% to infinity satisfied that guard.** A bound two
+orders of magnitude looser than the number it protects does not protect it.
+
+`sampling_control_lands_near_the_provable_optimum` asserted `excess < 0.10`, which reads as
+*"sampling control is within 10% of optimal"* and is true only at the 200 steps it hardcodes — at
+400 the same code gives 11.7% and that assertion fails.
+
+Both are now **bands** around the published figures, and the second additionally asserts the growth
+itself is monotone in run length, since that is now the claim the docs make.
+
+*Found by an adversarial audit agent; the verifier that confirmed it found the larger half — the
+auditor reported the wrong cell, and the unbounded metric underneath it is what makes the whole
+table a coordinate.*
+
 ### ⛔ The OMMX bridge silently dropped every constraint and returned the relaxation
 
 `import` matched three `Instance` fields — decision variables, objective, sense — and had a

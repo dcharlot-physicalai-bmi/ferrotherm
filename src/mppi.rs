@@ -20,15 +20,30 @@
 //!
 //! # What it achieves, and where it stops
 //!
-//! Measured against the exact optimum (`examples/mppi_probe.rs`), best settings found:
+//! Measured against the exact optimum by `examples/mppi_probe.rs`, which now PRINTS this table
+//! (it did not: it swept horizons {5,15} and iters {1,10} only, so the two unstable rows came from
+//! no command in the repository). All rows at `seed = 7`, `rollouts = 300`, `sigma = 0.2`,
+//! `lambda = 0.3`, `x0 = 1`:
 //!
-//! | plant | horizon | iters | excess over LQR |
-//! |---|---|---|---|
-//! | stable, `a = 0.9` | 5 | 10 | **7.1%** |
-//! | stable, `a = 0.9` | 5 | 1 | 28.7% |
-//! | stable, `a = 0.9` | 15 | 10 | 19.9% |
-//! | unstable, `a = 1.1` | 10 | 30 | 15.7% |
-//! | unstable, `a = 1.1` | 30 | 30 | 729% |
+//! | plant | horizon | iters | excess @200 | @100 | @800 |
+//! |---|---|---|---|---|---|
+//! | stable, `a = 0.9` | 5 | 10 | **7.1%** | 3.4% | 22.6% |
+//! | stable, `a = 0.9` | 5 | 1 | 28.7% | 26.0% | 43.2% |
+//! | stable, `a = 0.9` | 15 | 10 | 19.9% | 10.6% | 78.8% |
+//! | unstable, `a = 1.1` | 10 | 30 | 15.1% | 7.2% | 61.2% |
+//! | unstable, `a = 1.1` | 30 | 30 | **1446%** | 733.5% | 5400% |
+//!
+//! **The step count is part of every number in that table, and it was missing.** Excess over the
+//! provable optimum is not a property of the method: MPPI injects `sigma` noise at every step forever,
+//! while the LQR oracle's `cost_to_go` is a finite infinite-horizon cost from `x0 = 1`, so the ratio
+//! grows without bound in the horizon it is measured over. The flagship 7.1% is **1.0% at 25 steps and
+//! 22.6% at 800**. It is a coordinate — a number plus the run length it was taken over — and it was
+//! published as though it were a property.
+//!
+//! **And the 729% that used to sit in the last row was wrong.** At 200 steps, where all three stable
+//! rows reproduce to the printed digit, horizon 30 gives 1446%. 729% is what horizon 30 gives at *100*
+//! steps — but at 100 steps the row above it reads 7.2%, not the 15.7% that was published beside it.
+//! No single run produced both numbers.
 //!
 //! Three things that table says plainly:
 //!
@@ -267,13 +282,37 @@ mod tests {
 
     #[test]
     fn sampling_control_lands_near_the_provable_optimum() {
-        // The measurement this module exists for. Measured 7.1% at these settings.
+        // The measurement this module exists for: 7.1% AT 200 STEPS.
+        //
+        // The step count is not incidental and this test used to hide that. `excess < 0.10` passes
+        // at 200 steps and FAILS at 400, where the same code gives 11.7% -- not because anything
+        // regressed, but because the metric grows without bound in run length. A guard that reads
+        // as "sampling control is within 10% of optimal" while being true only at one hardcoded
+        // horizon states a property the method does not have.
         let l = Lqr::solve(&SYS);
         let optimal = l.cost_to_go(1.0);
-        let cost = TUNED.run(&SYS, 1.0, 200, 7);
-        let excess = (cost - optimal) / optimal;
-        assert!(excess > -1e-9, "nothing can beat the optimum: {cost} vs {optimal}");
-        assert!(excess < 0.10, "sampling control was {excess:.3} above the optimum");
+        let excess = |steps: usize| (TUNED.run(&SYS, 1.0, steps, 7) - optimal) / optimal;
+
+        let at200 = excess(200);
+        assert!(at200 > -1e-9, "nothing can beat the optimum: {at200}");
+        // A BAND, not a ceiling. A ceiling is satisfied by a method that got better for the wrong
+        // reason -- and by one that got worse in a way the ceiling happens to still admit.
+        assert!(
+            (0.065..0.078).contains(&at200),
+            "the published 7.1% at 200 steps moved to {:.1}%",
+            at200 * 100.0
+        );
+
+        // And the growth itself is the claim the docs now make, so it is the claim under test.
+        // Monotone in run length, because the noise MPPI injects never stops and the oracle's
+        // cost-to-go is finite.
+        let series: Vec<f64> = [25usize, 50, 100, 200, 400, 800].iter().map(|&s| excess(s)).collect();
+        assert!(
+            series.windows(2).all(|w| w[1] > w[0]),
+            "excess must grow with run length, and it went {series:?}"
+        );
+        assert!(series[0] < 0.02, "1.0% at 25 steps: {:.1}%", series[0] * 100.0);
+        assert!(series[5] > 0.20, "22.6% at 800 steps: {:.1}%", series[5] * 100.0);
     }
 
     #[test]
@@ -311,7 +350,22 @@ mod tests {
             (m.run(&UNSTABLE, 1.0, 200, 7) - opt) / opt
         };
         assert!(ex(10) < ex(30), "a long horizon on an unstable plant should be far worse");
-        assert!(ex(30) > 1.0, "and it should fail outright, which it does");
+        // A BAND ROUND THE PUBLISHED NUMBERS, because `> 1.0` was how a wrong one survived.
+        //
+        // This used to assert only that horizon 30 exceeded 100%. The docs published 729% for that
+        // cell; the real figure at these settings is 1446%, and any value from 101% to infinity
+        // satisfied the old guard. A test whose bound is two orders of magnitude looser than the
+        // number it is guarding does not guard it.
+        assert!(
+            (0.140..0.162).contains(&ex(10)),
+            "the published 15.1% at horizon 10 moved to {:.1}%",
+            ex(10) * 100.0
+        );
+        assert!(
+            (13.5..15.5).contains(&ex(30)),
+            "the published 1446% at horizon 30 moved to {:.1}%",
+            ex(30) * 100.0
+        );
     }
 
     #[test]

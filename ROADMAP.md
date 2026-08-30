@@ -454,7 +454,7 @@ reporting what was measured against it, including where the method stops.
 
 | Workload | Oracle | Measured |
 |---|---|---|
-| **Sampling-based control** (`mppi.rs`) | closed-form LQR optimum | **7.1%** above the provable optimum |
+| **Sampling-based control** (`mppi.rs`) | closed-form LQR optimum | **7.1%** above the provable optimum **over 200 steps** — the metric grows without bound in run length (1.0% at 25, 22.6% at 800), so it is a coordinate and not a property |
 | **Categorical optimisation** (`categorical.rs`) | exact feasibility | domain wall needs a **3× weaker** penalty |
 | **Thermodynamic linear algebra** (`tla.rs`) | Gaussian elimination | exact-transition integrator unbiased; EM bias law confirmed |
 | **Spin-glass physics** (`ising.rs`, `planted.rs`) | Onsager; planted optima | agrees to **0.0086**, annealed in |
