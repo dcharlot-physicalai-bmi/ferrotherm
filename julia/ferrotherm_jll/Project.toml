@@ -1,6 +1,6 @@
 name = "ferrotherm_jll"
 uuid = "5c1e9d38-7b04-4a6f-9e2d-3a8f1c60b74e"
-version = "0.31.0"
+version = "0.32.0"
 
 [deps]
 Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"

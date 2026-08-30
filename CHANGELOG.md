@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.32.0
+
+**The minor-embedding placer works.** It could not build a chain when one was needed — a star with
+eight leaves would not go onto a 512-site Chimera, and every clique past `K_7` failed at every
+machine size and round budget. Two independent defects, both fixed; on a 736-instance paired corpus
+the repair solves **141 instances the original could not** and loses 2.
+
+Repairing it made the chain-strength question answerable at a size where it means something, and the
+answer moved a shipped default: **`DEFAULT_CHAIN_MULTIPLE` is 4.0, and was 2.0** — the standard
+first guess breaks a tenth of all chains.
+
+Saying "no" stopped being free once the placer stopped abandoning its own search, so `K_100` spent
+95 seconds proving nothing. `site_lower_bound` is a counting argument that refuses the impossible in
+microseconds, and it is the one place in that module where `None` is a **proof** rather than a
+failure to find.
+
+And every gate can now prove it fails — seven of twelve could not, which is how one of them spent an
+unknown stretch reporting "all 54 crates" for a repository with six.
+
 ### Every gate can now prove it fails, and one of them could not
 
 Five of twelve gates had a `--selftest`. Seven did not, and `check-versions.sh` is why that mattered:
