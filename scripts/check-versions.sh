@@ -15,6 +15,25 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
 # name:file:pattern — each extracts the version from its own format
+# THE MANIFESTS THIS REPOSITORY OWNS, and nothing else.
+#
+# `find .` and `grep -r .` were both wrong here, and wrong in a way that only shows up on someone
+# else's machine: they descend into NESTED CHECKOUTS. A git worktree lives under .claude/worktrees
+# when an agent is given one, and a worktree is a full copy of the tree at whatever commit it was
+# cut from -- so eight worktrees pinned one commit back reported all six crates as "registry is
+# AHEAD of this tree" seconds after a correct release. Vendored copies and nested clones do the same.
+#
+# `git ls-files` enumerates what this repository TRACKS, which is exactly the question: a worktree
+# is not tracked by its parent, and neither is target/. The fallback keeps the gate working outside
+# a git checkout -- a published tarball, say -- where nested checkouts cannot exist anyway.
+owned_manifests() {
+  if git -C "$here" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$here" ls-files -- '*Cargo.toml' | sed 's|^|./|'
+  else
+    find . -name Cargo.toml -not -path './target/*' -not -path './.claude/*'
+  fi
+}
+
 read_version() {
   case "$1" in
     Cargo.toml|serve/Cargo.toml|julia/Ferrotherm/Project.toml|julia/ferrotherm_jll/Project.toml)
@@ -123,7 +142,7 @@ while IFS= read -r f; do
     printf '  %-36s depends on ferrotherm %s   <- expected %s\n' "$f" "$dep" "$major_minor"
     bad=1
   fi
-done < <(grep -rl '^ferrotherm = ' --include=Cargo.toml . | grep -v '^\./target/' | sort)
+done < <(owned_manifests | xargs grep -l '^ferrotherm = ' 2>/dev/null | sort)
 
 if [[ $found -eq 0 ]]; then
   # A floor: if the search stops matching, this passes vacuously over nothing.
@@ -217,7 +236,7 @@ while IFS= read -r f; do
     # check's failure to raise, but say it rather than swallow it.
     printf '  %-24s %-9s crates.io: %-9s <- registry is AHEAD of this tree\n' "$name" "$local_v" "$live"
   fi
-done < <(find . -name Cargo.toml -not -path './target/*' | sort)
+done < <(owned_manifests | sort)
 
 if [[ $offline -eq 1 ]]; then
   echo "  (crates.io unreachable -- publish state not checked)"

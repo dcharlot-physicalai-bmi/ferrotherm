@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The version gate counted nested checkouts as crates
+
+`check-versions.sh` enumerated manifests with `find .` and `grep -r .`, which descend into **nested
+checkouts**. A git worktree — what an agent gets when it needs to edit files without disturbing
+anyone — is a full copy of the tree at whatever commit it was cut from. Eight of them, one commit
+behind, made the gate report all six crates as *"registry is AHEAD of this tree"* seconds after a
+correct 0.31.0 release, and inflated its own coverage line to **"all 54 crates"** when this
+repository has six.
+
+That second number is the tell, and it is the more dangerous half: a gate that overstates what it
+checked reads as thorough. It now enumerates with `git ls-files`, which is exactly the question
+being asked — a worktree is not tracked by its parent, and neither is `target/`. The `find` path
+survives as a fallback for a tree that is not a git checkout, where nested checkouts cannot exist.
+
 ## 0.31.0
 
 **This release teaches the stack to produce a model, not only consume one.** Every module before it
