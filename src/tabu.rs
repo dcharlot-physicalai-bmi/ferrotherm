@@ -34,6 +34,31 @@
 //! assert!((r.energy - g.energy(&r.state)).abs() < 1e-9);
 //! assert!(r.energy <= -2.0 * 64.0 + 1e-9, "should reach the ground state");
 //! ```
+//!
+//! # What choosing a move costs, and why it is still a scan
+//!
+//! **Each iteration scans every gain.** The incremental update after a flip is already `O(degree)`
+//! (`flip`), so the linear part is the argmin alone — the same gap [`crate::bls`] documents,
+//! which uses Fiduccia–Mattheyses buckets in the literature to get it in `O(1)`. Until now that
+//! cost was written down for `bls` and not for this module, which has it identically.
+//!
+//! **The obvious fix does not apply here, and that is worth writing down rather than leaving as an
+//! open task somebody re-derives.** A max-gain heap answers "the best move"; this needs "the best
+//! ADMISSIBLE move", and admissibility is not a property of the gain. A move is inadmissible while
+//! it is tabu — which depends on `iter` and expires on its own, so a node becomes admissible again
+//! with no change to its gain and nothing to trigger a heap update — and it is admissible anyway if
+//! it beats the best state ever seen, which depends on the current energy and moves every
+//! iteration. A heap keyed on gain would have to pop through inadmissible entries and push them
+//! back, with a worst case of the scan it replaced.
+//!
+//! It would also change every seeded result. The scan takes the FIRST minimum, so ties break by
+//! lowest index; a heap breaks them by heap order, and this crate's contract is that a seed
+//! reproduces a run. Preserving the tie-break means keying on `(gain, index)` and handling the
+//! time-varying admissibility on top, which is a different piece of work from "add a heap".
+//!
+//! So it stays a scan, and the cost is stated instead of hidden. What would justify the rewrite is
+//! a workload that needs it — the paper's `200000·|V|` budget, which `bls` names as the thing this
+//! shape of implementation cannot reach.
 
 use crate::graph::Graph;
 use crate::ledger::Ledger;

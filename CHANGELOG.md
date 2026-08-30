@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### The last audit finding, declined — with the reason written into the code
+
+An audit reported that `tabu` and `bls` choose every move by a full `O(n)` scan of the gain vector
+while the incremental update after a flip is already `O(degree)`, and proposed an indexed max-gain
+heap. **The cost is real. The fix does not apply, and `tabu` was not disclosing the cost at all.**
+
+A max-gain heap answers *"the best move"*. Tabu search needs *"the best **admissible** move"*, and
+admissibility is not a property of the gain:
+
+- a move is inadmissible while it is **tabu**, which depends on `iter` and expires on its own — so a
+  node becomes admissible again with **no change to its gain** and nothing to trigger a heap update;
+- and it is admissible regardless if it beats the best state ever seen, which depends on the current
+  energy and moves every iteration.
+
+A heap keyed on gain would pop through inadmissible entries and push them back, worst case the scan
+it replaced. It would also **change every seeded result**: the scan takes the first minimum, so ties
+break by lowest index, where a heap breaks them by heap order — and a seed reproducing a run is a
+contract this crate keeps. Preserving that means keying on `(gain, index)` *and* handling
+time-varying admissibility on top, which is a different piece of work from "add a heap".
+
+So it stays a scan. What changed is that `tabu` now states the cost the way `bls` already did —
+`bls` names the Fiduccia–Mattheyses buckets the literature uses and says plainly that this is why it
+cannot reach the paper's `200000·|V|` budget, and `tabu` said nothing while having the identical
+gap. The reasoning above is in the module, so the next person to read the audit finding does not
+re-derive why the obvious fix is not one.
+
+**And it is a speed optimisation.** Its payoff depends on how often the top of the heap is
+inadmissible — instance- and schedule-dependent, not measurable fabric-independently, and exactly
+the kind of thing that should not be decided from timings on one development laptop.
+
 ### Min-fill elimination stops rescanning the whole graph, and the order is byte-identical
 
 `min_fill_order` recomputed the fill count of **every live vertex** on each of its `n` elimination
