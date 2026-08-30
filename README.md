@@ -18,13 +18,20 @@ cargo add ferrotherm
 ```
 
 ```rust
-use ferrotherm::{ising, gibbs::Sampler, ledger::{Ledger, Z1_SPICE}};
+use ferrotherm::{ising, gibbs::Sampler, samples::Plan, ledger::{Ledger, Z1_SPICE}};
 
 let g = ising::lattice2d(16, 1.0);            // a magnet below critical temperature
 let mut led = Ledger::default();
 let mut smp = Sampler::new(&g, 0.6, 42);
-smp.sweeps(500, Some(&mut led));               // sample it, and meter it
-println!("|M| = {:.3}", smp.s.iter().map(|&v| v as f64).sum::<f64>().abs() / g.n as f64);
+
+// Burn in 500 sweeps, then keep 2,000 states two sweeps apart -- charging the device for the
+// sweeps AND the readback, which is the larger half of the bill on hardware of this class.
+let set = smp.collect(&Plan::new(500, 2_000, 2), Some(&mut led));
+
+let m = set.magnetization().expect("a chain is distributional; a search would refuse here");
+println!("|M| = {m}");                        // value, error bar, effective sample size, tau
+println!("{}", set.certificate(&g).unwrap()); // and at what temperature it REALLY sampled
+
 let j = led.joules(&Z1_SPICE).expect("Z1_SPICE states its prices; Prices::UNSTATED would not");
 println!("device-model cost: {j:.2e} J");     // pre-silicon vendor prices, labelled
 ```
@@ -421,6 +428,52 @@ is the check that says the comparison was of the same computation.
   magnitude**, not the marketed four — with both biases stated: package watts cover the whole
   platform; the SPICE figure excludes I/O and its own appendix revised the coarse model ~10× worse.
 
+### The error bar, checked against the exact answer
+
+A standard error is a claim, and this is the measurement of it. `examples/interval_calibration`
+runs 24 chains of 20,000 draws on three models at four temperatures, takes `⟨s_i⟩` at every site,
+and asks how often the interval contains the *exactly enumerated* marginal. Two intervals, built
+from the same estimate, differing only by `sqrt(2τ)`:
+
+| model | β | τ_int | corrected `sqrt(var/ess)` | naive `sqrt(var/N)` |
+|---|---|---|---|---|
+| ring12 | 0.5 | 2.1 | 99.7% | 83.3% |
+| ring12 | 0.8 | 6.5 | 100.0% | 67.0% |
+| ring12 | 1.2 | 31.6 | 100.0% | **24.0%** |
+| glass14 | 0.8 | 68.1 | 94.6% | 27.7% |
+| glass16 | 0.8 | 23.6 | 97.9% | 30.7% |
+
+An interval announcing 95% and containing the truth for one site in four is not conservative; it is
+a wrong number with a decoration. The corrected one over-covers on several rows and that is the
+direction chosen — each estimate is deflated by the *slowest* autocorrelation the chain showed, not
+the site's own, because a site sitting in a metastable mode reports a fast-looking trace while the
+mode that decides the answer never moves.
+
+**And the limit is printed with the result.** Where τ runs to hundreds, τ is itself an estimate from
+a chain barely long enough to make it. On glass16 at β = 1.2, 11 of 24 seeds clear `certify`'s
+`Undermixed` finding and coverage among exactly those seeds is 80.7%. The correction is a large
+improvement and not a guarantee; past that point the answer is a longer chain, not a wider bar.
+
+### Readback is 78–98% of what an independent draw costs
+
+The mixing-expressivity table below prices one independent draw. It used to price only the sweeps
+between draws, because the collection loop appended the sampler's state directly instead of reading
+it — five places in this repository did the same, so the readback column was zero everywhere and
+nothing could show it was missing. `Sampler::collect` reads.
+
+```text
+ layers  width   edges       tau_int   updates/draw   nJ mixing nJ readback  read share
+      2     72    5184   26.30+-1.18           3787      0.0268      0.2436       90.1%
+      3     48    4608    4.91+-0.31            707      0.0050      0.2436       98.0%
+     12     12    1584  65.95+-20.75           9497      0.0673      0.2436       78.3%
+```
+
+A Z1-class read is 1.692 pJ per node against 7.09 fJ per Gibbs cycle: **one read is worth 239
+updates.** The mixing column spans 13× across these shapes and the total spans 1.25×, because
+readback depends on the spin count and these shapes hold it fixed. The tradeoff the field argues
+about is real, is measured below, and is the minority of the bill at these sizes — which is what it
+means to say a machine of this class is an I/O machine.
+
 ### The mixing-expressivity tradeoff, measured on both halves
 
 The field states one sentence as its central open problem — *"scaling the number of latent variables
@@ -451,6 +504,12 @@ learned is what makes sampling harder.
 
 ## Positions this crate takes
 
+0. **A sampler returns samples.** Every commercial machine in this field returns "best found", and
+   so did this crate until `samples` landed. A `SampleSet` carries the distribution its states came
+   from and *refuses* an expectation value where there is none — averaging over a tabu search's
+   trajectory produces a number the same shape as `⟨s_i⟩` and estimates nothing. Every estimate
+   carries an error bar deflated by the chain's slowest autocorrelation, checked against exact
+   enumeration above.
 1. **The ledger is not an appendix.** Every simulation carries joules: samples, reads, writes,
    priced by a swappable `Prices` device model. Re-price the same workload on GPU-measured
    watts×time and you have the impedance-tax comparison that decides whether standalone sampling

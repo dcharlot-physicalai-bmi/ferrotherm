@@ -8,7 +8,7 @@ use ferrotherm::encode::Encoding;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising;
-use ferrotherm::certify::{certify, Certificate};
+use ferrotherm::certify::Certificate;
 use ferrotherm::model::{Constraint, Expr, Lit, Model, Rel, Sense};
 use ferrotherm::ledger::{Ledger, Prices, Z1_SPICE};
 use std::time::Instant;
@@ -243,6 +243,56 @@ fn ledger_json(l: &Ledger, p: &Prices, wall_s: f64) -> Json {
     ])
 }
 
+/// What the run RETURNED, beside what it did.
+///
+/// The certificate says whether to believe the sampler; this says what the sampler found. Both are
+/// computed from the same draws, and neither is optional: an endpoint that returns one state and a
+/// summary statistic cannot answer "how many distinct states were there" or "what is the error bar
+/// on that magnetization", which are the two questions a caller of a SAMPLER actually has.
+///
+/// `magnetization` here is not the `magnetization` field above. That one is the order parameter of
+/// the single final state; this one is the expectation over every draw, with a standard error of
+/// `sqrt(var/ess)` -- chain draws are correlated, and `sqrt(var/N)` understates the error by
+/// `sqrt(2*tau)`.
+fn samples_json(set: &ferrotherm::samples::SampleSet) -> Json {
+    let est = |e: Result<ferrotherm::samples::Estimate, ferrotherm::samples::Refused>| match e {
+        Ok(e) => Json::Obj(
+            vec![
+                ("value".to_string(), Json::n(e.value)),
+                ("stderr".to_string(), Json::n(e.stderr)),
+                ("ess".to_string(), Json::n(e.ess)),
+                ("tau_int".to_string(), Json::n(e.tau_int)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        Err(r) => Json::s(&r.to_string()),
+    };
+    Json::Obj(
+        vec![
+            ("draws".to_string(), Json::n(set.len() as f64)),
+            // The number a sampler is usually not asked for: 10,000 draws of which three are
+            // distinct have told you about three states, whatever the draw count says.
+            ("distinct".to_string(), Json::n(set.distinct().len() as f64)),
+            (
+                "best_energy".to_string(),
+                Json::n(set.best().map(|(_, e)| e).unwrap_or(f64::NAN)),
+            ),
+            // EVIDENCE of degeneracy, not a count of it: a chain proves the states it visited
+            // exist and nothing about the ones it did not.
+            (
+                "ground_states_seen".to_string(),
+                Json::n(set.ground_states(1e-9).len() as f64),
+            ),
+            ("chain_tau".to_string(), Json::n(set.chain_tau())),
+            ("magnetization".to_string(), est(set.magnetization())),
+            ("energy".to_string(), est(set.mean_energy())),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
 fn certificate_json(c: &Certificate, capped: Option<usize>) -> Json {
     let mut out = vec![
         ("draws", Json::n(c.draws as f64)),
@@ -334,24 +384,18 @@ pub fn sample(req: &Json) -> Result<Json, String> {
     }
     // `sweeps` is burn-in; then draws are recorded so the run can be certified. A sampler that
     // returns one state cannot be checked at all, which is why this is not optional.
-    if threads > 1 {
-        smp.sweeps_par(sweeps, threads, Some(&mut led));
+    //
+    // Through `collect`, which CHARGES THE LEDGER FOR EACH READBACK. This loop used to push
+    // `smp.s.clone()` and then charge one `read_all` at the end, so a 128-draw request billed for
+    // one read instead of 128 -- and on the device this endpoint prices against, a read is worth
+    // 239 Gibbs cycles, so the missing 127 were the larger part of the answer's own energy figure.
+    let plan = ferrotherm::samples::Plan::new(sweeps, draws, thin);
+    let set = if threads > 1 {
+        smp.collect_par(&plan, threads, Some(&mut led))
     } else {
-        smp.sweeps(sweeps, Some(&mut led));
-    }
-
-    let mut samples: Vec<Vec<i8>> = Vec::with_capacity(draws);
-    let mut trace: Vec<f64> = Vec::with_capacity(draws);
-    for _ in 0..draws {
-        if threads > 1 {
-            smp.sweeps_par(thin, threads, Some(&mut led));
-        } else {
-            smp.sweeps(thin, Some(&mut led));
-        }
-        samples.push(smp.s.clone());
-        trace.push(g.energy(&smp.s));
-    }
-    let cert = certify(&g, beta, &samples, &trace);
+        smp.collect(&plan, Some(&mut led))
+    };
+    let cert = set.certificate(&g).expect("collect returns a chain");
 
     let s = smp.read_all(Some(&mut led));
     let wall = t0.elapsed().as_secs_f64();
@@ -368,6 +412,7 @@ pub fn sample(req: &Json) -> Result<Json, String> {
         ("magnetization", Json::n(m)),
         ("ledger", ledger_json(&led, &Z1_SPICE, wall)),
         ("certificate", certificate_json(&cert, capped)),
+        ("samples", samples_json(&set)),
     ];
     // A million-node state is not something to paste into a chat transcript; it is returned only
     // when asked for, and the summary statistics above are what a caller usually wants.
@@ -2086,10 +2131,28 @@ mod tests {
         let led = r.get("ledger").unwrap();
         assert_eq!(led.get("node_updates").unwrap().as_f64(), Some(64.0 * (50.0 + 128.0)));
 
+        // And the READS, which this endpoint used to give away. 128 recorded draws of 64 nodes,
+        // plus the one final `read_all` that produces the returned state. Before `collect`, the
+        // draws were cloned out of the sampler without touching the read path and this figure was
+        // 64 -- on a device where a read is worth 239 Gibbs cycles, so the missing 127 reads were
+        // the larger part of the joules this same response reports.
+        assert_eq!(led.get("reads").unwrap().as_f64(), Some(64.0 * 129.0));
+
         let c = r.get("certificate").expect("every sample must carry a certificate");
         assert_eq!(c.get("draws").unwrap().as_f64(), Some(128.0));
         assert!(c.get("beta_effective").is_some());
         assert!(c.get("passed").unwrap().as_bool().is_some());
+
+        // What the run RETURNED, beside what it did.
+        let s = r.get("samples").expect("a sampler's answer is its samples");
+        assert_eq!(s.get("draws").unwrap().as_f64(), Some(128.0));
+        let distinct = s.get("distinct").unwrap().as_f64().unwrap();
+        assert!(distinct > 1.0 && distinct <= 128.0, "distinct states: {distinct}");
+        let m = s.get("magnetization").expect("with an error bar");
+        assert!(m.get("stderr").unwrap().as_f64().unwrap() > 0.0);
+        assert!(m.get("ess").unwrap().as_f64().unwrap() <= 128.0, "ess cannot exceed the draws");
+        assert!(s.get("chain_tau").unwrap().as_f64().unwrap() >= 0.5);
+        assert!(s.get("energy").unwrap().get("value").is_some());
     }
 
     #[test]

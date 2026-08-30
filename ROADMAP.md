@@ -268,6 +268,30 @@ Live through the API, a 24×24 lattice with no burn-in comes back with both diag
 *"400 draws are worth about 3 independent samples"* and *"early draws average −0.0197 and late ones
 −0.9846, a gap of 6.2 standard errors"*.
 
+**1.2 `SampleSet`.** ✅ **DONE** — `src/samples.rs`.
+
+The certificate had no producer. Its signature takes `samples: &[Vec<i8>]` and a trace, and nothing
+in the crate returned either — five places hand-wrote the same burn-in/thin/collect loop, and every
+one of them appended the sampler's state directly rather than READING it, so every certified run in
+the repository priced its readback at exactly zero on a device where one read is worth 239 Gibbs
+cycles. Section 0 says every player returns "best found"; this crate did too.
+
+A sample set carries the distribution its states came from and **refuses** where there is none:
+averaging spins over a tabu search's trajectory yields a number the same shape as `⟨s_i⟩` and
+estimates nothing. Three provenances answer, each deflated by its own correlation structure —
+a chain by `tau_int`, population annealing's final population by its family statistic `ρ`,
+exhaustive enumeration by nothing at all, because nothing was sampled.
+
+| | independent draws | measured coverage of a 95% interval |
+|---|---|---|
+| corrected `sqrt(var/ess)` | `N / (2·τ_int)` | 94.6%–100% where the chain is long against its own τ |
+| naive `sqrt(var/N)` | `N` | **24.0%** at τ = 32 |
+
+`examples/interval_calibration.rs`, 24 chains × 20,000 draws × every site × three models × four
+temperatures, against exactly enumerated marginals. The limit is printed with the result: where τ
+runs to hundreds, τ is itself an estimate from a chain barely long enough to make it, and 11 of 24
+seeds clear the `Undermixed` finding with 80.7% coverage among exactly those.
+
 *Five findings from building it, each from a test that failed for a real reason:*
 
 1. **Newton diverged**; uniform noise pinned at the clamp instead of reporting β ≈ 0. Far from the

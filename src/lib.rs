@@ -90,6 +90,7 @@ pub mod factor;
 pub mod kernel;
 pub mod schedule;
 pub mod gibbs;
+pub mod samples;
 pub mod ising;
 pub mod device;
 pub mod ledger;

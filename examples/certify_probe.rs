@@ -1,19 +1,10 @@
 //! What do real chains actually look like? Measure before asserting.
-use ferrotherm::certify::certify;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::Graph;
+use ferrotherm::samples::{Plan, SampleSet};
 
-fn run(g: &Graph, beta: f64, thin: usize, burn: usize, draws: usize, seed: u64)
-    -> (Vec<Vec<i8>>, Vec<f64>) {
-    let mut smp = Sampler::new(g, beta, seed);
-    smp.sweeps(burn, None);
-    let (mut s, mut t) = (Vec::new(), Vec::new());
-    for _ in 0..draws {
-        smp.sweeps(thin.max(1), None);
-        s.push(smp.s.clone());
-        t.push(g.energy(&smp.s));
-    }
-    (s, t)
+fn run(g: &Graph, beta: f64, thin: usize, burn: usize, draws: usize, seed: u64) -> SampleSet {
+    Sampler::new(g, beta, seed).collect(&Plan::new(burn, draws, thin), None)
 }
 
 fn main() {
@@ -29,8 +20,7 @@ fn main() {
         ("lat12 b0.44 burn500 thin20",ferrotherm::ising::lattice2d(12, 1.0), 0.44, 20, 500, 3000),
     ];
     for (name, g, beta, thin, burn, draws) in cases {
-        let (s, t) = run(&g, beta, thin, burn, draws, 1);
-        let c = certify(&g, beta, &s, &t);
+        let c = run(&g, beta, thin, burn, draws, 1).certificate(&g).expect("a chain");
         let f: Vec<String> = c.findings.iter().map(|x| format!("{x:?}").split(' ').next().unwrap().to_string()).collect();
         println!("{name:<34} {:>8.3} {:>8.1} {:>7.0} {:>6}  {}",
                  c.beta_eff, c.tau_int, c.ess, g.n,

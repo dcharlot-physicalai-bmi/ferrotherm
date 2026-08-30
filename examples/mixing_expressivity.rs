@@ -69,11 +69,12 @@
 //
 // run: cargo run --release --example mixing_expressivity
 
-use ferrotherm::certify::{self, Certificate};
+use ferrotherm::certify::Certificate;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ledger::{Ledger, Z1_SPICE};
 use ferrotherm::rng::Pcg;
+use ferrotherm::samples::Plan;
 
 /// A layered Boltzmann machine: `layers` layers of `width`, dense bipartite between neighbours.
 ///
@@ -108,16 +109,8 @@ fn measure(g: &Graph, beta: f64, draws: usize, thin: usize, seed: u64) -> (Certi
     let mut smp = Sampler::new(g, beta, seed);
     // Burn-in long enough that the certificate's own drift finding is about the model and not
     // about a chain that was still walking away from its random start.
-    smp.sweeps(2_000, Some(&mut led));
-
-    let mut samples = Vec::with_capacity(draws);
-    let mut trace = Vec::with_capacity(draws);
-    for _ in 0..draws {
-        smp.sweeps(thin.max(1), Some(&mut led));
-        trace.push(g.energy(&smp.s));
-        samples.push(smp.s.clone());
-    }
-    (certify::certify(g, beta, &samples, &trace), led)
+    let set = smp.collect(&Plan::new(2_000, draws, thin.max(1)), Some(&mut led));
+    (set.certificate(g).expect("collect returns a chain"), led)
 }
 
 const DRAWS: usize = 40_000;
@@ -189,18 +182,39 @@ fn main() {
     let cold = *BETAS.last().unwrap();
     println!("\nPRICED AT beta {cold} -- what ONE INDEPENDENT DRAW costs\n");
     println!(
-        "{:>7} {:>6} {:>7} {:>14} {:>16} {:>12}",
-        "layers", "width", "edges", "tau_int", "updates/sample", "nJ/sample"
+        "{:>7} {:>6} {:>7} {:>13} {:>14} {:>11} {:>11} {:>11}",
+        "layers", "width", "edges", "tau_int", "updates/draw", "nJ mixing", "nJ readback", "read share"
     );
     for (layers, width, edges, m, sd) in &cold_row {
-        let per = m * (layers * width) as f64;
-        let one = Ledger { samples: per.round().max(1.0) as u64, reads: 0, writes: 0 };
-        let nj = one.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
+        let n = layers * width;
+        let per = m * n as f64;
+        // An independent draw is the sweeps that separate it from the last one AND the readback
+        // that turns the device's state into a sample somebody holds. Pricing only the first was
+        // what this column did before, and it is the more flattering of the two halves.
+        let mixing = Ledger { samples: per.round().max(1.0) as u64, reads: 0, writes: 0 };
+        let readback = Ledger { samples: 0, reads: n as u64, writes: 0 };
+        let mj = mixing.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
+        let rj = readback.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
         println!(
-            "{layers:>7} {width:>6} {edges:>7} {:>14} {per:>16.0} {nj:>12.3}",
-            format!("{m:.2}+-{sd:.2}")
+            "{layers:>7} {width:>6} {edges:>7} {:>13} {per:>14.0} {mj:>11.4} {rj:>11.4} {:>10.1}%",
+            format!("{m:.2}+-{sd:.2}"),
+            100.0 * rj / (mj + rj)
         );
     }
+    println!(
+        "\nTHE COLUMN THIS TABLE DID NOT HAVE UNTIL NOW, and it changes what the table is about.\n\
+         A Z1-class read is 1.692 pJ per node against 7.09 fJ per Gibbs cycle, so ONE READ IS WORTH\n\
+         239 UPDATES. Depth moves the mixing column by a large factor across these shapes and leaves\n\
+         the readback column exactly constant, because readback depends on the spin count and these\n\
+         shapes hold the spin count fixed. So the quantity the field argues about is real, is\n\
+         measured above, and is the minority of the bill at these sizes. That is not a weakening of\n\
+         the tradeoff; it is where the tradeoff sits. A machine of this class is an I/O machine,\n\
+         and this is that sentence in the units of this experiment.\n\n\
+         The read is charged here because `Sampler::collect` charges it. Five places in this\n\
+         repository, this example included, used to append `smp.s.clone()` inside their own\n\
+         collection loop -- which never touches the read path, so the readback column was zero\n\
+         everywhere and nobody could see it was missing."
+    );
 
     // ---- 3. width at a fixed depth --------------------------------------------------------------
     //

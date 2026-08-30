@@ -37,6 +37,8 @@ __all__ = [
     "BranchResult",
     "BreakoutRun",
     "Certificate",
+    "Estimate",
+    "SampleSet",
     "PlanarCut",
     "PopulationRun",
     "Rounded",
@@ -151,6 +153,16 @@ _cert_findings = _sig("ft_cert_findings", c_uint32, [_p])
 _cert_finding = _sig("ft_cert_finding", c_uint32, [_p, c_uint32, ctypes.POINTER(ctypes.c_ubyte), c_uint32])
 _cert_f = {n: _sig("ft_cert_" + n, c_double, [_p]) for n in
            ("beta_eff", "beta_lo", "beta_hi", "tau", "ess", "tv", "floor")}
+_collect = _sig("ft_collect", c_uint32, [_p, c_uint32, c_uint32, c_uint32])
+_samples_len = _sig("ft_samples_len", c_uint32, [_p])
+_samples_distinct = _sig("ft_samples_distinct", c_uint32, [_p])
+_samples_best_energy = _sig("ft_samples_best_energy", c_double, [_p])
+_samples_chain_tau = _sig("ft_samples_chain_tau", c_double, [_p])
+_samples_degeneracy = _sig("ft_samples_degeneracy", c_uint32, [_p, c_double])
+_samples_state = _sig("ft_samples_state", c_uint32, [_p, c_uint32, POINTER(c_int8), c_uint32])
+_samples_mean_spin = _sig("ft_samples_mean_spin", c_uint32, [_p, c_uint32, POINTER(c_double)])
+_samples_correlation = _sig("ft_samples_correlation", c_uint32, [_p, c_uint32, c_uint32, POINTER(c_double)])
+_samples_magnetization = _sig("ft_samples_magnetization", c_uint32, [_p, POINTER(c_double)])
 _exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
 _exact_marginals = _sig("ft_exact_marginals", c_uint32,
                         [_p, c_double, c_uint32, ctypes.POINTER(c_double), c_uint32])
@@ -488,6 +500,112 @@ class PopulationRun:
         warn = "" if self.trustworthy else "  ** rho says do not trust ln_z **"
         return (f"<PopulationRun energy={self.energy:.6g} ln_z={z} "
                 f"rho={self.rho:.3g}/{self.population}{warn}>")
+
+
+class Estimate:
+    """An expectation value with an error bar that accounts for how correlated the draws were.
+
+    ``stderr`` is ``sqrt(var / ess)``, not ``sqrt(var / n)``. Chain draws are correlated, so ``n``
+    of them are worth ``n / (2 * tau_int)`` independent ones, and the naive interval understates the
+    error by ``sqrt(2 * tau)``. Measured against exact enumeration, on a chain with ``tau = 32`` the
+    naive interval contains the true value for one site in four while announcing 95%.
+    """
+
+    __slots__ = ("value", "stderr", "ess", "tau_int")
+
+    def __init__(self, value: float, stderr: float, ess: float, tau_int: float) -> None:
+        self.value, self.stderr, self.ess, self.tau_int = value, stderr, ess, tau_int
+
+    @property
+    def ci95(self) -> "tuple[float, float]":
+        return (self.value - 1.96 * self.stderr, self.value + 1.96 * self.stderr)
+
+    def covers(self, truth: float) -> bool:
+        lo, hi = self.ci95
+        return lo <= truth <= hi
+
+    def __repr__(self) -> str:
+        tau = f", tau={self.tau_int:.1f}" if self.tau_int == self.tau_int else ""
+        return f"<Estimate {self.value:.5f} +- {self.stderr:.5f} (ess {self.ess:.0f}{tau})>"
+
+
+class SampleSet:
+    """The states a run kept, and what may honestly be computed from them.
+
+    Bound to one simulation: the accessors read whatever that simulation last collected, so keeping
+    a ``SampleSet`` past the next :meth:`Sim.collect` gives you the new draws, not the old ones.
+
+    >>> s = lattice2d(6, beta=0.5, seed=3)
+    >>> d = s.collect(draws=512, thin=2, burn_in=200)
+    >>> len(d)
+    512
+    >>> abs(d.mean_spin(0).value) <= 1.0
+    True
+    >>> d.mean_spin(0).stderr > 0.0
+    True
+    """
+
+    def __init__(self, sim: "Sim") -> None:
+        self._sim = sim
+
+    def __len__(self) -> int:
+        return int(_samples_len(self._sim._h))
+
+    @property
+    def distinct(self) -> int:
+        """How many of the draws were DIFFERENT.
+
+        A run returning 10,000 draws of which three are distinct has told you about three states,
+        whatever its draw count says.
+        """
+        return int(_samples_distinct(self._sim._h))
+
+    @property
+    def best_energy(self) -> float:
+        return float(_samples_best_energy(self._sim._h))
+
+    @property
+    def chain_tau(self) -> float:
+        """The slowest autocorrelation the chain showed. Every estimate is deflated by it."""
+        return float(_samples_chain_tau(self._sim._h))
+
+    def degeneracy(self, tol: float = 1e-9) -> int:
+        """Distinct states within ``tol`` of the lowest energy seen.
+
+        Evidence of degeneracy, not a count of it: a chain proves the states it visited exist and
+        nothing about the ones it did not.
+        """
+        return int(_samples_degeneracy(self._sim._h, float(tol)))
+
+    def state(self, k: int) -> "list[int]":
+        n = int(_samples_state(self._sim._h, int(k), None, 0))
+        if n == 0:
+            raise IndexError(f"no sample {k}")
+        buf = (c_int8 * n)()
+        got = _samples_state(self._sim._h, int(k), buf, n)
+        return [int(v) for v in buf[:got]]
+
+    def _four(self, call, *args) -> Estimate:
+        out = (c_double * 4)()
+        if call(self._sim._h, *args, out) == 0:
+            raise RuntimeError("no samples collected, or the index is out of range")
+        return Estimate(float(out[0]), float(out[1]), float(out[2]), float(out[3]))
+
+    def mean_spin(self, i: int) -> Estimate:
+        """``<s_i>``, in ``[-1, 1]``."""
+        return self._four(_samples_mean_spin, int(i))
+
+    def correlation(self, i: int, j: int) -> Estimate:
+        """``<s_i s_j>``. This and :meth:`mean_spin` are the two moments contrastive divergence matches."""
+        return self._four(_samples_correlation, int(i), int(j))
+
+    def magnetization(self) -> Estimate:
+        """The order parameter, with its error bar."""
+        return self._four(_samples_magnetization)
+
+    def __repr__(self) -> str:
+        return (f"<SampleSet {len(self)} draws, {self.distinct} distinct, "
+                f"best {self.best_energy:.6g}, chain tau {self.chain_tau:.1f}>")
 
 
 class Certificate:
@@ -871,6 +989,24 @@ is how a dropped GPU dispatch turns into a believable energy.
         return float(_ledger_joules(self._h))
 
     # -- lifetime --
+
+    def collect(self, draws: int = 512, thin: int = 1, burn_in: int = 0) -> "SampleSet":
+        """Draw states and keep them.
+
+        Every solver here returns one state, which is an optimiser's answer. This is a sampler:
+        expectation values, degeneracy evidence and the moments an energy-based model is trained on
+        all need many. The run is certified at the same time -- read :attr:`certificate` after.
+
+        It charges the ledger for the READBACK as well as the sweeps. A Z1-class read is 1.692 pJ
+        per node against 7.09 fJ per Gibbs cycle, so a read is worth 239 updates; a collection loop
+        that does not charge for it reports the larger half of its own energy bill as zero.
+        """
+        self._live()
+        if draws < 16:
+            raise ValueError("certifying fewer than 16 draws says nothing")
+        if _collect(self._h, int(max(0, burn_in)), int(draws), int(max(1, thin))) == 0:
+            raise RuntimeError("could not collect from this simulation")
+        return SampleSet(self)
 
     def certify(self, draws: int = 512, thin: int = 1) -> "Certificate":
         """Sample and check the result.

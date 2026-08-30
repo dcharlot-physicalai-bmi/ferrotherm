@@ -163,6 +163,45 @@ uint32_t ft_cert_findings(const ft_sim *sim);
  * NULL, or 0 if there is no such finding. */
 uint32_t ft_cert_finding(const ft_sim *sim, uint32_t i, uint8_t *buf, uint32_t cap);
 
+/* ---- samples ------------------------------------------------------------------------------------
+
+   Every solver on this ABI returns ONE state. That is an optimiser's answer, and this is a sampler:
+   the device it prices charges 1.692 pJ for a read and 7.09 fJ for a Gibbs cycle, so a machine that
+   returns one state per program spent its whole budget on the thing it did not use. These keep what
+   was drawn.
+
+   ft_collect also CHARGES THE LEDGER FOR THE READBACK, which the loop it replaced did not, so
+   ft_ledger_joules_z1 after a certified run is now larger than it used to be -- and the earlier
+   figure was the one that was wrong. */
+
+/* Draw `draws` states `thin` sweeps apart after `burn_in`, keep them, and certify the run. Returns
+ * 1 on success, 0 on NULL or fewer than 16 draws. ft_certify is this with burn_in = 0. */
+uint32_t ft_collect(ft_sim *sim, uint32_t burn_in, uint32_t draws, uint32_t thin);
+
+uint32_t ft_samples_len(const ft_sim *sim);       /* states held, 0 if nothing collected */
+uint32_t ft_samples_distinct(const ft_sim *sim);  /* how many of them were DIFFERENT */
+double   ft_samples_best_energy(const ft_sim *sim);
+double   ft_samples_chain_tau(const ft_sim *sim); /* the slowest autocorrelation seen */
+
+/* Distinct states within `tol` of the lowest energy seen. EVIDENCE of degeneracy, not a count of
+ * it: a chain proves the states it visited exist and nothing about the ones it did not. */
+uint32_t ft_samples_degeneracy(const ft_sim *sim, double tol);
+
+/* Copy state `k` into `out`. Returns entries written, or the width if `out` is NULL. */
+uint32_t ft_samples_state(const ft_sim *sim, uint32_t k, int8_t *out, uint32_t cap);
+
+/* Expectation values. Each writes FOUR doubles into `out`: value, stderr, ess, tau_int.
+ *
+ * The standard error is sqrt(var/ess), NOT sqrt(var/N). Chain draws are correlated, so N of them
+ * are worth N/(2*tau) independent ones and the naive interval understates the error by sqrt(2*tau).
+ * Measured against exact enumeration in examples/interval_calibration.rs: on a chain with tau = 32
+ * the naive interval contains the true value for one site in four while announcing 95%.
+ *
+ * Return 1 on success, 0 on NULL, an out-of-range index, or nothing collected. */
+uint32_t ft_samples_mean_spin(const ft_sim *sim, uint32_t i, double *out);
+uint32_t ft_samples_correlation(const ft_sim *sim, uint32_t i, uint32_t j, double *out);
+uint32_t ft_samples_magnetization(const ft_sim *sim, double *out);
+
 /* ---- solvers and bounds -------------------------------------------------------------------------
 
    Each solver LEAVES ITS BEST STATE as the simulation's state, so ft_spins reads the answer and

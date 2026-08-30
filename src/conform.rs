@@ -171,14 +171,10 @@ pub fn run(dev: &mut dyn Device) -> Report {
     {
         let g = crate::ising::lattice2d(24, 1.0);
         let mut smp = crate::gibbs::Sampler::new(&g, 0.7, 4);
-        let mut samples = Vec::new();
-        let mut trace = Vec::new();
-        for _ in 0..300 {
-            smp.sweeps(1, None);
-            samples.push(smp.s.clone());
-            trace.push(g.energy(&smp.s));
-        }
-        let c = crate::certify::certify(&g, 0.7, &samples, &trace);
+        let c = smp
+            .collect(&crate::samples::Plan::new(0, 300, 1), None)
+            .certificate(&g)
+            .expect("collect returns a chain");
         let ok = !c.passed();
         cases.push(case(
             "rejects a bad run",
@@ -196,14 +192,10 @@ pub fn run(dev: &mut dyn Device) -> Report {
     {
         let g = crate::ising::ring(10, 1.0, 0.3);
         let mut smp = crate::gibbs::Sampler::new(&g, 0.5, 11);
-        smp.sweeps(500, None);
-        let (mut samples, mut trace) = (Vec::new(), Vec::new());
-        for _ in 0..3000 {
-            smp.sweeps(8, None);
-            samples.push(smp.s.clone());
-            trace.push(g.energy(&smp.s));
-        }
-        let c = crate::certify::certify(&g, 0.5, &samples, &trace);
+        let c = smp
+            .collect(&crate::samples::Plan::new(500, 3000, 8), None)
+            .certificate(&g)
+            .expect("collect returns a chain");
         let ok = c.passed();
         let detail = match (c.tv_exact, c.noise_floor) {
             (Some(tv), Some(fl)) => format!(

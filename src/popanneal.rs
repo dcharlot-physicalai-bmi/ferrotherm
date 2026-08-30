@@ -49,6 +49,12 @@ pub struct Params {
     /// Starting at `0.0` is what makes [`Outcome::ln_z`] an absolute free energy: `Z(0) = 2ⁿ` for
     /// every graph, with no sampling involved.
     pub betas: Vec<f64>,
+    /// Keep the final population as a [`crate::samples::SampleSet`] on [`Outcome::population`].
+    ///
+    /// Off by default because it costs `R * n` bytes to hold, and a caller who wanted only the
+    /// ground state should not pay for a population they are about to drop. Turn it on with
+    /// [`Params::keeping_population`].
+    pub keep_population: bool,
 }
 
 impl Params {
@@ -59,7 +65,13 @@ impl Params {
     pub fn linear_from_zero(population: usize, sweeps: usize, beta_max: f64, stages: usize) -> Params {
         let stages = stages.max(1);
         let betas = (0..=stages).map(|i| beta_max * i as f64 / stages as f64).collect();
-        Params { population, sweeps, betas }
+        Params { population, sweeps, betas, keep_population: false }
+    }
+
+    /// Keep the final population. See [`Outcome::population`] for what it is worth.
+    pub fn keeping_population(mut self) -> Params {
+        self.keep_population = true;
+        self
     }
 }
 
@@ -80,6 +92,25 @@ pub struct Outcome {
     pub rho_max: f64,
     /// Population size after each resampling. Fluctuates by `O(√R)` around the target.
     pub sizes: Vec<usize>,
+    /// The final population as a sample set, when [`Params::keep_population`] asked for it.
+    ///
+    /// # This is the second thing in this crate that can produce an expectation value
+    ///
+    /// [`crate::gibbs::Sampler::collect`] produces one by running a chain, and its draws are
+    /// correlated along time. This produces one a completely different way: `R` chains run in
+    /// parallel down the same ladder, so there is no autocorrelation along the index at all — and
+    /// a different correlation instead, because resampling means several replicas can descend from
+    /// one ancestor. `rho` measures exactly that, and it is what
+    /// [`crate::samples::Provenance::Population`] carries so the error bars can be deflated by it.
+    ///
+    /// Ancestry is tracked from the INITIAL population, never reset, so the `rho` attached here is
+    /// cumulative over the whole ladder: the effective number of distinct starting points that
+    /// still have descendants at `beta_end`. That makes `R / rho` a LOWER bound on the effective
+    /// sample size rather than an estimate of it — replicas sharing an ancestor also ran
+    /// `sweeps` independent Gibbs sweeps at every rung afterwards, which decorrelates them by an
+    /// amount this does not attempt to measure. Error bars built from it are therefore
+    /// conservative, which is the direction to be wrong in.
+    pub population: Option<crate::samples::SampleSet>,
 }
 
 impl Outcome {
@@ -106,6 +137,7 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
             rho: Vec::new(),
             rho_max: 1.0,
             sizes: Vec::new(),
+            population: None,
         };
     }
     let mut rng = Pcg::new(seed, 0x9A_11E4);
@@ -250,16 +282,86 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     }
 
     let rho_max = rho.iter().cloned().fold(1.0f64, f64::max);
+    // The LAST rho, not the worst one: families are tracked from the initial population and never
+    // reset, so this is the cumulative diversity of the population being handed over. `rho_max`
+    // answers a different question -- whether to believe `ln_z`, which depends on the worst rung
+    // the ladder passed through, not on where it ended.
+    let population = p.keep_population.then(|| {
+        let e: Vec<f64> = pop.iter().map(|s| g.energy(s)).collect();
+        crate::samples::SampleSet::from_population(
+            pop,
+            e,
+            *p.betas.last().expect("a non-empty ladder, checked above"),
+            rho.last().copied().unwrap_or(1.0),
+        )
+    });
     // Recomputed from the state, not carried: the one number a caller acts on should not depend on
     // an accumulator being right.
     let energy = g.energy(&best_state);
-    Outcome { state: best_state, energy, ln_z, ln_z_is_absolute: absolute, rho, rho_max, sizes }
+    Outcome { state: best_state, energy, ln_z, ln_z_is_absolute: absolute, rho, rho_max, sizes, population }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::graph::GraphBuilder;
+
+    /// The population is a second, structurally different sampler, and it must agree with exact
+    /// enumeration to within the interval it quotes.
+    ///
+    /// This is not a repeat of the chain test in [`crate::samples`]. A chain's draws are correlated
+    /// along TIME and are deflated by `tau_int`; a population's replicas are independent chains
+    /// correlated through shared ANCESTRY and are deflated by `rho`. Two different correlation
+    /// structures, two different deflators, checked against the same oracle.
+    #[test]
+    fn the_final_population_estimates_the_exact_marginals() {
+        for (n, beta) in [(12usize, 0.5f64), (12, 1.0)] {
+            let g = random_graph(n, 0.35, 5, true);
+            let enu = crate::samples::enumerate(&g, beta).expect("12 spins enumerates");
+            let p = Params::linear_from_zero(800, 4, beta, 30).keeping_population();
+            let mut covered = 0usize;
+            for seed in 0..4u64 {
+                let o = run(&g, &p, seed * 31 + 1);
+                let set = o.population.expect("keeping_population was asked for");
+                assert_eq!(set.len(), o.sizes.last().copied().unwrap());
+                match set.provenance() {
+                    crate::samples::Provenance::Population { beta: b, rho } => {
+                        assert!((b - beta).abs() < 1e-12);
+                        assert_eq!(rho, *o.rho.last().unwrap(), "the LAST rho, not the worst");
+                    }
+                    other => panic!("wrong provenance: {other:?}"),
+                }
+                for i in 0..n {
+                    if set.mean_spin(i).unwrap().covers(enu.mean_spin(i).unwrap().value) {
+                        covered += 1;
+                    }
+                }
+            }
+            let frac = covered as f64 / (4 * n) as f64;
+            assert!(frac >= 0.9, "population marginals covered {frac:.3} at beta {beta}");
+        }
+    }
+
+    /// A population held for its ancestry cannot be certified: there is no draw order to certify.
+    #[test]
+    fn a_population_is_not_a_chain() {
+        let g = random_graph(10, 0.4, 2, false);
+        let p = Params::linear_from_zero(200, 2, 1.0, 12).keeping_population();
+        let set = run(&g, &p, 7).population.unwrap();
+        assert_eq!(
+            set.certificate(&g).unwrap_err(),
+            crate::samples::Refused::NotAChain { provenance: "population" }
+        );
+    }
+
+    #[test]
+    fn the_population_is_not_kept_unless_asked_for() {
+        let g = random_graph(10, 0.4, 2, false);
+        let p = Params::linear_from_zero(64, 2, 1.0, 8);
+        assert!(!p.keep_population);
+        assert!(run(&g, &p, 1).population.is_none(), "R * n bytes nobody asked for");
+        assert!(run(&g, &p.clone().keeping_population(), 1).population.is_some());
+    }
 
     fn random_graph(n: usize, p: f64, seed: u64, fields: bool) -> Graph {
         let mut rng = Pcg::new(seed, 0xC0FFEE);
@@ -371,7 +473,7 @@ mod tests {
     fn rho_reports_a_collapsed_population() {
         let g = random_graph(30, 0.3, 11, false);
         let r = 128;
-        let p = Params { population: r, sweeps: 1, betas: vec![0.0, 40.0] };
+        let p = Params { population: r, sweeps: 1, betas: vec![0.0, 40.0], keep_population: false };
         let o = run(&g, &p, 9);
         assert_eq!(o.rho.len(), 1);
         assert!(
@@ -406,7 +508,7 @@ mod tests {
     #[test]
     fn a_ladder_that_skips_infinite_temperature_reports_a_relative_free_energy() {
         let g = random_graph(8, 0.5, 4, false);
-        let p = Params { population: 200, sweeps: 2, betas: vec![0.2, 0.6, 1.0] };
+        let p = Params { population: 200, sweeps: 2, betas: vec![0.2, 0.6, 1.0], keep_population: false };
         let o = run(&g, &p, 4);
         assert!(!o.ln_z_is_absolute);
         assert!(o.free_energy_per_spin(1.0, g.n).is_none(), "a ratio is not a free energy");
@@ -421,7 +523,7 @@ mod tests {
         let o = run(&g, &Params::linear_from_zero(10, 1, 1.0, 3), 1);
         assert!(o.state.is_empty() && o.rho.is_empty());
         let g2 = random_graph(6, 0.5, 1, false);
-        let o2 = run(&g2, &Params { population: 10, sweeps: 1, betas: Vec::new() }, 1);
+        let o2 = run(&g2, &Params { population: 10, sweeps: 1, betas: Vec::new(), keep_population: false }, 1);
         assert!(o2.rho.is_empty() && !o2.ln_z_is_absolute);
     }
 }

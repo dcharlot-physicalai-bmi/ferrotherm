@@ -134,6 +134,52 @@ end
     close!(s)
 end
 
+@testset "a sample set answers what a certificate cannot" begin
+    # Textual parity says these symbols are REACHABLE. This says they are right: a 10-spin ring has
+    # exact marginals through the same library, so every interval here is checked against truth
+    # rather than against itself.
+    #
+    # COVERAGE IS COUNTED, NOT REQUIRED SITE BY SITE. A 95% interval that never misses is not a 95%
+    # interval, and the sites of one chain are not independent checks -- they all move with the same
+    # global mode, so ten sites is closer to one or two genuine trials. Three seeds, thirty
+    # intervals, and at most four misses; measured, this run misses none.
+    hit = 0
+    for seed in (5, 17, 41)
+        s = ring(10; h = 0.3, beta = 0.5, seed = seed)
+        d = collect_samples(s; draws = 4000, thin = 2, burn_in = 500)
+        @test length(d) == 4000
+        @test distinct(d) > 1                 # a chain visiting one state is not sampling
+        @test distinct(d) <= 1024             # and cannot exceed the state space
+        @test chain_tau(d) >= 0.5
+        @test degeneracy(d) >= 1
+
+        truth = exact_marginals(s; beta = 0.5)   # P(s_i = +1), by variable elimination
+        for i in 1:10
+            e = mean_spin(d, i)
+            @test e.stderr > 0.0
+            @test e.ess <= length(d)
+            # <s_i> = 2 P(+1) - 1, in the crate's own units.
+            covers(e, 2 * truth[i] - 1) && (hit += 1)
+        end
+
+        # A claim the Z2 symmetry cannot satisfy by accident: neighbouring spins on a ferromagnet
+        # agree, so this correlation is positive and its interval excludes zero.
+        c = correlation(d, 1, 2)
+        @test c.value - 1.96 * c.stderr > 0.0
+
+        lo, hi = ci95(mean_spin(d, 1))
+        @test lo < hi
+        st = sample_state(d, 1)
+        @test length(st) == 10
+        @test all(v -> v in (-1, 1), st)
+        m = magnetization_estimate(d)
+        @test m.ess <= length(d)
+        @test occursin("draws", sprint(show, d))
+        close!(s)
+    end
+    @test hit >= 26
+end
+
 @testset "the noise floor is never reported without its distance" begin
     s = ring(10; beta = 0.5, seed = 2)
     sweep!(s, 400)

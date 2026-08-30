@@ -60,6 +60,8 @@ export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
 export certify, findings, passed
+export Estimate, SampleSet, collect_samples, ci95, covers, mean_spin, correlation,
+    magnetization_estimate, degeneracy, chain_tau, distinct, best_energy, sample_state
 export rbm, dbm, fit!, log_likelihood, bars_and_stripes
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
@@ -244,6 +246,16 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_cert_passed Cuint SimPtr
 @cfn ft_cert_findings Cuint SimPtr
 @cfn ft_cert_finding Cuint SimPtr Cuint Ptr{UInt8} Cuint
+@cfn ft_collect Cuint SimPtr Cuint Cuint Cuint
+@cfn ft_samples_len Cuint SimPtr
+@cfn ft_samples_distinct Cuint SimPtr
+@cfn ft_samples_best_energy Cdouble SimPtr
+@cfn ft_samples_chain_tau Cdouble SimPtr
+@cfn ft_samples_degeneracy Cuint SimPtr Cdouble
+@cfn ft_samples_state Cuint SimPtr Cuint Ptr{Int8} Cuint
+@cfn ft_samples_mean_spin Cuint SimPtr Cuint Ptr{Cdouble}
+@cfn ft_samples_correlation Cuint SimPtr Cuint Cuint Ptr{Cdouble}
+@cfn ft_samples_magnetization Cuint SimPtr Ptr{Cdouble}
 @cfn ft_exact_ground Cdouble SimPtr Cuint
 @cfn ft_exact_log_z Cdouble SimPtr Cdouble Cuint
 @cfn ft_exact_width Cuint SimPtr
@@ -1029,6 +1041,128 @@ function certify(s::Simulation; draws::Integer = 512, thin::Integer = 1)
                 (ft_cert_beta_lo(s.handle), ft_cert_beta_hi(s.handle)),
                 ft_cert_tau(s.handle), ft_cert_ess(s.handle),
                 nan2n(ft_cert_tv(s.handle)), nan2n(ft_cert_floor(s.handle)), msgs)
+end
+
+"""
+    Estimate
+
+An expectation value with an error bar that accounts for how correlated the draws were.
+
+`stderr` is `sqrt(var / ess)`, not `sqrt(var / n)`. Chain draws are correlated, so `n` of them are
+worth `n / (2 * tau_int)` independent ones, and the naive interval understates the error by
+`sqrt(2 * tau)`. Measured against exact enumeration: on a chain with `tau = 32` the naive interval
+contains the true value for one site in four while announcing 95%.
+"""
+struct Estimate
+    value::Float64
+    stderr::Float64
+    ess::Float64
+    tau_int::Float64
+end
+
+"""`value ± 1.96 * stderr`."""
+ci95(e::Estimate) = (e.value - 1.96 * e.stderr, e.value + 1.96 * e.stderr)
+
+"""Whether `truth` lies inside [`ci95`](@ref)."""
+function covers(e::Estimate, truth::Real)
+    lo, hi = ci95(e)
+    lo <= truth <= hi
+end
+
+function Base.show(io::IO, e::Estimate)
+    print(io, round(e.value; digits = 5), " ± ", round(e.stderr; digits = 5),
+          " (ess ", round(e.ess; digits = 0))
+    isnan(e.tau_int) || print(io, ", tau ", round(e.tau_int; digits = 1))
+    print(io, ")")
+end
+
+"""
+    SampleSet
+
+The states a run kept. Bound to one simulation: the accessors read whatever that simulation last
+collected, so holding one past the next [`collect_samples`](@ref) gives you the new draws.
+"""
+struct SampleSet
+    sim::Simulation
+end
+
+"""
+    collect_samples(s; draws = 512, thin = 1, burn_in = 0)
+
+Draw states and **keep** them.
+
+Every solver here returns one state, which is an optimiser's answer. This is a sampler: expectation
+values, degeneracy evidence and the moments an energy-based model is trained on all need many. The
+run is certified at the same time, so [`certify`](@ref)'s accessors read the same run.
+
+It charges the ledger for the readback as well as the sweeps — a Z1-class read is 1.692 pJ per node
+against 7.09 fJ per Gibbs cycle, so a read is worth 239 updates.
+"""
+function collect_samples(s::Simulation; draws::Integer = 512, thin::Integer = 1,
+                         burn_in::Integer = 0)
+    _live(s)
+    draws >= 16 || throw(ArgumentError("certifying fewer than 16 draws says nothing"))
+    ft_collect(s.handle, Cuint(max(0, burn_in)), Cuint(draws), Cuint(max(1, thin))) == 0 &&
+        error("could not collect from this simulation")
+    SampleSet(s)
+end
+
+Base.length(d::SampleSet) = Int(ft_samples_len(d.sim.handle))
+
+"""How many of the draws were **different**. Ten thousand draws of which three are distinct have
+told you about three states, whatever the draw count says."""
+distinct(d::SampleSet) = Int(ft_samples_distinct(d.sim.handle))
+
+"""Lowest energy in the collected set."""
+best_energy(d::SampleSet) = ft_samples_best_energy(d.sim.handle)
+
+"""The slowest autocorrelation the chain showed. Every estimate is deflated by it."""
+chain_tau(d::SampleSet) = ft_samples_chain_tau(d.sim.handle)
+
+"""
+    degeneracy(d; tol = 1e-9)
+
+Distinct states within `tol` of the lowest energy seen. **Evidence** of degeneracy, not a count of
+it: a chain proves the states it visited exist and nothing about the ones it did not.
+"""
+degeneracy(d::SampleSet; tol::Real = 1e-9) = Int(ft_samples_degeneracy(d.sim.handle, Cdouble(tol)))
+
+"""State `k`, one-based, as a vector of ±1."""
+function sample_state(d::SampleSet, k::Integer)
+    n = ft_samples_state(d.sim.handle, Cuint(k - 1), Ptr{Int8}(C_NULL), Cuint(0))
+    n == 0 && throw(BoundsError(d, k))
+    buf = Vector{Int8}(undef, n)
+    got = ft_samples_state(d.sim.handle, Cuint(k - 1), pointer(buf), Cuint(n))
+    buf[1:got]
+end
+
+function _estimate(ok::Integer, buf::Vector{Cdouble})
+    ok == 0 && error("no samples collected, or the index is out of range")
+    Estimate(buf[1], buf[2], buf[3], buf[4])
+end
+
+"""`⟨s_i⟩` with its error bar, `i` one-based."""
+function mean_spin(d::SampleSet, i::Integer)
+    buf = Vector{Cdouble}(undef, 4)
+    _estimate(ft_samples_mean_spin(d.sim.handle, Cuint(i - 1), pointer(buf)), buf)
+end
+
+"""`⟨s_i s_j⟩`, one-based. This and [`mean_spin`](@ref) are the two moments contrastive divergence
+matches."""
+function correlation(d::SampleSet, i::Integer, j::Integer)
+    buf = Vector{Cdouble}(undef, 4)
+    _estimate(ft_samples_correlation(d.sim.handle, Cuint(i - 1), Cuint(j - 1), pointer(buf)), buf)
+end
+
+"""The order parameter, with its error bar."""
+function magnetization_estimate(d::SampleSet)
+    buf = Vector{Cdouble}(undef, 4)
+    _estimate(ft_samples_magnetization(d.sim.handle, pointer(buf)), buf)
+end
+
+function Base.show(io::IO, d::SampleSet)
+    print(io, "SampleSet ", length(d), " draws, ", distinct(d), " distinct, best ",
+          round(best_energy(d); digits = 6), ", chain tau ", round(chain_tau(d); digits = 1))
 end
 
 function Base.show(io::IO, c::Certificate)

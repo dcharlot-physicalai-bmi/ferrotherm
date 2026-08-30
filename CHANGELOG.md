@@ -2,6 +2,114 @@
 
 ## Unreleased
 
+### A sampler that returns more than one state, and an error bar that means what it says
+
+`ferrotherm` priced a device that charges 1.692 pJ per read against 7.09 fJ per Gibbs cycle, and
+then handed back **one state**. Every solver in the crate returned `Outcome { state, energy, .. }`.
+That is an optimiser's answer, and the ROADMAP's own position statement — *"every player returns
+best found"* — described this crate too. New module `samples`.
+
+**`SampleSet` carries where its states came from, and refuses accordingly.** Averaging spins over
+the states a tabu search visited produces a number of exactly the same shape as `⟨s_i⟩` — a float in
+`[-1, 1]`, printable, plottable — and it estimates nothing: a search trajectory is distributed by
+nothing. So `Provenance` is part of the type, and `mean_spin`, `correlation`, `magnetization` and
+`expectation` return `Err(Refused::NotDistributional)` on a search set. `best`, `distinct` and
+`ground_states` are facts about the multiset and always answer.
+
+**The standard error is `sqrt(var/ess)`, not `sqrt(var/N)`, and the difference is not cosmetic.**
+`examples/interval_calibration.rs` measures it: 24 chains × 20,000 draws × every site, on three
+models at four temperatures, each interval compared against the *exactly enumerated* marginal.
+
+| model | β | τ_int | corrected | naive |
+|---|---|---|---|---|
+| ring12 | 0.5 | 2.1 | 99.7% | 83.3% |
+| ring12 | 1.2 | 31.6 | 100.0% | **24.0%** |
+| glass14 | 0.8 | 68.1 | 94.6% | 27.7% |
+| glass16 | 0.8 | 23.6 | 97.9% | 30.7% |
+
+Both intervals are built from the same estimate and differ only by `sqrt(2τ)`. An interval that
+announces 95% and contains the true value for one site in four is not conservative; it is a wrong
+number with a decoration.
+
+**And the correction is by the chain's *slowest* observed autocorrelation, not the site's own.** A
+per-observable `tau_int` is the textbook correction and it is fooled in one specific, common way: a
+single site sitting in a metastable mode produces a trace that is `+1` with fast jitter, and Sokal's
+windowing correctly reports that the *jitter* decorrelates quickly — while the mode that decides
+whether the estimate is right at all never appears in that trace. Measured on a 14-spin glass at
+β = 1.2: per-site τ reads ≈15, the chain's reads ≈306, and the per-site interval covers 44% while
+claiming 95%. `SampleSet::chain_tau` closes it.
+
+**The honest limit is printed too.** Where τ runs to hundreds, τ is itself an estimate from a chain
+barely long enough to make it, and a seed that under-estimates it clears `certify`'s `Undermixed`
+check with an interval still too narrow. On glass16 at β = 1.2, 11 of 24 seeds clear the check and
+coverage among exactly those is 80.7%. The correction is a large improvement and not a guarantee.
+
+Two producers, with two different correlation structures:
+
+- `Sampler::collect(&Plan, ledger)` — burn in, thin, keep. Deflated by `tau_int`.
+- `popanneal::Params::keeping_population()` → `Outcome::population` — `R` independent chains,
+  correlated instead through shared ancestry, deflated by the family statistic `ρ` the module
+  already computed and already reported. Ancestry is tracked from the initial population and never
+  reset, so `R/ρ` is a lower bound on the effective count: the copies also ran independent sweeps at
+  every rung afterwards. Conservative, which is the direction to be wrong in.
+
+Plus `samples::enumerate`, which returns every state with its exact Boltzmann weight — zero standard
+error, infinite effective sample size — and is the oracle the sampled sets are tested against.
+
+### Collecting samples used to be free, and the flagship figure was missing 78–98% of its bill
+
+Five places in this repository hand-wrote the same burn-in/thin/collect loop, and every one of them
+appended `smp.s.clone()` — which takes the state without going through `Sampler::read_all`, and
+therefore **without charging the ledger a single read**. On a Z1-class device a read is worth 239
+Gibbs cycles. Every certified run in the crate, and every run certified over the C ABI, reported its
+readback energy as exactly zero.
+
+`Sampler::collect` reads, all five call sites now go through it, and `examples/mixing_expressivity.rs`
+— the mixing-expressivity table, priced per independent draw — grew the column it was missing:
+
+```
+ layers  width   edges       tau_int   updates/draw   nJ mixing nJ readback  read share
+      2     72    5184   26.30+-1.18           3787      0.0268      0.2436       90.1%
+      3     48    4608    4.91+-0.31            707      0.0050      0.2436       98.0%
+     12     12    1584  65.95+-20.75           9497      0.0673      0.2436       78.3%
+```
+
+The mixing column spans 13× across these shapes; the total spans 1.25×. **The quantity the field
+argues about is real, is measured, and is the minority of the bill at these sizes.** That is not a
+weakening of the tradeoff — it locates it. Readback depends on spin count, and these shapes hold
+spin count fixed, so reshaping moves the part of the bill that is not the largest part. A machine of
+this class is an I/O machine, and that is that sentence in the units of this experiment.
+
+`ft_ledger_joules_z1` after `ft_certify` is now **larger** than it was in 0.33.0. The earlier figure
+was the one that was wrong.
+
+### The sample set reaches every surface
+
+New C ABI: `ft_collect` (certify with the burn-in exposed and the states kept — `ft_certify` is now
+this with `burn_in = 0`), `ft_samples_len`, `ft_samples_distinct`, `ft_samples_best_energy`,
+`ft_samples_chain_tau`, `ft_samples_degeneracy`, `ft_samples_state`, `ft_samples_mean_spin`,
+`ft_samples_correlation`, `ft_samples_magnetization`. Bound in the header, Python (`Sim.collect`
+→ `SampleSet`, `Estimate`), Zig (`collect`, `samplesMeanSpin`, …) and Julia (`collect_samples`,
+`mean_spin`, `ci95`, …). `check-parity.sh` now sees 182 symbols across 4 surfaces.
+
+`ft_samples_degeneracy` reports distinct states within a tolerance of the best seen, and its
+documentation says on every surface what it is: **evidence** of degeneracy, not a count of it. A
+chain proves the states it visited exist and nothing about the ones it did not. Only enumeration
+counts a ground manifold, and this ABI does not expose one.
+
+`/v1/sample` and `ferrotherm_sample` grew a `samples` block — draws, distinct, best energy, ground
+states seen, `chain_tau`, and `⟨M⟩`/`⟨E⟩` each with `value`/`stderr`/`ess`/`tau_int`. The MCP tool
+description now says **read `samples.magnetization`, not the top-level `magnetization`**: the
+top-level figure is the order parameter of the *last state drawn*, and one draw from a distribution
+is not an estimate of it. Live, an 8×8 lattice at 300 draws now reports its ledger share as
+**98.9% readback** where it used to report a fraction of a percent.
+
+**Gap, written down rather than left implicit:** the browser surface does not have this yet. The C
+ABI symbols compile into `ferrotherm.wasm` on the next build, but `docs/ide.html` and
+`docs/graph.html` have no sample-set panel and `check-wasm-exports.sh` only checks the exports the
+pages already call, so nothing fails. Rust, C, Python, Zig, Julia, HTTP and MCP have it.
+
+
 ### The last audit finding, declined — with the reason written into the code
 
 An audit reported that `tabu` and `bls` choose every move by a full `O(n)` scan of the gain vector

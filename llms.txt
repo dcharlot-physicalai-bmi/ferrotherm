@@ -41,6 +41,11 @@ into telling you a signature that no longer exists.
 - model: variables, constraints (not_equal, equal, fix, cardinality, at_most, at_least, exactly-one,
   at-most-one), linear and quadratic objectives; compiles to spins, decodes by name, checks itself
 - encode: one-hot, binary and domain-wall encodings of a categorical variable
+- samples: what a run RETURNED -- many states, with the distribution they came from carried in the
+  type. Expectation values are REFUSED on a search's trajectory (distributed by nothing) and carry
+  an error bar of sqrt(var/ess), not sqrt(var/N); measured against exact enumeration, the naive
+  interval covers 24% while announcing 95% on a chain with tau = 32. Produced by
+  `Sampler::collect`, by population annealing's final population, and by exhaustive enumeration
 - certify: what a run ACTUALLY did, computed from its samples -- effective beta, ESS, integrated
   autocorrelation time, TV from the exact distribution beside the sampling noise floor
 - ftp: the portable program format every backend reads (spec/ftp-v1.md is normative)

@@ -58,6 +58,16 @@ class ClusterRun:
     def __init__(self, energy: float, moves: int) -> None:
         ...
 
+class Estimate:
+    """An expectation value with an error bar that accounts for how correlated the draws were."""
+    def __init__(self, value: float, stderr: float, ess: float, tau_int: float) -> None:
+        ...
+    @property
+    def ci95(self) -> 'tuple[float, float]':
+        ...
+    def covers(self, truth: float) -> bool:
+        ...
+
 class Grid:
     """A grid of variables, subscripted like an array."""
     def __init__(self, name: str, dims: 'tuple[int, ...]', vars: 'list[Variable]') -> None:
@@ -229,6 +239,36 @@ class Rounded:
     def __init__(self, cut: float, energy: float, guaranteed: bool) -> None:
         ...
 
+class SampleSet:
+    """The states a run kept, and what may honestly be computed from them."""
+    def __init__(self, sim: 'Sim') -> None:
+        ...
+    @property
+    def best_energy(self) -> float:
+        ...
+    @property
+    def chain_tau(self) -> float:
+        """The slowest autocorrelation the chain showed. Every estimate is deflated by it."""
+        ...
+    def correlation(self, i: int, j: int) -> Estimate:
+        """``<s_i s_j>``. This and :meth:`mean_spin` are the two moments contrastive divergence matches."""
+        ...
+    def degeneracy(self, tol: float = 1e-09) -> int:
+        """Distinct states within ``tol`` of the lowest energy seen."""
+        ...
+    @property
+    def distinct(self) -> int:
+        """How many of the draws were DIFFERENT."""
+        ...
+    def magnetization(self) -> Estimate:
+        """The order parameter, with its error bar."""
+        ...
+    def mean_spin(self, i: int) -> Estimate:
+        """``<s_i>``, in ``[-1, 1]``."""
+        ...
+    def state(self, k: int) -> 'list[int]':
+        ...
+
 class Sim:
     """A running simulation. Use the constructors below rather than instantiating directly."""
     def __init__(self, handle: int) -> None:
@@ -255,6 +295,9 @@ class Sim:
         ...
     def cluster_anneal(self, rungs: int = 16, rounds: int = 400, beta_min: float = 0.1, beta_max: float = 6.0) -> 'ClusterRun':
         """Parallel tempering with isoenergetic cluster moves — the field's baseline."""
+        ...
+    def collect(self, draws: int = 512, thin: int = 1, burn_in: int = 0) -> 'SampleSet':
+        """Draw states and keep them."""
         ...
     @property
     def energy(self) -> float:

@@ -37,7 +37,20 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
    domain's own values. If you add a domain, give it its own arm in `Domain::values`, `index_of`
    and `Compiled::reify` — a catch-all is how a spin variable came to report 0 and 1 to the reader
    while the decoder handed back -1 and +1.
-7. **A default is not a fallback.** An input the code cannot understand is an error naming what
+7. **A sample set knows what it may be asked.** `samples::SampleSet` carries the distribution its
+   states came from, and expectation values are REFUSED where there is none. Averaging spins over
+   the states a tabu search visited yields a number of exactly the shape of `<s_i>` and estimates
+   nothing. If you add a producer, give it the right `Provenance` — mislabelling one as `Chain`
+   makes `tau_int`, the drift check and every error bar downstream believe an order that is not
+   there. And every estimate's error bar is `sqrt(var/ess)`, never `sqrt(var/N)`; the difference is
+   measured against exact enumeration in `examples/interval_calibration.rs`, where the naive
+   interval covers 24% while announcing 95%.
+8. **Reading a state costs the device.** Take draws through `Sampler::collect` (or `collect_par`),
+   never by cloning `smp.s` in your own loop. On a Z1-class device a read is 1.692 pJ per node
+   against 7.09 fJ per Gibbs cycle — one read is worth 239 updates — and five hand-written
+   collection loops in this repository each reported their readback as exactly zero, which on the
+   HTTP endpoint was 98.9% of the answer's energy.
+9. **A default is not a fallback.** An input the code cannot understand is an error naming what
    was actually sent. Substituting a default for an unreadable value is how `"maximize": 1`
    silently minimised and `"value": "13"` silently pinned a variable to 0.
 

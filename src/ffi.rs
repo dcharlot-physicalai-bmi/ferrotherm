@@ -71,6 +71,8 @@ pub struct Sim {
     bb: Option<crate::branch::Outcome>,
     /// The last HFS descent, for the `ft_hfs_*` accessors.
     hf: Option<crate::hfs::Outcome>,
+    /// The last collected sample set, for the `ft_samples_*` accessors.
+    sm: Option<crate::samples::SampleSet>,
     sampler_state: Vec<i8>,
     beta: f64,
     seed: u64,
@@ -86,7 +88,7 @@ impl Sim {
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
         Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None }))
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None }))
     }
 }
 
@@ -737,28 +739,219 @@ mod planted_ffi_tests {
 /// Sample `draws` states with `thin` sweeps between them and certify the run.
 ///
 /// The certificate is stored on the simulation; read it with the `ft_cert_*` accessors. Returns 1
-/// on success, 0 on a null handle or a degenerate request.
+/// on success, 0 on a null handle or a degenerate request. Exactly [`ft_collect`] with no burn-in;
+/// the states it drew are kept and reachable through the `ft_samples_*` accessors.
 #[no_mangle]
 pub extern "C" fn ft_certify(sim: *mut Sim, draws: u32, thin: u32) -> u32 {
+    ft_collect(sim, 0, draws, thin)
+}
+
+/// Draw `draws` states `thin` sweeps apart after `burn_in`, keep them, and certify the run.
+///
+/// This is [`ft_certify`] with the burn-in exposed and the states kept. Read the states back with
+/// the `ft_samples_*` accessors and the certificate with the `ft_cert_*` ones; both describe the
+/// same run. Returns 1 on success, 0 on a null handle or fewer than 16 draws.
+///
+/// # It charges the device for the readback, and that is a change
+///
+/// The loop this replaced appended the sampler's state directly, which never touches the read
+/// path, so every run certified over this ABI reported its readback energy as exactly zero. On a
+/// Z1-class device a read is 1.692 pJ per node against 7.09 fJ per Gibbs cycle -- one read is
+/// worth 239 updates -- so [`ft_ledger_joules_z1`] after this call is now LARGER than it was, and
+/// the earlier figure was the one that was wrong.
+#[no_mangle]
+pub extern "C" fn ft_collect(sim: *mut Sim, burn_in: u32, draws: u32, thin: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
     if draws < 16 {
         return 0; // certifying 15 samples is theatre; certify::TooFewSamples says so too
     }
     let mut smp = Sampler::new(&s.graph, s.beta, s.seed ^ s.sweeps_done.wrapping_mul(0x9E37_79B9_7F4A_7C15));
     smp.s.copy_from_slice(&s.sampler_state);
-    let mut samples = Vec::with_capacity(draws as usize);
-    let mut trace = Vec::with_capacity(draws as usize);
-    for _ in 0..draws {
-        for _ in 0..thin.max(1) {
-            smp.sweep(Some(&mut s.ledger));
-        }
-        samples.push(smp.s.clone());
-        trace.push(s.graph.energy(&smp.s));
-    }
+    let plan = crate::samples::Plan::new(burn_in as usize, draws as usize, thin.max(1) as usize);
+    let set = smp.collect(&plan, Some(&mut s.ledger));
     s.sampler_state.copy_from_slice(&smp.s);
-    s.sweeps_done += draws as u64 * thin.max(1) as u64;
-    s.cert = Some(crate::certify::certify(&s.graph, s.beta, &samples, &trace));
+    s.sweeps_done += plan.sweeps() as u64;
+    s.cert = Some(set.certificate(&s.graph).expect("collect returns a chain"));
+    s.sm = Some(set);
     1
+}
+
+/// States held by the last [`ft_collect`]. Zero when nothing has been collected.
+#[no_mangle]
+pub extern "C" fn ft_samples_len(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(0, |m| m.len() as u32)
+}
+
+/// How many of those states were DISTINCT.
+///
+/// The number a sampler is usually not asked for and usually should be: a run returning 10,000
+/// draws of which 3 are distinct has told you about 3 states, whatever its draw count says.
+#[no_mangle]
+pub extern "C" fn ft_samples_distinct(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(0, |m| m.distinct().len() as u32)
+}
+
+/// Lowest energy in the collected set, or NaN if nothing has been collected.
+#[no_mangle]
+pub extern "C" fn ft_samples_best_energy(sim: *const Sim) -> f64 {
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.sm.as_ref())
+        .and_then(|m| m.best().map(|(_, e)| e))
+        .unwrap_or(f64::NAN)
+}
+
+/// Distinct states within `tol` of the lowest energy seen.
+///
+/// This is EVIDENCE of degeneracy and not a count of it: a chain proves the states it visited
+/// exist and can prove nothing about the ones it did not. Only exhaustive enumeration counts a
+/// ground manifold, and this ABI does not expose one.
+#[no_mangle]
+pub extern "C" fn ft_samples_degeneracy(sim: *const Sim, tol: f64) -> u32 {
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.sm.as_ref())
+        .map_or(0, |m| m.ground_states(tol.max(0.0)).len() as u32)
+}
+
+/// The slowest autocorrelation time the chain showed, which every estimate below is deflated by.
+/// NaN when nothing has been collected.
+#[no_mangle]
+pub extern "C" fn ft_samples_chain_tau(sim: *const Sim) -> f64 {
+    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(f64::NAN, |m| m.chain_tau())
+}
+
+/// Copy state `k` into `out`, which must hold at least `cap` entries. Returns the number written.
+///
+/// With a NULL `out` it returns the width and writes nothing, so a caller can size its buffer.
+#[no_mangle]
+pub extern "C" fn ft_samples_state(sim: *const Sim, k: u32, out: *mut i8, cap: u32) -> u32 {
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    let Some(st) = m.states().get(k as usize) else { return 0 };
+    if out.is_null() {
+        return st.len() as u32;
+    }
+    let n = st.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(st.as_ptr(), out, n) };
+    n as u32
+}
+
+/// Write `[value, stderr, ess, tau_int]` for one estimate into `out`, which must hold 4 doubles.
+fn write_estimate(
+    e: Result<crate::samples::Estimate, crate::samples::Refused>,
+    out: *mut f64,
+) -> u32 {
+    let Ok(e) = e else { return 0 };
+    if out.is_null() {
+        return 0;
+    }
+    let v = [e.value, e.stderr, e.ess, e.tau_int];
+    unsafe { core::ptr::copy_nonoverlapping(v.as_ptr(), out, 4) };
+    1
+}
+
+/// `<s_i>` with its error bar: writes `[value, stderr, ess, tau_int]` into `out` (4 doubles).
+///
+/// The standard error is `sqrt(var/ess)`, NOT `sqrt(var/N)`: chain draws are correlated and the
+/// naive interval understates the error by `sqrt(2*tau)`. Measured against exact enumeration in
+/// `examples/interval_calibration.rs`, the naive interval contains the true value for one site in
+/// four on a chain with `tau = 32`, while announcing 95%.
+///
+/// Returns 0 if nothing has been collected, `i` is out of range, or `out` is NULL.
+#[no_mangle]
+pub extern "C" fn ft_samples_mean_spin(sim: *const Sim, i: u32, out: *mut f64) -> u32 {
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    if i as usize >= m.n_spins() {
+        return 0;
+    }
+    write_estimate(m.mean_spin(i as usize), out)
+}
+
+/// `<s_i s_j>` with its error bar, in the same four-double layout as [`ft_samples_mean_spin`].
+///
+/// This and the single-site mean are the two moments contrastive divergence matches.
+#[no_mangle]
+pub extern "C" fn ft_samples_correlation(sim: *const Sim, i: u32, j: u32, out: *mut f64) -> u32 {
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    if i as usize >= m.n_spins() || j as usize >= m.n_spins() {
+        return 0;
+    }
+    write_estimate(m.correlation(i as usize, j as usize), out)
+}
+
+/// The order parameter `(1/n) sum_i <s_i>`, in the same four-double layout.
+#[no_mangle]
+pub extern "C" fn ft_samples_magnetization(sim: *const Sim, out: *mut f64) -> u32 {
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    write_estimate(m.magnetization(), out)
+}
+
+#[cfg(test)]
+mod sample_tests {
+    use super::*;
+
+    /// The ABI must hand back estimates that agree with exact enumeration, and refuse cleanly
+    /// where it has nothing to say.
+    #[test]
+    fn the_abi_returns_estimates_that_cover_the_exact_answer() {
+        let sim = ft_ising2d_new(3, 1.0, 0.4, 7); // 9 spins: small enough to enumerate exactly
+        assert_eq!(ft_samples_len(sim), 0, "nothing collected yet");
+        assert!(ft_samples_best_energy(sim).is_nan());
+        let mut out = [0.0f64; 4];
+        assert_eq!(ft_samples_mean_spin(sim, 0, out.as_mut_ptr()), 0, "and no estimate either");
+
+        assert_eq!(ft_collect(sim, 1_000, 8_000, 1), 1);
+        assert_eq!(ft_samples_len(sim), 8_000);
+        assert!(ft_samples_distinct(sim) > 1, "a chain that visits one state is not sampling");
+        assert!(ft_samples_distinct(sim) <= 8_000);
+        assert!(ft_samples_chain_tau(sim) >= 0.5);
+
+        let g = unsafe { &*sim }.graph.as_ref();
+        let truth = crate::samples::enumerate(g, 0.4).expect("9 spins enumerates");
+        for i in 0..9u32 {
+            assert_eq!(ft_samples_mean_spin(sim, i, out.as_mut_ptr()), 1);
+            let e = crate::samples::Estimate { value: out[0], stderr: out[1], ess: out[2], tau_int: out[3] };
+            let exact = truth.mean_spin(i as usize).unwrap().value;
+            assert!(e.covers(exact), "site {i}: ABI {e} does not cover the enumerated {exact:.5}");
+        }
+        assert_eq!(ft_samples_correlation(sim, 0, 1, out.as_mut_ptr()), 1);
+        assert_eq!(ft_samples_magnetization(sim, out.as_mut_ptr()), 1);
+        assert!(out[1] > 0.0, "an error bar of exactly zero on a moving chain is a bug");
+
+        // Out of range and null are refusals, not answers.
+        assert_eq!(ft_samples_mean_spin(sim, 9, out.as_mut_ptr()), 0);
+        assert_eq!(ft_samples_correlation(sim, 0, 99, out.as_mut_ptr()), 0);
+        assert_eq!(ft_samples_mean_spin(sim, 0, core::ptr::null_mut()), 0);
+        assert_eq!(ft_samples_len(core::ptr::null()), 0);
+
+        // States come back at the graph's width, and a NULL buffer reports that width.
+        assert_eq!(ft_samples_state(sim, 0, core::ptr::null_mut(), 0), 9);
+        let mut st = [0i8; 9];
+        assert_eq!(ft_samples_state(sim, 0, st.as_mut_ptr(), 9), 9);
+        assert!(st.iter().all(|&v| v == 1 || v == -1));
+        assert_eq!(ft_samples_state(sim, 8_000, st.as_mut_ptr(), 9), 0, "no such draw");
+
+        ft_free(sim);
+    }
+
+    /// The defect the collection path was built to close: certifying used to be free.
+    #[test]
+    fn certifying_now_charges_for_the_readback_it_performs() {
+        let sim = ft_ising2d_new(8, 1.0, 0.5, 3);
+        let before = ft_ledger_joules_z1(sim);
+        assert_eq!(ft_certify(sim, 200, 1), 1);
+        let after = ft_ledger_joules_z1(sim);
+
+        // 200 draws of 64 nodes at 1.692 pJ is 21.7 nJ of readback; 200 sweeps of 64 nodes at
+        // 7.09 fJ is 0.09 nJ of sampling. If this ABI ever stops charging for reads again, the
+        // total drops by more than two orders of magnitude and this catches it.
+        let reads = 200.0 * 64.0 * crate::ledger::Z1_SPICE.e_read;
+        assert!(
+            after - before > 0.9 * reads,
+            "certify charged {:.3e} J where readback alone is {reads:.3e} J",
+            after - before
+        );
+        assert_eq!(ft_samples_len(sim), 200, "and the states it read are kept");
+        ft_free(sim);
+    }
 }
 
 macro_rules! cert_field {
@@ -2800,15 +2993,8 @@ pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, t
     }
     let g = &c.graph;
     let mut smp = Sampler::new(g, beta, 1);
-    smp.sweeps(200, None);
-    let mut samples = Vec::with_capacity(draws as usize);
-    let mut trace = Vec::with_capacity(draws as usize);
-    for _ in 0..draws {
-        smp.sweeps(thin.max(1) as usize, None);
-        samples.push(smp.s.clone());
-        trace.push(g.energy(&smp.s));
-    }
-    h.cert = Some(crate::certify::certify(g, beta, &samples, &trace));
+    let set = smp.collect(&crate::samples::Plan::new(200, draws as usize, thin.max(1) as usize), None);
+    h.cert = Some(set.certificate(g).expect("collect returns a chain"));
     1
 }
 

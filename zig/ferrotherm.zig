@@ -559,6 +559,48 @@ test "a model with no objective reports none rather than zero" {
     try std.testing.expect(p.objective() == null);
 }
 
+test "a sample set answers what a certificate cannot, and its interval covers the truth" {
+    // Textual parity says these symbols are REACHABLE. This says they are right: a 4x4 lattice
+    // above its critical temperature has exact marginals through the same library, so every
+    // interval here is checked against the truth rather than against itself.
+    const s = try Sim.lattice2d(4, 1.0, 0.3, 5);
+    defer s.deinit();
+    try collect(s, 500, 4000, 2);
+    try std.testing.expectEqual(@as(u32, 4000), samplesLen(s));
+    try std.testing.expect(samplesDistinct(s) > 1); // a chain visiting one state is not sampling
+    try std.testing.expect(samplesChainTau(s) >= 0.5);
+    try std.testing.expect(samplesDegeneracy(s, 1e-9) >= 1);
+    try std.testing.expect(samplesBestEnergy(s) <= -16.0);
+
+    // COVERAGE IS COUNTED, NOT REQUIRED SITE BY SITE. A 95% interval that never misses is not a
+    // 95% interval, and the sites of one chain are not independent checks -- they all move with
+    // the same global mode. Sixteen intervals, at most two misses; measured, this run misses none.
+    var truth: [16]f64 = undefined;
+    try s.exactMarginals(0.3, 22, &truth);
+    var hit: usize = 0;
+    for (0..16) |i| {
+        const e = samplesMeanSpin(s, @intCast(i)).?;
+        try std.testing.expect(e.stderr > 0.0);
+        try std.testing.expect(e.ess <= 4000.0);
+        // <s_i> = 2 P(+1) - 1.
+        if (e.covers(2.0 * truth[i] - 1.0)) hit += 1;
+    }
+    try std.testing.expect(hit >= 14);
+
+    // A claim the Z2 symmetry of this model cannot satisfy by accident: neighbouring spins on a
+    // ferromagnet agree, so this correlation is positive and its interval excludes zero.
+    const nn = samplesCorrelation(s, 0, 1).?;
+    try std.testing.expect(nn.value - 1.96 * nn.stderr > 0.0);
+
+    var st: [16]i8 = undefined;
+    const got = samplesState(s, 0, &st);
+    try std.testing.expectEqual(@as(usize, 16), got.len);
+    for (got) |v| try std.testing.expect(v == 1 or v == -1);
+
+    try std.testing.expect(samplesMagnetization(s) != null);
+    try std.testing.expect(samplesMeanSpin(s, 99) == null); // out of range refuses
+}
+
 test "a parallel sweep reproduces itself and reports what ran" {
     try std.testing.expect(hardwareThreads() >= 1);
 
@@ -862,6 +904,101 @@ pub fn certify(sim: Sim, draws: u32, thin: u32) Error!Certificate {
 pub fn finding(sim: Sim, i: u32, buf: []u8) []const u8 {
     const n = c.ft_cert_finding(sim.h, i, buf.ptr, @intCast(buf.len));
     return buf[0..n];
+}
+
+// ---- samples --------------------------------------------------------------------------------------
+
+/// An expectation value with an error bar that accounts for how correlated the draws were.
+///
+/// `stderr` is `sqrt(var / ess)`, not `sqrt(var / n)`. Chain draws are correlated, so `n` of them
+/// are worth `n / (2 * tau_int)` independent ones, and the naive interval understates the error by
+/// `sqrt(2 * tau)`. Measured against exact enumeration: on a chain with `tau = 32` the naive
+/// interval contains the true value for one site in four while announcing 95%.
+pub const Estimate = struct {
+    value: f64,
+    stderr: f64,
+    ess: f64,
+    tau_int: f64,
+
+    /// `value +- 1.96 * stderr`.
+    pub fn ci95(self: Estimate) struct { f64, f64 } {
+        return .{ self.value - 1.96 * self.stderr, self.value + 1.96 * self.stderr };
+    }
+
+    pub fn covers(self: Estimate, truth: f64) bool {
+        const b = self.ci95();
+        return b[0] <= truth and truth <= b[1];
+    }
+};
+
+/// Draw `draws` states `thin` sweeps apart after `burn_in` and KEEP them.
+///
+/// Every solver here returns one state, which is an optimiser's answer. This is a sampler:
+/// expectation values, degeneracy evidence and the moments an energy-based model is trained on all
+/// need many. The run is certified at the same time, so the `cert*` accessors read it too.
+///
+/// It charges the ledger for the READBACK as well as the sweeps -- a Z1-class read is 1.692 pJ per
+/// node against 7.09 fJ per Gibbs cycle, so a read is worth 239 updates.
+pub fn collect(sim: Sim, burn_in: u32, draws: u32, thin: u32) Error!void {
+    if (c.ft_collect(sim.h, burn_in, draws, thin) == 0) return Error.TooFewDraws;
+}
+
+/// How many states the last `collect` kept.
+pub fn samplesLen(sim: Sim) u32 {
+    return c.ft_samples_len(sim.h);
+}
+
+/// How many of them were DIFFERENT. A run returning 10,000 draws of which three are distinct has
+/// told you about three states, whatever its draw count says.
+pub fn samplesDistinct(sim: Sim) u32 {
+    return c.ft_samples_distinct(sim.h);
+}
+
+/// Lowest energy in the collected set, or NaN if nothing has been collected.
+pub fn samplesBestEnergy(sim: Sim) f64 {
+    return c.ft_samples_best_energy(sim.h);
+}
+
+/// The slowest autocorrelation the chain showed. Every estimate is deflated by it.
+pub fn samplesChainTau(sim: Sim) f64 {
+    return c.ft_samples_chain_tau(sim.h);
+}
+
+/// Distinct states within `tol` of the lowest energy seen.
+///
+/// EVIDENCE of degeneracy, not a count of it: a chain proves the states it visited exist and
+/// nothing about the ones it did not.
+pub fn samplesDegeneracy(sim: Sim, tol: f64) u32 {
+    return c.ft_samples_degeneracy(sim.h, tol);
+}
+
+/// Copy state `k` into `out`, returning the slice actually written.
+pub fn samplesState(sim: Sim, k: u32, out: []i8) []const i8 {
+    const n = c.ft_samples_state(sim.h, k, out.ptr, @intCast(out.len));
+    return out[0..n];
+}
+
+fn four(ok: u32, buf: [4]f64) ?Estimate {
+    if (ok == 0) return null;
+    return .{ .value = buf[0], .stderr = buf[1], .ess = buf[2], .tau_int = buf[3] };
+}
+
+/// `<s_i>` with its error bar, or null if nothing was collected or `i` is out of range.
+pub fn samplesMeanSpin(sim: Sim, i: u32) ?Estimate {
+    var buf: [4]f64 = undefined;
+    return four(c.ft_samples_mean_spin(sim.h, i, &buf), buf);
+}
+
+/// `<s_i s_j>`. This and `samplesMeanSpin` are the two moments contrastive divergence matches.
+pub fn samplesCorrelation(sim: Sim, i: u32, j: u32) ?Estimate {
+    var buf: [4]f64 = undefined;
+    return four(c.ft_samples_correlation(sim.h, i, j, &buf), buf);
+}
+
+/// The order parameter, with its error bar.
+pub fn samplesMagnetization(sim: Sim) ?Estimate {
+    var buf: [4]f64 = undefined;
+    return four(c.ft_samples_magnetization(sim.h, &buf), buf);
 }
 
 // ---- exact inference ------------------------------------------------------------------------------

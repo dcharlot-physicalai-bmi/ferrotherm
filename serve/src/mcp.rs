@@ -51,14 +51,27 @@ pub fn tools() -> Json {
     Json::Arr(vec![
         tool(
             "ferrotherm_sample",
-            "Draw a state from the Boltzmann distribution of an Ising graph by chromatic \
-             block-Gibbs sampling. Returns the state, its energy, magnetization, an energy ledger \
-             priced at Z1-class device figures, and a CERTIFICATE computed from the samples \
-             themselves: the temperature actually sampled at with a confidence interval, the \
-             autocorrelation time and effective sample size, and where the model is small enough, \
-             the distance from the exact Boltzmann distribution beside the sampling-noise floor. \
-             An empty findings list is the only thing that means the run is sound. Deterministic \
-             given seed and thread count.",
+            "Draw states from the Boltzmann distribution of an Ising graph by chromatic \
+             block-Gibbs sampling. Returns the final state, its energy, magnetization, an energy \
+             ledger priced at Z1-class device figures, a \"samples\" block, and a CERTIFICATE \
+             computed from the samples themselves: the temperature actually sampled at with a \
+             confidence interval, the autocorrelation time and effective sample size, and where \
+             the model is small enough, the distance from the exact Boltzmann distribution beside \
+             the sampling-noise floor. An empty findings list is the only thing that means the run \
+             is sound. \
+             READ \"samples\", NOT the top-level \"magnetization\". The top-level figure is the \
+             order parameter of ONE state -- the last one drawn -- and a single draw from a \
+             distribution is not an estimate of it. \"samples.magnetization\" is the expectation \
+             over every draw WITH ITS ERROR BAR, and that error bar is sqrt(var/ess), not \
+             sqrt(var/N): chain draws are correlated, so N of them are worth N/(2*tau) independent \
+             ones and the naive interval understates the error by sqrt(2*tau) -- measured against \
+             exact enumeration, it contains the true value for one site in four on a chain with \
+             tau = 32 while announcing 95%. \
+             \"samples.distinct\" is how many of the draws were DIFFERENT; ten thousand draws of \
+             which three are distinct have told you about three states whatever the count says. \
+             \"samples.ground_states_seen\" is EVIDENCE of degeneracy and not a count of it: a \
+             chain proves the states it visited exist and nothing about the ones it did not. \
+             Deterministic given seed and thread count.",
             vec![
                 ("graph", schema_graph()),
                 ("beta", prop("number", "Inverse temperature, 1/T. Higher is colder and more ordered. Default 1.0.")),
