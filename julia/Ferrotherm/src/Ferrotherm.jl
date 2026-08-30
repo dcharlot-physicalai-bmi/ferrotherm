@@ -1784,7 +1784,9 @@ The direction that makes this a bridge rather than an exporter: a problem someon
 OMMX becomes something this sampler can run. `ommx_objective(x) == energy(sim) + constant`.
 
 Errors naming what could not be read — a continuous variable, a bound that is not `[0,1]`, an
-objective of degree three or more — rather than silently dropping it.
+objective of degree three or more, or **constraints** (ferrotherm expresses a constraint as a
+penalty whose weight changes the answer, so reading the objective alone would return the
+relaxation) — rather than silently dropping it.
 """
 function from_ommx(data::AbstractVector{UInt8}; beta::Real = 1.0, seed::Integer = 0)
     constant = Ref{Cdouble}(0.0)

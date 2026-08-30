@@ -492,8 +492,11 @@ uint32_t ft_model_violation_is_hard(const ft_model *m, uint32_t i);
  *     ommx_objective(x) == ft_energy(sim) + constant
  *
  * On NULL, ft_ommx_error says why: a continuous variable, a bound that is not [0,1], an objective of
- * degree three or more. This sampler samples spins, and a bridge that silently dropped what it could
- * not represent would hand back a model that solves a different problem. */
+ * degree three or more, or CONSTRAINTS -- ferrotherm expresses a constraint as a penalty whose
+ * weight changes the answer, so reading the objective alone would return the relaxation.
+ *
+ * This sampler samples spins, and a bridge that silently dropped what it could not represent would
+ * hand back a model that solves a different problem. It DID drop constraints until 0.33.0. */
 ft_sim *ft_ommx_read(const uint8_t *bytes, uint32_t len, double beta, uint64_t seed,
                      double *constant_out);
 uint32_t ft_ommx_error(uint8_t *buf, uint32_t cap);

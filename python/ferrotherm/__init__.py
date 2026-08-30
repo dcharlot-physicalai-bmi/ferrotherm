@@ -1693,9 +1693,10 @@ def from_ommx(data: bytes, beta: float = 1.0, seed: int = 0) -> "tuple[Sim, floa
     states correctly and reports the wrong number.
 
     Raises :class:`ValueError` naming what could not be read: a continuous variable, a bound that is
-    not ``[0, 1]``, an objective of degree three or more. This sampler samples spins, and a bridge
-    that silently dropped what it could not represent would return a model solving a different
-    problem.
+    not ``[0, 1]``, an objective of degree three or more, or **constraints** — ferrotherm expresses
+    a constraint as a penalty whose weight changes the answer, so reading the objective alone would
+    return the relaxation. This sampler samples spins, and a bridge that silently dropped what it
+    could not represent would return a model solving a different problem.
 
     >>> import ferrotherm as ft                       # doctest: +SKIP
     >>> sim, constant = ft.from_ommx(open("p.ommx", "rb").read(), beta=1.0)   # doctest: +SKIP

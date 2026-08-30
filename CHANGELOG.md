@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### ⛔ The OMMX bridge silently dropped every constraint and returned the relaxation
+
+`import` matched three `Instance` fields — decision variables, objective, sense — and had a
+`_ => {}` arm. Field 4 is `repeated Constraint constraints`, the field **jijmodeling fills for every
+constrained problem**, and it was swallowed. A constrained instance imported as its objective alone:
+the relaxation, with no error, no warning, and nothing on the returned `(Graph, f64)` to say a
+constraint had ever existed. The caller then sampled a different problem and got a confident answer
+to it. The word "constraint" did not appear anywhere in `src/ommx.rs`.
+
+**`ft_ommx_read`'s own documentation promised this did not happen** — *"a bridge that silently
+dropped what it could not represent would hand back a model that solves a different problem"* — so
+the doc was right about the principle and wrong about the code, on all four surfaces that repeat it.
+
+It refuses now, by name and by count: `ImportError::HasConstraints { count }`. Refusing rather than
+penalising is the same argument the rest of this crate makes — ferrotherm expresses a constraint as
+a penalty, the weight changes the answer, and `crate::model` surfaces `violated`, `penalty` and
+`caveats` precisely so that choice is visible. Choosing one silently inside a file reader would be
+the same substitution in a different costume.
+
+The test builds a real constrained instance with a readable objective and requires the refusal —
+and it was checked against a neutered guard, because the failure it protects against does not look
+like a failure, it looks like an answer. The C header, Python and Julia docstrings now list
+constraints alongside the other three refusals.
+
+*Found by an adversarial audit agent, and confirmed by a second one that reproduced it from
+scratch.*
+
+### Replica threading in parallel tempering is NOT the same defect, measured
+
+`sweep_par` spawned a thread per colour class per sweep and was catastrophically slow, so
+`tempering::advance` — which spawns one thread per replica per round, 7,200 spawns in a typical run
+— was an obvious suspect. It is not:
+
+| spins | threaded | serial | |
+|---|---|---|---|
+| 256 | 0.483 s | 2.104 s | **4.4×** |
+| 1,024 | 1.835 s | 11.603 s | **6.3×** |
+| 4,096 | 1.481 s | 10.805 s | **7.3×** |
+| 16,384 | 4.725 s | 38.326 s | **8.1×** |
+
+A replica does `swap_every` sweeps of the *whole graph* per spawn, where a colour-class chunk was a
+few hundred nodes — so the work per spawn is two to three orders of magnitude larger and the spawn
+cost disappears into it. The hypothesis was reasonable and the measurement refuted it; no change
+made.
+
 ### Asking for threads used to make you thirty-three times slower
 
 `sweep_par` opened a `thread::scope` **per colour class per sweep**. Two thousand sweeps of a

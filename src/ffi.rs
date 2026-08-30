@@ -106,7 +106,11 @@ pub extern "C" fn ft_ising2d_new(l: u32, j: f64, beta: f64, seed: u64) -> *mut S
 /// correctly and reports the wrong number.
 ///
 /// On null, [`ft_ommx_error`] says why in the caller's own terms -- a continuous variable, a bound
-/// that is not `[0,1]`, an objective of degree three or more. This sampler samples spins, and a
+/// that is not `[0,1]`, an objective of degree three or more, or CONSTRAINTS -- ferrotherm
+/// expresses a constraint as a penalty whose weight changes the answer, so reading the objective
+/// alone would hand back the relaxation, which is a different problem.
+///
+/// This sampler samples spins, and a
 /// bridge that silently dropped what it could not represent would return a model that solves a
 /// different problem.
 #[no_mangle]

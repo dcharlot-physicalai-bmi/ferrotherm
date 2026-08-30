@@ -50,6 +50,9 @@ pub mod schema {
     // Instance
     pub const INSTANCE_DECISION_VARIABLES: u32 = 2;
     pub const INSTANCE_OBJECTIVE: u32 = 3;
+    /// `repeated Constraint constraints`, which this reader REFUSES rather than skips. See
+    /// [`super::ImportError::HasConstraints`].
+    pub const INSTANCE_CONSTRAINTS: u32 = 4;
     pub const INSTANCE_SENSE: u32 = 5;
     // DecisionVariable
     pub const DV_ID: u32 = 1;
@@ -214,6 +217,24 @@ pub enum ImportError {
     UnsupportedKind { id: u64, name: String, kind: u64 },
     /// A variable whose bounds are not 0/1.
     NotBinary { id: u64, name: String, lower: f64, upper: f64 },
+    /// The instance carries constraints, which this reader cannot represent.
+    ///
+    /// **This used to be skipped.** `import` matched three fields and had a `_ => {}` arm, so
+    /// `repeated Constraint constraints` -- the field jijmodeling fills for every constrained
+    /// problem -- was swallowed in silence. A constrained instance imported as its objective ALONE:
+    /// the continuous relaxation, returned with no error, no warning, and nothing on the resulting
+    /// `(Graph, f64)` to say a constraint had ever been there. The caller then sampled a different
+    /// problem and got a confident answer to it.
+    ///
+    /// That is precisely the failure `ft_ommx_read`'s own documentation promised did not happen --
+    /// "a bridge that silently dropped what it could not represent would return a model that solves
+    /// a different problem" -- so the doc was right about the principle and wrong about the code.
+    ///
+    /// The reader refuses instead. Ferrotherm expresses a constraint as a PENALTY, and the penalty
+    /// weight is a modelling decision with consequences the compiler reports (`crate::model`
+    /// surfaces `violated`, `penalty` and `caveats` for exactly this reason). Choosing one here, out
+    /// of sight, would be the same silent substitution in a different costume.
+    HasConstraints { count: usize },
     /// An objective of degree three or higher.
     ///
     /// `crate::reduce` lowers those onto pairwise hardware with ancillas, so this is a
@@ -248,6 +269,14 @@ impl core::fmt::Display for ImportError {
                 "decision variable {id} ('{name}') is bounded [{lower}, {upper}] rather than \
                  [0, 1]. A binary variable with other bounds is a different variable."
             ),
+            ImportError::HasConstraints { count } => write!(
+                f,
+                "this instance carries {count} constraint(s), and ferrotherm expresses a constraint \
+                 as a penalty whose weight changes the answer. Reading the objective alone would \
+                 hand back the RELAXATION -- a different problem, with nothing to say so. State the \
+                 model through crate::model (or the `solve` operation), where the penalty is \
+                 explicit and `violated` reports what it bought."
+            ),
             ImportError::TooHighDegree => write!(
                 f,
                 "this objective has degree three or higher. crate::reduce lowers such a model \
@@ -279,6 +308,7 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
     let mut vars: Vec<(u64, String, u64, f64, f64)> = Vec::new();
     let mut objective: Option<&[u8]> = None;
     let mut sense = schema::SENSE_MINIMIZE;
+    let mut constraints = 0usize;
 
     for f in fields(bytes)? {
         match (f.number, f.value) {
@@ -307,11 +337,21 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                 vars.push((id, name, kind, lo, hi));
             }
             (schema::INSTANCE_OBJECTIVE, Value::Bytes(b)) => objective = Some(b),
+            // COUNTED, NOT SKIPPED. Every repeated constraint arrives as its own field, so this
+            // counts them and refuses below rather than at the first -- an error saying "3
+            // constraints" tells a caller what kind of model they have; one saying "a constraint"
+            // makes them go and look.
+            (schema::INSTANCE_CONSTRAINTS, _) => constraints += 1,
             (schema::INSTANCE_SENSE, Value::Varint(v)) => sense = v,
             _ => {}
         }
     }
 
+    // BEFORE the variable checks, because a constrained instance is the wrong SHAPE of model and
+    // saying so is more useful than a complaint about one of its variables.
+    if constraints > 0 {
+        return Err(ImportError::HasConstraints { count: constraints });
+    }
     if vars.is_empty() {
         return Err(ImportError::NoVariables);
     }
@@ -611,6 +651,68 @@ mod tests {
                     (want - got).abs() < 1e-9,
                     "state {mask:b}: {want} before the round trip, {got} after"
                 );
+            }
+        }
+    }
+
+    /// A CONSTRAINED INSTANCE IS REFUSED, AND IT USED TO BE RELAXED.
+    ///
+    /// `import` matched three fields and had a `_ => {}` arm, so `repeated Constraint constraints`
+    /// -- the field jijmodeling fills for every constrained problem -- was swallowed. The instance
+    /// imported as its objective alone: the continuous relaxation, no error, no warning, nothing on
+    /// the returned `(Graph, f64)` to say a constraint had ever existed. This test builds a real
+    /// constrained instance and requires the refusal, because the failure it guards against does
+    /// not look like a failure -- it looks like an answer.
+    #[test]
+    fn a_constrained_instance_is_refused_rather_than_relaxed() {
+        // Two binaries and an objective, so everything EXCEPT the constraints is readable and the
+        // refusal cannot be coming from something else.
+        let mut base = Vec::new();
+        for (id, name) in [(0u64, "x"), (1, "y")] {
+            let mut dv = Vec::new();
+            varint_field(&mut dv, schema::DV_ID, id);
+            varint_field(&mut dv, schema::DV_KIND, schema::KIND_BINARY);
+            str_field(&mut dv, schema::DV_NAME, name);
+            len_field(&mut base, schema::INSTANCE_DECISION_VARIABLES, &dv);
+        }
+        // A linear objective over those two, built the way `export` builds one.
+        let mut linear = Vec::new();
+        for id in [0u64, 1] {
+            let mut term = Vec::new();
+            varint_field(&mut term, schema::TERM_ID, id);
+            double_field(&mut term, schema::TERM_COEFFICIENT, 1.0);
+            len_field(&mut linear, schema::LINEAR_TERMS, &term);
+        }
+        let mut quadratic = Vec::new();
+        len_field(&mut quadratic, schema::QUAD_LINEAR, &linear);
+        let mut objective = Vec::new();
+        len_field(&mut objective, schema::FUNCTION_QUADRATIC, &quadratic);
+        len_field(&mut base, schema::INSTANCE_OBJECTIVE, &objective);
+
+        // Unconstrained, this reads.
+        let (g, _) = import(&base).expect("two binaries and a linear objective must read");
+        assert_eq!(g.n, 2);
+
+        // The SAME instance with constraints attached must not.
+        for n in 1..=3usize {
+            let mut inst = base.clone();
+            for k in 0..n {
+                let mut c = Vec::new();
+                varint_field(&mut c, 1, k as u64); // Constraint.id
+                len_field(&mut inst, schema::INSTANCE_CONSTRAINTS, &c);
+            }
+            match import(&inst) {
+                Err(ImportError::HasConstraints { count }) => {
+                    assert_eq!(count, n, "the error names how many, so a caller knows the shape");
+                    let msg = ImportError::HasConstraints { count }.to_string();
+                    assert!(msg.contains("penalty"), "must say WHY ferrotherm cannot take it: {msg}");
+                    assert!(msg.contains("RELAXATION"), "and what the old behaviour was: {msg}");
+                }
+                Err(e) => panic!("expected HasConstraints, got {e}"),
+                Ok(_) => panic!(
+                    "{n} constraint(s) were DROPPED and the relaxation returned -- this is the \
+                     defect: a confident answer to a different problem"
+                ),
             }
         }
     }
