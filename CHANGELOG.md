@@ -2,9 +2,30 @@
 
 ## Unreleased
 
-What changed is the **visual editor**, shipped from `docs/` to the site rather than to crates.io,
-the two gates that now hold it to the library, and one measurement that corrected a claim this
-changelog itself made.
+## 0.31.0
+
+**This release teaches the stack to produce a model, not only consume one.** Every module before it
+took a model as given — sampled it, optimised it, bounded it. `ebm` fits one to data by contrastive
+divergence and scores it by the *exact* log-likelihood, and that reaches all ten surfaces: Rust, the
+C ABI, Python, Zig, Julia, wasm, the workbench, the node editor, HTTP and MCP. You can draw a
+Boltzmann machine in the visual editor, fit it, and then anneal, bound or certify the result with no
+export step.
+
+Alongside it, four measurements that each corrected something this repository believed:
+
+- the field's central open problem measured on **both halves**, and its stated mechanism found to run
+  backwards — depth makes *learning* harder, and what a model learned is what makes sampling harder
+- the flagship workload's own metric measured to **order models backwards**
+- an **adaptive tempering ladder** whose mechanism works and whose payoff is absent, plus the
+  discovery that an even ladder is not a healthy one
+- **Chimera was paying for a colour it did not need**: +32–56% on the parallel sweep
+
+And two defects found by looking rather than by a failing test: the browser binary shipped 62 KB of
+symbols nobody reads, and **the minor-embedding placer cannot build a chain when one is needed** —
+diagnosed, pinned by tests, and written into the roadmap rather than half-fixed.
+
+What changed in the visual editor, the two gates that now hold it to the library, and one
+measurement that corrected a claim this changelog itself made:
 
 ### Correction: "higher-order terms cannot be built from any non-Rust surface" was wrong
 
