@@ -1,7 +1,7 @@
 name = "Ferrotherm"
 uuid = "3f2a7c14-8d6b-4e39-9a5c-1b7e0d84f6a2"
 authors = ["Institute for Physical AI @ BMI"]
-version = "0.33.0"
+version = "0.34.0"
 
 [deps]
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"

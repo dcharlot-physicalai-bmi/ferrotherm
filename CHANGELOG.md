@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.34.0
 
 ### A sampler that returns more than one state, and an error bar that means what it says
 
