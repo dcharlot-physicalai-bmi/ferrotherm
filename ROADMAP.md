@@ -292,6 +292,12 @@ temperatures, against exactly enumerated marginals. The limit is printed with th
 runs to hundreds, τ is itself an estimate from a chain barely long enough to make it, and 11 of 24
 seeds clear the `Undermixed` finding with 80.7% coverage among exactly those.
 
+Reaches Rust, C, Python, Zig, Julia, HTTP, MCP and the browser workbench, which is where the
+interval stops being an argument and becomes a reading: at `β_c` on a 16×16 lattice the workbench
+reports 2,000 draws, 2,000 distinct, `tau_int` 245 and an effective sample size of **4**, so
+`⟨M⟩ = 0.103 ± 0.71`. Not yet in `docs/graph.html`, which edits models rather than samplers — the
+sample set lives on a `Sim`, not a `ModelHandle`.
+
 *Five findings from building it, each from a test that failed for a real reason:*
 
 1. **Newton diverged**; uniform noise pinned at the clamp instead of reporting β ≈ 0. Far from the
