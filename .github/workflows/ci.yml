@@ -29,7 +29,16 @@ jobs:
         run: npm install && npx playwright install --with-deps chromium
       - name: Install icarus-verilog (RTL bit-exactness gate)
         run: sudo apt-get update && sudo apt-get install -y iverilog
+      # GH_TOKEN for the same reason the landscape step needs it, in a quieter and worse shape.
+      # This gate's JLL drift branch asks `gh release view v<x>` whether the release has tarballs
+      # the Artifacts manifest never picked up -- the v0.18.0 failure, where all three uploaded, the
+      # manifest commit lost a rebase, and the JLL served v0.17.0 under a 0.18.0 version number.
+      # Unauthenticated, that call fails and the branch reports "no release yet, so nothing to point
+      # at" AND PASSES. It does not go red; it goes quiet, which is the reading this whole file
+      # argues against.
       - name: One version across every package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/check-versions.sh --selftest && scripts/check-versions.sh
       - name: Every C ABI symbol reaches every binding, or the gap is written down
         # --selftest first. This gate discovered symbols by grepping for `pub extern "C" fn`, which
@@ -161,7 +170,18 @@ jobs:
       # that survey is a day's work while checking whether it still holds is five seconds. It was
       # never in CI, so the one gate whose whole purpose is to notice the world moving was the one
       # thing nobody ran on a schedule.
+      #
+      # GH_TOKEN IS NOT OPTIONAL HERE, and leaving it out is why this step was red for every run
+      # between landing and now. `check-landscape.sh` drives `gh api`, `gh` on a runner has no
+      # credentials of its own, and the script correctly refuses rather than reporting "unchanged"
+      # -- "I could not look" and "nothing moved" are different answers and only one of them is
+      # safe. So the gate was doing exactly the right thing and CI failed on every commit, which
+      # makes a red build mean nothing and is how a real failure gets waved through. The runner's
+      # automatic token turns 60 unauthenticated requests an hour, shared across every runner on
+      # that IP, into 5,000 for this repository.
       - name: The competitive landscape has not moved out from under the survey
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/check-landscape.sh --selftest && scripts/check-landscape.sh
 
       - name: The published documentation has no broken links
