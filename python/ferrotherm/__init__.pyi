@@ -263,6 +263,9 @@ class SampleSet:
     def magnetization(self) -> Estimate:
         """The order parameter, with its error bar."""
         ...
+    def mean_energy(self) -> Estimate:
+        """``<E>``, the internal energy."""
+        ...
     def mean_spin(self, i: int) -> Estimate:
         """``<s_i>``, in ``[-1, 1]``."""
         ...

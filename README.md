@@ -395,7 +395,7 @@ for an autovectoriser to find. The flag is not enabled. Energy was bit-identical
 is the check that says the comparison was of the same computation.
 
 - `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
-  compiles with **zero changes**; the cdylib is a **591 KB .wasm** (220 KB gzipped) exposing the
+  compiles with **zero changes**; the cdylib is a **619 KB .wasm** (231 KB gzipped) exposing the
   `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
@@ -509,7 +509,8 @@ learned is what makes sampling harder.
    from and *refuses* an expectation value where there is none — averaging over a tabu search's
    trajectory produces a number the same shape as `⟨s_i⟩` and estimates nothing. Every estimate
    carries an error bar deflated by the chain's slowest autocorrelation, checked against exact
-   enumeration above.
+   enumeration above. The workbench shows it: at `β_c` on a 16×16 lattice, 2,000 draws are worth
+   **4** independent ones, so `⟨M⟩ = 0.103 ± 0.71` — and that width is the answer, not a defect.
 1. **The ledger is not an appendix.** Every simulation carries joules: samples, reads, writes,
    priced by a swappable `Prices` device model. Re-price the same workload on GPU-measured
    watts×time and you have the impedance-tax comparison that decides whether standalone sampling

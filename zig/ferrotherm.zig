@@ -598,6 +598,9 @@ test "a sample set answers what a certificate cannot, and its interval covers th
     for (got) |v| try std.testing.expect(v == 1 or v == -1);
 
     try std.testing.expect(samplesMagnetization(s) != null);
+    // <E> is a mean over draws; `energy` is the energy of the one state the machine is holding.
+    const me = samplesMeanEnergy(s).?;
+    try std.testing.expect(me.stderr > 0.0);
     try std.testing.expect(samplesMeanSpin(s, 99) == null); // out of range refuses
 }
 
@@ -999,6 +1002,15 @@ pub fn samplesCorrelation(sim: Sim, i: u32, j: u32) ?Estimate {
 pub fn samplesMagnetization(sim: Sim) ?Estimate {
     var buf: [4]f64 = undefined;
     return four(c.ft_samples_magnetization(sim.h, &buf), buf);
+}
+
+/// `<E>`, the internal energy.
+///
+/// `energy` reports the energy of the ONE configuration the machine is holding, and a draw from a
+/// distribution is not an estimate of its mean.
+pub fn samplesMeanEnergy(sim: Sim) ?Estimate {
+    var buf: [4]f64 = undefined;
+    return four(c.ft_samples_mean_energy(sim.h, &buf), buf);
 }
 
 // ---- exact inference ------------------------------------------------------------------------------

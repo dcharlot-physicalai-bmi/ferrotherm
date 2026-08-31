@@ -835,6 +835,16 @@ pub extern "C" fn ft_samples_state(sim: *const Sim, k: u32, out: *mut i8, cap: u
 }
 
 /// Write `[value, stderr, ess, tau_int]` for one estimate into `out`, which must hold 4 doubles.
+///
+/// # The writes are UNALIGNED, deliberately
+///
+/// `copy_nonoverlapping` to a `*mut f64` requires the destination to be 8-byte aligned, and the
+/// caller this was written for cannot promise that: the browser passes a pointer from
+/// [`ft_scratch`], which hands back the buffer of a `Vec<u8>` and is therefore aligned to 1. The
+/// same page already learned this on the other side of the boundary — it reads these bytes through
+/// a `DataView` rather than a `Float64Array`, because the typed-array constructor REFUSES a
+/// byte offset that is not a multiple of eight. An aligned write into a buffer with no alignment
+/// is undefined behaviour that would work on every machine anyone tested it on.
 fn write_estimate(
     e: Result<crate::samples::Estimate, crate::samples::Refused>,
     out: *mut f64,
@@ -844,7 +854,9 @@ fn write_estimate(
         return 0;
     }
     let v = [e.value, e.stderr, e.ess, e.tau_int];
-    unsafe { core::ptr::copy_nonoverlapping(v.as_ptr(), out, 4) };
+    for (k, x) in v.iter().enumerate() {
+        unsafe { out.add(k).write_unaligned(*x) };
+    }
     1
 }
 
@@ -875,6 +887,17 @@ pub extern "C" fn ft_samples_correlation(sim: *const Sim, i: u32, j: u32, out: *
         return 0;
     }
     write_estimate(m.correlation(i as usize, j as usize), out)
+}
+
+/// `<E>` with its error bar, in the same four-double layout as [`ft_samples_mean_spin`].
+///
+/// The internal energy, which is the expectation this field asks for most and the one a single
+/// returned state cannot give: [`ft_energy`] reports the energy of the ONE configuration the
+/// machine is holding, and a draw from a distribution is not an estimate of its mean.
+#[no_mangle]
+pub extern "C" fn ft_samples_mean_energy(sim: *const Sim, out: *mut f64) -> u32 {
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    write_estimate(m.mean_energy(), out)
 }
 
 /// The order parameter `(1/n) sum_i <s_i>`, in the same four-double layout.
@@ -914,6 +937,14 @@ mod sample_tests {
         }
         assert_eq!(ft_samples_correlation(sim, 0, 1, out.as_mut_ptr()), 1);
         assert_eq!(ft_samples_magnetization(sim, out.as_mut_ptr()), 1);
+        // <E> is a mean over draws, checked against the exactly enumerated internal energy --
+        // the expectation this field asks for most, and the one a single returned state cannot
+        // give: `ft_energy` reports the energy of the ONE configuration the machine is holding.
+        assert_eq!(ft_samples_mean_energy(sim, out.as_mut_ptr()), 1);
+        let mean_e = crate::samples::Estimate { value: out[0], stderr: out[1], ess: out[2], tau_int: out[3] };
+        assert!(mean_e.stderr > 0.0, "an error bar of exactly zero on a moving chain is a bug");
+        let exact_e = truth.mean_energy().unwrap().value;
+        assert!(mean_e.covers(exact_e), "<E>: ABI {mean_e} does not cover the enumerated {exact_e:.5}");
         assert!(out[1] > 0.0, "an error bar of exactly zero on a moving chain is a bug");
 
         // Out of range and null are refusals, not answers.
@@ -929,6 +960,40 @@ mod sample_tests {
         assert!(st.iter().all(|&v| v == 1 || v == -1));
         assert_eq!(ft_samples_state(sim, 8_000, st.as_mut_ptr(), 9), 0, "no such draw");
 
+        ft_free(sim);
+    }
+
+    /// The browser hands these functions a pointer with no alignment, and they must survive it.
+    ///
+    /// `ft_scratch` returns the buffer of a `Vec<u8>`, aligned to ONE. An aligned `f64` write into
+    /// that is undefined behaviour of the kind that works on every machine anyone tests it on, so
+    /// the writes are unaligned; this deliberately hands over a pointer that is NOT 8-byte aligned
+    /// and requires the same four numbers back.
+    #[test]
+    fn an_estimate_writes_correctly_to_a_pointer_with_no_alignment() {
+        let sim = ft_ising2d_new(3, 1.0, 0.4, 11);
+        assert_eq!(ft_collect(sim, 200, 1_000, 1), 1);
+
+        let mut aligned = [0.0f64; 4];
+        assert_eq!(ft_samples_mean_spin(sim, 0, aligned.as_mut_ptr()), 1);
+
+        // Land the destination four bytes off an eight-byte boundary, which is the worst case a
+        // byte buffer can produce.
+        let mut raw = [0u8; 48];
+        let base = raw.as_mut_ptr();
+        let off = (4 + 8 - (base as usize % 8)) % 8;
+        let odd = unsafe { base.add(off) }.cast::<f64>();
+        assert_ne!(odd as usize % 8, 0, "this test is vacuous unless the pointer is misaligned");
+        assert_eq!(ft_samples_mean_spin(sim, 0, odd), 1);
+
+        for k in 0..4 {
+            let got = unsafe { odd.add(k).read_unaligned() };
+            let want = aligned[k];
+            assert!(
+                got == want || (got.is_nan() && want.is_nan()),
+                "slot {k}: unaligned wrote {got} where aligned wrote {want}"
+            );
+        }
         ft_free(sim);
     }
 

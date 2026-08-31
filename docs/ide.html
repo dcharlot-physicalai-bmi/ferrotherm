@@ -65,6 +65,7 @@
           white-space:pre-wrap;word-break:break-word}
   .status.bad{border-color:rgba(212,104,91,.5);color:#f0b9b2}
   .status.good{border-color:rgba(125,216,125,.4);color:#bfe6bf}
+  .status.warn{border-color:rgba(224,164,88,.5);color:#e7c48d}
 
   canvas{display:block;width:100%;height:auto;background:#070d16;
          border:1px solid var(--line);border-radius:8px}
@@ -189,6 +190,7 @@
   </label>
   <button id="solve">Solve</button>
   <button id="certify">Certify</button>
+  <button id="draws">Draw</button>
   <button id="reset">Reset</button>
 </div>
 
@@ -260,6 +262,24 @@
           <div>spins<b id="fit-spins">&mdash;</b></div>
         </div>
         <p class="certnote" id="fitnote"></p>
+      </section>
+
+      <section id="samp" class="cert" hidden>
+        <div class="certtop">
+          <span class="certtitle">What the sampler returned</span>
+          <span class="certverdict" id="sampverdict"></span>
+        </div>
+        <div class="fitgrid">
+          <div>draws kept<b id="s-draws">&mdash;</b></div>
+          <div>of those, distinct<b id="s-distinct">&mdash;</b></div>
+          <div>lowest energy seen<b id="s-best">&mdash;</b></div>
+          <div>states tying it<b id="s-deg">&mdash;</b></div>
+          <div>&#10216;M&#10217;<b id="s-mag">&mdash;</b></div>
+          <div>&#10216;E&#10217;<b id="s-energy">&mdash;</b></div>
+          <div>independent draws<b id="s-ess">&mdash;</b></div>
+          <div>&tau;<sub>int</sub>, slowest seen<b id="s-tau">&mdash;</b></div>
+        </div>
+        <p class="certnote" id="sampnote"></p>
       </section>
 
       <details>
@@ -408,6 +428,10 @@ let W = null, mem = null, sim = 0, running = false, raf = 0, gpuDiag = "";
 let spec = null, nodes = 0, layout = null, lattice = 0;
 // What the last fit learned, or null when the live model was not fitted to anything.
 let fitted = null;
+// The source text whose `beta` and `seed` the controls have already taken. See `apply`.
+let adoptedFrom = null;
+// Set when the body asked for a beta the slider cannot reach, so the status line can say so.
+let betaClamped = "";
 
 const $ = (id) => document.getElementById(id);
 const status = (msg, kind) => {
@@ -744,6 +768,104 @@ function showFit() {
       + "one would be reading the proxy's failure and calling it expressivity."
     : "The machine fitted, but scoring it exactly needs enumerating every state and this one is too "
       + "large. It still samples: the model is real, only its expressivity is unmeasured here.";
+}
+
+// ---- what the sampler returned ------------------------------------------------------------------
+//
+// Every other control on this page hands back ONE state. That is an optimiser's answer, and this is
+// a sampler: the readouts above are the order parameter of the single configuration the machine
+// happens to be sitting in, which is a draw from a distribution and not an estimate of it. This
+// draws many, keeps them, and reports what may honestly be computed from them.
+let sampCache = null;
+
+/** Read one `[value, stderr, ess, tau_int]` estimate out of wasm memory. */
+function estimate(fn, ...args) {
+  const p = W.ft_scratch(32);
+  if (!p) return null;
+  const ok = fn(sim, ...args, p);
+  if (!ok) return null;
+  // The DataView is built AFTER the call, and it is a DataView rather than a Float64Array for two
+  // separate reasons. The call allocates inside wasm to compute the estimate, which can GROW the
+  // heap and detach every existing view; and `ft_scratch` returns the buffer of a `Vec<u8>`, whose
+  // alignment is one, where the Float64Array constructor refuses a byte offset that is not a
+  // multiple of eight. The Rust side writes these unaligned for the same reason.
+  const dv = new DataView(W.memory.buffer, p, 32);
+  return { value: dv.getFloat64(0, true), stderr: dv.getFloat64(8, true),
+           ess: dv.getFloat64(16, true), tau: dv.getFloat64(24, true) };
+}
+
+/** `value ± 1.96 σ`, or an em dash when the estimate was refused. */
+function pm(e) {
+  if (!e) return "\u2014";
+  return fmt(e.value) + " \u00b1 " + (1.96 * e.stderr).toPrecision(2);
+}
+
+function drawSamples() {
+  if (!sim) return;
+  stop();
+  const draws = 2000, thin = 2, burn = 500;
+  const t0 = performance.now();
+  if (!W.ft_collect(sim, burn, draws, thin)) {
+    status("that model could not be drawn from: fewer than 16 draws certifies nothing", "bad");
+    return;
+  }
+  const ms = performance.now() - t0;
+  sampCache = {
+    draws: W.ft_samples_len(sim),
+    distinct: W.ft_samples_distinct(sim),
+    best: W.ft_samples_best_energy(sim),
+    // Ties within a tolerance, and the tolerance matters: an energy is a float sum, so exact
+    // equality would count only states that happened to round the same way.
+    deg: W.ft_samples_degeneracy(sim, 1e-9),
+    tau: W.ft_samples_chain_tau(sim),
+    mag: estimate(W.ft_samples_magnetization),
+    // The internal energy. The `energy` readout above is the energy of the ONE configuration the
+    // machine is holding, which is a draw from a distribution and not an estimate of its mean.
+    energy: estimate(W.ft_samples_mean_energy),
+    ms,
+  };
+  // The state the sampler is left holding is the last one drawn, so the canvas and readouts follow.
+  draw();
+  readouts();
+  certify(true);
+  showSamples();
+  status("drew " + sampCache.draws.toLocaleString() + " states in " + ms.toFixed(0) + " ms, "
+    + sampCache.distinct.toLocaleString() + " of them distinct", "good");
+}
+
+/** Fill the panel, or hide it when nothing has been drawn from the live model. */
+function showSamples() {
+  const el = $("samp");
+  if (!el) return;
+  if (!sampCache) { el.hidden = true; return; }
+  el.hidden = false;
+  const s = sampCache;
+  $("s-draws").textContent = s.draws.toLocaleString();
+  $("s-distinct").textContent = s.distinct.toLocaleString();
+  $("s-best").textContent = fmt(s.best);
+  $("s-deg").textContent = s.deg.toLocaleString();
+  $("s-mag").textContent = pm(s.mag);
+  $("s-energy").textContent = pm(s.energy);
+  $("s-ess").textContent = s.mag ? Math.round(s.mag.ess).toLocaleString() : "\u2014";
+  $("s-tau").textContent = Number.isFinite(s.tau) ? s.tau.toFixed(1) : "infinite";
+  const v = $("sampverdict");
+  const frac = s.draws ? s.distinct / s.draws : 0;
+  v.textContent = (100 * frac).toFixed(0) + "% distinct";
+  v.classList.toggle("proved", frac > 0.5);
+  $("sampnote").textContent =
+    "The \u00b1 is 1.96 \u00d7 sqrt(var / ess), NOT sqrt(var / draws). Successive draws from one "
+    + "chain share a state, so " + s.draws.toLocaleString() + " of them are worth about "
+    + (s.mag ? Math.round(s.mag.ess).toLocaleString() : "?") + " independent ones, and the naive "
+    + "interval would be narrower by sqrt(2\u03c4). Measured against exactly enumerated marginals, "
+    + "the naive interval contains the true value for one site in four on a chain with \u03c4 = 32 "
+    + "while announcing 95%. \u03c4 here is the SLOWEST the chain showed over energy and "
+    + "magnetization, not the fastest: an ordered model's energy jitters quickly around a fixed "
+    + "value while the configuration has not moved at all. "
+    + (s.distinct <= 3
+        ? "Only " + s.distinct + " distinct states came back, so this chain has explored almost "
+          + "nothing whatever its draw count says."
+        : "\u201cStates tying it\u201d is EVIDENCE of degeneracy and not a count of it: a chain "
+          + "proves the states it visited exist and says nothing about the ones it did not.");
 }
 
 function ringEdges(v) {
@@ -1319,13 +1441,48 @@ function apply() {
   // WORKS -- the worst kind, because nobody goes looking.
   certCache = null;
   proved = false;
+  // Drawn states belong to the model they came from. Leaving them beside a new one is the same
+  // stale-surface failure as a carried-over bracket, in a shape that looks even more like an answer.
+  sampCache = null;
   // A fresh model needs its own batch size: a 512x512 lattice inheriting a 5-ring's batch of 4096
   // would freeze the tab on the first frame.
   perFrame = 1;
   const cel = document.getElementById("cert");
   if (cel) cel.hidden = true;
+  showSamples();
   try {
-    spec = parseSpec($("src").value);
+    const raw = $("src").value;
+    spec = parseSpec(raw);
+    // A PASTED BODY CARRIES ITS OWN BETA AND SEED, AND THE API HONOURS BOTH.
+    //
+    // The pane above this box says "the same JSON the API and the MCP tools take", and until now
+    // that was false for exactly these two fields: `apply` read the slider and the seed box and
+    // ignored what the body said, so `{"beta": 0.44}` sampled at whatever the slider happened to
+    // hold. The workbench test caught it holding 1.50 from a preset loaded several steps earlier
+    // and reporting a fully ordered lattice as if it were a critical one. Two surfaces answering
+    // different questions for the same bytes is the thing this page exists not to do.
+    //
+    // ONLY WHEN THE SOURCE CHANGED. `apply` also runs from the seed box and from Reset, and
+    // adopting there would overwrite the control the reader just moved with the value it is meant
+    // to override.
+    if (raw !== adoptedFrom) {
+      adoptedFrom = raw;
+      betaClamped = "";
+      if (Number.isFinite(spec.beta)) {
+        // The slider spans 0.01 to 2.00. A body outside that is adopted as far as the control can
+        // go and SAID SO -- silently sampling at 2.0 while the box reads 6.0 is the same divergence
+        // in a smaller font.
+        const want = +spec.beta;
+        const shown = Math.min(2, Math.max(0.01, want));
+        $("beta").value = Math.round(shown * 100);
+        $("betaval").textContent = shown.toFixed(2);
+        if (Math.abs(shown - want) > 1e-9) {
+          betaClamped = " (beta " + want + " is outside this slider's 0.01-2.00 range, so it is "
+            + "sampling at " + shown.toFixed(2) + "; the API has no such limit)";
+        }
+      }
+      if (Number.isFinite(spec.seed)) $("seed").value = spec.seed | 0;
+    }
     if (spec.variables) return applySolve();
     if (spec.terms) return applyHubo();
     const beta = +$("beta").value / 100, seed = +$("seed").value;
@@ -1340,7 +1497,8 @@ function apply() {
     showFit();
     status(fitted
       ? fitMessage()
-      : "model built: " + n + " nodes. Press Run to sample, or Anneal to minimise.", "good");
+      : "model built: " + n + " nodes. Press Run to sample, or Anneal to minimise." + betaClamped,
+      betaClamped ? "warn" : "good");
     exports_();
     draw();
   } catch (err) {
@@ -1522,6 +1680,7 @@ function certify(quiet) {
 }
 
 $("certify").onclick = () => certify(false);
+$("draws").onclick = drawSamples;
 
 $("solve").onclick = () => {
   if (!sim) return;

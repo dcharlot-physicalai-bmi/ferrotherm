@@ -104,10 +104,43 @@ top-level figure is the order parameter of the *last state drawn*, and one draw 
 is not an estimate of it. Live, an 8×8 lattice at 300 draws now reports its ledger share as
 **98.9% readback** where it used to report a fraction of a percent.
 
-**Gap, written down rather than left implicit:** the browser surface does not have this yet. The C
-ABI symbols compile into `ferrotherm.wasm` on the next build, but `docs/ide.html` and
-`docs/graph.html` have no sample-set panel and `check-wasm-exports.sh` only checks the exports the
-pages already call, so nothing fails. Rust, C, Python, Zig, Julia, HTTP and MCP have it.
+### And the browser, where it found two more defects
+
+`docs/ide.html` grew a **Draw** button and a "what the sampler returned" panel: draws kept, how many
+were distinct, the lowest energy seen, states tying it, `⟨M⟩` and `⟨E⟩` each with an interval, the
+effective sample size, and the slowest `tau_int` the chain showed. `ft_samples_mean_energy` is new —
+the C ABI could give `⟨M⟩` and `⟨s_i s_j⟩` but not the internal energy, which is the expectation this
+field asks for most and the one `ft_energy` cannot give, because that reports the energy of the
+single configuration the machine is holding.
+
+**The estimate writer assumed an alignment nothing promises.** `ft_scratch` returns the buffer of a
+`Vec<u8>`, aligned to one, and the browser is the only caller that uses it; writing four `f64`
+through an aligned `copy_nonoverlapping` into that is undefined behaviour of the kind that works on
+every machine anyone tests it on. The writes are unaligned now, the page reads them through a
+`DataView` rather than a `Float64Array` for the mirror-image reason (the typed-array constructor
+*refuses* a byte offset that is not a multiple of eight), and a test hands the ABI a deliberately
+misaligned pointer and requires the same four numbers back.
+
+**And the workbench was ignoring the `beta` in the body it was given.** The pane above the editor
+says *"the same JSON the API and the MCP tools take"*, and that was false for `beta` and `seed` on a
+pasted body: `apply()` read the slider and the seed box and ignored what the body said. The new test
+caught the slider holding **1.50** from a preset loaded several steps earlier while the body asked
+for 0.44 — so the page reported a fully ordered 16×16 lattice, one distinct state and `⟨M⟩ = −1.000`,
+where the same bytes through `/v1/sample` sample at criticality. Both fields are adopted now, only
+when the source text itself changed (so the seed box still overrides), and a `beta` outside the
+slider's 0.01–2.00 range is adopted as far as the control goes **and said so in the status line**
+rather than silently sampling somewhere else.
+
+With `beta` honoured, the panel shows what it is for. At `beta_c` on a 16×16 lattice: 2,000 draws,
+2,000 distinct, `tau_int` **245**, and an effective sample size of **4** — so `⟨M⟩ = 0.103 ± 0.71`,
+which is the honest width. Frozen at `beta = 1.5` on an 8×8: **one** distinct state in 2,000 draws,
+a zero-width interval that is arithmetically correct and reads as certainty, and an infinite
+`tau_int` beside it saying why.
+
+**Gap, written down rather than left implicit:** `docs/graph.html` has no sample-set node. It edits
+*models* and its certificate node deliberately takes only a solve result — the sample set lives on a
+`Sim`, not on a `ModelHandle`, so reaching it there would need a parallel `ft_model_samples_*`
+family. Everything else has it: Rust, C, Python, Zig, Julia, HTTP, MCP and the workbench.
 
 
 ### The last audit finding, declined — with the reason written into the code

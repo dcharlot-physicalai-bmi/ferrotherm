@@ -163,6 +163,7 @@ _samples_state = _sig("ft_samples_state", c_uint32, [_p, c_uint32, POINTER(c_int
 _samples_mean_spin = _sig("ft_samples_mean_spin", c_uint32, [_p, c_uint32, POINTER(c_double)])
 _samples_correlation = _sig("ft_samples_correlation", c_uint32, [_p, c_uint32, c_uint32, POINTER(c_double)])
 _samples_magnetization = _sig("ft_samples_magnetization", c_uint32, [_p, POINTER(c_double)])
+_samples_mean_energy = _sig("ft_samples_mean_energy", c_uint32, [_p, POINTER(c_double)])
 _exact_ground = _sig("ft_exact_ground", c_double, [_p, c_uint32])
 _exact_marginals = _sig("ft_exact_marginals", c_uint32,
                         [_p, c_double, c_uint32, ctypes.POINTER(c_double), c_uint32])
@@ -602,6 +603,14 @@ class SampleSet:
     def magnetization(self) -> Estimate:
         """The order parameter, with its error bar."""
         return self._four(_samples_magnetization)
+
+    def mean_energy(self) -> Estimate:
+        """``<E>``, the internal energy.
+
+        :attr:`Sim.energy` reports the energy of the one configuration the machine is holding, and a
+        draw from a distribution is not an estimate of its mean.
+        """
+        return self._four(_samples_mean_energy)
 
     def __repr__(self) -> str:
         return (f"<SampleSet {len(self)} draws, {self.distinct} distinct, "

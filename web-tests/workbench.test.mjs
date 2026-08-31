@@ -546,6 +546,122 @@ const run = (body) => page.evaluate((json) => {
   }
 }
 
+// --- the sampler returns SAMPLES, and the page says what may be computed from them ----------------
+//
+// Every other control on this page hands back one state. The readouts beside the canvas are the
+// order parameter of the single configuration the machine is sitting in -- a draw from a
+// distribution, not an estimate of it. This checks that the Draw panel exists, that it fills, and
+// that the interval it quotes is the corrected one rather than sigma/sqrt(N), which is the whole
+// reason the panel is worth having.
+{
+  const r = await page.evaluate(async () => {
+    // Critical, deliberately. At beta_c a 2D lattice shows critical slowing down, so tau is well
+    // above its floor and the autocorrelation correction has something to correct.
+    document.getElementById("src").value =
+      JSON.stringify({ graph: { builtin: "lattice2d", l: 16, j: 1.0 }, beta: 0.44, seed: 3 });
+    document.getElementById("src").dispatchEvent(new Event("change"));
+    await new Promise(r => setTimeout(r, 200));
+    const hiddenBefore = document.getElementById("samp").hidden;
+    document.getElementById("draws").click();
+    await new Promise(r => setTimeout(r, 400));
+    const txt = id => document.getElementById(id).textContent;
+    return {
+      hiddenBefore,
+      hiddenAfter: document.getElementById("samp").hidden,
+      draws: txt("s-draws"), distinct: txt("s-distinct"), best: txt("s-best"),
+      mag: txt("s-mag"), energy: txt("s-energy"), ess: txt("s-ess"), tau: txt("s-tau"),
+      note: txt("sampnote"), status: txt("status"),
+      beta: +document.getElementById("beta").value / 100,
+      // The two intervals, read straight off the module, so the assertion is about arithmetic and
+      // not about a rendered string.
+      raw: (() => {
+        const p = W.ft_scratch(32);
+        if (!W.ft_samples_magnetization(sim, p)) return null;
+        const dv = new DataView(W.memory.buffer, p, 32);
+        return { value: dv.getFloat64(0, true), stderr: dv.getFloat64(8, true),
+                 ess: dv.getFloat64(16, true), tau: dv.getFloat64(24, true),
+                 n: W.ft_samples_len(sim) };
+      })(),
+    };
+  });
+
+  check("the panel is hidden until something is drawn", r.hiddenBefore === true);
+  check("and appears once it is", r.hiddenAfter === false);
+  // The body said 0.44 and the page must have sampled at 0.44. It used to read the slider and
+  // ignore the body: this same block found it holding 1.50 from a preset loaded steps earlier.
+  check("the body's beta is the beta it sampled at", Math.abs(r.beta - 0.44) < 1e-9, String(r.beta));
+  check("it reports how many draws it kept", /^2,?000$/.test(r.draws), r.draws);
+  check("and how many of them were distinct",
+        +r.distinct.replace(/,/g, "") > 1 && +r.distinct.replace(/,/g, "") <= 2000, r.distinct);
+  check("every tile is filled", ![r.best, r.mag, r.energy, r.ess, r.tau].includes("\u2014"),
+        [r.best, r.mag, r.energy, r.ess, r.tau].join(" | "));
+  check("<M> and <E> both carry an interval", /\u00b1/.test(r.mag) && /\u00b1/.test(r.energy),
+        r.mag + "   " + r.energy);
+
+  // THE CLAIM THE PANEL MAKES, in two parts.
+  //
+  // First the arithmetic, which holds always: ess is n/(2*tau) and nothing else. This is the
+  // assertion that catches the page quietly reverting to sigma/sqrt(N), because that would need
+  // ess to equal n at a tau above the floor.
+  check("the effective sample size is the draw count deflated by tau",
+        r.raw && Math.abs(r.raw.ess - r.raw.n / (2 * r.raw.tau)) < 1e-6,
+        r.raw ? `ess ${r.raw.ess.toFixed(1)} = ${r.raw.n} / (2 x ${r.raw.tau.toFixed(3)})` : "no estimate");
+
+  // Then that the correction BITES on this model. It is not a universal claim and must not be
+  // written as one: tau bottoms out at 0.5, where n/(2*tau) is exactly n, and a genuinely
+  // fast-mixing observable legitimately reports ess = draws. An earlier version of this test
+  // asserted `ess < draws` unconditionally and failed against a correct page -- on an ORDERED
+  // lattice whose chain had frozen into two states, where the energy trace really does decorrelate
+  // in half a sweep because nothing is moving. That is what the distinct count below is for.
+  check("and at criticality it is materially below the draw count",
+        r.raw && r.raw.tau > 1.0 && r.raw.ess < 0.5 * r.raw.n,
+        r.raw ? `tau ${r.raw.tau.toFixed(2)}, ess ${r.raw.ess.toFixed(0)} of ${r.raw.n}` : "no estimate");
+  check("and the note says which interval it is",
+        /sqrt\(var \/ ess\)/.test(r.note) && /NOT sqrt\(var \/ draws\)/.test(r.note),
+        r.note.slice(0, 90));
+
+  // A misaligned f64 write is undefined behaviour that works everywhere it is tried. `ft_scratch`
+  // returns the buffer of a Vec<u8>, aligned to one, so this is the surface that would find it.
+  check("the estimate survives an unaligned scratch pointer",
+        r.raw && Number.isFinite(r.raw.value) && Math.abs(r.raw.value) <= 1,
+        r.raw ? String(r.raw.value) : "no estimate");
+
+  // AND THE READING THE DRAW COUNT ALONE WOULD NOT GIVE. An ordered lattice's chain freezes into a
+  // handful of configurations while its energy still jitters, so tau reports fast mixing for a
+  // machine that has not moved. The distinct count is what says so, and the panel must say it in
+  // words rather than leaving a reader to compare two numbers.
+  const frozen = await page.evaluate(async () => {
+    document.getElementById("src").value =
+      JSON.stringify({ graph: { builtin: "lattice2d", l: 8, j: 1.0 }, beta: 1.5, seed: 3 });
+    document.getElementById("src").dispatchEvent(new Event("change"));
+    await new Promise(r => setTimeout(r, 200));
+    document.getElementById("draws").click();
+    await new Promise(r => setTimeout(r, 400));
+    const txt = id => document.getElementById(id).textContent;
+    return { distinct: +txt("s-distinct").replace(/,/g, ""), tau: txt("s-tau"),
+             mag: txt("s-mag"), ess: txt("s-ess"), note: txt("sampnote") };
+  });
+  check("a frozen chain returns one state two thousand times", frozen.distinct === 1,
+        `${frozen.distinct} distinct`);
+  check("and the panel says so in words", /explored almost nothing/.test(frozen.note));
+  // The arithmetic here is right and reads as certainty: one repeated state has zero sample
+  // variance, so the interval is a point. The infinite tau beside it is the only thing standing
+  // between a reader and that reading, and it must be on the panel rather than in a comment.
+  check("its interval is zero-width, and the tau beside it says why",
+        /\u00b1 0\.0*$/.test(frozen.mag.trim()) && frozen.tau === "infinite",
+        `${frozen.mag}   tau ${frozen.tau}, ess ${frozen.ess}`);
+
+  // Drawn states belong to the model they came from.
+  const cleared = await page.evaluate(async () => {
+    document.getElementById("src").value =
+      JSON.stringify({ graph: { builtin: "ring", n: 12, j: 1.0 }, beta: 0.5, seed: 1 });
+    document.getElementById("src").dispatchEvent(new Event("change"));
+    await new Promise(r => setTimeout(r, 200));
+    return document.getElementById("samp").hidden;
+  });
+  check("and a new model clears them rather than showing them beside it", cleared === true);
+}
+
 check("no page errors", errs.length === 0, errs.join(" | "));
 
 await browser.close();

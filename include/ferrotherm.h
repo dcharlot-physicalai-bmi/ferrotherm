@@ -202,6 +202,10 @@ uint32_t ft_samples_mean_spin(const ft_sim *sim, uint32_t i, double *out);
 uint32_t ft_samples_correlation(const ft_sim *sim, uint32_t i, uint32_t j, double *out);
 uint32_t ft_samples_magnetization(const ft_sim *sim, double *out);
 
+/* <E>, the internal energy. ft_energy reports the energy of the ONE configuration the machine is
+ * holding, and a draw from a distribution is not an estimate of its mean. */
+uint32_t ft_samples_mean_energy(const ft_sim *sim, double *out);
+
 /* ---- solvers and bounds -------------------------------------------------------------------------
 
    Each solver LEAVES ITS BEST STATE as the simulation's state, so ft_spins reads the answer and

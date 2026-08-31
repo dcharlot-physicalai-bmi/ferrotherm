@@ -61,7 +61,8 @@ export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
 export certify, findings, passed
 export Estimate, SampleSet, collect_samples, ci95, covers, mean_spin, correlation,
-    magnetization_estimate, degeneracy, chain_tau, distinct, best_energy, sample_state
+    magnetization_estimate, mean_energy, degeneracy, chain_tau, distinct, best_energy,
+    sample_state
 export rbm, dbm, fit!, log_likelihood, bars_and_stripes
 export known_optimum, excess, solved
 export treewidth, exact_ground_energy, exact_ground_state, exact_logz
@@ -256,6 +257,7 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_samples_mean_spin Cuint SimPtr Cuint Ptr{Cdouble}
 @cfn ft_samples_correlation Cuint SimPtr Cuint Cuint Ptr{Cdouble}
 @cfn ft_samples_magnetization Cuint SimPtr Ptr{Cdouble}
+@cfn ft_samples_mean_energy Cuint SimPtr Ptr{Cdouble}
 @cfn ft_exact_ground Cdouble SimPtr Cuint
 @cfn ft_exact_log_z Cdouble SimPtr Cdouble Cuint
 @cfn ft_exact_width Cuint SimPtr
@@ -1158,6 +1160,16 @@ end
 function magnetization_estimate(d::SampleSet)
     buf = Vector{Cdouble}(undef, 4)
     _estimate(ft_samples_magnetization(d.sim.handle, pointer(buf)), buf)
+end
+
+"""`⟨E⟩`, the internal energy.
+
+[`energy`](@ref) reports the energy of the one configuration the machine is holding, and a draw from
+a distribution is not an estimate of its mean.
+"""
+function mean_energy(d::SampleSet)
+    buf = Vector{Cdouble}(undef, 4)
+    _estimate(ft_samples_mean_energy(d.sim.handle, pointer(buf)), buf)
 end
 
 function Base.show(io::IO, d::SampleSet)

@@ -263,10 +263,68 @@ if [[ "${1:-}" == "--selftest" ]]; then
        exit 1 ;;
   esac
 
+  # --- damage 4: a SIBLING pinning ANOTHER SIBLING at the wrong minor ---------------------------
+  #
+  # The real edge is gpu -> meter, and it is the one RELEASING.md's table forgets. Damaging it here
+  # also proves the finder finds something: a sibling-pin loop that matched nothing would print its
+  # "(no sibling crate pins another sibling)" line and pass, which reads identically to a clean tree.
+  restore_all
+  x_file=""; x_name=""; x_have=""; x_want=""
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$tmp/$f" ]] || continue
+    while IFS= read -r g; do
+      [[ -n "$g" && -f "$tmp/$g" ]] || continue
+      gn="$(grep -m1 '^name = ' "$tmp/$g" | cut -d'"' -f2)"
+      gv="$(grep -m1 '^version = ' "$tmp/$g" | cut -d'"' -f2)"
+      [[ -n "$gn" && -n "$gv" && "$gn" != "ferrotherm" ]] || continue
+      l="$(grep -m1 "^${gn} = " "$tmp/$f" 2>/dev/null || true)"
+      [[ -n "$l" ]] || continue
+      d="$(printf '%s' "$l" | sed -nE 's/.*version = "([^"]+)".*/\1/p')"
+      [[ -n "$d" ]] || continue
+      x_file="$f"; x_name="$gn"; x_have="$d"; x_want="${gv%.*}"; break
+    done <<< "$manifests"
+    [[ -n "$x_file" ]] && break
+  done <<< "$manifests"
+
+  if [[ -z "$x_file" ]]; then
+    echo "SELFTEST SKIP: no sibling crate pins another sibling, so damage 4 has nothing to damage."
+    echo "That is a real state and not a failure -- but the sibling-pin loop is then UNPROVEN, and"
+    echo "the moment such an edge is added this arm starts covering it."
+  else
+    x_maj="${x_have%.*}"; x_min="${x_have#*.}"
+    if [[ "$x_min" -gt 0 ]]; then x_stale="$x_maj.$((x_min - 1))"
+    elif [[ "$x_maj" -gt 0 ]]; then x_stale="$((x_maj - 1)).0"
+    else x_stale="$x_maj.$((x_min + 1))"; fi
+    sed "/^${x_name} = /s|version = \"$x_have\"|version = \"$x_stale\"|" "$tmp/$x_file" > "$tmp/$x_file.tmp"
+    mv "$tmp/$x_file.tmp" "$tmp/$x_file"
+    if ! grep -q "^${x_name} = .*version = \"$x_stale\"" "$tmp/$x_file"; then
+      echo "SELFTEST FAILED: the damage did not apply -- $x_file does not pin $x_name $x_stale," >&2
+      echo "so the run below would have been vacuous" >&2
+      exit 1
+    fi
+    if out="$(run_copy)"; then
+      echo "SELFTEST FAILED: the gate passed $x_file pinning $x_name $x_stale against a sibling at" >&2
+      echo "$x_want -- publishing it would resolve that pin against crates.io and ship against the" >&2
+      echo "PREVIOUS release of a crate in this same repository" >&2
+      exit 1
+    fi
+    case "$out" in
+      *"depends on $x_name $x_stale"*"expected $x_want"*) ;;
+      *) echo "SELFTEST FAILED: the damaged run failed, but not on the sibling pin -- so that" >&2
+         echo "comparison is still unproven. It said:" >&2
+         printf '%s\n' "$out" >&2
+         exit 1 ;;
+    esac
+  fi
+
   echo "selftest: a wheel at $bumped beside a crate at $ver was caught, and so was $dep_file"
   echo "pinning ferrotherm $stale instead of $pin. A stale manifest planted where a git worktree"
   echo "would put one stayed invisible and the coverage count held at $n_owned, so the enumeration"
   echo "this gate was once wrong about is covered as well as its comparisons."
+  if [[ -n "$x_file" ]]; then
+    echo "And $x_file pinning $x_name $x_stale instead of $x_want was caught -- the sibling-to-sibling"
+    echo "edge (gpu dev-depends on meter) that RELEASING.md's own table does not list."
+  fi
   exit 0
 fi
 
@@ -365,6 +423,52 @@ if [[ $found -eq 0 ]]; then
   # A floor: if the search stops matching, this passes vacuously over nothing.
   echo "found no crate depending on ferrotherm, which cannot be right" >&2
   exit 2
+fi
+
+# ---- and the pins the siblings hold on EACH OTHER ----------------------------------------------
+#
+# The loop above checks every pin on the core. It does not check sibling-to-sibling pins, and there
+# is one: `ferrotherm-gpu` dev-depends on `ferrotherm-meter`, which is the whole reason RELEASING.md
+# has to publish meter before gpu. Bump meter to 0.5 and that pin still reads "0.4";
+# `cargo publish -p ferrotherm-gpu` then resolves it against crates.io and ships the energy
+# comparison built on the PREVIOUS meter, with nothing to say so. It is the exact failure the core
+# loop exists for, one edge over, and RELEASING.md's own table of "what has to move together" does
+# not list it either.
+#
+# Found rather than listed, for the same reason the core loop is: a list of edges goes stale the
+# moment someone adds one.
+declare -a sib_name=() sib_ver=()
+while IFS= read -r f; do
+  nm="$(grep -m1 '^name = ' "$f" | cut -d'"' -f2)"
+  vv="$(grep -m1 '^version = ' "$f" | cut -d'"' -f2)"
+  [[ -n "$nm" && -n "$vv" && "$nm" != "ferrotherm" ]] || continue
+  sib_name+=("$nm"); sib_ver+=("$vv")
+done < <(owned_manifests | sort)
+
+cross=0
+while IFS= read -r f; do
+  for i in "${!sib_name[@]}"; do
+    nm="${sib_name[$i]}"; vv="${sib_ver[$i]}"
+    line="$(grep -m1 "^${nm} = " "$f" 2>/dev/null || true)"
+    [[ -n "$line" ]] || continue
+    dep="$(printf '%s' "$line" | sed -nE 's/.*version = "([^"]+)".*/\1/p')"
+    [[ -n "$dep" ]] || continue
+    cross=$((cross + 1))
+    if [[ "$dep" == "${vv%.*}" || "$dep" == "$vv" ]]; then
+      printf '  %-36s depends on %s %s\n' "$f" "$nm" "$dep"
+    else
+      printf '  %-36s depends on %s %s   <- expected %s\n' "$f" "$nm" "$dep" "${vv%.*}"
+      bad=1
+    fi
+  done
+done < <(owned_manifests | sort)
+
+# Reported rather than assumed. Zero is a legitimate state -- siblings need not depend on each
+# other -- but a check that silently examines nothing looks exactly like a check that passed, and
+# this file has already been wrong about its own coverage once. The selftest damages one of these
+# pins and requires a failure, which is what proves the finder above finds anything at all.
+if [[ $cross -eq 0 ]]; then
+  echo "  (no sibling crate pins another sibling)"
 fi
 
 # ---- and is any of it actually ON crates.io? ---------------------------------------------------

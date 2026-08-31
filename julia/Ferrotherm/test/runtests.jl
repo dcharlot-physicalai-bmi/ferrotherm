@@ -174,6 +174,8 @@ end
         @test all(v -> v in (-1, 1), st)
         m = magnetization_estimate(d)
         @test m.ess <= length(d)
+        # <E> is a mean over draws; `energy` is the energy of the one state being held.
+        @test mean_energy(d).stderr > 0.0
         @test occursin("draws", sprint(show, d))
         close!(s)
     end

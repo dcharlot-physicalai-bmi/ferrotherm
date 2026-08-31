@@ -4,12 +4,23 @@ Where each surface is published, and what it takes.
 
 | surface | registry | state |
 |---|---|---|
-| Rust library | crates.io | **`ferrotherm` 0.8.0** |
-| Agent server | crates.io | **`ferrotherm-serve` 0.4.0** |
-| Python | PyPI | **`ferrotherm` 0.8.0** — three wheels |
+| Rust library | crates.io | `ferrotherm` — live |
+| Agent server | crates.io | `ferrotherm-serve` — live, versioned on its own cadence |
+| Python | PyPI | `ferrotherm` — three wheels, versioned with the library |
 | Julia | our own artifacts | `ferrotherm_jll` built and loading; registry is the open question |
-| Zig | package index | `zig build test` builds the Rust library and runs 17 tests; not submitted |
+| Zig | package index | `zig build test` builds the Rust library and runs its suite; not submitted |
 | Browser | Institute site | live, `scripts/publish-site-assets.sh` |
+
+**No version numbers in that table, deliberately.** It used to name three — `ferrotherm` 0.8.0,
+`ferrotherm-serve` 0.4.0, Python 0.8.0 — and carried them, unchanged and unnoticed, through
+twenty-five releases, while `cargo publish` and every gate in the repository were perfectly happy:
+no check reads this file. A number a human retypes is a number that rots, and one that rots inside
+a table headed **state** is worse than no number, because it reads as current. The live answer is
+one command, and it queries the registry rather than the repository:
+
+```sh
+scripts/check-versions.sh
+```
 
 ## The thing all of them share
 
@@ -41,8 +52,10 @@ Its filename is load-bearing. PyPI's Trusted Publisher is bound to `python-relea
 repository, so renaming the file makes PyPI reject the OIDC token with an error about a workflow it
 has never heard of. It builds the Julia artifacts as well, despite the name. Every wheel runs the self-containment check on the platform it targets before upload.
 
-**Verified.** A build-only run produced all three wheels, each carrying its library and tagged for
-exactly where it runs:
+**Verified.** A build-only run — taken at 0.7.0, and left at the version it was taken at because a
+record of an observation is not a statement about today — produced all three wheels, each carrying
+its library and tagged for exactly where it runs. It is the SHAPE that is being reported: three
+platform tags, one library inside each:
 
 ```
 ferrotherm-0.7.0-py3-none-macosx_11_0_arm64.whl        ferrotherm/libferrotherm.dylib
