@@ -2266,16 +2266,25 @@ test "a solved problem certifies its own sampling" {
     try std.testing.expect(cert.tau_int > 0);
     try std.testing.expect(cert.ess <= 512);
     try std.testing.expect(cert.beta_eff > 0);
-    // This model DOES report a finding at these settings -- tv 0.097 sits under a noise floor of
-    // 0.190, so the distance to the exact distribution cannot be told from sampling noise. Asserting
-    // `passed()` would have made this test a check that the certifier stays quiet, which is the
-    // opposite of what a certificate is for.
-    try std.testing.expect(cert.findings > 0);
+    // A FINDING THAT IS STRUCTURALLY GUARANTEED, rather than one this model happens to produce.
+    //
+    // This used to assert `cert.findings > 0` on the 512-draw run above, with a comment recording
+    // that tv 0.097 sat under a 0.190 noise floor. That was an observation about one chain, and it
+    // stopped being true the moment the colouring changed and the sweep mixed better: the same
+    // request now certifies CLEAN, at tv 0.104 against a 0.216 floor. Asserting `passed()` would
+    // make this a check that the certifier stays quiet, and asserting the opposite made it a check
+    // that one model stays imperfect. Neither is what a certificate is for.
+    //
+    // Sixteen draws is the fewest the library accepts and can never be worth the fifty independent
+    // samples the undermixed check asks for -- 16 / (2 tau) < 50 for every tau >= 1/2, which is the
+    // floor tau has. So this reports, on any sampler, in any sweep order, for ever.
+    const thin = try p.certify(1.0, 16, 1);
+    try std.testing.expect(thin.findings > 0);
     var buf: [256]u8 = undefined;
     var i: u32 = 0;
     var saw = false;
-    while (i < cert.findings) : (i += 1) {
-        const text = cert.finding(i, &buf);
+    while (i < thin.findings) : (i += 1) {
+        const text = thin.finding(i, &buf);
         try std.testing.expect(text.len > 0);
         saw = true;
     }

@@ -1815,12 +1815,21 @@ mod optima_tests {
         }
         assert_eq!(ft_model_select_optimum(m, 3, 1e-9), 0, "there is no fourth");
 
-        // Index 0 is the answer solve returned, so selecting it puts the handle back.
-        assert_eq!(ft_model_select_optimum(m, 0, 1e-9), 1);
-        let after = (0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>();
+        // The solve's own answer is ONE OF the optima -- not necessarily the head of the list.
+        // These three tie on energy, so the list orders them by assignment while the solve returns
+        // whichever seed reached the minimum first. An earlier version of this test asserted they
+        // were the same and passed by coincidence until a colouring change moved the trajectory.
         assert_eq!(ft_model_solve_with(m, 40, 0.0, 0.0, 0, 0), 1);
-        let fresh = (0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>();
-        assert_eq!(after, fresh, "optimum 0 is what solve hands back");
+        let solved = (0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>();
+        assert!(seen.contains(&solved), "solve returned {solved:?}, which is not among the optima");
+        // And the list itself is deterministic: same tries, same order.
+        let mut again = Vec::new();
+        for i in 0..3u32 {
+            assert_eq!(ft_model_select_optimum(m, i, 1e-9), 1);
+            again.push((0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>());
+        }
+        assert_eq!(again.len(), 3);
+        assert!(again.windows(2).all(|w| w[0] != w[1]), "three distinct assignments");
 
         // Recompiling invalidates them: an optimum belongs to the model it was solved from.
         assert!(ft_model_compile(m) > 0);
@@ -1862,8 +1871,18 @@ mod optima_tests {
 /// Make optimum `i` the current answer, so `ft_model_value` and friends report it.
 ///
 /// Enumerating the alternatives needs no second decode surface: select one, read it by name
-/// through the accessors that already exist, and select the next. Index 0 is the answer
-/// [`ft_model_solve_with`] returned, so selecting 0 puts the handle back where it was.
+/// through the accessors that already exist, and select the next.
+///
+/// # Index 0 is the best optimum, NOT necessarily the one the solve returned
+///
+/// The list is ordered by energy and then by the assignment itself, which makes it deterministic.
+/// When several optima TIE on energy — which is the whole case this function exists for — the head
+/// of the list is the lexicographically first of them, and the solve returned whichever seed
+/// happened to reach the minimum first. Both are optimal and neither is more correct.
+///
+/// An earlier version of this documentation claimed selecting 0 put the handle back where it was.
+/// It was true by coincidence on the graphs that were tested and stopped being true the moment the
+/// colouring changed, which is how it was found. Re-solve if you need the solve's own answer.
 ///
 /// Returns 1 on success, 0 for a null handle or an index past the count.
 #[no_mangle]

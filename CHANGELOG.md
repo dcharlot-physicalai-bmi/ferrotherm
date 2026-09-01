@@ -31,6 +31,44 @@ New on the C ABI: `ft_pegasus_new`, `ft_zephyr_new`, `ft_qubit` (`0xFFFFFFFF`, n
 with no vendor numbering — 0 is a valid qubit). Bound in the header, Python (`ferrotherm.pegasus`,
 `ferrotherm.zephyr`, `Sim.qubit`), Zig and Julia.
 
+### DSATUR, because the crate now has graphs greedy colours badly
+
+`graph`'s colouring note said DSATUR was left undone deliberately: *"this review did not locate a
+non-bipartite graph in this crate that greedy colours suboptimally, so that work is not done here
+rather than done speculatively."* Building Pegasus and Zephyr changed that premise in the same
+commit — they are the crate's first non-bipartite topologies.
+
+A chromatic sweep runs one pass per colour, so **the colour count is the number of sequential
+barriers in a sweep** and, on the GPU path, the number of dispatches. It is a pure count, the same
+on every fabric. Measured:
+
+| graph | greedy | DSATUR | clique bound |
+|---|---|---|---|
+| lattice, Chimera, Z1 grid | 2 | 2 | 2 |
+| Pegasus P₄ … P₁₆ | 4 | 4 | 4 |
+| **Zephyr Z₆, Z₁₅** | 6 | **5** | 4 |
+| **a compiled exactly-one model** | 4 | **3** | 3 |
+
+So it wins on Zephyr and on compiled models carrying a counting constraint, and ties everywhere
+else — including Pegasus, where greedy already matches the clique bound and is therefore optimal.
+
+**Adopted only when it strictly wins**, after greedy and after the bipartite check, for the reason
+the module already gave: a different colouring visits spins in a different order and moves every
+seeded trajectory on that graph. Paying that to save nothing is the trade this ordering refuses.
+
+The selection is heap-driven with lazy invalidation rather than the textbook rescan — saturation only
+ever increases, so a stale heap entry is recognised by its recorded saturation no longer matching.
+`O((n+m) log n)` instead of `O(n²)`, which would have put a minutes-long pause inside `Graph::build`
+for a large non-bipartite graph.
+
+**And the change caught a false invariant in this repository's own test.** Two tests from the
+previous commit asserted that `optima[0]` is the assignment `solve` returns. It is not: when optima
+tie on energy — the case that function exists for — the list orders them by assignment while the
+solve returns whichever seed reached the minimum first. It passed by coincidence and stopped the
+moment the sweep order moved. Both tests now assert the real invariant (the solve's answer is *among*
+the optima, and all of them tie on energy), and `ft_model_select_optimum`'s documentation no longer
+claims that selecting 0 puts the handle back.
+
 ### What a topology generation is worth, in counts
 
 `examples/embedding_tax.rs`. Same cliques, five machines, and **every column is a count** — sites

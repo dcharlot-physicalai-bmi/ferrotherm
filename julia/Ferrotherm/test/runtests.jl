@@ -132,7 +132,12 @@ end
         push!(seen, vals)
     end
     @test length(seen) == 3          # three DIFFERENT assignments, not one listed thrice
-    @test opts[1].values == best.values   # best first, and the head is what solve returned
+    # The solve's answer is ONE OF the optima -- not the head of the list. All three tie on energy,
+    # so `optima` orders them by assignment while `solve!` returns whichever seed reached the
+    # minimum first. Asserting equality passed by coincidence until a colouring change moved the
+    # sweep order, which is a fact about sweep order and not about either answer being better.
+    @test any(o -> o.values == best.values, opts)
+    @test all(o -> abs(o.energy - best.energy) < 1e-9, opts)
     @test isempty(optima(p; tol = -1.0)) == false   # a negative tolerance is coerced, not obeyed
     close!(p)
 end

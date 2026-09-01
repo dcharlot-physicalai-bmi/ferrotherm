@@ -2684,6 +2684,10 @@ impl Compiled {
 /// enumeration counts, and this is not that.
 ///
 /// Returned best first, ties broken by the assignment itself, so the order is deterministic.
+///
+/// When several optima tie — the case this function exists for — the head is therefore the
+/// lexicographically first of them and NOT necessarily the one [`Compiled::solve_best_with`]
+/// returned, which is whichever seed reached the minimum first. Both are optimal.
 pub fn distinct_optima(answers: &[Solution], tol: f64) -> Vec<Solution> {
     let feasible: Vec<&Solution> = answers.iter().filter(|s| s.feasible()).collect();
     let Some(best) = feasible.iter().map(|s| s.energy).fold(None, |acc: Option<f64>, e| {
@@ -4075,9 +4079,17 @@ mod tests {
             let on = ["a", "b", "c"].iter().filter(|n| s.value(n) == 1).count();
             assert_eq!(on, 1);
         }
-        // Best first, and the best is the one `solve_best_with` returns.
+        // The solve's answer is ONE OF the optima. Not the head of the list: all three tie on
+        // energy, so `distinct_optima` orders them by assignment while `solve_best_with` returns
+        // whichever seed reached the minimum first. An earlier version asserted they were equal
+        // and held by coincidence until a colouring change moved the trajectory -- which is a
+        // fact about sweep order and says nothing about either answer being better.
         let best = comp.solve_best_with(&sched, 40);
-        assert_eq!(opt[0].values, best.values, "the head of the list is the answer solve returns");
+        assert!(
+            opt.iter().any(|s| s.values == best.values),
+            "solve's answer is not among the optima"
+        );
+        assert!(opt.iter().all(|s| (s.energy - best.energy).abs() < 1e-9), "all tie on energy");
         // Deterministic: same tries, same list, in the same order.
         let again = distinct_optima(&comp.solve_all_with(&sched, 40), 1e-9);
         assert_eq!(

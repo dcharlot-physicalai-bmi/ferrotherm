@@ -531,6 +531,23 @@ variable has no value at all.
 `P₁₆` spreads 5,640 qubits over indices 30 to 5,729, and a chain written in our dense indices would
 program different qubits on a real machine.
 
+### Fewer sequential barriers per sweep
+
+A chromatic sweep runs one pass per colour, so the colour count *is* the number of sequential
+barriers — and on the GPU path, the number of dispatches. `graph` now tries **DSATUR** after greedy
+and after the bipartite check, and keeps it only when it strictly wins, because a different
+colouring moves every seeded trajectory on that graph:
+
+| graph | greedy | DSATUR | clique bound |
+|---|---|---|---|
+| lattice, Chimera, Z1 grid | 2 | 2 | 2 |
+| Pegasus P₄ … P₁₆ | 4 | 4 | 4 |
+| **Zephyr Z₆, Z₁₅** | 6 | **5** | 4 |
+| **a compiled exactly-one model** | 4 | **3** | 3 |
+
+Greedy is already optimal on Pegasus — it matches the clique bound. Zephyr and compiled counting
+constraints each get a pass cheaper, on every fabric.
+
 ### How many ways are there to do the job
 
 `model` answers a problem by name; it could not say whether the answer was the only one. A solve

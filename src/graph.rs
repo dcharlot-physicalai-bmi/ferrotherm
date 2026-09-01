@@ -186,20 +186,35 @@ impl Graph {
 /// in the repository for no gain at all -- the colour COUNT would be identical. This way the only
 /// graphs whose results move are the ones that were being coloured badly.
 ///
-/// A graph that is not bipartite keeps greedy's answer. Greedy is not optimal in general -- an odd
-/// ring needs three and gets three, but a crafted graph can defeat it -- and DSATUR or a
-/// largest-first order would do better on dense irregular graphs. This review did not locate a
-/// non-bipartite graph in this crate that greedy colours suboptimally, so that work is not done
-/// here rather than done speculatively.
+/// A graph that is not bipartite then gets [`color_dsatur`], and keeps it only when it needs
+/// STRICTLY fewer colours.
+///
+/// That branch was written the day this crate gained a graph greedy colours badly. The note here
+/// used to say DSATUR was left undone because "this review did not locate a non-bipartite graph in
+/// this crate that greedy colours suboptimally" -- true until `device::pegasus` and
+/// `device::zephyr` landed, the first non-bipartite topologies in the tree. Greedy spends six
+/// colours on Zephyr where DSATUR spends five, and four on a compiled counting constraint where
+/// DSATUR spends three. It ties on Pegasus, where greedy already matches the clique bound and is
+/// therefore optimal, and on everything bipartite.
 fn color_for(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
     let greedy = color_greedy(n, offset, nbr);
     let used = greedy.iter().max().map_or(0, |&c| c as usize + 1);
     if used < 3 {
         return greedy;
     }
-    match two_color(n, offset, nbr) {
-        Some(c) => c,
-        None => greedy,
+    if let Some(c) = two_color(n, offset, nbr) {
+        return c;
+    }
+    // Not bipartite. DSATUR is tried last and kept only when it STRICTLY wins, because a different
+    // colouring visits spins in a different order and moves every seeded trajectory on that graph.
+    // Measured: it saves a pass on Zephyr (6 -> 5) and ties on Pegasus and on everything bipartite,
+    // so this branch changes results on exactly the graphs where a sweep gets cheaper.
+    let d = color_dsatur(n, offset, nbr);
+    let d_used = d.iter().max().map_or(0, |&c| c as usize + 1);
+    if d_used < used {
+        d
+    } else {
+        greedy
     }
 }
 
@@ -230,6 +245,94 @@ fn two_color(n: usize, offset: &[usize], nbr: &[u32]) -> Option<Vec<u16>> {
         }
     }
     Some(color)
+}
+
+/// DSATUR (Brelaz 1979): colour the vertex with the most distinctly-coloured neighbours next,
+/// breaking ties by degree.
+///
+/// Greedy in index order asks "what is free here". DSATUR asks "where is the choice about to run
+/// out" — the vertex that will force a new colour if it is left until later. It is exact on
+/// bipartite graphs and on cycles, and stronger than index order on the irregular graphs this crate
+/// acquired the moment it learned to build Pegasus and Zephyr, its first non-bipartite topologies.
+///
+/// Measured, in colours — which is the unit that matters, because a chromatic sweep runs one pass
+/// per colour and the count is the number of sequential barriers:
+///
+/// | graph | greedy | DSATUR | clique bound |
+/// |---|---|---|---|
+/// | lattice, Chimera, Z1 grid | 2 | 2 | 2 |
+/// | Pegasus P₄ … P₁₆ | 4 | 4 | 4 |
+/// | Zephyr Z₆, Z₁₅ | 6 | **5** | 4 |
+///
+/// So it wins on exactly one family here and ties everywhere else, which is why it is tried LAST
+/// and adopted only when it strictly wins: replacing a colouring changes the order spins are
+/// visited in, and therefore every seeded trajectory on that graph. Paying that to save nothing is
+/// the trade this ordering refuses.
+///
+/// # The selection is heap-driven, not a scan
+///
+/// The textbook form rescans every uncoloured vertex per step, which is `O(n²)` and would put a
+/// minutes-long pause inside `Graph::build` for a large non-bipartite graph. Saturation only ever
+/// INCREASES, so a max-heap with lazy invalidation is exact here: a stale entry is recognised by
+/// its recorded saturation no longer matching, and discarded. `O((n + m) log n)`.
+fn color_dsatur(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
+    use std::collections::BinaryHeap;
+    const UNSET: u16 = u16::MAX;
+    let mut color = vec![UNSET; n];
+    if n == 0 {
+        return color;
+    }
+    let deg: Vec<usize> = (0..n).map(|i| offset[i + 1] - offset[i]).collect();
+    // Distinct neighbour colours, not neighbour count: two neighbours sharing a colour constrain a
+    // vertex once, and counting them twice would order by something that is not saturation.
+    let mut seen: Vec<Vec<bool>> = vec![Vec::new(); n];
+    let mut sat = vec![0usize; n];
+    // (saturation, degree, Reverse(index)) so ties break by higher degree then LOWER index, which
+    // is what makes the output deterministic rather than a function of heap order.
+    let mut heap: BinaryHeap<(usize, usize, core::cmp::Reverse<usize>)> =
+        (0..n).map(|v| (0, deg[v], core::cmp::Reverse(v))).collect();
+    let mut used: Vec<bool> = Vec::new();
+
+    while let Some((s, _, core::cmp::Reverse(v))) = heap.pop() {
+        // Lazy invalidation: an entry whose saturation has moved on since it was pushed describes a
+        // vertex that now sits elsewhere in the order, and a current entry for it is already queued.
+        if color[v] != UNSET || s != sat[v] {
+            continue;
+        }
+        used.clear();
+        used.resize(deg[v] + 2, false);
+        for k in offset[v]..offset[v + 1] {
+            let c = color[nbr[k] as usize];
+            if c != UNSET {
+                if (c as usize) >= used.len() {
+                    used.resize(c as usize + 1, false);
+                }
+                used[c as usize] = true;
+            }
+        }
+        let c = used.iter().position(|&u| !u).unwrap_or(used.len()) as u16;
+        color[v] = c;
+        for k in offset[v]..offset[v + 1] {
+            let u = nbr[k] as usize;
+            if color[u] != UNSET {
+                continue;
+            }
+            if seen[u].len() <= c as usize {
+                seen[u].resize(c as usize + 1, false);
+            }
+            if !seen[u][c as usize] {
+                seen[u][c as usize] = true;
+                sat[u] += 1;
+                heap.push((sat[u], deg[u], core::cmp::Reverse(u)));
+            }
+        }
+    }
+    color
+}
+
+/// Colours DSATUR needs for this graph, for measurement and for the tests that compare it.
+pub fn dsatur_colours(g: &Graph) -> usize {
+    color_dsatur(g.n, &g.offset, &g.nbr).iter().max().map_or(0, |&c| c as usize + 1)
 }
 
 fn color_greedy(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
@@ -396,5 +499,81 @@ mod tests {
         for _ in 0..4 {
             assert_eq!(build(), first, "the same model must compile to the same bytes");
         }
+    }
+}
+
+#[cfg(test)]
+mod dsatur_tests {
+    use super::*;
+
+    fn proper(g: &Graph) -> bool {
+        (0..g.n).all(|i| {
+            (g.offset[i]..g.offset[i + 1]).all(|k| g.colors[i] != g.colors[g.nbr[k] as usize])
+        })
+    }
+
+    /// DSATUR saves a sweep pass on Zephyr and ties everywhere else, which is why it is adopted
+    /// only when it strictly wins.
+    ///
+    /// The colour count is the number of SEQUENTIAL BARRIERS in a chromatic sweep, so this is a
+    /// measurement in the unit that matters and it is the same on every fabric. The clique bound is
+    /// printed in the failure message because it is what says whether the remaining slack is real.
+    #[test]
+    fn dsatur_wins_on_zephyr_and_ties_on_everything_else() {
+        let cases: [(&str, Graph, usize, usize); 6] = [
+            ("lattice2d 16", crate::ising::lattice2d(16, 1.0), 2, 2),
+            ("chimera C8", crate::ising::chimera(8, 8, 4, 1.0), 2, 2),
+            ("z1 grid 32", crate::device::z1_grid(32, 32, 1.0, 0.0), 2, 2),
+            ("pegasus P4", crate::device::pegasus(4, 1.0).graph, 4, 4),
+            ("pegasus P16", crate::device::pegasus(16, 1.0).graph, 4, 4),
+            // Greedy in index order spends SIX here; DSATUR spends five, and the graph adopts it.
+            ("zephyr Z6", crate::device::zephyr(6, 4, 1.0).graph, 5, 5),
+        ];
+        for (name, g, adopted, dsatur) in cases {
+            assert!(proper(&g), "{name}: the adopted colouring is not proper");
+            assert_eq!(g.classes.len(), adopted, "{name}: colour classes actually used");
+            assert_eq!(dsatur_colours(&g), dsatur, "{name}: what DSATUR alone would spend");
+            assert_eq!(
+                g.classes.iter().map(|c| c.len()).sum::<usize>(),
+                g.n,
+                "{name}: every node in exactly one class"
+            );
+        }
+    }
+
+    /// The saving is real: greedy in index order needs one more pass on Zephyr than the graph uses.
+    ///
+    /// Asserted against `color_greedy` directly rather than against a remembered number, so it
+    /// stays true if the generator's node ordering ever changes.
+    #[test]
+    fn the_zephyr_saving_is_a_pass_greedy_would_have_spent() {
+        let g = crate::device::zephyr(6, 4, 1.0);
+        let greedy = color_greedy(g.graph.n, &g.graph.offset, &g.graph.nbr);
+        let greedy_used = greedy.iter().max().map_or(0, |&c| c as usize + 1);
+        assert_eq!(greedy_used, 6, "index-order greedy on Zephyr");
+        assert_eq!(g.graph.classes.len(), 5, "and the graph uses one fewer");
+        assert!(two_color(g.graph.n, &g.graph.offset, &g.graph.nbr).is_none(), "not bipartite");
+    }
+
+    /// DSATUR must be exact where the answer is known, or it is not DSATUR.
+    #[test]
+    fn dsatur_is_exact_on_the_graphs_whose_chromatic_number_is_known() {
+        // Bipartite: two, always.
+        assert_eq!(dsatur_colours(&crate::ising::lattice2d(8, 1.0)), 2);
+        assert_eq!(dsatur_colours(&crate::ising::ring(10, 1.0, 0.0)), 2);
+        // An ODD ring needs three and cannot do better.
+        assert_eq!(dsatur_colours(&crate::ising::ring(9, 1.0, 0.0)), 3);
+        // K_n needs exactly n.
+        for k in 2..=8usize {
+            let mut gb = GraphBuilder::new(k);
+            for i in 0..k {
+                for j in (i + 1)..k {
+                    gb.couple(i, j, 1.0);
+                }
+            }
+            assert_eq!(dsatur_colours(&gb.build()), k, "K_{k}");
+        }
+        // And an empty graph is not a special case that panics.
+        assert_eq!(dsatur_colours(&GraphBuilder::new(0).build()), 0);
     }
 }
