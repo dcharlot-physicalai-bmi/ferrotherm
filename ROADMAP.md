@@ -455,6 +455,19 @@ with the bitstream.
 
 The admitted open wound of the field, and unowned.
 
+**3.0 A machine to embed ONTO.** ✅ **DONE** — `device::pegasus`, `device::zephyr`.
+
+Everything below assumed a target and the crate had the wrong one: `embed` did honest minor
+embedding onto **Chimera**, which D-Wave retired, while `fabric` described "a 5,640-qubit Pegasus"
+it could not build. `P₁₆` now comes out at 5,640 qubits / 40,484 couplers at degree 15 and `Z₁₅` at
+7,440 / 71,736 at degree 20 — the Advantage's and Advantage2's published figures, produced from the
+coordinate rules and checked at five sizes each against D-Wave's own generator on counts *and* full
+degree histograms. `Topology` carries the vendor's qubit numbering beside the graph, because
+Pegasus's is sparse and a chain in our indices would program different qubits.
+
+`examples/embedding_tax` prices the generations in counts, never seconds: at `K₁₆` Chimera spends
+126 sites and an 18-qubit chain against Pegasus's 49 and 7 and Zephyr's 48 and 6.
+
 **3.1 COPY-gate sparsification** ported to Rust (exact, ground-state preserving, degree budget
 `ceil(max_deg/copies)+1`, bias split across copies) with **DSATUR** coloring as a first-class pass.
 

@@ -137,6 +137,31 @@ end
     close!(p)
 end
 
+@testset "the machines you can actually rent" begin
+    # Chimera is retired. Until Pegasus and Zephyr existed this library could target only a machine
+    # nobody can hire. P16 is the Advantage; Z15 is the Advantage2.
+    p = pegasus(16)
+    @test length(p) == 5640
+    # The vendor numbering is SPARSE and must survive the crossing: node 1 is their qubit 30.
+    @test qubit(p, 1) == 30
+    @test qubit(p, 5640) == 5729
+    @test qubit(p, 5641) === nothing
+    close!(p)
+
+    z = zephyr(15)
+    @test length(z) == 7440
+    @test qubit(z, 1) == 0        # Zephyr wires every qubit it defines, so its numbering is dense
+    close!(z)
+
+    # A graph with no device numbering says so rather than answering zero.
+    l = lattice2d(4)
+    @test qubit(l, 1) === nothing
+    close!(l)
+
+    @test_throws ArgumentError pegasus(1)
+    @test_throws ArgumentError zephyr(0)
+end
+
 @testset "a certificate can fail" begin
     # The point of the type. A cold lattice with no burn-in and no thinning must NOT certify clean,
     # or the certificate is decoration.

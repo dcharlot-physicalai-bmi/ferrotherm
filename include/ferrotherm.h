@@ -36,6 +36,37 @@ ft_sim *ft_ising2d_new(uint32_t l, double j, double beta, uint64_t seed);
 /* Z1-topology grid, degree 16, open boundaries, `w` by `h`, uniform coupling `j` and bias `hb`. */
 ft_sim *ft_z1_new(uint32_t w, uint32_t h, double j, double hb, double beta, uint64_t seed);
 
+/* ---- the machines you can actually rent -----------------------------------------------------------
+
+   Pegasus P_m is every D-Wave Advantage; Zephyr Z_{m,t} is the Advantage2. Chimera, which this
+   library could already build, is retired -- so until these existed the embedding layer targeted a
+   machine nobody can rent.
+
+   These are the NOMINAL full-yield graphs, not a particular machine's working graph: a real QPU has
+   qubits and couplers missing from fabrication, and a program that embeds here is not guaranteed to
+   fit the machine in front of you. This is the right target for "could this fit at all". */
+
+/* P_m, uniform coupling j. m=16 is the Advantage: 5,640 qubits, 40,484 couplers, degree 15.
+ * NULL for m < 2, which has no qubits. */
+ft_sim *ft_pegasus_new(uint32_t m, double j, double beta, uint64_t seed);
+
+/* Z_{m,t}, uniform coupling j. m=15, t=4 is the Advantage2: 7,440 qubits, 71,736 couplers,
+ * degree 20. t is 4 on every shipped machine. NULL if either parameter is 0.
+ *
+ * Zephyr's higher degree is the point: the same problem embeds with shorter chains, and a chain
+ * that breaks leaves a variable with no value at all. */
+ft_sim *ft_zephyr_new(uint32_t m, uint32_t t, double j, double beta, uint64_t seed);
+
+/* The VENDOR's linear qubit index for node i, or 0xFFFFFFFF if this graph has no such numbering.
+ *
+ * Two numbering systems meet here. Everything in this library indexes 0..n densely; Pegasus drops
+ * the qubits outside its largest component, so its own numbering is sparse -- a P16 spreads 5,640
+ * qubits over indices 30 to 5,729. A chain written in our indices and handed to a machine programs
+ * DIFFERENT QUBITS, and the answer comes back looking like a bad embedding rather than a mistake.
+ *
+ * 0xFFFFFFFF rather than 0, because 0 is a valid qubit. */
+uint32_t ft_qubit(const ft_sim *sim, uint32_t i);
+
 /* ---- models you define ----------------------------------------------------------------------- */
 
 /* New builder over `n` nodes, or NULL if n is 0. Consume with ft_builder_build, or release with

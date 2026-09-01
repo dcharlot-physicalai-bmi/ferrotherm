@@ -502,6 +502,35 @@ Spearman of τ_int against **what the model learned: ρ = +0.81**; against **how
 they failed.** Depth does not make sampling harder; depth makes *learning* harder, and what a model
 learned is what makes sampling harder.
 
+### The machines you can actually rent
+
+`embed` did honest minor embedding onto **Chimera**, which D-Wave retired. `device::pegasus` and
+`device::zephyr` build the topologies of the Advantage and Advantage2: `P₁₆` is **5,640 qubits /
+40,484 couplers** at degree 15, `Z₁₅` is **7,440 / 71,736** at degree 20 — the vendor's published
+figures, produced here from the coordinate rules. Transcribed from D-Wave's own generator and
+checked against it at five sizes each on node count, coupler count and the *full degree histogram*,
+because two different graphs can share a total.
+
+`examples/embedding_tax` measures what a topology generation is worth, in counts rather than
+seconds — the same table on any machine:
+
+```text
+--- K_16
+hardware        sites   deg     used   longest    mean
+Chimera C8        512     6      126        18    7.88
+Pegasus P16      5640    15       49         7    3.06
+Zephyr Z15       7440    20       48         6    3.00
+```
+
+Two and a half times the qubits and three times the chain length for the same sixteen variables.
+**The chain column is the one to read**: sites are a budget, but a chain is a failure mode — held
+together by a penalty, and when that penalty loses, the qubits of one variable disagree and the
+variable has no value at all.
+
+`Topology` carries the vendor's qubit numbering beside the graph, because Pegasus's is *sparse*: a
+`P₁₆` spreads 5,640 qubits over indices 30 to 5,729, and a chain written in our dense indices would
+program different qubits on a real machine.
+
 ### How many ways are there to do the job
 
 `model` answers a problem by name; it could not say whether the answer was the only one. A solve

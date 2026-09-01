@@ -117,6 +117,37 @@ pub const Sim = struct {
         return .{ .h = c.ft_z1_new(w, ht, j, hb, beta, seed) orelse return Error.OutOfMemory };
     }
 
+    /// The **Pegasus** graph `P_m` -- the topology of every D-Wave *Advantage* processor.
+    ///
+    /// `m = 16` is the Advantage: 5,640 qubits, 40,484 couplers, degree 15. The NOMINAL full-yield
+    /// graph, not a particular machine's working graph -- a real QPU has qubits missing from
+    /// fabrication, so an embedding here is not guaranteed to fit the machine in front of you.
+    /// Refuses `m < 2`, which has no qubits.
+    pub fn pegasus(m: u32, j: f64, beta: f64, seed: u64) Error!Sim {
+        return .{ .h = c.ft_pegasus_new(m, j, beta, seed) orelse return Error.OutOfMemory };
+    }
+
+    /// The **Zephyr** graph `Z_{m,t}` -- the topology of D-Wave's *Advantage2* processors.
+    ///
+    /// `m = 15, t = 4` is the Advantage2: 7,440 qubits, 71,736 couplers, degree 20. Zephyr's higher
+    /// degree is the point: the same problem embeds with shorter chains, and a chain that breaks
+    /// leaves a variable with no value at all.
+    pub fn zephyr(m: u32, t: u32, j: f64, beta: f64, seed: u64) Error!Sim {
+        return .{ .h = c.ft_zephyr_new(m, t, j, beta, seed) orelse return Error.OutOfMemory };
+    }
+
+    /// The VENDOR's linear qubit index for node `i`, or null where this graph has no such numbering.
+    ///
+    /// Two numbering systems meet here. Everything in this library indexes `0..n` densely; Pegasus
+    /// drops the qubits outside its largest component, so its own numbering is sparse -- a `P16`
+    /// spreads 5,640 qubits over indices 30 to 5,729. A chain written in our indices and handed to
+    /// a machine programs DIFFERENT QUBITS, and the answer comes back looking like a bad embedding
+    /// rather than like the mistake it is.
+    pub fn qubit(self: Sim, i: u32) ?u32 {
+        const q = c.ft_qubit(self.h, i);
+        return if (q == std.math.maxInt(u32)) null else q;
+    }
+
     /// A restricted Boltzmann machine's STRUCTURE: complete bipartite, every weight zero. Give
     /// the weights meaning with `fit`. Visible units are spins `0..visible`.
     pub fn rbm(visible: u32, hidden: u32, beta: f64, seed: u64) Error!Sim {
@@ -547,6 +578,30 @@ test "an answer is scored in the modeller's own units" {
     try std.testing.expect(p.feasible());
     // And it is NOT the compiled energy, which is the only number this used to hand back.
     try std.testing.expect(obj != p.energy());
+}
+
+test "the machines you can actually rent" {
+    // Chimera is retired. Until Pegasus and Zephyr existed this library could target only a machine
+    // nobody can hire. P16 is the Advantage; Z15 is the Advantage2.
+    const p = try Sim.pegasus(16, 1.0, 0.5, 3);
+    defer p.deinit();
+    try std.testing.expectEqual(@as(u32, 5640), p.len());
+    // The vendor numbering is SPARSE and must survive the crossing: our node 0 is their qubit 30.
+    try std.testing.expectEqual(@as(?u32, 30), p.qubit(0));
+    try std.testing.expectEqual(@as(?u32, 5729), p.qubit(5639));
+    try std.testing.expectEqual(@as(?u32, null), p.qubit(5640));
+
+    const z = try Sim.zephyr(15, 4, 1.0, 0.5, 3);
+    defer z.deinit();
+    try std.testing.expectEqual(@as(u32, 7440), z.len());
+    try std.testing.expectEqual(@as(?u32, 0), z.qubit(0)); // Zephyr wires every qubit: dense
+
+    // A graph with no device numbering says so rather than answering zero.
+    const l = try Sim.lattice2d(4, 1.0, 0.5, 1);
+    defer l.deinit();
+    try std.testing.expectEqual(@as(?u32, null), l.qubit(0));
+
+    try std.testing.expectError(error.OutOfMemory, Sim.pegasus(1, 1.0, 0.5, 1));
 }
 
 test "how many ways are there to do the job" {

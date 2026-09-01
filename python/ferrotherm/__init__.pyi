@@ -375,6 +375,9 @@ class Sim:
     def quantum_anneal(self, trotter: int = 4, beta: float = 10.0, gamma_max: float = 3.0, gamma_min: float = 0.05, steps: int = 200) -> float:
         """Simulated quantum annealing: path-integral Monte Carlo, not a quantum computer."""
         ...
+    def qubit(self, i: int) -> 'int | None':
+        """The **vendor's** linear qubit index for node ``i``, or ``None`` if this graph has none."""
+        ...
     @property
     def spins(self) -> list[int]:
         """The state as a list of -1/+1."""
@@ -459,6 +462,10 @@ def onsager(beta: float) -> float:
     """Onsager's exact spontaneous magnetisation for the 2D Ising model. Ground truth."""
     ...
 
+def pegasus(m: int = 16, j: float = 1.0, beta: float = 1.0, seed: int = 0) -> Sim:
+    """The **Pegasus** graph ``P_m`` — the topology of every D-Wave *Advantage* processor."""
+    ...
+
 def rbm(visible: int, hidden: int, beta: float = 1.0, seed: int = 0) -> Sim:
     """A restricted Boltzmann machine's **structure**: complete bipartite, every weight zero."""
     ...
@@ -473,6 +480,10 @@ def wishart(n: int, alpha: float = 0.5, seed: int = 0, beta: float = 1.0) -> Sim
 
 def z1_grid(w: int, h: int, j: float = 1.0, hb: float = 0.0, beta: float = 1.0, seed: int = 0) -> Sim:
     """Z1-topology grid, degree 16, open boundaries."""
+    ...
+
+def zephyr(m: int = 15, t: int = 4, j: float = 1.0, beta: float = 1.0, seed: int = 0) -> Sim:
+    """The **Zephyr** graph ``Z_{m,t}`` — the topology of D-Wave's *Advantage2* processors."""
     ...
 
 __version__: Any

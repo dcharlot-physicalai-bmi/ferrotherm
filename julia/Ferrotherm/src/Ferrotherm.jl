@@ -56,6 +56,7 @@ export IsingModel, Simulation, Certificate, Hubo
 export hubo, add!, anneal!, delta, terms, max_arity, ancillas_avoided, proposals, accepted
 export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
+export pegasus, zephyr, qubit
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -219,6 +220,9 @@ const HuboPtr = Ptr{Cvoid}
 
 @cfn ft_ising2d_new SimPtr Cuint Cdouble Cdouble Culonglong
 @cfn ft_z1_new SimPtr Cuint Cuint Cdouble Cdouble Cdouble Culonglong
+@cfn ft_pegasus_new SimPtr Cuint Cdouble Cdouble Culonglong
+@cfn ft_zephyr_new SimPtr Cuint Cuint Cdouble Cdouble Culonglong
+@cfn ft_qubit Cuint SimPtr Cuint
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -487,6 +491,56 @@ lattice2d(l::Integer; J::Real = 1.0, beta::Real = 0.44, seed::Integer = 0) =
 z1_grid(w::Integer, h::Integer; J::Real = 1.0, hb::Real = 0.0, beta::Real = 1.0, seed::Integer = 0) =
     Simulation(ft_z1_new(Cuint(w), Cuint(h), Cdouble(J), Cdouble(hb), Cdouble(beta),
                          Culonglong(seed)), "the grid")
+
+"""
+    pegasus(m = 16; J = 1.0, beta = 1.0, seed = 0)
+
+The **Pegasus** graph `P_m` -- the topology of every D-Wave *Advantage* processor.
+
+`m = 16` is the Advantage: 5,640 qubits, 40,484 couplers, degree 15.
+
+This is the NOMINAL full-yield graph, not a particular machine's working graph: a real QPU has
+qubits and couplers missing from fabrication, so a program that embeds here is not guaranteed to
+fit the machine in front of you. It is the right target for *could this fit at all*.
+"""
+function pegasus(m::Integer = 16; J::Real = 1.0, beta::Real = 1.0, seed::Integer = 0)
+    m >= 2 || throw(ArgumentError("P_$m has no qubits; Pegasus starts at m = 2"))
+    Simulation(ft_pegasus_new(Cuint(m), Cdouble(J), Cdouble(beta), Culonglong(seed)), "P_$m")
+end
+
+"""
+    zephyr(m = 15, t = 4; J = 1.0, beta = 1.0, seed = 0)
+
+The **Zephyr** graph `Z_{m,t}` -- the topology of D-Wave's *Advantage2* processors.
+
+`m = 15, t = 4` is the Advantage2: 7,440 qubits, 71,736 couplers, degree 20. `t` is 4 on every
+shipped machine. Zephyr's higher degree is the point: the same problem embeds with shorter chains,
+and a chain that breaks leaves a variable with no value at all.
+"""
+function zephyr(m::Integer = 15, t::Integer = 4; J::Real = 1.0, beta::Real = 1.0,
+                seed::Integer = 0)
+    (m >= 1 && t >= 1) || throw(ArgumentError("Zephyr needs m >= 1 and t >= 1"))
+    Simulation(ft_zephyr_new(Cuint(m), Cuint(t), Cdouble(J), Cdouble(beta), Culonglong(seed)),
+               "Z_$m,$t")
+end
+
+"""
+    qubit(s, i)
+
+The **vendor's** linear qubit index for node `i` (one-based), or `nothing` where this graph has no
+such numbering.
+
+Two numbering systems meet here. Everything in this library indexes densely; Pegasus drops the
+qubits outside its largest component, so its own numbering is sparse -- a `P16` spreads 5,640
+qubits over indices 30 to 5,729. A chain written in our indices and handed to a machine programs
+DIFFERENT QUBITS, and the answer comes back looking like a bad embedding rather than the mistake it
+is. `nothing` rather than 0, because 0 is a valid qubit.
+"""
+function qubit(s::Simulation, i::Integer)
+    _live(s)
+    q = ft_qubit(s.handle, Cuint(i - 1))
+    q == typemax(Cuint) ? nothing : Int(q)
+end
 
 """A periodic chain of `n` nodes."""
 function ring(n::Integer; J::Real = 1.0, h::Real = 0.0, beta::Real = 1.0, seed::Integer = 0)

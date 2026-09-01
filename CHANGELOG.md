@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased
+
+### The machines you can actually rent
+
+`embed` did honest minor embedding — a repaired placer, chain-length reporting, and a *proof* of
+impossibility when the site lower bound exceeds the machine — onto **Chimera**, a topology D-Wave
+retired. Every annealer you can hire today is Pegasus (Advantage) or Zephyr (Advantage2), and
+`fabric` described "a 5,640-qubit Pegasus" the crate had no way to build.
+
+`device::pegasus(m, j)` and `device::zephyr(m, t, j)`. `P₁₆` comes out at **5,640 qubits and 40,484
+couplers** at degree 15 and `Z₁₅` at **7,440 and 71,736** at degree 20 — the Advantage's and
+Advantage2's published figures, arrived at from the coordinate rules rather than copied.
+
+**Transcribed from D-Wave's own generator, not from a paper's prose**, because Pegasus's offset
+lists are a *choice* the vendor made and no description of the graph family pins them down. The
+tests check node counts, coupler counts and the **full degree histogram** at five sizes each against
+that generator's output — two different graphs can share a node and edge total, so a total alone
+would let a transcription error pass as a topology.
+
+**`Topology` carries the vendor's own qubit numbering, and that is the point of the type.** Every
+sampler here indexes `0..n` densely. Pegasus drops the qubits outside its largest component, so its
+numbering is *sparse in both directions*: a `P₁₆` spreads 5,640 qubits over indices **30 to 5,729**.
+A chain written in our indices and handed to a machine programs different qubits, and the answer
+comes back looking like a bad embedding rather than like the mistake it is. `Topology::node` returns
+`None` for a qubit outside the fabric — a real answer, not a lookup failure. Zephyr wires every
+qubit it defines, so there the numbering is the identity, which the tests assert rather than assume.
+
+New on the C ABI: `ft_pegasus_new`, `ft_zephyr_new`, `ft_qubit` (`0xFFFFFFFF`, not 0, for a graph
+with no vendor numbering — 0 is a valid qubit). Bound in the header, Python (`ferrotherm.pegasus`,
+`ferrotherm.zephyr`, `Sim.qubit`), Zig and Julia.
+
+### What a topology generation is worth, in counts
+
+`examples/embedding_tax.rs`. Same cliques, five machines, and **every column is a count** — sites
+used, longest chain, mean chain. Not one is a duration, so the table is the same on a laptop and on
+a cluster.
+
+```text
+--- K_16
+hardware        sites   deg     used   longest    mean
+Chimera C8        512     6      126        18    7.88
+Pegasus P6        680    15       52         8    3.25
+Pegasus P16      5640    15       49         7    3.06
+Zephyr Z4         576    20       55         8    3.44
+Zephyr Z15       7440    20       48         6    3.00
+```
+
+Two and a half times the qubits and three times the chain length, for the same sixteen variables.
+**Read the chain column.** Sites are a budget; a chain is a *failure mode* — it is held together by
+a penalty, and when that penalty loses, the qubits of one variable disagree and the variable has no
+value at all. That is what degree buys.
+
+Two things stated rather than trimmed. At K_32 the *larger* machine of each family spends more sites
+than the smaller — P16 uses 237 where P6 uses 203 — which is the placement heuristic having more
+room to wander, a fact about `embed` and not about Pegasus. And Chimera's K_32 row reads "not found
+by this search", not "impossible": `chimera(8,8,4)`'s true maximum is K_33, so K_32 is inside its
+capacity by one and the search did not thread it. The example prints which of the two it means,
+because `site_lower_bound` can tell them apart and a reader cannot.
+
 ## 0.35.0
 
 ### How many ways are there to do the job

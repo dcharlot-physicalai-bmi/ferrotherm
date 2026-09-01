@@ -37,6 +37,8 @@ __all__ = [
     "BranchResult",
     "BreakoutRun",
     "Certificate",
+    "pegasus",
+    "zephyr",
     "Estimate",
     "SampleSet",
     "PlanarCut",
@@ -128,6 +130,9 @@ def _sig(name: str, restype: Any, argtypes: Sequence[Any]) -> Any:
 _p = ctypes.c_void_p
 _ising2d_new = _sig("ft_ising2d_new", _p, [c_uint32, c_double, c_double, c_uint64])
 _z1_new = _sig("ft_z1_new", _p, [c_uint32, c_uint32, c_double, c_double, c_double, c_uint64])
+_pegasus_new = _sig("ft_pegasus_new", _p, [c_uint32, c_double, c_double, c_uint64])
+_zephyr_new = _sig("ft_zephyr_new", _p, [c_uint32, c_uint32, c_double, c_double, c_uint64])
+_qubit = _sig("ft_qubit", c_uint32, [_p, c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
 _builder_bias = _sig("ft_builder_bias", c_uint32, [_p, c_uint32, c_double])
@@ -994,6 +999,21 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         return int(_ledger_updates(self._h))
 
+    def qubit(self, i: int) -> "int | None":
+        """The **vendor's** linear qubit index for node ``i``, or ``None`` if this graph has none.
+
+        Two numbering systems meet here. Everything in this library indexes ``0..n`` densely;
+        Pegasus drops the qubits outside its largest component, so its own numbering is sparse — a
+        ``P16`` spreads 5,640 qubits over indices 30 to 5,729. A chain written in our indices and
+        handed to a machine programs *different qubits*, and the answer comes back looking like a
+        bad embedding rather than like the mistake it is.
+
+        ``None`` rather than 0, because 0 is a valid qubit.
+        """
+        self._live()
+        q = int(_qubit(self._h, int(i)))
+        return None if q == 0xFFFFFFFF else q
+
     @property
     def joules(self) -> float:
         """Ledger priced at Z1-class device figures. This prices the modelled device, not your CPU."""
@@ -1449,6 +1469,44 @@ def lattice2d(l: int, j: float = 1.0, beta: float = 0.44, seed: int = 0) -> Sim:
 def z1_grid(w: int, h: int, j: float = 1.0, hb: float = 0.0, beta: float = 1.0, seed: int = 0) -> Sim:
     """Z1-topology grid, degree 16, open boundaries."""
     return _wrap(_z1_new(int(w), int(h), float(j), float(hb), float(beta), int(seed)), beta, "the grid")
+
+
+def pegasus(m: int = 16, j: float = 1.0, beta: float = 1.0, seed: int = 0) -> Sim:
+    """The **Pegasus** graph ``P_m`` — the topology of every D-Wave *Advantage* processor.
+
+    ``m = 16`` is the Advantage: 5,640 qubits, 40,484 couplers, degree 15.
+
+    >>> s = pegasus(16)
+    >>> len(s)
+    5640
+    >>> s.qubit(0)          # the VENDOR's number for our node 0, and it is not 0
+    30
+
+    This is the nominal full-yield graph, not a particular machine's working graph: a real QPU has
+    qubits and couplers missing from fabrication, so a program that embeds here is not guaranteed to
+    fit the machine in front of you. It is the right target for *could this fit at all*.
+    """
+    if m < 2:
+        raise ValueError(f"P_{m} has no qubits; Pegasus starts at m = 2")
+    return _wrap(_pegasus_new(int(m), float(j), float(beta), int(seed)), beta, f"P_{m}")
+
+
+def zephyr(m: int = 15, t: int = 4, j: float = 1.0, beta: float = 1.0, seed: int = 0) -> Sim:
+    """The **Zephyr** graph ``Z_{m,t}`` — the topology of D-Wave's *Advantage2* processors.
+
+    ``m = 15, t = 4`` is the Advantage2: 7,440 qubits, 71,736 couplers, degree 20. ``t`` is 4 on
+    every shipped machine.
+
+    >>> s = zephyr(15)
+    >>> len(s)
+    7440
+
+    Zephyr's higher degree is what it is for: the same problem embeds with shorter chains, and a
+    chain that breaks leaves a variable with no value at all.
+    """
+    if m < 1 or t < 1:
+        raise ValueError("Zephyr needs m >= 1 and t >= 1")
+    return _wrap(_zephyr_new(int(m), int(t), float(j), float(beta), int(seed)), beta, f"Z_{m},{t}")
 
 
 def ring(n: int, j: float = 1.0, h: float = 0.0, beta: float = 1.0, seed: int = 0) -> Sim:

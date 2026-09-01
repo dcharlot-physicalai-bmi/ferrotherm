@@ -80,6 +80,9 @@ pub struct Sim {
     /// Threads the last `ft_sweep_par` actually used. See [`ft_threads_used`].
     threads_used: u32,
     ledger: Ledger,
+    /// The vendor's linear qubit index per node, for a simulation built on a real device topology.
+    /// Empty for every graph that has no such numbering. See [`ft_qubit`].
+    qubits: Vec<u32>,
 }
 
 impl Sim {
@@ -88,7 +91,15 @@ impl Sim {
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
         Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None }))
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None, qubits: Vec::new() }))
+    }
+
+    /// As [`Sim::new`], keeping the device topology's own qubit numbering. See [`ft_qubit`].
+    fn with_qubits(t: crate::device::Topology, beta: f64, seed: u64) -> *mut Sim {
+        let p = Sim::new(t.graph, beta, seed);
+        // SAFETY: `Sim::new` just handed back a live, uniquely-owned allocation.
+        unsafe { (*p).qubits = t.qubits };
+        p
     }
 }
 
@@ -172,6 +183,111 @@ fn set_ommx_error(s: &str) {
 #[no_mangle]
 pub extern "C" fn ft_z1_new(w: u32, h: u32, j: f64, hb: f64, beta: f64, seed: u64) -> *mut Sim {
     Sim::new(z1_grid(w as usize, h as usize, j, hb), beta, seed)
+}
+
+/// New **Pegasus** `P_m` graph — the topology of every D-Wave *Advantage* processor.
+///
+/// `m = 16` is the Advantage: 5,640 qubits, 40,484 couplers, degree 15. Uniform coupling `j`.
+/// Null for `m < 2`, which has no qubits.
+///
+/// The nominal full-yield graph, not a particular machine's working graph. Read
+/// [`ft_qubit`] to get the vendor's own qubit number for a node — this crate indexes densely and
+/// Pegasus does not, so the two disagree and programming a machine with our indices would drive
+/// the wrong qubits.
+#[no_mangle]
+pub extern "C" fn ft_pegasus_new(m: u32, j: f64, beta: f64, seed: u64) -> *mut Sim {
+    let t = crate::device::pegasus(m as usize, j);
+    if t.graph.n == 0 {
+        return core::ptr::null_mut();
+    }
+    Sim::with_qubits(t, beta, seed)
+}
+
+/// New **Zephyr** `Z_{m,t}` graph — the topology of D-Wave's *Advantage2* processors.
+///
+/// `m = 15, t = 4` is the Advantage2: 7,440 qubits, 71,736 couplers, degree 20. `t` is 4 on every
+/// shipped machine; 0 for either parameter returns null.
+///
+/// Zephyr's higher degree is what it is for: the same problem embeds with shorter chains, and a
+/// chain that breaks leaves a variable with no value at all. See `examples/embedding_tax.rs`.
+#[no_mangle]
+pub extern "C" fn ft_zephyr_new(m: u32, t: u32, j: f64, beta: f64, seed: u64) -> *mut Sim {
+    let z = crate::device::zephyr(m as usize, t as usize, j);
+    if z.graph.n == 0 {
+        return core::ptr::null_mut();
+    }
+    Sim::with_qubits(z, beta, seed)
+}
+
+/// The **vendor's** linear qubit index for node `i`, or `0xFFFFFFFF` if there is no mapping.
+///
+/// Two numbering systems meet at this boundary and conflating them is silent. Every sampler here
+/// indexes `0..n` densely; Pegasus's fabric drops the qubits outside its largest component, so its
+/// own numbering is sparse — a `P16` spreads 5,640 qubits over indices 30 to 5,729. A chain written
+/// in our indices and handed to a machine programs different qubits, and the answer comes back
+/// looking like a bad embedding rather than like the mistake it is.
+///
+/// `0xFFFFFFFF` — not 0, which is a valid qubit — for a simulation built from a graph with no
+/// vendor numbering at all, which is every one except [`ft_pegasus_new`] and [`ft_zephyr_new`].
+#[no_mangle]
+pub extern "C" fn ft_qubit(sim: *const Sim, i: u32) -> u32 {
+    match unsafe { sim.as_ref() } {
+        Some(s) => s.qubits.get(i as usize).copied().unwrap_or(u32::MAX),
+        None => u32::MAX,
+    }
+}
+
+#[cfg(test)]
+mod topology_ffi_tests {
+    use super::*;
+
+    /// The machines you can actually rent, across the boundary, with their own numbering intact.
+    #[test]
+    fn the_abi_builds_the_advantage_and_advantage2_graphs() {
+        // P16 is the Advantage: 5,640 qubits at degree 15.
+        let p = ft_pegasus_new(16, 1.0, 0.5, 3);
+        assert!(!p.is_null());
+        assert_eq!(ft_len(p), 5640);
+
+        // The vendor numbering is SPARSE and must survive the crossing. Our node 0 is their
+        // qubit 30, not their qubit 0 -- which is the whole reason this accessor exists.
+        assert_eq!(ft_qubit(p, 0), 30);
+        assert_eq!(ft_qubit(p, 5639), 5729);
+        assert!((0..5640).all(|i| ft_qubit(p, i) < ft_qubit(p, i + 1)), "strictly increasing");
+        assert_eq!(ft_qubit(p, 5640), u32::MAX, "past the end is not qubit zero");
+
+        // It samples like any other graph.
+        ft_sweep(p, 20);
+        assert!(ft_energy(p).is_finite());
+        ft_free(p);
+
+        // Z15 is the Advantage2: 7,440 qubits at degree 20, densely numbered.
+        let z = ft_zephyr_new(15, 4, 1.0, 0.5, 3);
+        assert!(!z.is_null());
+        assert_eq!(ft_len(z), 7440);
+        assert_eq!(ft_qubit(z, 0), 0);
+        assert_eq!(ft_qubit(z, 7439), 7439);
+        ft_free(z);
+    }
+
+    /// A graph with no vendor numbering says so, rather than answering zero.
+    #[test]
+    fn a_graph_without_a_device_numbering_refuses_the_question() {
+        let s = ft_ising2d_new(4, 1.0, 0.5, 1);
+        assert_eq!(ft_len(s), 16);
+        assert_eq!(ft_qubit(s, 0), u32::MAX, "a lattice has no vendor qubit numbers");
+        ft_free(s);
+        assert_eq!(ft_qubit(core::ptr::null(), 0), u32::MAX);
+    }
+
+    #[test]
+    fn a_size_with_no_qubits_is_null_rather_than_an_empty_simulation() {
+        for m in [0u32, 1] {
+            assert!(ft_pegasus_new(m, 1.0, 0.5, 1).is_null(), "P{m} has no qubits");
+        }
+        assert!(ft_zephyr_new(0, 4, 1.0, 0.5, 1).is_null());
+        assert!(ft_zephyr_new(4, 0, 1.0, 0.5, 1).is_null());
+    }
 }
 
 /// Run `n` chromatic Gibbs sweeps. Returns the total sweeps done so far, or 0 on null.
