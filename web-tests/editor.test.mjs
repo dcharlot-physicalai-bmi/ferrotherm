@@ -49,6 +49,54 @@ await page.evaluate(() => window.ferrotherm.ready);
   check("variables answer by name", txt.includes("west ="), "not by node number");
 }
 
+// --- how many ways are there to do the job ---------------------------------------------------------
+//
+// The editor could answer "what should I do" and not "was that the only way". A model with a
+// symmetry has several optima and the solve threw all but one away; a modeller reading a single
+// assignment had no way to tell a unique answer from one of several. Exactly-one over three
+// binaries has three, and the count is known in advance rather than observed.
+//
+// PLACED AFTER THE SHIPPED-EXAMPLE CHECKS ON PURPOSE: this block clears the canvas to build its own
+// model, and running it first left the next test looking at an empty graph and reporting the page
+// as broken.
+{
+  const txt = await page.evaluate(() => {
+    const F = window.ferrotherm;
+    for (const n of [...F.nodes]) F.remove(n.id);
+    const a = F.add("binary", 40, 40, { name: "a" });
+    const b = F.add("binary", 40, 120, { name: "b" });
+    const c = F.add("binary", 40, 200, { name: "c" });
+    const one = F.add("exactlyone", 240, 120);
+    for (const v of [a, b, c]) F.connect(v, one);
+    const solve = F.add("solve", 440, 120, { tries: 40 });
+    F.connect(one, solve);
+    const rep = F.add("report", 640, 120);
+    F.connect(solve, rep, "result");
+    return F.run();
+  });
+
+  check("the editor counts the ways to do the job", /3 distinct ways to do this/.test(txt),
+        txt.split("\n").filter(l => /distinct ways|only one way/.test(l))[0] || txt.slice(-160));
+
+  // Each listed alternative must be a DIFFERENT assignment with exactly one variable set. A block
+  // that printed the same answer three times would satisfy a count check and nothing else.
+  const rows = [...txt.matchAll(/^\s+\d+\.\s+(a=\d\s+b=\d\s+c=\d)$/gm)].map(m => m[1].replace(/\s+/g, " "));
+  check("and lists three different ones", new Set(rows).size === 3, JSON.stringify(rows));
+  check("each sets exactly one variable",
+        rows.length === 3 && rows.every(r => (r.match(/=1/g) || []).length === 1), JSON.stringify(rows));
+
+  // A count without this sentence reads as a census, and it is not one.
+  check("and says it is evidence rather than a proof", /not a\s*\n?\s*proof there are no others/.test(txt),
+        (txt.match(/found by \d+ independent tries[^)]*/) || ["no caveat printed"])[0].replace(/\s+/g, " "));
+
+  // Everything above the block was read off the same handle, so selecting an optimum must put it
+  // back. If it did not, the printed answer and the listed alternatives would disagree.
+  const head = txt.split("distinct ways")[0];
+  check("the printed answer is still the one solve returned",
+        /\ba = \d/.test(head) && !/did not decode/.test(head), head.slice(-120).replace(/\n/g, " | "));
+}
+
+
 // --- the three counting constraints differ in the way they are supposed to -------------------------
 //
 // All three are "k of these"; only the comparison changes. Rewarding every variable unequally makes

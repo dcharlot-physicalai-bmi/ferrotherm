@@ -615,6 +615,31 @@ double ft_model_ommx_constant(const ft_model *m);
  * 1 on success; 0 on a null handle, an unknown method, or a model that has not compiled. */
 uint32_t ft_model_solve_by(ft_model *m, uint32_t method, uint64_t effort);
 
+/* ---- how many ways are there to do the job -------------------------------------------------------
+
+   A schedule that returns one answer cannot say whether it was the only one, and a model with a
+   symmetry usually has several. Every solve keeps all its tries; these count and read them.
+
+   Distinctness is on the DECODED VALUES, never on the spins: a compiled model carries slack and
+   ancilla bits no variable reads, and the count has to be a statement about the model rather than
+   about how the compiler chose to represent it.
+
+   It is EVIDENCE, not a count of the ground manifold. `tries` independent anneals prove the optima
+   they landed on exist and prove nothing about the ones they missed. */
+
+/* Answers the last solve kept -- one per try. */
+uint32_t ft_model_answers(const ft_model *m);
+
+/* Distinct FEASIBLE assignments within `tol` of the best. `tol` is on the compiled Ising energy,
+ * which folds in every penalty; 1e-9 is the value for exact ties. An assignment that breaks a hard
+ * row is not a way to do the job and is not counted. */
+uint32_t ft_model_optima(const ft_model *m, double tol);
+
+/* Make optimum `i` the current answer, so ft_model_value and friends report it -- enumerating the
+ * alternatives needs no second decode surface. Index 0 is the answer the solve returned, so
+ * selecting 0 puts the handle back. Returns 0 for an index past the count. */
+uint32_t ft_model_select_optimum(ft_model *m, uint32_t i, double tol);
+
 /* Whether the last solve PROVED its answer optimal. Only method 3 can set it.
  *
  * Read it with ft_model_feasible. Branch proves a statement about the compiled energy; it becomes a

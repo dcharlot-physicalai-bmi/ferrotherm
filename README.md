@@ -395,7 +395,7 @@ for an autovectoriser to find. The flag is not enabled. Energy was bit-identical
 is the check that says the comparison was of the same computation.
 
 - `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
-  compiles with **zero changes**; the cdylib is a **619 KB .wasm** (231 KB gzipped) exposing the
+  compiles with **zero changes**; the cdylib is a **644 KB .wasm** (237 KB gzipped) exposing the
   `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
@@ -501,6 +501,29 @@ Spearman of τ_int against **what the model learned: ρ = +0.81**; against **how
 τ_int = 0.5 is the floor — independent draws — and the deep arms sit on it. **They are fast because
 they failed.** Depth does not make sampling harder; depth makes *learning* harder, and what a model
 learned is what makes sampling harder.
+
+### How many ways are there to do the job
+
+`model` answers a problem by name; it could not say whether the answer was the only one. A solve
+runs `tries` independent anneals and keeps the best, so a model with a symmetry hands back one of
+several optima and nothing distinguishes that from a unique answer. Every try is kept now, and the
+node editor lists the alternatives:
+
+```text
+3 distinct ways to do this, all at energy -5.0000:
+  1.  a=0  b=0  c=1
+  2.  a=0  b=1  c=0
+  3.  a=1  b=0  c=0
+  (found by 40 independent tries -- evidence that these exist, not a
+   proof there are no others. Raise the Solve node's tries to look harder.)
+```
+
+Distinctness is on the **decoded values**, never on the spins. The obvious justification — slack
+bits float, so counting states over-reports — is wrong, and the test is named after the claim it
+refuted: enumerating `at most two of four` exactly gives eleven assignments and eleven
+minimum-energy states, because the penalty that makes a row hold also pins its slack. The real
+reason is that the count must be a statement about the model rather than about how the compiler
+chose to represent it.
 
 ## Positions this crate takes
 

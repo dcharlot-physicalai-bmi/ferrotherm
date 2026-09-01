@@ -254,6 +254,9 @@ _model_solve_with = _sig("ft_model_solve_with", c_uint32,
                          [_p, c_uint32, c_double, c_double, c_uint32, c_uint32])
 _model_value = _sig("ft_model_value", ctypes.c_int64, [_p, c_uint32])
 _model_feasible = _sig("ft_model_feasible", c_uint32, [_p])
+_model_answers = _sig("ft_model_answers", c_uint32, [_p])
+_model_optima = _sig("ft_model_optima", c_uint32, [_p, c_double])
+_model_select_optimum = _sig("ft_model_select_optimum", c_uint32, [_p, c_uint32, c_double])
 _model_solve_by = _sig("ft_model_solve_by", c_uint32, [_p, c_uint32, ctypes.c_uint64])
 _model_proved = _sig("ft_model_proved", c_uint32, [_p])
 _model_objective = _sig("ft_model_objective", c_double, [_p])
@@ -2298,6 +2301,9 @@ class Problem:
         spins = _model_compile(self._h)
         if spins == 0:
             raise ValueError(self._error() or "this problem did not compile")
+        # Kept so `optima` can build its answers without recompiling -- a recompile clears the
+        # answers it is about to read.
+        self._spins = int(spins)
         if method != "anneal":
             if not _model_solve_by(self._h, self._METHODS[method], int(effort)):
                 raise ValueError(self._error() or f"could not solve by {method}")
@@ -2309,6 +2315,47 @@ class Problem:
                 "must be real numbers. Pass 0 for any of the four to use the default."
             )
         return self._answer(spins)
+
+    def optima(self, tol: float = 1e-9) -> "list[Answer]":
+        """Every distinct way to do the job that the last :meth:`solve` found, best first.
+
+        A solve returns one answer and cannot say whether it was the only one. A model with a
+        symmetry usually has several, and this is the question no surface in this field answers.
+
+        >>> p = Problem()
+        >>> a, b, c = (p.binary(n) for n in ("a", "b", "c"))
+        >>> p.exactly_one([a.is_(1), b.is_(1), c.is_(1)])
+        >>> _ = p.solve(tries=40)
+        >>> len(p.optima())
+        3
+
+        Distinctness is on the DECODED VALUES, never on the spins: a compiled model carries slack
+        and ancilla bits no variable reads, and the count has to be a statement about the model
+        rather than about how the compiler chose to represent it.
+
+        It is **evidence**, not a count: ``tries`` independent anneals prove the optima they landed
+        on exist and prove nothing about the ones they missed. Only feasible answers are counted —
+        an assignment that breaks a hard constraint is not a way to do the job. ``tol`` is on the
+        compiled Ising energy, which folds in every penalty.
+        """
+        n = int(_model_optima(self._h, float(tol)))
+        if n == 0:
+            return []
+        spins = getattr(self, "_spins", 0)
+        out = []
+        for i in range(n):
+            if not _model_select_optimum(self._h, i, float(tol)):
+                break
+            out.append(self._answer(spins))
+        # Put the handle back where the solve left it, so reading the alternatives does not change
+        # what `solve` returned.
+        _model_select_optimum(self._h, 0, float(tol))
+        return out
+
+    @property
+    def answers_kept(self) -> int:
+        """How many answers the last solve kept — one per try."""
+        return int(_model_answers(self._h))
 
     def _answer(self, spins: int) -> Answer:
         """Read the last solve back, whichever method produced it."""

@@ -60,6 +60,7 @@ export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
 export certify, findings, passed
+export optima, answers_kept
 export Estimate, SampleSet, collect_samples, ci95, covers, mean_spin, correlation,
     magnetization_estimate, mean_energy, degeneracy, chain_tau, distinct, best_energy,
     sample_state
@@ -339,6 +340,9 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_solve_with Cuint ModPtr Cuint Cdouble Cdouble Cuint Cuint
 @cfn ft_model_value Clonglong ModPtr Cuint
 @cfn ft_model_feasible Cuint ModPtr
+@cfn ft_model_answers Cuint ModPtr
+@cfn ft_model_optima Cuint ModPtr Cdouble
+@cfn ft_model_select_optimum Cuint ModPtr Cuint Cdouble
 @cfn ft_model_energy Cdouble ModPtr
 @cfn ft_model_solve_by Cuint ModPtr Cuint Culonglong
 @cfn ft_model_proved Cuint ModPtr
@@ -1549,10 +1553,13 @@ square. The slack never appears in the answer.
 mutable struct Problem
     handle::ModPtr
     vars::Vector{Variable}
+    # Spins the last compile produced. Kept so `optima` can read its answers back without
+    # recompiling -- a recompile CLEARS the answers it is about to read.
+    spins::Int
     function Problem()
         h = ft_model_new()
         h == C_NULL && error("could not allocate a problem")
-        p = new(h, Variable[])
+        p = new(h, Variable[], 0)
         finalizer(close!, p)
         p
     end
@@ -1921,6 +1928,7 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
         error("unknown method $method; one of " * join(sort(collect(keys(_METHODS))), ", "))
     spins = ft_model_compile(p.handle)
     spins == 0 && error(isempty(_why(p)) ? "this problem did not compile" : _why(p))
+    p.spins = Int(spins)
     if method != :anneal
         # `:branch` is the only one that returns a proof; read `proved_optimal` on the answer.
         ft_model_solve_by(p.handle, Cuint(_METHODS[method]), Culonglong(effort)) == 0 &&
@@ -1932,6 +1940,12 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
                      "both must be real numbers. Pass 0 for any of the four to use the default.")
     end
 
+    _read_answer(p)
+end
+
+"""Read whatever answer the handle is currently holding."""
+function _read_answer(p::Problem)
+    spins = p.spins
     vals = Dict{String, Union{Int64, Nothing}}()
     for v in p.vars
         got = ft_model_value(p.handle, v.idx)
@@ -1957,6 +1971,44 @@ function solve!(p::Problem; tries::Integer = 12, beta_hot::Real = 0, beta_cold::
            Int(spins), ft_model_penalty(p.handle),
            ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
            [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)])
+end
+
+"""
+    answers_kept(p)
+
+How many answers the last [`solve!`](@ref) kept -- one per try.
+"""
+answers_kept(p::Problem) = (_live(p); Int(ft_model_answers(p.handle)))
+
+"""
+    optima(p; tol = 1e-9) -> Vector{Answer}
+
+Every distinct way to do the job that the last [`solve!`](@ref) found, best first.
+
+A solve returns one answer and cannot say whether it was the only one. A model with a symmetry
+usually has several, and this is the question no surface in this field answers.
+
+Distinctness is on the **decoded values**, never on the spins: a compiled model carries slack and
+ancilla bits no variable reads, and the count has to be a statement about the model rather than
+about how the compiler chose to represent it.
+
+It is **evidence**, not a count of the ground manifold -- independent anneals prove the optima they
+landed on exist and prove nothing about the ones they missed. Only feasible answers are counted; an
+assignment that breaks a hard constraint is not a way to do the job. `tol` is on the compiled Ising
+energy, which folds in every penalty.
+"""
+function optima(p::Problem; tol::Real = 1e-9)
+    _live(p)
+    n = Int(ft_model_optima(p.handle, Cdouble(tol)))
+    out = Answer[]
+    for i in 0:(n - 1)
+        ft_model_select_optimum(p.handle, Cuint(i), Cdouble(tol)) == 0 && break
+        push!(out, _read_answer(p))
+    end
+    # Put the handle back where the solve left it, so reading the alternatives does not change what
+    # `solve!` returned.
+    n > 0 && ft_model_select_optimum(p.handle, Cuint(0), Cdouble(tol))
+    out
 end
 
 """

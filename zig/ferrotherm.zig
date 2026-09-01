@@ -549,6 +549,39 @@ test "an answer is scored in the modeller's own units" {
     try std.testing.expect(obj != p.energy());
 }
 
+test "how many ways are there to do the job" {
+    // A solve returns one answer and cannot say whether it was the only one. Exactly-one over
+    // three binaries has three, and the count is known in advance.
+    var p = try Problem.init();
+    defer p.deinit();
+    const a = try p.binary("a");
+    const b = try p.binary("b");
+    const cv = try p.binary("c");
+    try p.count(.exactly_one, 0, &.{ a.is(1), b.is(1), cv.is(1) });
+    try p.solve(40);
+
+    try std.testing.expectEqual(@as(u32, 40), p.answersKept());
+    try std.testing.expectEqual(@as(u32, 3), p.optima(1e-9));
+
+    // Each reads back by name through the accessors that already exist, and each is different.
+    var seen: [3][3]i64 = undefined;
+    for (0..3) |i| {
+        try p.selectOptimum(@intCast(i), 1e-9);
+        try std.testing.expect(p.feasible());
+        var on: usize = 0;
+        for ([_]Var{ a, b, cv }, 0..) |v, k| {
+            const got = (try p.value(v)).?;
+            seen[i][k] = got;
+            if (got == 1) on += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 1), on);
+    }
+    try std.testing.expect(!std.mem.eql(i64, &seen[0], &seen[1]));
+    try std.testing.expect(!std.mem.eql(i64, &seen[1], &seen[2]));
+    try std.testing.expect(!std.mem.eql(i64, &seen[0], &seen[2]));
+    try std.testing.expectError(error.NotSolved, p.selectOptimum(3, 1e-9));
+}
+
 test "a model with no objective reports none rather than zero" {
     var p = try Problem.init();
     defer p.deinit();
@@ -1624,6 +1657,34 @@ pub const Problem = struct {
     /// moves when the penalty does. For what the answer is WORTH, see `objective`.
     pub fn energy(self: *Problem) f64 {
         return c.ft_model_energy(self.h);
+    }
+
+    /// Answers the last solve kept -- one per try.
+    pub fn answersKept(self: *Problem) u32 {
+        return c.ft_model_answers(self.h);
+    }
+
+    /// How many DISTINCT ways there are to do the job, among the answers the last solve found.
+    ///
+    /// A solve returns one answer and cannot say whether it was the only one; a model with a
+    /// symmetry usually has several. Distinctness is on the DECODED VALUES, never on the spins: a
+    /// compiled model carries slack and ancilla bits no variable reads, and the count has to be a
+    /// statement about the model rather than about how the compiler represented it.
+    ///
+    /// EVIDENCE, not a count of the ground manifold -- independent anneals prove the optima they
+    /// landed on exist and prove nothing about the ones they missed. Only feasible answers count.
+    /// `tol` is on the compiled energy; `1e-9` is the value for exact ties.
+    pub fn optima(self: *Problem, tol: f64) u32 {
+        return c.ft_model_optima(self.h, tol);
+    }
+
+    /// Make optimum `i` the current answer, so `value` and `feasible` report it.
+    ///
+    /// Enumerating the alternatives needs no second decode surface. Index 0 is the answer the solve
+    /// returned, so selecting 0 puts the problem back where it was.
+    pub fn selectOptimum(self: *Problem, i: u32, tol: f64) Error!void {
+        if (!self.solved) return Error.NotSolved;
+        if (c.ft_model_select_optimum(self.h, i, tol) == 0) return Error.NotSolved;
     }
 
     /// Which solver to point at a compiled model. Only `branch` returns a proof.

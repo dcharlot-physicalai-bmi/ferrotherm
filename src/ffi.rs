@@ -1276,6 +1276,8 @@ pub struct ModelHandle {
     /// counting row -- and no binding has to learn two ways to append a literal.
     coeffs: Vec<f64>,
     cert: Option<crate::certify::Certificate>,
+    /// Every answer the last solve produced, not only the best. See [`ft_model_optima`].
+    answers: Vec<crate::model::Solution>,
 }
 
 #[no_mangle]
@@ -1288,6 +1290,7 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
         lits: Vec::new(),
         coeffs: Vec::new(),
         cert: None,
+        answers: Vec::new(),
     }))
 }
 
@@ -1538,12 +1541,20 @@ pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
         Ok(c) => {
             let n = c.spins() as u32;
             h.compiled = Some(c);
+            // Answers belong to the model they were solved from. Recompiling means the constraints
+            // or the objective moved, so a kept list would have `ft_model_optima` counting the
+            // optima of a model that no longer exists -- the same stale-surface failure the
+            // certificate accessors and the workbench's panels each learned separately.
+            h.answers.clear();
+            h.solution = None;
             h.last_error.clear();
             n
         }
         Err(e) => {
             h.last_error = e.to_string();
             h.compiled = None;
+            h.answers.clear();
+            h.solution = None;
             0
         }
     }
@@ -1554,7 +1565,16 @@ pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
 pub extern "C" fn ft_model_solve(m: *mut ModelHandle, tries: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let Some(c) = h.compiled.as_ref() else { return 0 };
-    h.solution = Some(c.solve_best_of(tries.max(1) as u64));
+    let (lo, hi, n, w) = crate::model::Compiled::DEFAULT_LADDER;
+    // The default ladder, spelled out, so this keeps every try the way `ft_model_solve_with` does.
+    // `solve_best_of` runs the same seeds on the same schedule and returns only the winner; going
+    // through `solve_all_with` here is what makes `ft_model_optima` answer after EITHER entry
+    // point. A surface where the same question works after one solve and silently returns zero
+    // after the other is worse than one where it does not exist.
+    let sched = crate::schedule::Schedule::geometric(lo, hi, n, w);
+    let all = c.solve_all_with(&sched, tries.max(1) as u64);
+    h.solution = Some(best_answer(&all));
+    h.answers = all;
     1
 }
 
@@ -1589,8 +1609,159 @@ pub extern "C" fn ft_model_solve_with(
     let n = if stages > 0 { stages as usize } else { dn };
     let w = if sweeps > 0 { sweeps as usize } else { dw };
     let sched = crate::schedule::Schedule::geometric(lo, hi, n, w);
-    h.solution = Some(c.solve_best_with(&sched, tries.max(1) as u64));
+    // Every try, not only the winner. `solve_best_with` runs exactly these seeds and keeps one,
+    // which answers "what should I do" and cannot answer "how many ways could I have done it" --
+    // and a model with a symmetry has several. Picking the best from the kept list rather than
+    // calling `solve_best_with` again means the two cannot disagree.
+    let all = c.solve_all_with(&sched, tries.max(1) as u64);
+    h.solution = Some(best_answer(&all));
+    h.answers = all;
     1
+}
+
+/// The answer `solve_best_with` would have returned: feasible beats infeasible, then lowest energy.
+fn best_answer(all: &[crate::model::Solution]) -> crate::model::Solution {
+    let mut best = &all[0];
+    for cand in &all[1..] {
+        let better = match (best.feasible(), cand.feasible()) {
+            (false, true) => true,
+            (true, false) => false,
+            _ => cand.energy < best.energy,
+        };
+        if better {
+            best = cand;
+        }
+    }
+    best.clone()
+}
+
+/// How many answers the last solve kept — one per try.
+#[no_mangle]
+pub extern "C" fn ft_model_answers(m: *const ModelHandle) -> u32 {
+    unsafe { m.as_ref() }.map_or(0, |h| h.answers.len() as u32)
+}
+
+/// How many DISTINCT optimal assignments those answers found, within `tol` of the best.
+///
+/// The question a modeller has and no surface in this field answers: **how many different ways are
+/// there to do the job**. A schedule that returns one answer cannot say whether it was the only
+/// one, and a problem with a symmetry usually has several.
+///
+/// Distinctness is on the DECODED VALUES, never on the spins — a compiled model carries slack and
+/// ancilla bits no variable reads, and the count has to be a statement about the model rather than
+/// about how the compiler chose to represent it.
+///
+/// This is **evidence**, not a count of the ground manifold: `tries` independent anneals prove the
+/// optima they landed on exist and prove nothing about the ones they missed. Only feasible answers
+/// are counted, because an assignment that breaks a hard row is not a way to do the job. `tol` is
+/// on the compiled Ising energy, which folds in every penalty; `1e-9` is the value for exact ties.
+#[no_mangle]
+pub extern "C" fn ft_model_optima(m: *const ModelHandle, tol: f64) -> u32 {
+    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
+    let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
+    crate::model::distinct_optima(&h.answers, tol).len() as u32
+}
+
+#[cfg(test)]
+mod optima_tests {
+    use super::*;
+
+    /// The question the node editor could not ask: how many ways are there to do the job.
+    #[test]
+    fn the_abi_counts_every_way_to_do_the_job_and_can_read_each_one() {
+        let m = ft_model_new();
+        // Three binaries, exactly one of them on. Three assignments, known in advance.
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        let c = ft_model_binary(m);
+        for v in [a, b, c] {
+            assert_eq!(ft_model_lit(m, v, 1), 1);
+        }
+        assert_eq!(ft_model_close(m, 3, 0), 1); // kind 3 = exactly-one
+        assert!(ft_model_compile(m) > 0);
+
+        assert_eq!(ft_model_optima(m, 1e-9), 0, "nothing solved yet");
+        assert_eq!(ft_model_answers(m), 0);
+
+        assert_eq!(ft_model_solve_with(m, 40, 0.0, 0.0, 0, 0), 1);
+        assert_eq!(ft_model_answers(m), 40, "one answer per try, kept");
+        assert_eq!(ft_model_optima(m, 1e-9), 3, "exactly-one over three has three ways");
+
+        // Each one reads back by name through the accessors that already exist, and each is a
+        // DIFFERENT assignment with exactly one variable on.
+        let mut seen = std::collections::BTreeSet::new();
+        for i in 0..3u32 {
+            assert_eq!(ft_model_select_optimum(m, i, 1e-9), 1);
+            assert_eq!(ft_model_feasible(m), 1);
+            let vals: Vec<i64> = (0..3).map(|v| ft_model_value(m, v)).collect();
+            assert_eq!(vals.iter().filter(|&&x| x == 1).count(), 1, "exactly one on: {vals:?}");
+            assert!(seen.insert(vals), "the same assignment was listed twice");
+        }
+        assert_eq!(ft_model_select_optimum(m, 3, 1e-9), 0, "there is no fourth");
+
+        // Index 0 is the answer solve returned, so selecting it puts the handle back.
+        assert_eq!(ft_model_select_optimum(m, 0, 1e-9), 1);
+        let after = (0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>();
+        assert_eq!(ft_model_solve_with(m, 40, 0.0, 0.0, 0, 0), 1);
+        let fresh = (0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>();
+        assert_eq!(after, fresh, "optimum 0 is what solve hands back");
+
+        // Recompiling invalidates them: an optimum belongs to the model it was solved from.
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_optima(m, 1e-9), 0);
+        assert_eq!(ft_model_answers(m), 0);
+        assert_eq!(ft_model_select_optimum(m, 0, 1e-9), 0);
+
+        ft_model_free(m);
+    }
+
+    /// Both solve entry points must answer, or the surface is confidently inconsistent.
+    #[test]
+    fn the_default_ladder_keeps_its_tries_too() {
+        let m = ft_model_new();
+        let a = ft_model_binary(m);
+        let b = ft_model_binary(m);
+        for v in [a, b] {
+            assert_eq!(ft_model_lit(m, v, 1), 1);
+        }
+        assert_eq!(ft_model_close(m, 3, 0), 1); // kind 3 = exactly-one
+        assert!(ft_model_compile(m) > 0);
+        assert_eq!(ft_model_solve(m, 24), 1);
+        assert_eq!(ft_model_answers(m), 24);
+        assert_eq!(ft_model_optima(m, 1e-9), 2, "exactly-one over two has two ways");
+
+        // A single-method solve replaces the list rather than leaving the previous one behind.
+        assert_eq!(ft_model_solve_by(m, 3, 0), 1, "branch and bound");
+        assert_eq!(ft_model_answers(m), 1);
+        assert_eq!(ft_model_optima(m, 1e-9), 1, "one run found one assignment");
+
+        // A negative or NaN tolerance is coerced, not obeyed.
+        assert_eq!(ft_model_optima(m, -1.0), 1);
+        assert_eq!(ft_model_optima(m, f64::NAN), 1);
+        assert_eq!(ft_model_optima(core::ptr::null(), 1e-9), 0);
+        ft_model_free(m);
+    }
+}
+
+/// Make optimum `i` the current answer, so `ft_model_value` and friends report it.
+///
+/// Enumerating the alternatives needs no second decode surface: select one, read it by name
+/// through the accessors that already exist, and select the next. Index 0 is the answer
+/// [`ft_model_solve_with`] returned, so selecting 0 puts the handle back where it was.
+///
+/// Returns 1 on success, 0 for a null handle or an index past the count.
+#[no_mangle]
+pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
+    let opt = crate::model::distinct_optima(&h.answers, tol);
+    match opt.into_iter().nth(i as usize) {
+        Some(s) => {
+            h.solution = Some(s);
+            1
+        }
+        None => 0,
+    }
 }
 
 /// The solved value of variable `v`, or `i64::MIN` if it did not decode.
@@ -1697,6 +1868,10 @@ pub extern "C" fn ft_model_solve_by(m: *mut ModelHandle, method: u32, effort: u6
         }
     };
     let sol = c.solve_by(meth, 1);
+    // One run, one answer -- and `answers` is REPLACED rather than left alone. A stale list would
+    // make `ft_model_optima` describe a previous solve of a possibly different model, which is the
+    // shape of a surface that is confidently wrong.
+    h.answers = vec![sol.clone()];
     h.solution = Some(sol);
     h.last_error.clear();
     1

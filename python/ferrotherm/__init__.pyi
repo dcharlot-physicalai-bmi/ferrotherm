@@ -170,6 +170,10 @@ class Problem:
     def all_different(self, of: 'Sequence[Variable]', soft: 'float | None' = None) -> None:
         """Every one of these variables takes a different value."""
         ...
+    @property
+    def answers_kept(self) -> int:
+        """How many answers the last solve kept — one per try."""
+        ...
     def at_least(self, of: 'Sequence[Any]', k: int, value: int = 1, soft: 'float | None' = None) -> None:
         """At least ``k`` of them hold. Costs a slack variable."""
         ...
@@ -223,6 +227,9 @@ class Problem:
         ...
     def ommx(self) -> 'tuple[bytes, float]':
         """The compiled model as an OMMX instance -- the interchange format this corner of the field converged on, so a ferrotherm program can be read by jijmodeling, Jij's stack, and anything else that speaks it. Returns the protobuf bytes and the offset the +/-1 to 0/1 substitution produced, ALREADY FOLDED INTO the instance -- ommx_objective(x) == ferrotherm_energy(s), so read the constant, do not add it."""
+        ...
+    def optima(self, tol: float = 1e-09) -> 'list[Answer]':
+        """Every distinct way to do the job that the last :meth:`solve` found, best first."""
         ...
     def penalty(self, p: float) -> None:
         """Use exactly this penalty, disabling the automatic scaling."""

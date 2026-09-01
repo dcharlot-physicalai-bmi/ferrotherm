@@ -295,8 +295,16 @@ seeds clear the `Undermixed` finding with 80.7% coverage among exactly those.
 Reaches Rust, C, Python, Zig, Julia, HTTP, MCP and the browser workbench, which is where the
 interval stops being an argument and becomes a reading: at `β_c` on a 16×16 lattice the workbench
 reports 2,000 draws, 2,000 distinct, `tau_int` 245 and an effective sample size of **4**, so
-`⟨M⟩ = 0.103 ± 0.71`. Not yet in `docs/graph.html`, which edits models rather than samplers — the
-sample set lives on a `Sim`, not a `ModelHandle`.
+`⟨M⟩ = 0.103 ± 0.71`.
+
+**1.3 The same gap one layer up.** ✅ **DONE** — `model::distinct_optima`.
+
+`docs/graph.html` edits models rather than samplers, so a sample set on a `Sim` was the wrong shape
+for it — but the gap it had was the same one: `solve_best_with` runs `tries` independent anneals and
+keeps one, and a modeller reading a single assignment cannot tell a unique optimum from one of four.
+Every try is kept now, and the editor reports the distinct optimal assignments by name with the
+sentence that stops a count reading as a census: independent anneals are evidence the optima they
+found exist, not a proof there are no others.
 
 *Five findings from building it, each from a test that failed for a real reason:*
 

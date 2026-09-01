@@ -112,6 +112,31 @@ end
     close!(plain)
 end
 
+@testset "how many ways are there to do the job" begin
+    # A solve returns one answer and cannot say whether it was the only one. Exactly-one over three
+    # binaries has three, and the count is known in advance rather than observed.
+    p = Problem()
+    a = binary!(p, "a"); b = binary!(p, "b"); c = binary!(p, "c")
+    exactly_one!(p, [a, b, c])
+    best = solve!(p; tries = 40)
+    @test feasible(best)
+    @test answers_kept(p) == 40
+
+    opts = optima(p)
+    @test length(opts) == 3
+    seen = Set{Vector{Int64}}()
+    for o in opts
+        @test feasible(o)
+        vals = Int64[o["a"], o["b"], o["c"]]
+        @test count(==(1), vals) == 1
+        push!(seen, vals)
+    end
+    @test length(seen) == 3          # three DIFFERENT assignments, not one listed thrice
+    @test opts[1].values == best.values   # best first, and the head is what solve returned
+    @test isempty(optima(p; tol = -1.0)) == false   # a negative tolerance is coerced, not obeyed
+    close!(p)
+end
+
 @testset "a certificate can fail" begin
     # The point of the type. A cold lattice with no burn-in and no thinning must NOT certify clean,
     # or the certificate is decoration.

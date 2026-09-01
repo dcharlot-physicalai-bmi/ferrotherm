@@ -2618,6 +2618,19 @@ impl Compiled {
         self.best_of(tries, |s| self.solve_annealed(s))
     }
 
+    /// Anneal `tries` times and keep **every** answer, in seed order.
+    ///
+    /// [`Self::solve_best_with`] throws away every try but one, which is the right answer to
+    /// "what should I do" and the wrong one to "how many ways could I have done it". A problem
+    /// with a symmetry has several optima and a modeller usually wants to see them; nothing below
+    /// this line could tell them apart, because only one survived the loop.
+    ///
+    /// Seeds are `0..tries`, the same ones [`Self::solve_best_with`] uses, so the best answer here
+    /// is the answer that call returns.
+    pub fn solve_all_with(&self, sched: &Schedule, tries: u64) -> Vec<Solution> {
+        (0..tries.max(1)).map(|s| self.solve_with(sched, s)).collect()
+    }
+
     fn best_of(&self, tries: u64, run: impl Fn(u64) -> Solution) -> Solution {
         let mut best: Option<Solution> = None;
         for s in 0..tries.max(1) {
@@ -2636,6 +2649,65 @@ impl Compiled {
         }
         best.expect("at least one try")
     }
+}
+
+/// The distinct optimal assignments among a set of answers, best first.
+///
+/// # Distinctness is on the DECODED VALUES, never on the spins
+///
+/// A compiled model carries bits no variable reads — a cardinality row's slack register, a
+/// Rosenberg substitution's ancilla — so the key is the decoded map. The count then means what a
+/// modeller reads it to mean: **how many different ways there are to do the job**.
+///
+/// **And on this compiler the two counts happen to agree, which is worth stating because the
+/// obvious argument for keying on values is wrong.** The obvious argument is that slack bits float
+/// freely and inflate a state count; enumerating `at most two of four` exactly says otherwise —
+/// eleven satisfying assignments, eleven minimum-energy states. The penalty that makes the row hold
+/// also PINS its slack, so at the optimum there is nothing left floating. The test
+/// `counting_spin_states_would_over_count_the_optima` measures precisely that, and is named for
+/// the claim it refuted.
+///
+/// So the reason to key on values is not a measured discrepancy today. It is that the count is a
+/// statement about the model and must not depend on how the compiler chose to represent it: an
+/// encoding with a redundant slack representation, added later, would inflate a state count
+/// silently and leave this one correct.
+///
+/// # What it does and does not claim
+///
+/// Only **feasible** answers are counted — an assignment that breaks a hard constraint is not a way
+/// to do the job — and only those within `tol` of the best feasible energy. `tol` is on the
+/// compiled Ising energy, which folds in every penalty and the constant, so it is a number about
+/// spins and not about the objective; `1e-9` is the right value for exact ties.
+///
+/// It is **evidence**, not a count of the ground manifold. `tries` independent anneals prove the
+/// optima they landed on exist and prove nothing about the ones they missed. Only exhaustive
+/// enumeration counts, and this is not that.
+///
+/// Returned best first, ties broken by the assignment itself, so the order is deterministic.
+pub fn distinct_optima(answers: &[Solution], tol: f64) -> Vec<Solution> {
+    let feasible: Vec<&Solution> = answers.iter().filter(|s| s.feasible()).collect();
+    let Some(best) = feasible.iter().map(|s| s.energy).fold(None, |acc: Option<f64>, e| {
+        Some(match acc {
+            None => e,
+            Some(b) => b.min(e),
+        })
+    }) else {
+        return Vec::new();
+    };
+    let mut seen: BTreeMap<&BTreeMap<String, i64>, &Solution> = BTreeMap::new();
+    for s in feasible.iter().filter(|s| s.energy <= best + tol) {
+        // First occurrence wins, which is the lowest seed among identical assignments -- so the
+        // list is stable under re-running with the same tries.
+        seen.entry(&s.values).or_insert(s);
+    }
+    let mut out: Vec<Solution> = seen.into_values().cloned().collect();
+    out.sort_by(|a, b| {
+        a.energy
+            .partial_cmp(&b.energy)
+            .unwrap_or(core::cmp::Ordering::Equal)
+            .then_with(|| a.values.cmp(&b.values))
+    });
+    out
 }
 
 /// A constraint the answer breaks, and by how much.
@@ -3978,6 +4050,127 @@ mod tests {
         let s = c.solve_best_of(10);
         assert!(s.feasible(), "{s}");
         assert_eq!((s.value("a"), s.value("b")), (2, 2), "{s}");
+    }
+
+    /// A model with a symmetry has several optima, and `solve_best_with` throws all but one away.
+    ///
+    /// Exactly-one over three binaries: three assignments, all feasible, all at the same compiled
+    /// energy. The count is known in advance, so this is checkable rather than plausible.
+    #[test]
+    fn every_way_to_do_the_job_is_found_and_counted_once() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        let c = m.binary("c");
+        m.constrain(Constraint::ExactlyOne(vec![Lit::Is(a, 1), Lit::Is(b, 1), Lit::Is(c, 1)]));
+        let comp = m.compile().unwrap();
+        let sched = Schedule::geometric(0.05, 8.0, 120, 40);
+        let answers = comp.solve_all_with(&sched, 40);
+        assert_eq!(answers.len(), 40, "one answer per seed, kept");
+
+        let opt = distinct_optima(&answers, 1e-9);
+        assert_eq!(opt.len(), 3, "exactly-one over three has three ways to be satisfied");
+        for s in &opt {
+            assert!(s.feasible());
+            let on = ["a", "b", "c"].iter().filter(|n| s.value(n) == 1).count();
+            assert_eq!(on, 1);
+        }
+        // Best first, and the best is the one `solve_best_with` returns.
+        let best = comp.solve_best_with(&sched, 40);
+        assert_eq!(opt[0].values, best.values, "the head of the list is the answer solve returns");
+        // Deterministic: same tries, same list, in the same order.
+        let again = distinct_optima(&comp.solve_all_with(&sched, 40), 1e-9);
+        assert_eq!(
+            opt.iter().map(|s| s.values.clone()).collect::<Vec<_>>(),
+            again.iter().map(|s| s.values.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Named for the claim it refuted, and kept as the control that would catch it becoming true.
+    ///
+    /// `distinct_optima` keys on the decoded assignment, and the obvious justification is that a
+    /// compiled model carries slack bits no variable reads, so counting STATES would report one
+    /// answer as several. This enumerates the whole state space to check that, and the obvious
+    /// justification is wrong: eleven satisfying assignments, eleven minimum-energy states. The
+    /// penalty that makes a cardinality row hold also PINS its slack register, so at the optimum
+    /// nothing is left floating.
+    ///
+    /// The test stays, asserting the equality rather than the inequality it was written for. An
+    /// encoding with a redundant slack representation would break it, which is exactly when
+    /// someone needs to know — and the docs on `distinct_optima` now say the honest reason for
+    /// keying on values: not a discrepancy today, but that the count must not depend on how the
+    /// compiler chose to represent the model.
+    #[test]
+    fn counting_spin_states_would_over_count_the_optima() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        let c = m.binary("c");
+        let d = m.binary("d");
+        // At most two of four: a cardinality row, which compiles a slack register no variable
+        // reads and which is free to sit anywhere a satisfying assignment allows.
+        m.constrain(Constraint::AtMost {
+            lits: vec![Lit::Is(a, 1), Lit::Is(b, 1), Lit::Is(c, 1), Lit::Is(d, 1)],
+            k: 2,
+        });
+        let comp = m.compile().unwrap();
+        let n = comp.spins();
+        assert!(n > 4, "the compiled model must carry bits beyond the four variables, got {n}");
+        assert!(n <= 20, "this test enumerates 2^n and n is {n}");
+
+        let mut s = vec![-1i8; n];
+        let mut best = f64::INFINITY;
+        let mut at_min: Vec<Vec<i8>> = Vec::new();
+        for mask in 0..(1usize << n) {
+            for (i, v) in s.iter_mut().enumerate() {
+                *v = if mask >> i & 1 == 1 { 1 } else { -1 };
+            }
+            let e = comp.graph.energy(&s);
+            if e < best - 1e-9 {
+                best = e;
+                at_min.clear();
+            }
+            if e <= best + 1e-9 {
+                at_min.push(s.clone());
+            }
+        }
+
+        let assignments: std::collections::BTreeSet<_> = at_min
+            .iter()
+            .map(|st| comp.decode(st))
+            .filter(|sol| sol.feasible())
+            .map(|sol| sol.values.clone())
+            .collect();
+
+        // 11 assignments of four binaries have at most two set: 1 + 4 + 6.
+        assert_eq!(assignments.len(), 11, "at most two of four");
+        assert_eq!(
+            at_min.len(),
+            assignments.len(),
+            "one minimum-energy state per assignment: the penalty pins the slack. If this ever \
+             fails HIGH, an encoding has gained a redundant representation and a state count would \
+             now over-report the optima -- which is the case `distinct_optima` is written to \
+             survive. If it fails LOW, two assignments have collapsed onto one state, which is a \
+             decoder bug. {} states for {} assignments",
+            at_min.len(),
+            assignments.len()
+        );
+    }
+
+    #[test]
+    fn an_infeasible_run_has_no_optima_rather_than_a_bad_one() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        // Two hard rows that cannot both hold: a must be 1 and a must be 0.
+        m.constrain(Constraint::Fix(a, 1));
+        m.constrain(Constraint::Fix(a, 0));
+        let Ok(comp) = m.compile() else { return }; // a compile-time refusal is also a right answer
+        let answers = comp.solve_all_with(&Schedule::geometric(0.05, 8.0, 60, 20), 8);
+        let opt = distinct_optima(&answers, 1e-9);
+        assert!(
+            opt.iter().all(|s| s.feasible()),
+            "an assignment that breaks a hard row is not a way to do the job"
+        );
     }
 
     #[test]

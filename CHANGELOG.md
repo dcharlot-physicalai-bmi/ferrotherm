@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### How many ways are there to do the job
+
+The node editor could answer *"what should I do"* and not *"was that the only way"*. Every solve
+runs `tries` independent anneals and `solve_best_with` keeps one — which is the right answer to the
+first question and cannot address the second. A model with a symmetry has several optima, and the
+alternatives are usually the interesting part: they are the slack a plan has.
+
+`Compiled::solve_all_with` keeps every try; `model::distinct_optima` reduces them to the distinct
+optimal assignments. Over the C ABI: `ft_model_answers`, `ft_model_optima(tol)` and
+`ft_model_select_optimum(i, tol)` — select one and read it back through the accessors that already
+exist, so there is one decode path and not two. Index 0 is the answer the solve returned, so
+selecting it puts the handle back. Bound in the header, Python (`Problem.optima()`), Zig
+(`optima`/`selectOptimum`) and Julia (`optima`), and reported in `docs/graph.html`:
+
+```
+3 distinct ways to do this, all at energy -5.0000:
+  1.  a=0  b=0  c=1
+  2.  a=0  b=1  c=0
+  3.  a=1  b=0  c=0
+  (found by 40 independent tries -- evidence that these exist, not a
+   proof there are no others. Raise the Solve node's tries to look harder.)
+```
+
+That last sentence is not decoration. Independent anneals prove the optima they landed on exist and
+say nothing about the ones they missed; a bare count reads as a census and is not one.
+
+**Distinctness is on the decoded values, never on the spins — and the obvious argument for that is
+wrong.** The obvious argument is that a compiled model carries slack and ancilla bits no variable
+reads, so counting states would report one answer as several. Enumerating `at most two of four`
+exactly says otherwise: eleven satisfying assignments, eleven minimum-energy states. **The penalty
+that makes the row hold also pins its slack**, so at the optimum there is nothing left floating. The
+test is named `counting_spin_states_would_over_count_the_optima` for the claim it refuted, and now
+asserts the equality — it is the control that catches an encoding gaining a redundant
+representation. The real reason to key on values is that the count must be a statement about the
+model, not about how the compiler chose to represent it.
+
+Every solve path fills the list, including `ft_model_solve`'s default ladder and `ft_model_solve_by`
+(one run, one answer) — a surface where the same question answers after one entry point and silently
+returns zero after another is worse than one where it does not exist. `ft_model_compile` clears both
+the answers and the solution: an optimum belongs to the model it was solved from.
+
 ## 0.34.0
 
 ### A sampler that returns more than one state, and an error bar that means what it says

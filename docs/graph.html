@@ -797,6 +797,39 @@ function runGraph() {
       txt += "\n  " + (hard ? "broken: " : "traded: ") + readTextIdx(W.ft_model_violation, m, i)
            + " (by " + W.ft_model_violation_amount(m, i) + ")";
     }
+    // HOW MANY WAYS ARE THERE TO DO THE JOB.
+    //
+    // Everything above answers "what should I do". A model with a symmetry has several answers and
+    // this editor could not say so: the solve ran `tries` independent anneals and kept one, and a
+    // modeller reading a single assignment has no way to tell a unique optimum from one of four.
+    // The alternatives are usually the interesting part -- they are the slack a plan has.
+    //
+    // Each is SELECTED and then read back through the same accessors the block above uses, so
+    // there is one decode path and not two. Selecting index 0 puts the handle back, which matters
+    // because everything printed above was read off it.
+    if (W.ft_model_optima) {
+      const nopt = W.ft_model_optima(m, 1e-9);
+      if (nopt > 1) {
+        txt += "\n\n" + nopt + " distinct ways to do this, all at energy "
+             + W.ft_model_energy(m).toFixed(4) + ":";
+        for (let i = 0; i < nopt; i++) {
+          if (!W.ft_model_select_optimum(m, i, 1e-9)) break;
+          const row = varNodes.map(n => {
+            const v = W.ft_model_value(m, idx.get(n.id));
+            return label(n) + "=" + (v === -9223372036854775808n || v === undefined ? "?" : v);
+          });
+          txt += "\n  " + (i + 1) + ".  " + row.join("  ");
+        }
+        W.ft_model_select_optimum(m, 0, 1e-9);
+        // Said in words, because a bare count reads as a census and is not one. Independent
+        // anneals prove the optima they landed on exist and say nothing about the ones they
+        // missed; more tries on the Solve node can only ever raise this number.
+        txt += "\n  (found by " + tries + " independent tries -- evidence that these exist, not a"
+             + "\n   proof there are no others. Raise the Solve node's tries to look harder.)";
+      } else if (nopt === 1 && tries > 1) {
+        txt += "\n\nonly one way found, in " + tries + " independent tries";
+      }
+    }
     // What the compiler wants the modeller to know about the model it just built: a binary
     // encoding whose size is not a power of two decodes some states to nothing, a counting
     // constraint with k=1 paid for a comparator it did not need, a constraint that constrains
