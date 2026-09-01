@@ -531,6 +531,25 @@ variable has no value at all.
 `P₁₆` spreads 5,640 qubits over indices 30 to 5,729, and a chain written in our dense indices would
 program different qubits on a real machine.
 
+### Sparsification, with the correctness property enumerated
+
+A model denser than the fabric has two routes onto it. `embed` **places** it onto one specific
+machine; `sparsify` **rewrites** it so no variable exceeds degree *d*, with no machine involved — a
+variable of degree *k* becomes *c* copies bound into a path by a strong coupling, its edges shared
+out and its bias split. The field names this as an open problem and the reference answer is one
+unmaintained MATLAB file.
+
+The copy count is `⌈(k−2)/(d−2)⌉` — character for character what `embed::site_lower_bound` derives
+for a chain, because it is the same port-counting argument from the other side. A test asserts the
+two agree.
+
+**Ground-state preservation is checked by enumeration, not argued.** The whole sparsified state
+space is enumerated and required to satisfy three things: every ground state has all copies
+agreeing, each projects onto a ground state of the original, and **every** ground state of the
+original is reached — the last being the one a rewrite can quietly fail while passing the first two.
+A companion test drops the copy coupling below the derived bound and requires the property to break,
+so the derivation is load-bearing rather than decorative.
+
 ### Fewer sequential barriers per sweep
 
 A chromatic sweep runs one pass per colour, so the colour count *is* the number of sequential

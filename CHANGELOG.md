@@ -31,6 +31,41 @@ New on the C ABI: `ft_pegasus_new`, `ft_zephyr_new`, `ft_qubit` (`0xFFFFFFFF`, n
 with no vendor numbering — 0 is a valid qubit). Bound in the header, Python (`ferrotherm.pegasus`,
 `ferrotherm.zephyr`, `Sim.qubit`), Zig and Julia.
 
+### COPY-gate sparsification, with the correctness property enumerated
+
+New module `sparsify`. A model denser than the fabric has two routes onto it and they are not the
+same thing: [`embed`] *places* it onto one specific machine, giving each variable a chain of physical
+sites; sparsification *rewrites the model* so no variable exceeds degree `d`, with no machine
+involved. A variable of degree `k` becomes `c` copies bound into a path by a strong ferromagnetic
+coupling, its edges shared out among them and its bias split evenly.
+
+The field names this as an open problem in exactly those terms — OPUSLab's answer is one MATLAB file
+from June 2025 and their repository named `SparsifyDenseGraph` is empty.
+
+**The copy count is the embedding bound, and that is not a coincidence.** A path of `c` copies offers
+`c(d−2) + 2` free ports, so a variable of degree `k` needs `c ≥ ⌈(k−2)/(d−2)⌉` — character for
+character what `embed::site_lower_bound` derives for a chain, because it is the same port-counting
+argument from the other side. A test asserts the two agree across every `(k, d)` in range.
+
+**Ground-state preservation is enumerated, not argued.** `copy_strength` returns `2 ×` the heaviest
+variable's total weight, from a derivation: flipping a contiguous block of copies repairs at least
+one broken copy edge, worth `2·W0`, while changing every logical term on that block by at most
+`2·W_v`, so any `W0 > W_v` makes disagreement strictly unprofitable. The test then enumerates the
+whole sparsified state space and requires that every ground state has all copies agreeing, that each
+projects onto a ground state of the original, **and that every ground state of the original is
+reached** — the third being the one a rewrite can quietly fail while satisfying the first two. A
+companion test drops `W0` to 0.01 and requires the property to FAIL, so the bound is doing work
+rather than decorating a test that would pass at any strength.
+
+`project` returns the logical state *and the list of variables whose copies disagreed*, because a
+broken copy set means the coupling lost and a majority vote is not an answer.
+
+**And the tests themselves needed the arithmetic.** At budget 3 the port count is `c + 2`, so copies
+grow like the degree and a 7-node glass sparsifies to 28 spins — 268 million states, enumerated
+twice. The first version of the falsification test did exactly that and hung. Both tests now check
+the sparsified size *before* enumerating anything, so a future case that blows past it fails in a
+second instead of running for a week.
+
 ### DSATUR, because the crate now has graphs greedy colours badly
 
 `graph`'s colouring note said DSATUR was left undone deliberately: *"this review did not locate a

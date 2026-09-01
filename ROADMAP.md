@@ -468,8 +468,23 @@ Pegasus's is sparse and a chain in our indices would program different qubits.
 `examples/embedding_tax` prices the generations in counts, never seconds: at `K₁₆` Chimera spends
 126 sites and an 18-qubit chain against Pegasus's 49 and 7 and Zephyr's 48 and 6.
 
-**3.1 COPY-gate sparsification** ported to Rust (exact, ground-state preserving, degree budget
-`ceil(max_deg/copies)+1`, bias split across copies) with **DSATUR** coloring as a first-class pass.
+**3.1 COPY-gate sparsification.** ✅ **DONE** — `src/sparsify.rs`, and **DSATUR** is in
+`graph::color_for`.
+
+Exact and ground-state preserving, with the property *enumerated* rather than argued: the whole
+sparsified state space is walked, and every ground state must have its copies agreeing, must project
+onto a ground state of the original, and every ground state of the original must be reached. A
+companion test drops the copy coupling below the derived bound and requires the property to fail.
+
+**The degree budget in the line above was wrong and the correction is the interesting part.** A path
+of `c` copies spends one coupling at each end and two in the middle, so it offers `c(d−2) + 2` ports
+and a variable of degree `k` needs `c ≥ ⌈(k−2)/(d−2)⌉` — not `⌈k/c⌉ + 1`. That is character for
+character `embed::site_lower_bound`'s per-variable term, because a chain of hardware sites and a path
+of logical copies are the same object seen from opposite ends. A test asserts the two agree.
+
+DSATUR was added the day the crate acquired a graph greedy colours badly: it saves a sweep pass on
+Zephyr (6 → 5) and on compiled counting constraints (4 → 3), ties on Pegasus where greedy already
+matches the clique bound, and is adopted only when it strictly wins.
 
 **3.2 2D adaptive parallel tempering over (β, W0)**, so nobody hand-tunes copy strength.
 *Why:* every sparsification introduces a penalty that must be tuned by hand. OPUSLab states the

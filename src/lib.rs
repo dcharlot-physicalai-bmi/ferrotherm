@@ -91,6 +91,7 @@ pub mod kernel;
 pub mod schedule;
 pub mod gibbs;
 pub mod samples;
+pub mod sparsify;
 pub mod ising;
 pub mod device;
 pub mod ledger;
