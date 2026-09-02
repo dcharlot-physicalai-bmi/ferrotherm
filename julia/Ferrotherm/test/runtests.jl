@@ -142,6 +142,35 @@ end
     close!(p)
 end
 
+@testset "a dense model can be rewritten to fit a degree budget" begin
+    # z1_grid is degree 16 in the interior; six is well under it.
+    dense = z1_grid(8, 8)
+    @test length(dense) == 64
+    @test logical_variables(dense) == 0
+
+    sparse = sparsify(dense, 6)
+    @test length(sparse) > length(dense)
+    @test logical_variables(sparse) == 64
+    @test sparsify_offset(sparse) > 0.0
+
+    # Every node belongs to exactly one variable: a partition, not a suggestion.
+    owned = zeros(Int, length(sparse))
+    for v in 1:64, n in copies(sparse, v)
+        owned[n] += 1
+    end
+    @test all(==(1), owned)
+    @test_throws BoundsError copies(sparse, 65)
+
+    anneal!(sparse, 0.05, 8.0; stages = 200, per = 40)
+    st, broken = project(sparse)
+    @test length(st) == 64
+    @test all(s -> s in (Int8(1), Int8(-1)), st)
+    @test broken == 0            # at the derived copy strength nothing comes apart
+
+    @test_throws ArgumentError sparsify(dense, 2)
+    close!(sparse); close!(dense)
+end
+
 @testset "the machines you can actually rent" begin
     # Chimera is retired. Until Pegasus and Zephyr existed this library could target only a machine
     # nobody can hire. P16 is the Advantage; Z15 is the Advantage2.

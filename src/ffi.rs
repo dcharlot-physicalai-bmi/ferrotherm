@@ -83,6 +83,10 @@ pub struct Sim {
     /// The vendor's linear qubit index per node, for a simulation built on a real device topology.
     /// Empty for every graph that has no such numbering. See [`ft_qubit`].
     qubits: Vec<u32>,
+    /// For a simulation produced by [`ft_sparsify`]: which nodes represent each logical variable,
+    /// and the constant that turns a sparse energy back into a logical one. Empty otherwise.
+    copies: Vec<Vec<u32>>,
+    sparsify_offset: f64,
 }
 
 impl Sim {
@@ -91,7 +95,7 @@ impl Sim {
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
         Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None, qubits: Vec::new() }))
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None, qubits: Vec::new(), copies: Vec::new(), sparsify_offset: 0.0 }))
     }
 
     /// As [`Sim::new`], keeping the device topology's own qubit numbering. See [`ft_qubit`].
@@ -287,6 +291,174 @@ mod topology_ffi_tests {
         }
         assert!(ft_zephyr_new(0, 4, 1.0, 0.5, 1).is_null());
         assert!(ft_zephyr_new(4, 0, 1.0, 0.5, 1).is_null());
+    }
+}
+
+/// Rewrite this simulation's model so no variable exceeds `budget` neighbours, and return the
+/// rewritten one.
+///
+/// A model denser than a fabric has two routes onto it. Minor embedding PLACES it onto one specific
+/// machine; this REWRITES it, with no machine involved, by splitting each heavy variable into copies
+/// bound by a strong coupling. The result is a larger, sparser model with the same ground states,
+/// and any degree-`budget` fabric can take it.
+///
+/// The other route is **not on this ABI**: [`crate::embed`] is Rust-only, so a caller here cannot
+/// compare the two and has to take the measurement on trust. That gap is real and worth stating
+/// where someone would look for the missing function rather than leaving them to grep for it.
+///
+/// The original simulation is untouched and still owned by the caller. The returned one must be
+/// freed with [`ft_free`] like any other.
+///
+/// NULL for a null handle or a budget below 3 — a path of copies spends one coupling at each end
+/// and two in the middle, so it offers `c(d-2)+2` ports and that does not grow with `c` below 3.
+///
+/// Read the result back with [`ft_sparsify_project`], which reports which variables' copies
+/// disagreed, and price it with [`ft_sparsify_offset`].
+#[no_mangle]
+pub extern "C" fn ft_sparsify(sim: *const Sim, budget: u32) -> *mut Sim {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return core::ptr::null_mut() };
+    let Ok(sp) = crate::sparsify::sparsify(&s.graph, budget as usize) else {
+        return core::ptr::null_mut();
+    };
+    let (copies, offset) = (sp.copies, sp.offset);
+    let p = Sim::new(sp.graph, s.beta, s.seed);
+    // SAFETY: `Sim::new` just handed back a live, uniquely-owned allocation.
+    unsafe {
+        (*p).copies = copies;
+        (*p).sparsify_offset = offset;
+    }
+    p
+}
+
+/// Logical variables a sparsified simulation stands for, or 0 if it was not produced by
+/// [`ft_sparsify`].
+#[no_mangle]
+pub extern "C" fn ft_sparsify_variables(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }.map_or(0, |s| s.copies.len() as u32)
+}
+
+/// Copy the nodes representing logical variable `v` into `out`. Returns how many were written, or
+/// the count needed when `out` is NULL.
+#[no_mangle]
+pub extern "C" fn ft_sparsify_copies(sim: *const Sim, v: u32, out: *mut u32, cap: u32) -> u32 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+    let Some(set) = s.copies.get(v as usize) else { return 0 };
+    if out.is_null() {
+        return set.len() as u32;
+    }
+    let n = set.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(set.as_ptr(), out, n) };
+    n as u32
+}
+
+/// `E_logical = E_sparse + offset` when every copy set agrees. 0 for a simulation that was not
+/// sparsified.
+///
+/// The copy couplings contribute the same constant in every agreeing state, so they order answers
+/// identically and shift every energy by this amount. Reporting a sparsified energy without it
+/// compares a number from one model against a number from another.
+#[no_mangle]
+pub extern "C" fn ft_sparsify_offset(sim: *const Sim) -> f64 {
+    unsafe { sim.as_ref() }.map_or(0.0, |s| s.sparsify_offset)
+}
+
+/// Read the current state back as a LOGICAL one. Returns the number of variables whose copies
+/// disagreed, and `0xFFFFFFFF` on a null handle or a buffer too small.
+///
+/// A variable whose copies disagree has not been assigned a value; the majority is written so the
+/// caller still has a complete state to look at, and the count says how much of it to distrust. A
+/// non-zero return means the copy coupling lost, and reading the state as an answer without
+/// checking it is reading a majority vote as though it were one.
+#[no_mangle]
+pub extern "C" fn ft_sparsify_project(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return u32::MAX };
+    if s.copies.is_empty() || out.is_null() || (cap as usize) < s.copies.len() {
+        return u32::MAX;
+    }
+    let mut broken = 0u32;
+    for (v, set) in s.copies.iter().enumerate() {
+        let up = set.iter().filter(|&&n| s.sampler_state[n as usize] > 0).count();
+        if up != 0 && up != set.len() {
+            broken += 1;
+        }
+        unsafe { *out.add(v) = if up * 2 >= set.len() { 1 } else { -1 } };
+    }
+    broken
+}
+
+#[cfg(test)]
+mod sparsify_ffi_tests {
+    use super::*;
+
+    /// Rewriting a model across the boundary, and reading it back as the model it stands for.
+    #[test]
+    fn a_dense_model_crosses_the_abi_and_comes_back_logical() {
+        // A 12-node clique: degree 11, well past the budget below.
+        let b = ft_builder_new(12);
+        for i in 0..12u32 {
+            for j in (i + 1)..12 {
+                ft_builder_couple(b, i, j, 1.0);
+            }
+        }
+        let dense = ft_builder_build(b, 0.5, 7);
+        assert_eq!(ft_len(dense), 12);
+        assert_eq!(ft_sparsify_variables(dense), 0, "a model nobody sparsified has no copy map");
+        assert_eq!(ft_sparsify_offset(dense), 0.0);
+
+        let sparse = ft_sparsify(dense, 4);
+        assert!(!sparse.is_null());
+        assert!(ft_len(sparse) > 12, "splitting adds nodes");
+        assert_eq!(ft_sparsify_variables(sparse), 12, "one entry per logical variable");
+        assert!(ft_sparsify_offset(sparse) > 0.0, "copy couplings cost a constant");
+
+        // The copy sets partition the sparsified nodes: every node belongs to exactly one variable.
+        let mut owned = vec![0u32; ft_len(sparse) as usize];
+        let mut total = 0usize;
+        for v in 0..12u32 {
+            let need = ft_sparsify_copies(sparse, v, core::ptr::null_mut(), 0);
+            assert!(need >= 1, "variable {v} has at least one copy");
+            let mut buf = vec![0u32; need as usize];
+            assert_eq!(ft_sparsify_copies(sparse, v, buf.as_mut_ptr(), need), need);
+            for n in buf {
+                owned[n as usize] += 1;
+            }
+            total += need as usize;
+        }
+        assert_eq!(total, ft_len(sparse) as usize);
+        assert!(owned.iter().all(|&c| c == 1), "every node belongs to exactly one variable");
+        assert_eq!(ft_sparsify_copies(sparse, 12, core::ptr::null_mut(), 0), 0, "no variable 12");
+
+        // Anneal it cold, then read it back as twelve logical spins.
+        ft_anneal(sparse, 0.05, 8.0, 200, 40);
+        let mut logical = vec![0i8; 12];
+        let broken = ft_sparsify_project(sparse, logical.as_mut_ptr(), 12);
+        assert!(broken != u32::MAX, "a real answer, not a refusal");
+        assert!(logical.iter().all(|&s| s == 1 || s == -1));
+        // Annealed at the derived copy strength, nothing should have come apart.
+        assert_eq!(broken, 0, "{broken} of 12 variables had their copies disagree");
+
+        // A buffer too small is refused rather than written past.
+        assert_eq!(ft_sparsify_project(sparse, logical.as_mut_ptr(), 11), u32::MAX);
+        assert_eq!(ft_sparsify_project(dense, logical.as_mut_ptr(), 12), u32::MAX,
+                   "a model that was never sparsified has no logical state to project to");
+        ft_free(sparse);
+        ft_free(dense);
+    }
+
+    #[test]
+    fn a_budget_that_cannot_work_is_null_rather_than_a_wrong_model() {
+        let s = ft_ising2d_new(4, 1.0, 0.5, 1);
+        for budget in [0u32, 1, 2] {
+            assert!(ft_sparsify(s, budget).is_null(), "budget {budget} cannot be met by splitting");
+        }
+        assert!(ft_sparsify(core::ptr::null(), 4).is_null());
+        // A lattice already fits a budget of 4, so this is the identity and still valid.
+        let same = ft_sparsify(s, 4);
+        assert!(!same.is_null());
+        assert_eq!(ft_len(same), ft_len(s));
+        assert_eq!(ft_sparsify_offset(same), 0.0, "no copy edges to pay for");
+        ft_free(same);
+        ft_free(s);
     }
 }
 

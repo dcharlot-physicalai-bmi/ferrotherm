@@ -66,6 +66,64 @@ twice. The first version of the falsification test did exactly that and hung. Bo
 the sparsified size *before* enumerating anything, so a future case that blows past it fails in a
 second instead of running for a week.
 
+### The crossover, published — and sparsification loses
+
+`examples/sparsify_vs_embed.rs` answers the question the ROADMAP set as Phase 3.3: *at what N does
+dense-all-to-all beat sparsify-plus-embed?* **Nowhere.** Sites and longest chain, both counts:
+
+```text
+=== Pegasus P16: 5640 sites, degree 15
+  K_n       direct sites     direct longest       sparse sites     sparse longest
+    8                 12                  2                 12                  2
+   16                 49                  7                 49                  7
+   24                130                 14                758                 55
+   32                237                 16          not found          not found
+
+=== Zephyr Z15: 7440 sites, degree 20
+   16                 48                  6                 48                  6
+   24                 94                  9          not found          not found
+   32                161                 11          not found          not found
+```
+
+Where sparsification changes anything at all it loses, and not narrowly: `K₂₄` on Pegasus costs 130
+sites and a 14-site chain placed directly, against **758 sites and a 55-site run** through
+sparsification — 5.8× the qubits and 3.9× the length of the thing that has to agree. At `K₃₂` the
+sparsified model does not embed at all within the same budget while the direct route places it in
+237 sites.
+
+**The rows that tie are ties for a reason**, said out loud rather than left to look like the columns
+are wired together: up to `K₁₆` the model already fits the machine's degree — Pegasus is degree 15
+and `K₁₆` has degree 15 — so `sparsify` returns it unchanged and the two routes are one route. The
+measurement only begins at `K₂₄`.
+
+**Why it loses: it is the same tax paid twice.** Sparsification picks a variable's copies *before*
+the machine is looked at, using only the degree budget; the embedder must then give every one of
+those copies its own chain. The copies are a worse decomposition than a placer with the whole graph
+in front of it would choose, and the chains are built on top of that choice rather than instead of
+it.
+
+So the honest recommendation is the opposite of what a paper introducing a sparsifier would be
+expected to conclude: **where a placer exists, place.** The routine is for a fabric with a fixed
+sparse topology and no placer at all — a p-bit array, a physics ASIC with a wired lattice — where
+there is no direct route and the question is not which is cheaper but whether the model runs.
+
+### Sparsification reaches every surface
+
+`ft_sparsify`, `ft_sparsify_variables`, `ft_sparsify_copies`, `ft_sparsify_offset` and
+`ft_sparsify_project` — bound in the header, Python (`Sim.sparsify`, `.copies`, `.project`), Zig and
+Julia. 194 C ABI symbols across four surfaces, parity green.
+
+`ft_sparsify_project` returns **how many variables broke**, and `0xFFFFFFFF` — not 0, which is a
+valid count — for a model that was never sparsified or a buffer too small.
+
+**Gap found while writing those docs and written down rather than papered over:** the *other* route
+is not on this ABI at all. `embed` is Rust-only, so a C, Python, Zig or Julia caller can sparsify but
+cannot minor-embed, and cannot run the comparison above for themselves — they have to take it on
+trust. `ft_sparsify`'s documentation says so, at the place someone would look for the missing
+function. (It surfaced as a broken rustdoc link: I wrote `[ft_embed]` and there is no such symbol.) A variable whose copies
+disagree has not been assigned a value; the majority is written so there is still a complete state,
+and the count says how much of it to distrust.
+
 ### DSATUR, because the crate now has graphs greedy colours badly
 
 `graph`'s colouring note said DSATUR was left undone deliberately: *"this review did not locate a

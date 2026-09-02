@@ -550,6 +550,27 @@ original is reached — the last being the one a rewrite can quietly fail while 
 A companion test drops the copy coupling below the derived bound and requires the property to break,
 so the derivation is load-bearing rather than decorative.
 
+### The crossover, and sparsification loses
+
+*At what N does sparsify-plus-embed beat placing the model directly?* **Nowhere.**
+`examples/sparsify_vs_embed` measures it in counts on both machines:
+
+```text
+=== Pegasus P16: 5640 sites, degree 15
+  K_n       direct sites     direct longest       sparse sites     sparse longest
+   16                 49                  7                 49                  7
+   24                130                 14                758                 55
+   32                237                 16          not found          not found
+```
+
+`K₂₄` costs 130 sites and a 14-site chain placed directly, against 758 sites and a 55-site run
+through sparsification. It is the same tax paid twice — copies are chosen before the machine is
+looked at, and the embedder then chains every one of them. The rows that tie do so because the model
+already fits the machine's degree and `sparsify` returns it unchanged.
+
+**Where a placer exists, place.** Sparsification is for a fabric with a fixed sparse topology and no
+placer at all, where the question is not which is cheaper but whether the model runs.
+
 ### Fewer sequential barriers per sweep
 
 A chromatic sweep runs one pass per colour, so the colour count *is* the number of sequential

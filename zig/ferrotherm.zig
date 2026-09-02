@@ -136,6 +136,55 @@ pub const Sim = struct {
         return .{ .h = c.ft_zephyr_new(m, t, j, beta, seed) orelse return Error.OutOfMemory };
     }
 
+    /// Rewrite this model so no variable exceeds `budget` neighbours, and return the rewritten one.
+    ///
+    /// A model denser than a fabric has two routes onto it: embedding PLACES it onto one specific
+    /// machine, and this REWRITES it -- splitting each heavy variable into copies bound by a strong
+    /// coupling -- so any degree-`budget` fabric can take it, with no machine involved. The
+    /// original is untouched; the result must be `deinit`ed like any other.
+    ///
+    /// MEASURED, AND THE ANSWER IS A NEGATIVE ONE: where a placer exists, place. `K_24` onto a
+    /// Pegasus P16 costs 130 sites and a 14-site chain placed directly, against 758 sites and a
+    /// 55-site run through sparsification -- the same tax paid twice, because copies are chosen
+    /// before the machine is looked at and each is then chained anyway. This is for a fabric with
+    /// a fixed sparse topology and NO placer, where there is no direct route at all.
+    ///
+    /// Refuses a budget below 3: a path of copies offers c(d-2)+2 ports, which does not grow with
+    /// c below 3.
+    pub fn sparsify(self: Sim, budget: u32) Error!Sim {
+        return .{ .h = c.ft_sparsify(self.h, budget) orelse return Error.OutOfMemory };
+    }
+
+    /// Logical variables a sparsified model stands for, or 0 if it was not produced by `sparsify`.
+    pub fn logicalVariables(self: Sim) u32 {
+        return c.ft_sparsify_variables(self.h);
+    }
+
+    /// The nodes representing logical variable `v`, written into `out`.
+    pub fn copies(self: Sim, v: u32, out: []u32) []const u32 {
+        const n = c.ft_sparsify_copies(self.h, v, out.ptr, @intCast(out.len));
+        return out[0..n];
+    }
+
+    /// `E_logical = E_sparse + offset` when every copy set agrees.
+    ///
+    /// The copy couplings contribute the same constant in every agreeing state, so reporting a
+    /// sparsified energy without this compares a number from one model against one from another.
+    pub fn sparsifyOffset(self: Sim) f64 {
+        return c.ft_sparsify_offset(self.h);
+    }
+
+    /// Read the current state back as a LOGICAL one, returning how many variables BROKE.
+    ///
+    /// A variable whose copies disagree has not been assigned a value. The majority is written so
+    /// there is still a complete state, and the count says how much of it to distrust: non-zero
+    /// means the copy coupling lost.
+    pub fn project(self: Sim, out: []i8) Error!u32 {
+        const broken = c.ft_sparsify_project(self.h, out.ptr, @intCast(out.len));
+        if (broken == std.math.maxInt(u32)) return Error.NotSolved;
+        return broken;
+    }
+
     /// The VENDOR's linear qubit index for node `i`, or null where this graph has no such numbering.
     ///
     /// Two numbering systems meet here. Everything in this library indexes `0..n` densely; Pegasus
@@ -578,6 +627,45 @@ test "an answer is scored in the modeller's own units" {
     try std.testing.expect(p.feasible());
     // And it is NOT the compiled energy, which is the only number this used to hand back.
     try std.testing.expect(obj != p.energy());
+}
+
+test "a dense model can be rewritten to fit a degree budget" {
+    // z1_grid is degree 16 in the interior; six is well under it.
+    const dense = try Sim.z1Grid(8, 8, 1.0, 0.0, 0.5, 3);
+    defer dense.deinit();
+    try std.testing.expectEqual(@as(u32, 64), dense.len());
+    try std.testing.expectEqual(@as(u32, 0), dense.logicalVariables());
+
+    const sparse = try dense.sparsify(6);
+    defer sparse.deinit();
+    try std.testing.expect(sparse.len() > dense.len());
+    try std.testing.expectEqual(@as(u32, 64), sparse.logicalVariables());
+    try std.testing.expect(sparse.sparsifyOffset() > 0.0);
+
+    // A centre node needs several copies; a corner may need one. Either way every node belongs to
+    // exactly one variable, which is what makes the map a partition rather than a suggestion.
+    var owned = [_]u8{0} ** 256;
+    var buf: [32]u32 = undefined;
+    var v: u32 = 0;
+    var total: usize = 0;
+    while (v < 64) : (v += 1) {
+        const set = sparse.copies(v, &buf);
+        try std.testing.expect(set.len >= 1);
+        for (set) |n| owned[n] += 1;
+        total += set.len;
+    }
+    try std.testing.expectEqual(@as(usize, sparse.len()), total);
+    for (owned[0..sparse.len()]) |c_| try std.testing.expectEqual(@as(u8, 1), c_);
+
+    // Anneal it cold and read it back as sixty-four logical spins, none of them broken.
+    _ = try sparse.anneal(0.05, 8.0, 200, 40);
+    var logical: [64]i8 = undefined;
+    const broken = try sparse.project(&logical);
+    try std.testing.expectEqual(@as(u32, 0), broken);
+    for (logical) |s| try std.testing.expect(s == 1 or s == -1);
+
+    // A budget no splitting can meet is an error, not a wrong model.
+    try std.testing.expectError(error.OutOfMemory, dense.sparsify(2));
 }
 
 test "the machines you can actually rent" {

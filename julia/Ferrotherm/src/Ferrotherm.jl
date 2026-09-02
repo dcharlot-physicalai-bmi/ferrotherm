@@ -57,6 +57,7 @@ export hubo, add!, anneal!, delta, terms, max_arity, ancillas_avoided, proposals
 export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
+export sparsify, logical_variables, copies, sparsify_offset, project
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -223,6 +224,11 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_pegasus_new SimPtr Cuint Cdouble Cdouble Culonglong
 @cfn ft_zephyr_new SimPtr Cuint Cuint Cdouble Cdouble Culonglong
 @cfn ft_qubit Cuint SimPtr Cuint
+@cfn ft_sparsify SimPtr SimPtr Cuint
+@cfn ft_sparsify_variables Cuint SimPtr
+@cfn ft_sparsify_copies Cuint SimPtr Cuint Ptr{Cuint} Cuint
+@cfn ft_sparsify_offset Cdouble SimPtr
+@cfn ft_sparsify_project Cuint SimPtr Ptr{Int8} Cuint
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -540,6 +546,71 @@ function qubit(s::Simulation, i::Integer)
     _live(s)
     q = ft_qubit(s.handle, Cuint(i - 1))
     q == typemax(Cuint) ? nothing : Int(q)
+end
+
+"""
+    sparsify(s, budget)
+
+Rewrite this model so no variable has more than `budget` neighbours.
+
+A model denser than a fabric has two routes onto it: **embedding** places it onto one specific
+machine, and **sparsification** rewrites it -- splitting each heavy variable into copies bound by a
+strong coupling -- so any degree-`budget` fabric can take it, with no machine involved.
+
+**Measured, and the answer is a negative one: where a placer exists, place.** `K_24` onto a Pegasus
+P16 costs 130 sites and a 14-site chain placed directly, against 758 sites and a 55-site run through
+sparsification -- the same tax paid twice, because copies are chosen before the machine is looked at
+and each is then chained anyway. This is for a fabric with a fixed sparse topology and *no* placer,
+where there is no direct route at all.
+
+The original is untouched. Refuses a budget below 3: a path of copies offers `c(d-2)+2` ports, which
+does not grow with `c` below 3.
+"""
+function sparsify(s::Simulation, budget::Integer)
+    _live(s)
+    budget >= 3 || throw(ArgumentError(
+        "a degree budget of $budget cannot be met by splitting: a path of copies offers " *
+        "c(d-2)+2 ports and that is not increasing in c below d = 3"))
+    Simulation(ft_sparsify(s.handle, Cuint(budget)), "the sparsified model")
+end
+
+"""Logical variables a sparsified model stands for, or 0 if it was not produced by
+[`sparsify`](@ref)."""
+logical_variables(s::Simulation) = (_live(s); Int(ft_sparsify_variables(s.handle)))
+
+"""The nodes representing logical variable `v`, one-based."""
+function copies(s::Simulation, v::Integer)
+    _live(s)
+    need = ft_sparsify_copies(s.handle, Cuint(v - 1), Ptr{Cuint}(C_NULL), Cuint(0))
+    need == 0 && throw(BoundsError(s, v))
+    buf = Vector{Cuint}(undef, need)
+    got = ft_sparsify_copies(s.handle, Cuint(v - 1), pointer(buf), Cuint(need))
+    Int.(buf[1:got]) .+ 1
+end
+
+"""`E_logical = E_sparse + offset` when every copy set agrees.
+
+The copy couplings contribute the same constant in every agreeing state, so reporting a sparsified
+energy without this compares a number from one model against a number from another."""
+sparsify_offset(s::Simulation) = (_live(s); ft_sparsify_offset(s.handle))
+
+"""
+    project(s) -> (Vector{Int8}, Int)
+
+Read the current state back as a logical one, with the count of variables that **broke**.
+
+A variable whose copies disagree has not been assigned a value; the majority is returned so there is
+still a complete state to look at, and the count says how much of it to distrust. Non-zero means the
+copy coupling lost.
+"""
+function project(s::Simulation)
+    _live(s)
+    n = logical_variables(s)
+    n == 0 && error("this model was not produced by sparsify(), so it has no logical state")
+    buf = Vector{Int8}(undef, n)
+    broken = ft_sparsify_project(s.handle, pointer(buf), Cuint(n))
+    broken == typemax(Cuint) && error("could not project this state")
+    (buf, Int(broken))
 end
 
 """A periodic chain of `n` nodes."""

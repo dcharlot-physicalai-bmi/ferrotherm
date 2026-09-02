@@ -309,6 +309,9 @@ class Sim:
     def collect(self, draws: int = 512, thin: int = 1, burn_in: int = 0) -> 'SampleSet':
         """Draw states and keep them."""
         ...
+    def copies(self, v: int) -> 'list[int]':
+        """The nodes representing logical variable ``v``."""
+        ...
     @property
     def energy(self) -> float:
         ...
@@ -360,6 +363,10 @@ class Sim:
         """Mean log-likelihood per row under this model, **exact**, by enumeration."""
         ...
     @property
+    def logical_variables(self) -> int:
+        """Logical variables this model stands for, or 0 if it was not produced by :meth:`sparsify`."""
+        ...
+    @property
     def magnetization(self) -> float:
         ...
     @property
@@ -372,11 +379,21 @@ class Sim:
     def population_anneal(self, population: int = 1000, sweeps: int = 4, beta_max: float = 6.0, stages: int = 100) -> 'PopulationRun':
         """Population annealing: ``population`` chains down one ladder, resampled at each rung."""
         ...
+    def project(self) -> 'tuple[list[int], int]':
+        """Read the current state back as a logical one, with the count of variables that BROKE."""
+        ...
     def quantum_anneal(self, trotter: int = 4, beta: float = 10.0, gamma_max: float = 3.0, gamma_min: float = 0.05, steps: int = 200) -> float:
         """Simulated quantum annealing: path-integral Monte Carlo, not a quantum computer."""
         ...
     def qubit(self, i: int) -> 'int | None':
         """The **vendor's** linear qubit index for node ``i``, or ``None`` if this graph has none."""
+        ...
+    def sparsify(self, budget: int) -> 'Sim':
+        """Rewrite this model so no variable has more than ``budget`` neighbours."""
+        ...
+    @property
+    def sparsify_offset(self) -> float:
+        """``E_logical = E_sparse + offset`` when every copy set agrees."""
         ...
     @property
     def spins(self) -> list[int]:

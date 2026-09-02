@@ -67,6 +67,46 @@ ft_sim *ft_zephyr_new(uint32_t m, uint32_t t, double j, double beta, uint64_t se
  * 0xFFFFFFFF rather than 0, because 0 is a valid qubit. */
 uint32_t ft_qubit(const ft_sim *sim, uint32_t i);
 
+/* ---- sparsification -------------------------------------------------------------------------------
+
+   A model denser than a fabric has two routes onto it. Embedding PLACES it onto one specific
+   machine. Sparsification REWRITES it -- splitting each heavy variable into copies bound by a strong
+   coupling -- so that any degree-`budget` fabric can take it, with no machine involved.
+
+   MEASURED, AND THE ANSWER IS A NEGATIVE ONE: where a placer exists, place. See
+   examples/sparsify_vs_embed.rs -- K_24 onto a Pegasus P16 costs 130 sites and a 14-site chain
+   placed directly, against 758 sites and a 55-site run through sparsification. It is the same tax
+   paid twice: copies are chosen before the machine is looked at, and each is then chained anyway.
+   This exists for a fabric with a fixed sparse topology and NO placer, where there is no direct
+   route and the question is whether the model runs at all. */
+
+/* Rewrite `sim`'s model so no variable exceeds `budget` neighbours; the original is untouched and
+ * the result must be freed with ft_free. NULL on NULL, or on a budget below 3 -- a path of copies
+ * offers c(d-2)+2 ports and that does not grow with c below 3. */
+ft_sim *ft_sparsify(const ft_sim *sim, uint32_t budget);
+
+/* Logical variables a sparsified simulation stands for, or 0 if it was not produced by
+ * ft_sparsify. */
+uint32_t ft_sparsify_variables(const ft_sim *sim);
+
+/* Copy the nodes representing logical variable `v` into `out`; returns entries written, or the
+ * count needed when `out` is NULL. */
+uint32_t ft_sparsify_copies(const ft_sim *sim, uint32_t v, uint32_t *out, uint32_t cap);
+
+/* E_logical = E_sparse + offset when every copy set agrees. The copy couplings contribute the same
+ * constant in every agreeing state, so reporting a sparsified energy without this compares a number
+ * from one model against a number from another. */
+double ft_sparsify_offset(const ft_sim *sim);
+
+/* Read the current state back as a LOGICAL one. Returns how many variables had their copies
+ * DISAGREE, or 0xFFFFFFFF on NULL, on a model that was never sparsified, or on a buffer too small.
+ *
+ * A variable whose copies disagree has not been assigned a value. The majority is written so the
+ * caller still has a complete state, and the count says how much of it to distrust: non-zero means
+ * the copy coupling lost, and reading the state without checking is reading a majority vote as
+ * though it were an answer. */
+uint32_t ft_sparsify_project(const ft_sim *sim, int8_t *out, uint32_t cap);
+
 /* ---- models you define ----------------------------------------------------------------------- */
 
 /* New builder over `n` nodes, or NULL if n is 0. Consume with ft_builder_build, or release with

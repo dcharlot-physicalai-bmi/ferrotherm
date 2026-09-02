@@ -487,16 +487,35 @@ Zephyr (6 → 5) and on compiled counting constraints (4 → 3), ties on Pegasus
 matches the clique bound, and is adopted only when it strictly wins.
 
 **3.2 2D adaptive parallel tempering over (β, W0)**, so nobody hand-tunes copy strength.
+*Partly answered another way:* `sparsify::copy_strength` derives a sufficient `W0` from the model's
+own weights rather than tuning one, and the derivation is checked by enumeration — every ground
+state of the sparsified model has its copies agreeing, and dropping `W0` below the bound breaks that.
+Adaptive tempering would find a SMALLER working `W0` than the derivation's; whether that is worth
+having is now a question about the margin rather than about correctness.
 *Why:* every sparsification introduces a penalty that must be tuned by hand. OPUSLab states the
 problem in exactly those terms; their answer is one MATLAB file from June 2025 with no adoption, and
 their repo literally named `SparsifyDenseGraph` is empty.
 **Accept:** across the planted-instance suite, adaptive tempering matches or beats the best
 hand-tuned `W0`, with copy-agreement certified at readout.
 
-**3.3 Publish the crossover.** At what `N` does dense-all-to-all beat sparsify-plus-embed?
-*Why:* pc-COP runs 2048 fully-connected p-bits with zero embedding tax; the physics-ASIC
-prescription is dense-within-tile, sparse-between-tile. Nobody has measured where the line is.
-Publishing that crossover honestly is worth more than any speedup claim we could make.
+**3.3 Publish the crossover.** ✅ **DONE, and the answer is NO CROSSOVER** —
+`examples/sparsify_vs_embed.rs`.
+
+At what `N` does sparsify-plus-embed beat placing the model directly? **Nowhere, on either machine.**
+`K₂₄` onto a Pegasus P16 costs 130 sites and a 14-site chain placed directly, against 758 sites and a
+55-site run through sparsification — 5.8× the qubits and 3.9× the length of the thing that has to
+agree. At `K₃₂` the sparsified model does not embed at all while the direct route places it in 237.
+Below `K₂₄` the model already fits the machine's degree, so `sparsify` returns it unchanged and the
+two routes are one route.
+
+It is the same tax paid twice: copies are chosen before the machine is looked at, and the embedder
+then chains every one of them. So **where a placer exists, place** — and sparsification is for a
+fabric with a fixed sparse topology and no placer at all, where the question is not which is cheaper
+but whether the model runs.
+
+That is the opposite of what a paper introducing a sparsifier would conclude, which is why it was
+worth measuring rather than assuming. *Still unmeasured:* the pc-COP comparison — 2048 fully
+connected p-bits with zero embedding tax — needs a dense fabric this crate does not model yet.
 
 ### Phase 4 — Surfaces
 

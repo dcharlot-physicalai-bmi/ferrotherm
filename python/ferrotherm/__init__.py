@@ -133,6 +133,11 @@ _z1_new = _sig("ft_z1_new", _p, [c_uint32, c_uint32, c_double, c_double, c_doubl
 _pegasus_new = _sig("ft_pegasus_new", _p, [c_uint32, c_double, c_double, c_uint64])
 _zephyr_new = _sig("ft_zephyr_new", _p, [c_uint32, c_uint32, c_double, c_double, c_uint64])
 _qubit = _sig("ft_qubit", c_uint32, [_p, c_uint32])
+_sparsify = _sig("ft_sparsify", _p, [_p, c_uint32])
+_sparsify_variables = _sig("ft_sparsify_variables", c_uint32, [_p])
+_sparsify_copies = _sig("ft_sparsify_copies", c_uint32, [_p, c_uint32, POINTER(c_uint32), c_uint32])
+_sparsify_offset = _sig("ft_sparsify_offset", c_double, [_p])
+_sparsify_project = _sig("ft_sparsify_project", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
 _builder_bias = _sig("ft_builder_bias", c_uint32, [_p, c_uint32, c_double])
@@ -998,6 +1003,84 @@ is how a dropped GPU dispatch turns into a believable energy.
         """Node updates charged to the ledger so far."""
         self._live()
         return int(_ledger_updates(self._h))
+
+    def sparsify(self, budget: int) -> "Sim":
+        """Rewrite this model so no variable has more than ``budget`` neighbours.
+
+        A model denser than a fabric has two routes onto it: **embedding** places it onto one
+        specific machine, and **sparsification** rewrites it — splitting each heavy variable into
+        copies bound by a strong coupling — so any degree-``budget`` fabric can take it, with no
+        machine involved.
+
+        >>> dense = z1_grid(8, 8)          # degree 16 in the interior
+        >>> sparse = dense.sparsify(6)
+        >>> len(dense), len(sparse)
+        (64, 148)
+        >>> sparse.logical_variables
+        64
+        >>> len(sparse.copies(27))         # a centre node needs three
+        3
+
+        **Measured, and the answer is a negative one: where a placer exists, place.** `K_24` onto a
+        Pegasus P16 costs 130 sites and a 14-site chain placed directly, against 758 sites and a
+        55-site run through sparsification — the same tax paid twice, because copies are chosen
+        before the machine is looked at and each is then chained anyway. This is for a fabric with a
+        fixed sparse topology and *no* placer, where there is no direct route at all.
+
+        The original is untouched. Raises for a budget below 3: a path of copies offers
+        ``c(d-2)+2`` ports, which does not grow with ``c`` below 3.
+        """
+        self._live()
+        if budget < 3:
+            raise ValueError(
+                f"a degree budget of {budget} cannot be met by splitting: a path of copies offers "
+                "c(d-2)+2 ports and that is not increasing in c below d = 3"
+            )
+        return _wrap(_sparsify(self._h, int(budget)), self._beta, "the sparsified model")
+
+    @property
+    def logical_variables(self) -> int:
+        """Logical variables this model stands for, or 0 if it was not produced by :meth:`sparsify`."""
+        self._live()
+        return int(_sparsify_variables(self._h))
+
+    def copies(self, v: int) -> "list[int]":
+        """The nodes representing logical variable ``v``."""
+        self._live()
+        need = int(_sparsify_copies(self._h, int(v), None, 0))
+        if need == 0:
+            raise IndexError(f"no logical variable {v}; this model has {self.logical_variables}")
+        buf = (c_uint32 * need)()
+        got = _sparsify_copies(self._h, int(v), buf, need)
+        return [int(x) for x in buf[:got]]
+
+    @property
+    def sparsify_offset(self) -> float:
+        """``E_logical = E_sparse + offset`` when every copy set agrees.
+
+        The copy couplings contribute the same constant in every agreeing state, so reporting a
+        sparsified energy without this compares a number from one model against a number from
+        another.
+        """
+        self._live()
+        return float(_sparsify_offset(self._h))
+
+    def project(self) -> "tuple[list[int], int]":
+        """Read the current state back as a logical one, with the count of variables that BROKE.
+
+        A variable whose copies disagree has not been assigned a value; the majority is returned so
+        there is still a complete state to look at, and the count says how much of it to distrust.
+        Non-zero means the copy coupling lost.
+        """
+        self._live()
+        n = self.logical_variables
+        if n == 0:
+            raise ValueError("this model was not produced by sparsify(), so it has no logical state")
+        buf = (c_int8 * n)()
+        broken = int(_sparsify_project(self._h, buf, n))
+        if broken == 0xFFFFFFFF:
+            raise RuntimeError("could not project this state")
+        return ([int(x) for x in buf], broken)
 
     def qubit(self, i: int) -> "int | None":
         """The **vendor's** linear qubit index for node ``i``, or ``None`` if this graph has none.
