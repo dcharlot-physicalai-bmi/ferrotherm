@@ -442,3 +442,47 @@ mod tests {
         assert_eq!(s.graph.n_edges, g.n_edges);
     }
 }
+
+// ---- machine-checked theorems ---------------------------------------------------------------------
+//
+// These are PROOFS, not tests: `cargo kani` explores every value in the stated ranges by bounded
+// model checking, so a pass is exhaustive over the domain rather than a sample of it. They compile
+// only under the Kani toolchain (`cfg(kani)`), so the crate's zero-dependency promise is untouched.
+// `scripts/check-proofs.sh` runs them.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// The copy count is sufficient AND minimal, for every degree and budget in range.
+    ///
+    /// Sufficiency: a path of `copies_for(k, d)` copies offers at least `k` ports. Minimality: one
+    /// copy fewer offers too few. Together these say the count is exactly right, not merely safe —
+    /// and the whole ground-state argument stands on sufficiency, while the site economics stand
+    /// on minimality.
+    #[kani::proof]
+    fn copies_for_is_sufficient_and_minimal() {
+        let k: usize = kani::any();
+        let d: usize = kani::any();
+        kani::assume((3..=32).contains(&d));
+        kani::assume((1..=64).contains(&k));
+        let c = copies_for(k, d);
+        let capacity = |c: usize| if c <= 1 { d } else { c * (d - 2) + 2 };
+        assert!(capacity(c) >= k, "sufficient");
+        if c > 1 {
+            assert!(capacity(c - 1) < k, "minimal");
+        }
+    }
+
+    /// The `.max(2)` in `copies_for` is provably redundant: for `k > d ≥ 3` the ceiling is already
+    /// at least two. Kept in the code as belt-and-braces; proved here so the belt is known to be
+    /// decorative rather than load-bearing.
+    #[kani::proof]
+    fn the_ceiling_already_exceeds_one_past_the_budget() {
+        let k: usize = kani::any();
+        let d: usize = kani::any();
+        kani::assume((3..=32).contains(&d));
+        kani::assume(k > d && k <= 64);
+        assert!((k - 2).div_ceil(d - 2) >= 2);
+        assert_eq!(copies_for(k, d), (k - 2).div_ceil(d - 2));
+    }
+}

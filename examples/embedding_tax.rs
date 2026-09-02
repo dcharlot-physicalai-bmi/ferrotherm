@@ -86,6 +86,34 @@ fn main() {
         println!();
     }
 
+    // ---- and the route that does not search at all ---------------------------------------------
+    //
+    // Everything above is the heuristic embedder: any graph, any hardware, found by rip-up and
+    // reroute. A clique on a Chimera has enough structure that the embedding can be WRITTEN DOWN,
+    // and the difference is not small. `Embedding::verify` checks it here the same way it checks
+    // the searched ones, so the row earns its place the same way.
+    {
+        let hw = ising::chimera(8, 8, 4, 1.0);
+        let e = embed::chimera_clique(8, 4).expect("m, t > 0");
+        e.verify(&clique(32), &hw).expect("a verified clique minor");
+        let lens: Vec<usize> = e.chains.iter().map(|c| c.len()).collect();
+        println!("--- K_32 by CONSTRUCTION on Chimera C8 (the search above could not place it)");
+        println!(
+            "{:<14} {:>6} {:>5} {:>8} {:>9} {:>7}",
+            "hardware", "sites", "deg", "used", "longest", "mean"
+        );
+        println!(
+            "{:<14} {:>6} {:>5} {:>8} {:>9} {:>7.2}",
+            "Chimera C8",
+            hw.n,
+            hw.max_degree(),
+            lens.iter().sum::<usize>(),
+            lens.iter().max().unwrap(),
+            lens.iter().sum::<usize>() as f64 / lens.len() as f64
+        );
+        println!();
+    }
+
     println!(
         "WHAT THE TABLE SAYS.\n\n\
          THE GENERATIONS ARE WORTH WHAT THEY CLAIM, and the chain column is where it shows. At\n\
@@ -104,6 +132,13 @@ fn main() {
          penalty loses, the qubits of one variable disagree and the variable HAS NO VALUE. Halving\n\
          the longest chain is worth more than halving the qubit count, and it is the thing degree\n\
          buys.\n\n\
+         AND THE SEARCH IS NOT THE FRONTIER, which the construction row above makes measurable\n\
+         rather than asserted: the same machine that defeats the search at K_32 holds it by\n\
+         construction with uniform chains of 9 -- and D-Wave's structured tooling reaches K_150 at\n\
+         chain 14 on a full-yield P16, where the search above stops at K_32 at chain 16. A table of\n\
+         heuristic numbers is a statement about the heuristic. This crate builds the structured\n\
+         route for Chimera today; Pegasus and Zephyr are the recorded gap, with those numbers as\n\
+         the bar.\n\n\
          AND THE ANOMALY, stated rather than trimmed. At K_32 the LARGER machine of each family\n\
          spends more sites than the smaller one -- P16 uses 237 where P6 uses 203. That is not the\n\
          bigger machine being worse. It is the placement heuristic having more room to wander in,\n\

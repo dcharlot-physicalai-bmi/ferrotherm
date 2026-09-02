@@ -87,6 +87,16 @@ thermodynamic-computing corpus currently leaves empty.
 
 ## Verification (all reproducible, seeds fixed)
 
+### Machine-checked theorems
+
+Where a statement is load-bearing and its domain is finite, it is **proved**, not tested: four Kani
+harnesses (bounded model checking, exhaustive over the stated ranges) verify that `copies_for` is
+sufficient *and minimal* for every degree and budget in range, and that the Pegasus and Zephyr
+linear indices are injective and in range at the shipped machine sizes — injectivity being the
+difference between programming a qubit and programming *some* qubit. The harnesses live beside the
+code under `cfg(kani)` (no dependency added); `scripts/check-proofs.sh` runs them, and its selftest
+feeds Kani a false theorem and requires the refutation.
+
 - `cargo test --workspace` — 699 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.

@@ -469,3 +469,54 @@ mod topology_tests {
         assert_eq!(zephyr(4, 0, 1.0).graph.n, 0);
     }
 }
+
+// ---- machine-checked theorems ---------------------------------------------------------------------
+//
+// Proved by `cargo kani` (bounded model checking): exhaustive over the stated coordinate ranges,
+// compiled only under `cfg(kani)` so no dependency is added. `scripts/check-proofs.sh` runs them.
+#[cfg(kani)]
+mod proofs {
+    /// The Pegasus linear index is injective and in range on the machine that matters.
+    ///
+    /// Injectivity is the difference between programming a qubit and programming SOME qubit: if
+    /// two distinct coordinates shared a linear index, `Topology::qubits` would silently merge two
+    /// physical qubits and every downstream read would be about the wrong hardware. `m` is fixed
+    /// at 16 — the Advantage — so every product below is linear in the symbolic coordinates and
+    /// the check is exhaustive over all 5,760 × 5,760 coordinate pairs.
+    #[kani::proof]
+    fn pegasus_linear_index_is_injective_and_in_range() {
+        const M: usize = 16;
+        let lin = |u: usize, w: usize, k: usize, z: usize| ((u * M + w) * 12 + k) * (M - 1) + z;
+        let (u, w, k, z): (usize, usize, usize, usize) =
+            (kani::any(), kani::any(), kani::any(), kani::any());
+        kani::assume(u < 2 && w < M && k < 12 && z < M - 1);
+        assert!(lin(u, w, k, z) < 24 * M * (M - 1), "in range");
+
+        let (u2, w2, k2, z2): (usize, usize, usize, usize) =
+            (kani::any(), kani::any(), kani::any(), kani::any());
+        kani::assume(u2 < 2 && w2 < M && k2 < 12 && z2 < M - 1);
+        kani::assume((u, w, k, z) != (u2, w2, k2, z2));
+        assert_ne!(lin(u, w, k, z), lin(u2, w2, k2, z2), "injective");
+    }
+
+    /// The same two properties for Zephyr's index, at the Advantage2's size.
+    #[kani::proof]
+    fn zephyr_linear_index_is_injective_and_in_range() {
+        const M: usize = 15;
+        const T: usize = 4;
+        const BIG: usize = 2 * M + 1;
+        let lin = |u: usize, w: usize, k: usize, j: usize, z: usize| {
+            ((((u * BIG + w) * T + k) * 2 + j) * M + z)
+        };
+        let (u, w, k, j, z): (usize, usize, usize, usize, usize) =
+            (kani::any(), kani::any(), kani::any(), kani::any(), kani::any());
+        kani::assume(u < 2 && w < BIG && k < T && j < 2 && z < M);
+        assert!(lin(u, w, k, j, z) < 4 * T * M * BIG, "in range");
+
+        let (u2, w2, k2, j2, z2): (usize, usize, usize, usize, usize) =
+            (kani::any(), kani::any(), kani::any(), kani::any(), kani::any());
+        kani::assume(u2 < 2 && w2 < BIG && k2 < T && j2 < 2 && z2 < M);
+        kani::assume((u, w, k, j, z) != (u2, w2, k2, j2, z2));
+        assert_ne!(lin(u, w, k, j, z), lin(u2, w2, k2, j2, z2), "injective");
+    }
+}

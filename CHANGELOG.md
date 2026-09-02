@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### The "negative result" was checked against the industry, and the check found a hole in us
+
+The crossover entry below concluded that sparsify-then-embed loses to direct embedding. A reader
+doubted it against the industry, and the doubt was right in a way that mattered: **both columns of
+that table ran this crate's heuristic embedder**, and for cliques the industry does not search — it
+writes the embedding down. D-Wave's structured clique embedder reaches **K₁₅₀ with chains of 14 on a
+full-yield P₁₆** and places a 40-variable clique with chains of 5, where our search stops at K₃₂
+with a chain of 16. The verdict between the two heuristic routes stands — sparsification lost to
+even the weak route — but the tables implied "direct" was the frontier, and it was not. Both
+examples now say what "direct" means before showing a number, and cite the bar.
+
+### A clique embedding you write down instead of searching for
+
+`embed::chimera_clique(m, t)`: `K_{t·m}` onto `chimera(m, m, t)` with **every chain exactly
+`m + 1` sites** — variable `(b, k)` occupies an L bending at diagonal cell `(b, b)`, and any two
+chains cross in exactly one cell where the in-cell `K_{t,t}` supplies the edge. On `C₈`: **K₃₂ with
+uniform chains of 9, by construction**, where the search at its default budget finds K₁₈ with a
+chain of 17 and cannot place K₃₂ at all. The search is not wrong — it answers a harder question and
+pays for the generality.
+
+**The construction is checked, not trusted**: every size in range goes through `Embedding::verify` —
+chains connected, chains disjoint, a hardware edge behind every logical edge — which together are
+the definition of a clique minor, so passing it *is* the claim. The known maximum is one better
+(`K_{4m+1}`, Boothby–King–Roy 2015, non-uniform chains), stated rather than approximated.
+**Pegasus and Zephyr structured cliques are the recorded gap**, with the bar attached: K₁₅₀ at
+chain 14 on P₁₆; 52 nodes on the Advantage2 prototype in the published comparisons.
+
+### Machine-checked theorems, and a gate that knows a refutation from a build failure
+
+The crate's discipline has been "verify against exact physics"; this adds **proof**, where the
+domain is finite and the statement is load-bearing. Four Kani harnesses (bounded model checking —
+exhaustive over the stated ranges, not sampled; compiled only under `cfg(kani)`, so the
+zero-dependency promise is untouched):
+
+* `copies_for` is **sufficient and minimal** for every degree ≤ 64 and budget 3..=32 — the
+  ground-state argument stands on sufficiency, the site economics on minimality.
+* its `.max(2)` guard is **provably redundant** — kept in the code, known decorative.
+* the **Pegasus and Zephyr linear indices are injective and in range** at the shipped machine
+  sizes — injectivity is the difference between programming a qubit and programming *some* qubit,
+  checked over all 5,760² (and 7,440²) coordinate pairs.
+
+`scripts/check-proofs.sh` runs them, skips cleanly without the toolchain, fails the skip under
+`FERROTHERM_REQUIRE_ALL=1`, and its selftest feeds Kani a theorem false at `x = 255` and requires
+the refutation. **Its own first bug is recorded**: a broken manifest made `cargo kani` fail to
+build, and the gate announced "a proof harness FAILED" — a refuted theorem that never existed. "The
+tool could not run" and "the theorem is false" now take separate branches, the same split the
+certifier makes between *could not look* and *nothing moved*.
+
+
 ### The machines you can actually rent
 
 `embed` did honest minor embedding — a repaired placer, chain-length reporting, and a *proof* of

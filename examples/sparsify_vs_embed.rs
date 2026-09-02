@@ -9,6 +9,15 @@
 //
 // Nobody has published where the line is. This measures it, on the machines you can actually rent.
 //
+// WHAT "DIRECT" MEANS HERE, said before the table so the table cannot over-claim. Both columns run
+// THIS CRATE'S HEURISTIC EMBEDDER, which answers the general question -- any graph onto any
+// hardware -- and pays for the generality. For the specific shape being embedded (cliques), the
+// industry's structured embedders write the answer down instead of searching: D-Wave's clique
+// embedder reaches K_150 with chains of 14 on a full-yield P16, far past anything below. So this
+// table decides between two HEURISTIC routes, and its verdict is about them; the structured route
+// beats both where it applies, and this crate builds it for Chimera today (`embed::chimera_clique`,
+// verified by construction) with Pegasus and Zephyr recorded as the open gap.
+//
 // WHY THIS IS COUNTS AND NOT SECONDS. Sites used and longest chain are properties of the graphs and
 // the seed, so this table is identical on a laptop and on a cluster. A timing table would be a
 // statement about whichever machine ran it, and the two routes do not even spend their time in the
@@ -107,6 +116,11 @@ fn main() {
          give every one of those copies its own chain. The copies are a worse decomposition than a\n\
          placer with the whole graph in front of it would have chosen, and the chains are then\n\
          built on top of that choice rather than instead of it.\n\n\
+         AND NEITHER COLUMN IS THE FRONTIER. Both are the same heuristic search; a STRUCTURED\n\
+         clique embedding beats both where it applies -- K_150 at chain 14 on a full-yield P16 by\n\
+         D-Wave's own tooling, against the K_32 at chain 16 the search manages above. This crate\n\
+         builds the structured route for Chimera (embed::chimera_clique, verified at every size);\n\
+         Pegasus and Zephyr structured cliques are the recorded gap, with those numbers as the bar.\n\n\
          SO WHAT IS IT FOR. Not this. The routine exists because a fabric with a FIXED sparse\n\
          topology and no placer at all -- a p-bit array, a physics ASIC with a wired lattice -- has\n\
          no direct route, and there the question is not which is cheaper but whether the model runs\n\

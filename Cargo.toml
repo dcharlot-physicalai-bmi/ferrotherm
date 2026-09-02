@@ -54,6 +54,15 @@ neg_cmp_op_on_partial_ord = "allow"
 # ledger into a struct to satisfy a count of seven moves the arity, it does not reduce it.
 too_many_arguments = "allow"
 
+# `cfg(kani)` guards the machine-checked proof harnesses in src/*.rs. Declaring it at the
+# WORKSPACE level -- the crate inherits with `[lints] workspace = true`, and a member-level
+# `[lints.rust]` beside that inheritance is a Cargo error, which is how this line found its home --
+# is what stops rustc's unexpected_cfgs lint firing on every build that is not the Kani toolchain.
+# The proofs are real code, compiled and run by `cargo kani` (scripts/check-proofs.sh), and
+# invisible to every other build.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
 [workspace]
 members = [".", "silicon", "serve", "cloud", "gpu", "meter"]
 

@@ -255,6 +255,148 @@ pub fn site_lower_bound(logical: &Graph, hardware: &Graph) -> usize {
         .sum()
 }
 
+/// A native clique embedding on Chimera, **by construction rather than by search**.
+///
+/// Embeds `K_{t·m}` onto the square `chimera(m, m, t, ..)` with every chain exactly `m + 1` sites
+/// long. On `chimera(8, 8, 4)` that is `K_32` with uniform chains of 9 — where
+/// [`embed_bounded`] at its default budget finds `K_18` with a chain of 17. The search is not
+/// wrong; it is answering a harder question (an arbitrary graph on arbitrary hardware) and paying
+/// for the generality. A clique on a Chimera has enough structure that the answer can be written
+/// down, and writing it down beats searching for it by roughly double on both counts.
+///
+/// # The construction
+///
+/// Variable `(b, k)` — block `b < m`, track `k < t` — occupies an **L**: the vertical qubits of
+/// track `k` in column `b`, rows `0..=b`, then the horizontal qubits of track `k` in row `b`,
+/// columns `b..m`. The bend joins at cell `(b, b)` through the in-cell coupler. Two chains
+/// `(b, k)` and `(b', k')` with `b ≤ b'` always cross at cell `(b, b')`, where one is horizontal
+/// and the other vertical, and the cell's `K_{t,t}` provides the edge.
+///
+/// # What is verified, and what is known but not built
+///
+/// The tests do not trust this prose: every size in range is checked with [`Embedding::verify`] —
+/// chains connected, chains disjoint, every pair adjacent — against the same `chimera()` the rest
+/// of the crate uses. The known maximum is one better, `K_{4m+1}`, using leftover qubits with
+/// non-uniform chains (Boothby–King–Roy 2015); this builds the uniform `K_{4m}` and says so
+/// rather than approximating the harder one.
+///
+/// Pegasus and Zephyr have structured clique embeddings too, and **this crate does not build them
+/// yet**: D-Wave's own tooling reaches `K_150` with chains of 14 on a full-yield `P₁₆`, against
+/// `K_80` found slowly by our heuristic. That gap is recorded where the comparison tables cite it,
+/// with those numbers as the bar.
+///
+/// Returns `None` when `m == 0` or `t == 0`, where there is no clique to speak of.
+pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
+    if m == 0 || t == 0 {
+        return None;
+    }
+    // Must match `ising::chimera`'s indexing exactly: idx = ((i*n)+j)*2t + u*t + k with n = m,
+    // u = 0 vertical (couples along i), u = 1 horizontal (couples along j).
+    let idx = |i: usize, j: usize, u: usize, k: usize| ((i * m) + j) * 2 * t + u * t + k;
+    let mut chains = Vec::with_capacity(t * m);
+    for b in 0..m {
+        for k in 0..t {
+            let mut chain = Vec::with_capacity(m + 1);
+            for i in 0..=b {
+                chain.push(idx(i, b, 0, k)); // down column b
+            }
+            for j in b..m {
+                chain.push(idx(b, j, 1, k)); // across row b
+            }
+            debug_assert_eq!(chain.len(), m + 1, "the construction promises uniform chains");
+            chains.push(chain);
+        }
+    }
+    Some(Embedding { chains, sites: 2 * t * m * m })
+}
+
+#[cfg(test)]
+mod clique_tests {
+    use super::*;
+    use crate::graph::GraphBuilder;
+
+    fn clique(k: usize) -> Graph {
+        let mut gb = GraphBuilder::new(k);
+        for i in 0..k {
+            for j in (i + 1)..k {
+                gb.couple(i, j, 1.0);
+            }
+        }
+        gb.build()
+    }
+
+    /// The construction is not trusted; it is CHECKED, at every size, against the same verifier
+    /// the heuristic answers to. `Embedding::verify` demands connected chains, disjoint chains,
+    /// and a hardware edge behind every logical edge -- which together are the definition of a
+    /// clique minor, so passing it IS the claim.
+    #[test]
+    fn the_construction_is_a_valid_clique_minor_at_every_size() {
+        for m in 1..=10usize {
+            for t in [2usize, 4] {
+                let hw = crate::ising::chimera(m, m, t, 1.0);
+                let e = chimera_clique(m, t).expect("m, t > 0");
+                assert_eq!(e.chains.len(), t * m, "K_(t*m) as promised");
+                assert!(
+                    e.chains.iter().all(|c| c.len() == m + 1),
+                    "chains uniform at m+1, C({m},{m},{t})"
+                );
+                let logical = clique(t * m);
+                e.verify(&logical, &hw)
+                    .unwrap_or_else(|err| panic!("C({m},{m},{t}): {err}"));
+            }
+        }
+        assert!(chimera_clique(0, 4).is_none());
+        assert!(chimera_clique(4, 0).is_none());
+    }
+
+    /// What writing the answer down is worth over searching for it, in the two counts that matter.
+    ///
+    /// The heuristic is not wrong -- it answers a harder question and pays for the generality.
+    /// But on the structured case both of its numbers roughly double, and a table that shows only
+    /// the heuristic (as this repository's own comparison tables did until this test's commit)
+    /// understates what the hardware can hold.
+    #[test]
+    fn construction_beats_search_on_both_counts() {
+        let m = 8;
+        let hw = crate::ising::chimera(m, m, 4, 1.0);
+
+        let built = chimera_clique(m, 4).unwrap();
+        assert_eq!(built.chains.len(), 32);
+        let built_longest = built.chains.iter().map(|c| c.len()).max().unwrap();
+        assert_eq!(built_longest, 9);
+        built.verify(&clique(32), &hw).expect("K_32 by construction");
+
+        // The search at its default budget cannot even PLACE K_32 here (the comparison tables
+        // record it as "not found"), so compare where it succeeds: its K_18 uses a longer chain
+        // than the construction needs for K_32.
+        let searched = embed_bounded(&clique(18), &hw, 7, 10, DEFAULT_SEARCH_BUDGET)
+            .expect("the tables record K_18 as found");
+        let searched_longest = searched.chains.iter().map(|c| c.len()).max().unwrap();
+        assert!(
+            searched_longest > built_longest,
+            "search: chain {searched_longest} for K_18; construction: chain {built_longest} for K_32"
+        );
+    }
+
+    /// The embedded model actually runs, and the answer comes back with no broken chains.
+    #[test]
+    fn the_structured_embedding_samples_and_reads_back() {
+        let m = 4;
+        let hw = crate::ising::chimera(m, m, 4, 1.0);
+        let logical = clique(16);
+        let e = chimera_clique(m, 4).unwrap();
+        let out = apply_with(&logical, &hw, &e, 0.0);
+        let ladder: Vec<(f64, usize)> = crate::tempering::geometric_ladder(0.05, 8.0, 200)
+            .into_iter()
+            .map(|b| (b, 40))
+            .collect();
+        let (state_raw, _e) = crate::tempering::anneal(&out.graph, &ladder, 7, None);
+        let (state, broken) = unembed(&out.embedding, &state_raw);
+        assert_eq!(state.len(), 16);
+        assert!(broken.is_empty(), "chains broke: {broken:?}");
+    }
+}
+
 /// How many shortest-path searches [`embed_with`] will run before giving up.
 ///
 /// SAYING "NO" USED TO BE FREE AND IS NOT ANY MORE, and that is a direct consequence of the repair

@@ -184,6 +184,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/check-landscape.sh --selftest && scripts/check-landscape.sh
 
+      # The machine-checked theorems. `check-proofs.sh` skips without the toolchain, and a
+      # skipping CI step is the vacuous-check trap this file keeps relearning -- so the toolchain
+      # is installed and FERROTHERM_REQUIRE_ALL makes any skip a failure.
+      - name: The stated theorems hold over their whole ranges
+        run: |
+          cargo install --locked kani-verifier
+          cargo kani setup
+          FERROTHERM_REQUIRE_ALL=1 scripts/check-proofs.sh --selftest
+          FERROTHERM_REQUIRE_ALL=1 scripts/check-proofs.sh
+
       - name: The published documentation has no broken links
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 

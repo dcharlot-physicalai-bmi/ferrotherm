@@ -50,7 +50,13 @@ compiles unchanged to wasm32-unknown-unknown, deterministic for a fixed seed.
    against 7.09 fJ per Gibbs cycle — one read is worth 239 updates — and five hand-written
    collection loops in this repository each reported their readback as exactly zero, which on the
    HTTP endpoint was 98.9% of the answer's energy.
-9. **A default is not a fallback.** An input the code cannot understand is an error naming what
+9. **A finite, load-bearing statement gets a proof, not a test.** `cfg(kani)` modules hold Kani
+   harnesses — bounded model checking, exhaustive over their stated ranges — for the copy-count
+   bound and the device linear indices; `scripts/check-proofs.sh` runs them. If you add arithmetic
+   that an argument stands on (a capacity bound, an index formula, an overflow guard), add the
+   harness beside it. A proof that exists but is not in the gate script's floor count is a proof
+   that can silently stop running.
+10. **A default is not a fallback.** An input the code cannot understand is an error naming what
    was actually sent. Substituting a default for an unreadable value is how `"maximize": 1`
    silently minimised and `"value": "13"` silently pinned a variable to 0.
 
