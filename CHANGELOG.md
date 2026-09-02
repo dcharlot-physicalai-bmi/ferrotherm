@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### A structured clique on Zephyr — written down, not searched, and machine-checked
+
+The previous entry's honesty note said the frontier for cliques is a construction, not a search, and
+recorded the bar. This closes half of that gap on the real machine.
+
+`embed::zephyr_clique(m, t)` places `K_{2t·m}` on `Z_{m,t}` — **K_120 on Z₁₅, uniform chains of 16**,
+in closed form with no search. It maps a Chimera clique through Zephyr's own minor relation (the
+"double" sublattice map stated verbatim in D-Wave's `dwave-graphs`), which is offset-free — the one
+property that makes it safe to transcribe where a native-coordinate construction would have to match
+a coordinate convention by hand and could get it wrong silently.
+
+**Verified, not trusted.** Every size 2..8 goes through `Embedding::verify` against the same
+`device::zephyr` the crate ships — connected, disjoint, an edge behind every logical pair, which
+together *are* the definition of a clique minor. And the disjointness those checks rest on is
+**proved** over the whole coordinate domain by a fifth Kani harness: the Chimera→Zephyr map is
+injective, so no two logical variables can land on one qubit. (`scripts/check-proofs.sh` floor
+raised to 5.)
+
+**The gap that remains is exact, not vague.** D-Wave's `busclique` reaches `K_{16m-8}` — *twice* this
+clique — at the *same* chain length `m+1`, by fusing the two odd-coupled tracks into one wire, which
+this double-Chimera minor does not do. So the shortfall is clique size at a fixed chain, and the bar
+is `K_232` on Z₁₅ / `K_184` on the Advantage2's Z₁₂. Pegasus is the fully open one: a single Chimera
+slice gives only `K_{4(m−1)}` — below what the heuristic already finds — and the full `K_{12(m−1)}`
+needs the cross-slice fusion (verified here to fail without it: stacking three slices leaves
+variables in slices 0 and 2 non-adjacent), so no Pegasus construction ships; `busclique`'s `K_180 @
+chain 17` on P₁₆ is the recorded bar.
+
+**Reaches every surface.** `ft_clique_embed(logical, hardware, n_out)` stores the placement on the
+logical model exactly as `ft_embed` does — a design bug found in the writing, where an earlier
+version stored it on the hardware and `ft_embed_apply` could not read it back. Bound in the header,
+Python (`Sim.clique_embed`), Zig (`cliqueEmbed`) and Julia (`clique_embed!`); refused with the
+`embed`-fallback message on any graph without a known construction. 202 C ABI symbols across four
+surfaces.
+
+The construction tables in `examples/embedding_tax.rs` now carry a verified "BY CONSTRUCTION" block
+beside the heuristic rows, so a reader sees the structured numbers and the frontier bar side by side
+rather than only the search's.
+
+
 ### The "negative result" was checked against the industry, and the check found a hole in us
 
 The crossover entry below concluded that sparsify-then-embed loses to direct embedding. A reader

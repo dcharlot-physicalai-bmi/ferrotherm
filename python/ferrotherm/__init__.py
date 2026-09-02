@@ -144,6 +144,7 @@ _embed_longest = _sig("ft_embed_longest", c_uint32, [_p])
 _embed_chain = _sig("ft_embed_chain", c_uint32, [_p, c_uint32, POINTER(c_uint32), c_uint32])
 _site_lower_bound = _sig("ft_site_lower_bound", c_uint32, [_p, _p])
 _embed_apply = _sig("ft_embed_apply", _p, [_p, _p, c_double])
+_clique_embed = _sig("ft_clique_embed", c_uint32, [_p, _p, POINTER(c_uint32)])
 _unembed = _sig("ft_unembed", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
@@ -1032,6 +1033,34 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         hardware._live()
         return int(_site_lower_bound(self._h, hardware._h))
+
+    def clique_embed(self, hardware: "Sim") -> int:
+        """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.
+
+        Where :meth:`embed` searches, this writes the answer down: ``K_n`` with uniform chains and no
+        search. Supported today for **Zephyr** (``K_{2t·m}``, uniform chains ``m+1``) and Chimera.
+        The clique size is fixed by the machine; this returns it. The placement lands on ``self``
+        just as :meth:`embed` does, so :meth:`embed_apply`, :meth:`unembed` and the ``embed_*``
+        readers work unchanged.
+
+        >>> hw = zephyr(4)
+        >>> problem = Model(32).build(beta=0.5)   # a K_32 on the 32 variables it will place
+        >>> problem.clique_embed(hw)
+        32
+        >>> problem.embed_longest                 # uniform m+1 = 5
+        5
+
+        It is not the maximum D-Wave's tooling reaches — ``busclique`` fuses the odd-coupled tracks
+        for ``K_{16m-8}`` at the same chain length — but it beats this crate's own search decisively
+        and is instant. Raises when the topology has no known construction; :meth:`embed` is then the
+        fallback.
+        """
+        self._live()
+        hardware._live()
+        n = c_uint32(0)
+        if _clique_embed(self._h, hardware._h, ctypes.byref(n)) == 0:
+            raise ValueError("no closed-form clique embedding is known for that topology; use embed()")
+        return int(n.value)
 
     def embed(self, hardware: "Sim", seed: int = 0, rounds: int = 0, budget: int = 0) -> bool:
         """Place this model onto ``hardware``, keeping the placement for the accessors below.

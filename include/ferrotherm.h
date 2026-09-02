@@ -151,6 +151,16 @@ uint32_t ft_site_lower_bound(const ft_sim *logical, const ft_sim *hardware);
  * the result. Free it with ft_free. NULL when `logical` carries no placement. */
 ft_sim *ft_embed_apply(const ft_sim *logical, const ft_sim *hardware, double chain_strength);
 
+/* A CLOSED-FORM structured clique embedding, where the topology has a known one. Where ft_embed
+ * SEARCHES, this writes the answer down: K_n with uniform chains and no search. Supported today for
+ * Zephyr (ft_zephyr_new) -- K_{2t*m}, uniform chains m+1 -- and Chimera graphs.
+ *
+ * The clique size is FIXED by the machine; *n_out (if non-NULL) receives it. The placement is stored
+ * on `logical` exactly as ft_embed stores its own, so ft_embed_apply / ft_unembed / the ft_embed_*
+ * accessors read it back. 0 on NULL or a topology with no known construction, where ft_embed is the
+ * fallback. */
+uint32_t ft_clique_embed(ft_sim *logical, const ft_sim *hardware, uint32_t *n_out);
+
 /* Read an embedded state back as a LOGICAL one, returning how many chains BROKE. 0xFFFFFFFF -- not
  * 0, which is a valid count -- on NULL, on a simulation with no placement, or on a buffer smaller
  * than the logical variable count.

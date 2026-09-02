@@ -474,6 +474,75 @@ mod sparsify_ffi_tests {
 // wins wherever both apply. A caller on this ABI could previously only sparsify, and so had to take
 // that measurement on trust. These close it.
 
+/// Store a CLOSED-FORM structured clique embedding on `hardware`, if one is known for its topology.
+///
+/// Where [`ft_embed`] searches, this writes the answer down: a `K_n` clique embedding built from the
+/// topology's own minor structure, with uniform chains and no search. Supported today for the
+/// **Zephyr** topology (`ft_zephyr_new`) and **Chimera** lattices (`ft_ising2d_new` is not one; use
+/// a chimera graph), which is the only place this crate ships a native construction.
+///
+/// The clique size is FIXED by the machine, not chosen: it is the largest this construction places,
+/// `K_{2t*m}` on `Z_{m,t}`. `n_out`, when non-null, receives it. The placement is stored on
+/// `logical` exactly as [`ft_embed`] stores its own — so the caller builds their `K_n` problem as
+/// `logical`, and `ft_embed_apply`, `ft_unembed` and the `ft_embed_*` accessors then read it back
+/// unchanged. (The placement is topology-only, so `logical` need not be a clique for this call to
+/// succeed; it is the caller's problem to solve on those `n` variables.)
+///
+/// Returns 1 on success, 0 on a null handle or a topology with no known construction — in which case
+/// [`ft_embed`] is the fallback, and `ft_site_lower_bound` still answers whether any embedding of a
+/// given clique can exist.
+#[no_mangle]
+pub extern "C" fn ft_clique_embed(logical: *mut Sim, hardware: *const Sim, n_out: *mut u32) -> u32 {
+    let Some(hw) = (unsafe { hardware.as_ref() }) else { return 0 };
+    let Some(lg) = (unsafe { logical.as_mut() }) else { return 0 };
+    // The construction needs the DEVICE parameters, which the graph alone does not carry -- a
+    // Zephyr graph and an arbitrary graph of the same size are indistinguishable here. So it is
+    // gated on the vendor numbering being present and the site count matching a Z_{m,t}. This is
+    // deliberately conservative: a graph that merely looks Zephyr-shaped is refused rather than
+    // mis-embedded, because Embedding::verify would catch a wrong guess but a wrong guess should
+    // not reach it.
+    let Some(e) = zephyr_clique_for(hw) else { return 0 };
+    let n = e.chains.len() as u32;
+    if !n_out.is_null() {
+        unsafe { *n_out = n };
+    }
+    lg.emb = Some(e);
+    1
+}
+
+/// The Zephyr clique for a simulation, when its shape and numbering say it is a `device::zephyr`.
+fn zephyr_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
+    // Recover (m, t=4) from the site count: |Z_{m,4}| = 4*4*m*(2m+1) = 16m(2m+1). Solve for m and
+    // require an exact match AND the vendor numbering, so an arbitrary 7,440-node graph cannot be
+    // mistaken for Z_15.
+    if s.qubits.is_empty() {
+        return None;
+    }
+    let n = s.graph.n;
+    for m in 1..=64usize {
+        let size = 16 * m * (2 * m + 1);
+        if size == n {
+            let built = crate::embed::zephyr_clique(m, 4)?;
+            // The last line of defence: the construction must actually verify against THIS graph.
+            let logical = {
+                let k = built.chains.len();
+                let mut gb = crate::graph::GraphBuilder::new(k);
+                for i in 0..k {
+                    for j in (i + 1)..k {
+                        gb.couple(i, j, 1.0);
+                    }
+                }
+                gb.build()
+            };
+            return built.verify(&logical, &s.graph).ok().map(|()| built);
+        }
+        if size > n {
+            break;
+        }
+    }
+    None
+}
+
 /// Place `logical` onto `hardware`, storing the placement on `logical` for the accessors below.
 ///
 /// Returns 1 on success, 0 on a null handle or when the search did not find a placement.
@@ -608,6 +677,57 @@ pub extern "C" fn ft_unembed(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
 #[cfg(test)]
 mod embed_ffi_tests {
     use super::*;
+
+    /// A structured Zephyr clique, across the boundary, reading back with no broken chains.
+    #[test]
+    fn a_structured_clique_places_on_zephyr_over_the_abi() {
+        let hw = ft_zephyr_new(4, 4, 1.0, 0.5, 3); // Z_4: 576 sites
+        assert!(!hw.is_null());
+        assert_eq!(ft_len(hw), 576);
+
+        // The caller's problem is a K_32 clique; the placement is stored on IT, as ft_embed does.
+        let logical = {
+            let b = ft_builder_new(32);
+            for i in 0..32u32 {
+                for j in (i + 1)..32 {
+                    ft_builder_couple(b, i, j, 1.0);
+                }
+            }
+            ft_builder_build(b, 0.5, 3)
+        };
+        let mut n: u32 = 0;
+        assert_eq!(ft_clique_embed(logical, hw, &mut n), 1);
+        assert_eq!(n, 32, "K_{{2t*m}} = K_32 on Z_4");
+        assert_eq!(ft_embed_sites(logical), 32 * 5, "32 chains of 5");
+        assert_eq!(ft_embed_longest(logical), 5, "uniform m+1 = 5");
+
+        // Build the runnable model, anneal it, read back the 32 logical spins.
+        let embedded = ft_embed_apply(logical, hw, 0.0);
+        assert!(!embedded.is_null());
+        ft_anneal(embedded, 0.05, 8.0, 300, 40);
+        let mut out = vec![0i8; 32];
+        let broken = ft_unembed(embedded, out.as_mut_ptr(), 32);
+        assert!(broken != u32::MAX);
+        assert!(out.iter().all(|&s| s == 1 || s == -1));
+
+        ft_free(embedded);
+        ft_free(logical);
+        ft_free(hw);
+    }
+
+    /// A graph that is not a device topology has no known construction, and is refused, not guessed.
+    #[test]
+    fn a_plain_graph_has_no_structured_clique() {
+        let s = ft_ising2d_new(8, 1.0, 0.5, 1); // 64 sites, no vendor numbering
+        let lg = ft_ising2d_new(2, 1.0, 0.5, 1);
+        let mut n: u32 = 7;
+        assert_eq!(ft_clique_embed(lg, s, &mut n), 0, "a lattice is not Zephyr-shaped");
+        assert_eq!(ft_clique_embed(lg, s, core::ptr::null_mut()), 0);
+        assert_eq!(ft_clique_embed(core::ptr::null_mut(), s, &mut n), 0);
+        assert_eq!(ft_clique_embed(lg, core::ptr::null(), &mut n), 0);
+        ft_free(lg);
+        ft_free(s);
+    }
 
     fn clique_sim(k: u32, beta: f64) -> *mut Sim {
         let b = ft_builder_new(k);

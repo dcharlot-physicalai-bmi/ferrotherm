@@ -512,6 +512,18 @@ Spearman of τ_int against **what the model learned: ρ = +0.81**; against **how
 they failed.** Depth does not make sampling harder; depth makes *learning* harder, and what a model
 learned is what makes sampling harder.
 
+### Structured cliques, written down instead of searched
+
+For a clique on a structured fabric the frontier is a construction, not a search — D-Wave's tooling
+places `K_150` on a Pegasus P₁₆ by writing the answer down. `embed::zephyr_clique` does the same on
+Zephyr: `K_{2t·m}` — **K_120 on Z₁₅, uniform chains of 16** — via the topology's own offset-free
+minor relation, verified at every size by `Embedding::verify` and with the coordinate map's
+injectivity machine-checked by Kani. It is below the `K_{16m-8}` frontier (which fuses the
+odd-coupled tracks for twice the clique at the same chain length — recorded, not claimed), and on
+Pegasus a single Chimera slice gives less than the heuristic, so no Pegasus construction ships yet.
+`ft_clique_embed` carries it to Python, Zig and Julia; `examples/embedding_tax` shows the
+construction and the frontier side by side.
+
 ### The machines you can actually rent
 
 `embed` did honest minor embedding onto **Chimera**, which D-Wave retired. `device::pegasus` and

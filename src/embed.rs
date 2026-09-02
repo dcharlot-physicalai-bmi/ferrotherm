@@ -310,6 +310,108 @@ pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
     Some(Embedding { chains, sites: 2 * t * m * m })
 }
 
+/// A native clique on **Zephyr**, by mapping a Chimera clique through the topology's own minor
+/// relation rather than by search.
+///
+/// Zephyr contains `chimera(m, m, 2t)` as a subgraph — D-Wave's `dwave-graphs` states the mapping
+/// in closed form (the "double" sublattice map), and it is offset-free, which is why this is safe
+/// to transcribe where a native-coordinate construction is not: the coordinate convention a
+/// hand-derivation would have to match is bypassed entirely. So [`chimera_clique`]'s
+/// `K_{2t·m}` on that Chimera becomes a `K_{2t·m}` on `Z_{m,t}` — **K_{8m} for the shipped `t = 4`,
+/// uniform chains of `m + 1`**.
+///
+/// # What this is, measured against the frontier
+///
+/// It is closed-form, instant, and uniform-chained where the search is none of those. It is
+/// **not** the maximum, and the gap is precise: D-Wave's `busclique` reaches `K_{16m-8}` — TWICE
+/// this clique — at the SAME chain length `m + 1`, by fusing the two odd-coupled tracks into one
+/// wire, which this double-Chimera minor does not do. So the shortfall is in clique SIZE at a fixed
+/// chain, not in chain length. `K_{16m-8}` (`K_232` on `Z_15`, `K_184` on the Advantage2's `Z_12`)
+/// is the recorded bar; the Zephyr paper's `K_{16m+1}` treewidth construction is larger still, with
+/// longer chains.
+///
+/// The mapping is transcribed, but **the result is not trusted**: every size is checked with
+/// [`Embedding::verify`] against the same `device::zephyr` graph the rest of the crate builds —
+/// chains connected, disjoint, an edge behind every logical pair. A wrong coordinate makes that
+/// fail loudly. `None` for `m == 0` or `t == 0`.
+pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
+    if m == 0 || t == 0 {
+        return None;
+    }
+    let base = chimera_clique(m, 2 * t)?; // K_{2t·m} on chimera(m, m, 2t)
+    let topo = crate::device::zephyr(m, t, 1.0);
+    let shore = 2 * t; // chimera(m, m, 2t) has 2t sites per shore
+    // Decode a chimera(m, m, 2t) node the way `ising::chimera` encodes it, then send it through the
+    // double sublattice map (offsets and both j-phases zero) to a Zephyr coordinate, then to this
+    // crate's dense node via the vendor linear index.
+    let map = |node: usize| -> Option<usize> {
+        let cell = node / (2 * shore);
+        let rem = node % (2 * shore);
+        let u = rem / shore; // 0 vertical, 1 horizontal
+        let k = rem % shore; // 0..2t
+        let (row, col) = (cell / m, cell % m); // y, x
+        let (wz, kz) = (k / t, k % t);
+        let (zu, zw, zk, zj, zz) = if u == 0 {
+            (0usize, 2 * col + wz, kz, 0usize, row)
+        } else {
+            (1usize, 2 * row + wz, kz, 0usize, col)
+        };
+        let big = 2 * m + 1;
+        let lin = ((((zu * big + zw) * t + zk) * 2 + zj) * m + zz) as u32;
+        topo.node(lin)
+    };
+    let mut chains = Vec::with_capacity(base.chains.len());
+    for chain in &base.chains {
+        let mut mapped = Vec::with_capacity(chain.len());
+        for &node in chain {
+            mapped.push(map(node)?); // a coordinate off the fabric aborts rather than skips
+        }
+        chains.push(mapped);
+    }
+    Some(Embedding { chains, sites: topo.graph.n })
+}
+
+// ---- machine-checked theorem for the Zephyr construction ------------------------------------------
+//
+// `Embedding::verify` already checks the construction exhaustively at every CONCRETE size the tests
+// run. This proves the property those checks rest on -- that the coordinate map never sends two
+// distinct Chimera nodes to the same Zephyr qubit -- over the WHOLE coordinate domain at a fixed
+// size by bounded model checking, which is the disjointness guarantee stated once rather than
+// re-observed per size. Compiled only under `cfg(kani)`; run by scripts/check-proofs.sh.
+#[cfg(kani)]
+mod proofs {
+    /// The chimera(m,m,2t) -> Zephyr coordinate map is injective, at the Advantage2 prototype size.
+    ///
+    /// Two Chimera nodes that collided would put two logical variables on one physical qubit, which
+    /// `chimera_clique` forbids and `zephyr_clique` must preserve. m=4, t=4 is Z_4 (the shipped
+    /// prototype): 2*4*4*8 = 256 Chimera nodes, every pair checked.
+    #[kani::proof]
+    fn the_zephyr_coordinate_map_is_injective() {
+        const M: usize = 4;
+        const T: usize = 4;
+        const SHORE: usize = 2 * T;
+        const BIG: usize = 2 * M + 1;
+        // The map from src::zephyr_clique, as pure coordinate arithmetic to a linear index.
+        let lin = |u: usize, i: usize, j: usize, k: usize| -> usize {
+            let (wz, kz) = (k / T, k % T);
+            let (zu, zw, zk, zz) = if u == 0 {
+                (0usize, 2 * j + wz, kz, i)
+            } else {
+                (1usize, 2 * i + wz, kz, j)
+            };
+            (((zu * BIG + zw) * T + zk) * 2 + 0) * M + zz
+        };
+        let (u1, i1, j1, k1): (usize, usize, usize, usize) =
+            (kani::any(), kani::any(), kani::any(), kani::any());
+        let (u2, i2, j2, k2): (usize, usize, usize, usize) =
+            (kani::any(), kani::any(), kani::any(), kani::any());
+        kani::assume(u1 < 2 && i1 < M && j1 < M && k1 < SHORE);
+        kani::assume(u2 < 2 && i2 < M && j2 < M && k2 < SHORE);
+        kani::assume((u1, i1, j1, k1) != (u2, i2, j2, k2));
+        assert_ne!(lin(u1, i1, j1, k1), lin(u2, i2, j2, k2));
+    }
+}
+
 #[cfg(test)]
 mod clique_tests {
     use super::*;
@@ -376,6 +478,28 @@ mod clique_tests {
             searched_longest > built_longest,
             "search: chain {searched_longest} for K_18; construction: chain {built_longest} for K_32"
         );
+    }
+
+    /// The Zephyr clique is a valid minor at every size, with uniform chains.
+    ///
+    /// Same verifier as the Chimera one, against the same `device::zephyr` the crate ships. K_{8m}
+    /// with every chain exactly m+1, checked exhaustively. The claim here is CORRECTNESS and
+    /// UNIFORMITY -- what the construction is worth against the search is a measurement, made in
+    /// `examples/embedding_tax.rs` where the numbers can be shown rather than asserted, because the
+    /// search's margin depends on the size and the budget and a brittle inequality would encode one
+    /// point of that surface as though it were the rule.
+    #[test]
+    fn the_zephyr_clique_is_a_valid_minor_with_uniform_chains() {
+        for m in 2..=8usize {
+            let topo = crate::device::zephyr(m, 4, 1.0);
+            let e = zephyr_clique(m, 4).expect("m, t > 0");
+            assert_eq!(e.chains.len(), 8 * m, "K_{{2t*m}} = K_{{8m}} for t=4");
+            assert!(e.chains.iter().all(|c| c.len() == m + 1), "uniform chains at m+1, Z{m}");
+            e.verify(&clique(8 * m), &topo.graph)
+                .unwrap_or_else(|err| panic!("Z{m}: {err}"));
+        }
+        assert!(zephyr_clique(0, 4).is_none());
+        assert!(zephyr_clique(4, 0).is_none());
     }
 
     /// The embedded model actually runs, and the answer comes back with no broken chains.

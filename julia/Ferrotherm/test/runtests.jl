@@ -142,6 +142,29 @@ end
     close!(p)
 end
 
+@testset "a structured clique is written down rather than searched for" begin
+    hw = zephyr(4)
+    m = IsingModel(32)
+    for i in 1:32, j in (i+1):32
+        couple!(m, i, j, 1.0)
+    end
+    logical = build(m; beta = 0.5, seed = 3)
+
+    n = clique_embed!(logical, hw)
+    @test n == 32                       # K_{2t*m} = K_32 on Z_4
+    @test embed_sites(logical) == 32 * 5
+    @test embed_longest(logical) == 5   # uniform m+1
+
+    embedded = embed_apply(logical, hw)
+    anneal!(embedded, 0.05, 8.0; stages = 300, per = 40)
+    st, _ = unembed(embedded, 32)
+    @test all(s -> s in (Int8(1), Int8(-1)), st)
+
+    flat = lattice2d(8)
+    @test_throws ErrorException clique_embed!(logical, flat)
+    close!(flat); close!(embedded); close!(hw); close!(logical)
+end
+
 @testset "a model places onto a real machine and comes back logical" begin
     # The other route onto a sparse fabric, and the one this binding did not have.
     m = IsingModel(12)

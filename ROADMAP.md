@@ -486,6 +486,17 @@ DSATUR was added the day the crate acquired a graph greedy colours badly: it sav
 Zephyr (6 → 5) and on compiled counting constraints (4 → 3), ties on Pegasus where greedy already
 matches the clique bound, and is adopted only when it strictly wins.
 
+**3.4 Structured clique constructions.** ◐ **Zephyr DONE, Pegasus OPEN** — `embed::zephyr_clique`,
+`embed::chimera_clique`.
+
+The crossover tables ran the heuristic embedder on both sides; for cliques the frontier is a
+*construction*, not a search. `zephyr_clique` places `K_{2t·m}` (`K_120` on Z₁₅, uniform chains
+`m+1`) via Zephyr's offset-free double-Chimera minor, verified at every size and with the map's
+injectivity machine-checked by Kani. It leaves half the machine's clique on the table — `busclique`
+fuses the odd-coupled tracks for `K_{16m-8}` at the same chain length — recorded as the bar. Pegasus
+needs cross-slice fusion (a single nice-slice gives only `K_{4(m−1)}`, below the heuristic); the full
+`K_{12(m−1)}` (`K_180 @ chain 17` on P₁₆) is the open construction.
+
 **3.2 2D adaptive parallel tempering over (β, W0)**, so nobody hand-tunes copy strength.
 *Partly answered another way:* `sparsify::copy_strength` derives a sufficient `W0` from the model's
 own weights rather than tuning one, and the derivation is checked by enumeration — every ground

@@ -89,11 +89,11 @@ out="$(cargo kani 2>&1)" || {
   exit 1
 }
 verified="$(printf '%s\n' "$out" | grep -oE '[0-9]+ successfully verified harnesses' | grep -oE '^[0-9]+' | head -1)"
-if [ -z "$verified" ] || [ "$verified" -lt 4 ]; then
+if [ -z "$verified" ] || [ "$verified" -lt 5 ]; then
   # A floor, not a formality: if harness discovery breaks, kani "succeeds" over an empty set and
   # this gate would go green while checking nothing. Four is today's count; raise it when a proof
   # lands, and this line is the reminder to.
-  echo "only ${verified:-0} harnesses verified; expected at least 4. Discovery has shrunk." >&2
+  echo "only ${verified:-0} harnesses verified; expected at least 5. Discovery has shrunk." >&2
   exit 1
 fi
 echo "all $verified proof harnesses verified: the stated theorems hold over their whole ranges"

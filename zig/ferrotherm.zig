@@ -197,6 +197,19 @@ pub const Sim = struct {
         return broken;
     }
 
+    /// Store a CLOSED-FORM structured clique embedding, where `hardware` has a known one.
+    ///
+    /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
+    /// Supported today for Zephyr (`K_{2t*m}`, chains m+1) and Chimera. The clique size is fixed by
+    /// the machine and returned; the placement lands on `self` exactly as `embed` does, so
+    /// `embedApply`, `unembed` and the `embed*` readers work unchanged. `error.NotSolved` when the
+    /// topology has no known construction -- `embed` is then the fallback.
+    pub fn cliqueEmbed(self: Sim, hardware: Sim) Error!u32 {
+        var n: u32 = 0;
+        if (c.ft_clique_embed(self.h, hardware.h, &n) == 0) return Error.NotSolved;
+        return n;
+    }
+
     /// Rewrite this model so no variable exceeds `budget` neighbours, and return the rewritten one.
     ///
     /// A model denser than a fabric has two routes onto it: embedding PLACES it onto one specific
@@ -688,6 +701,39 @@ test "an answer is scored in the modeller's own units" {
     try std.testing.expect(p.feasible());
     // And it is NOT the compiled energy, which is the only number this used to hand back.
     try std.testing.expect(obj != p.energy());
+}
+
+test "a structured clique is written down rather than searched for" {
+    // Zephyr has a closed-form clique; ask for it and read the answer back.
+    const hw = try Sim.zephyr(4, 4, 1.0, 0.5, 3);
+    defer hw.deinit();
+
+    var m = try Model.init(32);
+    defer m.deinit();
+    var i: u32 = 0;
+    while (i < 32) : (i += 1) {
+        var j: u32 = i + 1;
+        while (j < 32) : (j += 1) try m.couple(i, j, 1.0);
+    }
+    const logical = try m.build(0.5, 3);
+    defer logical.deinit();
+
+    const n = try logical.cliqueEmbed(hw);
+    try std.testing.expectEqual(@as(u32, 32), n); // K_{2t*m} = K_32 on Z_4
+    try std.testing.expectEqual(@as(u32, 32 * 5), logical.embedSites());
+    try std.testing.expectEqual(@as(u32, 5), logical.embedLongest()); // uniform m+1
+
+    const embedded = try logical.embedApply(hw, 0.0);
+    defer embedded.deinit();
+    _ = try embedded.anneal(0.05, 8.0, 300, 40);
+    var out: [32]i8 = undefined;
+    _ = try embedded.unembed(&out);
+    for (out) |s| try std.testing.expect(s == 1 or s == -1);
+
+    // A plain lattice has no known construction.
+    const flat = try Sim.lattice2d(8, 1.0, 0.5, 1);
+    defer flat.deinit();
+    try std.testing.expectError(error.NotSolved, logical.cliqueEmbed(flat));
 }
 
 test "a model places onto a real machine and the answer comes back logical" {

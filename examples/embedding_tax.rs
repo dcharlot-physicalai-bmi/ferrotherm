@@ -89,28 +89,40 @@ fn main() {
     // ---- and the route that does not search at all ---------------------------------------------
     //
     // Everything above is the heuristic embedder: any graph, any hardware, found by rip-up and
-    // reroute. A clique on a Chimera has enough structure that the embedding can be WRITTEN DOWN,
-    // and the difference is not small. `Embedding::verify` checks it here the same way it checks
-    // the searched ones, so the row earns its place the same way.
+    // reroute. A clique on a structured fabric can instead be WRITTEN DOWN in closed form, and the
+    // difference is not small. `Embedding::verify` checks each row here the same way it checks the
+    // searched ones -- connected, disjoint, an edge behind every pair -- so a construction row earns
+    // its place by being a real clique minor, not by being asserted.
     {
-        let hw = ising::chimera(8, 8, 4, 1.0);
-        let e = embed::chimera_clique(8, 4).expect("m, t > 0");
-        e.verify(&clique(32), &hw).expect("a verified clique minor");
-        let lens: Vec<usize> = e.chains.iter().map(|c| c.len()).collect();
-        println!("--- K_32 by CONSTRUCTION on Chimera C8 (the search above could not place it)");
+        println!("--- BY CONSTRUCTION (closed-form, uniform chains, verified)");
         println!(
-            "{:<14} {:>6} {:>5} {:>8} {:>9} {:>7}",
-            "hardware", "sites", "deg", "used", "longest", "mean"
+            "{:<16} {:>6} {:>7} {:>9} {:>10}",
+            "hardware", "clique", "chain", "verified", "frontier"
         );
-        println!(
-            "{:<14} {:>6} {:>5} {:>8} {:>9} {:>7.2}",
-            "Chimera C8",
-            hw.n,
-            hw.max_degree(),
-            lens.iter().sum::<usize>(),
-            lens.iter().max().unwrap(),
-            lens.iter().sum::<usize>() as f64 / lens.len() as f64
-        );
+        // Chimera K_{t*m}: the classic native clique, here the same C8 the search stalled on.
+        {
+            let hw = ising::chimera(8, 8, 4, 1.0);
+            let e = embed::chimera_clique(8, 4).expect("m,t>0");
+            let ok = e.verify(&clique(32), &hw).is_ok();
+            println!(
+                "{:<16} {:>6} {:>7} {:>9} {:>10}",
+                "Chimera C8", "K_32", e.chains.iter().map(|c| c.len()).max().unwrap(),
+                if ok { "yes" } else { "NO" }, "K_33 (K_{4m+1})"
+            );
+        }
+        // Zephyr K_{8m}: the double-Chimera minor, offset-free, verified against device::zephyr.
+        for m in [4usize, 6, 15] {
+            let hw = device::zephyr(m, 4, 1.0).graph;
+            let e = embed::zephyr_clique(m, 4).expect("m,t>0");
+            let n = e.chains.len();
+            let ok = e.verify(&clique(n), &hw).is_ok();
+            println!(
+                "{:<16} {:>6} {:>7} {:>9} {:>10}",
+                format!("Zephyr Z{m}"), format!("K_{n}"),
+                e.chains.iter().map(|c| c.len()).max().unwrap(),
+                if ok { "yes" } else { "NO" }, format!("K_{}", 16 * m - 8)
+            );
+        }
         println!();
     }
 
@@ -132,13 +144,19 @@ fn main() {
          penalty loses, the qubits of one variable disagree and the variable HAS NO VALUE. Halving\n\
          the longest chain is worth more than halving the qubit count, and it is the thing degree\n\
          buys.\n\n\
-         AND THE SEARCH IS NOT THE FRONTIER, which the construction row above makes measurable\n\
-         rather than asserted: the same machine that defeats the search at K_32 holds it by\n\
-         construction with uniform chains of 9 -- and D-Wave's structured tooling reaches K_150 at\n\
-         chain 14 on a full-yield P16, where the search above stops at K_32 at chain 16. A table of\n\
-         heuristic numbers is a statement about the heuristic. This crate builds the structured\n\
-         route for Chimera today; Pegasus and Zephyr are the recorded gap, with those numbers as\n\
-         the bar.\n\n\
+         AND THE SEARCH IS NOT THE FRONTIER, which the construction rows above make measurable\n\
+         rather than asserted. The heuristic answers the general question and pays for it; a clique\n\
+         on a structured fabric is written down. This crate builds two of the three today, verified\n\
+         by the same Embedding::verify the searched rows pass:\n\
+           * Chimera K_32 on C8 -- uniform chains of 9, where the search stalls at K_18 chain 17.\n\
+           * Zephyr K_{{8m}} -- K_120 on Z_15 with uniform chains of 16, from the double-Chimera\n\
+             minor. The frontier is K_{{16m-8}} = K_232 at the SAME chain length: busclique fuses\n\
+             the two odd-coupled tracks and gets twice the clique for no extra chain, which this\n\
+             route does not do. So the gap here is clique SIZE at fixed chain, recorded not claimed.\n\
+         PEGASUS IS THE OPEN ONE. A single Chimera slice of P_m gives only K_{{4(m-1)}} -- below what\n\
+         the heuristic already finds -- and the full K_{{12(m-1)}} needs cross-slice fusion this crate\n\
+         does not build yet. D-Wave's busclique reaches K_180 at chain 17 on a full-yield P16; that\n\
+         is the bar, and it is a bar and not a claim.\n\n\
          AND THE ANOMALY, stated rather than trimmed. At K_32 the LARGER machine of each family\n\
          spends more sites than the smaller one -- P16 uses 237 where P6 uses 203. That is not the\n\
          bigger machine being worse. It is the placement heuristic having more room to wander in,\n\

@@ -304,6 +304,9 @@ class Sim:
     def chain(self, v: int) -> 'list[int]':
         """The sites holding logical variable ``v``."""
         ...
+    def clique_embed(self, hardware: 'Sim') -> int:
+        """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one."""
+        ...
     def close(self) -> None:
         ...
     def cluster_anneal(self, rungs: int = 16, rounds: int = 400, beta_min: float = 0.1, beta_max: float = 6.0) -> 'ClusterRun':

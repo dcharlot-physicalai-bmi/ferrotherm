@@ -58,7 +58,7 @@ export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
 export sparsify, logical_variables, copies, sparsify_offset, project
-export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed
+export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed, clique_embed!
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -237,6 +237,7 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_site_lower_bound Cuint SimPtr SimPtr
 @cfn ft_embed_apply SimPtr SimPtr SimPtr Cdouble
 @cfn ft_unembed Cuint SimPtr Ptr{Int8} Cuint
+@cfn ft_clique_embed Cuint SimPtr SimPtr Ptr{Cuint}
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -554,6 +555,29 @@ function qubit(s::Simulation, i::Integer)
     _live(s)
     q = ft_qubit(s.handle, Cuint(i - 1))
     q == typemax(Cuint) ? nothing : Int(q)
+end
+
+"""
+    clique_embed!(logical, hardware) -> Int
+
+Store a **closed-form** structured clique embedding, where `hardware` has a known one, returning the
+clique size.
+
+Where [`embed!`](@ref) searches, this writes the answer down: `K_n` with uniform chains and no
+search. Supported today for Zephyr (`K_{2t*m}`, chains `m+1`) and Chimera. The size is fixed by the
+machine; the placement lands on `logical` exactly as `embed!` does, so [`embed_apply`](@ref),
+[`unembed`](@ref) and the accessors work unchanged.
+
+It is not the maximum D-Wave's tooling reaches -- `busclique` fuses the odd-coupled tracks for
+`K_{16m-8}` at the same chain length -- but it beats this crate's own search decisively and is
+instant. Errors when the topology has no known construction; `embed!` is the fallback.
+"""
+function clique_embed!(logical::Simulation, hardware::Simulation)
+    _live(logical); _live(hardware)
+    n = Ref{Cuint}(0)
+    ft_clique_embed(logical.handle, hardware.handle, n) == 0 &&
+        error("no closed-form clique embedding is known for that topology; use embed!")
+    Int(n[])
 end
 
 """
