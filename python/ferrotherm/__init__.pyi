@@ -301,6 +301,9 @@ class Sim:
     def certify(self, draws: int = 512, thin: int = 1) -> 'Certificate':
         """Sample and check the result."""
         ...
+    def chain(self, v: int) -> 'list[int]':
+        """The sites holding logical variable ``v``."""
+        ...
     def close(self) -> None:
         ...
     def cluster_anneal(self, rungs: int = 16, rounds: int = 400, beta_min: float = 0.1, beta_max: float = 6.0) -> 'ClusterRun':
@@ -311,6 +314,20 @@ class Sim:
         ...
     def copies(self, v: int) -> 'list[int]':
         """The nodes representing logical variable ``v``."""
+        ...
+    def embed(self, hardware: 'Sim', seed: int = 0, rounds: int = 0, budget: int = 0) -> bool:
+        """Place this model onto ``hardware``, keeping the placement for the accessors below."""
+        ...
+    def embed_apply(self, hardware: 'Sim', chain_strength: float = 0.0) -> 'Sim':
+        """Build the model that actually **runs** on the hardware, from a placement already found."""
+        ...
+    @property
+    def embed_longest(self) -> int:
+        """The longest chain — the number that decides whether an answer survives."""
+        ...
+    @property
+    def embed_sites(self) -> int:
+        """Physical sites the placement uses in total, or 0 if there is none."""
         ...
     @property
     def energy(self) -> float:
@@ -388,6 +405,9 @@ class Sim:
     def qubit(self, i: int) -> 'int | None':
         """The **vendor's** linear qubit index for node ``i``, or ``None`` if this graph has none."""
         ...
+    def site_lower_bound(self, hardware: 'Sim') -> int:
+        """The fewest sites **any** embedding of this model onto ``hardware`` could use."""
+        ...
     def sparsify(self, budget: int) -> 'Sim':
         """Rewrite this model so no variable has more than ``budget`` neighbours."""
         ...
@@ -418,6 +438,9 @@ class Sim:
     @property
     def treewidth(self) -> int:
         """Induced width of the elimination order. Exact inference costs ``2 ** treewidth``."""
+        ...
+    def unembed(self, variables: int) -> 'tuple[list[int], int]':
+        """Read this embedded state back as a logical one, with the count of chains that **broke**."""
         ...
 
 class Term:

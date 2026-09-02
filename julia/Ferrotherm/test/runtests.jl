@@ -142,6 +142,51 @@ end
     close!(p)
 end
 
+@testset "a model places onto a real machine and comes back logical" begin
+    # The other route onto a sparse fabric, and the one this binding did not have.
+    m = IsingModel(12)
+    for i in 1:12, j in (i+1):12
+        couple!(m, i, j, 1.0)
+    end
+    logical = build(m; beta = 0.5, seed = 7)
+    hw = pegasus(6)
+
+    lb = site_lower_bound(logical, hw)
+    @test lb >= 12                     # at least one site per variable
+    @test lb <= length(hw)             # K_12 is not impossible on a 680-site machine
+
+    @test embed!(logical, hw; seed = 7)
+    @test embed_sites(logical) >= lb   # a placement cannot beat the bound
+    @test embed_longest(logical) >= 1
+
+    # Chains partition the sites they use: no site holds two variables.
+    seen = Set{Int}()
+    total = 0
+    for v in 1:12
+        ch = chain(logical, v)
+        @test !isempty(ch)
+        for s in ch
+            @test 1 <= s <= length(hw)
+            @test !(s in seen)
+            push!(seen, s)
+        end
+        total += length(ch)
+    end
+    @test total == embed_sites(logical)
+    @test_throws BoundsError chain(logical, 13)
+
+    embedded = embed_apply(logical, hw)
+    @test length(embedded) == length(hw)
+    anneal!(embedded, 0.05, 8.0; stages = 300, per = 40)
+    st, broken = unembed(embedded, 12)
+    @test length(st) == 12
+    @test all(s -> s in (Int8(1), Int8(-1)), st)
+    @test broken <= 12
+
+    @test_throws ErrorException unembed(hw, 12)   # the machine carries no placement
+    close!(embedded); close!(hw); close!(logical)
+end
+
 @testset "a dense model can be rewritten to fit a degree budget" begin
     # z1_grid is degree 16 in the interior; six is well under it.
     dense = z1_grid(8, 8)

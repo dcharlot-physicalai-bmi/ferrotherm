@@ -527,6 +527,7 @@ Adapters, not a DSL. The field does not need a fifth modelling language.
 | **Python** | `ferrotherm.linalg` in thermox's signatures + `estimate/stderr/certificate/ledger` on every result. A PyMC `BlockedStep` with a `Competence` rule, so a discrete-latent model gets our block-Gibbs step in one line. | now |
 | **Node graph** | ✅ `docs/graph.html`. Nodes are IR objects, not widgets — model, schedule, run, report — and the ports carry those kinds, so a graph that type-checks is a program that compiles. Runs on the wasm module and exports `.ftp`. The survey found no node editor exists for **any** Ising or factor-graph stack anywhere; this is the first. | done |
 | **Zig** | Already binds the C ABI. Extend as the IR lands. | next |
+| **Embedding, everywhere** | ✅ Both routes onto a sparse fabric now cross the ABI: `ft_embed`/`ft_embed_apply`/`ft_unembed` beside `ft_sparsify`, with `ft_site_lower_bound` as the proof-carrying refusal. Until this landed a non-Rust caller could rewrite a model but not place one, and so could not run the 3.3 comparison themselves. 201 symbols, four surfaces. | done |
 | **Adapters** (`dimod.Sampler`, `ommx`) | Separate, optional, deletable crates the core never names. Written when a user asks, not before. | later |
 
 **Accept (node graph):** a graph built by dragging produces a `.ftp` byte-identical to the

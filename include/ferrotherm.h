@@ -107,6 +107,58 @@ double ft_sparsify_offset(const ft_sim *sim);
  * though it were an answer. */
 uint32_t ft_sparsify_project(const ft_sim *sim, int8_t *out, uint32_t cap);
 
+/* ---- minor embedding ------------------------------------------------------------------------------
+
+   The other route onto a sparse fabric. Sparsification rewrites a model to fit a degree budget with
+   no machine involved; embedding PLACES the model as it stands onto one specific hardware graph,
+   giving each variable a chain of physical sites.
+
+   examples/sparsify_vs_embed.rs measures which is cheaper and it is not close: placing wins wherever
+   both apply. Until these existed a caller on this ABI could only sparsify, and had to take that
+   measurement on trust. */
+
+/* Place `logical` onto `hardware`, storing the placement on `logical`. 1 on success, 0 on NULL or
+ * when the search did not find one.
+ *
+ * ZERO NEVER MEANS IMPOSSIBLE. It means this heuristic did not find a placement, which is a fact
+ * about the search. ft_site_lower_bound is the question with a proof behind it.
+ *
+ * `rounds` of rip-up and reroute and `budget` shortest-path searches; 0 for either takes a default.
+ * A large machine wants a larger budget -- saying "no" is not free. */
+uint32_t ft_embed(ft_sim *logical, const ft_sim *hardware, uint64_t seed, uint32_t rounds,
+                  uint64_t budget);
+
+uint32_t ft_embed_sites(const ft_sim *sim);    /* physical sites the placement uses in total */
+
+/* The longest chain, which is the number that decides whether an answer survives. Sites are a
+ * budget; a chain is a FAILURE MODE -- held together by a coupling, and when that coupling loses,
+ * the sites of one variable disagree and the variable has no value at all. */
+uint32_t ft_embed_longest(const ft_sim *sim);
+
+/* Copy the sites holding logical variable `v` into `out`; entries written, or the count needed when
+ * `out` is NULL. */
+uint32_t ft_embed_chain(const ft_sim *sim, uint32_t v, uint32_t *out, uint32_t cap);
+
+/* The fewest sites ANY embedding could use -- a PROOF, not a heuristic. A chain of L sites on a
+ * degree-d machine offers at most L(d-2)+2 ports, so a variable of degree k needs ceil((k-2)/(d-2))
+ * sites however cleverly it is placed. When the sum exceeds the machine, NO EMBEDDING EXISTS, and
+ * this answers in microseconds where ft_embed would spend its whole budget finding out. */
+uint32_t ft_site_lower_bound(const ft_sim *logical, const ft_sim *hardware);
+
+/* Build the model to actually RUN on the hardware, from a placement already found. The result is a
+ * simulation over the hardware's sites with each chain bound by a coupling strong enough to hold it;
+ * `chain_strength` of 0 takes the derived default. The placement rides along, so ft_unembed works on
+ * the result. Free it with ft_free. NULL when `logical` carries no placement. */
+ft_sim *ft_embed_apply(const ft_sim *logical, const ft_sim *hardware, double chain_strength);
+
+/* Read an embedded state back as a LOGICAL one, returning how many chains BROKE. 0xFFFFFFFF -- not
+ * 0, which is a valid count -- on NULL, on a simulation with no placement, or on a buffer smaller
+ * than the logical variable count.
+ *
+ * A variable whose chain broke has two values at once and therefore none. The majority is written so
+ * there is still a complete state, and the count says how much of it to distrust. */
+uint32_t ft_unembed(const ft_sim *sim, int8_t *out, uint32_t cap);
+
 /* ---- models you define ----------------------------------------------------------------------- */
 
 /* New builder over `n` nodes, or NULL if n is 0. Consume with ft_builder_build, or release with

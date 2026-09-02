@@ -58,6 +58,7 @@ export couple!, bias!, build
 export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
 export sparsify, logical_variables, copies, sparsify_offset, project
+export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -229,6 +230,13 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_sparsify_copies Cuint SimPtr Cuint Ptr{Cuint} Cuint
 @cfn ft_sparsify_offset Cdouble SimPtr
 @cfn ft_sparsify_project Cuint SimPtr Ptr{Int8} Cuint
+@cfn ft_embed Cuint SimPtr SimPtr Culonglong Cuint Culonglong
+@cfn ft_embed_sites Cuint SimPtr
+@cfn ft_embed_longest Cuint SimPtr
+@cfn ft_embed_chain Cuint SimPtr Cuint Ptr{Cuint} Cuint
+@cfn ft_site_lower_bound Cuint SimPtr SimPtr
+@cfn ft_embed_apply SimPtr SimPtr SimPtr Cdouble
+@cfn ft_unembed Cuint SimPtr Ptr{Int8} Cuint
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -546,6 +554,92 @@ function qubit(s::Simulation, i::Integer)
     _live(s)
     q = ft_qubit(s.handle, Cuint(i - 1))
     q == typemax(Cuint) ? nothing : Int(q)
+end
+
+"""
+    site_lower_bound(logical, hardware)
+
+The fewest sites **any** embedding of `logical` onto `hardware` could use.
+
+A proof, not a heuristic. A chain of `L` sites on a degree-`d` machine offers at most `L(d-2)+2`
+ports, so a variable of degree `k` needs `ceil((k-2)/(d-2))` sites however cleverly it is placed.
+**When this exceeds the machine's site count, no embedding exists** -- and asking costs microseconds
+where [`embed!`](@ref) would spend its whole budget finding out.
+"""
+function site_lower_bound(logical::Simulation, hardware::Simulation)
+    _live(logical); _live(hardware)
+    Int(ft_site_lower_bound(logical.handle, hardware.handle))
+end
+
+"""
+    embed!(logical, hardware; seed = 0, rounds = 0, budget = 0)
+
+Place `logical` onto `hardware`, keeping the placement for the accessors below. Returns `true` on
+success.
+
+**`false` never means "impossible."** It means this heuristic did not find a placement, which is a
+fact about the search; [`site_lower_bound`](@ref) is the question with a proof behind it.
+
+`rounds` of rip-up and reroute and `budget` shortest-path searches; 0 for either takes a default. A
+large machine wants a larger budget -- saying "no" is not free.
+"""
+function embed!(logical::Simulation, hardware::Simulation; seed::Integer = 0,
+                rounds::Integer = 0, budget::Integer = 0)
+    _live(logical); _live(hardware)
+    ft_embed(logical.handle, hardware.handle, Culonglong(seed), Cuint(rounds),
+             Culonglong(budget)) == 1
+end
+
+"""Physical sites the placement uses in total, or 0 if there is none."""
+embed_sites(s::Simulation) = (_live(s); Int(ft_embed_sites(s.handle)))
+
+"""The longest chain -- the number that decides whether an answer survives.
+
+Sites are a budget and you either have them or you do not. A chain is a *failure mode*: it is held
+together by a coupling, and when that coupling loses, the sites of one variable disagree and the
+variable has no value at all."""
+embed_longest(s::Simulation) = (_live(s); Int(ft_embed_longest(s.handle)))
+
+"""The sites holding logical variable `v`, one-based on both sides."""
+function chain(s::Simulation, v::Integer)
+    _live(s)
+    need = ft_embed_chain(s.handle, Cuint(v - 1), Ptr{Cuint}(C_NULL), Cuint(0))
+    need == 0 && throw(BoundsError(s, v))
+    buf = Vector{Cuint}(undef, need)
+    got = ft_embed_chain(s.handle, Cuint(v - 1), pointer(buf), Cuint(need))
+    Int.(buf[1:got]) .+ 1
+end
+
+"""
+    embed_apply(logical, hardware; chain_strength = 0.0)
+
+Build the model that actually **runs** on the hardware, from a placement already found.
+
+A simulation over the hardware's sites with each chain bound by a coupling strong enough to hold it;
+`chain_strength` of 0 takes the derived default. The placement rides along, so [`unembed`](@ref)
+works on the result.
+"""
+function embed_apply(logical::Simulation, hardware::Simulation; chain_strength::Real = 0.0)
+    _live(logical); _live(hardware)
+    Simulation(ft_embed_apply(logical.handle, hardware.handle, Cdouble(chain_strength)),
+               "the embedded model (embed! first)")
+end
+
+"""
+    unembed(s, variables) -> (Vector{Int8}, Int)
+
+Read an embedded state back as a logical one, with the count of chains that **broke**.
+
+A variable whose chain broke has two values at once and therefore none. The majority is returned so
+there is still a complete state, and the count says how much of it to distrust.
+"""
+function unembed(s::Simulation, variables::Integer)
+    _live(s)
+    buf = Vector{Int8}(undef, variables)
+    broken = ft_unembed(s.handle, pointer(buf), Cuint(variables))
+    broken == typemax(Cuint) &&
+        error("this simulation carries no placement, or the buffer is too small")
+    (buf, Int(broken))
 end
 
 """

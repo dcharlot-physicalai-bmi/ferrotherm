@@ -550,6 +550,25 @@ original is reached — the last being the one a rewrite can quietly fail while 
 A companion test drops the copy coupling below the derived bound and requires the property to break,
 so the derivation is load-bearing rather than decorative.
 
+### Both routes, from every language
+
+`embed` places a model onto a specific machine; `sparsify` rewrites it to fit a degree budget. Both
+now cross the C ABI, so Python, Zig and Julia can run the comparison below rather than take it on
+trust — 201 symbols across four surfaces.
+
+```python
+k  = model.build(beta=0.5, seed=7)      # a K_12
+hw = ferrotherm.pegasus(6)
+k.site_lower_bound(hw)                  # 12 -- a PROOF, in microseconds
+k.embed(hw, seed=7)                     # True; 25 sites, longest chain 4
+run = k.embed_apply(hw); run.anneal()
+state, broken = run.unembed(12)         # 0 broken chains
+```
+
+`site_lower_bound` is the question with a proof behind it: `embed` returning false means *this
+search* did not find a placement, while a bound exceeding the machine's site count means **none
+exists**.
+
 ### The crossover, and sparsification loses
 
 *At what N does sparsify-plus-embed beat placing the model directly?* **Nowhere.**

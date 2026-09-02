@@ -136,6 +136,67 @@ pub const Sim = struct {
         return .{ .h = c.ft_zephyr_new(m, t, j, beta, seed) orelse return Error.OutOfMemory };
     }
 
+    /// The fewest sites ANY embedding of this model onto `hardware` could use.
+    ///
+    /// A PROOF, not a heuristic. A chain of L sites on a degree-d machine offers at most L(d-2)+2
+    /// ports, so a variable of degree k needs ceil((k-2)/(d-2)) sites however cleverly it is
+    /// placed. When this exceeds the machine's site count, NO EMBEDDING EXISTS -- and asking costs
+    /// microseconds where `embed` would spend its whole budget finding out.
+    pub fn siteLowerBound(self: Sim, hardware: Sim) u32 {
+        return c.ft_site_lower_bound(self.h, hardware.h);
+    }
+
+    /// Place this model onto `hardware`, keeping the placement for the accessors below.
+    ///
+    /// `error.NotSolved` NEVER MEANS IMPOSSIBLE. It means this heuristic did not find a placement,
+    /// which is a fact about the search; `siteLowerBound` is the question with a proof behind it.
+    ///
+    /// `rounds` of rip-up and reroute and `budget` shortest-path searches; 0 for either takes a
+    /// default. A large machine wants a larger budget -- saying "no" is not free.
+    pub fn embed(self: Sim, hardware: Sim, seed: u64, rounds: u32, budget: u64) Error!void {
+        if (c.ft_embed(self.h, hardware.h, seed, rounds, budget) == 0) return Error.NotSolved;
+    }
+
+    /// Physical sites the placement uses in total, or 0 if there is none.
+    pub fn embedSites(self: Sim) u32 {
+        return c.ft_embed_sites(self.h);
+    }
+
+    /// The longest chain -- the number that decides whether an answer survives.
+    ///
+    /// Sites are a budget and you either have them or you do not. A chain is a FAILURE MODE: it is
+    /// held together by a coupling, and when that coupling loses, the sites of one variable
+    /// disagree and the variable has no value at all.
+    pub fn embedLongest(self: Sim) u32 {
+        return c.ft_embed_longest(self.h);
+    }
+
+    /// The sites holding logical variable `v`, written into `out`.
+    pub fn embedChain(self: Sim, v: u32, out: []u32) []const u32 {
+        const n = c.ft_embed_chain(self.h, v, out.ptr, @intCast(out.len));
+        return out[0..n];
+    }
+
+    /// Build the model that actually RUNS on the hardware, from a placement already found.
+    ///
+    /// A simulation over the hardware's sites with each chain bound by a coupling strong enough to
+    /// hold it; `chain_strength` of 0 takes the derived default. The placement rides along, so
+    /// `unembed` works on the result.
+    pub fn embedApply(self: Sim, hardware: Sim, chain_strength: f64) Error!Sim {
+        return .{ .h = c.ft_embed_apply(self.h, hardware.h, chain_strength) orelse
+            return Error.NotSolved };
+    }
+
+    /// Read this embedded state back as a LOGICAL one, returning how many chains BROKE.
+    ///
+    /// A variable whose chain broke has two values at once and therefore none. The majority is
+    /// written so there is still a complete state, and the count says how much of it to distrust.
+    pub fn unembed(self: Sim, out: []i8) Error!u32 {
+        const broken = c.ft_unembed(self.h, out.ptr, @intCast(out.len));
+        if (broken == std.math.maxInt(u32)) return Error.NotSolved;
+        return broken;
+    }
+
     /// Rewrite this model so no variable exceeds `budget` neighbours, and return the rewritten one.
     ///
     /// A model denser than a fabric has two routes onto it: embedding PLACES it onto one specific
@@ -627,6 +688,61 @@ test "an answer is scored in the modeller's own units" {
     try std.testing.expect(p.feasible());
     // And it is NOT the compiled energy, which is the only number this used to hand back.
     try std.testing.expect(obj != p.energy());
+}
+
+test "a model places onto a real machine and the answer comes back logical" {
+    // The other route onto a sparse fabric, and the one this ABI did not have until now.
+    var m = try Model.init(12);
+    defer m.deinit();
+    var i: u32 = 0;
+    while (i < 12) : (i += 1) {
+        var j: u32 = i + 1;
+        while (j < 12) : (j += 1) try m.couple(i, j, 1.0);
+    }
+    const logical = try m.build(0.5, 7);
+    defer logical.deinit();
+    const hw = try Sim.pegasus(6, 1.0, 0.5, 3);
+    defer hw.deinit();
+
+    // The proof-carrying question first.
+    const lb = logical.siteLowerBound(hw);
+    try std.testing.expect(lb >= 12);
+    try std.testing.expect(lb <= hw.len());
+
+    try logical.embed(hw, 7, 0, 0);
+    const sites = logical.embedSites();
+    try std.testing.expect(sites >= lb);
+    try std.testing.expect(logical.embedLongest() >= 1);
+
+    // Chains partition the sites they use: no site holds two variables.
+    var seen = [_]bool{false} ** 1024;
+    var buf: [64]u32 = undefined;
+    var total: u32 = 0;
+    var v: u32 = 0;
+    while (v < 12) : (v += 1) {
+        const chain = logical.embedChain(v, &buf);
+        try std.testing.expect(chain.len >= 1);
+        for (chain) |s| {
+            try std.testing.expect(s < hw.len());
+            try std.testing.expect(!seen[s]);
+            seen[s] = true;
+        }
+        total += @intCast(chain.len);
+    }
+    try std.testing.expectEqual(sites, total);
+
+    // Then the model that actually runs on the machine.
+    const embedded = try logical.embedApply(hw, 0.0);
+    defer embedded.deinit();
+    try std.testing.expectEqual(hw.len(), embedded.len());
+    _ = try embedded.anneal(0.05, 8.0, 300, 40);
+    var out: [12]i8 = undefined;
+    const broken = try embedded.unembed(&out);
+    try std.testing.expect(broken <= 12);
+    for (out) |s| try std.testing.expect(s == 1 or s == -1);
+
+    // A machine carrying no placement refuses rather than answering zero.
+    try std.testing.expectError(error.NotSolved, hw.unembed(&out));
 }
 
 test "a dense model can be rewritten to fit a degree budget" {

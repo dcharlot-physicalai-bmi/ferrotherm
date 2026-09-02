@@ -66,6 +66,33 @@ twice. The first version of the falsification test did exactly that and hung. Bo
 the sparsified size *before* enumerating anything, so a future case that blows past it fails in a
 second instead of running for a week.
 
+### Minor embedding reaches every surface, closing the gap the crossover exposed
+
+The measurement below says placing beats rewriting wherever both apply — and until now a caller on
+the C ABI could only *rewrite*. `embed` was Rust-only, so every other surface had to take that result
+on trust. Seven new symbols close it:
+
+`ft_embed`, `ft_embed_sites`, `ft_embed_longest`, `ft_embed_chain`, `ft_site_lower_bound`,
+`ft_embed_apply`, `ft_unembed` — bound in the header, Python (`Sim.embed`, `.chain`,
+`.embed_apply`, `.unembed`, `.site_lower_bound`), Zig and Julia. **201 C ABI symbols across four
+surfaces**, parity green.
+
+**The bound is the one that carries a proof, and the ABI says so.** `ft_embed` returning 0 means
+*this heuristic did not find a placement* — a fact about the search. `ft_site_lower_bound` is the
+different question: a chain of `L` sites on a degree-`d` machine offers at most `L(d−2) + 2` ports,
+so a variable of degree `k` needs `⌈(k−2)/(d−2)⌉` sites however cleverly it is placed, and when the
+sum exceeds the machine **no embedding exists**. A test puts `K₂₄` on a 40-site `P₂`: the bound says
+48 in microseconds, and the search agrees by failing — the weaker statement, arrived at slowly.
+
+`ft_embed_apply` builds the model that actually *runs* on the hardware, chains bound and placement
+carried along, so `ft_unembed` reads an answer back by variable. It returns **how many chains
+broke**, and `0xFFFFFFFF` — not 0, a valid count — for a simulation carrying no placement.
+
+**And a latent bug in the Python surface, found by using it.** `Sim.sparsify` read `self._beta`,
+which only the module's own factories set — a `Sim` built through `Model` does not pass through one,
+so an ordinary path raised `AttributeError`. Both derived-simulation methods now go through one
+helper that falls back to the library default.
+
 ### The crossover, published — and sparsification loses
 
 `examples/sparsify_vs_embed.rs` answers the question the ROADMAP set as Phase 3.3: *at what N does

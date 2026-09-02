@@ -138,6 +138,13 @@ _sparsify_variables = _sig("ft_sparsify_variables", c_uint32, [_p])
 _sparsify_copies = _sig("ft_sparsify_copies", c_uint32, [_p, c_uint32, POINTER(c_uint32), c_uint32])
 _sparsify_offset = _sig("ft_sparsify_offset", c_double, [_p])
 _sparsify_project = _sig("ft_sparsify_project", c_uint32, [_p, POINTER(c_int8), c_uint32])
+_embed = _sig("ft_embed", c_uint32, [_p, _p, c_uint64, c_uint32, c_uint64])
+_embed_sites = _sig("ft_embed_sites", c_uint32, [_p])
+_embed_longest = _sig("ft_embed_longest", c_uint32, [_p])
+_embed_chain = _sig("ft_embed_chain", c_uint32, [_p, c_uint32, POINTER(c_uint32), c_uint32])
+_site_lower_bound = _sig("ft_site_lower_bound", c_uint32, [_p, _p])
+_embed_apply = _sig("ft_embed_apply", _p, [_p, _p, c_double])
+_unembed = _sig("ft_unembed", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
 _builder_bias = _sig("ft_builder_bias", c_uint32, [_p, c_uint32, c_double])
@@ -1004,6 +1011,99 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         return int(_ledger_updates(self._h))
 
+    def _beta_or_default(self) -> float:
+        """The beta to stamp on a Sim derived from this one.
+
+        `_beta` is set by the module's own factories; a Sim built through :class:`Model` does not
+        pass through one, so reading the attribute directly raised `AttributeError` on a perfectly
+        ordinary path. Derived simulations carry the parent's beta where there is one and the
+        library's default otherwise.
+        """
+        return float(getattr(self, "_beta", 1.0))
+
+    def site_lower_bound(self, hardware: "Sim") -> int:
+        """The fewest sites **any** embedding of this model onto ``hardware`` could use.
+
+        A proof, not a heuristic. A chain of *L* sites on a degree-*d* machine offers at most
+        ``L(d-2)+2`` ports, so a variable of degree *k* needs ``ceil((k-2)/(d-2))`` sites however
+        cleverly it is placed. **When this exceeds the machine's site count, no embedding exists** —
+        and asking costs microseconds where :meth:`embed` would spend its whole budget finding out.
+        """
+        self._live()
+        hardware._live()
+        return int(_site_lower_bound(self._h, hardware._h))
+
+    def embed(self, hardware: "Sim", seed: int = 0, rounds: int = 0, budget: int = 0) -> bool:
+        """Place this model onto ``hardware``, keeping the placement for the accessors below.
+
+        >>> k = Grid  # doctest: +SKIP
+
+        **False never means "impossible."** It means this heuristic did not find a placement, which
+        is a fact about the search. :meth:`site_lower_bound` is the question with a proof behind it.
+
+        ``rounds`` of rip-up and reroute and ``budget`` shortest-path searches; 0 for either takes a
+        default. A large machine wants a larger budget — saying "no" is not free.
+        """
+        self._live()
+        hardware._live()
+        return _embed(self._h, hardware._h, int(seed), int(rounds), int(budget)) == 1
+
+    @property
+    def embed_sites(self) -> int:
+        """Physical sites the placement uses in total, or 0 if there is none."""
+        self._live()
+        return int(_embed_sites(self._h))
+
+    @property
+    def embed_longest(self) -> int:
+        """The longest chain — the number that decides whether an answer survives.
+
+        Sites are a budget and you either have them or you do not. A chain is a *failure mode*: it
+        is held together by a coupling, and when that coupling loses, the sites of one variable
+        disagree and the variable has no value at all. Halving this is worth more than halving
+        :attr:`embed_sites`.
+        """
+        self._live()
+        return int(_embed_longest(self._h))
+
+    def chain(self, v: int) -> "list[int]":
+        """The sites holding logical variable ``v``."""
+        self._live()
+        need = int(_embed_chain(self._h, int(v), None, 0))
+        if need == 0:
+            raise IndexError(f"no chain for variable {v}; embed() first, or it is out of range")
+        buf = (c_uint32 * need)()
+        got = _embed_chain(self._h, int(v), buf, need)
+        return [int(x) for x in buf[:got]]
+
+    def embed_apply(self, hardware: "Sim", chain_strength: float = 0.0) -> "Sim":
+        """Build the model that actually **runs** on the hardware, from a placement already found.
+
+        A simulation over the hardware's sites, each chain bound by a coupling strong enough to hold
+        it; ``chain_strength`` of 0 takes the derived default. The placement rides along, so
+        :meth:`unembed` works on the result.
+        """
+        self._live()
+        hardware._live()
+        return _wrap(_embed_apply(self._h, hardware._h, float(chain_strength)),
+                     self._beta_or_default(),
+                     "the embedded model (embed() first)")
+
+    def unembed(self, variables: int) -> "tuple[list[int], int]":
+        """Read this embedded state back as a logical one, with the count of chains that **broke**.
+
+        A variable whose chain broke has two values at once and therefore none. The majority is
+        returned so there is still a complete state, and the count says how much of it to distrust:
+        non-zero means the chain coupling lost to the problem, and the answer is a stronger coupling
+        or a shorter chain.
+        """
+        self._live()
+        buf = (c_int8 * int(variables))()
+        broken = int(_unembed(self._h, buf, int(variables)))
+        if broken == 0xFFFFFFFF:
+            raise ValueError("this simulation carries no placement, or the buffer is too small")
+        return ([int(x) for x in buf], broken)
+
     def sparsify(self, budget: int) -> "Sim":
         """Rewrite this model so no variable has more than ``budget`` neighbours.
 
@@ -1036,7 +1136,8 @@ is how a dropped GPU dispatch turns into a believable energy.
                 f"a degree budget of {budget} cannot be met by splitting: a path of copies offers "
                 "c(d-2)+2 ports and that is not increasing in c below d = 3"
             )
-        return _wrap(_sparsify(self._h, int(budget)), self._beta, "the sparsified model")
+        return _wrap(_sparsify(self._h, int(budget)), self._beta_or_default(),
+                     "the sparsified model")
 
     @property
     def logical_variables(self) -> int:

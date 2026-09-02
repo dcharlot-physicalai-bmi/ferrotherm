@@ -87,6 +87,8 @@ pub struct Sim {
     /// and the constant that turns a sparse energy back into a logical one. Empty otherwise.
     copies: Vec<Vec<u32>>,
     sparsify_offset: f64,
+    /// The placement [`ft_embed`] found, or the one an embedded simulation was built from.
+    emb: Option<crate::embed::Embedding>,
 }
 
 impl Sim {
@@ -95,7 +97,7 @@ impl Sim {
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
         Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None, qubits: Vec::new(), copies: Vec::new(), sparsify_offset: 0.0 }))
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None, qubits: Vec::new(), copies: Vec::new(), sparsify_offset: 0.0, emb: None }))
     }
 
     /// As [`Sim::new`], keeping the device topology's own qubit numbering. See [`ft_qubit`].
@@ -458,6 +460,252 @@ mod sparsify_ffi_tests {
         assert_eq!(ft_len(same), ft_len(s));
         assert_eq!(ft_sparsify_offset(same), 0.0, "no copy edges to pay for");
         ft_free(same);
+        ft_free(s);
+    }
+}
+
+// ---- minor embedding ------------------------------------------------------------------------------
+//
+// The other route onto a sparse fabric, and until now the one this ABI did not have. `sparsify`
+// rewrites a model to fit a degree budget with no machine involved; embedding PLACES the model as it
+// stands onto one specific hardware graph, giving each variable a chain of physical sites.
+//
+// `examples/sparsify_vs_embed.rs` measures which is cheaper and the answer is not close -- placing
+// wins wherever both apply. A caller on this ABI could previously only sparsify, and so had to take
+// that measurement on trust. These close it.
+
+/// Place `logical` onto `hardware`, storing the placement on `logical` for the accessors below.
+///
+/// Returns 1 on success, 0 on a null handle or when the search did not find a placement.
+///
+/// **Zero never means "impossible."** It means this heuristic did not find one, which is a fact
+/// about the search. [`ft_site_lower_bound`] is the question with a proof behind it: when it
+/// exceeds the machine's site count, no embedding exists at all, and asking it first costs nothing.
+///
+/// `rounds` of rip-up and reroute, 0 for the default; `budget` shortest-path searches before giving
+/// up, 0 for the default. A large machine wants a larger budget — saying "no" is not free, and on a
+/// hopeless dense input the unbounded search runs for minutes.
+#[no_mangle]
+pub extern "C" fn ft_embed(
+    logical: *mut Sim,
+    hardware: *const Sim,
+    seed: u64,
+    rounds: u32,
+    budget: u64,
+) -> u32 {
+    let Some(hw) = (unsafe { hardware.as_ref() }) else { return 0 };
+    let Some(lg) = (unsafe { logical.as_mut() }) else { return 0 };
+    let rounds = if rounds == 0 { 10 } else { rounds as usize };
+    let budget = if budget == 0 { crate::embed::DEFAULT_SEARCH_BUDGET } else { budget };
+    match crate::embed::embed_bounded(&lg.graph, &hw.graph, seed, rounds, budget) {
+        Some(e) => {
+            lg.emb = Some(e);
+            1
+        }
+        None => 0,
+    }
+}
+
+/// Physical sites the placement uses in total, or 0 if there is none.
+#[no_mangle]
+pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.emb.as_ref())
+        .map_or(0, |e| e.chains.iter().map(|c| c.len()).sum::<usize>() as u32)
+}
+
+/// The longest chain, which is the number that decides whether an answer survives.
+///
+/// Sites are a budget and you either have them or you do not. A chain is a FAILURE MODE: it is held
+/// together by a coupling, and when that coupling loses, the sites of one variable disagree and the
+/// variable has no value at all. Halving this is worth more than halving [`ft_embed_sites`].
+#[no_mangle]
+pub extern "C" fn ft_embed_longest(sim: *const Sim) -> u32 {
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.emb.as_ref())
+        .map_or(0, |e| e.chains.iter().map(|c| c.len()).max().unwrap_or(0) as u32)
+}
+
+/// Copy the sites holding logical variable `v` into `out`; entries written, or the count needed
+/// when `out` is NULL.
+#[no_mangle]
+pub extern "C" fn ft_embed_chain(sim: *const Sim, v: u32, out: *mut u32, cap: u32) -> u32 {
+    let Some(e) = unsafe { sim.as_ref() }.and_then(|s| s.emb.as_ref()) else { return 0 };
+    let Some(chain) = e.chains.get(v as usize) else { return 0 };
+    if out.is_null() {
+        return chain.len() as u32;
+    }
+    let n = chain.len().min(cap as usize);
+    for (i, &site) in chain.iter().take(n).enumerate() {
+        unsafe { *out.add(i) = site as u32 };
+    }
+    n as u32
+}
+
+/// The fewest sites ANY embedding of `logical` onto `hardware` could use.
+///
+/// A proof, not a heuristic. A chain of `L` sites on a degree-`d` machine offers at most
+/// `L(d−2) + 2` ports, so a variable of degree `k` needs `⌈(k−2)/(d−2)⌉` sites however cleverly it
+/// is placed. When the sum exceeds the machine, **no embedding exists** — and this answers in
+/// microseconds where [`ft_embed`] would spend its whole budget discovering the same thing.
+#[no_mangle]
+pub extern "C" fn ft_site_lower_bound(logical: *const Sim, hardware: *const Sim) -> u32 {
+    let (Some(lg), Some(hw)) = (unsafe { logical.as_ref() }, unsafe { hardware.as_ref() }) else {
+        return 0;
+    };
+    crate::embed::site_lower_bound(&lg.graph, &hw.graph) as u32
+}
+
+/// Build the model to actually RUN on the hardware, from a placement already found.
+///
+/// The result is a simulation over the hardware's sites, with each chain bound by a coupling strong
+/// enough to hold it. `chain_strength` of 0 takes the derived default — a multiple of the largest
+/// coefficient in the logical model, which is the standard first guess. The placement rides along,
+/// so [`ft_unembed`] works on the result.
+///
+/// NULL on a null handle or when `logical` carries no placement.
+#[no_mangle]
+pub extern "C" fn ft_embed_apply(
+    logical: *const Sim,
+    hardware: *const Sim,
+    chain_strength: f64,
+) -> *mut Sim {
+    let (Some(lg), Some(hw)) = (unsafe { logical.as_ref() }, unsafe { hardware.as_ref() }) else {
+        return core::ptr::null_mut();
+    };
+    let Some(e) = lg.emb.as_ref() else { return core::ptr::null_mut() };
+    let out = crate::embed::apply_with(&lg.graph, &hw.graph, e, chain_strength);
+    let embedding = out.embedding;
+    let p = Sim::new(out.graph, lg.beta, lg.seed);
+    // SAFETY: `Sim::new` just handed back a live, uniquely-owned allocation.
+    unsafe { (*p).emb = Some(embedding) };
+    p
+}
+
+/// Read an embedded state back as a LOGICAL one, returning how many chains BROKE.
+///
+/// `0xFFFFFFFF` — not 0, which is a valid count — on a null handle, a simulation carrying no
+/// placement, or a buffer smaller than the logical variable count.
+///
+/// A variable whose chain broke has two values at once and therefore none. The majority is written
+/// so there is still a complete state to look at, and the count says how much of it to distrust:
+/// non-zero means the chain coupling lost to the problem, and the answer is a stronger coupling or
+/// a shorter chain.
+#[no_mangle]
+pub extern "C" fn ft_unembed(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return u32::MAX };
+    let Some(e) = s.emb.as_ref() else { return u32::MAX };
+    if out.is_null() || (cap as usize) < e.chains.len() {
+        return u32::MAX;
+    }
+    let (state, broken) = crate::embed::unembed(e, &s.sampler_state);
+    for (i, &v) in state.iter().enumerate() {
+        unsafe { *out.add(i) = v };
+    }
+    broken.len() as u32
+}
+
+#[cfg(test)]
+mod embed_ffi_tests {
+    use super::*;
+
+    fn clique_sim(k: u32, beta: f64) -> *mut Sim {
+        let b = ft_builder_new(k);
+        for i in 0..k {
+            for j in (i + 1)..k {
+                ft_builder_couple(b, i, j, 1.0);
+            }
+        }
+        ft_builder_build(b, beta, 7)
+    }
+
+    /// Place a clique on a real machine, run the placed model, and read it back by variable.
+    #[test]
+    fn a_model_places_onto_pegasus_and_the_answer_comes_back_logical() {
+        let logical = clique_sim(12, 0.5);
+        let hw = ft_pegasus_new(6, 1.0, 0.5, 3);
+        assert!(!hw.is_null());
+        assert_eq!(ft_embed_sites(logical), 0, "nothing placed yet");
+        assert_eq!(ft_embed_longest(logical), 0);
+
+        // The proof-carrying question first: K_12 needs far fewer sites than P6 has.
+        let lb = ft_site_lower_bound(logical, hw);
+        assert!(lb >= 12, "at least one site per variable, got {lb}");
+        assert!(lb <= ft_len(hw), "K_12 is not impossible on a 680-site machine");
+
+        assert_eq!(ft_embed(logical, hw, 7, 0, 0), 1);
+        let sites = ft_embed_sites(logical);
+        let longest = ft_embed_longest(logical);
+        assert!(sites >= lb, "a placement cannot beat the lower bound: {sites} < {lb}");
+        assert!(longest >= 1 && (longest as usize) <= sites as usize);
+
+        // Chains partition the sites they use: no site holds two variables.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut total = 0usize;
+        for v in 0..12u32 {
+            let need = ft_embed_chain(logical, v, core::ptr::null_mut(), 0);
+            assert!(need >= 1, "variable {v} has no chain");
+            let mut buf = vec![0u32; need as usize];
+            assert_eq!(ft_embed_chain(logical, v, buf.as_mut_ptr(), need), need);
+            for s in buf {
+                assert!(s < ft_len(hw), "site {s} is off the machine");
+                assert!(seen.insert(s), "site {s} is in two chains");
+            }
+            total += need as usize;
+        }
+        assert_eq!(total, sites as usize);
+        assert_eq!(ft_embed_chain(logical, 12, core::ptr::null_mut(), 0), 0, "no variable 12");
+
+        // Now build the model that actually runs on the machine, and solve it.
+        let embedded = ft_embed_apply(logical, hw, 0.0);
+        assert!(!embedded.is_null());
+        assert_eq!(ft_len(embedded), ft_len(hw), "it runs over the hardware's sites");
+        ft_anneal(embedded, 0.05, 8.0, 300, 40);
+
+        let mut out = vec![0i8; 12];
+        let broken = ft_unembed(embedded, out.as_mut_ptr(), 12);
+        assert!(broken != u32::MAX, "a real answer, not a refusal");
+        assert!(out.iter().all(|&s| s == 1 || s == -1));
+        assert!(broken <= 12);
+
+        // A buffer too small, and a simulation with no placement, are refusals rather than writes.
+        assert_eq!(ft_unembed(embedded, out.as_mut_ptr(), 11), u32::MAX);
+        assert_eq!(ft_unembed(hw, out.as_mut_ptr(), 12), u32::MAX, "the machine holds no placement");
+
+        ft_free(embedded);
+        ft_free(hw);
+        ft_free(logical);
+    }
+
+    /// The bound proves impossibility; the search only reports failure.
+    ///
+    /// A P2 has 40 sites at degree 13. A K_24 variable has degree 23, and a chain of L sites offers
+    /// L(13-2)+2 ports, so it needs 2 sites -- 48 for the twenty-four of them, which is more than
+    /// the machine has. No embedding exists, and the library says so in microseconds without
+    /// searching. That is the whole point of having a bound beside a heuristic.
+    #[test]
+    fn the_lower_bound_answers_impossible_where_the_search_only_says_not_found() {
+        let logical = clique_sim(24, 0.5);
+        let hw = ft_pegasus_new(2, 1.0, 0.5, 1);
+        assert!(!hw.is_null());
+        assert_eq!(ft_len(hw), 40);
+        let lb = ft_site_lower_bound(logical, hw);
+        assert_eq!(lb, 48, "24 variables at 2 sites each");
+        assert!(lb > ft_len(hw), "K_24 needs {lb} sites of 40, so no embedding exists");
+        // And the search agrees, by failing -- but its failure is the weaker statement.
+        assert_eq!(ft_embed(logical, hw, 1, 0, 5_000), 0);
+        ft_free(hw);
+        ft_free(logical);
+    }
+
+    #[test]
+    fn null_and_unplaced_handles_are_inert() {
+        let s = ft_ising2d_new(4, 1.0, 0.5, 1);
+        assert_eq!(ft_embed(core::ptr::null_mut(), s, 1, 0, 0), 0);
+        assert_eq!(ft_embed(s, core::ptr::null(), 1, 0, 0), 0);
+        assert_eq!(ft_site_lower_bound(core::ptr::null(), s), 0);
+        assert_eq!(ft_embed_sites(core::ptr::null()), 0);
+        assert!(ft_embed_apply(s, s, 0.0).is_null(), "no placement to apply");
         ft_free(s);
     }
 }
