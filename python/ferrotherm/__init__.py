@@ -1038,7 +1038,7 @@ is how a dropped GPU dispatch turns into a believable energy.
         """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.
 
         Where :meth:`embed` searches, this writes the answer down: ``K_n`` with uniform chains and no
-        search. Supported today for **Pegasus** (``K_{12(m-2)}``, chains ``m+1`` — ``K_168`` on the
+        search. Supported today for **Pegasus** (``K_{12(m-2)+4}``, chains ≤ ``m+1`` — ``K_172`` on the
         Advantage's P₁₆, where the search reaches ``K_80``) and **Zephyr** (``K_{2t(2m-1)}``, chains
         ``m+1`` — ``K_232`` on Z₁₅, the busclique frontier size exactly).
         The clique size is fixed by the machine; this returns it. The placement lands on ``self``
@@ -1053,8 +1053,9 @@ is how a dropped GPU dispatch turns into a believable energy.
         5
 
         On Zephyr this IS the maximum ``busclique`` reaches on a perfect fabric, at the same chain
-        length; on Pegasus it is within 7% (``K_{12(m-1)}`` needs the boundary repair this crate
-        does not perform). Either way it beats this crate's own search decisively and is instant.
+        length; on Pegasus it is within 5% (the last eight chains of ``K_{12(m-1)}`` need the
+        staggered-fragment diagonal this crate does not perform). Either way it beats this crate's
+        own search decisively and is instant.
         Raises when the topology has no known construction; :meth:`embed` is then the fallback.
         """
         self._live()

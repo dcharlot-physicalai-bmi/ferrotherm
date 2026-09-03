@@ -94,7 +94,7 @@ fn main() {
     // searched ones -- connected, disjoint, an edge behind every pair -- so a construction row earns
     // its place by being a real clique minor, not by being asserted.
     {
-        println!("--- BY CONSTRUCTION (closed-form, uniform chains, verified)");
+        println!("--- BY CONSTRUCTION (closed-form, verified; chain = longest)");
         println!(
             "{:<16} {:>6} {:>7} {:>9} {:>10}",
             "hardware", "clique", "chain", "verified", "frontier"
@@ -168,12 +168,15 @@ fn main() {
              busclique frontier EXACTLY, size and chain length both. Nothing structured is left on\n\
              this table; only the Zephyr paper's K_{{16m+1}} treewidth construction is larger, and\n\
              it pays longer chains for the last seventeen.\n\
-           * Pegasus K_{{12(m-2)}} -- K_168 on the Advantage's P16 with uniform chains of 17, where\n\
-             the search reaches K_80 at chain 16. The frontier is K_{{12(m-1)}} = K_180 at the SAME\n\
-             chain: the twelve missing chains need busclique's boundary odd-coupler repair. So the\n\
-             construction is within 7%% of the maximum, instantly, and the last 7%% is the recorded\n\
-             gap. The ell intervals that make every pair of chains adjacent are a Kani theorem\n\
-             (exhaustive to m = 2^16), and every size still passes Embedding::verify besides.\n\n\
+           * Pegasus K_{{12(m-2)+4}} -- K_172 on the Advantage's P16, ells at chain 17 plus the\n\
+             fabric's four UNIVERSAL WIRES at chain 15, where the search reaches K_80 at chain 16.\n\
+             Four is a theorem, not a choice: the offset lists make exactly the wires on tracks\n\
+             {{0,1}} (columns at w = m-1) and {{10,11}} (rows at w = 0) cross every ell, and every\n\
+             other boundary wire provably fails. The frontier is K_{{12(m-1)}} = K_180: the last\n\
+             EIGHT chains need busclique's staggered-fragment diagonal, so the construction is\n\
+             within 5%% of the maximum, instantly, with the remainder recorded. The interval and\n\
+             quantifier arithmetic is a Kani theorem (exhaustive to m = 2^16), and every size still\n\
+             passes Embedding::verify besides.\n\n\
          AND THE ANOMALY, stated rather than trimmed. At K_32 the LARGER machine of each family\n\
          spends more sites than the smaller one -- P16 uses 237 where P6 uses 203. That is not the\n\
          bigger machine being worse. It is the placement heuristic having more room to wander in,\n\

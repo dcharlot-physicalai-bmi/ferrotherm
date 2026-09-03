@@ -25,8 +25,23 @@ seventeen. The double-Chimera `K_{2t·m}` route this supersedes lives in the 0.3
 
 `ft_clique_embed` and all four bindings return the new sizes (`K_56` on the Z₄ prototype, up from
 `K_32`); the construction table in `examples/embedding_tax` now shows every Zephyr row AT the
-frontier. Remaining structured gap, exact: twelve chains on Pegasus (`busclique`'s boundary
-odd-coupler repair), `K_180` vs our `K_168` on P₁₆.
+frontier.
+
+### Pegasus +4: the universal wires, and a proof they are exactly four
+
+The measured shift laws — `a(k,k′) = [k′ < off0[k]]`, `b(k,k′) = [k < off1[k′]]` — turn the
+boundary question into a quantifier: a whole wire added as a chain crosses EVERY ell iff its shift
+condition holds against all twelve tracks at once. The offset lists answer it exactly. Columns at
+`w = m−1` need `b = 1` universally, so their track must sit below `min(off1) = 2`: tracks 0 and 1,
+no others. Rows at `w = 0` need `a = 0` universally, so their track must sit at or above
+`max(off0) = 10`: tracks 10 and 11, no others. Each pair holds together on its odd coupler, the
+pairs cross each other, and every other boundary wire provably fails — both directions are in the
+extended Kani harness, since "exactly four" is the claim.
+
+So `pegasus_clique` now places **`K_{12(m−2)+4}` — `K_172` on P₁₆, within 5% of `busclique`'s
+`K_180`** — with the four universal wires at chain `m−1`, *shorter* than the ells' `m+1`. The
+remaining eight chains are the exact recorded gap: they need `busclique`'s staggered-fragment
+diagonal, a structurally different construction, not a patch on this one.
 
 ## 0.36.0
 

@@ -493,10 +493,11 @@ The crossover tables ran the heuristic embedder on both sides; for cliques the f
 *construction*, not a search. `zephyr_clique` places `K_{2t(2m−1)}` at uniform chain `m+1` — `K_232`
 on Z₁₅, **exactly busclique's size and chain**: the measured crossing law (`zv = (wh−jv)/2`, no
 offset dependence) makes the two `j` phases first-class tracks, no odd-coupler fusion needed.
-`pegasus_clique` places `K_{12(m−2)}` at chain `m+1` — `K_168` on the Advantage's P₁₆, within 7% of
-busclique's `K_180` at the same chain, against the heuristic's `K_80`. Both ell-interval coverage
-arguments are Kani theorems (exhaustive to `m = 2¹⁶`); every size passes `Embedding::verify`.
-Remaining bar, exact: +12 chains on Pegasus (boundary odd-coupler repair).
+`pegasus_clique` places `K_{12(m−2)+4}` — `K_172` on the Advantage's P₁₆, ells at `m+1` plus the
+four universal wires the offsets provably admit (exactly four: tracks {0,1} at `w = m−1`, {10,11} at
+`w = 0`), within 5% of busclique's `K_180`, against the heuristic's `K_80`. All coverage and
+quantifier arguments are Kani theorems (exhaustive to `m = 2¹⁶`); every size passes
+`Embedding::verify`. Remaining bar, exact: +8 chains on Pegasus (staggered-fragment diagonal).
 
 **3.2 2D adaptive parallel tempering over (β, W0)**, so nobody hand-tunes copy strength.
 *Partly answered another way:* `sparsify::copy_strength` derives a sufficient `W0` from the model's

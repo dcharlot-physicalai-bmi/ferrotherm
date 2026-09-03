@@ -375,11 +375,13 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 
 /// A native clique on **Pegasus** — the Advantage fabric — written down, not searched for.
 ///
-/// `K_{12(m-2)}` with **uniform chains of `m + 1`**: `K_168` at chain 17 on the Advantage's `P_16`,
-/// where this crate's heuristic search reaches `K_80` at chain 16 and D-Wave's `busclique` frontier
-/// is `K_180` at the SAME chain 17. So this is 93% of the maximum, instantly, with the remaining
-/// twelve chains recorded as the exact gap (they need the boundary-wire odd-coupler repair
-/// `busclique` performs, which this construction does not).
+/// `K_{12(m-2)+4}` with chains of at most `m + 1`: **`K_172` on the Advantage's `P_16`**, where this
+/// crate's heuristic search reaches `K_80` at chain 16 and D-Wave's `busclique` frontier is `K_180`
+/// at the same chain bound. So this is within 5% of the maximum, instantly. The body is `12(m-2)`
+/// diagonal ells at uniform chain `m + 1`; the `+4` are the fabric's four **universal wires** at
+/// chain `m - 1` — see below for why four is a theorem about the offsets and not a choice — and the
+/// remaining eight chains are the exact recorded gap (busclique's staggered-fragment diagonal,
+/// which this construction does not perform).
 ///
 /// # The construction, and why it is safe to build by hand
 ///
@@ -394,19 +396,36 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 /// 2. **Proved**: the segments above cover all four possibilities — the interval arithmetic is the
 ///    `pegasus_ell_segments_cover_every_crossing` Kani harness, exhaustive over `m ≤ 2^16`.
 ///
-/// The construction never reads an offset value: it covers both places the crossing can be, so the
+/// The ell body never reads an offset value: it covers both places a crossing can be, so the
 /// convention trap (the Pegasus paper's clique uses a different shift vector than the
-/// `dwave-networkx` graph [`crate::device::pegasus`] reproduces) cannot bite. And the result is
-/// still not trusted — every size goes through [`Embedding::verify`] against the shipped fabric.
+/// `dwave-networkx` graph [`crate::device::pegasus`] reproduces) cannot bite.
 ///
-/// Chains are indexed `(w - 1) * 12 + k`. `None` for `m < 3`, where no interior diagonal exists.
+/// # The four universal wires, and why exactly four
+///
+/// The measured shifts obey `a(k, k') = [k' < off0[k]]` and `b(k, k') = [k < off1[k']]` with
+/// `off0 ∈ {2, 10, 6}` and `off1 ∈ {6, 2, 10}` by track group. A whole wire added as a chain
+/// crosses EVERY ell iff its shift condition holds against all twelve tracks at once:
+///
+/// * a full column at `w = m-1` needs `b = 1` universally → its track below `min(off1) = 2`
+///   → columns `(0, m-1, 0)` and `(0, m-1, 1)`, no others;
+/// * a full row at `w = 0` needs `a = 0` universally → its track at or above `max(off0) = 10`
+///   → rows `(1, 0, 10)` and `(1, 0, 11)`, no others.
+///
+/// Each pair is odd-coupled along its whole length, the pairs cross each other, and every other
+/// boundary wire fails the quantifier — so `+4` is where this family provably stops. That interval
+/// and quantifier arithmetic is the `pegasus_ell_segments_cover_every_crossing` Kani harness, and
+/// the result is still not trusted: every size goes through [`Embedding::verify`] against the
+/// shipped fabric.
+///
+/// Chains are indexed `(w - 1) * 12 + k`, then the four universal wires in the order above.
+/// `None` for `m < 3`, where no interior diagonal exists.
 pub fn pegasus_clique(m: usize) -> Option<Embedding> {
     if m < 3 {
         return None;
     }
     let topo = crate::device::pegasus(m, 1.0);
     let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
-    let mut chains = Vec::with_capacity(12 * (m - 2));
+    let mut chains = Vec::with_capacity(12 * (m - 2) + 4);
     for w in 1..=(m - 2) {
         for k in 0..12 {
             let mut chain = Vec::with_capacity(m + 1);
@@ -418,6 +437,19 @@ pub fn pegasus_clique(m: usize) -> Option<Embedding> {
             }
             chains.push(chain);
         }
+    }
+    // The four UNIVERSAL WIRES, each a chain of m-1 -- shorter than the ells. The offset lists pin
+    // them exactly: b(k*, k) = 1 for every k demands k* < min(off1) = 2, and a(k, x) = 0 for every
+    // k demands x >= max(off0) = 10, so columns (0, m-1, {0,1}) cross every ell's row, rows
+    // (1, 0, {10,11}) cross every ell's column, each pair holds together on its odd coupler, and
+    // the two pairs cross each other. Four is not a choice -- it is the count of wires the offsets
+    // make universal, which is why this family stops at K_{12(m-2)+4}.
+    for (u, w, k) in [(0usize, m - 1, 0usize), (0, m - 1, 1), (1, 0, 10), (1, 0, 11)] {
+        let mut chain = Vec::with_capacity(m - 1);
+        for z in 0..(m - 1) {
+            chain.push(topo.node(lin(u, w, k, z))?);
+        }
+        chains.push(chain);
     }
     Some(Embedding { chains, sites: topo.graph.n })
 }
@@ -480,9 +512,39 @@ mod proofs {
         let z_row = w2 - b; // must lie in H(w1) = [w1 - 1, m - 2]
         assert!(z_col <= w2);
         assert!(z_row >= w1 - 1 && z_row <= m - 2);
-        // And every chain has exactly m + 1 sites: (w + 1) vertical + (m - w) horizontal.
+        // And every ell has exactly m + 1 sites: (w + 1) vertical + (m - w) horizontal.
         let len = (w1 + 1) + ((m - 2) - (w1 - 1) + 1);
         assert!(len == m + 1);
+
+        // The universal-wire quantifiers, against the literal offset lists the fabric uses. A
+        // column at w = m-1 crosses ell (w1, k)'s row iff b = [k_col < off1[k]] is 1, which for
+        // every k at once demands k_col < min(off1) = 2; a row at w = 0 crosses the ell's column
+        // iff a = [x >= off0[k]] holds... written as [x < off0[k]] being 0, for every k at once:
+        // x >= max(off0) = 10. So tracks {0, 1} and {10, 11} are universal AND nothing else is --
+        // both directions checked, since "exactly four" is the claim the doc makes.
+        const OFF0: [usize; 12] = [2, 2, 2, 2, 10, 10, 10, 10, 6, 6, 6, 6];
+        const OFF1: [usize; 12] = [6, 6, 6, 6, 2, 2, 2, 2, 10, 10, 10, 10];
+        let k: usize = kani::any();
+        kani::assume(k < 12);
+        // the four hold universally...
+        assert!(0 < OFF1[k] && 1 < OFF1[k], "columns (0, m-1, 0/1) cross every ell");
+        assert!(10 >= OFF0[k] && 11 >= OFF0[k], "rows (1, 0, 10/11) cross every ell");
+        // ...and their crossings land inside the ell segments: the column meets ell (w1, k)'s row
+        // at z_row = m - 2 (b = 1), inside [w1 - 1, m - 2]; the row meets the ell's column at
+        // z_col = 0 (a = 0), inside [0, w1].
+        assert!(m - 2 >= w1 - 1);
+        // no other boundary wire is universal: some track defeats each candidate.
+        let cand: usize = kani::any();
+        kani::assume(cand < 12);
+        if cand >= 2 {
+            // a column track >= 2 misses every ell whose row track has off1 = 2 (tracks 4..8).
+            assert!(!(cand < OFF1[4]), "column (0, m-1, {cand}) is not universal");
+        }
+        if cand < 10 {
+            // a row track < 10 is crossed (a = 1) by every column track with off0 = 10 (4..8),
+            // putting that crossing at z_col = -1 off the fabric for the w = 0 row.
+            assert!(cand < OFF0[4], "row (1, 0, {cand}) is not universal");
+        }
     }
 }
 
@@ -583,13 +645,17 @@ mod clique_tests {
     /// twelve chains need the boundary odd-coupler repair, recorded as the exact gap. Sizes to P_8
     /// here for time; the example table carries P_16, verified the same way.
     #[test]
-    fn the_pegasus_clique_is_a_valid_minor_with_uniform_chains() {
+    fn the_pegasus_clique_is_a_valid_minor_with_bounded_chains() {
         for m in 3..=8usize {
             let topo = crate::device::pegasus(m, 1.0);
             let e = pegasus_clique(m).expect("m >= 3");
-            assert_eq!(e.chains.len(), 12 * (m - 2), "K_{{12(m-2)}} on P_{m}");
-            assert!(e.chains.iter().all(|c| c.len() == m + 1), "uniform chains at m+1, P_{m}");
-            e.verify(&clique(12 * (m - 2)), &topo.graph)
+            let n = 12 * (m - 2) + 4;
+            assert_eq!(e.chains.len(), n, "K_{{12(m-2)+4}} on P_{m}");
+            // The body is uniform at m+1; the four universal wires are SHORTER, at m-1.
+            let (body, wires) = e.chains.split_at(12 * (m - 2));
+            assert!(body.iter().all(|c| c.len() == m + 1), "ells at m+1, P_{m}");
+            assert!(wires.iter().all(|c| c.len() == m - 1), "universal wires at m-1, P_{m}");
+            e.verify(&clique(n), &topo.graph)
                 .unwrap_or_else(|err| panic!("P_{m}: {err}"));
         }
         assert!(pegasus_clique(0).is_none());

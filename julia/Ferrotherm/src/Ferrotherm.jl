@@ -564,14 +564,14 @@ Store a **closed-form** structured clique embedding, where `hardware` has a know
 clique size.
 
 Where [`embed!`](@ref) searches, this writes the answer down: `K_n` with uniform chains and no
-search. Supported today for Pegasus (`K_{12(m-2)}`, chains `m+1` -- `K_168` on the Advantage's P16)
+search. Supported today for Pegasus (`K_{12(m-2)+4}`, chains <= `m+1` -- `K_172` on the Advantage's P16)
 and Zephyr (`K_{2t(2m-1)}`, chains `m+1` -- the busclique frontier size exactly). The size is fixed by the
 machine; the placement lands on `logical` exactly as `embed!` does, so [`embed_apply`](@ref),
 [`unembed`](@ref) and the accessors work unchanged.
 
 On Zephyr this IS the maximum `busclique` reaches on a perfect fabric, at the same chain length; on
-Pegasus it is within 7% (`K_{12(m-1)}` needs the boundary repair this crate does not perform).
-Either way it beats this crate's own search decisively and is instant. Errors when the topology has no known construction; `embed!` is the fallback.
+Pegasus it is within 5% (the last eight chains need the staggered-fragment diagonal this crate does
+not perform). Either way it beats this crate's own search decisively and is instant. Errors when the topology has no known construction; `embed!` is the fallback.
 """
 function clique_embed!(logical::Simulation, hardware::Simulation)
     _live(logical); _live(hardware)

@@ -153,7 +153,7 @@ ft_sim *ft_embed_apply(const ft_sim *logical, const ft_sim *hardware, double cha
 
 /* A CLOSED-FORM structured clique embedding, where the topology has a known one. Where ft_embed
  * SEARCHES, this writes the answer down: K_n with uniform chains and no search. Supported today for
- * Pegasus (ft_pegasus_new) -- K_{12(m-2)}, chains m+1, K_168 on the Advantage's P16 -- and Zephyr
+ * Pegasus (ft_pegasus_new) -- K_{12(m-2)+4}, chains <= m+1, K_172 on the Advantage's P16 -- and Zephyr
  * (ft_zephyr_new) -- K_{2t(2m-1)}, chains m+1, the busclique frontier size exactly.
  *
  * The clique size is FIXED by the machine; *n_out (if non-NULL) receives it. The placement is stored

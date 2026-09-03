@@ -727,9 +727,9 @@ mod embed_ffi_tests {
         let hw = ft_pegasus_new(4, 1.0, 0.5, 3); // P_4 fabric: 8*3*11 = 264 sites
         assert!(!hw.is_null());
         let lg = {
-            let b = ft_builder_new(24);
-            for i in 0..24u32 {
-                for j in (i + 1)..24 {
+            let b = ft_builder_new(28);
+            for i in 0..28u32 {
+                for j in (i + 1)..28 {
                     ft_builder_couple(b, i, j, 1.0);
                 }
             }
@@ -737,8 +737,8 @@ mod embed_ffi_tests {
         };
         let mut n: u32 = 0;
         assert_eq!(ft_clique_embed(lg, hw, &mut n), 1);
-        assert_eq!(n, 24, "K_{{12(m-2)}} = K_24 on P_4");
-        assert_eq!(ft_embed_longest(lg), 5, "uniform m+1 = 5");
+        assert_eq!(n, 28, "K_{{12(m-2)+4}} = K_28 on P_4");
+        assert_eq!(ft_embed_longest(lg), 5, "ells at m+1 = 5; the universal wires are shorter");
         ft_free(lg);
         ft_free(hw);
     }
