@@ -201,7 +201,7 @@ pub const Sim = struct {
     ///
     /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
     /// Supported today for Pegasus (`K_{12(m-2)}`, chains m+1 -- K_168 on the Advantage's P16) and
-    /// Zephyr (`K_{2t*m}`, chains m+1). The clique size is fixed by
+    /// Zephyr (`K_{2t(2m-1)}`, chains m+1 -- the busclique frontier size). The clique size is fixed by
     /// the machine and returned; the placement lands on `self` exactly as `embed` does, so
     /// `embedApply`, `unembed` and the `embed*` readers work unchanged. `error.NotSolved` when the
     /// topology has no known construction -- `embed` is then the fallback.
@@ -709,25 +709,25 @@ test "a structured clique is written down rather than searched for" {
     const hw = try Sim.zephyr(4, 4, 1.0, 0.5, 3);
     defer hw.deinit();
 
-    var m = try Model.init(32);
+    var m = try Model.init(56);
     defer m.deinit();
     var i: u32 = 0;
-    while (i < 32) : (i += 1) {
+    while (i < 56) : (i += 1) {
         var j: u32 = i + 1;
-        while (j < 32) : (j += 1) try m.couple(i, j, 1.0);
+        while (j < 56) : (j += 1) try m.couple(i, j, 1.0);
     }
     const logical = try m.build(0.5, 3);
     defer logical.deinit();
 
     const n = try logical.cliqueEmbed(hw);
-    try std.testing.expectEqual(@as(u32, 32), n); // K_{2t*m} = K_32 on Z_4
-    try std.testing.expectEqual(@as(u32, 32 * 5), logical.embedSites());
+    try std.testing.expectEqual(@as(u32, 56), n); // K_{2t(2m-1)} = K_56 on Z_4, the frontier size
+    try std.testing.expectEqual(@as(u32, 56 * 5), logical.embedSites());
     try std.testing.expectEqual(@as(u32, 5), logical.embedLongest()); // uniform m+1
 
     const embedded = try logical.embedApply(hw, 0.0);
     defer embedded.deinit();
     _ = try embedded.anneal(0.05, 8.0, 300, 40);
-    var out: [32]i8 = undefined;
+    var out: [56]i8 = undefined;
     _ = try embedded.unembed(&out);
     for (out) |s| try std.testing.expect(s == 1 or s == -1);
 

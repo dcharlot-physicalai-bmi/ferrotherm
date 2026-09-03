@@ -1039,23 +1039,23 @@ is how a dropped GPU dispatch turns into a believable energy.
 
         Where :meth:`embed` searches, this writes the answer down: ``K_n`` with uniform chains and no
         search. Supported today for **Pegasus** (``K_{12(m-2)}``, chains ``m+1`` — ``K_168`` on the
-        Advantage's P₁₆, where the search reaches ``K_80``) and **Zephyr** (``K_{2t·m}``, chains
-        ``m+1``).
+        Advantage's P₁₆, where the search reaches ``K_80``) and **Zephyr** (``K_{2t(2m-1)}``, chains
+        ``m+1`` — ``K_232`` on Z₁₅, the busclique frontier size exactly).
         The clique size is fixed by the machine; this returns it. The placement lands on ``self``
         just as :meth:`embed` does, so :meth:`embed_apply`, :meth:`unembed` and the ``embed_*``
         readers work unchanged.
 
         >>> hw = zephyr(4)
-        >>> problem = Model(32).build(beta=0.5)   # a K_32 on the 32 variables it will place
+        >>> problem = Model(56).build(beta=0.5)   # a K_56 on the 56 variables it will place
         >>> problem.clique_embed(hw)
-        32
+        56
         >>> problem.embed_longest                 # uniform m+1 = 5
         5
 
-        It is not quite the maximum D-Wave's tooling reaches — ``busclique`` gets ``K_{12(m-1)}`` on
-        Pegasus and ``K_{16m-8}`` on Zephyr at the same chain lengths — but it is within 7% on
-        Pegasus, beats this crate's own search decisively, and is instant. Raises when the topology has no known construction; :meth:`embed` is then the
-        fallback.
+        On Zephyr this IS the maximum ``busclique`` reaches on a perfect fabric, at the same chain
+        length; on Pegasus it is within 7% (``K_{12(m-1)}`` needs the boundary repair this crate
+        does not perform). Either way it beats this crate's own search decisively and is instant.
+        Raises when the topology has no known construction; :meth:`embed` is then the fallback.
         """
         self._live()
         hardware._live()

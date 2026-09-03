@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Zephyr at the frontier: K_{16m-8}, the busclique size exactly, and the gap is closed
+
+0.36.0 shipped `zephyr_clique` at `K_{2t·m}` — half the frontier at the same chain length — with the
+gap recorded as "the odd-coupled-track fusion this route does not use." Measuring the fabric closed
+it, and the fusion turned out to be unnecessary.
+
+The measured crossing law of `device::zephyr` is cleaner than Pegasus's: **every** vertical wire
+crosses **every** horizontal wire, at `zv = (wh − jv)/2`, `zh = (wv − jh)/2` (integer division), with
+no offset dependence at all. Under that law the two `j` phases are not tracks to fuse — they are two
+more first-class tracks per `k`, offset half a cell, with the floor in the law absorbing the offset.
+The Pegasus-style diagonal ell then gives **`K_{2t(2m−1)}` at uniform chain `m+1`** directly:
+variable `(w, k, j)` for `w ∈ [1, 2m−1]` takes `z ∈ [0, (w−j)/2]` of its vertical wire and
+`z ∈ [(w−j)/2, m−1]` of its horizontal one.
+
+For `t = 4` that is **`K_{16m−8}` — `K_232` on Z₁₅, `K_184` on the Advantage2's Z₁₂ — exactly the
+size and chain length D-Wave's `busclique` reaches on a perfect fabric.** `Embedding::verify`
+passes at every size from Z₁ up, and the interval-coverage arithmetic replaces the now-obsolete
+double-Chimera injectivity harness as the sixth Kani theorem (exhaustive to `m = 2¹⁶`). Only the
+Zephyr paper's `K_{16m+1}` treewidth construction is larger, and it pays longer chains for the last
+seventeen. The double-Chimera `K_{2t·m}` route this supersedes lives in the 0.36.0 entry.
+
+`ft_clique_embed` and all four bindings return the new sizes (`K_56` on the Z₄ prototype, up from
+`K_32`); the construction table in `examples/embedding_tax` now shows every Zephyr row AT the
+frontier. Remaining structured gap, exact: twelve chains on Pegasus (`busclique`'s boundary
+odd-coupler repair), `K_180` vs our `K_168` on P₁₆.
+
 ## 0.36.0
 
 ### The Advantage clique: K_168 on Pegasus, written down, 93% of the frontier

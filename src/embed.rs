@@ -310,63 +310,65 @@ pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
     Some(Embedding { chains, sites: 2 * t * m * m })
 }
 
-/// A native clique on **Zephyr**, by mapping a Chimera clique through the topology's own minor
-/// relation rather than by search.
+/// A native clique on **Zephyr** — the Advantage2 fabric — at the frontier size, written down.
 ///
-/// Zephyr contains `chimera(m, m, 2t)` as a subgraph — D-Wave's `dwave-graphs` states the mapping
-/// in closed form (the "double" sublattice map), and it is offset-free, which is why this is safe
-/// to transcribe where a native-coordinate construction is not: the coordinate convention a
-/// hand-derivation would have to match is bypassed entirely. So [`chimera_clique`]'s
-/// `K_{2t·m}` on that Chimera becomes a `K_{2t·m}` on `Z_{m,t}` — **K_{8m} for the shipped `t = 4`,
-/// uniform chains of `m + 1`**.
+/// **`K_{2t(2m-1)}` with uniform chains of `m + 1`**: for the shipped `t = 4` that is `K_{16m-8}` —
+/// `K_232` on `Z_15`, `K_184` on the Advantage2's `Z_12` — which is EXACTLY the size and chain
+/// length D-Wave's `busclique` reaches on a perfect fabric. Nothing structured is left on this
+/// table; only the Zephyr paper's `K_{16m+1}` treewidth construction is larger, and it pays longer
+/// chains for the last seventeen.
 ///
-/// # What this is, measured against the frontier
+/// # The construction
 ///
-/// It is closed-form, instant, and uniform-chained where the search is none of those. It is
-/// **not** the maximum, and the gap is precise: D-Wave's `busclique` reaches `K_{16m-8}` — TWICE
-/// this clique — at the SAME chain length `m + 1`, by fusing the two odd-coupled tracks into one
-/// wire, which this double-Chimera minor does not do. So the shortfall is in clique SIZE at a fixed
-/// chain, not in chain length. `K_{16m-8}` (`K_232` on `Z_15`, `K_184` on the Advantage2's `Z_12`)
-/// is the recorded bar; the Zephyr paper's `K_{16m+1}` treewidth construction is larger still, with
-/// longer chains.
+/// Variable `(w, k, j)` — diagonal position `w ∈ [1, 2m-1]`, track `k ∈ [0, t)`, phase `j ∈ {0,1}`
+/// — is an ell with corner `c = (w - j) / 2`: the segment of vertical wire `(0, w, k, j)` covering
+/// `z ∈ [0, c]`, joined to the segment of horizontal wire `(1, w, k, j)` covering `z ∈ [c, m-1]`.
+/// The segments live on different wires, so nothing is shared and the chain is exactly
+/// `(c + 1) + (m - c) = m + 1` qubits, every time.
 ///
-/// The mapping is transcribed, but **the result is not trusted**: every size is checked with
-/// [`Embedding::verify`] against the same `device::zephyr` graph the rest of the crate builds —
-/// chains connected, disjoint, an edge behind every logical pair. A wrong coordinate makes that
-/// fail loudly. `None` for `m == 0` or `t == 0`.
+/// Two measured facts carry the whole thing, both read off the shipped fabric rather than derived
+/// from a coordinate convention:
+///
+/// 1. every vertical wire crosses every horizontal wire — all `t²·4` track/phase pairs — and the
+///    crossing of `(0, wv, ·, jv)` with `(1, wh, ·, jh)` sits at `zv = (wh - jv)/2`,
+///    `zh = (wv - jh)/2` (integer division);
+/// 2. the ell intervals above contain that crossing for every ordered pair of diagonal positions —
+///    which is the `zephyr_ell_segments_cover_every_crossing` Kani theorem, exhaustive over
+///    `m ≤ 2^16`.
+///
+/// The `j` phase needs no odd coupler and no fusion: the two phases are simply two more tracks per
+/// `k`, offset half a cell, and the floor in the crossing law absorbs the offset. (This crate first
+/// shipped a `K_{2t·m}` here via Zephyr's double-Chimera minor — half the frontier at the same
+/// chain length; the measured crossing law then made the fusion it lacked unnecessary. The
+/// changelog carries that route.)
+///
+/// And the result is still not trusted: every size goes through [`Embedding::verify`] against the
+/// same `device::zephyr` the rest of the crate builds — chains connected, disjoint, an edge behind
+/// every logical pair. Chains are indexed `((w-1)·t + k)·2 + j`. `None` for `m == 0` or `t == 0`.
 pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
     if m == 0 || t == 0 {
         return None;
     }
-    let base = chimera_clique(m, 2 * t)?; // K_{2t·m} on chimera(m, m, 2t)
     let topo = crate::device::zephyr(m, t, 1.0);
-    let shore = 2 * t; // chimera(m, m, 2t) has 2t sites per shore
-    // Decode a chimera(m, m, 2t) node the way `ising::chimera` encodes it, then send it through the
-    // double sublattice map (offsets and both j-phases zero) to a Zephyr coordinate, then to this
-    // crate's dense node via the vendor linear index.
-    let map = |node: usize| -> Option<usize> {
-        let cell = node / (2 * shore);
-        let rem = node % (2 * shore);
-        let u = rem / shore; // 0 vertical, 1 horizontal
-        let k = rem % shore; // 0..2t
-        let (row, col) = (cell / m, cell % m); // y, x
-        let (wz, kz) = (k / t, k % t);
-        let (zu, zw, zk, zj, zz) = if u == 0 {
-            (0usize, 2 * col + wz, kz, 0usize, row)
-        } else {
-            (1usize, 2 * row + wz, kz, 0usize, col)
-        };
-        let big = 2 * m + 1;
-        let lin = ((((zu * big + zw) * t + zk) * 2 + zj) * m + zz) as u32;
-        topo.node(lin)
+    let big = 2 * m + 1;
+    let lin = |u: usize, w: usize, k: usize, j: usize, z: usize| {
+        ((((u * big + w) * t + k) * 2 + j) * m + z) as u32
     };
-    let mut chains = Vec::with_capacity(base.chains.len());
-    for chain in &base.chains {
-        let mut mapped = Vec::with_capacity(chain.len());
-        for &node in chain {
-            mapped.push(map(node)?); // a coordinate off the fabric aborts rather than skips
+    let mut chains = Vec::with_capacity(2 * t * (2 * m - 1));
+    for w in 1..=(2 * m - 1) {
+        for k in 0..t {
+            for j in 0..2 {
+                let c = (w - j) / 2;
+                let mut chain = Vec::with_capacity(m + 1);
+                for z in 0..=c {
+                    chain.push(topo.node(lin(0, w, k, j, z))?); // a fabric hole aborts, never skips
+                }
+                for z in c..m {
+                    chain.push(topo.node(lin(1, w, k, j, z))?);
+                }
+                chains.push(chain);
+            }
         }
-        chains.push(mapped);
     }
     Some(Embedding { chains, sites: topo.graph.n })
 }
@@ -429,35 +431,31 @@ pub fn pegasus_clique(m: usize) -> Option<Embedding> {
 // re-observed per size. Compiled only under `cfg(kani)`; run by scripts/check-proofs.sh.
 #[cfg(kani)]
 mod proofs {
-    /// The chimera(m,m,2t) -> Zephyr coordinate map is injective, at the Advantage2 prototype size.
+    /// The Zephyr ell segments cover every crossing, at every diagonal pair and both phases.
     ///
-    /// Two Chimera nodes that collided would put two logical variables on one physical qubit, which
-    /// `chimera_clique` forbids and `zephyr_clique` must preserve. m=4, t=4 is Z_4 (the shipped
-    /// prototype): 2*4*4*8 = 256 Chimera nodes, every pair checked.
+    /// The graph gives one fact: vertical wire `(0, wv, ·, jv)` crosses horizontal `(1, wh, ·, jh)`
+    /// at `zv = (wh - jv)/2`, `zh = (wv - jh)/2` (integer division). `zephyr_clique` gives variable
+    /// `(w, k, j)` the vertical interval `[0, (w-j)/2]` and the horizontal interval `[(w-j)/2, m-1]`
+    /// of its two wires. This theorem says those intervals contain the crossing for EVERY ordered
+    /// pair of diagonal positions and every phase combination -- so all `2t(2m-1)` chains are
+    /// pairwise adjacent given the measured crossing law, and every chain is exactly `m + 1` sites.
+    /// Exhaustive over `m` up to 2^16, not sampled.
     #[kani::proof]
-    fn the_zephyr_coordinate_map_is_injective() {
-        const M: usize = 4;
-        const T: usize = 4;
-        const SHORE: usize = 2 * T;
-        const BIG: usize = 2 * M + 1;
-        // The map from src::zephyr_clique, as pure coordinate arithmetic to a linear index.
-        let lin = |u: usize, i: usize, j: usize, k: usize| -> usize {
-            let (wz, kz) = (k / T, k % T);
-            let (zu, zw, zk, zz) = if u == 0 {
-                (0usize, 2 * j + wz, kz, i)
-            } else {
-                (1usize, 2 * i + wz, kz, j)
-            };
-            (((zu * BIG + zw) * T + zk) * 2 + 0) * M + zz
-        };
-        let (u1, i1, j1, k1): (usize, usize, usize, usize) =
-            (kani::any(), kani::any(), kani::any(), kani::any());
-        let (u2, i2, j2, k2): (usize, usize, usize, usize) =
-            (kani::any(), kani::any(), kani::any(), kani::any());
-        kani::assume(u1 < 2 && i1 < M && j1 < M && k1 < SHORE);
-        kani::assume(u2 < 2 && i2 < M && j2 < M && k2 < SHORE);
-        kani::assume((u1, i1, j1, k1) != (u2, i2, j2, k2));
-        assert_ne!(lin(u1, i1, j1, k1), lin(u2, i2, j2, k2));
+    fn zephyr_ell_segments_cover_every_crossing() {
+        let m: usize = kani::any();
+        kani::assume(m >= 1 && m <= 1 << 16);
+        let (w1, w2): (usize, usize) = (kani::any(), kani::any());
+        kani::assume(1 <= w1 && w1 <= w2 && w2 <= 2 * m - 1);
+        let (j1, j2): (usize, usize) = (kani::any(), kani::any());
+        kani::assume(j1 <= 1 && j2 <= 1);
+        // Chain (w1,-,j1)'s horizontal wire crosses chain (w2,-,j2)'s vertical wire here:
+        let zv = (w1 - j2) / 2; // must lie in V(w2,j2) = [0, (w2 - j2)/2]
+        let zh = (w2 - j1) / 2; // must lie in H(w1,j1) = [(w1 - j1)/2, m - 1]
+        assert!(zv <= (w2 - j2) / 2);
+        assert!(zh >= (w1 - j1) / 2 && zh <= m - 1);
+        // And the chain is uniform: (c + 1) vertical + (m - c) horizontal sites.
+        let c = (w1 - j1) / 2;
+        assert!((c + 1) + (m - c) == m + 1);
     }
 
     /// The Pegasus ell segments cover every crossing, whatever the offset convention does.
@@ -566,12 +564,12 @@ mod clique_tests {
     /// point of that surface as though it were the rule.
     #[test]
     fn the_zephyr_clique_is_a_valid_minor_with_uniform_chains() {
-        for m in 2..=8usize {
+        for m in 1..=8usize {
             let topo = crate::device::zephyr(m, 4, 1.0);
             let e = zephyr_clique(m, 4).expect("m, t > 0");
-            assert_eq!(e.chains.len(), 8 * m, "K_{{2t*m}} = K_{{8m}} for t=4");
+            assert_eq!(e.chains.len(), 16 * m - 8, "K_{{2t(2m-1)}} = K_{{16m-8}} for t=4");
             assert!(e.chains.iter().all(|c| c.len() == m + 1), "uniform chains at m+1, Z{m}");
-            e.verify(&clique(8 * m), &topo.graph)
+            e.verify(&clique(16 * m - 8), &topo.graph)
                 .unwrap_or_else(|err| panic!("Z{m}: {err}"));
         }
         assert!(zephyr_clique(0, 4).is_none());

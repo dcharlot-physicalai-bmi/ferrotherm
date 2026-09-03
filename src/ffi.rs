@@ -691,11 +691,11 @@ mod embed_ffi_tests {
         assert!(!hw.is_null());
         assert_eq!(ft_len(hw), 576);
 
-        // The caller's problem is a K_32 clique; the placement is stored on IT, as ft_embed does.
+        // The caller's problem is a K_56 clique; the placement is stored on IT, as ft_embed does.
         let logical = {
-            let b = ft_builder_new(32);
-            for i in 0..32u32 {
-                for j in (i + 1)..32 {
+            let b = ft_builder_new(56);
+            for i in 0..56u32 {
+                for j in (i + 1)..56 {
                     ft_builder_couple(b, i, j, 1.0);
                 }
             }
@@ -703,16 +703,16 @@ mod embed_ffi_tests {
         };
         let mut n: u32 = 0;
         assert_eq!(ft_clique_embed(logical, hw, &mut n), 1);
-        assert_eq!(n, 32, "K_{{2t*m}} = K_32 on Z_4");
-        assert_eq!(ft_embed_sites(logical), 32 * 5, "32 chains of 5");
+        assert_eq!(n, 56, "K_{{2t(2m-1)}} = K_56 on Z_4, the busclique frontier size");
+        assert_eq!(ft_embed_sites(logical), 56 * 5, "56 chains of 5");
         assert_eq!(ft_embed_longest(logical), 5, "uniform m+1 = 5");
 
-        // Build the runnable model, anneal it, read back the 32 logical spins.
+        // Build the runnable model, anneal it, read back the 56 logical spins.
         let embedded = ft_embed_apply(logical, hw, 0.0);
         assert!(!embedded.is_null());
         ft_anneal(embedded, 0.05, 8.0, 300, 40);
-        let mut out = vec![0i8; 32];
-        let broken = ft_unembed(embedded, out.as_mut_ptr(), 32);
+        let mut out = vec![0i8; 56];
+        let broken = ft_unembed(embedded, out.as_mut_ptr(), 56);
         assert!(broken != u32::MAX);
         assert!(out.iter().all(|&s| s == 1 || s == -1));
 

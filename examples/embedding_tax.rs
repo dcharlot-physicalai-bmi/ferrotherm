@@ -124,7 +124,8 @@ fn main() {
                 if ok { "yes" } else { "NO" }, format!("K_{}", 12 * (m - 1))
             );
         }
-        // Zephyr K_{8m}: the double-Chimera minor, offset-free, verified against device::zephyr.
+        // Zephyr K_{2t(2m-1)}: the measured-crossing ell construction, verified against
+        // device::zephyr. This IS the busclique frontier size, at the same chain length.
         for m in [4usize, 6, 15] {
             let hw = device::zephyr(m, 4, 1.0).graph;
             let e = embed::zephyr_clique(m, 4).expect("m,t>0");
@@ -163,10 +164,10 @@ fn main() {
          on a structured fabric is written down. This crate builds all three fabrics today, verified\n\
          by the same Embedding::verify the searched rows pass:\n\
            * Chimera K_32 on C8 -- uniform chains of 9, where the search stalls at K_18 chain 17.\n\
-           * Zephyr K_{{8m}} -- K_120 on Z_15 with uniform chains of 16, from the double-Chimera\n\
-             minor. The frontier is K_{{16m-8}} = K_232 at the SAME chain length: busclique fuses\n\
-             the two odd-coupled tracks and gets twice the clique for no extra chain, which this\n\
-             route does not do. So the gap here is clique SIZE at fixed chain, recorded not claimed.\n\
+           * Zephyr K_{{2t(2m-1)}} -- K_232 on Z_15 with uniform chains of 16, which is the\n\
+             busclique frontier EXACTLY, size and chain length both. Nothing structured is left on\n\
+             this table; only the Zephyr paper's K_{{16m+1}} treewidth construction is larger, and\n\
+             it pays longer chains for the last seventeen.\n\
            * Pegasus K_{{12(m-2)}} -- K_168 on the Advantage's P16 with uniform chains of 17, where\n\
              the search reaches K_80 at chain 16. The frontier is K_{{12(m-1)}} = K_180 at the SAME\n\
              chain: the twelve missing chains need busclique's boundary odd-coupler repair. So the\n\

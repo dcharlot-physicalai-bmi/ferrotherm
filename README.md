@@ -515,15 +515,15 @@ learned is what makes sampling harder.
 ### Structured cliques, written down instead of searched
 
 For a clique on a structured fabric the frontier is a construction, not a search — D-Wave's tooling
-places its cliques by writing the answer down. This crate now does the same on all three fabrics:
-`embed::pegasus_clique` places **K_168 at uniform chain 17 on the Advantage's P₁₆** (the frontier is
-K_180 at the *same* chain — within 7%, and the heuristic search reaches K_80), `embed::zephyr_clique`
-places K_120 at chain 16 on Z₁₅, and `embed::chimera_clique` the classic `K_{t·m}`. Each is verified
-at every size by `Embedding::verify` against the shipped fabric, and the arithmetic each rests on —
-the Pegasus ell intervals covering every crossing, the Zephyr coordinate map's injectivity — is
-machine-checked by Kani, exhaustively. The remaining gaps are exact and recorded: twelve chains on
-Pegasus (busclique's boundary odd-coupler repair), a factor of ~2 at fixed chain on Zephyr (its
-odd-track fusion). `ft_clique_embed` carries the constructions to Python, Zig and Julia;
+places its cliques by writing the answer down. This crate does the same on all three fabrics, and on
+Zephyr it reaches the frontier exactly: `embed::zephyr_clique` places **K_{16m−8} at uniform chain
+m+1 — K_232 on Z₁₅ — the same size and chain length D-Wave's busclique reaches on a perfect
+fabric**. `embed::pegasus_clique` places K_168 at chain 17 on the Advantage's P₁₆ (busclique's K_180
+is within 7%, at the same chain; the heuristic search reaches K_80), and `embed::chimera_clique` the
+classic `K_{t·m}`. Each is verified at every size by `Embedding::verify` against the shipped fabric,
+and the ell-interval arithmetic each rests on is machine-checked by Kani, exhaustively. The one
+remaining structured gap is exact and recorded: twelve chains on Pegasus (busclique's boundary
+odd-coupler repair). `ft_clique_embed` carries the constructions to Python, Zig and Julia;
 `examples/embedding_tax` shows them beside the search and the frontier.
 
 ### The machines you can actually rent
