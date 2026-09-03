@@ -81,6 +81,8 @@ pub mod graph;
 pub mod categorical;
 pub mod certify;
 pub mod free_energy;
+pub mod meanfield;
+pub mod hopfield;
 pub mod conform;
 pub mod dense;
 pub mod embed;

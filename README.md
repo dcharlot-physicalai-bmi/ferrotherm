@@ -405,7 +405,7 @@ for an autovectoriser to find. The flag is not enabled. Energy was bit-identical
 is the check that says the comparison was of the same computation.
 
 - `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
-  compiles with **zero changes**; the cdylib is a **733 KB .wasm** (264 KB gzipped) exposing the
+  compiles with **zero changes**; the cdylib is a **740 KB .wasm** (268 KB gzipped) exposing the
   `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
@@ -538,6 +538,17 @@ exact anchor, giving `ln Z`, entropy and heat capacity at every rung from the sa
 and Onsager before they are trusted; outward rounding of every published bound is a Kani theorem.
 `ebm::log_likelihood_ais` turns it into a likelihood for models past enumeration, with an
 unconditional upper bound. On every surface as `ft_ln_z_*`.
+
+### Learning theory as oracles
+
+`meanfield` gives the fast approximations with their standing stated: the Gibbs–Bogoliubov bound
+(a theorem — a deterministic lower bound on `ln Z` at any magnetisation), TAP, and belief propagation
+with the Bethe free energy, exact on trees and measured to degrade past criticality on loops.
+`hopfield` is the statistical mechanics of learning with its closed forms as the check: one pattern
+is Curie–Weiss and the sampler retrieves at `m = tanh(βm)`; at finite load the
+Amit–Gutfreund–Sompolinsky replica equations are solved in the crate, and bisection on them gives
+the capacity **`α_c = 0.1379`** (AGS: 0.138), with retrieval present at `α = 0.02` and absent at
+`0.10` in the samplers' own runs. `examples/learning_theory` shows the table.
 
 ### The machines you can actually rent
 

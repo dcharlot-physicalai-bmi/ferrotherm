@@ -708,6 +708,19 @@ mod free_energy_ffi_tests {
         assert!(lo <= truth && truth <= hi, "[{lo}, {hi}] misses {truth}");
         assert!((mid - truth).abs() < 0.5);
 
+        // The deterministic bound sits below the truth with no probability attached; Bethe on a
+        // torus is close but not exact.
+        let mf = ft_ln_z_mean_field(s, beta);
+        assert!(mf <= truth && truth - mf < 3.0, "mean-field bound {mf} vs {truth}");
+        // Bethe is close in the disordered phase and degrades past criticality (beta_c = 0.44 on
+        // the square lattice): within 0.5 at beta 0.3, off by more than 1 at beta 0.5 -- the
+        // second fact is as much the finding as the first.
+        let (t3, b3) = (ft_ln_z_exact(s, 0.3), ft_ln_z_bethe(s, 0.3));
+        assert!((b3 - t3).abs() < 0.5 && (b3 - t3).abs() > 1e-9, "Bethe {b3} vs {t3} at beta 0.3");
+        let be = ft_ln_z_bethe(s, beta);
+        assert!((be - truth).abs() > 1.0, "Bethe {be} vs {truth} at beta 0.5: expected loopy BP to degrade in the ordered phase");
+        assert!(ft_ln_z_mean_field(core::ptr::null(), beta).is_nan() && ft_ln_z_bethe(s, -1.0).is_nan());
+
         let mut se = f64::NAN;
         let b = ft_ln_z_bar(s, beta, 16, 100, 500, &mut se);
         assert!((b - truth).abs() < 0.3 + 4.0 * se, "bar {b} +- {se} vs {truth}");
@@ -4261,6 +4274,32 @@ pub extern "C" fn ft_ln_z_bar(sim: *const Sim, beta: f64, rungs: u32, burn_in: u
         unsafe { *stderr_out = top.stderr };
     }
     top.log_z
+}
+
+/// A DETERMINISTIC lower bound on `ln Z(beta)`: the Gibbs-Bogoliubov inequality at the naive
+/// mean-field fixed point (`meanfield::naive_mean_field`, 2000 damped iterations). No sampling, no
+/// probability of failure -- it holds for every magnetisation, and the fixed point is only where
+/// it is tightest. NaN on a null handle or `beta < 0`.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_mean_field(sim: *const Sim, beta: f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    if !beta.is_finite() || beta < 0.0 {
+        return f64::NAN;
+    }
+    crate::meanfield::naive_mean_field(&s.graph, beta, 2000, 0.3).log_z
+}
+
+/// `ln Z(beta)` by the Bethe free energy of loopy belief propagation (2000 damped iterations).
+/// EXACT on a tree; an approximation with loops, neither bound nor estimate with an error bar.
+/// NaN on a null handle, `beta < 0`, or a run that did not converge to 1e-8.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_bethe(sim: *const Sim, beta: f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    if !beta.is_finite() || beta < 0.0 {
+        return f64::NAN;
+    }
+    let b = crate::meanfield::belief_propagation(&s.graph, beta, 2000, 0.5);
+    if b.converged(1e-8) { b.log_z } else { f64::NAN }
 }
 
 /// `ln Z` at the final β from the last [`ft_popanneal`], or NaN if there was none.

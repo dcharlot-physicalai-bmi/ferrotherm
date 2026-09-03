@@ -498,6 +498,15 @@ Recorded gap: `tempering`/`adaptive` return best-found and swap rates, not per-r
 so BAR draws its own chains; an energy-trace observer there would let the curve come free with
 every parallel-tempering run.
 
+**4.2 Learning theory as oracles.** ✅ **DONE** — `src/meanfield.rs`, `src/hopfield.rs`.
+
+Mean field with the Gibbs–Bogoliubov bound (a deterministic lower bound on `ln Z`), TAP, belief
+propagation exact on trees; the Hopfield memory against Curie–Weiss and the AGS replica theory,
+capacity `α_c = 0.1379` reproduced by bisection on the crate's own numerics, retrieval and its
+absence confirmed by the samplers. Recorded gaps: replica-symmetry-breaking corrections near
+`α_c`; the Gardner/perceptron storage problem (a higher-order model, not pairwise — needs the
+`hubo` path); modern (dense associative) Hopfield and equilibrium propagation are path item 5.
+
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.
 

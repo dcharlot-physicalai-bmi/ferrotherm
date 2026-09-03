@@ -385,6 +385,9 @@ class Sim:
     def ln_z_bar(self, beta: float, rungs: int = 32, burn_in: int = 200, draws: int = 2000) -> tuple:
         """``ln Z(beta)`` by Bennett acceptance-ratio steps from the exact anchor ``n ln 2``: ``(ln_z, stderr)``."""
         ...
+    def ln_z_bethe(self, beta: float) -> float:
+        """``ln Z(beta)`` by the Bethe free energy of loopy belief propagation: exact on a tree, an approximation with loops, ``nan`` if BP did not converge."""
+        ...
     def ln_z_ess(self) -> float:
         """Effective sample size of the last :meth:`ln_z_ais` run's weights; near 1 means one walk dominated and the bound, while valid, is loose."""
         ...
@@ -393,6 +396,9 @@ class Sim:
         ...
     def ln_z_lower(self, delta: float = 0.01) -> float:
         """``ln Z >= ln_z_lower(delta)`` with probability at least ``1 - delta``, from the last :meth:`ln_z_ais`. ``nan`` with no run. See :meth:`ln_z_ess` for how loose it is."""
+        ...
+    def ln_z_mean_field(self, beta: float) -> float:
+        """A **deterministic** lower bound on ``ln Z(beta)``: the Gibbs–Bogoliubov inequality at the naive mean-field fixed point. No sampling and no probability of failure — the bound holds at every magnetisation; the fixed point is only where it is tightest."""
         ...
     def ln_z_ti(self, beta: float, rungs: int = 32, burn_in: int = 200, draws: int = 2000, z: float = 3.0) -> tuple:
         """``ln Z(beta)`` by thermodynamic integration: ``(midpoint, lower, upper)``."""

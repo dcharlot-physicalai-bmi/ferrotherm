@@ -497,6 +497,12 @@ double ft_ln_z_ti(const ft_sim *sim, double beta, uint32_t rungs, uint32_t burn_
  * entropy and heat capacity is free_energy::thermodynamics, Rust-only. 0 args = 32/200/2000. */
 double ft_ln_z_bar(const ft_sim *sim, double beta, uint32_t rungs, uint32_t burn_in, uint32_t draws,
                    double *stderr_out);
+/* A DETERMINISTIC lower bound on ln Z(beta): Gibbs-Bogoliubov at the naive mean-field fixed
+ * point. No sampling, no probability of failure. */
+double ft_ln_z_mean_field(const ft_sim *sim, double beta);
+/* ln Z(beta) by the Bethe free energy of loopy belief propagation: exact on a tree, an
+ * approximation with loops; NaN if BP did not converge. */
+double ft_ln_z_bethe(const ft_sim *sim, double beta);
 
 /* The worst family statistic rho over the ladder -- THE NUMBER THAT SAYS WHETHER TO BELIEVE
    ft_popanneal_ln_z. 1.0 means every ancestor still has one descendant; the population size means

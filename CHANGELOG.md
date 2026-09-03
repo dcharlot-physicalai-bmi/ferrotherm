@@ -70,6 +70,46 @@ assertions now use them (`4·(se_lnZ + β·se_E)`), and the monotonicity check a
 estimates' noise. A test that asserts a fixed number is asserting the author's guess, not the
 method's guarantee.
 
+### Learning theory as oracles: mean field, belief propagation, and the Hopfield memory
+
+The strategy review found the learning-theory lane essentially empty. This fills it the way the
+crate fills every lane — with closed forms the samplers must reproduce.
+
+**The mean-field family, and the one that is a theorem.** `meanfield::gibbs_bogoliubov` is the
+Gibbs–Bogoliubov inequality: for *any* product distribution, `ln Z ≥ β⟨−E⟩_q + S(q)` — a
+**deterministic lower bound on `ln Z`** with no sampling and no probability of failure, the fourth
+member of the free-energy family, held against exact `ln Z` as a strict inequality at random
+magnetisations and at the naive mean-field fixed point on rings, tori and trees. `tap` adds the
+Onsager reaction term and the second-order Plefka free energy, measured to beat naive mean field on
+a small Sherrington–Kirkpatrick sample in both `ln Z` and marginals. `belief_propagation` is
+sum-product in cavity-field form with the Bethe free energy; **exact on trees** — `ln Z` and every
+marginal to `1e-9` against `Elimination` on random trees — and on a 4×4 torus close below
+criticality (0.28 at `β = 0.3`) and 2.2 nats off above it (`β = 0.5`): loops reinforce and BP cannot
+see them, and the tests assert the degradation as much as the agreement. An earlier draft asserted
+"within 0.5" at `β = 0.5` from a guess made at `β = 0.3`; the ordered phase corrected it.
+
+**The Hopfield model, with its theory as the oracle.** `hopfield::hebbian` builds the memory as an
+Ising model the samplers run unchanged. One pattern is Curie–Weiss in a gauge, `m = tanh(βm)`, and
+a 256-spin chain retrieves at that overlap within its error bar (0.855 ± 0.001 vs 0.859 at
+`β = 1.5`; near the transition finite size shows, 0.638 vs 0.659 at `β = 1.2`). At finite load the
+Amit–Gutfreund–Sompolinsky replica-symmetric equations are solved by 64-point Gauss–Hermite
+(`ags_rs`), and at `T = 0` in their erf form (`ags_zero_t`); **bisection on the crate's own numerics
+gives `α_c = 0.1379`**, AGS's 0.138, with the overlap still 0.979 just below it — the first-order
+transition. The samplers see it: at `β = 2` a 1000-spin memory at `α = 0.02` retrieves at 0.9465
+± 0.0009 against the theory's 0.9450, and at `α = 0.10` and `0.30`, where the theory has no
+retrieval state, the overlap is 0.14 and 0.10.
+
+**What the middle taught.** At `α = 0.05` the theory has a retrieval state (`m = 0.904`) but above
+`α ≈ 0.05` retrieval states are only metastable, and a finite-`N` chain at `T = 0.5` sometimes
+leaves one within the run: held in 2 of 5 pattern sets at `N = 1000` (0.92 and 0.91 where held), in
+5 of 5 at `β = 4` (0.99–1.0 vs 0.996). The example reports it per pattern set rather than as one
+number, because the one number would have been whichever set the seed picked. Replica symmetry is
+itself an approximation near `α_c`; the figures are the theory's, not a machine's.
+
+`ft_ln_z_mean_field` (the deterministic bound) and `ft_ln_z_bethe` complete the `ln Z` family on the
+ABI and all four bindings; Hopfield and the replica solvers are Rust-level. `examples/learning_theory`
+prints all of it. Zig 56, Julia 342.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had

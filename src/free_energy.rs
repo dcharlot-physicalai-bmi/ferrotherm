@@ -455,6 +455,11 @@ pub fn ti_from_rungs(n: usize, mut rungs: Vec<(f64, Estimate)>, z: f64) -> Ti {
     }
 }
 
+/// Mean, `tau_int`-aware effective size and standard error of a trace.
+pub(crate) fn estimate_trace(trace: &[f64]) -> Estimate {
+    estimate(trace)
+}
+
 fn estimate(trace: &[f64]) -> Estimate {
     let n = trace.len() as f64;
     let mean = trace.iter().sum::<f64>() / n;

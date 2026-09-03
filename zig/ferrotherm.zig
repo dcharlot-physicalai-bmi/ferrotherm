@@ -235,6 +235,16 @@ pub const Sim = struct {
         return .{ .ln_z = v, .stderr = se };
     }
 
+    /// A DETERMINISTIC lower bound on `ln Z(beta)`: Gibbs-Bogoliubov at the mean-field fixed point.
+    pub fn lnZMeanField(self: Sim, beta: f64) f64 {
+        return c.ft_ln_z_mean_field(self.h, beta);
+    }
+
+    /// `ln Z(beta)` by the Bethe free energy of belief propagation: exact on a tree.
+    pub fn lnZBethe(self: Sim, beta: f64) f64 {
+        return c.ft_ln_z_bethe(self.h, beta);
+    }
+
     /// Store a CLOSED-FORM structured clique embedding, where `hardware` has a known one.
     ///
     /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
@@ -753,6 +763,9 @@ test "ln Z crosses the boundary three ways and the bound holds" {
     try std.testing.expect(@abs(a - exact) < 0.3);
     try std.testing.expect(s.lnZLower(1e-6) <= exact);
     try std.testing.expect(s.lnZEss() > 8.0);
+    try std.testing.expect(s.lnZMeanField(beta) <= exact);
+    try std.testing.expect(@abs(s.lnZBethe(0.3) - s.lnZExact(0.3)) < 0.5); // disordered phase
+    try std.testing.expect(@abs(s.lnZBethe(beta) - exact) > 1.0); // ordered phase: loopy BP degrades
     const b = s.lnZBar(beta, 16, 100, 500);
     try std.testing.expect(@abs(b.ln_z - exact) < 0.3 + 4.0 * b.stderr);
     const t = s.lnZTi(beta, 16, 100, 500, 3.0);

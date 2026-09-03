@@ -59,7 +59,7 @@ export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
 export sparsify, logical_variables, copies, sparsify_offset, project
 export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed, clique_embed!
-export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti, ln_z_bar
+export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti, ln_z_bar, ln_z_mean_field, ln_z_bethe
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -245,6 +245,8 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_ln_z_ais_ess Cdouble SimPtr
 @cfn ft_ln_z_ti Cdouble SimPtr Cdouble Cuint Cuint Cuint Cdouble Ptr{Cdouble} Ptr{Cdouble}
 @cfn ft_ln_z_bar Cdouble SimPtr Cdouble Cuint Cuint Cuint Ptr{Cdouble}
+@cfn ft_ln_z_mean_field Cdouble SimPtr Cdouble
+@cfn ft_ln_z_bethe Cdouble SimPtr Cdouble
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -626,6 +628,22 @@ function ln_z_bar(sim::Simulation, beta::Real; rungs::Integer = 32, burn_in::Int
     v = ft_ln_z_bar(sim.handle, Float64(beta), Cuint(rungs), Cuint(burn_in), Cuint(draws), se)
     (Float64(v), se[])
 end
+
+"""
+    ln_z_mean_field(sim, beta) -> Float64
+
+A DETERMINISTIC lower bound on `ln Z(beta)`: the Gibbs-Bogoliubov inequality at the naive
+mean-field fixed point. No sampling, no probability of failure.
+"""
+ln_z_mean_field(sim::Simulation, beta::Real) = (_live(sim); Float64(ft_ln_z_mean_field(sim.handle, Float64(beta))))
+
+"""
+    ln_z_bethe(sim, beta) -> Float64
+
+`ln Z(beta)` by the Bethe free energy of belief propagation: exact on a tree, approximate with
+loops, `NaN` if BP did not converge.
+"""
+ln_z_bethe(sim::Simulation, beta::Real) = (_live(sim); Float64(ft_ln_z_bethe(sim.handle, Float64(beta))))
 
 """
     clique_embed!(logical, hardware) -> Int

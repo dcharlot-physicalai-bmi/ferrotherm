@@ -151,6 +151,8 @@ _ln_z_ais_lower = _sig("ft_ln_z_ais_lower", ctypes.c_double, [_p, ctypes.c_doubl
 _ln_z_ais_ess = _sig("ft_ln_z_ais_ess", ctypes.c_double, [_p])
 _ln_z_ti = _sig("ft_ln_z_ti", ctypes.c_double, [_p, ctypes.c_double, c_uint32, c_uint32, c_uint32, ctypes.c_double, POINTER(ctypes.c_double), POINTER(ctypes.c_double)])
 _ln_z_bar = _sig("ft_ln_z_bar", ctypes.c_double, [_p, ctypes.c_double, c_uint32, c_uint32, c_uint32, POINTER(ctypes.c_double)])
+_ln_z_mean_field = _sig("ft_ln_z_mean_field", ctypes.c_double, [_p, ctypes.c_double])
+_ln_z_bethe = _sig("ft_ln_z_bethe", ctypes.c_double, [_p, ctypes.c_double])
 _unembed = _sig("ft_unembed", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
@@ -1120,6 +1122,34 @@ is how a dropped GPU dispatch turns into a believable energy.
         se = ctypes.c_double(float("nan"))
         v = _ln_z_bar(self._h, beta, rungs, burn_in, draws, ctypes.byref(se))
         return float(v), float(se.value)
+
+    def ln_z_mean_field(self, beta: float) -> float:
+        """A **deterministic** lower bound on ``ln Z(beta)``: the Gibbs–Bogoliubov inequality at
+        the naive mean-field fixed point. No sampling and no probability of failure — the bound
+        holds at every magnetisation; the fixed point is only where it is tightest.
+
+        >>> s = lattice2d(4)
+        >>> s.ln_z_mean_field(0.5) <= s.ln_z_exact(0.5)
+        True
+        """
+        self._live()
+        return float(_ln_z_mean_field(self._h, beta))
+
+    def ln_z_bethe(self, beta: float) -> float:
+        """``ln Z(beta)`` by the Bethe free energy of loopy belief propagation: exact on a tree,
+        an approximation with loops, ``nan`` if BP did not converge.
+
+        Close in the disordered phase, and it degrades past criticality (``beta_c = 0.44`` on the
+        square lattice) — the second fact is as much the finding as the first.
+
+        >>> s = lattice2d(4)
+        >>> abs(s.ln_z_bethe(0.3) - s.ln_z_exact(0.3)) < 0.5
+        True
+        >>> abs(s.ln_z_bethe(0.5) - s.ln_z_exact(0.5)) > 1.0
+        True
+        """
+        self._live()
+        return float(_ln_z_bethe(self._h, beta))
 
     def clique_embed(self, hardware: "Sim") -> int:
         """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.
