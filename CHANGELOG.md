@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.36.0
 
 ### The Advantage clique: K_168 on Pegasus, written down, 93% of the frontier
 
