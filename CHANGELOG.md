@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.37.0
 
 ### Zephyr at the frontier: K_{16m-8}, the busclique size exactly, and the gap is closed
 
