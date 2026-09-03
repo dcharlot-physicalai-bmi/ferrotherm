@@ -486,6 +486,16 @@ DSATUR was added the day the crate acquired a graph greedy colours badly: it sav
 Zephyr (6 → 5) and on compiled counting constraints (4 → 3), ties on Pegasus where greedy already
 matches the clique bound, and is adopted only when it strictly wins.
 
+**4.1 Free energy as a certified quantity.** ✅ **DONE** — `src/free_energy.rs`,
+`ebm::log_likelihood_ais`.
+
+The certificate said the chain mixed; nothing said what the distribution is. `ln Z` now comes
+three ways — AIS with an *unconditional* Markov lower bound, reverse AIS with the conditional upper,
+thermodynamic integration with a monotonicity bracket — cross-checked against enumeration,
+elimination, the transfer matrix, Onsager and `popanneal`. Recorded gaps: a clamped AIS for the
+EBM numerator past 22 hidden units; Bennett acceptance ratio across a parallel-tempering ladder,
+which would give `ln Z` at every rung from samples the crate already produces.
+
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.
 

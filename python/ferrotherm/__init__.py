@@ -145,6 +145,11 @@ _embed_chain = _sig("ft_embed_chain", c_uint32, [_p, c_uint32, POINTER(c_uint32)
 _site_lower_bound = _sig("ft_site_lower_bound", c_uint32, [_p, _p])
 _embed_apply = _sig("ft_embed_apply", _p, [_p, _p, c_double])
 _clique_embed = _sig("ft_clique_embed", c_uint32, [_p, _p, POINTER(c_uint32)])
+_ln_z_exact = _sig("ft_ln_z_exact", ctypes.c_double, [_p, ctypes.c_double])
+_ln_z_ais = _sig("ft_ln_z_ais", ctypes.c_double, [_p, ctypes.c_double, c_uint32, c_uint32, c_uint32])
+_ln_z_ais_lower = _sig("ft_ln_z_ais_lower", ctypes.c_double, [_p, ctypes.c_double])
+_ln_z_ais_ess = _sig("ft_ln_z_ais_ess", ctypes.c_double, [_p])
+_ln_z_ti = _sig("ft_ln_z_ti", ctypes.c_double, [_p, ctypes.c_double, c_uint32, c_uint32, c_uint32, ctypes.c_double, POINTER(ctypes.c_double), POINTER(ctypes.c_double)])
 _unembed = _sig("ft_unembed", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
@@ -1033,6 +1038,68 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         hardware._live()
         return int(_site_lower_bound(self._h, hardware._h))
+
+    def ln_z_exact(self, beta: float) -> float:
+        """Exact ``ln Z(beta)`` by variable elimination, or ``nan`` if the graph is too wide.
+
+        Bounded by treewidth rather than spin count: a 6×6 torus is fine where enumeration is not.
+
+        >>> ln_z = lattice2d(4).ln_z_exact(0.5)      # 16 spins, ground energy -32
+        >>> 16 * 0.6931 <= ln_z <= 16 * 0.6931 + 0.5 * 32   # n ln 2 <= ln Z <= n ln 2 + beta |E_min|
+        True
+        """
+        self._live()
+        return float(_ln_z_exact(self._h, beta))
+
+    def ln_z_ais(self, beta: float, rungs: int = 64, sweeps: int = 2, runs: int = 128) -> float:
+        """``ln Z(beta)`` by annealed importance sampling — the estimate whose *lower bound* is
+        unconditional.
+
+        A linear ladder of ``rungs`` inverse temperatures from zero, ``sweeps`` palindromic sweeps
+        per rung, ``runs`` independent walks. The estimator of ``Z`` is unbiased for any number of
+        sweeps, so :meth:`ln_z_lower` follows from Markov's inequality with no equilibrium
+        assumption at all; more sweeps and runs tighten it, never validate it.
+
+        >>> s = lattice2d(4)
+        >>> est = s.ln_z_ais(0.5)
+        >>> abs(est - s.ln_z_exact(0.5)) < 0.3
+        True
+        >>> s.ln_z_lower(0.01) <= s.ln_z_exact(0.5)
+        True
+        """
+        self._live()
+        return float(_ln_z_ais(self._h, beta, rungs, sweeps, runs))
+
+    def ln_z_lower(self, delta: float = 0.01) -> float:
+        """``ln Z >= ln_z_lower(delta)`` with probability at least ``1 - delta``, from the last
+        :meth:`ln_z_ais`. ``nan`` with no run. See :meth:`ln_z_ess` for how loose it is."""
+        self._live()
+        return float(_ln_z_ais_lower(self._h, delta))
+
+    def ln_z_ess(self) -> float:
+        """Effective sample size of the last :meth:`ln_z_ais` run's weights; near 1 means one walk
+        dominated and the bound, while valid, is loose."""
+        self._live()
+        return float(_ln_z_ais_ess(self._h))
+
+    def ln_z_ti(self, beta: float, rungs: int = 32, burn_in: int = 200, draws: int = 2000,
+                z: float = 3.0) -> tuple:
+        """``ln Z(beta)`` by thermodynamic integration: ``(midpoint, lower, upper)``.
+
+        The bracket comes from ``d<E>/dbeta = -Var(E) <= 0`` — the left and right Riemann sums of
+        the mean energy bracket the integral — with each rung's mean widened by ``z`` standard
+        errors. Far tighter than the AIS bound, at the price of assuming each rung's chain reached
+        equilibrium.
+
+        >>> s = lattice2d(4)
+        >>> mid, lo, hi = s.ln_z_ti(0.5, rungs=16, burn_in=100, draws=500)
+        >>> lo <= s.ln_z_exact(0.5) <= hi
+        True
+        """
+        self._live()
+        lo, hi = ctypes.c_double(float("nan")), ctypes.c_double(float("nan"))
+        mid = _ln_z_ti(self._h, beta, rungs, burn_in, draws, z, ctypes.byref(lo), ctypes.byref(hi))
+        return float(mid), float(lo.value), float(hi.value)
 
     def clique_embed(self, hardware: "Sim") -> int:
         """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.

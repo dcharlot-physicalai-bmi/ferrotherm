@@ -197,6 +197,36 @@ pub const Sim = struct {
         return broken;
     }
 
+    /// Exact `ln Z(beta)` by variable elimination, or NaN if the graph is too wide.
+    pub fn lnZExact(self: Sim, beta: f64) f64 {
+        return c.ft_ln_z_exact(self.h, beta);
+    }
+
+    /// `ln Z(beta)` by annealed importance sampling; 0 for the defaults 64 / 2 / 128. The run is
+    /// kept for `lnZLower` (an UNCONDITIONAL high-probability lower bound) and `lnZEss`.
+    pub fn lnZAis(self: Sim, beta: f64, rungs: u32, sweeps: u32, runs: u32) f64 {
+        return c.ft_ln_z_ais(self.h, beta, rungs, sweeps, runs);
+    }
+
+    /// `ln Z >= lnZLower(delta)` with probability at least 1 - delta; NaN with no run.
+    pub fn lnZLower(self: Sim, delta: f64) f64 {
+        return c.ft_ln_z_ais_lower(self.h, delta);
+    }
+
+    /// Effective sample size of the last AIS run's weights.
+    pub fn lnZEss(self: Sim) f64 {
+        return c.ft_ln_z_ais_ess(self.h);
+    }
+
+    /// `ln Z(beta)` by thermodynamic integration: the midpoint and the bracket (means widened by
+    /// `z` standard errors). 0 for the defaults 32 / 200 / 2000 / 3.
+    pub fn lnZTi(self: Sim, beta: f64, rungs: u32, burn_in: u32, draws: u32, z: f64) struct { mid: f64, lower: f64, upper: f64 } {
+        var lo: f64 = 0;
+        var hi: f64 = 0;
+        const mid = c.ft_ln_z_ti(self.h, beta, rungs, burn_in, draws, z, &lo, &hi);
+        return .{ .mid = mid, .lower = lo, .upper = hi };
+    }
+
     /// Store a CLOSED-FORM structured clique embedding, where `hardware` has a known one.
     ///
     /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
@@ -702,6 +732,22 @@ test "an answer is scored in the modeller's own units" {
     try std.testing.expect(p.feasible());
     // And it is NOT the compiled energy, which is the only number this used to hand back.
     try std.testing.expect(obj != p.energy());
+}
+
+test "ln Z crosses the boundary three ways and the bound holds" {
+    const s = try Sim.lattice2d(4, 1.0, 0.5, 3);
+    defer s.deinit();
+    const beta: f64 = 0.5;
+    const exact = s.lnZExact(beta);
+    // n ln 2 <= ln Z <= n ln 2 + beta * |E_min|: 16 spins, ground energy -32 on the torus.
+    try std.testing.expect(exact >= 16.0 * 0.6931 and exact <= 16.0 * 0.6931 + 0.5 * 32.0);
+    const a = s.lnZAis(beta, 0, 0, 0);
+    try std.testing.expect(@abs(a - exact) < 0.3);
+    try std.testing.expect(s.lnZLower(1e-6) <= exact);
+    try std.testing.expect(s.lnZEss() > 8.0);
+    const t = s.lnZTi(beta, 16, 100, 500, 3.0);
+    try std.testing.expect(t.lower <= exact and exact <= t.upper);
+    try std.testing.expect(@abs(t.mid - exact) < 0.5);
 }
 
 test "a structured clique is written down rather than searched for" {

@@ -59,6 +59,7 @@ export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
 export sparsify, logical_variables, copies, sparsify_offset, project
 export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed, clique_embed!
+export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -238,6 +239,11 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_embed_apply SimPtr SimPtr SimPtr Cdouble
 @cfn ft_unembed Cuint SimPtr Ptr{Int8} Cuint
 @cfn ft_clique_embed Cuint SimPtr SimPtr Ptr{Cuint}
+@cfn ft_ln_z_exact Cdouble SimPtr Cdouble
+@cfn ft_ln_z_ais Cdouble SimPtr Cdouble Cuint Cuint Cuint
+@cfn ft_ln_z_ais_lower Cdouble SimPtr Cdouble
+@cfn ft_ln_z_ais_ess Cdouble SimPtr
+@cfn ft_ln_z_ti Cdouble SimPtr Cdouble Cuint Cuint Cuint Cdouble Ptr{Cdouble} Ptr{Cdouble}
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -555,6 +561,56 @@ function qubit(s::Simulation, i::Integer)
     _live(s)
     q = ft_qubit(s.handle, Cuint(i - 1))
     q == typemax(Cuint) ? nothing : Int(q)
+end
+
+"""
+    ln_z_exact(sim, beta) -> Float64
+
+Exact `ln Z(beta)` by variable elimination, or `NaN` if the graph is too wide (induced width above
+24). Bounded by treewidth, not spin count.
+"""
+function ln_z_exact(sim::Simulation, beta::Real)
+    _live(sim)
+    Float64(ft_ln_z_exact(sim.handle, Float64(beta)))
+end
+
+"""
+    ln_z_ais!(sim, beta; rungs=64, sweeps=2, runs=128) -> Float64
+
+`ln Z(beta)` by annealed importance sampling up a linear ladder. The estimator of `Z` is unbiased
+for any number of sweeps, so [`ln_z_lower`](@ref) is an UNCONDITIONAL high-probability lower bound;
+[`ln_z_ess`](@ref) says how loose.
+"""
+function ln_z_ais!(sim::Simulation, beta::Real; rungs::Integer = 64, sweeps::Integer = 2, runs::Integer = 128)
+    _live(sim)
+    Float64(ft_ln_z_ais(sim.handle, Float64(beta), Cuint(rungs), Cuint(sweeps), Cuint(runs)))
+end
+
+"""
+    ln_z_lower(sim, delta=0.01) -> Float64
+
+`ln Z >= ln_z_lower(delta)` with probability at least `1 - delta`, from the last [`ln_z_ais!`](@ref).
+"""
+ln_z_lower(sim::Simulation, delta::Real = 0.01) = (_live(sim); Float64(ft_ln_z_ais_lower(sim.handle, Float64(delta))))
+
+"""
+    ln_z_ess(sim) -> Float64
+
+Effective sample size of the last AIS run's weights; near 1 means the bound is loose.
+"""
+ln_z_ess(sim::Simulation) = (_live(sim); Float64(ft_ln_z_ais_ess(sim.handle)))
+
+"""
+    ln_z_ti(sim, beta; rungs=32, burn_in=200, draws=2000, z=3.0) -> (mid, lower, upper)
+
+`ln Z(beta)` by thermodynamic integration, with the bracket from `d<E>/dbeta <= 0` and each rung's
+mean widened by `z` standard errors. Tighter than the AIS bound; assumes each rung equilibrated.
+"""
+function ln_z_ti(sim::Simulation, beta::Real; rungs::Integer = 32, burn_in::Integer = 200, draws::Integer = 2000, z::Real = 3.0)
+    _live(sim)
+    lo = Ref{Cdouble}(NaN); hi = Ref{Cdouble}(NaN)
+    mid = ft_ln_z_ti(sim.handle, Float64(beta), Cuint(rungs), Cuint(burn_in), Cuint(draws), Float64(z), lo, hi)
+    (Float64(mid), lo[], hi[])
 end
 
 """

@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+### Free energy, certified: what a sampler owes, and the bound it can prove it paid
+
+Every certificate in this crate said the chain *mixed*. None said what the distribution *is*. The
+quantity that does is `ln Z(β)` — it turns sampled statistics into normalised probabilities, gives
+an energy-based model a likelihood instead of a marginal error, and is the number every
+thermodynamic-computing paper quotes and no sampling stack certifies. `free_energy` computes it
+three ways, each carrying exactly the guarantee it has, and checks all of them against exact
+oracles before any is trusted.
+
+**Exact oracles.** Enumeration to 24 spins; `Elimination::log_partition` (already in the crate,
+bounded by treewidth rather than by `n`); the periodic chain in closed form by transfer matrix;
+and Onsager's infinite-lattice density in closed form — the same oracle the sampler was first
+verified against. Enumeration, elimination and the transfer matrix agree to `1e-9`, which pins
+every sign convention at once.
+
+**Annealed importance sampling** walks a ladder from the uniform distribution (`ln Z₀ = n ln 2`).
+Its estimator of `Z` is unbiased for *any* transition kernels that leave the rungs invariant,
+however few sweeps they run — so Markov's inequality gives `ln Z ≥ ln Ẑ − ln(1/δ)` with probability
+`≥ 1 − δ` **with no equilibrium assumption at all**. That is the first unconditional bound on a
+distribution this crate has ever issued. **Reverse AIS** (Burda–Grosse–Salakhutdinov) gives the
+mirror upper bound, conditional on starting from the target; the two use a *palindromic* sweep
+(every colour class forward, then back), which is self-adjoint where a fixed-order sweep is not,
+so the reverse estimator is an exact mirror of the forward one. **Thermodynamic integration**
+brackets `ln Z` from one fact — `d⟨E⟩/dβ = −Var(E) ≤ 0`, so the left and right Riemann sums of the
+mean energy bracket the integral — with each rung's mean widened by its own `tau_int`-aware error
+bar. And `popanneal`'s SMC `ln Z`, which the crate already had, is now cross-checked against the
+other three: on a 16-spin ring all four sit within 0.02 of the transfer matrix.
+
+**The trade the numbers show, stated plainly.** At 99% the AIS sandwich is ±4.6 nats wide — the
+slack is Markov's, and it is the price of assuming nothing. The TI bracket on the same model is
+±0.5 — nine times tighter — and its price is assuming each rung's chain equilibrated. Both are
+reported; the reader chooses which assumption to buy. A geometric ladder was measured to be the
+wrong default (its last step doubles `β` and drove the weights' effective sample size to about
+one, with the estimates a nat off in both directions while the bounds still held); the default is
+linear, and the doc says why.
+
+**Past enumeration.** On a 6×6 torus AIS lands within 0.06 of exact elimination; on a 12×12 torus
+its `ln Z / N` is within `2.9e-4` of Onsager's closed form — the finite-size residual of a periodic
+lattice below criticality. `ebm::log_likelihood_ais` uses it to give an energy-based model a
+likelihood past the 22-spin enumeration limit: the numerator exact over the hidden units, `ln Z`
+by AIS, and `upper_bound(δ)` inheriting the unconditional standing of the `ln Z` bound.
+
+**Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
+Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
+exact — including at `±MAX`, where the neighbour is infinite and the author's own check had
+predicted a failure the machine did not find. Proofs-gate floor raised to 7.
+
+**Every surface.** `ft_ln_z_exact`, `ft_ln_z_ais` / `_lower` / `_ess`, `ft_ln_z_ti` in the ABI and
+in Python, Zig and Julia; reverse AIS stays Rust-only because it needs caller-supplied target draws
+and a statement of how they were made, a contract the flat ABI cannot express honestly. Zig 56,
+Julia 338. `examples/free_energy` shows the whole table.
+
 ## 0.37.0
 
 ### Zephyr at the frontier: K_{16m-8}, the busclique size exactly, and the gap is closed

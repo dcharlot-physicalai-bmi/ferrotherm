@@ -142,6 +142,21 @@ end
     close!(p)
 end
 
+@testset "ln Z crosses the boundary three ways and the bound holds" begin
+    s = lattice2d(4)
+    beta = 0.5
+    exact = ln_z_exact(s, beta)
+    @test 16 * log(2) <= exact <= 16 * log(2) + 0.5 * 32   # n ln 2 <= ln Z <= n ln 2 + beta |E_min|
+    a = ln_z_ais!(s, beta)
+    @test abs(a - exact) < 0.3
+    @test ln_z_lower(s, 1e-6) <= exact
+    @test ln_z_ess(s) > 8.0
+    mid, lo, hi = ln_z_ti(s, beta; rungs = 16, burn_in = 100, draws = 500)
+    @test lo <= exact <= hi
+    @test abs(mid - exact) < 0.5
+    close!(s)
+end
+
 @testset "a structured clique is written down rather than searched for" begin
     hw = zephyr(4)
     m = IsingModel(56)

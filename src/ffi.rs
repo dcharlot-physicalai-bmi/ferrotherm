@@ -67,6 +67,8 @@ pub struct Sim {
     ic: Option<crate::icm::Outcome>,
     /// The last population-annealing outcome, for the `ft_popanneal_*` accessors.
     pa: Option<crate::popanneal::Outcome>,
+    /// The last annealed-importance-sampling run, for the `ft_ln_z_ais_*` accessors.
+    fe: Option<crate::free_energy::Ais>,
     /// The last branch-and-bound outcome, for the `ft_branch_*` accessors.
     bb: Option<crate::branch::Outcome>,
     /// The last HFS descent, for the `ft_hfs_*` accessors.
@@ -97,7 +99,8 @@ impl Sim {
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
         Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None, bb: None, hf: None, sm: None, qubits: Vec::new(), copies: Vec::new(), sparsify_offset: 0.0, emb: None }))
+            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None,
+            fe: None, bb: None, hf: None, sm: None, qubits: Vec::new(), copies: Vec::new(), sparsify_offset: 0.0, emb: None }))
     }
 
     /// As [`Sim::new`], keeping the device topology's own qubit numbering. See [`ft_qubit`].
@@ -678,6 +681,37 @@ pub extern "C" fn ft_unembed(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
         unsafe { *out.add(i) = v };
     }
     broken.len() as u32
+}
+
+#[cfg(test)]
+mod free_energy_ffi_tests {
+    use super::*;
+
+    /// The three ABI routes agree with the closed form, and the bound holds.
+    #[test]
+    fn ln_z_crosses_the_boundary_three_ways() {
+        let s = ft_ising2d_new(4, 1.0, 0.5, 3); // a 4x4 torus, 16 spins
+        let beta = 0.5;
+        let truth = crate::free_energy::exact_log_z(unsafe { &(*s).graph }, beta);
+        let exact = ft_ln_z_exact(s, beta);
+        assert!((exact - truth).abs() < 1e-9, "elimination {exact} vs enumeration {truth}");
+
+        assert!(ft_ln_z_ais_lower(s, 0.05).is_nan(), "no run yet");
+        let a = ft_ln_z_ais(s, beta, 0, 0, 0);
+        assert!((a - truth).abs() < 0.3, "ais {a} vs {truth}");
+        assert!(ft_ln_z_ais_lower(s, 1e-6) <= truth);
+        assert!(ft_ln_z_ais_ess(s) > 8.0);
+        assert!(ft_ln_z_ais_lower(s, 0.0).is_nan() && ft_ln_z_ais_lower(s, 1.0).is_nan());
+
+        let (mut lo, mut hi) = (f64::NAN, f64::NAN);
+        let mid = ft_ln_z_ti(s, beta, 16, 100, 500, 3.0, &mut lo, &mut hi);
+        assert!(lo <= truth && truth <= hi, "[{lo}, {hi}] misses {truth}");
+        assert!((mid - truth).abs() < 0.5);
+
+        assert!(ft_ln_z_exact(s, -1.0).is_nan() && ft_ln_z_ais(s, 0.0, 0, 0, 0).is_nan());
+        assert!(ft_ln_z_exact(core::ptr::null(), beta).is_nan());
+        ft_free(s);
+    }
 }
 
 #[cfg(test)]
@@ -4098,6 +4132,106 @@ pub extern "C" fn ft_popanneal(
     let e = out.energy;
     s.pa = Some(out);
     e
+}
+
+// ---- free energy ----------------------------------------------------------------------------------
+//
+// What a sampler owes: ln Z, with the guarantee each route actually carries. Reverse AIS is
+// Rust-only -- it needs caller-supplied draws from the target and a statement of how they were
+// made, which is a contract the flat ABI cannot express honestly. The three below are
+// self-contained: exact, an UNCONDITIONAL lower bound, and a monotonicity bracket.
+
+/// Exact `ln Z(beta)` by variable elimination, or NaN if the graph is too wide (induced width
+/// above 24) or the handle is null. Bounded by treewidth, not by spin count.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_exact(sim: *const Sim, beta: f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    if !beta.is_finite() || beta < 0.0 {
+        return f64::NAN;
+    }
+    match crate::exact::Elimination::default().log_partition(&s.graph, beta) {
+        Ok(e) => e.log_z.unwrap_or(f64::NAN),
+        Err(_) => f64::NAN,
+    }
+}
+
+/// `ln Z(beta)` by annealed importance sampling up a linear ladder of `rungs` rungs, `sweeps`
+/// palindromic sweeps per rung, `runs` independent walks. Returns the point estimate and keeps the
+/// run for [`ft_ln_z_ais_lower`] and [`ft_ln_z_ais_ess`]. NaN on a null handle or `beta <= 0`.
+/// Zero arguments take the defaults 64 / 2 / 128.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_ais(sim: *mut Sim, beta: f64, rungs: u32, sweeps: u32, runs: u32) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    if !beta.is_finite() || beta <= 0.0 {
+        return f64::NAN;
+    }
+    let rungs = if rungs < 2 { 64 } else { rungs as usize };
+    let sweeps = if sweeps == 0 { 2 } else { sweeps as usize };
+    let runs = if runs == 0 { 128 } else { runs as usize };
+    let ladder = crate::free_energy::linear_ladder(beta, rungs);
+    let a = crate::free_energy::ais(&s.graph, &ladder, sweeps, runs, s.seed);
+    let v = a.log_z;
+    s.fe = Some(a);
+    v
+}
+
+/// `ln Z >= ft_ln_z_ais_lower(delta)` with probability at least `1 - delta`, unconditionally --
+/// Markov's inequality on the unbiased estimator of the last [`ft_ln_z_ais`]. NaN if there was
+/// no run or `delta` is outside `(0, 1)`.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_ais_lower(sim: *const Sim, delta: f64) -> f64 {
+    if !(delta > 0.0 && delta < 1.0) {
+        return f64::NAN;
+    }
+    match unsafe { sim.as_ref() }.and_then(|s| s.fe.as_ref()) {
+        Some(a) => a.lower_bound(delta),
+        None => f64::NAN,
+    }
+}
+
+/// Effective sample size of the last [`ft_ln_z_ais`]'s weights; near 1 means one walk dominated
+/// and the bound, still valid, is loose. NaN if there was no run.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_ais_ess(sim: *const Sim) -> f64 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.fe.as_ref()) {
+        Some(a) => a.ess,
+        None => f64::NAN,
+    }
+}
+
+/// `ln Z(beta)` by thermodynamic integration: `rungs` rungs, each measured by a chain of
+/// `burn_in + draws` palindromic sweeps. Returns the bracket midpoint and writes the bracket --
+/// each mean widened by `z` standard errors -- to `lower_out` / `upper_out` when non-null. The
+/// bracket rests on `d<E>/dbeta <= 0`, a theorem, and on each rung being at equilibrium, which is
+/// not. NaN on a null handle or `beta <= 0`; zero arguments take the defaults 32 / 200 / 2000 / 3.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_ti(
+    sim: *const Sim,
+    beta: f64,
+    rungs: u32,
+    burn_in: u32,
+    draws: u32,
+    z: f64,
+    lower_out: *mut f64,
+    upper_out: *mut f64,
+) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    if !beta.is_finite() || beta <= 0.0 {
+        return f64::NAN;
+    }
+    let rungs = if rungs < 2 { 32 } else { rungs as usize };
+    let burn_in = if burn_in == 0 { 200 } else { burn_in as usize };
+    let draws = if draws < 4 { 2000 } else { draws as usize };
+    let z = if z.is_finite() && z > 0.0 { z } else { 3.0 };
+    let ladder = crate::free_energy::linear_ladder(beta, rungs);
+    let t = crate::free_energy::thermodynamic_integration(&s.graph, &ladder, burn_in, draws, z, s.seed);
+    if !lower_out.is_null() {
+        unsafe { *lower_out = t.lower_widened };
+    }
+    if !upper_out.is_null() {
+        unsafe { *upper_out = t.upper_widened };
+    }
+    t.midpoint()
 }
 
 /// `ln Z` at the final β from the last [`ft_popanneal`], or NaN if there was none.

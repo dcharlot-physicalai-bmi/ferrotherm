@@ -475,6 +475,24 @@ double ft_popanneal(ft_sim *sim, uint32_t population, uint32_t sweeps, double be
 /* ln Z at the final beta from the last ft_popanneal, or NaN if there was none. */
 double ft_popanneal_ln_z(const ft_sim *sim);
 
+/* Free energy: ln Z, with the guarantee each route carries. Reverse AIS is Rust-only (it needs
+ * caller-supplied target draws). */
+/* Exact ln Z(beta) by variable elimination; NaN if too wide (induced width > 24) or NULL. */
+double ft_ln_z_exact(const ft_sim *sim, double beta);
+/* ln Z(beta) by annealed importance sampling: linear ladder of `rungs`, `sweeps` palindromic
+ * sweeps per rung, `runs` walks (0 = defaults 64 / 2 / 128). Keeps the run for the two below. */
+double ft_ln_z_ais(ft_sim *sim, double beta, uint32_t rungs, uint32_t sweeps, uint32_t runs);
+/* ln Z >= this with probability >= 1 - delta, UNCONDITIONALLY (Markov on an unbiased estimator).
+ * NaN with no run or delta outside (0, 1). */
+double ft_ln_z_ais_lower(const ft_sim *sim, double delta);
+/* Effective sample size of the last run's weights; near 1 means the bound is loose. */
+double ft_ln_z_ais_ess(const ft_sim *sim);
+/* ln Z(beta) by thermodynamic integration; returns the bracket midpoint and writes the bracket
+ * (means widened by z standard errors) to lower_out/upper_out when non-NULL. The bracket rests on
+ * d<E>/dbeta <= 0 (a theorem) and each rung at equilibrium (not one). 0 args = 32/200/2000/3. */
+double ft_ln_z_ti(const ft_sim *sim, double beta, uint32_t rungs, uint32_t burn_in, uint32_t draws,
+                  double z, double *lower_out, double *upper_out);
+
 /* The worst family statistic rho over the ladder -- THE NUMBER THAT SAYS WHETHER TO BELIEVE
    ft_popanneal_ln_z. 1.0 means every ancestor still has one descendant; the population size means
    the population collapsed onto one ancestor and explored a single basin with N copies of one

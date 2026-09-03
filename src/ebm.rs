@@ -306,6 +306,65 @@ pub fn exact_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     Ok(total / data.rows.len() as f64)
 }
 
+/// A likelihood past enumeration: the numerator exact over the hidden units, `ln Z` by AIS.
+#[derive(Clone, Debug)]
+pub struct AisLikelihood {
+    /// Mean log-likelihood per row, with `ln Z` at its AIS point estimate.
+    pub estimate: f64,
+    /// Mean over rows of the exact `ln Σ_h exp(−E(v, h))`.
+    pub mean_log_numerator: f64,
+    /// The `ln Z` run, with its own bound and effective sample size.
+    pub log_z: crate::free_energy::Ais,
+}
+
+impl AisLikelihood {
+    /// The likelihood is at most this with probability at least `1 − delta`: the exact numerator
+    /// minus the unconditional lower bound on `ln Z`. A lower bound on the likelihood would need
+    /// an upper bound on `ln Z`, which is reverse AIS's conditional business.
+    pub fn upper_bound(&self, delta: f64) -> f64 {
+        self.mean_log_numerator - self.log_z.lower_bound(delta)
+    }
+}
+
+/// Mean log-likelihood per row for a model too large to enumerate, when its HIDDEN part is not.
+///
+/// `log p(v) = ln Σ_h exp(−E(v, h)) − ln Z`. The first term enumerates the `2^hidden` completions
+/// of each row exactly; the second is [`crate::free_energy::ais`] on the whole model, whose lower
+/// bound is unconditional and therefore gives [`AisLikelihood::upper_bound`] the same standing.
+/// Refuses when `hidden > MAX_ENUMERATED`; a clamped AIS for the numerator is the recorded next
+/// step past that.
+pub fn log_likelihood_ais(
+    g: &Graph,
+    data: &Dataset,
+    ladder: &[f64],
+    sweeps: usize,
+    runs: usize,
+    seed: u64,
+) -> Result<AisLikelihood, Error> {
+    check(g, data)?;
+    let hidden = g.n - data.visible;
+    if hidden > MAX_ENUMERATED {
+        return Err(Error::TooLarge { spins: hidden, limit: MAX_ENUMERATED });
+    }
+    let mut s = vec![-1i8; g.n];
+    let mut total = 0.0;
+    for row in &data.rows {
+        s[..data.visible].copy_from_slice(row);
+        let mut logs = Vec::with_capacity(1usize << hidden);
+        for mask in 0..(1usize << hidden) {
+            for b in 0..hidden {
+                s[data.visible + b] = if mask >> b & 1 == 1 { 1 } else { -1 };
+            }
+            logs.push(-g.energy(&s));
+        }
+        let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        total += mx + logs.iter().map(|x| (x - mx).exp()).sum::<f64>().ln();
+    }
+    let mean_log_numerator = total / data.rows.len() as f64;
+    let log_z = crate::free_energy::ais(g, ladder, sweeps, runs, seed);
+    Ok(AisLikelihood { estimate: mean_log_numerator - log_z.log_z, mean_log_numerator, log_z })
+}
+
 fn check(g: &Graph, data: &Dataset) -> Result<(), Error> {
     if data.rows.is_empty() {
         return Err(Error::NoData);
@@ -383,6 +442,27 @@ pub fn bars_and_stripes(side: usize) -> Dataset {
         }
     }
     Dataset { visible: n, rows: seen }
+}
+
+#[cfg(test)]
+mod likelihood_tests {
+    use super::*;
+    use crate::free_energy::linear_ladder;
+
+    /// Where enumeration can still judge it, the AIS likelihood agrees and its bound holds.
+    #[test]
+    fn the_ais_likelihood_agrees_with_enumeration_and_is_bounded() {
+        let data = bars_and_stripes(3); // 9 visible
+        let g = rbm(9, 6); // 15 spins: enumerable, so the exact likelihood exists
+        let exact = exact_log_likelihood(&g, &data).unwrap();
+        let a = log_likelihood_ais(&g, &data, &linear_ladder(1.0, 64), 2, 128, 4).unwrap();
+        assert!((a.estimate - exact).abs() < 0.1, "ais {} vs exact {exact}", a.estimate);
+        assert!(exact <= a.upper_bound(1e-6), "exact {exact} above the bound {}", a.upper_bound(1e-6));
+        assert!(a.log_z.ess > 8.0);
+        // Too many hidden units is refused, not approximated.
+        let wide = rbm(9, 30);
+        assert!(matches!(log_likelihood_ais(&wide, &data, &linear_ladder(1.0, 8), 1, 4, 1), Err(Error::TooLarge { .. })));
+    }
 }
 
 #[cfg(test)]
