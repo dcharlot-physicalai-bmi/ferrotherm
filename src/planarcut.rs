@@ -43,6 +43,26 @@
 //! An exact solver whose only output is a number nobody can check is the worst thing in this
 //! crate's problem domain, because every downstream comparison then inherits it silently.
 //!
+//! # Why an exact planar solver is also a warning about planar benchmarks
+//!
+//! Mandrà, Katzgraber and Thomas made this point in 2017 and it is worth carrying here rather than
+//! discovering it later. Quantum-annealer speedup claims moved onto carefully-built gadget problems
+//! whose logical topology is **planar**, and reported impressive wins over classical heuristics —
+//! until it was observed that **minimum-weight perfect matching solves those problems exactly and in
+//! polynomial time**. The speedups were measured on instances that are easy in the typical *and* the
+//! worst case.
+//!
+//! This module is that observation, implemented. So a result produced here says something precise
+//! and something narrow: it says the instance had exploitable structure, and it says nothing about
+//! hard instances. `examples/planar_exact` shows breakout local search — the record holder on most
+//! of G-set — falling 2.5% short at 10,000 spins, and the honest reading of that is **not** that our
+//! search is behind the field. It is that a heuristic which does not know the graph is planar cannot
+//! use the one fact that makes it tractable. Quote it as a demonstration of structure, never as a
+//! benchmark of solvers.
+//!
+//! [Mandrà, Katzgraber & Thomas]: "The pitfalls of planar spin-glass benchmarks: raising the bar for
+//! quantum annealers (again)", Quantum Science and Technology 2 (2017) 038501, arXiv:1703.00622.
+//!
 //! # What it will not do
 //!
 //! **Fields.** `E(s) = −Σ h_i s_i − Σ J_ij s_i s_j` with any `h_i ≠ 0` is not max-cut on this
