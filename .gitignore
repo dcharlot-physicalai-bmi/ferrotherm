@@ -46,3 +46,4 @@ zig-out/
 # on the author's machine. A stale one here listed no LazyArtifacts and failed CI with
 # "direct dependency, but does not appear in the manifest".
 julia/*/Manifest.toml
+.claude/
