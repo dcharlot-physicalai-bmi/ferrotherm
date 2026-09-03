@@ -1038,7 +1038,9 @@ is how a dropped GPU dispatch turns into a believable energy.
         """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.
 
         Where :meth:`embed` searches, this writes the answer down: ``K_n`` with uniform chains and no
-        search. Supported today for **Zephyr** (``K_{2t·m}``, uniform chains ``m+1``) and Chimera.
+        search. Supported today for **Pegasus** (``K_{12(m-2)}``, chains ``m+1`` — ``K_168`` on the
+        Advantage's P₁₆, where the search reaches ``K_80``) and **Zephyr** (``K_{2t·m}``, chains
+        ``m+1``).
         The clique size is fixed by the machine; this returns it. The placement lands on ``self``
         just as :meth:`embed` does, so :meth:`embed_apply`, :meth:`unembed` and the ``embed_*``
         readers work unchanged.
@@ -1050,9 +1052,9 @@ is how a dropped GPU dispatch turns into a believable energy.
         >>> problem.embed_longest                 # uniform m+1 = 5
         5
 
-        It is not the maximum D-Wave's tooling reaches — ``busclique`` fuses the odd-coupled tracks
-        for ``K_{16m-8}`` at the same chain length — but it beats this crate's own search decisively
-        and is instant. Raises when the topology has no known construction; :meth:`embed` is then the
+        It is not quite the maximum D-Wave's tooling reaches — ``busclique`` gets ``K_{12(m-1)}`` on
+        Pegasus and ``K_{16m-8}`` on Zephyr at the same chain lengths — but it is within 7% on
+        Pegasus, beats this crate's own search decisively, and is instant. Raises when the topology has no known construction; :meth:`embed` is then the
         fallback.
         """
         self._live()

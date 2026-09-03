@@ -405,7 +405,7 @@ for an autovectoriser to find. The flag is not enabled. Energy was bit-identical
 is the check that says the comparison was of the same computation.
 
 - `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
-  compiles with **zero changes**; the cdylib is a **644 KB .wasm** (237 KB gzipped) exposing the
+  compiles with **zero changes**; the cdylib is a **717 KB .wasm** (260 KB gzipped) exposing the
   `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
@@ -515,14 +515,16 @@ learned is what makes sampling harder.
 ### Structured cliques, written down instead of searched
 
 For a clique on a structured fabric the frontier is a construction, not a search — D-Wave's tooling
-places `K_150` on a Pegasus P₁₆ by writing the answer down. `embed::zephyr_clique` does the same on
-Zephyr: `K_{2t·m}` — **K_120 on Z₁₅, uniform chains of 16** — via the topology's own offset-free
-minor relation, verified at every size by `Embedding::verify` and with the coordinate map's
-injectivity machine-checked by Kani. It is below the `K_{16m-8}` frontier (which fuses the
-odd-coupled tracks for twice the clique at the same chain length — recorded, not claimed), and on
-Pegasus a single Chimera slice gives less than the heuristic, so no Pegasus construction ships yet.
-`ft_clique_embed` carries it to Python, Zig and Julia; `examples/embedding_tax` shows the
-construction and the frontier side by side.
+places its cliques by writing the answer down. This crate now does the same on all three fabrics:
+`embed::pegasus_clique` places **K_168 at uniform chain 17 on the Advantage's P₁₆** (the frontier is
+K_180 at the *same* chain — within 7%, and the heuristic search reaches K_80), `embed::zephyr_clique`
+places K_120 at chain 16 on Z₁₅, and `embed::chimera_clique` the classic `K_{t·m}`. Each is verified
+at every size by `Embedding::verify` against the shipped fabric, and the arithmetic each rests on —
+the Pegasus ell intervals covering every crossing, the Zephyr coordinate map's injectivity — is
+machine-checked by Kani, exhaustively. The remaining gaps are exact and recorded: twelve chains on
+Pegasus (busclique's boundary odd-coupler repair), a factor of ~2 at fixed chain on Zephyr (its
+odd-track fusion). `ft_clique_embed` carries the constructions to Python, Zig and Julia;
+`examples/embedding_tax` shows them beside the search and the frontier.
 
 ### The machines you can actually rent
 

@@ -371,6 +371,55 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
     Some(Embedding { chains, sites: topo.graph.n })
 }
 
+/// A native clique on **Pegasus** — the Advantage fabric — written down, not searched for.
+///
+/// `K_{12(m-2)}` with **uniform chains of `m + 1`**: `K_168` at chain 17 on the Advantage's `P_16`,
+/// where this crate's heuristic search reaches `K_80` at chain 16 and D-Wave's `busclique` frontier
+/// is `K_180` at the SAME chain 17. So this is 93% of the maximum, instantly, with the remaining
+/// twelve chains recorded as the exact gap (they need the boundary-wire odd-coupler repair
+/// `busclique` performs, which this construction does not).
+///
+/// # The construction, and why it is safe to build by hand
+///
+/// Variable `(w, k)` — diagonal position `w ∈ [1, m-2]`, track `k ∈ [0, 12)` — is an ell: the
+/// segment of vertical wire `(0, w, k)` covering `z ∈ [0, w]`, joined to the segment of horizontal
+/// wire `(1, w, k)` covering `z ∈ [w-1, m-2]`. Two facts make every pair of ells adjacent:
+///
+/// 1. **Measured from the graph**: every vertical wire crosses every horizontal wire — all 144
+///    `(k, k')` track pairs — and the crossing of column `w` with row `w'` sits at
+///    `z_col = w' - a`, `z_row = w - b` with `a, b ∈ {0, 1}` (which of the four depends on the
+///    offset convention, and is exactly the thing a hand-derivation gets wrong).
+/// 2. **Proved**: the segments above cover all four possibilities — the interval arithmetic is the
+///    `pegasus_ell_segments_cover_every_crossing` Kani harness, exhaustive over `m ≤ 2^16`.
+///
+/// The construction never reads an offset value: it covers both places the crossing can be, so the
+/// convention trap (the Pegasus paper's clique uses a different shift vector than the
+/// `dwave-networkx` graph [`crate::device::pegasus`] reproduces) cannot bite. And the result is
+/// still not trusted — every size goes through [`Embedding::verify`] against the shipped fabric.
+///
+/// Chains are indexed `(w - 1) * 12 + k`. `None` for `m < 3`, where no interior diagonal exists.
+pub fn pegasus_clique(m: usize) -> Option<Embedding> {
+    if m < 3 {
+        return None;
+    }
+    let topo = crate::device::pegasus(m, 1.0);
+    let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
+    let mut chains = Vec::with_capacity(12 * (m - 2));
+    for w in 1..=(m - 2) {
+        for k in 0..12 {
+            let mut chain = Vec::with_capacity(m + 1);
+            for z in 0..=w {
+                chain.push(topo.node(lin(0, w, k, z))?); // a fabric hole aborts rather than skips
+            }
+            for z in (w - 1)..=(m - 2) {
+                chain.push(topo.node(lin(1, w, k, z))?);
+            }
+            chains.push(chain);
+        }
+    }
+    Some(Embedding { chains, sites: topo.graph.n })
+}
+
 // ---- machine-checked theorem for the Zephyr construction ------------------------------------------
 //
 // `Embedding::verify` already checks the construction exhaustively at every CONCRETE size the tests
@@ -409,6 +458,33 @@ mod proofs {
         kani::assume(u2 < 2 && i2 < M && j2 < M && k2 < SHORE);
         kani::assume((u1, i1, j1, k1) != (u2, i2, j2, k2));
         assert_ne!(lin(u1, i1, j1, k1), lin(u2, i2, j2, k2));
+    }
+
+    /// The Pegasus ell segments cover every crossing, whatever the offset convention does.
+    ///
+    /// The graph gives one fact per track pair: column `w` crosses row `w'` at `z_col = w' - a`,
+    /// `z_row = w - b` for SOME `a, b ∈ {0, 1}` -- which of the four is the offset convention's
+    /// business. `pegasus_clique` never asks: variable `(w, k)` takes `z ∈ [0, w]` of its column and
+    /// `z ∈ [w-1, m-2]` of its row, and this theorem says those intervals contain the crossing for
+    /// EVERY `a, b` and every pair of diagonal positions -- so adjacency of all `12(m-2)` chains
+    /// reduces to the measured crossing fact, and the chain length is exactly `m + 1` besides.
+    /// Exhaustive over `m` up to 2^16, not sampled.
+    #[kani::proof]
+    fn pegasus_ell_segments_cover_every_crossing() {
+        let m: usize = kani::any();
+        kani::assume(m >= 3 && m <= 1 << 16);
+        let (w1, w2): (usize, usize) = (kani::any(), kani::any());
+        kani::assume(1 <= w1 && w1 <= w2 && w2 <= m - 2);
+        let (a, b): (usize, usize) = (kani::any(), kani::any());
+        kani::assume(a <= 1 && b <= 1);
+        // Chain (w1,-)'s horizontal wire crosses chain (w2,-)'s vertical wire here:
+        let z_col = w1 - a; // must lie in V(w2) = [0, w2]
+        let z_row = w2 - b; // must lie in H(w1) = [w1 - 1, m - 2]
+        assert!(z_col <= w2);
+        assert!(z_row >= w1 - 1 && z_row <= m - 2);
+        // And every chain has exactly m + 1 sites: (w + 1) vertical + (m - w) horizontal.
+        let len = (w1 + 1) + ((m - 2) - (w1 - 1) + 1);
+        assert!(len == m + 1);
     }
 }
 
@@ -500,6 +576,26 @@ mod clique_tests {
         }
         assert!(zephyr_clique(0, 4).is_none());
         assert!(zephyr_clique(4, 0).is_none());
+    }
+
+    /// The Pegasus clique is a valid minor at every size, with uniform chains -- the Advantage row.
+    ///
+    /// K_{12(m-2)} at chain m+1, against the same `device::pegasus` the crate ships. On P_16 this is
+    /// K_168 at chain 17 where the frontier (busclique) is K_180 at the same 17 -- the missing
+    /// twelve chains need the boundary odd-coupler repair, recorded as the exact gap. Sizes to P_8
+    /// here for time; the example table carries P_16, verified the same way.
+    #[test]
+    fn the_pegasus_clique_is_a_valid_minor_with_uniform_chains() {
+        for m in 3..=8usize {
+            let topo = crate::device::pegasus(m, 1.0);
+            let e = pegasus_clique(m).expect("m >= 3");
+            assert_eq!(e.chains.len(), 12 * (m - 2), "K_{{12(m-2)}} on P_{m}");
+            assert!(e.chains.iter().all(|c| c.len() == m + 1), "uniform chains at m+1, P_{m}");
+            e.verify(&clique(12 * (m - 2)), &topo.graph)
+                .unwrap_or_else(|err| panic!("P_{m}: {err}"));
+        }
+        assert!(pegasus_clique(0).is_none());
+        assert!(pegasus_clique(2).is_none(), "no interior diagonal below P_3");
     }
 
     /// The embedded model actually runs, and the answer comes back with no broken chains.

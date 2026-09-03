@@ -110,6 +110,20 @@ fn main() {
                 if ok { "yes" } else { "NO" }, "K_33 (K_{4m+1})"
             );
         }
+        // Pegasus K_{12(m-2)}: the diagonal-ell construction, offset-agnostic by covering both
+        // places a crossing can sit, verified against device::pegasus. P_16 is the Advantage.
+        for m in [8usize, 16] {
+            let hw = device::pegasus(m, 1.0).graph;
+            let e = embed::pegasus_clique(m).expect("m>=3");
+            let n = e.chains.len();
+            let ok = e.verify(&clique(n), &hw).is_ok();
+            println!(
+                "{:<16} {:>6} {:>7} {:>9} {:>10}",
+                format!("Pegasus P{m}"), format!("K_{n}"),
+                e.chains.iter().map(|c| c.len()).max().unwrap(),
+                if ok { "yes" } else { "NO" }, format!("K_{}", 12 * (m - 1))
+            );
+        }
         // Zephyr K_{8m}: the double-Chimera minor, offset-free, verified against device::zephyr.
         for m in [4usize, 6, 15] {
             let hw = device::zephyr(m, 4, 1.0).graph;
@@ -146,17 +160,19 @@ fn main() {
          buys.\n\n\
          AND THE SEARCH IS NOT THE FRONTIER, which the construction rows above make measurable\n\
          rather than asserted. The heuristic answers the general question and pays for it; a clique\n\
-         on a structured fabric is written down. This crate builds two of the three today, verified\n\
+         on a structured fabric is written down. This crate builds all three fabrics today, verified\n\
          by the same Embedding::verify the searched rows pass:\n\
            * Chimera K_32 on C8 -- uniform chains of 9, where the search stalls at K_18 chain 17.\n\
            * Zephyr K_{{8m}} -- K_120 on Z_15 with uniform chains of 16, from the double-Chimera\n\
              minor. The frontier is K_{{16m-8}} = K_232 at the SAME chain length: busclique fuses\n\
              the two odd-coupled tracks and gets twice the clique for no extra chain, which this\n\
              route does not do. So the gap here is clique SIZE at fixed chain, recorded not claimed.\n\
-         PEGASUS IS THE OPEN ONE. A single Chimera slice of P_m gives only K_{{4(m-1)}} -- below what\n\
-         the heuristic already finds -- and the full K_{{12(m-1)}} needs cross-slice fusion this crate\n\
-         does not build yet. D-Wave's busclique reaches K_180 at chain 17 on a full-yield P16; that\n\
-         is the bar, and it is a bar and not a claim.\n\n\
+           * Pegasus K_{{12(m-2)}} -- K_168 on the Advantage's P16 with uniform chains of 17, where\n\
+             the search reaches K_80 at chain 16. The frontier is K_{{12(m-1)}} = K_180 at the SAME\n\
+             chain: the twelve missing chains need busclique's boundary odd-coupler repair. So the\n\
+             construction is within 7%% of the maximum, instantly, and the last 7%% is the recorded\n\
+             gap. The ell intervals that make every pair of chains adjacent are a Kani theorem\n\
+             (exhaustive to m = 2^16), and every size still passes Embedding::verify besides.\n\n\
          AND THE ANOMALY, stated rather than trimmed. At K_32 the LARGER machine of each family\n\
          spends more sites than the smaller one -- P16 uses 237 where P6 uses 203. That is not the\n\
          bigger machine being worse. It is the placement heuristic having more room to wander in,\n\

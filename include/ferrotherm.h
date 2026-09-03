@@ -153,7 +153,8 @@ ft_sim *ft_embed_apply(const ft_sim *logical, const ft_sim *hardware, double cha
 
 /* A CLOSED-FORM structured clique embedding, where the topology has a known one. Where ft_embed
  * SEARCHES, this writes the answer down: K_n with uniform chains and no search. Supported today for
- * Zephyr (ft_zephyr_new) -- K_{2t*m}, uniform chains m+1 -- and Chimera graphs.
+ * Pegasus (ft_pegasus_new) -- K_{12(m-2)}, chains m+1, K_168 on the Advantage's P16 -- and Zephyr
+ * (ft_zephyr_new) -- K_{2t*m}, chains m+1.
  *
  * The clique size is FIXED by the machine; *n_out (if non-NULL) receives it. The placement is stored
  * on `logical` exactly as ft_embed stores its own, so ft_embed_apply / ft_unembed / the ft_embed_*

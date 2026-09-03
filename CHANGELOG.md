@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### The Advantage clique: K_168 on Pegasus, written down, 93% of the frontier
+
+The previous entry shipped Zephyr and recorded Pegasus as "the fully open one" — the full
+`K_{12(m−1)}` needs cross-slice fusion, and the naive three-slice stack was verified to fail. This
+entry closes it to within one diagonal position, by a construction the fusion machinery turns out
+not to be needed for.
+
+`embed::pegasus_clique(m)` places **`K_{12(m−2)}` with uniform chains of `m+1`** — `K_168` at chain
+17 on the Advantage's P₁₆, where this crate's heuristic search reaches `K_80` at chain 16 and
+D-Wave's `busclique` frontier is `K_180` at the *same* chain 17. Variable `(w, k)` is an ell: the
+segment of vertical wire `(0,w,k)` over `z ∈ [0,w]` joined to the segment of horizontal wire
+`(1,w,k)` over `z ∈ [w−1, m−2]`.
+
+**Why this is safe where the paper transcription was not.** The measured crossing structure of the
+shipped fabric — all 144 track pairs cross, at `z_col = w′−a`, `z_row = w−b` with `a,b ∈ {0,1}` —
+is the only fact used, and *which* of the four shifts applies (the offset convention, the thing a
+hand-derivation gets wrong) is never asked: the ell intervals cover both places a crossing can sit.
+That coverage is the sixth Kani theorem, exhaustive over `m ≤ 2¹⁶` (proofs-gate floor raised to 6),
+and every size still passes `Embedding::verify` against the shipped `device::pegasus` besides.
+
+**The remaining gap is one diagonal position.** The twelve missing chains (`K_180 − K_168`) need
+`busclique`'s boundary odd-coupler repair, which this construction does not perform — recorded, not
+claimed. The interim probes also measured two dead ends worth keeping: full-wire ells verify but
+give only `K_60` at chain 30 (wrong shape), and a greedy over full wires is dominated by this
+closed form on both counts.
+
+`ft_clique_embed` now recognises Pegasus as well as Zephyr — the site-count sniff (`|P_m| =
+8(m−1)(3m−1)`) is sealed by a full `Embedding::verify` against the actual graph before anything is
+returned, so a graph that merely looks machine-shaped is refused. Python, Zig, Julia and the header
+docs updated; the `examples/embedding_tax` construction table now carries all three fabrics.
+
+
 ### A structured clique on Zephyr — written down, not searched, and machine-checked
 
 The previous entry's honesty note said the frontier for cliques is a construction, not a search, and

@@ -486,16 +486,17 @@ DSATUR was added the day the crate acquired a graph greedy colours badly: it sav
 Zephyr (6 → 5) and on compiled counting constraints (4 → 3), ties on Pegasus where greedy already
 matches the clique bound, and is adopted only when it strictly wins.
 
-**3.4 Structured clique constructions.** ◐ **Zephyr DONE, Pegasus OPEN** — `embed::zephyr_clique`,
-`embed::chimera_clique`.
+**3.4 Structured clique constructions.** ✅ **All three fabrics** — `embed::pegasus_clique`,
+`embed::zephyr_clique`, `embed::chimera_clique`.
 
 The crossover tables ran the heuristic embedder on both sides; for cliques the frontier is a
-*construction*, not a search. `zephyr_clique` places `K_{2t·m}` (`K_120` on Z₁₅, uniform chains
-`m+1`) via Zephyr's offset-free double-Chimera minor, verified at every size and with the map's
-injectivity machine-checked by Kani. It leaves half the machine's clique on the table — `busclique`
-fuses the odd-coupled tracks for `K_{16m-8}` at the same chain length — recorded as the bar. Pegasus
-needs cross-slice fusion (a single nice-slice gives only `K_{4(m−1)}`, below the heuristic); the full
-`K_{12(m−1)}` (`K_180 @ chain 17` on P₁₆) is the open construction.
+*construction*, not a search. `pegasus_clique` places `K_{12(m−2)}` at uniform chain `m+1` — `K_168`
+on the Advantage's P₁₆, within 7% of busclique's `K_180` at the same chain, against the heuristic's
+`K_80`; the ell-interval arithmetic it rests on is a Kani theorem (exhaustive to `m = 2¹⁶`).
+`zephyr_clique` places `K_{2t·m}` (`K_120` on Z₁₅) via the offset-free double-Chimera minor, its
+coordinate map's injectivity likewise proved. Every size passes `Embedding::verify`. Remaining bars,
+exact: +12 chains on Pegasus (boundary odd-coupler repair), ×2 at fixed chain on Zephyr (odd-track
+fusion into `K_{16m−8}`).
 
 **3.2 2D adaptive parallel tempering over (β, W0)**, so nobody hand-tunes copy strength.
 *Partly answered another way:* `sparsify::copy_strength` derives a sufficient `W0` from the model's

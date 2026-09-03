@@ -200,7 +200,8 @@ pub const Sim = struct {
     /// Store a CLOSED-FORM structured clique embedding, where `hardware` has a known one.
     ///
     /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
-    /// Supported today for Zephyr (`K_{2t*m}`, chains m+1) and Chimera. The clique size is fixed by
+    /// Supported today for Pegasus (`K_{12(m-2)}`, chains m+1 -- K_168 on the Advantage's P16) and
+    /// Zephyr (`K_{2t*m}`, chains m+1). The clique size is fixed by
     /// the machine and returned; the placement lands on `self` exactly as `embed` does, so
     /// `embedApply`, `unembed` and the `embed*` readers work unchanged. `error.NotSolved` when the
     /// topology has no known construction -- `embed` is then the fallback.

@@ -477,9 +477,9 @@ mod sparsify_ffi_tests {
 /// Store a CLOSED-FORM structured clique embedding on `hardware`, if one is known for its topology.
 ///
 /// Where [`ft_embed`] searches, this writes the answer down: a `K_n` clique embedding built from the
-/// topology's own minor structure, with uniform chains and no search. Supported today for the
-/// **Zephyr** topology (`ft_zephyr_new`) and **Chimera** lattices (`ft_ising2d_new` is not one; use
-/// a chimera graph), which is the only place this crate ships a native construction.
+/// topology's own minor structure, with uniform chains and no search. Supported today for
+/// **Pegasus** (`ft_pegasus_new`: `K_{12(m-2)}`, chains `m+1` -- `K_168` on the Advantage's P_16)
+/// and **Zephyr** (`ft_zephyr_new`: `K_{2t*m}`, chains `m+1`).
 ///
 /// The clique size is FIXED by the machine, not chosen: it is the largest this construction places,
 /// `K_{2t*m}` on `Z_{m,t}`. `n_out`, when non-null, receives it. The placement is stored on
@@ -501,7 +501,7 @@ pub extern "C" fn ft_clique_embed(logical: *mut Sim, hardware: *const Sim, n_out
     // deliberately conservative: a graph that merely looks Zephyr-shaped is refused rather than
     // mis-embedded, because Embedding::verify would catch a wrong guess but a wrong guess should
     // not reach it.
-    let Some(e) = zephyr_clique_for(hw) else { return 0 };
+    let Some(e) = structured_clique_for(hw) else { return 0 };
     let n = e.chains.len() as u32;
     if !n_out.is_null() {
         unsafe { *n_out = n };
@@ -510,33 +510,39 @@ pub extern "C" fn ft_clique_embed(logical: *mut Sim, hardware: *const Sim, n_out
     1
 }
 
-/// The Zephyr clique for a simulation, when its shape and numbering say it is a `device::zephyr`.
-fn zephyr_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
-    // Recover (m, t=4) from the site count: |Z_{m,4}| = 4*4*m*(2m+1) = 16m(2m+1). Solve for m and
-    // require an exact match AND the vendor numbering, so an arbitrary 7,440-node graph cannot be
-    // mistaken for Z_15.
+/// The structured clique for a simulation, when its shape and numbering say it is a device topology.
+///
+/// Recovers the device parameter from the site count -- |Z_{m,4}| = 16m(2m+1), |P_m| fabric =
+/// 8(m-1)(3m-1) -- and requires an exact match AND the vendor numbering, so an arbitrary graph of
+/// the same size cannot be mistaken for a machine. The last line of defence is unconditional
+/// either way: the construction must verify against THIS graph before it is returned.
+fn structured_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
     if s.qubits.is_empty() {
         return None;
     }
     let n = s.graph.n;
-    for m in 1..=64usize {
-        let size = 16 * m * (2 * m + 1);
-        if size == n {
-            let built = crate::embed::zephyr_clique(m, 4)?;
-            // The last line of defence: the construction must actually verify against THIS graph.
-            let logical = {
-                let k = built.chains.len();
-                let mut gb = crate::graph::GraphBuilder::new(k);
-                for i in 0..k {
-                    for j in (i + 1)..k {
-                        gb.couple(i, j, 1.0);
-                    }
-                }
-                gb.build()
-            };
-            return built.verify(&logical, &s.graph).ok().map(|()| built);
+    let sealed = |built: crate::embed::Embedding| -> Option<crate::embed::Embedding> {
+        let k = built.chains.len();
+        let mut gb = crate::graph::GraphBuilder::new(k);
+        for i in 0..k {
+            for j in (i + 1)..k {
+                gb.couple(i, j, 1.0);
+            }
         }
-        if size > n {
+        built.verify(&gb.build(), &s.graph).ok().map(|()| built)
+    };
+    for m in 1..=64usize {
+        if 16 * m * (2 * m + 1) == n {
+            if let Some(e) = crate::embed::zephyr_clique(m, 4).and_then(sealed) {
+                return Some(e);
+            }
+        }
+        if m >= 3 && 8 * (m - 1) * (3 * m - 1) == n {
+            if let Some(e) = crate::embed::pegasus_clique(m).and_then(sealed) {
+                return Some(e);
+            }
+        }
+        if 16 * m * (2 * m + 1) > n && 8 * m * (3 * m + 2) > n {
             break;
         }
     }
@@ -712,6 +718,28 @@ mod embed_ffi_tests {
 
         ft_free(embedded);
         ft_free(logical);
+        ft_free(hw);
+    }
+
+    /// The Advantage fabric places its structured clique over the boundary too.
+    #[test]
+    fn a_structured_clique_places_on_pegasus_over_the_abi() {
+        let hw = ft_pegasus_new(4, 1.0, 0.5, 3); // P_4 fabric: 8*3*11 = 264 sites
+        assert!(!hw.is_null());
+        let lg = {
+            let b = ft_builder_new(24);
+            for i in 0..24u32 {
+                for j in (i + 1)..24 {
+                    ft_builder_couple(b, i, j, 1.0);
+                }
+            }
+            ft_builder_build(b, 0.5, 3)
+        };
+        let mut n: u32 = 0;
+        assert_eq!(ft_clique_embed(lg, hw, &mut n), 1);
+        assert_eq!(n, 24, "K_{{12(m-2)}} = K_24 on P_4");
+        assert_eq!(ft_embed_longest(lg), 5, "uniform m+1 = 5");
+        ft_free(lg);
         ft_free(hw);
     }
 

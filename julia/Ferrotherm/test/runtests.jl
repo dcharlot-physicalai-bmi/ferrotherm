@@ -376,12 +376,28 @@ end
     close!(s)
 end
 
+# The two oracle suites below cross-validate against packages we did not write. A machine without
+# them installed must SKIP LOUDLY, not error: an error here reads as a red suite on every local run
+# and teaches people to ignore red, while a silent pass would claim coverage that did not happen.
+# CI installs both packages, so there the skip branch never runs.
+oracle_available(pkg) = Base.find_package(pkg) !== nothing
+
 @testset "agreement with oracles we did not write" begin
-    include("oracles.jl")
+    if oracle_available("Graphs")
+        include("oracles.jl")
+    else
+        @warn "Graphs.jl not installed -- the graph-oracle cross-checks DID NOT RUN here"
+        @test_skip false
+    end
 end
 
 @testset "QUBODrivers drivers agree with their exact sampler" begin
-    include("qubodrivers.jl")
+    if oracle_available("QUBODrivers")
+        include("qubodrivers.jl")
+    else
+        @warn "QUBODrivers.jl not installed -- the driver cross-checks DID NOT RUN here"
+        @test_skip false
+    end
 end
 
 @testset "same seed reproduces" begin
