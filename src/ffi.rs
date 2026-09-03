@@ -708,7 +708,13 @@ mod free_energy_ffi_tests {
         assert!(lo <= truth && truth <= hi, "[{lo}, {hi}] misses {truth}");
         assert!((mid - truth).abs() < 0.5);
 
+        let mut se = f64::NAN;
+        let b = ft_ln_z_bar(s, beta, 16, 100, 500, &mut se);
+        assert!((b - truth).abs() < 0.3 + 4.0 * se, "bar {b} +- {se} vs {truth}");
+        assert!(se.is_finite() && se > 0.0);
+
         assert!(ft_ln_z_exact(s, -1.0).is_nan() && ft_ln_z_ais(s, 0.0, 0, 0, 0).is_nan());
+        assert!(ft_ln_z_bar(s, 0.0, 0, 0, 0, core::ptr::null_mut()).is_nan());
         assert!(ft_ln_z_exact(core::ptr::null(), beta).is_nan());
         ft_free(s);
     }
@@ -4232,6 +4238,29 @@ pub extern "C" fn ft_ln_z_ti(
         unsafe { *upper_out = t.upper_widened };
     }
     t.midpoint()
+}
+
+/// `ln Z(beta)` by Bennett acceptance-ratio steps up a linear ladder of `rungs` rungs from the
+/// exact anchor `n ln 2`, each rung measured by a chain of `burn_in + draws` palindromic sweeps.
+/// Returns the top rung's `ln Z` and writes its standard error (NOT a bound: BAR is the precise
+/// estimate to sit beside the AIS bound and the TI bracket) to `stderr_out` when non-null. The
+/// full curve -- entropy and heat capacity per rung -- is `free_energy::thermodynamics`,
+/// Rust-only. NaN on a null handle or `beta <= 0`; zero arguments take the defaults 32/200/2000.
+#[no_mangle]
+pub extern "C" fn ft_ln_z_bar(sim: *const Sim, beta: f64, rungs: u32, burn_in: u32, draws: u32, stderr_out: *mut f64) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    if !beta.is_finite() || beta <= 0.0 {
+        return f64::NAN;
+    }
+    let rungs = if rungs < 2 { 32 } else { rungs as usize };
+    let burn_in = if burn_in == 0 { 200 } else { burn_in as usize };
+    let draws = if draws < 4 { 2000 } else { draws as usize };
+    let th = crate::free_energy::thermodynamics(&s.graph, &crate::free_energy::linear_ladder(beta, rungs), burn_in, draws, 3.0, s.seed);
+    let top = th.top();
+    if !stderr_out.is_null() {
+        unsafe { *stderr_out = top.stderr };
+    }
+    top.log_z
 }
 
 /// `ln Z` at the final β from the last [`ft_popanneal`], or NaN if there was none.

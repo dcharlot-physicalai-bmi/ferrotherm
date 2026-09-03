@@ -44,15 +44,41 @@ lattice below criticality. `ebm::log_likelihood_ais` uses it to give an energy-b
 likelihood past the 22-spin enumeration limit: the numerator exact over the hidden units, `ln Z`
 by AIS, and `upper_bound(δ)` inheriting the unconditional standing of the `ln Z` bound.
 
+**Bennett's acceptance ratio, and the whole thermodynamics.** `bar_pair` is the minimum-variance
+two-sample estimator of `ln(Z_b/Z_a)` between adjacent rungs (Bennett 1976), solved by bisection
+on its monotone implicit equation, with Bennett's standard error computed on `N / 2τ_int` rather
+than `N` so autocorrelation is charged. `bar_ladder` steps it up from the exact anchor
+`ln Z(0) = n ln 2`, giving **`ln Z` at every rung** — and with that, entropy `S = ln Z + β⟨E⟩` and
+heat capacity `β² Var(E)` per rung, from the same chains, as `thermodynamics`. On a 12-spin ring it
+reproduces the transfer matrix at all 40 rungs, the entropy oracle (`S` from the closed form's
+derivative) at every rung within its own error bars, and heads for `ln 2` at low temperature, the
+two ground states. The three routes now share their samples: `sample_ladder_energies` feeds both
+BAR and TI, so the precise estimate and the bracket are compared on identical draws. BAR's error is
+a standard error, not a bound; it is the number to sit *beside* the two bounds.
+
+**Clamped AIS, and a likelihood past 22 hidden units.** `ais_clamped` holds sites fixed (the
+reference at `β = 0` is uniform over the free sites only) and carries the same unconditional
+Markov standing. `ebm::log_likelihood_ais_clamped` uses it for the numerator of every row where the
+hidden part cannot be enumerated — a point estimate with, honestly, no bound: a lower-bounded
+numerator over a lower-bounded `ln Z` bounds nothing, so `upper_bound` is now an `Option` that the
+enumerating route fills and the clamped route does not. Where both routes apply they agree to 0.15.
+
+**Two test corrections worth recording.** The entropy oracle test first used fixed tolerances and
+failed at `β ≈ 1.2` by 0.29 — the estimate was fine, the tolerance ignored the estimate's own error
+bar. The claim a certificate makes is that its *reported* error bars cover the truth, so the
+assertions now use them (`4·(se_lnZ + β·se_E)`), and the monotonicity check allows the two adjacent
+estimates' noise. A test that asserts a fixed number is asserting the author's guess, not the
+method's guarantee.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had
 predicted a failure the machine did not find. Proofs-gate floor raised to 7.
 
-**Every surface.** `ft_ln_z_exact`, `ft_ln_z_ais` / `_lower` / `_ess`, `ft_ln_z_ti` in the ABI and
-in Python, Zig and Julia; reverse AIS stays Rust-only because it needs caller-supplied target draws
+**Every surface.** `ft_ln_z_exact`, `ft_ln_z_ais` / `_lower` / `_ess`, `ft_ln_z_ti`, `ft_ln_z_bar` in
+the ABI and in Python, Zig and Julia (the per-rung curve stays Rust-only until a caller needs it); reverse AIS stays Rust-only because it needs caller-supplied target draws
 and a statement of how they were made, a contract the flat ABI cannot express honestly. Zig 56,
-Julia 338. `examples/free_energy` shows the whole table.
+Julia 339. `examples/free_energy` shows the whole table.
 
 ## 0.37.0
 

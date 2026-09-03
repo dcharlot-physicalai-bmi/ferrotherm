@@ -315,14 +315,17 @@ pub struct AisLikelihood {
     pub mean_log_numerator: f64,
     /// The `ln Z` run, with its own bound and effective sample size.
     pub log_z: crate::free_energy::Ais,
+    /// Whether the numerator was enumerated (true) or estimated by clamped AIS (false).
+    pub numerator_exact: bool,
 }
 
 impl AisLikelihood {
     /// The likelihood is at most this with probability at least `1 − delta`: the exact numerator
-    /// minus the unconditional lower bound on `ln Z`. A lower bound on the likelihood would need
-    /// an upper bound on `ln Z`, which is reverse AIS's conditional business.
-    pub fn upper_bound(&self, delta: f64) -> f64 {
-        self.mean_log_numerator - self.log_z.lower_bound(delta)
+    /// minus the unconditional lower bound on `ln Z`. `None` when the numerator was itself
+    /// estimated — a lower-bounded numerator over a lower-bounded `ln Z` bounds nothing, and an
+    /// upper bound on the numerator is reverse AIS's conditional business.
+    pub fn upper_bound(&self, delta: f64) -> Option<f64> {
+        self.numerator_exact.then(|| self.mean_log_numerator - self.log_z.lower_bound(delta))
     }
 }
 
@@ -362,7 +365,31 @@ pub fn log_likelihood_ais(
     }
     let mean_log_numerator = total / data.rows.len() as f64;
     let log_z = crate::free_energy::ais(g, ladder, sweeps, runs, seed);
-    Ok(AisLikelihood { estimate: mean_log_numerator - log_z.log_z, mean_log_numerator, log_z })
+    Ok(AisLikelihood { estimate: mean_log_numerator - log_z.log_z, mean_log_numerator, log_z, numerator_exact: true })
+}
+
+/// [`log_likelihood_ais`] for a hidden part too large to enumerate: the numerator of every row by
+/// [`crate::free_energy::ais_clamped`] with the visible units held at the row.
+///
+/// One AIS per row, so the cost is `rows × runs × rungs × sweeps` sweeps over the hidden units.
+/// The result carries a point estimate and no bound — see [`AisLikelihood::upper_bound`].
+pub fn log_likelihood_ais_clamped(
+    g: &Graph,
+    data: &Dataset,
+    ladder: &[f64],
+    sweeps: usize,
+    runs: usize,
+    seed: u64,
+) -> Result<AisLikelihood, Error> {
+    check(g, data)?;
+    let mut total = 0.0;
+    for (r, row) in data.rows.iter().enumerate() {
+        let fixed: Vec<(usize, i8)> = row.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+        total += crate::free_energy::ais_clamped(g, &fixed, ladder, sweeps, runs, seed.wrapping_add(1 + r as u64)).log_z;
+    }
+    let mean_log_numerator = total / data.rows.len() as f64;
+    let log_z = crate::free_energy::ais(g, ladder, sweeps, runs, seed);
+    Ok(AisLikelihood { estimate: mean_log_numerator - log_z.log_z, mean_log_numerator, log_z, numerator_exact: false })
 }
 
 fn check(g: &Graph, data: &Dataset) -> Result<(), Error> {
@@ -457,11 +484,18 @@ mod likelihood_tests {
         let exact = exact_log_likelihood(&g, &data).unwrap();
         let a = log_likelihood_ais(&g, &data, &linear_ladder(1.0, 64), 2, 128, 4).unwrap();
         assert!((a.estimate - exact).abs() < 0.1, "ais {} vs exact {exact}", a.estimate);
-        assert!(exact <= a.upper_bound(1e-6), "exact {exact} above the bound {}", a.upper_bound(1e-6));
+        let ub = a.upper_bound(1e-6).expect("enumerated numerator carries a bound");
+        assert!(exact <= ub, "exact {exact} above the bound {ub}");
         assert!(a.log_z.ess > 8.0);
-        // Too many hidden units is refused, not approximated.
+        // Too many hidden units is refused by the enumerating route, not approximated...
         let wide = rbm(9, 30);
         assert!(matches!(log_likelihood_ais(&wide, &data, &linear_ladder(1.0, 8), 1, 4, 1), Err(Error::TooLarge { .. })));
+        // ...and the clamped route takes it, with a point estimate and no bound.
+        let c = log_likelihood_ais_clamped(&wide, &data, &linear_ladder(1.0, 32), 2, 16, 2).unwrap();
+        assert!(c.estimate.is_finite() && c.upper_bound(0.05).is_none());
+        // Where both routes apply they agree.
+        let c_small = log_likelihood_ais_clamped(&g, &data, &linear_ladder(1.0, 64), 2, 64, 3).unwrap();
+        assert!((c_small.estimate - exact).abs() < 0.15, "clamped {} vs exact {exact}", c_small.estimate);
     }
 }
 

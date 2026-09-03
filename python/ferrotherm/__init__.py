@@ -150,6 +150,7 @@ _ln_z_ais = _sig("ft_ln_z_ais", ctypes.c_double, [_p, ctypes.c_double, c_uint32,
 _ln_z_ais_lower = _sig("ft_ln_z_ais_lower", ctypes.c_double, [_p, ctypes.c_double])
 _ln_z_ais_ess = _sig("ft_ln_z_ais_ess", ctypes.c_double, [_p])
 _ln_z_ti = _sig("ft_ln_z_ti", ctypes.c_double, [_p, ctypes.c_double, c_uint32, c_uint32, c_uint32, ctypes.c_double, POINTER(ctypes.c_double), POINTER(ctypes.c_double)])
+_ln_z_bar = _sig("ft_ln_z_bar", ctypes.c_double, [_p, ctypes.c_double, c_uint32, c_uint32, c_uint32, POINTER(ctypes.c_double)])
 _unembed = _sig("ft_unembed", c_uint32, [_p, POINTER(c_int8), c_uint32])
 _builder_new = _sig("ft_builder_new", _p, [c_uint32])
 _builder_couple = _sig("ft_builder_couple", c_uint32, [_p, c_uint32, c_uint32, c_double])
@@ -1100,6 +1101,25 @@ is how a dropped GPU dispatch turns into a believable energy.
         lo, hi = ctypes.c_double(float("nan")), ctypes.c_double(float("nan"))
         mid = _ln_z_ti(self._h, beta, rungs, burn_in, draws, z, ctypes.byref(lo), ctypes.byref(hi))
         return float(mid), float(lo.value), float(hi.value)
+
+    def ln_z_bar(self, beta: float, rungs: int = 32, burn_in: int = 200, draws: int = 2000) -> tuple:
+        """``ln Z(beta)`` by Bennett acceptance-ratio steps from the exact anchor ``n ln 2``:
+        ``(ln_z, stderr)``.
+
+        The minimum-variance two-sample estimator between adjacent rungs; its error is a standard
+        error, not a bound — this is the precise estimate to sit beside :meth:`ln_z_lower` and
+        :meth:`ln_z_ti`. The per-rung curve with entropy and heat capacity is
+        ``free_energy::thermodynamics`` in Rust.
+
+        >>> s = lattice2d(4)
+        >>> ln_z, se = s.ln_z_bar(0.5, rungs=16, burn_in=100, draws=500)
+        >>> abs(ln_z - s.ln_z_exact(0.5)) < 0.3 + 4 * se
+        True
+        """
+        self._live()
+        se = ctypes.c_double(float("nan"))
+        v = _ln_z_bar(self._h, beta, rungs, burn_in, draws, ctypes.byref(se))
+        return float(v), float(se.value)
 
     def clique_embed(self, hardware: "Sim") -> int:
         """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.

@@ -382,6 +382,9 @@ class Sim:
     def ln_z_ais(self, beta: float, rungs: int = 64, sweeps: int = 2, runs: int = 128) -> float:
         """``ln Z(beta)`` by annealed importance sampling — the estimate whose *lower bound* is unconditional."""
         ...
+    def ln_z_bar(self, beta: float, rungs: int = 32, burn_in: int = 200, draws: int = 2000) -> tuple:
+        """``ln Z(beta)`` by Bennett acceptance-ratio steps from the exact anchor ``n ln 2``: ``(ln_z, stderr)``."""
+        ...
     def ln_z_ess(self) -> float:
         """Effective sample size of the last :meth:`ln_z_ais` run's weights; near 1 means one walk dominated and the bound, while valid, is loose."""
         ...

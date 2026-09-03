@@ -227,6 +227,14 @@ pub const Sim = struct {
         return .{ .mid = mid, .lower = lo, .upper = hi };
     }
 
+    /// `ln Z(beta)` by Bennett acceptance-ratio steps from the exact anchor; the error is a
+    /// standard error, not a bound. 0 for the defaults 32 / 200 / 2000.
+    pub fn lnZBar(self: Sim, beta: f64, rungs: u32, burn_in: u32, draws: u32) struct { ln_z: f64, stderr: f64 } {
+        var se: f64 = 0;
+        const v = c.ft_ln_z_bar(self.h, beta, rungs, burn_in, draws, &se);
+        return .{ .ln_z = v, .stderr = se };
+    }
+
     /// Store a CLOSED-FORM structured clique embedding, where `hardware` has a known one.
     ///
     /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
@@ -745,6 +753,8 @@ test "ln Z crosses the boundary three ways and the bound holds" {
     try std.testing.expect(@abs(a - exact) < 0.3);
     try std.testing.expect(s.lnZLower(1e-6) <= exact);
     try std.testing.expect(s.lnZEss() > 8.0);
+    const b = s.lnZBar(beta, 16, 100, 500);
+    try std.testing.expect(@abs(b.ln_z - exact) < 0.3 + 4.0 * b.stderr);
     const t = s.lnZTi(beta, 16, 100, 500, 3.0);
     try std.testing.expect(t.lower <= exact and exact <= t.upper);
     try std.testing.expect(@abs(t.mid - exact) < 0.5);

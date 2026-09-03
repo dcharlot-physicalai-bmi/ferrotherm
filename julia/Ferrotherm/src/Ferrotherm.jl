@@ -59,7 +59,7 @@ export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
 export sparsify, logical_variables, copies, sparsify_offset, project
 export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed, clique_embed!
-export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti
+export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti, ln_z_bar
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -244,6 +244,7 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_ln_z_ais_lower Cdouble SimPtr Cdouble
 @cfn ft_ln_z_ais_ess Cdouble SimPtr
 @cfn ft_ln_z_ti Cdouble SimPtr Cdouble Cuint Cuint Cuint Cdouble Ptr{Cdouble} Ptr{Cdouble}
+@cfn ft_ln_z_bar Cdouble SimPtr Cdouble Cuint Cuint Cuint Ptr{Cdouble}
 @cfn ft_builder_new BldPtr Cuint
 @cfn ft_builder_couple Cuint BldPtr Cuint Cuint Cdouble
 @cfn ft_builder_bias Cuint BldPtr Cuint Cdouble
@@ -611,6 +612,19 @@ function ln_z_ti(sim::Simulation, beta::Real; rungs::Integer = 32, burn_in::Inte
     lo = Ref{Cdouble}(NaN); hi = Ref{Cdouble}(NaN)
     mid = ft_ln_z_ti(sim.handle, Float64(beta), Cuint(rungs), Cuint(burn_in), Cuint(draws), Float64(z), lo, hi)
     (Float64(mid), lo[], hi[])
+end
+
+"""
+    ln_z_bar(sim, beta; rungs=32, burn_in=200, draws=2000) -> (ln_z, stderr)
+
+`ln Z(beta)` by Bennett acceptance-ratio steps from the exact anchor `n ln 2`. The error is a
+standard error, not a bound: the precise estimate beside [`ln_z_lower`](@ref) and [`ln_z_ti`](@ref).
+"""
+function ln_z_bar(sim::Simulation, beta::Real; rungs::Integer = 32, burn_in::Integer = 200, draws::Integer = 2000)
+    _live(sim)
+    se = Ref{Cdouble}(NaN)
+    v = ft_ln_z_bar(sim.handle, Float64(beta), Cuint(rungs), Cuint(burn_in), Cuint(draws), se)
+    (Float64(v), se[])
 end
 
 """

@@ -405,7 +405,7 @@ for an autovectoriser to find. The flag is not enabled. Energy was bit-identical
 is the check that says the comparison was of the same computation.
 
 - `RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown` —
-  compiles with **zero changes**; the cdylib is a **726 KB .wasm** (262 KB gzipped) exposing the
+  compiles with **zero changes**; the cdylib is a **733 KB .wasm** (264 KB gzipped) exposing the
   `ft_*` C ABI: the run-everywhere
   claim is a build,
   not a slogan.
@@ -533,7 +533,8 @@ recorded: eight chains on Pegasus (busclique's staggered-fragment diagonal). `ft
 sampling** gives `ln Z ≥ ln Ẑ − ln(1/δ)` with probability `1 − δ` and *no equilibrium assumption*
 (Markov on an unbiased estimator), reverse AIS the mirror upper bound, and **thermodynamic
 integration** a bracket from `d⟨E⟩/dβ ≤ 0` that is ~9× tighter at the price of assuming each rung
-equilibrated. All three are checked against enumeration, exact elimination, the transfer matrix
+equilibrated; **Bennett's acceptance ratio** steps the precise estimate up the ladder from the
+exact anchor, giving `ln Z`, entropy and heat capacity at every rung from the same chains. All three are checked against enumeration, exact elimination, the transfer matrix
 and Onsager before they are trusted; outward rounding of every published bound is a Kani theorem.
 `ebm::log_likelihood_ais` turns it into a likelihood for models past enumeration, with an
 unconditional upper bound. On every surface as `ft_ln_z_*`.

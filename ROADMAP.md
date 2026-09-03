@@ -491,10 +491,12 @@ matches the clique bound, and is adopted only when it strictly wins.
 
 The certificate said the chain mixed; nothing said what the distribution is. `ln Z` now comes
 three ways — AIS with an *unconditional* Markov lower bound, reverse AIS with the conditional upper,
-thermodynamic integration with a monotonicity bracket — cross-checked against enumeration,
-elimination, the transfer matrix, Onsager and `popanneal`. Recorded gaps: a clamped AIS for the
-EBM numerator past 22 hidden units; Bennett acceptance ratio across a parallel-tempering ladder,
-which would give `ln Z` at every rung from samples the crate already produces.
+thermodynamic integration with a monotonicity bracket, Bennett acceptance ratio for `ln Z` at every
+rung (and with it entropy and heat capacity), clamped AIS for the EBM numerator past enumeration —
+cross-checked against enumeration, elimination, the transfer matrix, Onsager and `popanneal`.
+Recorded gap: `tempering`/`adaptive` return best-found and swap rates, not per-rung energy traces,
+so BAR draws its own chains; an energy-trace observer there would let the curve come free with
+every parallel-tempering run.
 
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.

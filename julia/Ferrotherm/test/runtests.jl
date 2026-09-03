@@ -151,6 +151,8 @@ end
     @test abs(a - exact) < 0.3
     @test ln_z_lower(s, 1e-6) <= exact
     @test ln_z_ess(s) > 8.0
+    b, se = ln_z_bar(s, beta; rungs = 16, burn_in = 100, draws = 500)
+    @test abs(b - exact) < 0.3 + 4 * se
     mid, lo, hi = ln_z_ti(s, beta; rungs = 16, burn_in = 100, draws = 500)
     @test lo <= exact <= hi
     @test abs(mid - exact) < 0.5

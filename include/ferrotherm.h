@@ -492,6 +492,11 @@ double ft_ln_z_ais_ess(const ft_sim *sim);
  * d<E>/dbeta <= 0 (a theorem) and each rung at equilibrium (not one). 0 args = 32/200/2000/3. */
 double ft_ln_z_ti(const ft_sim *sim, double beta, uint32_t rungs, uint32_t burn_in, uint32_t draws,
                   double z, double *lower_out, double *upper_out);
+/* ln Z(beta) by Bennett acceptance-ratio steps from the exact anchor n ln 2; writes the standard
+ * error (an estimate's error, not a bound) to stderr_out when non-NULL. The per-rung curve with
+ * entropy and heat capacity is free_energy::thermodynamics, Rust-only. 0 args = 32/200/2000. */
+double ft_ln_z_bar(const ft_sim *sim, double beta, uint32_t rungs, uint32_t burn_in, uint32_t draws,
+                   double *stderr_out);
 
 /* The worst family statistic rho over the ladder -- THE NUMBER THAT SAYS WHETHER TO BELIEVE
    ft_popanneal_ln_z. 1.0 means every ancestor still has one descendant; the population size means

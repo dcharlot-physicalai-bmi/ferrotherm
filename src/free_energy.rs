@@ -37,6 +37,14 @@
 //! distribution), so the sandwich there is unconditional; in use it is as good as the chain that
 //! produced the sample, and the result says so.
 //!
+//! **Bennett's acceptance ratio** ([`bar_pair`], [`bar_ladder`]) steps `ln Z` up a ladder from the
+//! exact anchor `ln Z(0) = n ln 2` using samples at *both* ends of every step — the minimum-variance
+//! two-sample estimator — and with `ln Z` at every rung the rest of thermodynamics follows:
+//! entropy `S = ln Z + β⟨E⟩` and heat capacity `β² Var(E)`, per rung, from the same chains
+//! ([`thermodynamics`]). Its error is a standard error, not a bound; it is the precise estimate to
+//! sit beside the two bounds. [`ais_clamped`] is AIS with sites held fixed — the numerator of an
+//! energy-based model's likelihood when the hidden part is too large to enumerate.
+//!
 //! **Thermodynamic integration** ([`thermodynamic_integration`]) uses
 //! `ln Z(β) = n ln 2 − ∫_0^β ⟨E⟩_{β'} dβ'` and one fact: `d⟨E⟩/dβ = −Var(E) ≤ 0`, so `⟨E⟩` is
 //! non-increasing in `β` and the left and right Riemann sums *bracket* the integral. With the means
@@ -142,6 +150,52 @@ pub fn palindromic_sweep(g: &Graph, beta: f64, s: &mut [i8], rng: &mut Pcg) {
             s[i] = draw(g.field(i, s), beta, rng);
         }
     }
+}
+
+/// [`palindromic_sweep`] with the sites where `free[i]` is false held fixed.
+pub fn palindromic_sweep_masked(g: &Graph, beta: f64, s: &mut [i8], rng: &mut Pcg, free: &[bool]) {
+    for class in g.classes.iter().chain(g.classes.iter().rev()) {
+        for &i in class {
+            let i = i as usize;
+            if free[i] {
+                s[i] = draw(g.field(i, s), beta, rng);
+            }
+        }
+    }
+}
+
+/// Forward AIS with some sites clamped: `ln Z` of the conditional model, where the reference at
+/// `β = 0` is uniform over the FREE sites only, `ln Z_0 = free · ln 2`.
+///
+/// This is the numerator of an energy-based model's likelihood, `ln Σ_h exp(−E(v, h))`, for a
+/// hidden part too large to enumerate. The bound is the same Markov bound as [`ais`], with the
+/// same unconditional standing. `n` in the result counts the free sites.
+pub fn ais_clamped(g: &Graph, fixed: &[(usize, i8)], ladder: &[f64], sweeps: usize, runs: usize, seed: u64) -> Ais {
+    check_ladder(ladder);
+    assert!(runs >= 1);
+    let mut free = vec![true; g.n];
+    for &(i, v) in fixed {
+        assert!(i < g.n && (v == 1 || v == -1), "clamp {i} to {v} is not a site and a spin");
+        free[i] = false;
+    }
+    let n_free = free.iter().filter(|&&f| f).count();
+    let mut log_weights = Vec::with_capacity(runs);
+    for r in 0..runs {
+        let mut rng = Pcg::new(seed, r as u64);
+        let mut s = uniform_state(g.n, &mut rng);
+        for &(i, v) in fixed {
+            s[i] = v;
+        }
+        let mut lw = 0.0;
+        for k in 1..ladder.len() {
+            lw += -(ladder[k] - ladder[k - 1]) * g.energy(&s);
+            for _ in 0..sweeps {
+                palindromic_sweep_masked(g, ladder[k], &mut s, &mut rng, &free);
+            }
+        }
+        log_weights.push(lw);
+    }
+    finish_ais(n_free, *ladder.last().unwrap(), log_weights)
 }
 
 fn uniform_state(n: usize, rng: &mut Pcg) -> Vec<i8> {
@@ -344,7 +398,20 @@ impl Ti {
 pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z: f64, seed: u64) -> Ti {
     check_ladder(ladder);
     assert!(draws >= 4);
-    let mut rungs = vec![(0.0, Estimate { value: 0.0, stderr: 0.0, ess: f64::INFINITY, tau_int: 0.0 })];
+    let traces = sample_ladder_energies(g, ladder, burn_in, draws, seed);
+    let rungs: Vec<(f64, Estimate)> = traces.iter().map(|(b, e)| (*b, estimate(e))).collect();
+    ti_from_rungs(g.n, rungs, z)
+}
+
+/// The energies of `draws` states at every rung: exact uniform draws at `β = 0`, and a chromatic
+/// chain of `burn_in + draws` palindromic sweeps at every rung above it. Shared by TI and BAR, so
+/// the two estimators can be compared on the SAME samples.
+pub fn sample_ladder_energies(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, seed: u64) -> Vec<(f64, Vec<f64>)> {
+    check_ladder(ladder);
+    assert!(draws >= 4);
+    let mut out = Vec::with_capacity(ladder.len());
+    let mut rng0 = Pcg::new(seed, 0);
+    out.push((0.0, (0..draws).map(|_| g.energy(&uniform_state(g.n, &mut rng0))).collect()));
     for (k, &beta) in ladder.iter().enumerate().skip(1) {
         let mut rng = Pcg::new(seed, k as u64);
         let mut s = uniform_state(g.n, &mut rng);
@@ -356,11 +423,18 @@ pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draw
             palindromic_sweep(g, beta, &mut s, &mut rng);
             trace.push(g.energy(&s));
         }
-        rungs.push((beta, estimate(&trace)));
+        out.push((beta, trace));
     }
+    out
+}
+
+/// The TI bracket from per-rung mean energies. The zero rung's mean is set to its exact value `0`
+/// (uniform spins are uncorrelated), and the anchor `n ln 2` is exact.
+pub fn ti_from_rungs(n: usize, mut rungs: Vec<(f64, Estimate)>, z: f64) -> Ti {
+    rungs[0].1 = Estimate { value: 0.0, stderr: 0.0, ess: f64::INFINITY, tau_int: 0.0 };
     // Left sum uses the mean at the lower end of each interval (the larger value), right sum the
     // upper end; ⟨E⟩ non-increasing ⇒ left ≥ ∫ ≥ right ⇒ n ln 2 − left ≤ ln Z ≤ n ln 2 − right.
-    let n_ln2 = g.n as f64 * core::f64::consts::LN_2;
+    let n_ln2 = n as f64 * core::f64::consts::LN_2;
     let (mut left, mut right, mut left_w, mut right_w) = (0.0, 0.0, 0.0, 0.0);
     for w in rungs.windows(2) {
         let d = w[1].0 - w[0].0;
@@ -370,8 +444,8 @@ pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draw
         right_w += (w[1].1.value - z * w[1].1.stderr) * d;
     }
     Ti {
-        n: g.n,
-        beta: *ladder.last().unwrap(),
+        n,
+        beta: rungs.last().unwrap().0,
         rungs,
         lower: next_down(n_ln2 - left),
         upper: next_up(n_ln2 - right),
@@ -388,6 +462,153 @@ fn estimate(trace: &[f64]) -> Estimate {
     let tau = tau_int(trace);
     let ess = n / (2.0 * tau);
     Estimate { value: mean, stderr: (var / ess).sqrt(), ess, tau_int: tau }
+}
+
+// ---- Bennett acceptance ratio ----------------------------------------------------------------
+
+/// `ln(Z_b / Z_a)` between two rungs from samples of both, by the minimum-variance estimator.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarPair {
+    pub beta_a: f64,
+    pub beta_b: f64,
+    /// `ln(Z_b / Z_a)`.
+    pub delta: f64,
+    /// Bennett's asymptotic standard error, with each side's sample count replaced by its
+    /// effective size under autocorrelation.
+    pub stderr: f64,
+    pub ess_a: f64,
+    pub ess_b: f64,
+}
+
+fn fermi(x: f64) -> f64 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+/// Bennett's acceptance-ratio estimate (1976) between rung `a` and rung `b`, from the ENERGIES of
+/// samples drawn at each.
+///
+/// With `ℓ(E) = −(β_b − β_a) E` the log-ratio of unnormalised densities and `M = ln(N_a/N_b)`, the
+/// estimate `Δ = ln(Z_b/Z_a)` is the unique root of
+///
+/// ```text
+///   Σ_{i∈a} f(ℓ_i − Δ − M)  =  Σ_{j∈b} f(Δ + M − ℓ_j),      f(x) = 1 / (1 + e^{−x}),
+/// ```
+///
+/// whose left side falls and right side rises in `Δ`, so bisection finds it to `1e-10`. Among all
+/// estimators built from the two samples it has minimum asymptotic variance (Bennett; Shirts et
+/// al. 2003), which is why it beats one-directional exponential averaging when the rungs overlap.
+/// The standard error is Bennett's, with `N` replaced by `N / 2τ_int` of each side's `ℓ` trace.
+pub fn bar_pair(beta_a: f64, energies_a: &[f64], beta_b: f64, energies_b: &[f64]) -> BarPair {
+    assert!(beta_b > beta_a && energies_a.len() >= 2 && energies_b.len() >= 2);
+    let d = beta_b - beta_a;
+    let la: Vec<f64> = energies_a.iter().map(|e| -d * e).collect();
+    let lb: Vec<f64> = energies_b.iter().map(|e| -d * e).collect();
+    let (na, nb) = (la.len() as f64, lb.len() as f64);
+    let m = (na / nb).ln();
+    let resid = |delta: f64| -> f64 {
+        la.iter().map(|&l| fermi(l - delta - m)).sum::<f64>() - lb.iter().map(|&l| fermi(delta + m - l)).sum::<f64>()
+    };
+    // Bracket the root: the residual is positive far left and negative far right.
+    let spread = la.iter().chain(lb.iter()).fold(0.0f64, |acc, &l| acc.max(l.abs())) + m.abs() + 1.0;
+    let (mut lo, mut hi) = (-spread, spread);
+    while resid(lo) < 0.0 {
+        lo *= 2.0;
+    }
+    while resid(hi) > 0.0 {
+        hi *= 2.0;
+    }
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if resid(mid) > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+        if hi - lo < 1e-10 {
+            break;
+        }
+    }
+    let delta = 0.5 * (lo + hi);
+    // Bennett's variance, per side: (⟨f²⟩/⟨f⟩² − 1) / N_eff.
+    let c = delta + m;
+    let side = |ls: &[f64], sign: f64| -> f64 {
+        let fs: Vec<f64> = ls.iter().map(|&l| fermi(sign * (l - c))).collect();
+        let mean = fs.iter().sum::<f64>() / fs.len() as f64;
+        let mean2 = fs.iter().map(|f| f * f).sum::<f64>() / fs.len() as f64;
+        mean2 / (mean * mean) - 1.0
+    };
+    let ess_a = na / (2.0 * tau_int(&la));
+    let ess_b = nb / (2.0 * tau_int(&lb));
+    let var = side(&la, 1.0) / ess_a + side(&lb, -1.0) / ess_b;
+    BarPair { beta_a, beta_b, delta, stderr: var.max(0.0).sqrt(), ess_a, ess_b }
+}
+
+/// One rung of the free-energy curve.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThermoRung {
+    pub beta: f64,
+    /// Absolute `ln Z(β)`: `n ln 2` plus the BAR steps up the ladder.
+    pub log_z: f64,
+    /// Standard error of `log_z`, the BAR steps added in quadrature — an approximation, since
+    /// adjacent steps share the samples at their common rung.
+    pub stderr: f64,
+    /// `⟨E⟩` at this rung, with its error bar.
+    pub mean_energy: Estimate,
+    /// Entropy `S = ln Z + β⟨E⟩`, in nats. Exactly `n ln 2` at the zero rung.
+    pub entropy: f64,
+    /// Heat capacity `C = β² Var(E)` from the sample variance.
+    pub heat_capacity: f64,
+}
+
+/// The free-energy curve and what follows from it.
+#[derive(Clone, Debug)]
+pub struct Thermo {
+    pub n: usize,
+    pub rungs: Vec<ThermoRung>,
+    /// The TI bracket from the same samples, for comparison against the BAR curve's top rung.
+    pub ti: Ti,
+}
+
+impl Thermo {
+    pub fn top(&self) -> &ThermoRung {
+        self.rungs.last().unwrap()
+    }
+}
+
+/// `ln Z` at every rung by BAR steps from the exact anchor `ln Z(0) = n ln 2`, given the
+/// energies of samples at each rung (the zero rung's must be exact uniform draws, which
+/// [`sample_ladder_energies`] provides). Also the TI bracket from the same means.
+pub fn bar_ladder(n: usize, traces: &[(f64, Vec<f64>)], z: f64) -> Thermo {
+    assert!(traces.len() >= 2 && traces[0].0 == 0.0, "the curve is anchored at beta = 0");
+    let mut log_z = n as f64 * core::f64::consts::LN_2;
+    let mut var = 0.0;
+    let mut rungs = Vec::with_capacity(traces.len());
+    let mut means = Vec::with_capacity(traces.len());
+    for (k, (beta, e)) in traces.iter().enumerate() {
+        if k > 0 {
+            let step = bar_pair(traces[k - 1].0, &traces[k - 1].1, *beta, e);
+            log_z += step.delta;
+            var += step.stderr * step.stderr;
+        }
+        let m = estimate(e);
+        let nn = e.len() as f64;
+        let v = e.iter().map(|x| (x - m.value) * (x - m.value)).sum::<f64>() / (nn - 1.0);
+        rungs.push(ThermoRung {
+            beta: *beta,
+            log_z,
+            stderr: var.sqrt(),
+            mean_energy: m,
+            entropy: log_z + beta * m.value,
+            heat_capacity: beta * beta * v,
+        });
+        means.push((*beta, m));
+    }
+    Thermo { n, rungs, ti: ti_from_rungs(n, means, z) }
+}
+
+/// Draw the chains and build the curve: [`sample_ladder_energies`] then [`bar_ladder`].
+pub fn thermodynamics(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z: f64, seed: u64) -> Thermo {
+    bar_ladder(g.n, &sample_ladder_energies(g, ladder, burn_in, draws, seed), z)
 }
 
 // ---- outward rounding --------------------------------------------------------------------------
@@ -575,6 +796,65 @@ mod tests {
             assert!((est - truth).abs() < 0.3, "{name}: {est} vs truth {truth}");
         }
         assert!(t.lower_widened <= truth && truth <= t.upper_widened);
+    }
+
+    /// BAR reproduces the transfer matrix at EVERY rung, and the entropy has its exact limits.
+    #[test]
+    fn bar_curve_matches_the_transfer_matrix_at_every_rung() {
+        let (n, j, h) = (12usize, 1.0, 0.0);
+        let g = ising::ring(n, j, h);
+        let th = thermodynamics(&g, &linear_ladder(2.0, 40), 300, 3000, 3.0, 21);
+        assert_eq!(th.rungs.len(), 40);
+        assert!((th.rungs[0].log_z - n as f64 * core::f64::consts::LN_2).abs() < 1e-12, "the anchor is exact");
+        assert!((th.rungs[0].entropy - n as f64 * core::f64::consts::LN_2).abs() < 1e-12);
+        for r in &th.rungs[1..] {
+            let truth = ring_log_z(n, j, h, r.beta);
+            assert!((r.log_z - truth).abs() < 0.15 + 4.0 * r.stderr, "beta {}: BAR {} +- {} vs {truth}", r.beta, r.log_z, r.stderr);
+            // entropy oracle: S = ln Z + beta <E>, <E> = -d ln Z / d beta by central difference.
+            let hh = 1e-5;
+            let mean_e = -(ring_log_z(n, j, h, r.beta + hh) - ring_log_z(n, j, h, r.beta - hh)) / (2.0 * hh);
+            let s_truth = truth + r.beta * mean_e;
+            // The claim is that the REPORTED error bars cover the truth: S inherits ln Z's
+            // standard error and beta times the mean energy's.
+            let tol = 0.05 + 4.0 * (r.stderr + r.beta * r.mean_energy.stderr);
+            assert!((r.entropy - s_truth).abs() < tol, "beta {}: entropy {} vs {s_truth} (tol {tol})", r.beta, r.entropy);
+        }
+        // Entropy falls with beta and, with no field, heads for ln 2 (the two ground states).
+        for w in th.rungs.windows(2) {
+            // Non-increasing up to the two estimates' own noise, beta * se(<E>) each.
+            let slack = 0.02 + 4.0 * (w[0].beta * w[0].mean_energy.stderr + w[1].beta * w[1].mean_energy.stderr);
+            assert!(w[1].entropy <= w[0].entropy + slack, "entropy rose from {} to {} (slack {slack})", w[0].entropy, w[1].entropy);
+        }
+        assert!((th.top().entropy - core::f64::consts::LN_2).abs() < 0.3, "S(2.0) = {}", th.top().entropy);
+        // Same samples, two estimators: the TI bracket contains the BAR top rung.
+        assert!(th.ti.lower_widened <= th.top().log_z && th.top().log_z <= th.ti.upper_widened);
+    }
+
+    /// Clamped AIS estimates the conditional partition function enumeration can check.
+    #[test]
+    fn clamped_ais_matches_the_enumerated_conditional() {
+        let g = ising::ring(10, 1.0, 0.3);
+        let beta = 1.1;
+        let fixed = [(0usize, 1i8), (3, -1), (7, 1)];
+        let free: Vec<usize> = (0..g.n).filter(|i| !fixed.iter().any(|(f, _)| f == i)).collect();
+        let mut s = vec![0i8; g.n];
+        for &(i, v) in &fixed {
+            s[i] = v;
+        }
+        let mut logs = Vec::new();
+        for mask in 0..(1usize << free.len()) {
+            for (b, &i) in free.iter().enumerate() {
+                s[i] = if mask >> b & 1 == 1 { 1 } else { -1 };
+            }
+            logs.push(-beta * g.energy(&s));
+        }
+        let truth = log_sum_exp(&logs);
+        for seed in 0..6u64 {
+            let a = ais_clamped(&g, &fixed, &linear_ladder(beta, 64), 2, 64, seed);
+            assert_eq!(a.n, free.len());
+            assert!(a.lower_bound(1e-6) <= truth);
+            assert!((a.log_z - truth).abs() < 0.3, "seed {seed}: {} vs {truth}", a.log_z);
+        }
     }
 
     #[test]
