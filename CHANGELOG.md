@@ -173,6 +173,36 @@ Both modules are Rust-level; `examples/modern_memory` prints all of it. Recorded
 continuous-state units (the original Hopfield and EqProp formulations), which need a unit type the
 crate does not have; the Gardner storage problem.
 
+### Gardner's storage problem, and where the algorithm stops before the model does
+
+`perceptron` is the binary perceptron — Gardner's question with `J ∈ {±1}^N`, so the space of
+couplings *is* a spin space and this crate's samplers search it natively. The module keeps three
+kinds of claim apart, because they are not the same kind:
+
+* **A theorem.** `E[Z] = 2^N p_sat^P` exactly, so by Markov `P(Z ≥ 1) ≤ E[Z]` and no solutions
+  survive past `α = ln 2 / −ln p_sat`. Enumeration over 400 pattern sets matches the formula to
+  within sampling noise at five `(N, P)`.
+* **A citation.** Krauth–Mézard's `α_c ≈ 0.833` is *cited*, not derived — it is a one-step
+  replica-symmetry-breaking calculation, and a number this module cannot check is one it should
+  not claim to have computed.
+* **Enumeration.** The exact count for these patterns at this `N`, by Gray-code enumeration that
+  updates `P` stabilities per step rather than recomputing them.
+
+**The parity that the textbook formula hides.** `p_sat = P(J·ξ > 0)` is `1/2` only for odd `N`;
+with `N` even a tie `J·ξ = 0` is a misclassification, so `p_sat(10) = 0.3770` and the annealed
+capacity is `0.7105`, not 1. The textbook `2^N 2^{−P}` came out 25% high against enumeration at
+`N = 10` while looking correct; `p_sat` is exact at both parities.
+
+**And the finding, which is two findings.** The binary perceptron's solution space is expected to
+be *frozen* — isolated solutions a local search cannot follow — so the plan was to measure the gap
+between "a solution exists" and "annealing finds it". **At every size enumeration can reach, there
+is no gap**: at `N = 15` and `19`, across loads `0.2` to `1.1`, annealing found a solution in 313
+of 314 solvable instances. The freezing is asymptotic. **The gap opens with `N`, and fast**: at
+`α = 0.5`, far below the capacity, the success rate falls from 20/20 at `N = 21` to 17/20 at 101,
+5/20 at 201 and 0/20 at 401 — while the capacity is `0.833` at every `N`. The instances did not
+become unsatisfiable; the algorithm's reach shrank. Both halves are tested, and the negative one
+is the more useful.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had

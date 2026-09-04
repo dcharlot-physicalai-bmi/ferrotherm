@@ -516,7 +516,13 @@ machines with its theorem held at both rates. The memory is a program (`to_hubo`
 native annealing retrieves; the pairwise reduction is exact and measured dynamically frozen (0 of
 5 anneals, 21 ancillas behind a penalty 50× the signal) and unplaceable at max degree 28; degree 2
 reaches its exact ground state on a Chimera at a chain strength set relative to the couplings.
-Recorded gaps: continuous-state units; Gardner.
+
+**4.4 Gardner's storage problem.** ✅ **DONE** — `src/perceptron.rs`.
+
+The binary perceptron: first-moment bound (exact at finite `N`, both parities), Krauth–Mézard
+cited, enumeration by Gray code. Measured: no algorithmic gap at enumerable sizes (313 of 314),
+and the gap opening with `N` (20/20 → 0/20 at `α = 0.5` from `N = 21` to `401`). Recorded gaps:
+continuous-state units; the spherical perceptron (`α_c = 2`), which needs those.
 
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.

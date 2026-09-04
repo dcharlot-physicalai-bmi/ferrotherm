@@ -556,7 +556,10 @@ Ramsauer's attention as the exponential memory's one-step update — and it is a
 1e-9), from which the native annealer retrieves, the pairwise reduction is measured exact but
 dynamically frozen, and the degree-2 memory reaches its exact ground state on a Chimera. `eqprop`
 is equilibrium propagation for Boltzmann machines, its gradient theorem held by enumeration at
-both of its convergence rates.
+both of its convergence rates. `perceptron` is Gardner's storage problem on binary couplings, with
+its first-moment bound (a theorem), the Krauth–Mézard capacity (a citation) and exact enumeration
+kept apart — and the measured algorithmic gap: at `α = 0.5`, well under the capacity, annealing
+succeeds in 20 of 20 instances at `N = 21` and 0 of 20 at `N = 401`.
 
 ### The machines you can actually rent
 
