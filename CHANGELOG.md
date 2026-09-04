@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Continuous units, and the exact answers that keep them honest
+
+Every state in this crate has been a spin. That is the right primitive for a sampling fabric and it
+is why the whole thing could be built on one kernel, but it excludes a model class the field
+actually uses: real-valued units. `continuous::Gbm` is a **Gaussian–Bernoulli Boltzmann machine** —
+`E(x, s) = ½xᵀAx − bᵀx − Σ C_ic x_i s_c − Σ h_c s_c − Σ J_cd s_c s_d` — sampled by single-site Gibbs
+on both halves: each `x_i` from its Gaussian conditional, each `s_c` from the ordinary heat-bath
+this crate has always used, with `Σ_i C_ic x_i` added to its field.
+
+**This model rather than a general continuous unit, because it can be checked exactly and a
+continuous sampler nobody can check is one nobody should believe.** With no spins the distribution
+is `N(A⁻¹b, (βA)⁻¹)`: mean, *entire covariance*, and `ln Z = (β/2)bᵀA⁻¹b + (n/2)ln(2π/β) − ½ln det A`
+in closed form. With spins, integrating `x` out is still a Gaussian integral, so enumerating the
+spin states gives an exact `ln Z` — and exact magnetisations and continuous means by differentiating
+it. All four are tested: the sampler reproduces the exact normal's mean and every covariance entry,
+the closed-form `ln Z` matches 2-million-point quadrature to `1e-6`, and the hybrid model's sampled
+marginals match its enumerated ones to 0.03. `cholesky`, `log_det`, `solve` and `inverse` come with
+it, checked against `A A⁻¹ = I` and the crate's Jacobi eigensolver.
+
+**A note on that eigensolver**, because it cost a false failure: `linalg::jacobi_eig` returns the
+**eigenvector** matrix and leaves the eigenvalues on the diagonal of the input it modifies. Reading
+its return value as eigenvalues gives `ln 0` on a diagonal matrix, which is how a correct `log_det`
+first appeared to be wrong.
+
+What this is not: continuous Hopfield's graded response and equilibrium propagation's original
+continuous formulation need a general nonlinear unit, which has none of the exact answers above.
+This is the substrate they would be built on, not those models.
+
 ### Pegasus: the construction's ceiling is now proved, and the remaining eight chains are named
 
 `pegasus_clique` places `K_{12(m−2)+4}` — `K_172` on the Advantage's P₁₆ — against `busclique`'s

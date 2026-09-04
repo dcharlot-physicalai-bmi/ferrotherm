@@ -539,6 +539,16 @@ model above it. Recorded gap: continuous-state units *inside the EBM graph*, whi
 perceptron did not need (its couplings are a standalone vector) but continuous Hopfield and the
 original EqProp formulation do.
 
+**4.5 Continuous units.** ◐ **Gaussian units done; general nonlinear units open** —
+`src/continuous.rs`.
+
+`Gbm` is a Gaussian–Bernoulli Boltzmann machine with exact oracles at every level: `N(A⁻¹b, (βA)⁻¹)`
+and closed-form `ln Z` with no spins, exact enumerated `ln Z` and marginals with them. Chosen
+because it is checkable; a continuous sampler that cannot be checked should not be trusted.
+Recorded gap: continuous Hopfield's graded response and EqProp's original formulation need a
+general nonlinear unit, whose conditional is not Gaussian and which therefore has none of these
+oracles — that is the next design question, not a missing function.
+
 **3.4a Pegasus's ceiling, proved.** `K_{12(m−2)+4}` is optimal for chains made of one vertical and
 one horizontal wire segment: the interior segments are forced (`α = 0`, `β = 1`, so `w ∈ [1, m−2]`)
 and the boundary admits exactly two tracks at each end (10 and 11 hot, 0 and 1 cold), proved in Kani
