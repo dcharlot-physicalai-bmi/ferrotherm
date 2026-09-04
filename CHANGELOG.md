@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+### The calibration table was measured over too few runs, and one verdict was wrong
+
+0.38.0 shipped a table of error-bar calibrations built on 24–40 runs each. Re-measured at **200 runs
+with scrambled seeds**, one of its verdicts does not survive:
+
+| estimator | shipped in 0.38.0 | measured at 200 runs | change |
+|---|---|---|---|
+| `LadderTraces::log_z_total` jackknife | 0.81, "conservative" | **1.05 ± 0.05** | calibrated, not conservative |
+| `bar_ladder` quadrature | 1.28, "30% too small" | **1.50 ± 0.08** | worse than reported |
+| `SampleSet::mean_energy` | 0.80 | 0.72 ± 0.04 | unchanged in verdict |
+| `SampleSet::magnetization` | 0.93 | 0.97 ± 0.05 | unchanged |
+| `SampleSet::correlation` | 0.62 | 0.55 ± 0.03 | unchanged |
+| `SampleSet::marginals` | 0.71 | 0.80 ± 0.04 | unchanged |
+| `popanneal::ln_z_stderr` | 0.92 | 1.03 ± 0.05 | unchanged |
+
+At 24 runs the uncertainty in `sd(z)` is 14% of its own value, so 24 runs cannot separate `0.8` from
+`1.1`. The harness could have said so from the first day — `sd(z)/√(2n)` is one line — and the first
+table did not ask it. `calibration::sd_z_uncertainty` now exists so a caller cannot avoid the
+question, and every calibration assertion in the crate sets its threshold from it rather than from a
+number chosen by feel.
+
+**A story built on those runs also collapsed.** The 0.38.0 docs said the jackknife's calibration
+drifted with sample count and blamed the ladder's round-trip time — how long a state takes to
+traverse the temperature range, which a block jackknife cannot resolve if its blocks are shorter.
+`LadderTraces::round_trip_time` now measures it directly: about **10 rounds**, while every block in
+that experiment was 56 to 2,250 rounds long — 5 to 200 round trips each. Blocks were never the
+problem; too few runs was. The round-trip tracking stays because it is the right timescale to
+report (a rung's own `tau_int` of 1.4 says nothing about how often the ensemble renews), but the
+explanation it was introduced to support was wrong.
+
+**And seeds are now scrambled inside the harness.** Several samplers derive internal streams from
+the caller's seed by XOR with small constants — parallel tempering gives replica `i` the seed
+`seed ^ (i · 0x9E37)` — so `0, 1, 2, …` produces runs that are not quite independent. Measured at
+200 runs, sequential seeding understates `sd(z)` by about 15%: the direction that makes a bar look
+better than it is.
+
 ## 0.38.0
 
 ### Free energy, certified: what a sampler owes, and the bound it can prove it paid

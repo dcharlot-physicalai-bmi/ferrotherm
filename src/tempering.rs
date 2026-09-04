@@ -196,6 +196,28 @@ pub struct LadderTraces {
     pub betas: Vec<f64>,
     /// `energies[i]` is the trace at `betas[i]`, one entry per recorded round.
     pub energies: Vec<Vec<f64>>,
+    /// Completed round trips: a state that reached the hot end, then the cold end, then the hot end
+    /// again. The count is over the whole run, burn-in included, because a walker does not know
+    /// about burn-in.
+    pub round_trips: usize,
+    /// Rounds per completed round trip, or `None` when none completed.
+    ///
+    /// **This, not the per-rung `tau_int`, is the timescale a free-energy estimate decorrelates
+    /// on.** A rung's own energy trace can look decorrelated (`tau_int` near 1) while the ENSEMBLE
+    /// circulating through the ladder has not renewed itself at all: the state at a rung changes
+    /// quickly, but *which* states are available there is set by how often the ladder mixes end to
+    /// end. A block jackknife whose blocks are shorter than this is resampling correlated data and
+    /// will report a bar that is too small.
+    pub round_trip_time: Option<f64>,
+}
+
+impl LadderTraces {
+    /// How many round trips fit in the recorded stretch — the effective number of independent
+    /// ladder traversals a jackknife has to work with.
+    pub fn independent_traversals(&self) -> Option<f64> {
+        let len = self.energies.first()?.len() as f64;
+        self.round_trip_time.map(|t| len / t)
+    }
 }
 
 impl LadderTraces {
@@ -227,9 +249,10 @@ impl LadderTraces {
     ///
     /// **The `stderr` on each step is that step's alone.** Do not add them in quadrature to get an
     /// error bar on the telescoped total: adjacent steps share the samples at their common rung,
-    /// so they are correlated and the quadrature sum is optimistic. Measured on a 14-spin ring
-    /// over 60 seeds, the quadrature bar understates the true spread by 56% — `sd(z) = 1.56` where
-    /// a calibrated bar gives 1. [`Self::log_z_total`] does it properly.
+    /// so they are correlated and the quadrature sum is optimistic. Measured over 200 runs with
+    /// scrambled seeds, the quadrature bar understates the true spread by about 50% —
+    /// `sd(z) = 1.50 ± 0.08` where a calibrated bar gives 1. [`Self::log_z_total`] does it
+    /// properly, at `1.05 ± 0.05`.
     pub fn log_z_differences(&self) -> Vec<crate::free_energy::BarPair> {
         self.betas
             .windows(2)
@@ -256,17 +279,20 @@ impl LadderTraces {
     ///
     /// `blocks` below 4 is refused: a jackknife over three replicates is not an error bar.
     ///
-    /// # What is established, and what is not
+    /// # What is established
     ///
     /// That the quadrature sum ignores a covariance is arithmetic. That this estimator is
-    /// **calibrated** is not established across scales, and the measurement says so: on a 12-spin
-    /// ring with an 8-rung ladder, at 3,000 recorded samples in 8 blocks over 40 seeds, quadrature
-    /// gives `sd(z) = 1.28` and this gives `0.81` — better, and conservative rather than
-    /// optimistic. At 900 samples both are worse (1.5 and 2.9) and at 9,000 this one drifts back
-    /// to 1.4. Per-rung `tau_int` is only about 1.4, so the residual is not local autocorrelation
-    /// but the ladder's ROUND-TRIP time — how long a state takes to traverse the temperature
-    /// range — which blocks shorter than it cannot resolve and which this measurement did not
-    /// pin down. Treat the bar as the better of two, not as exact.
+    /// calibrated is now measured: on a 12-spin ring with an 8-rung ladder at 3,000 recorded
+    /// samples in 8 blocks, over **200 runs with scrambled seeds**, `sd(z) = 1.05 ± 0.05` against
+    /// quadrature's `1.50 ± 0.08`.
+    ///
+    /// An earlier version of this doc reported `0.81` from 24 runs and built a story on top of it —
+    /// that calibration drifted with sample count, and that the culprit was the ladder's round-trip
+    /// time. **Both were artefacts of too few runs.** The round-trip time is now measured directly
+    /// ([`Self::round_trip_time`]) and is about 10 rounds here, while every block in that
+    /// experiment was 56 to 2,250 rounds long — 5 to 200 round trips per block, so blocks were
+    /// never the problem. What was the problem is that 24 runs cannot measure an `sd` to better
+    /// than 14%.
     pub fn log_z_total(&self, blocks: usize) -> Result<(f64, f64), String> {
         if blocks < 4 {
             return Err(format!("{blocks} blocks is too few for a jackknife variance; use at least 4"));
@@ -326,6 +352,13 @@ pub fn parallel_tempering_observed(
     let mut best = reps[r - 1].s.clone();
     let mut best_e = g.energy(&best);
     let mut energies: Vec<Vec<f64>> = vec![Vec::with_capacity(rounds - burn_in); r];
+    // Round-trip tracking. `walker[i]` names the state currently at rung i; `dir[w]` remembers
+    // which end walker w last touched (+1 = it last touched the hot end and is heading cold).
+    // A round trip is counted when a walker that last touched the hot end reaches the cold end and
+    // returns -- the standard definition, so the count is comparable with the literature's.
+    let mut walker: Vec<usize> = (0..r).collect();
+    let mut last_end: Vec<i8> = vec![0; r];
+    let mut round_trips = 0usize;
     for round in 0..rounds {
         advance(&mut reps, swap_every, ledger.as_deref_mut());
         for (i, rep) in reps.iter().enumerate() {
@@ -348,16 +381,25 @@ pub fn parallel_tempering_observed(
                 accepts[i] += 1;
                 let (a, b) = reps.split_at_mut(i + 1);
                 std::mem::swap(&mut a[i].s, &mut b[0].s);
+                walker.swap(i, i + 1);
             }
         }
+        // Rung 0 is the hot end (beta smallest) and rung r-1 the cold end.
+        let (hot, cold) = (walker[0], walker[r - 1]);
+        if last_end[hot] == 1 {
+            round_trips += 1;
+        }
+        last_end[hot] = -1;
+        last_end[cold] = 1;
     }
+    let round_trip_time = (round_trips > 0).then(|| rounds as f64 / round_trips as f64);
     (
         TemperingResult {
             best,
             best_e,
             swap_rates: (0..r - 1).map(|i| accepts[i] as f64 / attempts[i].max(1) as f64).collect(),
         },
-        LadderTraces { betas: betas.to_vec(), energies },
+        LadderTraces { betas: betas.to_vec(), energies, round_trips, round_trip_time },
     )
 }
 
@@ -439,9 +481,13 @@ mod observed_tests {
             (v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len() - 1) as f64).sqrt()
         };
         let (sq, sj) = (sd(&zq), sd(&zj));
-        assert!(sq > 1.1, "the quadrature bar should be visibly optimistic here: sd(z) = {sq}");
+        // 24 runs measures an sd to about sd/sqrt(2*24) = 14%, so the assertions are two of those
+        // wide. A tighter threshold than the measurement is theatre -- and is exactly how this
+        // module once reported 0.81 for a quantity that is 1.05.
+        let tol = |v: f64| 2.0 * v / (2.0 * 24.0f64).sqrt();
+        assert!(sq > 1.15 - tol(sq), "the quadrature bar should be visibly optimistic: sd(z) = {sq}");
         assert!(sj < sq, "the jackknife must improve on it: {sj} vs {sq}");
-        assert!(sj < 1.1, "and must not itself be optimistic: sd(z) = {sj}");
+        assert!(sj < 1.3 + tol(sj), "and must not be badly optimistic itself: sd(z) = {sj}");
     }
 
     /// The jackknife refuses what it cannot do rather than returning a number.

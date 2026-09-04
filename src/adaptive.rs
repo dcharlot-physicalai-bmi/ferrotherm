@@ -150,7 +150,12 @@ pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::temp
     let mut betas = crate::tempering::geometric_ladder(p.beta_min, p.beta_max, r);
     let mut spread = Vec::with_capacity(epochs);
     let mut last = TemperingResult { best: vec![1; g.n], best_e: f64::INFINITY, swap_rates: vec![] };
-    let mut traces = crate::tempering::LadderTraces { betas: betas.clone(), energies: vec![Vec::new(); r] };
+    let mut traces = crate::tempering::LadderTraces {
+        betas: betas.clone(),
+        energies: vec![Vec::new(); r],
+        round_trips: 0,
+        round_trip_time: None,
+    };
 
     for epoch in 0..epochs {
         let final_epoch = epoch + 1 == epochs;

@@ -416,8 +416,11 @@ mod tests {
                 let o = run(&g, &Params::linear_from_zero(r, 2, beta, stages), seed);
                 (o.ln_z, o.ln_z_stderr.expect("a population this size yields a bar"))
             });
-            assert!(c.bar_is_honest(1.25), "R={r} stages={stages}: bar too small, sd(z) = {}", c.sd_z);
-            assert!(c.sd_z > 0.6, "R={r} stages={stages}: absurdly conservative, sd(z) = {}", c.sd_z);
+            // 24 runs measures an sd to about 14%; assert two of those wide, and let
+            // sd_z_uncertainty say so rather than picking a number by feel.
+            let tol = 2.0 * crate::calibration::sd_z_uncertainty(&c);
+            assert!(c.bar_is_honest(1.25 + tol), "R={r} stages={stages}: bar too small, sd(z) = {}", c.sd_z);
+            assert!(c.sd_z > 0.6 - tol, "R={r} stages={stages}: absurdly conservative, sd(z) = {}", c.sd_z);
             assert!(c.looks_unbiased(4.0), "R={r} stages={stages}: mean z = {}", c.mean_z);
             assert!(c.coverage_95 >= 0.85, "R={r} stages={stages}: coverage {}", c.coverage_95);
         }

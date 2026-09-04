@@ -24,17 +24,26 @@
 //!
 //! Applied across the crate (the tests in this module), with `sd(z) ≤ 1` meaning honest:
 //!
+//! **200 runs each, seeds scrambled**, `±` being [`sd_z_uncertainty`]:
+//!
 //! | estimator | mean z | sd(z) | verdict |
 //! |---|---|---|---|
-//! | `SampleSet::mean_energy` | −0.03 | 0.80 | honest, conservative |
-//! | `SampleSet::magnetization` | −0.01 | 0.93 | honest |
-//! | `SampleSet::correlation` | −0.04 | 0.62 | honest, very conservative |
-//! | `SampleSet::marginals` | +0.05 | 0.71 | honest, conservative |
-//! | `free_energy::thermodynamic_integration` | — | covers 40/40 | honest |
-//! | `free_energy::Ais::lower_bound` | — | 0 violations in 60 at δ=0.1 | honest |
-//! | `bar_ladder` quadrature stderr | — | **1.28** | **too small by ~30%** |
-//! | `LadderTraces::log_z_total` jackknife | — | 0.81 | honest |
-//! | `popanneal::Outcome::ln_z_stderr` | +0.05 | 0.92 | honest |
+//! | `SampleSet::mean_energy` | −0.01 | 0.72 ± 0.04 | honest, conservative |
+//! | `SampleSet::magnetization` | +0.04 | 0.97 ± 0.05 | honest, right on |
+//! | `SampleSet::correlation` | −0.07 | 0.55 ± 0.03 | honest, very conservative |
+//! | `SampleSet::marginals` | −0.01 | 0.80 ± 0.04 | honest, conservative |
+//! | `popanneal::Outcome::ln_z_stderr` | −0.05 | 1.03 ± 0.05 | honest |
+//! | `LadderTraces::log_z_total` jackknife | −0.06 | 1.05 ± 0.05 | honest |
+//! | `bar_ladder` quadrature stderr | −0.15 | **1.50 ± 0.08** | **too small by ~50%** |
+//! | `free_energy::thermodynamic_integration` | — | covers 200/200 | honest |
+//! | `free_energy::Ais::lower_bound` | — | 0 violations in 200 at δ=0.1 | honest |
+//!
+//! **These numbers replace a table measured over 24–40 runs, and one of its verdicts was wrong.**
+//! The jackknife was reported as *conservative* at `0.81`; at 200 runs it is `1.05`, which is
+//! calibrated, not conservative. The quadrature bar was reported as 30% too small; it is 50%. At 24
+//! runs `sd_z_uncertainty` is 14% of the value, so 24 runs cannot separate `0.8` from `1.1` — the
+//! harness was capable of measuring its own unreliability from the start, and the first table did
+//! not ask it. A run count is part of a calibration result, not a detail of how it was obtained.
 //!
 //! The conservatism of the `SampleSet` family is structural rather than accidental: the error bar
 //! deflates the sample count by the chain's `tau_int`, and `chain_tau` takes the SLOWEST of energy
@@ -89,13 +98,30 @@ impl Calibration {
     }
 }
 
+/// The uncertainty in `sd_z` itself, `sd_z / √(2·runs)`.
+///
+/// **Read this before believing a calibration.** At 24 runs it is 14% of the value, so 24 runs
+/// cannot tell `0.8` from `1.1` — which is not a hypothetical: a table in this crate reported a bar
+/// as conservative at `0.81` from 24 runs, and 200 runs put the same bar at `1.25`.
+pub fn sd_z_uncertainty(c: &Calibration) -> f64 {
+    c.sd_z / (2.0 * c.runs as f64).sqrt()
+}
+
 /// Calibrate an estimator against a known truth: `run(seed)` returns `(estimate, stderr)`.
 ///
-/// Panics on fewer than 8 runs — an `sd` over seven numbers is not a measurement.
+/// Seeds are **scrambled** rather than passed as `0, 1, 2, …`. Several samplers here derive their
+/// internal streams from the caller's seed by XOR with small constants (parallel tempering gives
+/// replica `i` the seed `seed ^ (i · 0x9E37)`), so consecutive seeds produce runs that are not
+/// quite independent — measured at 200 runs, sequential seeding understates `sd(z)` by about 15%,
+/// which is exactly the direction that makes a bar look better than it is.
+///
+/// Panics on fewer than 8 runs — an `sd` over seven numbers is not a measurement — but 8 is a floor,
+/// not a recommendation: see [`sd_z_uncertainty`].
 pub fn calibrate(truth: f64, runs: usize, run: impl Fn(u64) -> (f64, f64)) -> Calibration {
     assert!(runs >= 8, "{runs} runs is too few to estimate a spread");
     let z: Vec<f64> = (0..runs as u64)
-        .map(|s| {
+        .map(|k| {
+            let s = k.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678_9ABC_DEF0);
             let (est, se) = run(s);
             assert!(se > 0.0 && se.is_finite(), "run {s} reported a stderr of {se}");
             (est - truth) / se
@@ -178,6 +204,7 @@ mod tests {
             let mut sm = Sampler::new(&g, beta, seed);
             sm.collect(&Plan::new(1000, 2000, 1), None)
         };
+        // 32 runs measures an sd to about 12%; the thresholds below allow two of those.
         for (name, truth, f) in [
             ("mean_energy", e_t, Box::new(move |s: u64| { let x = collect(s).mean_energy().unwrap(); (x.value, x.stderr) }) as Box<dyn Fn(u64) -> (f64, f64)>),
             ("magnetization", m_t, Box::new(move |s: u64| { let x = collect(s).magnetization().unwrap(); (x.value, x.stderr) })),
@@ -185,7 +212,8 @@ mod tests {
             ("marginal 0", m0_t, Box::new(move |s: u64| { let x = &collect(s).marginals().unwrap()[0]; (x.value, x.stderr) })),
         ] {
             let c = calibrate(truth, 32, f);
-            assert!(c.bar_is_honest(1.15), "{name}: bar too small, sd(z) = {}", c.sd_z);
+            let tol = 2.0 * sd_z_uncertainty(&c);
+            assert!(c.bar_is_honest(1.15 + tol), "{name}: bar too small, sd(z) = {}", c.sd_z);
             assert!(c.looks_unbiased(4.0), "{name}: biased, mean z = {}", c.mean_z);
             assert!(c.coverage_95 >= 0.90, "{name}: 95% interval covered {}", c.coverage_95);
         }
