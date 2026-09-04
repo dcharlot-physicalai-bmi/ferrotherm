@@ -507,6 +507,14 @@ absence confirmed by the samplers. Recorded gaps: replica-symmetry-breaking corr
 `α_c`; the Gardner/perceptron storage problem (a higher-order model, not pairwise — needs the
 `hubo` path); modern (dense associative) Hopfield and equilibrium propagation are path item 5.
 
+**4.3 Modern memory and equilibrium propagation.** ✅ **DONE** — `src/dense_memory.rs`,
+`src/eqprop.rs`.
+
+Dense associative memory with the degree-2 identity to the Hebbian energy, exact fixed-point
+capacity, attention as the exponential memory's update; equilibrium propagation for Boltzmann
+machines with its theorem held at both rates. Recorded gaps: continuous-state units; dense memory
+as a `hubo` program for hardware; Gardner.
+
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.
 

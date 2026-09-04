@@ -110,6 +110,43 @@ itself an approximation near `α_c`; the figures are the theory's, not a machine
 ABI and all four bindings; Hopfield and the replica solvers are Rust-level. `examples/learning_theory`
 prints all of it. Zig 56, Julia 342.
 
+### Modern memory, and learning from two equilibria
+
+**Dense associative memory** (`dense_memory`): Krotov–Hopfield's `E = −c Σ_μ F(ξ^μ·s)` with
+polynomial or exponential `F`, sampled by heat-bath Gibbs over cached overlaps at `O(NP)` a sweep.
+The normalisation is chosen so that **at degree 2 the dense energy equals the classical Hebbian
+energy minus `P/2` for every state** — an identity the tests hold to `1e-9` against
+`hopfield::hebbian`, pinning the two modules to each other. Capacity is measured as the theorems
+define it, by `is_fixed_point`, an exact zero-temperature stability check: at `N = 100` the
+classical memory has lost most of a 20-pattern set (stable fraction 0.35) while degree 3 and the
+exponential memory keep all 400 of a 400-pattern set. `attention_update` is Ramsauer et al.'s
+softmax over the patterns — the transformer's attention as the exponential memory's one-step
+update — and with 200 patterns in 64 spins it returns a 15%-corrupted query's pattern in one step
+every time.
+
+**What the attention test taught, three times.** At 25% corruption the hit rate plateaued at 88%
+*independent of β*, which meant it was not softmax sharpness: some corrupted queries are genuinely
+nearer another stored pattern, and the update returns *that* one — the property the softmax has
+is "nearest", not "original" (92 of 100 nearest at 25%). Then exact ties turned up (two patterns at
+overlap 26), where the softmax blends them and an arbitrary tie-break called it wrong; then a
+three-way tie gave `±1/3`, and a third pattern two units below a tie leaked `e^{−8}` into the blend.
+The assertion that survived is the true one: at a tie the output is the tied patterns' mean. Never
+assert a hard argmax of a softmax.
+
+**Equilibrium propagation** (`eqprop`) for Boltzmann machines at unit temperature: the nudge
+`E + βℓ` is a field `β t_o / 2` on the outputs, so the crate's sampler needs nothing new, and the
+learning rule is the difference of two equilibria's statistics over `β`. The theorem —
+`d⟨ℓ⟩/dJ_ij = Cov₀(ℓ, s_i s_j) = lim (⟨s_i s_j⟩₀ − ⟨s_i s_j⟩_β)/β` — is held by enumeration at its
+two rates: halving `β` halves the one-sided error (ratios 2.3 → 2.1) and quarters the centered one
+(3.95 → 4.0), with the centered rule at `β = 10⁻³` within `10⁻⁶` of the exact gradient. The
+sampled rule agrees within its error bars, and twelve exact steps take a fixed pair's expected
+loss from 0.461 to 0.017. It belongs here because its only primitive is *sample two nearby
+Boltzmann distributions* — native on a thermodynamic fabric, alien to a GPU.
+
+Both are Rust-level; `examples/modern_memory` prints all of it. Recorded gaps: continuous-state
+units (the original Hopfield and EqProp formulations), which need a unit type the crate does not
+have; dense memory as a `hubo` program so hardware can run it; the Gardner storage problem.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had

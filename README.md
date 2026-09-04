@@ -548,7 +548,12 @@ with the Bethe free energy, exact on trees and measured to degrade past critical
 is Curie–Weiss and the sampler retrieves at `m = tanh(βm)`; at finite load the
 Amit–Gutfreund–Sompolinsky replica equations are solved in the crate, and bisection on them gives
 the capacity **`α_c = 0.1379`** (AGS: 0.138), with retrieval present at `α = 0.02` and absent at
-`0.10` in the samplers' own runs. `examples/learning_theory` shows the table.
+`0.10` in the samplers' own runs. `examples/learning_theory` shows the table. `dense_memory` is the
+modern Hopfield network — degree-2 provably the classical one minus a constant, degree 3 and the
+exponential memory holding hundreds of patterns in 100 spins where the classical one holds 14, and
+Ramsauer's attention as the exponential memory's one-step update — and `eqprop` is equilibrium
+propagation for Boltzmann machines, its gradient theorem held by enumeration at both of its
+convergence rates.
 
 ### The machines you can actually rent
 

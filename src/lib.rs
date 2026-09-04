@@ -83,6 +83,8 @@ pub mod certify;
 pub mod free_energy;
 pub mod meanfield;
 pub mod hopfield;
+pub mod dense_memory;
+pub mod eqprop;
 pub mod conform;
 pub mod dense;
 pub mod embed;
