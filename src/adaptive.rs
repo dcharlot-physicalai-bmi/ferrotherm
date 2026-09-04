@@ -134,6 +134,57 @@ pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
     Outcome { best: last.best, best_e: last.best_e, betas, swap_rates: last.swap_rates, spread }
 }
 
+/// [`adapt`], with the final epoch observed so the free-energy curve comes out beside the answer.
+///
+/// The traces are recorded on the ladder that was actually measured — the last epoch's, after all
+/// respacing — because a curve built on a ladder the run then abandoned would describe nothing
+/// that happened. The earlier epochs are adaptation and are not recorded.
+///
+/// The ladder is geometric between `beta_min` and `beta_max`, so it does not contain `β = 0` and
+/// the traces carry free-energy DIFFERENCES rather than an absolute `ln Z`; see
+/// [`crate::tempering::LadderTraces::log_z_differences`]. Whether the respacing makes those
+/// differences better conditioned is a measurement, and `examples/adaptive_free_energy` makes it.
+pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::tempering::LadderTraces) {
+    let r = p.replicas.max(2);
+    let epochs = p.epochs.max(1);
+    let mut betas = crate::tempering::geometric_ladder(p.beta_min, p.beta_max, r);
+    let mut spread = Vec::with_capacity(epochs);
+    let mut last = TemperingResult { best: vec![1; g.n], best_e: f64::INFINITY, swap_rates: vec![] };
+    let mut traces = crate::tempering::LadderTraces { betas: betas.clone(), energies: vec![Vec::new(); r] };
+
+    for epoch in 0..epochs {
+        let final_epoch = epoch + 1 == epochs;
+        let out = if final_epoch {
+            let (out, tr) = crate::tempering::parallel_tempering_observed(
+                g,
+                &betas,
+                p.rounds,
+                p.swap_every,
+                p.rounds / 4,
+                seed ^ ((epoch as u64) << 17),
+                None,
+            );
+            traces = tr;
+            out
+        } else {
+            crate::tempering::parallel_tempering(g, &betas, p.rounds, p.swap_every, seed ^ ((epoch as u64) << 17), None)
+        };
+        let hi = out.swap_rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let lo = out.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min);
+        spread.push(hi - lo);
+        if out.best_e < last.best_e {
+            last.best = out.best.clone();
+            last.best_e = out.best_e;
+        }
+        last.swap_rates = out.swap_rates.clone();
+        if !final_epoch {
+            betas = respace(&betas, &out.swap_rates);
+        }
+    }
+
+    (Outcome { best: last.best, best_e: last.best_e, betas, swap_rates: last.swap_rates, spread }, traces)
+}
+
 /// Redraw a ladder so acceptance is spread evenly across it.
 ///
 /// A pair that accepts RARELY is too far apart and needs its neighbours pulled in; a pair that

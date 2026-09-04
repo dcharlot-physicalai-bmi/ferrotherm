@@ -554,8 +554,15 @@ pub struct ThermoRung {
     pub beta: f64,
     /// Absolute `ln Z(β)`: `n ln 2` plus the BAR steps up the ladder.
     pub log_z: f64,
-    /// Standard error of `log_z`, the BAR steps added in quadrature — an approximation, since
-    /// adjacent steps share the samples at their common rung.
+    /// Standard error of `log_z`, the BAR steps added in quadrature.
+    ///
+    /// **This bar is optimistic, and by a measured amount.** Adjacent steps share the samples at
+    /// their common rung, so they are correlated and the quadrature sum ignores that covariance;
+    /// on a 12-spin ring over 40 seeds it understates the true spread by about 30%
+    /// (`sd(z) = 1.28` where a calibrated bar gives 1). When the traces are in hand,
+    /// [`crate::tempering::LadderTraces::log_z_total`] block-jackknifes the telescoped total
+    /// instead and comes out conservative rather than optimistic. This field was documented as
+    /// "an approximation" for one release before anyone measured which direction it erred.
     pub stderr: f64,
     /// `⟨E⟩` at this rung, with its error bar.
     pub mean_energy: Estimate,

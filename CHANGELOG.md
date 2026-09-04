@@ -256,6 +256,24 @@ a duplicated loop can drift from its original, so the test asserts bit-identical
 four seeds — state, energy and swap rates — the same discipline this module already applies to its
 threading floor.
 
+**And the observer immediately found a defect in the previous entry.** With traces in hand it is
+possible to ask whether the free-energy error bars are calibrated: run one ladder from many seeds,
+form `z = (estimate − truth) / reported stderr`, and check that `sd(z)` is 1. The quadrature sum
+that `bar_ladder` reports — adding adjacent BAR steps' variances — gives `sd(z) = 1.28`, so it
+**understates the true spread by about 30%**. Adjacent steps share the samples at their common
+rung; the covariance was documented as "an approximation" one release ago and never measured.
+`LadderTraces::log_z_total` block-jackknifes the telescoped total instead — deleting a block from
+every rung at once, which captures exactly that covariance — and comes out at `sd(z) = 0.81`,
+conservative rather than optimistic, which is the direction to err.
+
+**What is established there, and what is not.** That quadrature ignores a covariance is arithmetic.
+That the jackknife is *calibrated* is not established across scales, and the doc says so with the
+numbers: at 900 recorded samples both bars are worse (1.5 and 2.9), at 9,000 the jackknife drifts
+back to 1.4. Per-rung `tau_int` is only about 1.4, so the residual is not local autocorrelation but
+the ladder's round-trip time — how long a state takes to traverse the temperature range — which
+blocks shorter than it cannot resolve and which this measurement did not pin down. It is recorded
+as an open question rather than smoothed over.
+
 **A warm ladder is refused an absolute answer.** `ln Z(0) = n ln 2` is the anchor, so a ladder that
 does not start at infinite temperature has free-energy *differences* but no absolute scale;
 `thermodynamics` returns `Err` there and points at `log_z_differences`, which telescope to the

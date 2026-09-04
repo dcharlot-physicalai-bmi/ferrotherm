@@ -496,9 +496,18 @@ rung (and with it entropy and heat capacity), clamped AIS for the EBM numerator 
 cross-checked against enumeration, elimination, the transfer matrix, Onsager and `popanneal`.
 ✅ **The observer is in**: `tempering::parallel_tempering_observed` records per-rung energy traces,
 so one run gives the optimiser's best AND the free-energy curve, with recording proved bit-identical
-to the unobserved loop and warm ladders refused an absolute anchor. `adaptive` still returns only
-best-found and swap rates; the same observer there would put the curve on a respaced ladder, where
-equal swap rates mean equal overlap and therefore the best-conditioned BAR steps.
+to the unobserved loop and warm ladders refused an absolute anchor. `adaptive::adapt_observed`
+records the final (respaced) epoch: measured at EQUAL RECORDED SAMPLES, respacing evens the swap
+rates as designed (spread 0.40 → 0.15) and tightens the reported step error in 12 of 12 seeds, but
+the ACTUAL error is unchanged (0.047 either way) — the ladder got better conditioned and the
+estimate did not get better.
+
+And having the traces immediately caught a defect: `bar_ladder`'s quadrature error bar understates
+the true spread by ~30% (`sd(z) = 1.28`), because adjacent steps share the samples at their common
+rung. `LadderTraces::log_z_total` block-jackknifes the total instead and comes out conservative
+(`0.81`). Open: calibration is not established across scales (900 samples → 1.5, 9,000 → 1.4) and
+per-rung `tau_int` is only 1.4, so the residual is the ladder's ROUND-TRIP time, which no current
+measurement resolves.
 
 **4.2 Learning theory as oracles.** ✅ **DONE** — `src/meanfield.rs`, `src/hopfield.rs`.
 
