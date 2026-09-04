@@ -406,3 +406,281 @@ mod tests {
         }
     }
 }
+
+// ---- general nonlinear units ------------------------------------------------------------------
+//
+// [`Gbm`] is exactly solvable and therefore exactly checkable, which is why it shipped first. It is
+// also the only continuous model with that property: the moment a unit's local term stops being
+// quadratic, the conditional stops being Gaussian, `ln Z` stops having a closed form, and the
+// crate's usual oracles are gone.
+//
+// They are not the only oracles available. In FEW dimensions the partition function is an integral
+// a computer can simply do: a product rule over a bounded box converges to whatever precision the
+// grid affords, and every expectation with it. That is the oracle here -- slower than a closed form
+// and available only up to about three units, but exact enough to hold a sampler to, which is the
+// requirement. Everything below is verified against it before it is trusted at any size.
+
+/// A unit's local energy term.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Potential {
+    /// `½ a x² − b x`. Recovers the Gaussian case, so the general sampler can be checked against
+    /// [`Gbm`]'s closed forms as well as against quadrature.
+    Quadratic { a: f64, b: f64 },
+    /// Continuous Hopfield's graded-neuron term (Hopfield 1984), `gain · ∫₀ˣ atanh(u) du`
+    /// `= gain · (x·atanh(x) + ½ ln(1 − x²))`, finite only on `(−1, 1)`.
+    ///
+    /// This is the term that makes a continuous Hopfield network a Hopfield network: the transfer
+    /// function `g = tanh` enters the ENERGY through the integral of its inverse, so the stationary
+    /// points of the dynamics are the fixed points of `x = tanh(gain · field)`. Its domain is a
+    /// hard box, which the sampler respects by rejecting rather than by clamping — a clamp would
+    /// pile probability on the boundary that the model does not put there.
+    HopfieldTanh { gain: f64 },
+    /// `a x⁴ − b x²`, the double well: not log-concave, so the conditional is bimodal and a sampler
+    /// that quietly assumes unimodality will be caught.
+    DoubleWell { a: f64, b: f64 },
+}
+
+impl Potential {
+    /// `V(x)`, or `f64::INFINITY` outside the support.
+    pub fn energy(&self, x: f64) -> f64 {
+        match *self {
+            Potential::Quadratic { a, b } => 0.5 * a * x * x - b * x,
+            Potential::HopfieldTanh { gain } => {
+                if x.abs() >= 1.0 {
+                    f64::INFINITY
+                } else {
+                    gain * (x * x.atanh() + 0.5 * (1.0 - x * x).ln())
+                }
+            }
+            Potential::DoubleWell { a, b } => a * x * x * x * x - b * x * x,
+        }
+    }
+
+    /// The interval outside which the energy is infinite, for quadrature and for proposals.
+    pub fn support(&self) -> (f64, f64) {
+        match *self {
+            Potential::HopfieldTanh { .. } => (-1.0, 1.0),
+            _ => (f64::NEG_INFINITY, f64::INFINITY),
+        }
+    }
+}
+
+/// A continuous energy-based model with arbitrary local terms: `E(x) = Σ V_i(x_i) − Σ_{i<j} W_ij x_i x_j`.
+#[derive(Clone, Debug)]
+pub struct ContinuousEbm {
+    pub potentials: Vec<Potential>,
+    /// Row-major `n×n`, symmetric, diagonal ignored.
+    pub w: Vec<f64>,
+}
+
+impl ContinuousEbm {
+    pub fn new(potentials: Vec<Potential>, w: Vec<f64>) -> Self {
+        let n = potentials.len();
+        assert_eq!(w.len(), n * n);
+        for i in 0..n {
+            for j in 0..n {
+                assert!((w[i * n + j] - w[j * n + i]).abs() < 1e-12, "W must be symmetric");
+            }
+        }
+        ContinuousEbm { potentials, w }
+    }
+
+    pub fn n(&self) -> usize {
+        self.potentials.len()
+    }
+
+    /// `E(x)`.
+    pub fn energy(&self, x: &[f64]) -> f64 {
+        let n = self.n();
+        let mut e = 0.0;
+        for i in 0..n {
+            e += self.potentials[i].energy(x[i]);
+            for j in (i + 1)..n {
+                e -= self.w[i * n + j] * x[i] * x[j];
+            }
+        }
+        e
+    }
+
+    /// A Metropolis-within-Gibbs sweep: one symmetric Gaussian proposal per unit, accepted by the
+    /// Metropolis rule. `step` is per-unit and is the caller's to tune — [`Self::run`] adapts it.
+    ///
+    /// An infinite energy (a proposal outside the support) is rejected, which is what keeps
+    /// [`Potential::HopfieldTanh`]'s hard box honest.
+    pub fn sweep(&self, beta: f64, x: &mut [f64], step: &[f64], rng: &mut Pcg, accepts: &mut [u64]) {
+        let n = self.n();
+        for i in 0..n {
+            let before = self.local_energy(x, i);
+            let old = x[i];
+            let proposal = old + step[i] * standard_normal(rng);
+            x[i] = proposal;
+            let after = self.local_energy(x, i);
+            let d = after - before;
+            // exp(-beta * inf) = 0, so an out-of-support proposal is rejected without a branch
+            let accept = d <= 0.0 || (d.is_finite() && rng.f64() < (-beta * d).exp());
+            if accept {
+                accepts[i] += 1;
+            } else {
+                x[i] = old;
+            }
+        }
+    }
+
+    /// The part of the energy that depends on `x[i]`.
+    fn local_energy(&self, x: &[f64], i: usize) -> f64 {
+        let n = self.n();
+        let mut e = self.potentials[i].energy(x[i]);
+        for j in 0..n {
+            if j != i {
+                e -= self.w[i * n + j] * x[i] * x[j];
+            }
+        }
+        e
+    }
+
+    /// Sample, adapting each unit's proposal step toward 44% acceptance during burn-in.
+    ///
+    /// The target is the one-dimensional optimum for a random-walk Metropolis chain; adapting only
+    /// during burn-in keeps the recorded chain a proper Markov chain, since a step size that keeps
+    /// changing with the history is not one.
+    pub fn run(&self, beta: f64, burn_in: usize, draws: usize, seed: u64) -> Vec<Vec<f64>> {
+        let n = self.n();
+        let mut rng = Pcg::new(seed, 41);
+        let mut x = vec![0.0; n];
+        for i in 0..n {
+            let (lo, hi) = self.potentials[i].support();
+            if lo.is_finite() && hi.is_finite() {
+                x[i] = 0.5 * (lo + hi);
+            }
+        }
+        let mut step = vec![0.5; n];
+        let mut accepts = vec![0u64; n];
+        let window = 100.max(burn_in / 20);
+        for t in 0..burn_in {
+            self.sweep(beta, &mut x, &step, &mut rng, &mut accepts);
+            if (t + 1) % window == 0 {
+                for i in 0..n {
+                    let rate = accepts[i] as f64 / window as f64;
+                    step[i] *= if rate > 0.44 { 1.2 } else { 0.85 };
+                    step[i] = step[i].clamp(1e-6, 100.0);
+                    accepts[i] = 0;
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(draws);
+        for _ in 0..draws {
+            self.sweep(beta, &mut x, &step, &mut rng, &mut accepts);
+            out.push(x.clone());
+        }
+        out
+    }
+
+    /// `ln Z` and `⟨x⟩` by product-rule quadrature over `[lo, hi]^n` with `grid` points per axis.
+    ///
+    /// The oracle for everything above. Exact to the grid, and refused above three units because
+    /// `grid^n` is what it costs — an answer that takes a week is not an oracle.
+    pub fn exact_by_quadrature(&self, beta: f64, lo: f64, hi: f64, grid: usize) -> (f64, Vec<f64>) {
+        let n = self.n();
+        assert!(n <= 3, "quadrature refuses {n} units; it costs grid^n");
+        assert!(grid >= 2);
+        let h = (hi - lo) / grid as f64;
+        let axis: Vec<f64> = (0..grid).map(|i| lo + (i as f64 + 0.5) * h).collect();
+        let mut logs: Vec<f64> = Vec::with_capacity(grid.pow(n as u32));
+        let mut pts: Vec<Vec<f64>> = Vec::with_capacity(logs.capacity());
+        let mut idx = vec![0usize; n];
+        loop {
+            let x: Vec<f64> = (0..n).map(|d| axis[idx[d]]).collect();
+            let e = self.energy(&x);
+            if e.is_finite() {
+                logs.push(-beta * e);
+                pts.push(x);
+            }
+            let mut d = 0;
+            while d < n {
+                idx[d] += 1;
+                if idx[d] < grid {
+                    break;
+                }
+                idx[d] = 0;
+                d += 1;
+            }
+            if d == n {
+                break;
+            }
+        }
+        let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let ws: Vec<f64> = logs.iter().map(|l| (l - mx).exp()).collect();
+        let sum: f64 = ws.iter().sum();
+        let ln_z = mx + sum.ln() + n as f64 * h.ln();
+        let mean: Vec<f64> = (0..n)
+            .map(|d| pts.iter().zip(&ws).map(|(p, w)| w * p[d]).sum::<f64>() / sum)
+            .collect();
+        (ln_z, mean)
+    }
+}
+
+#[cfg(test)]
+mod nonlinear_tests {
+    use super::*;
+
+    /// The general sampler reproduces the Gaussian case the closed form already knows.
+    ///
+    /// A general machine that disagrees with the special case it contains is broken in a way no
+    /// quadrature check would isolate, so this comes first.
+    #[test]
+    fn the_general_sampler_agrees_with_the_closed_form_gaussian() {
+        let (a, b, beta) = (2.0f64, 0.7f64, 1.1f64);
+        let ebm = ContinuousEbm::new(vec![Potential::Quadratic { a, b }], vec![0.0]);
+        let g = Gbm::gaussian(1, vec![a], vec![b]);
+        let (mean, cov, ln_z) = g.exact_gaussian(beta).unwrap();
+        let (q_ln_z, q_mean) = ebm.exact_by_quadrature(beta, -8.0, 8.0, 40_000);
+        assert!((q_ln_z - ln_z).abs() < 1e-6, "quadrature {q_ln_z} vs closed form {ln_z}");
+        assert!((q_mean[0] - mean[0]).abs() < 1e-9);
+        let xs = ebm.run(beta, 20_000, 200_000, 3);
+        let m: f64 = xs.iter().map(|x| x[0]).sum::<f64>() / xs.len() as f64;
+        let se = (cov[0] / xs.len() as f64).sqrt();
+        assert!((m - mean[0]).abs() < 10.0 * se + 0.01, "sampled {m} vs exact {}", mean[0]);
+    }
+
+    /// Continuous Hopfield: the sampler matches quadrature, and respects the hard box.
+    #[test]
+    fn the_hopfield_unit_matches_quadrature_and_stays_in_its_box() {
+        let n = 2;
+        let p = vec![Potential::HopfieldTanh { gain: 1.0 }; n];
+        let mut w = vec![0.0; n * n];
+        w[1] = 0.8;
+        w[n] = 0.8;
+        let ebm = ContinuousEbm::new(p, w);
+        let beta = 2.0;
+        let (ln_z, mean) = ebm.exact_by_quadrature(beta, -1.0, 1.0, 1200);
+        assert!(ln_z.is_finite());
+        let xs = ebm.run(beta, 30_000, 200_000, 5);
+        assert!(xs.iter().all(|x| x.iter().all(|v| v.abs() < 1.0)), "a sample left the support");
+        for d in 0..n {
+            let m: f64 = xs.iter().map(|x| x[d]).sum::<f64>() / xs.len() as f64;
+            assert!((m - mean[d]).abs() < 0.02, "unit {d}: sampled {m} vs quadrature {}", mean[d]);
+        }
+    }
+
+    /// A double well is bimodal, and the sampler visits both wells rather than one.
+    ///
+    /// This is the test a sampler that quietly assumes a unimodal conditional fails.
+    #[test]
+    fn the_double_well_is_sampled_on_both_sides() {
+        let ebm = ContinuousEbm::new(vec![Potential::DoubleWell { a: 1.0, b: 4.0 }], vec![0.0]);
+        let beta = 1.0;
+        let (_, mean) = ebm.exact_by_quadrature(beta, -4.0, 4.0, 40_000);
+        assert!(mean[0].abs() < 1e-9, "the double well is symmetric: {}", mean[0]);
+        let xs = ebm.run(beta, 20_000, 200_000, 7);
+        let left = xs.iter().filter(|x| x[0] < 0.0).count();
+        let frac = left as f64 / xs.len() as f64;
+        assert!((0.3..0.7).contains(&frac), "only {frac} of samples in the left well -- it is stuck");
+        // and the second moment, which a stuck chain would also get wrong
+        let m2: f64 = xs.iter().map(|x| x[0] * x[0]).sum::<f64>() / xs.len() as f64;
+        let pts: Vec<f64> = (0..40_000).map(|i| -4.0 + (i as f64 + 0.5) * 8.0 / 40_000.0).collect();
+        let ws: Vec<f64> = pts.iter().map(|&v| (-beta * ebm.energy(&[v])).exp()).collect();
+        let z: f64 = ws.iter().sum();
+        let want: f64 = pts.iter().zip(&ws).map(|(p, w)| w * p * p).sum::<f64>() / z;
+        assert!((m2 - want).abs() < 0.05, "second moment {m2} vs {want}");
+    }
+}
