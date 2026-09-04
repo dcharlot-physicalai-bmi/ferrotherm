@@ -419,6 +419,13 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 /// no others** — proved in the Kani harness and measured on P₄, P₅ and P₈, where the fabric returns
 /// exactly those tracks and nothing else.
 ///
+/// One extension of the class was tested and does not help. Odd couplers join tracks in the pairs
+/// `(0,1), (2,3), … (10,11)` at **every** `z`, so a chain could hop between partners partway along a
+/// wire — a richer shape than one segment per orientation. But partners share an offset group
+/// exactly (`off0` and `off1` are constant across each pair), so `a` and `b` are unchanged by the
+/// hop and every crossing condition is identical. The extra freedom buys nothing, which is worth
+/// knowing before anyone spends a day on it.
+///
 /// So the remaining eight chains to `busclique`'s `K_{12(m−1)}` are not a missing repair to this
 /// construction; they are outside its class. `busclique` routes on Pegasus's **fragment**
 /// decomposition — each qubit is six fragments — which lets a chain begin and end partway along a

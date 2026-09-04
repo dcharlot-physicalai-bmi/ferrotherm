@@ -124,16 +124,27 @@ Honesty about a reference includes where it is thin:
   `capacity_by_enumeration` reaches `0.8305` from exhaustive counting with no replica assumptions.
   Both agree with the published `0.833` and with each other. The term that decided the derivation
   is the Legendre pairing `−½q̂(1−q)`, not `−½qq̂`.
-- **Pegasus is 8 chains short** of `busclique`. The ceiling of the current construction is proved;
-  exceeding it needs fragment-granularity routing that is not built.
+- **Pegasus is 8 chains short** of `busclique`, and this is now the only open *software* gap. The
+  ceiling of the current construction is proved (interior segments forced, boundary exactly two
+  tracks per end), and the obvious extension is measured and ruled out: odd couplers join tracks in
+  fixed pairs at every `z`, but partners share an offset group exactly, so a track hop leaves every
+  crossing condition unchanged. Exceeding `K_172` needs `busclique`'s fragment-granularity routing —
+  a different class of chain, roughly a session's work with their source in hand.
 - **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
   ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
 - ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed.**
   `chain_log_z` is a transfer-operator oracle, `O(n · grid²)`, exact to the grid at any chain
   length; the nonlinear sampler is now verified at twelve units against an exact mean energy.
   Non-chain topologies past three units remain quadrature-bound.
-- **`Ferrotherm` is not in the Julia General registry** — `] add Ferrotherm` does not work, and the
-  JLL is self-hosted. A channel we list that a user would find missing.
+- ~~`Ferrotherm` is not in the Julia General registry, a channel we list that a user would find
+  missing~~ — **this entry was wrong, and the error is mine.** It is true that `] add Ferrotherm`
+  does not work, but that is a documented decision, not an oversight: `PACKAGING.md` analyses it and
+  declines General because registering there means submitting to their AutoMerge — the same posture
+  already declined for Yggdrasil — and because a Julia registry must be the root of its own
+  repository. The README never claims otherwise; its install line is `cargo add ferrotherm`. I
+  inferred a defect from a registry's absence without reading the document that explains it. The
+  real open choice, stated there, is between hosting an IPAI registry and leaving install-from-URL
+  as it is.
 
 ---
 
