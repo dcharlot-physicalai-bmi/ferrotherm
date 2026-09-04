@@ -59,7 +59,7 @@ export lattice2d, ring, z1_grid, frustrated, wishart
 export pegasus, zephyr, qubit
 export sparsify, logical_variables, copies, sparsify_offset, project
 export embed!, embed_sites, embed_longest, chain, site_lower_bound, embed_apply, unembed, clique_embed!
-export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti, ln_z_bar, ln_z_mean_field, ln_z_bethe
+export ln_z_exact, ln_z_ais!, ln_z_lower, ln_z_ess, ln_z_ti, ln_z_bar, ln_z_mean_field, ln_z_bethe, popanneal_ln_z_stderr
 export sweep!, anneal!, beta!, spins, spins!, energy, magnetization
 export threads_used, hardware_threads, exact_marginals
 export hfs!, hfs_moves, hfs_improving
@@ -245,6 +245,7 @@ const HuboPtr = Ptr{Cvoid}
 @cfn ft_ln_z_ais_ess Cdouble SimPtr
 @cfn ft_ln_z_ti Cdouble SimPtr Cdouble Cuint Cuint Cuint Cdouble Ptr{Cdouble} Ptr{Cdouble}
 @cfn ft_ln_z_bar Cdouble SimPtr Cdouble Cuint Cuint Cuint Ptr{Cdouble}
+@cfn ft_popanneal_ln_z_stderr Cdouble SimPtr
 @cfn ft_ln_z_mean_field Cdouble SimPtr Cdouble
 @cfn ft_ln_z_bethe Cdouble SimPtr Cdouble
 @cfn ft_builder_new BldPtr Cuint
@@ -628,6 +629,15 @@ function ln_z_bar(sim::Simulation, beta::Real; rungs::Integer = 32, burn_in::Int
     v = ft_ln_z_bar(sim.handle, Float64(beta), Cuint(rungs), Cuint(burn_in), Cuint(draws), se)
     (Float64(v), se[])
 end
+
+"""
+    popanneal_ln_z_stderr(sim) -> Float64
+
+A FAMILY-jackknife standard error on the last population anneal's `ln Z` (replicas sharing an
+ancestor are correlated, so whole families are deleted). Calibrated against enumeration, not
+fitted. `NaN` when too few families survived.
+"""
+popanneal_ln_z_stderr(sim::Simulation) = (_live(sim); Float64(ft_popanneal_ln_z_stderr(sim.handle)))
 
 """
     ln_z_mean_field(sim, beta) -> Float64

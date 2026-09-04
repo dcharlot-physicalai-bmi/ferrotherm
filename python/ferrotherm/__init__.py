@@ -218,6 +218,7 @@ _bls_iterations = _sig("ft_bls_iterations", c_uint64, [_p])
 _bls_max_jump = _sig("ft_bls_max_jump", c_uint32, [_p])
 _popanneal = _sig("ft_popanneal", c_double, [_p, c_uint32, c_uint32, c_double, c_uint32])
 _popanneal_ln_z = _sig("ft_popanneal_ln_z", c_double, [_p])
+_popanneal_ln_z_stderr = _sig("ft_popanneal_ln_z_stderr", ctypes.c_double, [_p])
 _popanneal_rho = _sig("ft_popanneal_rho", c_double, [_p])
 _branch = _sig("ft_branch", c_double, [_p, c_uint64])
 _branch_proved = _sig("ft_branch_proved", c_uint32, [_p])
@@ -507,12 +508,24 @@ class PopulationRun:
     ``population`` when the population collapsed onto a single ancestor. A run whose ``rho`` spiked
     explored one basin with ``population`` copies of one history, and its ``ln_z`` is worth nothing.
     ``trustworthy`` applies the usual rule of thumb; the number is there so you can apply your own.
+
+    ``ln_z_stderr`` is a **family** jackknife: replicas sharing an ancestor are correlated, so whole
+    families are deleted rather than replicas. It is calibrated against exact enumeration rather
+    than fitted — ``sd((ln_z - truth) / ln_z_stderr)`` comes out near 1.
+
+    >>> import math
+    >>> s = lattice2d(4)
+    >>> r = s.population_anneal(population=256, sweeps=2, beta_max=0.5, stages=32)
+    >>> abs(r.ln_z - s.ln_z_exact(0.5)) < 5 * r.ln_z_stderr
+    True
     """
 
-    __slots__ = ("energy", "ln_z", "rho", "population")
+    __slots__ = ("energy", "ln_z", "ln_z_stderr", "rho", "population")
 
-    def __init__(self, energy: float, ln_z: "float | None", rho: float, population: int) -> None:
+    def __init__(self, energy: float, ln_z: "float | None", rho: float, population: int,
+                 ln_z_stderr: "float | None" = None) -> None:
         self.energy, self.ln_z, self.rho, self.population = energy, ln_z, rho, population
+        self.ln_z_stderr = ln_z_stderr
 
     @property
     def trustworthy(self) -> bool:
@@ -1704,9 +1717,11 @@ is how a dropped GPU dispatch turns into a believable energy.
         self._live()
         e = float(_popanneal(self._h, int(population), int(sweeps), float(beta_max), int(stages)))
         ln_z = float(_popanneal_ln_z(self._h))
+        se = float(_popanneal_ln_z_stderr(self._h))
         return PopulationRun(
             energy=e,
             ln_z=None if ln_z != ln_z else ln_z,
+            ln_z_stderr=None if se != se else se,
             rho=float(_popanneal_rho(self._h)),
             population=int(population),
         )

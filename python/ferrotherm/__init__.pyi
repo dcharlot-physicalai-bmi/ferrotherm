@@ -153,7 +153,7 @@ class PlanarCut:
 
 class PopulationRun:
     """A population-annealing run, with the diagnostic that says whether to believe it."""
-    def __init__(self, energy: float, ln_z: 'float | None', rho: float, population: int) -> None:
+    def __init__(self, energy: float, ln_z: 'float | None', rho: float, population: int, ln_z_stderr: 'float | None' = None) -> None:
         ...
     def free_energy(self, beta: float, n: int) -> 'float | None':
         """``-ln Z / (beta * n)``, or ``None`` when ``ln_z`` is unavailable."""

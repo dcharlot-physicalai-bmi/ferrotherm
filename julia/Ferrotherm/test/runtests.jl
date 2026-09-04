@@ -625,6 +625,9 @@ end
     @test r.ln_z !== nothing && r.ln_z >= 12 * log(2) - 1e-9
     @test 1.0 <= r.rho <= r.population
     @test trustworthy(r) isa Bool
+    # the family-jackknife bar crosses the boundary, and is a positive, finite number
+    se = popanneal_ln_z_stderr(s)
+    @test isfinite(se) && se > 0.0
     # A one-step quench collapses the population onto one ancestor, and rho has to say so.
     q = population_anneal!(s; population = 64, sweeps = 1, beta_max = 40.0, stages = 1)
     @test q.rho > r.rho

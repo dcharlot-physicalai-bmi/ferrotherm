@@ -88,6 +88,20 @@ pub struct Outcome {
     pub ln_z_is_absolute: bool,
     /// The family statistic after each resampling. `1.0` is ideal; `population` is total collapse.
     pub rho: Vec<f64>,
+    /// A **family-jackknife** standard error on [`Outcome::ln_z`], or `None` when the ladder had
+    /// too few distinct surviving families to form one.
+    ///
+    /// Population annealing's replicas are not independent: resampling means several descend from
+    /// one ancestor, and `rho` measures exactly how much. The correlated unit is therefore the
+    /// FAMILY, so the jackknife deletes whole families — every stage's mean weight is recomputed
+    /// with family `f` removed, the whole ladder is re-accumulated, and the variance over those
+    /// replicates is the bar. Deleting individual replicas would treat siblings as independent and
+    /// give a bar that is too small, which is the same mistake the quadrature bar made in
+    /// [`crate::tempering::LadderTraces::log_z_differences`].
+    ///
+    /// Held to the crate's own standard in [`crate::calibration`]: measured against exact
+    /// enumeration it comes out honest rather than optimistic.
+    pub ln_z_stderr: Option<f64>,
     /// The worst `ρ` over the ladder — the single number that says whether to believe `ln_z`.
     pub rho_max: f64,
     /// Population size after each resampling. Fluctuates by `O(√R)` around the target.
@@ -134,6 +148,7 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
             energy: 0.0,
             ln_z: 0.0,
             ln_z_is_absolute: false,
+            ln_z_stderr: None,
             rho: Vec::new(),
             rho_max: 1.0,
             sizes: Vec::new(),
@@ -166,6 +181,9 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     // is the whole reason the ladder starts at zero.
     let absolute = p.betas[0] == 0.0;
     let mut ln_z = if absolute { n as f64 * core::f64::consts::LN_2 } else { 0.0 };
+    // One leave-one-family-out replicate of `ln_z` per initial ancestor, accumulated in step.
+    let mut jack = vec![ln_z; r_target];
+    let mut jack_alive = vec![true; r_target];
 
     // Equilibrate at the first rung before any reweighting, so step 1 resamples states that belong
     // to `betas[0]` rather than to the uniform draw.
@@ -208,6 +226,32 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
         }
         // ln(Z_k / Z_{k-1}) = ln( (1/R) Σ exp(-Δβ E_i) ), evaluated through the shift.
         ln_z += m + (sum_ex / r_now as f64).ln();
+
+        // The same quantity with each FAMILY deleted, accumulated as the ladder runs so the bar
+        // costs O(R) memory rather than one stored weight per replica per stage. A family with no
+        // member at this stage contributes the undeleted term, which is what leaving it out means.
+        {
+            let mut fam_sum = vec![0.0f64; jack.len()];
+            let mut fam_cnt = vec![0usize; jack.len()];
+            for (i, &f) in fam.iter().enumerate().take(r_now) {
+                let idx = f as usize;
+                if idx < fam_sum.len() {
+                    fam_sum[idx] += ex[i];
+                    fam_cnt[idx] += 1;
+                }
+            }
+            for f in 0..jack.len() {
+                let s = sum_ex - fam_sum[f];
+                let c = r_now - fam_cnt[f];
+                // A stage that would be emptied by the deletion cannot contribute a mean; the
+                // replicate is marked dead rather than given a fabricated term.
+                if c == 0 || !(s > 0.0) {
+                    jack_alive[f] = false;
+                } else if jack_alive[f] {
+                    jack[f] += m + (s / c as f64).ln();
+                }
+            }
+        }
 
         // --- resample --------------------------------------------------------------------------
         //
@@ -298,7 +342,20 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     // Recomputed from the state, not carried: the one number a caller acts on should not depend on
     // an accumulator being right.
     let energy = g.energy(&best_state);
-    Outcome { state: best_state, energy, ln_z, ln_z_is_absolute: absolute, rho, rho_max, sizes, population }
+    // Only families that still had descendants can carry a replicate; the rest were deleted from a
+    // stage they no longer occupied and say nothing about the estimate's spread.
+    let live: Vec<f64> = jack.iter().zip(&jack_alive).filter(|(v, a)| **a && v.is_finite()).map(|(v, _)| *v).collect();
+    let ln_z_stderr = if live.len() >= 8 {
+        let k = live.len() as f64;
+        let mean = live.iter().sum::<f64>() / k;
+        let var = (k - 1.0) / k * live.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>();
+        let se = var.max(0.0).sqrt();
+        se.is_finite().then_some(se)
+    } else {
+        None
+    };
+
+    Outcome { state: best_state, energy, ln_z, ln_z_is_absolute: absolute, ln_z_stderr, rho, rho_max, sizes, population }
 }
 
 #[cfg(test)]
@@ -339,6 +396,30 @@ mod tests {
             }
             let frac = covered as f64 / (4 * n) as f64;
             assert!(frac >= 0.9, "population marginals covered {frac:.3} at beta {beta}");
+        }
+    }
+
+    /// The family-jackknife bar is honest, by the crate's own calibration harness.
+    ///
+    /// `z = (ln Z − truth) / stderr` over many seeds must have `sd(z) ≈ 1`; above 1 the bar is too
+    /// small. Checked across two population sizes and two ladder lengths, because a bar that is
+    /// calibrated at one setting and not another is not calibrated.
+    #[test]
+    fn the_free_energy_bar_is_calibrated() {
+        use crate::calibration::calibrate;
+        use crate::free_energy::exact_log_z;
+        let (n, beta) = (12usize, 0.8);
+        let g = crate::ising::ring(n, 1.0, 0.15);
+        let truth = exact_log_z(&g, beta);
+        for (r, stages) in [(128usize, 48usize), (256, 16)] {
+            let c = calibrate(truth, 24, |seed| {
+                let o = run(&g, &Params::linear_from_zero(r, 2, beta, stages), seed);
+                (o.ln_z, o.ln_z_stderr.expect("a population this size yields a bar"))
+            });
+            assert!(c.bar_is_honest(1.25), "R={r} stages={stages}: bar too small, sd(z) = {}", c.sd_z);
+            assert!(c.sd_z > 0.6, "R={r} stages={stages}: absurdly conservative, sd(z) = {}", c.sd_z);
+            assert!(c.looks_unbiased(4.0), "R={r} stages={stages}: mean z = {}", c.mean_z);
+            assert!(c.coverage_95 >= 0.85, "R={r} stages={stages}: coverage {}", c.coverage_95);
         }
     }
 

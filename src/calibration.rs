@@ -34,6 +34,7 @@
 //! | `free_energy::Ais::lower_bound` | — | 0 violations in 60 at δ=0.1 | honest |
 //! | `bar_ladder` quadrature stderr | — | **1.28** | **too small by ~30%** |
 //! | `LadderTraces::log_z_total` jackknife | — | 0.81 | honest |
+//! | `popanneal::Outcome::ln_z_stderr` | +0.05 | 0.92 | honest |
 //!
 //! The conservatism of the `SampleSet` family is structural rather than accidental: the error bar
 //! deflates the sample count by the chain's `tau_int`, and `chain_tau` takes the SLOWEST of energy
@@ -42,23 +43,22 @@
 //! is too small costs correctness — and this table is what makes it a measured choice rather than
 //! a hope.
 //!
-//! # The one estimator with no bar
+//! # The bar this harness caused to exist
 //!
-//! `popanneal`'s `ln_z` is absent from the table because it reports **no bar at all**. Measured on
-//! a 12-spin ring it is unbiased (mean error `+0.003` at 512 replicas over 48 stages), and its
-//! run-to-run spread follows
+//! `popanneal` used to report `ln_z` with **no bar at all**. The first thing measured was an
+//! empirical scaling — its spread follows `1.7·√(ρ/(R·stages))` to within ±10% across a 16× range
+//! in replicas and 6× in stages — and that was *refused*: a constant fitted on one model is
+//! exactly the kind of number this crate declines to dress up as a guarantee.
 //!
-//! ```text
-//!   sd(ln Z)  ≈  1.7 · sqrt( rho / (R · stages) )
-//! ```
+//! What shipped instead is a **family jackknife**, which is principled rather than fitted.
+//! Population annealing's replicas are not independent — resampling makes several descend from one
+//! ancestor — so the correlated unit is the family, and the bar deletes whole families rather than
+//! individual replicas. Deleting replicas would treat siblings as independent and produce a bar
+//! that is too small, which is precisely the mistake `bar_ladder`'s quadrature sum made.
 //!
-//! to within ±10% across a 16× range in replicas `R` and 6× in `stages`, with `rho` the family
-//! statistic the outcome already reports. **That is a lead, not a bar, and it is not shipped as
-//! one**: the constant `1.7` was fitted on a single model, and a constant fitted on one instance
-//! is exactly the kind of number this crate refuses to dress up as a guarantee. What a caller can
-//! do today is the gold standard anyway — run `popanneal` a few times and take the spread, which
-//! costs what it costs and assumes nothing. A principled bar (the family-entropy relation of the
-//! population-annealing literature) is recorded as open.
+//! And it is only in the table above because it passed this harness: `sd(z)` of `0.92`–`1.10` with
+//! 95% coverage across two population sizes, two ladder lengths, two system sizes and two
+//! temperatures. Had it come out at `1.3`, it would not have shipped either.
 
 /// What a calibration run measured.
 #[derive(Clone, Debug, PartialEq)]

@@ -280,6 +280,27 @@ does not start at infinite temperature has free-energy *differences* but no abso
 exact ratio. That is the distinction `popanneal` already draws between an absolute `ln Z` and a
 relative one, applied here rather than quietly reporting the second as the first.
 
+### The bar the harness caused to exist: population annealing gets an honest one
+
+The calibration sweep found exactly one estimator reporting a number with no bar at all —
+`popanneal`'s `ln_z`. The first thing measured was an empirical scaling (`1.7·√(ρ/(R·stages))`,
+good to ±10% over a wide range) and it was **refused**: a constant fitted on one model is the kind
+of number this crate declines to dress up as a guarantee.
+
+What ships instead is a **family jackknife**, principled rather than fitted. Population annealing's
+replicas are not independent — resampling makes several descend from one ancestor, which is exactly
+what `rho` measures — so the correlated unit is the family, and the bar deletes whole families
+rather than replicas. Deleting replicas would treat siblings as independent and give a bar that is
+too small, the same mistake the quadrature sum made. Each stage's mean weight is recomputed with
+family `f` removed and the whole ladder re-accumulated; the variance over those replicates is the
+bar, accumulated as the run goes so it costs `O(R)` memory rather than one weight per replica per
+stage.
+
+**It shipped because it passed the harness, and it would not have otherwise**: `sd(z)` of
+`0.92`–`1.10` with 95% coverage, across two population sizes, two ladder lengths, two system sizes
+and two temperatures. `Outcome::ln_z_stderr`, `ft_popanneal_ln_z_stderr`, and the Python, Zig and
+Julia bindings; `None` rather than a fabricated number when too few families survive.
+
 ### Are the error bars honest? A harness, and the crate's own answers
 
 Finding a bar that was 30% too small raised the obvious question about the rest of them, and the

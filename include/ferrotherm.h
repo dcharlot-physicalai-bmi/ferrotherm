@@ -474,6 +474,10 @@ double ft_popanneal(ft_sim *sim, uint32_t population, uint32_t sweeps, double be
 
 /* ln Z at the final beta from the last ft_popanneal, or NaN if there was none. */
 double ft_popanneal_ln_z(const ft_sim *sim);
+/* A FAMILY-jackknife standard error on that ln Z (replicas sharing an ancestor are correlated, so
+ * whole families are deleted, not replicas). Calibrated against enumeration, not fitted. NaN when
+ * too few families survived. */
+double ft_popanneal_ln_z_stderr(const ft_sim *sim);
 
 /* Free energy: ln Z, with the guarantee each route carries. Reverse AIS is Rust-only (it needs
  * caller-supplied target draws). */

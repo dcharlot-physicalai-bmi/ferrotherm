@@ -235,6 +235,12 @@ pub const Sim = struct {
         return .{ .ln_z = v, .stderr = se };
     }
 
+    /// A FAMILY-jackknife standard error on the last population anneal's ln Z; NaN when too few
+    /// families survived. Calibrated against enumeration, not fitted.
+    pub fn popannealLnZStderr(self: Sim) f64 {
+        return c.ft_popanneal_ln_z_stderr(self.h);
+    }
+
     /// A DETERMINISTIC lower bound on `ln Z(beta)`: Gibbs-Bogoliubov at the mean-field fixed point.
     pub fn lnZMeanField(self: Sim, beta: f64) f64 {
         return c.ft_ln_z_mean_field(self.h, beta);

@@ -4302,6 +4302,20 @@ pub extern "C" fn ft_ln_z_bethe(sim: *const Sim, beta: f64) -> f64 {
     if b.converged(1e-8) { b.log_z } else { f64::NAN }
 }
 
+/// A family-jackknife standard error on the last [`ft_popanneal`]'s `ln Z`, or NaN when the run
+/// left too few surviving families to form one.
+///
+/// Population-annealing replicas are not independent -- resampling makes several descend from one
+/// ancestor -- so the bar deletes whole FAMILIES rather than replicas. Calibrated against exact
+/// enumeration (`sd(z)` near 1), not fitted.
+#[no_mangle]
+pub extern "C" fn ft_popanneal_ln_z_stderr(sim: *const Sim) -> f64 {
+    match unsafe { sim.as_ref() }.and_then(|s| s.pa.as_ref()) {
+        Some(o) => o.ln_z_stderr.unwrap_or(f64::NAN),
+        None => f64::NAN,
+    }
+}
+
 /// `ln Z` at the final β from the last [`ft_popanneal`], or NaN if there was none.
 #[no_mangle]
 pub extern "C" fn ft_popanneal_ln_z(sim: *const Sim) -> f64 {
