@@ -400,6 +400,31 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 /// convention trap (the Pegasus paper's clique uses a different shift vector than the
 /// `dwave-networkx` graph [`crate::device::pegasus`] reproduces) cannot bite.
 ///
+/// # Why this family stops here
+///
+/// `K_{12(m−2)+4}` is **optimal for chains built from one vertical and one horizontal wire
+/// segment**, and the two halves of that have different characters.
+///
+/// The interior is an algebraic fact. Writing the segments as `z ∈ [0, w−α(k)]` and
+/// `z ∈ [w−β(k), m−2]`, the requirement that every pair of chains at the same diagonal position
+/// cross forces `α ≤ min_k a(k,k′) = 0` and `β ≥ max_k b(k,k′) = 1` — so the segments are exactly
+/// `[0, w]` and `[w−1, m−2]`, and staying inside the fabric confines `w` to `[1, m−2]`. Nothing
+/// in this class does better than `m−2` diagonal positions.
+///
+/// The boundary is an arithmetic fact about the offset lists. An ell's corner sits at the SELF
+/// crossing of its own two wires, `z_v = w − a(k,k)` and `z_h = w − b(k,k)`. At `w = 0` the
+/// vertical segment is the single qubit `z = 0`, so the chain is connected only if `a(k,k) = 0`,
+/// and the horizontal segment begins at `0`, so only if `b(k,k) = 0` too; at `w = m−1` both must be
+/// `1`. Those conditions admit **tracks 10 and 11 at the hot end and 0 and 1 at the cold end, and
+/// no others** — proved in the Kani harness and measured on P₄, P₅ and P₈, where the fabric returns
+/// exactly those tracks and nothing else.
+///
+/// So the remaining eight chains to `busclique`'s `K_{12(m−1)}` are not a missing repair to this
+/// construction; they are outside its class. `busclique` routes on Pegasus's **fragment**
+/// decomposition — each qubit is six fragments — which lets a chain begin and end partway along a
+/// qubit, a shape a whole-qubit segment cannot express. Reaching `K_180` on P₁₆ means building at
+/// that granularity, and this construction's ceiling is proved rather than assumed.
+///
 /// # The four universal wires, and why exactly four
 ///
 /// The measured shifts obey `a(k, k') = [k' < off0[k]]` and `b(k, k') = [k < off1[k']]` with
@@ -533,6 +558,26 @@ mod proofs {
         // at z_row = m - 2 (b = 1), inside [w1 - 1, m - 2]; the row meets the ell's column at
         // z_col = 0 (a = 0), inside [0, w1].
         assert!(m - 2 >= w1 - 1);
+        // THE BOUNDARY IS EXACTLY TWO TRACKS PER END, which is what caps this family.
+        //
+        // An ell at diagonal position w has its corner at the SELF crossing of its own two wires,
+        // at z_v = w - a(k,k) and z_h = w - b(k,k). At w = 0 the vertical segment is the single
+        // qubit z = 0, so the chain is connected only if a(k,k) = 0, and the horizontal segment
+        // starts at 0, so only if b(k,k) = 0 as well. At w = m-1 the mirror holds: both must be 1.
+        // Those four conditions pick out two tracks at each end and no more.
+        let k2: usize = kani::any();
+        kani::assume(k2 < 12);
+        let a_self = OFF0[k2] > k2; // a(k,k) = [k < off0[k]]
+        let b_self = k2 < OFF1[k2]; // b(k,k) = [k < off1[k]]
+        assert!(
+            (!a_self && !b_self) == (k2 == 10 || k2 == 11),
+            "w = 0 connects exactly on tracks 10 and 11"
+        );
+        assert!(
+            (a_self && b_self) == (k2 == 0 || k2 == 1),
+            "w = m-1 connects exactly on tracks 0 and 1"
+        );
+
         // no other boundary wire is universal: some track defeats each candidate.
         let cand: usize = kani::any();
         kani::assume(cand < 12);
@@ -636,6 +681,54 @@ mod clique_tests {
         }
         assert!(zephyr_clique(0, 4).is_none());
         assert!(zephyr_clique(4, 0).is_none());
+    }
+
+    /// The fabric agrees with the arithmetic: exactly two boundary tracks connect at each end.
+    ///
+    /// The Kani harness proves this about the offset lists; this checks the same claim against the
+    /// graph the crate actually builds, at three sizes, by asking which boundary ells are connected.
+    /// A proof about a formula and a measurement on the fabric are different claims, and the value
+    /// of the first depends on the second.
+    #[test]
+    fn the_boundary_admits_exactly_two_tracks_at_each_end() {
+        for m in [4usize, 5, 8] {
+            let topo = crate::device::pegasus(m, 1.0);
+            let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
+            let build = |w: usize, k: usize| -> Option<Vec<usize>> {
+                let mut c = Vec::new();
+                let (ev, sh) = (w.min(m - 2), w.saturating_sub(1));
+                for z in 0..=ev {
+                    c.push(topo.node(lin(0, w, k, z))?);
+                }
+                for z in sh..=(m - 2) {
+                    c.push(topo.node(lin(1, w, k, z))?);
+                }
+                Some(c)
+            };
+            let connected = |c: &Vec<usize>| -> bool {
+                let mut seen = vec![false; c.len()];
+                seen[0] = true;
+                let mut stack = vec![0usize];
+                let mut count = 1;
+                while let Some(i) = stack.pop() {
+                    for e in topo.graph.offset[c[i]]..topo.graph.offset[c[i] + 1] {
+                        let y = topo.graph.nbr[e] as usize;
+                        if let Some(j) = c.iter().position(|&v| v == y) {
+                            if !seen[j] {
+                                seen[j] = true;
+                                count += 1;
+                                stack.push(j);
+                            }
+                        }
+                    }
+                }
+                count == c.len()
+            };
+            let hot: Vec<usize> = (0..12).filter(|&k| build(0, k).map(|c| connected(&c)).unwrap_or(false)).collect();
+            let cold: Vec<usize> = (0..12).filter(|&k| build(m - 1, k).map(|c| connected(&c)).unwrap_or(false)).collect();
+            assert_eq!(hot, vec![10, 11], "P{m}: hot-end tracks");
+            assert_eq!(cold, vec![0, 1], "P{m}: cold-end tracks");
+        }
     }
 
     /// The Pegasus clique is a valid minor at every size, with uniform chains -- the Advantage row.

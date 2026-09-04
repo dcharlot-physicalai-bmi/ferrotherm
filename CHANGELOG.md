@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Pegasus: the construction's ceiling is now proved, and the remaining eight chains are named
+
+`pegasus_clique` places `K_{12(m−2)+4}` — `K_172` on the Advantage's P₁₆ — against `busclique`'s
+`K_{12(m−1)} = K_180`. The eight-chain gap was recorded as "needs busclique's staggered-fragment
+construction". Working on it produced something better than the construction: a proof of where this
+family stops and why.
+
+**The interior is algebraic.** Writing an ell's segments as `z ∈ [0, w−α(k)]` and `z ∈ [w−β(k),
+m−2]`, requiring every pair at the same diagonal position to cross forces `α ≤ min a(k,k′) = 0` and
+`β ≥ max b(k,k′) = 1`. The segments are therefore exactly `[0, w]` and `[w−1, m−2]`, and staying on
+the fabric confines `w` to `[1, m−2]`. No choice in this class beats `m−2` diagonal positions.
+
+**The boundary is arithmetic about the offset lists.** An ell's corner is the self crossing of its
+own two wires, at `z_v = w − a(k,k)`, `z_h = w − b(k,k)`. At `w = 0` the vertical segment is one
+qubit, so connectivity needs `a(k,k) = 0`, and the horizontal segment starts at 0, so `b(k,k) = 0`
+too; at `w = m−1` both must be 1. Those conditions admit **exactly tracks 10 and 11 at the hot end
+and 0 and 1 at the cold end** — now part of the Pegasus Kani harness, and measured against the
+built fabric at P₄, P₅ and P₈, which returns precisely those tracks.
+
+A search over the whole candidate family confirmed the shape of the limit from the other side: on
+P₄ and P₅ *every* connected candidate is already mutually adjacent (28 of 28, 40 of 40), so the
+clique is not limited by adjacency at all — it is limited by which boundary chains can connect,
+which is the arithmetic above.
+
+**So the missing eight are not a repair to this construction; they are outside its class.**
+`busclique` routes on Pegasus's fragment decomposition — each qubit is six fragments — which lets a
+chain begin and end partway along a qubit, a shape a whole-qubit segment cannot express. That is
+the work reaching `K_180` requires, and the ceiling below it is now proved rather than assumed.
+
 ### The calibration table was measured over too few runs, and one verdict was wrong
 
 0.38.0 shipped a table of error-bar calibrations built on 24–40 runs each. Re-measured at **200 runs

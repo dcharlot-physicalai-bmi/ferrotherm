@@ -539,6 +539,13 @@ model above it. Recorded gap: continuous-state units *inside the EBM graph*, whi
 perceptron did not need (its couplings are a standalone vector) but continuous Hopfield and the
 original EqProp formulation do.
 
+**3.4a Pegasus's ceiling, proved.** `K_{12(m−2)+4}` is optimal for chains made of one vertical and
+one horizontal wire segment: the interior segments are forced (`α = 0`, `β = 1`, so `w ∈ [1, m−2]`)
+and the boundary admits exactly two tracks at each end (10 and 11 hot, 0 and 1 cold), proved in Kani
+and measured on P₄/P₅/P₈. Every connected candidate is already mutually adjacent, so adjacency is
+not the limit — connectivity is. The remaining eight chains to `busclique`'s `K_180` need routing at
+FRAGMENT granularity (six per qubit), which is a different class of chain, not a patch on this one.
+
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.
 
