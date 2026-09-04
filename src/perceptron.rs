@@ -222,6 +222,113 @@ impl Perceptron {
     }
 }
 
+// ---- the spherical case: continuous couplings, where Gardner's answer is exact ----------------
+//
+// Gardner's original question was about CONTINUOUS couplings on the sphere `|J|² = N`, and there
+// the replica-symmetric calculation is exact -- no symmetry breaking, because the solution space
+// is the intersection of half-spaces with a sphere, and that is connected. So the capacity has a
+// closed form, and the algorithmic story is the opposite of the binary one above -- but not in the
+// way a first guess suggests, and the measurement is worth stating precisely (N = 120, minover,
+// 8 instances, `best margin` at the largest budget):
+//
+//   alpha   2k iters   20k iters   200k iters   best margin
+//   1.5        7/8         8/8         8/8        +0.0253
+//   1.8        0/8         6/8         7/8        +0.0087
+//   1.9        0/8         3/8         5/8        +0.0085
+//   2.0        0/8         0/8         4/8        +0.0037
+//   2.2        0/8         0/8         0/8        -0.0505
+//
+// Below the capacity minover always gets there EVENTUALLY -- every failure is a budget, and more
+// iterations always help, because the maximum margin is positive and the problem is convex. The
+// budget diverges as `alpha` approaches 2 because that margin is going to zero. Above the capacity
+// the converged margin is NEGATIVE and no budget changes it: the failure belongs to the model.
+//
+// That is the real contrast with the binary case, where the failure belongs to neither -- the
+// margin is irrelevant because solutions are isolated points, and the failure is the ALGORITHM's,
+// getting worse with N at a fixed load. Here the sign of minover's converged margin says which
+// side of the transition an instance is on, which is a diagnosis the binary problem cannot offer.
+
+/// The standard normal CDF, from [`crate::hopfield::erf`].
+fn normal_cdf(x: f64) -> f64 {
+    0.5 * (1.0 + crate::hopfield::erf(x / core::f64::consts::SQRT_2))
+}
+
+fn normal_pdf(x: f64) -> f64 {
+    (-0.5 * x * x).exp() / (core::f64::consts::TAU).sqrt()
+}
+
+/// Gardner's capacity for continuous couplings at stability margin `kappa` (1988):
+///
+/// ```text
+///   1 / α_c(κ)  =  ∫_{−κ}^{∞} Dz (z + κ)²  =  (1 + κ²) Φ(κ) + κ φ(κ),
+/// ```
+///
+/// the integral evaluated in closed form. At `κ = 0` this is exactly **2** — the classical result
+/// that a perceptron stores two patterns per weight — and it decreases with the margin demanded.
+/// Unlike [`KRAUTH_MEZARD_CAPACITY`] this is *computed*, not cited: the replica-symmetric solution
+/// is exact for the spherical case, and the tests check the closed form against quadrature.
+pub fn gardner_capacity(kappa: f64) -> f64 {
+    1.0 / ((1.0 + kappa * kappa) * normal_cdf(kappa) + kappa * normal_pdf(kappa))
+}
+
+/// The same storage problem with couplings on the sphere `|J|² = N` instead of the hypercube.
+#[derive(Clone, Debug)]
+pub struct SphericalPerceptron {
+    pub patterns: Vec<Vec<i8>>,
+    pub n: usize,
+}
+
+impl SphericalPerceptron {
+    pub fn new(patterns: Vec<Vec<i8>>) -> Self {
+        let n = patterns.first().map_or(0, |p| p.len());
+        assert!(n > 0 && patterns.iter().all(|p| p.len() == n));
+        SphericalPerceptron { patterns, n }
+    }
+
+    pub fn random(n: usize, p: usize, seed: u64) -> Self {
+        SphericalPerceptron::new(crate::hopfield::random_patterns(n, p, seed))
+    }
+
+    pub fn load(&self) -> f64 {
+        self.patterns.len() as f64 / self.n as f64
+    }
+
+    /// The normalised stabilities `(J·ξ^μ) / (|J| √N)`, which is what `κ` is measured in.
+    pub fn stabilities(&self, j: &[f64]) -> Vec<f64> {
+        let norm = j.iter().map(|v| v * v).sum::<f64>().sqrt().max(f64::MIN_POSITIVE);
+        let scale = 1.0 / (norm * (self.n as f64).sqrt());
+        self.patterns.iter().map(|p| scale * p.iter().zip(j).map(|(&a, &b)| a as f64 * b).sum::<f64>()).collect()
+    }
+
+    /// The smallest normalised stability: positive iff `j` classifies every pattern.
+    pub fn margin(&self, j: &[f64]) -> f64 {
+        self.stabilities(j).into_iter().fold(f64::INFINITY, f64::min)
+    }
+
+    /// **Minover** (Krauth & Mézard 1987): repeatedly add the worst-classified pattern to the
+    /// coupling vector. It converges to the maximum-stability solution, which is why it is the
+    /// right algorithm to measure a capacity with — a failure is the problem's, not the search's.
+    ///
+    /// Returns the coupling vector and its margin.
+    pub fn minover(&self, iters: usize) -> (Vec<f64>, f64) {
+        let mut j = vec![0.0f64; self.n];
+        for p in &self.patterns {
+            for (v, &x) in j.iter_mut().zip(p) {
+                *v += x as f64;
+            }
+        }
+        for _ in 0..iters {
+            let st = self.stabilities(&j);
+            let (worst, _) = st.iter().enumerate().fold((0usize, f64::INFINITY), |(bi, bv), (i, &v)| if v < bv { (i, v) } else { (bi, bv) });
+            for (v, &x) in j.iter_mut().zip(&self.patterns[worst]) {
+                *v += x as f64;
+            }
+        }
+        let m = self.margin(&j);
+        (j, m)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +429,56 @@ mod tests {
         assert!(load < KRAUTH_MEZARD_CAPACITY, "the test load must sit below the capacity");
         assert_eq!(small, 12, "at N = 21, alpha = {load} is easy: {small} of 12");
         assert!(large <= 3, "at N = 201 the same load should be mostly out of reach: {large} of 12");
+    }
+
+    /// Gardner's closed form is exactly 2 at zero margin, and matches quadrature elsewhere.
+    #[test]
+    fn the_gardner_capacity_is_two_and_matches_quadrature() {
+        assert!((gardner_capacity(0.0) - 2.0).abs() < 1e-12, "alpha_c(0) = {}", gardner_capacity(0.0));
+        // midpoint quadrature of 1/alpha_c = int_{-k}^inf Dz (z+k)^2
+        let quad = |k: f64| {
+            let (lo, hi, m) = (-k, -k + 40.0, 400_000);
+            let h = (hi - lo) / m as f64;
+            let s: f64 = (0..m).map(|i| {
+                let z = lo + (i as f64 + 0.5) * h;
+                normal_pdf(z) * (z + k) * (z + k) * h
+            }).sum();
+            1.0 / s
+        };
+        for k in [-0.5, 0.0, 0.25, 0.5, 1.0, 2.0] {
+            let (c, q) = (gardner_capacity(k), quad(k));
+            assert!((c - q).abs() < 1e-4 * q.max(1.0), "kappa {k}: closed {c} vs quadrature {q}");
+        }
+        // it falls with the margin demanded, and the binary capacity is far below the spherical one
+        for w in [(-0.5, 0.0), (0.0, 0.5), (0.5, 1.0)] {
+            assert!(gardner_capacity(w.0) > gardner_capacity(w.1));
+        }
+        assert!(KRAUTH_MEZARD_CAPACITY < gardner_capacity(0.0) / 2.0);
+    }
+
+    /// Below the capacity, minover's failures are a BUDGET; above it, they are the MODEL. The sign
+    /// of the converged margin is the discriminator, and it is the diagnosis the binary problem
+    /// cannot offer.
+    #[test]
+    fn minovers_failures_are_a_budget_below_the_capacity_and_the_model_above_it() {
+        let n = 120;
+        let margins = |alpha: f64, iters: usize| -> Vec<f64> {
+            let p = (alpha * n as f64).round() as usize;
+            (0..6u64).map(|s| SphericalPerceptron::random(n, p, 4000 + s).minover(iters).1).collect()
+        };
+        // below the capacity: more iterations only ever help, and every instance is solved
+        let cheap = margins(1.5, 2_000);
+        let rich = margins(1.5, 20_000);
+        assert!(rich.iter().zip(&cheap).all(|(r, c)| r >= c), "more iterations never hurt below the capacity");
+        assert!(rich.iter().all(|&m| m > 0.0), "alpha 1.5 < 2 is solvable, and minover gets there: {rich:?}");
+        // above it: the converged margin is negative on every instance, and a 10x budget does not
+        // move it across zero, because there is nothing to find
+        let above = margins(2.2, 5_000);
+        let above_rich = margins(2.2, 50_000);
+        assert!(above.iter().all(|&m| m < 0.0) && above_rich.iter().all(|&m| m < 0.0), "alpha 2.2 > 2 has no solutions: {above_rich:?}");
+        // the binary sampler at a load FAR below its own capacity fails for the other reason
+        let bin = (0..8u64).filter(|&s| Perceptron::random(n, (0.5 * n as f64) as usize, 4100 + s).solve(0.05, 12.0, 60, 25, s).1 == 0).count();
+        assert!(bin < 8, "binary annealing at alpha 0.5, N = {n} should already be missing some: {bin} of 8");
     }
 
     /// The flip cost the sampler uses is the true energy difference.

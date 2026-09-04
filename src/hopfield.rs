@@ -156,14 +156,32 @@ pub fn ags_rs(alpha: f64, beta: f64) -> RsSolution {
     RsSolution { alpha, beta, m, q, r, iterations: it }
 }
 
-/// The error function, Abramowitz–Stegun 7.1.26: absolute error below `1.5e-7`, which is far
-/// inside what the `T = 0` equations below are asked to resolve.
+/// The error function, by the series `erf(x) = (2x/√π) e^{−x²} Σ_n (2x²)ⁿ / (1·3···(2n+1))`.
+///
+/// Maximum absolute error `1.4e-12` against a reference over `[−6, 6]`, and **exactly zero at
+/// zero**, which is what the closed forms built on it need: this replaced the Abramowitz–Stegun
+/// 7.1.26 rational approximation, whose `1.5e-7` error was invisible in the `T = 0` AGS equations
+/// but put `perceptron::gardner_capacity(0)` at `1.9999999980` where the theory says exactly 2.
+/// Beyond `|x| = 5` the complement is below `1.5e-12` and the sign is returned directly.
 pub fn erf(x: f64) -> f64 {
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let x = x.abs();
-    let t = 1.0 / (1.0 + 0.3275911 * x);
-    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
-    sign * (1.0 - poly * (-x * x).exp())
+    let ax = x.abs();
+    if ax > 5.0 {
+        return if x < 0.0 { -1.0 } else { 1.0 };
+    }
+    let x2 = ax * ax;
+    let (mut term, mut sum) = (1.0f64, 1.0f64);
+    let mut n = 0usize;
+    while term.abs() > 1e-18 * sum.abs() && n < 300 {
+        n += 1;
+        term *= 2.0 * x2 / (2.0 * n as f64 + 1.0);
+        sum += term;
+    }
+    let r = 2.0 * ax / core::f64::consts::PI.sqrt() * (-x2).exp() * sum;
+    if x < 0.0 {
+        -r
+    } else {
+        r
+    }
 }
 
 /// The AGS equations at `T = 0`, in their closed form:
@@ -241,9 +259,19 @@ mod tests {
 
     #[test]
     fn erf_is_accurate_where_it_is_used() {
-        for &(x, want) in &[(0.0, 0.0), (0.5, 0.520_499_877_8), (1.0, 0.842_700_792_9), (2.0, 0.995_322_265_0)] {
-            assert!((erf(x) - want).abs() < 2e-7 && (erf(-x) + want).abs() < 2e-7);
+        for &(x, want) in &[
+            (0.0, 0.0),
+            (0.5, 0.520_499_877_813_046_5),
+            (1.0, 0.842_700_792_949_714_9),
+            (2.0, 0.995_322_265_018_952_7),
+            (3.0, 0.999_977_909_503_001_4),
+        ] {
+            assert!((erf(x) - want).abs() < 1e-12, "erf({x}) = {}, want {want}", erf(x));
+            assert!((erf(-x) + want).abs() < 1e-12);
         }
+        assert_eq!(erf(0.0), 0.0, "exactly zero at zero, which the closed forms depend on");
+        assert_eq!(erf(9.0), 1.0);
+        assert_eq!(erf(-9.0), -1.0);
     }
 
     #[test]

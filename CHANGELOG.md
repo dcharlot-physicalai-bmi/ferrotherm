@@ -203,6 +203,41 @@ of 314 solvable instances. The freezing is asymptotic. **The gap opens with `N`,
 become unsatisfiable; the algorithm's reach shrank. Both halves are tested, and the negative one
 is the more useful.
 
+### The spherical perceptron, where the capacity is computed and the failure can be attributed
+
+Gardner's original question was about *continuous* couplings, and there the replica-symmetric
+calculation is exact — the solution space is an intersection of half-spaces with a sphere, so it is
+connected and nothing breaks. `gardner_capacity(κ) = 1 / [(1+κ²) Φ(κ) + κ φ(κ)]` is therefore
+**computed here, not cited**: the integral `∫_{−κ}^∞ Dz (z+κ)²` in closed form, checked against
+midpoint quadrature at six margins and returning **exactly 2.0** at `κ = 0`.
+
+**Exactly 2.0 needed a better error function.** The first version returned `1.9999999980`, because
+`hopfield::erf` was Abramowitz–Stegun 7.1.26 with `1.5e-7` error — invisible in the `T = 0` AGS
+equations it was written for, fatal to a closed form whose exactness is the claim. It is now the
+series `(2x/√π) e^{−x²} Σ (2x²)ⁿ/(1·3···(2n+1))`, accurate to `1.4e-12` over `[−6, 6]` and
+**exactly zero at zero**, which is what makes the capacity exactly 2. The AGS capacity is unchanged
+at `0.1379`.
+
+**Where the failure belongs — the measurement that corrected the expectation.** The plan was to
+show a local rule reaching the capacity where the binary sampler could not. What minover (Krauth–
+Mézard 1987) actually does at `N = 120`, over 8 instances:
+
+```text
+  alpha   2k iters   20k iters   200k iters   best margin
+  1.5        7/8         8/8         8/8        +0.0253
+  1.8        0/8         6/8         7/8        +0.0087
+  2.0        0/8         0/8         4/8        +0.0037
+  2.2        0/8         0/8         0/8        -0.0505
+```
+
+So "reaches the capacity" was too glib. Below `α_c` every failure is a **budget** — the maximum
+margin is positive and the problem convex, so more iterations always help, and the budget diverges
+as the margin goes to zero at `α = 2`. Above `α_c` the converged margin is **negative** at any
+budget: the failure belongs to the model. In the binary case it belongs to neither — the solutions
+exist and the search cannot reach them, and there is no margin to tell you which case you are in.
+The sign of minover's converged margin is a diagnosis the binary problem cannot offer, and that,
+rather than a success rate, is what the test asserts.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had

@@ -5,7 +5,9 @@
 //!
 //! usage: cargo run --release --example perceptron_capacity
 
-use ferrotherm::perceptron::{annealed_capacity, annealed_log_z, p_sat, Perceptron, KRAUTH_MEZARD_CAPACITY};
+use ferrotherm::perceptron::{
+    annealed_capacity, annealed_log_z, gardner_capacity, p_sat, Perceptron, SphericalPerceptron, KRAUTH_MEZARD_CAPACITY,
+};
 
 fn main() {
     // ---- 1. the first moment, exact at finite N ----------------------------------------------
@@ -75,5 +77,27 @@ fn main() {
     }
     println!("  At alpha = 0.5, far below the capacity, the success rate falls from 20/20 to 0/20 as N");
     println!("  grows. The instances did not become unsatisfiable -- the solution space is FROZEN into");
-    println!("  isolated points, and a local search has nothing to follow. Easy to verify, hard to find.");
+    println!("  isolated points, and a local search has nothing to follow. Easy to verify, hard to find.\n");
+
+    // ---- 5. the spherical case: the same question, a convex answer -----------------------------
+    println!("--- spherical couplings: Gardner's capacity is COMPUTED here, not cited");
+    println!("{:<10} {:>16}", "kappa", "alpha_c(kappa)");
+    for k in [-0.5, 0.0, 0.25, 0.5, 1.0, 2.0] {
+        println!("{k:<10.2} {:>16.6}", gardner_capacity(k));
+    }
+    println!("  alpha_c(0) = {} exactly: 1/[(1+k^2)Phi(k) + k phi(k)] at k = 0 is 1/(1/2).\n", gardner_capacity(0.0));
+
+    println!("--- minover on the sphere (N = 120, 8 instances): where the failure BELONGS");
+    println!("{:<8} {:>10} {:>11} {:>12} {:>14}", "alpha", "2k iters", "20k iters", "200k iters", "best margin");
+    for a in [1.5f64, 1.8, 1.9, 2.0, 2.2] {
+        let p = (a * 120.0).round() as usize;
+        let rate = |iters: usize| (0..8u64).filter(|&s| SphericalPerceptron::random(120, p, 4000 + s).minover(iters).1 > 0.0).count();
+        let best = (0..8u64).map(|s| SphericalPerceptron::random(120, p, 4000 + s).minover(200_000).1).fold(f64::NEG_INFINITY, f64::max);
+        println!("{a:<8.1} {:>10} {:>11} {:>12} {best:>+14.4}", format!("{}/8", rate(2_000)), format!("{}/8", rate(20_000)), format!("{}/8", rate(200_000)));
+    }
+    println!("  Below the capacity every failure is a BUDGET: the max margin is positive, the problem");
+    println!("  is convex, and more iterations always help -- the budget diverges as the margin goes to");
+    println!("  zero at alpha = 2. Above it the converged margin is NEGATIVE at any budget: the failure");
+    println!("  belongs to the model. In the binary case it belongs to neither -- solutions exist and");
+    println!("  the search cannot reach them, and no margin exists to tell you which case you are in.");
 }

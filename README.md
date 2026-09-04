@@ -559,7 +559,10 @@ is equilibrium propagation for Boltzmann machines, its gradient theorem held by 
 both of its convergence rates. `perceptron` is Gardner's storage problem on binary couplings, with
 its first-moment bound (a theorem), the Krauth–Mézard capacity (a citation) and exact enumeration
 kept apart — and the measured algorithmic gap: at `α = 0.5`, well under the capacity, annealing
-succeeds in 20 of 20 instances at `N = 21` and 0 of 20 at `N = 401`.
+succeeds in 20 of 20 instances at `N = 21` and 0 of 20 at `N = 401`. The spherical case is there
+too, with Gardner's `α_c(κ)` *computed* in closed form (exactly 2 at zero margin), where the
+convexity means a failure below the capacity is a budget and above it is the model — an
+attribution the binary problem cannot make.
 
 ### The machines you can actually rent
 

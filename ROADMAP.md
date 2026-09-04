@@ -521,8 +521,12 @@ reaches its exact ground state on a Chimera at a chain strength set relative to 
 
 The binary perceptron: first-moment bound (exact at finite `N`, both parities), Krauth–Mézard
 cited, enumeration by Gray code. Measured: no algorithmic gap at enumerable sizes (313 of 314),
-and the gap opening with `N` (20/20 → 0/20 at `α = 0.5` from `N = 21` to `401`). Recorded gaps:
-continuous-state units; the spherical perceptron (`α_c = 2`), which needs those.
+and the gap opening with `N` (20/20 → 0/20 at `α = 0.5` from `N = 21` to `401`). The spherical
+case is done too — `gardner_capacity` computed in closed form (exactly 2 at `κ = 0`, which needed
+a machine-precision `erf`), minover measured to fail on a budget below the capacity and on the
+model above it. Recorded gap: continuous-state units *inside the EBM graph*, which the spherical
+perceptron did not need (its couplings are a standalone vector) but continuous Hopfield and the
+original EqProp formulation do.
 
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.
