@@ -1807,6 +1807,11 @@ pub fn fit(req: &Json) -> Result<Json, String> {
         positive_sweeps: opt_usize(req, "positive_sweeps", d.positive_sweeps),
         learning_rate: opt_f64(req, "learning_rate", d.learning_rate),
         batch: opt_usize(req, "batch", d.batch),
+        // Persistent contrastive divergence, off by default. It is exposed because a caller
+        // training something larger than this crate can judge exactly will want it -- and the
+        // module's own measurements say it does NOT help at sizes where the exact likelihood is
+        // computable, which is why it is not the default.
+        persistent: req.get("persistent").and_then(|v| v.as_bool()).unwrap_or(d.persistent),
     };
     if !(p.learning_rate > 0.0) || !p.learning_rate.is_finite() {
         return Err(format!(

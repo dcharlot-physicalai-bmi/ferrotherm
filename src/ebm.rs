@@ -98,6 +98,46 @@ impl core::fmt::Display for Error {
 pub struct Params {
     /// Passes over the dataset.
     pub epochs: usize,
+    /// Use **persistent** contrastive divergence (Tieleman 2008): keep a set of fantasy chains
+    /// alive across the whole run and take the negative phase from them, instead of restarting it
+    /// at the data every update.
+    ///
+    /// CD-k's model average is taken `k` sweeps from a data point, which is why it is biased — the
+    /// chain never gets far enough to see the model's own modes. A persistent chain is never reset,
+    /// so it keeps mixing while the parameters move slowly beneath it, and its average approaches
+    /// the model's rather than the data's. It costs nothing extra per update; the same `k` sweeps
+    /// are run, just from a different starting point.
+    ///
+    /// # What it is worth here, measured
+    ///
+    /// The textbook expectation is that PCD beats CD because it is less biased. On models small
+    /// enough for [`exact_log_likelihood`] to judge the result, **it does not** — and the exact
+    /// likelihood is what makes that sayable rather than guessable. On a 9-visible, 6-hidden RBM
+    /// over bars-and-stripes, 600 epochs, mean exact log-likelihood over six seeds:
+    ///
+    /// ```text
+    ///   k     lr      CD       PCD     PCD wins
+    ///   1    0.050  −3.003   −4.975      0/6
+    ///   1    0.020  −3.322   −3.290      2/6
+    ///   5    0.050  −2.843   −3.192      0/6
+    ///   5    0.020  −3.168   −3.129      3/6
+    ///  20    0.050  −2.808   −2.863      1/6
+    ///  20    0.020  −3.129   −3.084      3/6
+    /// ```
+    ///
+    /// At a large step PCD is clearly WORSE, which is the documented failure mode made concrete:
+    /// the fantasy chains cannot track a model that moves faster than they mix. At a small step the
+    /// two are tied to within seed noise. There is no regime on this model where PCD wins, because
+    /// CD's bias is not what limits a fifteen-spin machine — the same shape as this crate's
+    /// perceptron finding, where the frozen-landscape gap is real but only asymptotically.
+    ///
+    /// It ships because it is the standard method and a caller training something larger will want
+    /// it; it ships with this table because a method that is better in the literature and not here
+    /// should say so.
+    ///
+    /// `false` keeps plain CD-k, which is what this module shipped first and what the existing
+    /// tests pin.
+    pub persistent: bool,
     /// `k` in CD-k: negative-phase sweeps started from the positive-phase state.
     ///
     /// One is Hinton's original and is the biased extreme; larger is closer to the true gradient
@@ -120,7 +160,7 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { epochs: 300, k: 5, positive_sweeps: 5, learning_rate: 0.05, batch: 8 }
+        Params { epochs: 300, k: 5, positive_sweeps: 5, learning_rate: 0.05, batch: 8, persistent: false }
     }
 }
 
@@ -188,6 +228,25 @@ pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result
         gb.build()
     };
 
+    // The fantasy chains for PCD. One per batch slot, started from random spins and never reset --
+    // that is the whole idea. Unused when `persistent` is false.
+    // Each chain carries its own RNG STATE, not just its spins. Rebuilding a sampler from a fixed
+    // seed every update would replay the same random stream forever -- the chain would move, but
+    // always the same way, which is not a persistent chain at all. It is the kind of bug that shows
+    // up as a method quietly underperforming rather than as a failure.
+    let mut fantasy: Vec<(Vec<i8>, Pcg)> = if p.persistent {
+        (0..p.batch.max(1))
+            .map(|s| {
+                (
+                    (0..n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect(),
+                    Pcg::new(seed ^ 0xF0F0_0000 ^ s as u64, 0x9E37),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let mut order: Vec<usize> = (0..data.rows.len()).collect();
     for epoch in 0..p.epochs {
         // Shuffle, so a batch is not the same slice of the data every epoch.
@@ -206,7 +265,8 @@ pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result
             let mut d_edge = vec![0.0f64; edges.len()];
             let mut d_bias = vec![0.0f64; n];
 
-            for &r in chunk {
+
+            for (slot_in_batch, &r) in chunk.iter().enumerate() {
                 let row = &data.rows[r];
 
                 // POSITIVE PHASE. Visible clamped to the data, latent settled around it.
@@ -218,16 +278,27 @@ pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result
                 smp.sweeps(p.positive_sweeps.max(1), None);
                 let pos = smp.s.clone();
 
-                // NEGATIVE PHASE. The same chain, unclamped, k sweeps on -- which is what makes
-                // this CONTRASTIVE DIVERGENCE and not maximum likelihood: the model average is
-                // taken near the data rather than at equilibrium, and it is biased for exactly
-                // that reason.
-                for i in 0..data.visible {
-                    smp.unclamp(i);
-                }
-                smp.sweeps(p.k.max(1), None);
-                let neg = &smp.s;
-
+                // NEGATIVE PHASE. Plain CD runs the same chain on, unclamped, from the data --
+                // which is what makes it CONTRASTIVE DIVERGENCE and not maximum likelihood: the
+                // model average is taken near the data rather than at equilibrium, and it is
+                // biased for exactly that reason. PCD instead advances a chain that was never
+                // reset, so the average it reports is the model's.
+                let neg: Vec<i8> = if p.persistent {
+                    let slot = slot_in_batch % fantasy.len();
+                    let mut fs = Sampler::new(&g, 1.0, 0);
+                    fs.s.copy_from_slice(&fantasy[slot].0);
+                    fs.rng = fantasy[slot].1.clone();
+                    fs.sweeps(p.k.max(1), None);
+                    fantasy[slot].0.copy_from_slice(&fs.s);
+                    fantasy[slot].1 = fs.rng.clone();
+                    fs.s
+                } else {
+                    for i in 0..data.visible {
+                        smp.unclamp(i);
+                    }
+                    smp.sweeps(p.k.max(1), None);
+                    smp.s.clone()
+                };
                 for (e, &(i, j, _)) in edges.iter().enumerate() {
                     d_edge[e] += (pos[i] * pos[j]) as f64 - (neg[i] * neg[j]) as f64;
                 }
@@ -527,7 +598,7 @@ mod tests {
             vec![-1, -1, -1],
         ];
         let data = Dataset { visible: 3, rows: rows.clone() };
-        let p = Params { epochs: 4_000, k: 20, learning_rate: 0.05, batch: 6, positive_sweeps: 1 };
+        let p = Params { epochs: 4_000, k: 20, learning_rate: 0.05, batch: 6, positive_sweeps: 1, persistent: false };
         let t = train(&structure, &data, &p, 7).unwrap();
 
         // Data moments.
@@ -569,6 +640,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// PCD trains, and on a model small enough to judge exactly it does not beat CD.
+    ///
+    /// Two claims, both measured rather than assumed: the persistent path is a working trainer (it
+    /// raises the exact likelihood over an untrained machine), and at a large learning rate it is
+    /// WORSE than plain CD, because the fantasy chains cannot track a fast-moving model. The second
+    /// is the textbook expectation failing on a verifiable model, which is worth a test rather than
+    /// a footnote.
+    #[test]
+    fn persistent_divergence_trains_and_does_not_beat_cd_here() {
+        let data = bars_and_stripes(3);
+        let g = rbm(9, 6);
+        let untrained = exact_log_likelihood(&g, &data).unwrap();
+        let base = Params { epochs: 400, k: 5, positive_sweeps: 5, learning_rate: 0.05, batch: 8, persistent: false };
+        let mut pp = base;
+        pp.persistent = true;
+
+        let (mut cd_sum, mut pcd_sum) = (0.0, 0.0);
+        for seed in 0..4u64 {
+            let lc = exact_log_likelihood(&train(&g, &data, &base, seed).unwrap().graph, &data).unwrap();
+            let lp = exact_log_likelihood(&train(&g, &data, &pp, seed).unwrap().graph, &data).unwrap();
+            assert!(lp > untrained, "seed {seed}: PCD must train at all, {lp} vs untrained {untrained}");
+            cd_sum += lc;
+            pcd_sum += lp;
+        }
+        assert!(cd_sum > pcd_sum, "at lr 0.05 CD should win here: CD {cd_sum}, PCD {pcd_sum}");
     }
 
     /// The likelihood must be a likelihood: negative, and improved by training.

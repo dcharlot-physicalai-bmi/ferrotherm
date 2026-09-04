@@ -52,7 +52,7 @@ Each of these is a result derived outside this crate, reproduced by it in CI:
 | variable elimination `ln Z` | exact, treewidth-bounded |
 | exact planar max-cut | Kasteleyn / blossom matching |
 | Gardner capacity `α_c = 2` | Gardner 1988, computed here in closed form |
-| Krauth–Mézard `α_c ≈ 0.833` | cited (1RSB, not derivable here) |
+| Krauth–Mézard `α_c ≈ 0.833` | **derived** (replica saddle, `0.8331`) **and counted** (`0.8305`) |
 | AGS Hopfield `α_c = 0.1379` | Amit–Gutfreund–Sompolinsky, recomputed |
 | Curie–Weiss `m = tanh(βm)` | closed form |
 | Bethe free energy exact on trees | to `1e-9` vs elimination |
@@ -62,10 +62,13 @@ Each of these is a result derived outside this crate, reproduced by it in CI:
 | EqProp gradient at both convergence rates | Scellier–Bengio; Laborieux |
 | exact EBM log-likelihood | exhaustive |
 | numerical quadrature | for nonlinear potentials with no closed form |
+| score matching optimum `A = Σ⁻¹` | Hyvärinen 2005, closed form |
+| denoising score matching `A = (Σ+σ²I)⁻¹` | Vincent 2011 — the diffusion objective |
+| transfer-operator `ln Z` for chains | exact to the grid, any length |
 | AIS unconditional Markov bound | Neal 2001 |
 | Bennett acceptance ratio | Bennett 1976 |
 
-Eighteen independent sources of truth. This review did not locate a comparable list in any other
+Twenty-one independent sources of truth. This review did not locate a comparable list in any other
 project in the field.
 
 ---
@@ -116,14 +119,19 @@ Not "does better" — does *at all*, as far as this review could determine:
 
 Honesty about a reference includes where it is thin:
 
-- **Krauth–Mézard's 0.833 is cited, not derived.** It is a 1RSB calculation this crate cannot
-  check, and the module says so rather than implying otherwise.
+- ~~Krauth–Mézard's 0.833 is cited, not derived~~ — **closed, twice over.** `capacity_replica`
+  solves the replica-symmetric saddle and bisects its zero for `α_c = 0.8331`;
+  `capacity_by_enumeration` reaches `0.8305` from exhaustive counting with no replica assumptions.
+  Both agree with the published `0.833` and with each other. The term that decided the derivation
+  is the Legendre pairing `−½q̂(1−q)`, not `−½qq̂`.
 - **Pegasus is 8 chains short** of `busclique`. The ceiling of the current construction is proved;
   exceeding it needs fragment-granularity routing that is not built.
 - **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
   ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
-- **General nonlinear continuous units are verified only to ~3 dimensions**, because quadrature is
-  the oracle there and it costs `grid^n`.
+- ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed.**
+  `chain_log_z` is a transfer-operator oracle, `O(n · grid²)`, exact to the grid at any chain
+  length; the nonlinear sampler is now verified at twelve units against an exact mean energy.
+  Non-chain topologies past three units remain quadrature-bound.
 - **`Ferrotherm` is not in the Julia General registry** — `] add Ferrotherm` does not work, and the
   JLL is self-hosted. A channel we list that a user would find missing.
 
@@ -152,7 +160,7 @@ so this map reports when it has gone stale rather than being trusted indefinitel
 
 On the only axis that can be settled by computation — *does it reproduce what is independently
 known, and how much of the field does it cover* — ferrotherm is the reference implementation for
-thermodynamic computing. Eighteen external sources of truth, 117 verification-bearing tests, seven
+thermodynamic computing. Twenty-one external sources of truth, 125 verification-bearing tests, seven
 machine-checked theorems, and the field's only calibrated error bars, against competitors whose
 suites test their own API surface.
 

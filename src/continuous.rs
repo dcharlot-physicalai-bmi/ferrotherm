@@ -619,6 +619,76 @@ impl ContinuousEbm {
     }
 }
 
+impl ContinuousEbm {
+    /// `ln Z` of an open CHAIN by the transfer operator — exact to the grid, at any length.
+    ///
+    /// [`Self::exact_by_quadrature`] is capped near three units because a product rule costs
+    /// `grid^n`. A chain does not need one: discretising each variable on `grid` points makes the
+    /// partition function a product of `grid × grid` transfer matrices,
+    ///
+    /// ```text
+    ///   Z = 1ᵀ T₁ T₂ ⋯ T_{n−1} 1 · h^n,
+    ///   T_i[a,b] = exp(−β( ½V_i(x_a) + ½V_{i+1}(x_b) − W_{i,i+1} x_a x_b ))
+    /// ```
+    ///
+    /// which is `O(n · grid²)` — linear in the number of units. So a nonlinear chain of twenty
+    /// units has an exact answer where quadrature refuses past three, and the sampler can be held
+    /// to it at a size where its own behaviour is interesting.
+    ///
+    /// Requires the couplings to form an open chain: only `W_{i,i+1}` may be non-zero. Returns
+    /// `None` otherwise rather than silently pretending the extra couplings are not there.
+    pub fn chain_log_z(&self, beta: f64, lo: f64, hi: f64, grid: usize) -> Option<f64> {
+        let n = self.n();
+        assert!(grid >= 2);
+        if n < 2 {
+            return None;
+        }
+        for i in 0..n {
+            for j in 0..n {
+                if j > i + 1 && self.w[i * n + j] != 0.0 {
+                    return None; // not a chain
+                }
+            }
+        }
+        let h = (hi - lo) / grid as f64;
+        let x: Vec<f64> = (0..grid).map(|k| lo + (k as f64 + 0.5) * h).collect();
+        let v: Vec<Vec<f64>> = (0..n).map(|i| x.iter().map(|&u| self.potentials[i].energy(u)).collect()).collect();
+        // carry a log-scale running vector to keep the product from underflowing
+        let mut log_scale = 0.0f64;
+        // Each transfer matrix carries HALF of the potential at each of its two sites, so an
+        // interior site collects two halves and is counted once -- but the two END sites appear in
+        // only one matrix each and would be counted half. The missing halves go here and at the
+        // close, which is a boundary term: getting it wrong costs a constant offset independent of
+        // the chain length, which is exactly how the omission was found.
+        let mut vec: Vec<f64> = (0..grid).map(|a| (-beta * 0.5 * v[0][a]).exp()).collect();
+        for i in 0..(n - 1) {
+            let w = self.w[i * n + (i + 1)];
+            let mut next = vec![0.0f64; grid];
+            for b in 0..grid {
+                let mut acc = 0.0;
+                for a in 0..grid {
+                    let e = 0.5 * v[i][a] + 0.5 * v[i + 1][b] - w * x[a] * x[b];
+                    if e.is_finite() {
+                        acc += vec[a] * (-beta * e).exp();
+                    }
+                }
+                next[b] = acc;
+            }
+            let mx = next.iter().cloned().fold(0.0f64, f64::max);
+            if !(mx > 0.0) {
+                return None;
+            }
+            for u in next.iter_mut() {
+                *u /= mx;
+            }
+            log_scale += mx.ln();
+            vec = next;
+        }
+        let total: f64 = vec.iter().enumerate().map(|(b, u)| u * (-beta * 0.5 * v[n - 1][b]).exp()).sum();
+        Some(log_scale + total.ln() + n as f64 * h.ln())
+    }
+}
+
 #[cfg(test)]
 mod nonlinear_tests {
     use super::*;
@@ -662,6 +732,62 @@ mod nonlinear_tests {
         }
     }
 
+    /// The transfer operator agrees with quadrature, and then goes where quadrature cannot.
+    #[test]
+    fn the_transfer_operator_matches_quadrature_and_scales_past_it() {
+        let chain = |n: usize, p: Potential, w: f64| {
+            let mut m = vec![0.0; n * n];
+            for i in 0..(n - 1) {
+                m[i * n + i + 1] = w;
+                m[(i + 1) * n + i] = w;
+            }
+            ContinuousEbm::new(vec![p; n], m)
+        };
+        let e = chain(2, Potential::HopfieldTanh { gain: 1.0 }, 0.7);
+        let (q, _) = e.exact_by_quadrature(1.5, -1.0, 1.0, 1200);
+        let tr = e.chain_log_z(1.5, -1.0, 1.0, 1200).unwrap();
+        assert!((q - tr).abs() < 1e-9, "quadrature {q} vs transfer {tr}");
+
+        // grid convergence: the answer must stop moving
+        let long = chain(12, Potential::DoubleWell { a: 1.0, b: 2.0 }, 0.4);
+        let a = long.chain_log_z(1.0, -3.0, 3.0, 300).unwrap();
+        let b = long.chain_log_z(1.0, -3.0, 3.0, 900).unwrap();
+        assert!((a - b).abs() < 1e-6, "grid 300 gives {a}, grid 900 gives {b}");
+
+        // a graph that is not a chain is refused rather than answered wrongly
+        let mut w = vec![0.0; 9];
+        w[2] = 0.5;
+        w[6] = 0.5;
+        assert!(ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; 3], w)
+            .chain_log_z(1.0, -3.0, 3.0, 50)
+            .is_none());
+    }
+
+    /// The nonlinear SAMPLER is now checkable at twelve units, where quadrature refuses past three.
+    ///
+    /// `⟨E⟩ = −d ln Z / dβ`, and the transfer operator gives `ln Z` exactly, so a central
+    /// difference gives an exact mean energy to hold a twelve-unit chain of double wells to. This
+    /// is the whole point of the operator: the sampler is verified at a size where its behaviour is
+    /// interesting rather than only where a product rule can still run.
+    #[test]
+    fn a_twelve_unit_nonlinear_chain_is_verified_against_the_transfer_operator() {
+        let n = 12;
+        let mut w = vec![0.0; n * n];
+        for i in 0..(n - 1) {
+            w[i * n + i + 1] = 0.4;
+            w[(i + 1) * n + i] = 0.4;
+        }
+        let ebm = ContinuousEbm::new(vec![Potential::DoubleWell { a: 1.0, b: 2.0 }; n], w);
+        let beta = 1.0;
+        let h = 1e-4;
+        let up = ebm.chain_log_z(beta + h, -3.5, 3.5, 700).unwrap();
+        let dn = ebm.chain_log_z(beta - h, -3.5, 3.5, 700).unwrap();
+        let want = -(up - dn) / (2.0 * h);
+        let xs = ebm.run(beta, 40_000, 300_000, 19);
+        let got: f64 = xs.iter().map(|x| ebm.energy(x)).sum::<f64>() / xs.len() as f64;
+        assert!((got - want).abs() < 0.12, "sampled <E> {got} vs transfer-operator {want}");
+    }
+
     /// A double well is bimodal, and the sampler visits both wells rather than one.
     ///
     /// This is the test a sampler that quietly assumes a unimodal conditional fails.
@@ -682,5 +808,243 @@ mod nonlinear_tests {
         let z: f64 = ws.iter().sum();
         let want: f64 = pts.iter().zip(&ws).map(|(p, w)| w * p * p).sum::<f64>() / z;
         assert!((m2 - want).abs() < 0.05, "second moment {m2} vs {want}");
+    }
+}
+
+// ---- score matching ---------------------------------------------------------------------------
+//
+// Training an energy-based model by maximum likelihood needs the gradient of `ln Z`, which is an
+// expectation under the model, which needs sampling -- that is contrastive divergence, and it is
+// why EBMs were hard. Hyvärinen (2005) removed the partition function from the problem entirely:
+// minimise the expected squared distance between the model's score `∇_x ln p` and the data's, and
+// since `∇_x ln p = −∇_x E` the normaliser differentiates away. Integrating by parts leaves an
+// objective in the model's derivatives alone:
+//
+//   J(θ) = E_data[ Σ_i ( ½ (∂_i E)² − ∂²_i E ) ]
+//
+// No sampling, no `ln Z`, one pass over the data. It is the line that runs from EBMs to denoising
+// score matching to diffusion models, and it is the training method this crate did not have.
+//
+// For the Gaussian family it is not only tractable but EXACTLY SOLVABLE, which is what makes it
+// checkable here: with `E = ½xᵀAx − bᵀx`, `∂_i E = (Ax − b)_i` and `∂²_i E = A_ii`, so
+// `J = E[½‖Ax − b‖² − tr A]`, and setting both gradients to zero gives
+//
+//   b = A μ,      A Σ = I      ⇒     A = Σ⁻¹,   b = Σ⁻¹ μ
+//
+// The score-matching optimum for a Gaussian is the inverse covariance. That is a closed form to
+// hold the fit against, and the test does exactly that: generate from a known `A`, fit, recover it.
+
+/// The Hyvärinen score-matching objective of a Gaussian model on `data`.
+///
+/// `J = mean over data of ( ½‖Ax − b‖² − tr A )`. Lower is better; the minimiser is
+/// [`score_match_gaussian`].
+pub fn score_matching_objective(g: &Gbm, data: &[Vec<f64>]) -> f64 {
+    assert_eq!(g.n_spin, 0, "score matching here is for the continuous part");
+    let n = g.n_real;
+    let tr: f64 = (0..n).map(|i| g.a[i * n + i]).sum();
+    let mut acc = 0.0;
+    for x in data {
+        for i in 0..n {
+            let mut s = -g.b[i];
+            for k in 0..n {
+                s += g.a[i * n + k] * x[k];
+            }
+            acc += 0.5 * s * s;
+        }
+        acc -= tr;
+    }
+    acc / data.len() as f64
+}
+
+/// Fit a Gaussian energy-based model to `data` by score matching, in closed form.
+///
+/// Returns the exact minimiser `A = Σ⁻¹`, `b = Σ⁻¹ μ` of [`score_matching_objective`] — no
+/// sampling, no partition function, one pass. `None` when the sample covariance is singular, which
+/// is the honest answer for data that does not determine a model (fewer samples than dimensions,
+/// or an exactly collinear coordinate).
+pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
+    let n = data.first()?.len();
+    let k = data.len() as f64;
+    if data.len() <= n {
+        return None;
+    }
+    let mu: Vec<f64> = (0..n).map(|i| data.iter().map(|x| x[i]).sum::<f64>() / k).collect();
+    let mut cov = vec![0.0; n * n];
+    for x in data {
+        for i in 0..n {
+            for j in 0..n {
+                cov[i * n + j] += (x[i] - mu[i]) * (x[j] - mu[j]);
+            }
+        }
+    }
+    for v in cov.iter_mut() {
+        *v /= k - 1.0;
+    }
+    let a = inverse(&cov, n)?;
+    let b = (0..n).map(|i| (0..n).map(|j| a[i * n + j] * mu[j]).sum()).collect();
+    Some(Gbm::gaussian(n, a, b))
+}
+
+/// Fit by **denoising** score matching (Vincent 2011) at noise level `sigma`.
+///
+/// Instead of matching the score of the data, match the score of the data convolved with
+/// `N(0, σ²I)`. Two things follow, and the second is why this function is here.
+///
+/// First, it is easier: the perturbed density is smooth even where the data lie on a manifold, so
+/// the objective is well behaved where plain score matching is not.
+///
+/// Second, **this is the objective that trains diffusion models.** A diffusion model is a score
+/// model fitted by denoising score matching at a ladder of noise levels; the line runs from an
+/// energy-based model through Hyvärinen's identity to Vincent's denoising form to the training loop
+/// behind modern generative AI. That line ends in this crate, and it ends with a closed form to
+/// check it against: for a Gaussian the perturbed distribution is `N(μ, Σ + σ²I)`, so the optimum is
+///
+/// ```text
+///   A = (Σ + σ²I)⁻¹,     b = A μ
+/// ```
+///
+/// which the test verifies by generating from a known `Σ` and recovering it. `None` on the same
+/// condition as [`score_match_gaussian`].
+pub fn denoising_score_match_gaussian(data: &[Vec<f64>], sigma: f64) -> Option<Gbm> {
+    assert!(sigma >= 0.0, "a noise level is not negative");
+    let n = data.first()?.len();
+    let k = data.len() as f64;
+    if data.len() <= n {
+        return None;
+    }
+    let mu: Vec<f64> = (0..n).map(|i| data.iter().map(|x| x[i]).sum::<f64>() / k).collect();
+    let mut cov = vec![0.0; n * n];
+    for x in data {
+        for i in 0..n {
+            for j in 0..n {
+                cov[i * n + j] += (x[i] - mu[i]) * (x[j] - mu[j]);
+            }
+        }
+    }
+    for v in cov.iter_mut() {
+        *v /= k - 1.0;
+    }
+    // the perturbed covariance, which is what the denoising objective is fitting
+    for i in 0..n {
+        cov[i * n + i] += sigma * sigma;
+    }
+    let a = inverse(&cov, n)?;
+    let b = (0..n).map(|i| (0..n).map(|j| a[i * n + j] * mu[j]).sum()).collect();
+    Some(Gbm::gaussian(n, a, b))
+}
+
+#[cfg(test)]
+mod score_tests {
+    use super::*;
+
+    fn spd(n: usize, seed: u64) -> Vec<f64> {
+        let mut rng = Pcg::new(seed, 5);
+        let m: Vec<f64> = (0..n * n).map(|_| rng.f64() - 0.5).collect();
+        let mut a = vec![0.0; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                let mut s = 0.0;
+                for k in 0..n {
+                    s += m[i * n + k] * m[j * n + k];
+                }
+                a[i * n + j] = s + if i == j { n as f64 } else { 0.0 };
+            }
+        }
+        a
+    }
+
+    /// Score matching recovers the model that generated the data, without ever touching ln Z.
+    ///
+    /// The generating `A` is known, the fit is closed form, and the two are compared entry by
+    /// entry. This is the whole claim of the method: the partition function never appears.
+    #[test]
+    fn score_matching_recovers_the_generating_model() {
+        let n = 3;
+        let a = spd(n, 23);
+        let b: Vec<f64> = (0..n).map(|i| 0.3 * i as f64 - 0.2).collect();
+        let truth = Gbm::gaussian(n, a.clone(), b.clone());
+        // draw from the model at beta = 1, where A is exactly the precision
+        let (xs, _) = truth.collect(1.0, 5_000, 400_000, 11);
+        let fit = score_match_gaussian(&xs).expect("enough data to determine a model");
+        for i in 0..n {
+            for j in 0..n {
+                let (got, want) = (fit.a[i * n + j], a[i * n + j]);
+                assert!((got - want).abs() < 0.06 * want.abs().max(1.0), "A({i},{j}) = {got}, want {want}");
+            }
+            assert!((fit.b[i] - b[i]).abs() < 0.06, "b({i}) = {}, want {}", fit.b[i], b[i]);
+        }
+    }
+
+    /// The closed form is the minimiser: perturbing it in any direction raises the objective.
+    #[test]
+    fn the_closed_form_is_the_score_matching_minimum() {
+        let n = 2;
+        let truth = Gbm::gaussian(n, spd(n, 29), vec![0.4, -0.3]);
+        let (xs, _) = truth.collect(1.0, 3_000, 60_000, 13);
+        let fit = score_match_gaussian(&xs).unwrap();
+        let base = score_matching_objective(&fit, &xs);
+        let mut rng = Pcg::new(31, 0);
+        for _ in 0..40 {
+            let mut p = fit.clone();
+            let (i, j) = ((rng.f64() * n as f64) as usize % n, (rng.f64() * n as f64) as usize % n);
+            let d = 0.05 * (rng.f64() - 0.5);
+            p.a[i * n + j] += d;
+            p.a[j * n + i] += d; // keep it symmetric, which the family requires
+            assert!(score_matching_objective(&p, &xs) >= base - 1e-12, "a perturbation lowered the objective");
+        }
+        // and it beats a deliberately wrong model by a wide margin
+        let wrong = Gbm::gaussian(n, vec![1.0, 0.0, 0.0, 1.0], vec![0.0, 0.0]);
+        assert!(score_matching_objective(&wrong, &xs) > base);
+    }
+
+    /// Denoising score matching recovers the PERTURBED model, which is the diffusion objective.
+    ///
+    /// Fitting at noise `sigma` must return the score of `N(mu, Sigma + sigma^2 I)`, so the
+    /// recovered precision is `(Sigma + sigma^2 I)^-1` -- checked against the generating `Sigma`
+    /// rather than against the fit's own output. At `sigma = 0` it must agree with plain score
+    /// matching exactly.
+    #[test]
+    fn denoising_score_matching_recovers_the_perturbed_model() {
+        let n = 3;
+        let a = spd(n, 37);
+        let truth = Gbm::gaussian(n, a.clone(), vec![0.0; n]);
+        let sigma_data = inverse(&a, n).unwrap(); // Sigma = A^-1 at beta = 1
+        let (xs, _) = truth.collect(1.0, 5_000, 400_000, 17);
+        for sigma in [0.0, 0.3, 0.8] {
+            let fit = denoising_score_match_gaussian(&xs, sigma).unwrap();
+            // expected precision: (Sigma + sigma^2 I)^-1
+            let mut pert = sigma_data.clone();
+            for i in 0..n {
+                pert[i * n + i] += sigma * sigma;
+            }
+            let want = inverse(&pert, n).unwrap();
+            for i in 0..n {
+                for j in 0..n {
+                    let (got, w) = (fit.a[i * n + j], want[i * n + j]);
+                    assert!((got - w).abs() < 0.08 * w.abs().max(1.0), "sigma {sigma} A({i},{j}) = {got}, want {w}");
+                }
+            }
+        }
+        // sigma = 0 is plain score matching, exactly
+        let plain = score_match_gaussian(&xs).unwrap();
+        let dsm0 = denoising_score_match_gaussian(&xs, 0.0).unwrap();
+        for i in 0..(n * n) {
+            assert!((plain.a[i] - dsm0.a[i]).abs() < 1e-12);
+        }
+        // more noise means a flatter model: the precision shrinks
+        let lo = denoising_score_match_gaussian(&xs, 0.2).unwrap();
+        let hi = denoising_score_match_gaussian(&xs, 1.5).unwrap();
+        for i in 0..n {
+            assert!(hi.a[i * n + i] < lo.a[i * n + i], "noise must flatten the model");
+        }
+    }
+
+    /// Data that does not determine a model is refused, not fitted.
+    #[test]
+    fn underdetermined_data_is_refused() {
+        assert!(score_match_gaussian(&[vec![1.0, 2.0], vec![2.0, 4.0]]).is_none(), "2 points in 2D");
+        // an exactly collinear coordinate leaves the covariance singular
+        let collinear: Vec<Vec<f64>> = (0..50).map(|i| { let t = i as f64; vec![t, 2.0 * t] }).collect();
+        assert!(score_match_gaussian(&collinear).is_none(), "a collinear coordinate has no inverse covariance");
     }
 }

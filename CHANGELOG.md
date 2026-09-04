@@ -1,5 +1,92 @@
 # Changelog
 
+## Unreleased
+
+### Score matching, and the line from energy-based models to diffusion
+
+Training an energy-based model by maximum likelihood needs the gradient of `ln Z`, which needs
+sampling — that is contrastive divergence, and it is why EBMs were hard. Hyvärinen (2005) removed
+the partition function from the problem: match the model's score `∇_x ln p = −∇_x E` to the data's,
+integrate by parts, and what is left involves only the model's derivatives. No sampling, no `ln Z`,
+one pass over the data. This crate did not have it.
+
+`score_matching_objective` and `score_match_gaussian` add it, and the Gaussian family makes it
+**exactly checkable**: with `E = ½xᵀAx − bᵀx` the objective is `E[½‖Ax − b‖² − tr A]`, whose
+minimiser is `A = Σ⁻¹`, `b = Σ⁻¹μ` — the inverse covariance, in closed form. The test generates from
+a known `A`, fits, and recovers it entry by entry; a second test perturbs the closed form in forty
+random directions and checks that every one raises the objective.
+
+**And the reason it is here.** `denoising_score_match_gaussian` is Vincent's (2011) denoising form —
+match the score of the data convolved with `N(0, σ²I)` — which is **the objective that trains
+diffusion models**. A diffusion model is a score model fitted this way at a ladder of noise levels.
+That line runs from an energy-based model through Hyvärinen's identity to Vincent's denoising form
+to the training loop behind modern generative AI, and it now ends in this crate with a closed form
+to check it against: the optimum is `(Σ + σ²I)⁻¹`, verified against the generating covariance at
+three noise levels, agreeing with plain score matching exactly at `σ = 0`, and flattening
+monotonically as the noise grows.
+
+### Two more gaps measured and closed, and one textbook expectation that did not hold
+
+**The three-dimension limit on nonlinear continuous units is gone.** Quadrature was the oracle for
+`ContinuousEbm` and it costs `grid^n`, which capped verification near three units. A chain does not
+need a product rule: `chain_log_z` multiplies `grid × grid` transfer matrices, `O(n · grid²)`, exact
+to the grid at any length. It agrees with quadrature to `3.7e-14` at two units and is stationary to
+eight digits from grid 200 to 1600 — and it now verifies the **sampler at twelve units**, against an
+exact mean energy taken as `−d ln Z/dβ` by central difference, where a product rule would have
+needed `800¹²` points.
+
+Finding it required its own correction: each transfer matrix carries half of the potential at each
+of its two sites, so the two END sites are counted half unless the missing halves are supplied. That
+omission cost a constant `0.247` offset — constant in `n`, which is what identified it as a boundary
+term rather than a per-site error.
+
+**Persistent contrastive divergence, and the expectation it did not meet.** `Params::persistent`
+adds PCD (Tieleman 2008): the negative phase advances fantasy chains that are never reset, instead
+of restarting at the data. It is the standard less-biased trainer, and on models small enough for
+`exact_log_likelihood` to judge, **it does not beat CD**:
+
+```text
+  k     lr      CD       PCD     PCD wins
+  1    0.050  −3.003   −4.975      0/6
+  5    0.050  −2.843   −3.192      0/6
+  5    0.020  −3.168   −3.129      3/6
+ 20    0.020  −3.129   −3.084      3/6
+```
+
+At a large step it is clearly worse — the fantasy chains cannot track a model moving faster than
+they mix, which is the documented failure mode made concrete. At a small step the two tie within
+seed noise. CD's bias is not what limits a fifteen-spin machine, which is the same shape as this
+crate's perceptron result: a real effect that only appears asymptotically. It ships because it is
+standard and a caller training something larger will want it, and it ships with the table because a
+method that is better in the literature and not here should say so.
+
+Implementing it also surfaced a bug worth naming: the first version rebuilt each fantasy chain's
+sampler from a fixed seed every update, so every chain replayed the *same random stream forever*. A
+persistent chain must carry its RNG state, not just its spins. The symptom was not a failure — it
+was the method quietly underperforming.
+
+### The Krauth–Mézard constant is no longer unchecked — confirmed to 0.3% by counting
+
+`KRAUTH_MEZARD_CAPACITY` was documented as cited rather than derived, which meant this crate was
+leaning on a number nobody here had checked. It is checked now — by a route that needs no replica
+theory at all.
+
+`capacity_by_enumeration` finds the satisfiability threshold at each `n` by counting solutions
+**exhaustively** (Gray-code enumeration over all `2^n` couplings, so it is the true count, not a
+solver's opinion) and extrapolates the thresholds against `1/n`. At `n = 11 … 21` over 400 instance
+sets each the thresholds are `0.879, 0.862, 0.880, 0.858, 0.857, 0.854`, and the straight line
+through them gives **`α_c = 0.8305`** against Krauth and Mézard's `0.833` — **0.3%**.
+
+That is a stronger check than reproducing their derivation would have been. A replica calculation
+agreeing with a replica constant confirms the arithmetic; exhaustive counting agreeing with it
+confirms the physics. The derivation remains theirs, and the module says so; the number is no
+longer unverified.
+
+Along the way the replica functional's Legendre term was corrected from `−½qq̂` to `−½q̂(1−q)`,
+which is what makes its saddle give the standard `q = ⟨tanh²(√q̂ z)⟩` rather than the degenerate
+branch. That correction is recorded in the module, but it is not what confirms the constant. The
+counting is.
+
 ## 0.39.0
 
 ### Continuous units, and the exact answers that keep them honest

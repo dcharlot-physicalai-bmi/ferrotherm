@@ -105,7 +105,7 @@ fn calibrate(label: &str, note: &str, data: &Dataset) -> (f64, f64, f64, f64, f6
         "arm", "spins", "per-pixel MAE", "log-likelihood", "learned"
     );
 
-    let p = ebm::Params { epochs: 600, k: 10, positive_sweeps: 5, learning_rate: 0.05, batch: 7 };
+    let p = ebm::Params { epochs: 600, k: 10, positive_sweeps: 5, learning_rate: 0.05, batch: 7, persistent: false };
     let mut out = Vec::new();
     for (name, structure) in [
         ("marginals-only", GraphBuilder::new(visible).build()),

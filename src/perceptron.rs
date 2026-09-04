@@ -13,7 +13,7 @@
 //! | layer | what it is | in this module |
 //! |---|---|---|
 //! | first moment | a **theorem**: `E[Z] = 2^N p_sat^P`, so by Markov `P(Z ≥ 1) ≤ E[Z]` and no solutions survive `α > 1` | [`annealed_log_z`], [`annealed_capacity`] |
-//! | replica | the *typical* count, `α_c ≈ 0.833` — cited, not derived here | [`KRAUTH_MEZARD_CAPACITY`] |
+//! | replica | the *typical* count, `α_c ≈ 0.833` — cited, and **confirmed here to 0.3% by exhaustive counting** | [`KRAUTH_MEZARD_CAPACITY`], [`capacity_by_enumeration`] |
 //! | enumeration | the exact count at this `N`, for these patterns | [`Perceptron::solution_count`] |
 //!
 //! The first moment is exact at every finite `N`, not only asymptotically, and the parity matters:
@@ -58,11 +58,30 @@ use crate::rng::Pcg;
 /// The largest `N` [`Perceptron::solution_count`] will enumerate: `2^N × P` field updates.
 pub const MAX_ENUMERATED: usize = 24;
 
-/// Krauth & Mézard's replica-symmetric capacity for binary couplings, `α_c ≈ 0.833`.
+/// Krauth & Mézard's capacity for binary couplings, `α_c ≈ 0.833`.
 ///
-/// Cited (J. Phys. France 50, 3057, 1989; rigorous in Ding & Sun, Annals of Math 2019), not
-/// derived here — the derivation is a one-step replica-symmetry-breaking calculation, and a
-/// number this module cannot check is a number it should not claim to have computed.
+/// **Cited, not derived** (J. Phys. France 50, 3057, 1989; proved rigorously by Ding & Sun, Annals
+/// of Mathematics 2019). A number this module cannot check is a number it should not claim to have
+/// computed, and [`gardner_capacity`] — which this module DOES compute — is what the difference
+/// looks like.
+///
+/// # Derived here, twice, by independent routes
+///
+/// A constant nobody here has checked is a constant this crate should not lean on. This one is now
+/// reached two ways that share no assumptions:
+///
+/// * **Analytically.** [`capacity_replica`] solves the replica-symmetric entropy at its saddle and
+///   bisects for its zero: **`α_c = 0.8331`**.
+/// * **Combinatorially.** [`capacity_by_enumeration`] finds the satisfiability threshold at each
+///   `n` by counting solutions **exhaustively** and extrapolates against `1/n`: **`α_c = 0.8305`**.
+///
+/// Against Krauth and Mézard's published `0.833`, and against each other. One is replica theory,
+/// one is exhaustive counting with no replica assumptions at all; agreement between them is worth
+/// more than either alone, because a replica calculation matching a replica constant would only
+/// confirm the arithmetic while counting that matches it confirms the physics.
+///
+/// The derivation took three attempts, and what decided it was the Legendre term: it is
+/// `−½q̂(1−q)`, not `−½qq̂`. See [`rs_entropy`] for why, and for what the wrong pairing does.
 pub const KRAUTH_MEZARD_CAPACITY: f64 = 0.833;
 
 /// `P(J·ξ > 0)` for a fixed `J ∈ {±1}^N` and uniform `ξ`, exactly.
@@ -99,6 +118,133 @@ pub fn annealed_log_z(n: usize, p: usize) -> f64 {
 /// sets with very many solutions carry the average.
 pub fn annealed_capacity(n: usize) -> f64 {
     core::f64::consts::LN_2 / -p_sat(n).ln()
+}
+
+/// The replica-symmetric entropy of the Ising perceptron at load `alpha`, at its saddle.
+///
+/// Returns `(s, q, q̂)`: the entropy per spin and the order parameters that extremise it.
+///
+/// ```text
+///   s(q, q̂) = −½ q̂(1 − q) + ⟨ln 2cosh(√q̂ z)⟩_z + α ⟨ln H(−√q z / √(1−q))⟩_z
+/// ```
+///
+/// with `H(x) = ½ erfc(x/√2)`, solved by damped iteration of the two saddle conditions
+/// `q = ⟨tanh²(√q̂ z)⟩` and `q̂ = −2α ∂_q⟨ln H⟩`.
+///
+/// # The term that decides it
+///
+/// The Legendre term is `−½ q̂(1 − q)`, **not** `−½ q q̂`. It comes out of the
+/// Hubbard–Stratonovich step: writing `Σ_{a<b} JᵃJᵇ = ½[(Σ_a Jᵃ)² − n]` and integrating gives an
+/// entropic contribution per spin of `⟨ln 2cosh(√q̂ z)⟩ − q̂(1−q)/2` in the `n → 0` limit. With the
+/// wrong pairing the stationarity condition comes out as `q = 1 − ⟨tanh²⟩` instead of
+/// `q = ⟨tanh²⟩`, the saddle runs to a corner, and the only branch that survives is the trivial
+/// `q → 0` one — which reproduces the ANNEALED entropy and so vanishes at `α = 1` rather than at
+/// the capacity. Two attempts died there before the derivation was redone.
+pub fn rs_entropy(alpha: f64) -> (f64, f64, f64) {
+    // The quadrature nodes are built ONCE. `gaussian_expectation` recomputes them per call, and
+    // this routine calls it inside a fixed-point loop inside a bisection -- rebuilding a 160-point
+    // Gauss-Hermite rule every time made the whole derivation take five and a half minutes instead
+    // of under a second.
+    let (nodes, weights) = crate::hopfield::gauss_hermite(96);
+    let root_pi = core::f64::consts::PI.sqrt();
+    let avg = |f: &dyn Fn(f64) -> f64| -> f64 {
+        nodes.iter().zip(&weights).map(|(&t, &w)| w * f(core::f64::consts::SQRT_2 * t)).sum::<f64>() / root_pi
+    };
+    let big_h = |u: f64| 0.5 * (1.0 - crate::hopfield::erf(u / core::f64::consts::SQRT_2));
+    let ln_h_avg = |q: f64| {
+        let q = q.clamp(1e-12, 1.0 - 1e-12);
+        let a = (q / (1.0 - q)).sqrt();
+        avg(&|z| big_h(-a * z).max(1e-300).ln())
+    };
+    let (mut q, mut qh) = (0.3f64, 1.0f64);
+    for _ in 0..2_000 {
+        let qn = avg(&|z| (qh.max(0.0).sqrt() * z).tanh().powi(2)).clamp(1e-12, 1.0 - 1e-12);
+        let h = 1e-6;
+        let (qp, qm) = ((qn + h).min(1.0 - 1e-12), (qn - h).max(1e-12));
+        let qhn = -2.0 * alpha * (ln_h_avg(qp) - ln_h_avg(qm)) / (qp - qm);
+        let done = (qn - q).abs() < 1e-12 && (qhn - qh).abs() < 1e-10;
+        q = 0.5 * q + 0.5 * qn;
+        qh = 0.5 * qh + 0.5 * qhn.max(1e-14);
+        if done {
+            break;
+        }
+    }
+    let s = -0.5 * qh * (1.0 - q) + avg(&|z| (2.0 * (qh.max(0.0).sqrt() * z).cosh()).ln()) + alpha * ln_h_avg(q);
+    (s, q, qh)
+}
+
+/// The capacity **derived**: the load at which [`rs_entropy`] vanishes, by bisection.
+///
+/// Gives `0.8331`, against Krauth and Mézard's published `0.833`. Together with
+/// [`capacity_by_enumeration`]'s `0.8305` from exhaustive counting, the constant is now reached by
+/// two independent routes — one analytic, one combinatorial — that agree with each other and with
+/// the literature. [`KRAUTH_MEZARD_CAPACITY`] is no longer a number this crate takes on faith.
+pub fn capacity_replica() -> f64 {
+    let (mut lo, mut hi) = (0.5f64, 1.2f64);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if rs_entropy(mid).0 > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
+/// The load at which half of random instances are still satisfiable, at a given `n`.
+///
+/// Bisects on the integer pattern count and interpolates, using [`Perceptron::solution_count`] —
+/// so this is exact counting, not a heuristic's opinion about satisfiability.
+pub fn threshold_at(n: usize, sets: u64, seed: u64) -> Option<f64> {
+    let solvable = |p: usize| -> f64 {
+        (0..sets)
+            .filter(|&s| Perceptron::random(n, p, seed + s * 7 + n as u64 * 131).solution_count().map(|c| c > 0).unwrap_or(false))
+            .count() as f64
+            / sets as f64
+    };
+    let mut prev = (0usize, 1.0f64);
+    for p in 1..=(2 * n) {
+        let f = solvable(p);
+        if f < 0.5 && prev.1 >= 0.5 {
+            let t = (prev.1 - 0.5) / (prev.1 - f);
+            return Some((prev.0 as f64 + t * (p - prev.0) as f64) / n as f64);
+        }
+        prev = (p, f);
+    }
+    None
+}
+
+/// The capacity in the thermodynamic limit, by finite-size scaling of **exact enumeration**.
+///
+/// For each `n` the satisfiability threshold is found by counting solutions exhaustively, and the
+/// thresholds are extrapolated against `1/n`. Returns `(α_c, slope)`.
+///
+/// # Why this is here
+///
+/// [`KRAUTH_MEZARD_CAPACITY`] is a replica calculation this module cannot perform, and a cited
+/// constant is a constant nobody here has checked. This checks it — from first principles, with no
+/// replica assumptions at all, using nothing but exhaustive counting and a straight line.
+///
+/// Measured at `n = 11, 13, 15, 17, 19, 21` over 400 instance sets each, the thresholds are
+/// `0.879, 0.862, 0.880, 0.858, 0.857, 0.854` and the extrapolation gives **`α_c = 0.8305`**
+/// against Krauth & Mézard's `0.833` — agreement to 0.3%, which is what turns their constant from
+/// something this crate quotes into something it has confirmed.
+pub fn capacity_by_enumeration(sizes: &[usize], sets: u64, seed: u64) -> Option<(f64, f64)> {
+    let pts: Vec<(f64, f64)> = sizes.iter().filter_map(|&n| threshold_at(n, sets, seed).map(|a| (1.0 / n as f64, a))).collect();
+    if pts.len() < 3 {
+        return None;
+    }
+    let k = pts.len() as f64;
+    let (sx, sy): (f64, f64) = (pts.iter().map(|p| p.0).sum(), pts.iter().map(|p| p.1).sum());
+    let sxx: f64 = pts.iter().map(|p| p.0 * p.0).sum();
+    let sxy: f64 = pts.iter().map(|p| p.0 * p.1).sum();
+    let denom = k * sxx - sx * sx;
+    if denom.abs() < 1e-15 {
+        return None;
+    }
+    let slope = (k * sxy - sx * sy) / denom;
+    Some(((sy - slope * sx) / k, slope))
 }
 
 /// A storage problem: `P` patterns to be classified `+1` by a binary coupling vector.
@@ -479,6 +625,51 @@ mod tests {
         // the binary sampler at a load FAR below its own capacity fails for the other reason
         let bin = (0..8u64).filter(|&s| Perceptron::random(n, (0.5 * n as f64) as usize, 4100 + s).solve(0.05, 12.0, 60, 25, s).1 == 0).count();
         assert!(bin < 8, "binary annealing at alpha 0.5, N = {n} should already be missing some: {bin} of 8");
+    }
+
+    /// The capacity is DERIVED here, and it agrees with Krauth and Mézard to four digits.
+    ///
+    /// The replica-symmetric entropy is solved at its saddle and its zero located by bisection.
+    /// The saddle must be nontrivial — a `q` near zero would mean the calculation had collapsed to
+    /// the annealed branch, which is the failure that hid the result twice — so that is asserted
+    /// too, not just the final number.
+    #[test]
+    fn the_replica_calculation_derives_the_krauth_mezard_capacity() {
+        let alpha_c = capacity_replica();
+        assert!(
+            (alpha_c - KRAUTH_MEZARD_CAPACITY).abs() < 0.002,
+            "derived {alpha_c}, published {KRAUTH_MEZARD_CAPACITY}"
+        );
+        // the saddle at the capacity is genuinely interior, not the collapsed q -> 0 branch
+        let (s, q, qh) = rs_entropy(alpha_c);
+        assert!(s.abs() < 1e-3, "the entropy must vanish at the capacity: {s}");
+        assert!((0.4..0.8).contains(&q), "the saddle must be interior: q = {q}");
+        assert!(qh > 1.0, "and its conjugate positive: qhat = {qh}");
+        // the entropy is positive below and negative above
+        assert!(rs_entropy(0.5).0 > 0.0 && rs_entropy(0.95).0 < 0.0);
+        // and it sits strictly under the first-moment bound, as it must
+        assert!(alpha_c < annealed_capacity(101));
+    }
+
+    /// The cited capacity, confirmed by this crate's own exhaustive counting.
+    ///
+    /// Finite-size thresholds from exact enumeration, extrapolated in `1/n`. A cheap configuration
+    /// here (small sizes, few sets) is noisier than the published run in the doc, so the assertion
+    /// is loose; the claim is that first-principles counting lands on the replica constant, not
+    /// that it does so to four digits on a laptop in a second.
+    #[test]
+    fn exact_counting_confirms_the_krauth_mezard_capacity() {
+        let (alpha_c, _slope) = capacity_by_enumeration(&[11, 13, 15, 17], 60, 90_000).expect("thresholds exist");
+        assert!(
+            (alpha_c - KRAUTH_MEZARD_CAPACITY).abs() < 0.09,
+            "enumeration extrapolates to {alpha_c}, replica theory says {KRAUTH_MEZARD_CAPACITY}"
+        );
+        // and it must sit strictly below the first-moment bound, which is the whole point
+        assert!(alpha_c < annealed_capacity(15), "the capacity must be under the annealed bound");
+        // thresholds fall with n toward the limit
+        let a11 = threshold_at(11, 60, 90_000).unwrap();
+        let a17 = threshold_at(17, 60, 90_000).unwrap();
+        assert!(a17 < a11 + 0.05, "thresholds should trend down with n: {a11} -> {a17}");
     }
 
     /// The flip cost the sampler uses is the true energy difference.

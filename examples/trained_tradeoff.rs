@@ -104,7 +104,7 @@ fn main() {
         "latents", "arm", "edges", "spins", "log-likelihood", "learned", "tau_int"
     );
 
-    let p = Params { epochs: 400, k: 10, positive_sweeps: 5, learning_rate: 0.05, batch: 7 };
+    let p = Params { epochs: 400, k: 10, positive_sweeps: 5, learning_rate: 0.05, batch: 7, persistent: false };
     // (latents, arm, depth, learned %, tau) for the collapse below.
     let mut rows: Vec<(usize, &'static str, usize, f64, f64)> = Vec::new();
 
