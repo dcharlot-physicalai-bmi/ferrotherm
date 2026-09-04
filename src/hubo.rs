@@ -145,6 +145,11 @@ impl Hubo {
         h
     }
 
+    /// Every term as `(variables, weight)`, in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (Vec<usize>, f64)> + '_ {
+        self.terms.iter().map(|(v, w)| (v.iter().map(|&i| i as usize).collect(), *w))
+    }
+
     /// `E(s) = −Σ_T w_T Π s_i`.
     pub fn energy(&self, s: &[i8]) -> f64 {
         self.terms

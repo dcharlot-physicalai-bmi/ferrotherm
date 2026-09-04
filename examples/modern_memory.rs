@@ -51,7 +51,75 @@ fn main() {
     println!("  Where the original is not returned, the query had drifted nearer another stored pattern\n  \
               (or tied, in which case the update is their mean); the softmax returns the nearest.\n");
 
-    // ---- 3. equilibrium propagation: the theorem at its two rates, then learning
+    // ---- 3. the program path: the same memory from the closed form to a machine ----------------
+    {
+        use ferrotherm::embed;
+        use ferrotherm::exact::Elimination;
+        use ferrotherm::gibbs::Sampler;
+        use ferrotherm::hubo;
+        use ferrotherm::reduce::to_pairwise;
+        use ferrotherm::schedule::Schedule;
+        println!("--- the program path: a degree-4 memory of 10 spins as a higher-order program");
+        let n = 10;
+        let pats = random_patterns(n, 2, 31);
+        let m = DenseMemory::new(pats.clone(), Energy::Polynomial(4));
+        let (h, _) = m.to_hubo().unwrap();
+        let out = hubo::anneal(&h, &hubo::Params { beta_min: 0.2, beta_max: 6.0, stages: 30, sweeps_per_stage: 10 }, 5);
+        println!("  HUBO: {} terms, max arity {}; native annealing retrieves overlap {:.2}", h.terms(), h.max_arity(), overlap(&pats[0], &out.state).abs());
+        let (prog, _) = m.to_program(&Schedule::constant(3.0, 100)).unwrap();
+        let red = to_pairwise(&prog).unwrap();
+        let g = red.program.to_graph().unwrap();
+        println!("  reduced to pairwise: {} spins ({} ancillas), {} edges, max degree {}, penalty {:.1} against a memory signal of ~2.5",
+            g.n, red.ancillas, g.n_edges, g.max_degree(), red.penalty);
+        let mut worst = 0.0f64;
+        let mut rng = Pcg::new(9, 0);
+        for trial in 0..6 {
+            let s: Vec<i8> = if trial == 0 { pats[0].clone() } else { (0..n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect() };
+            let mut sm = Sampler::new(&g, 8.0, trial);
+            for i in 0..n { sm.clamp(i, s[i]); }
+            sm.sweeps(400, None);
+            worst = worst.max((g.energy(&sm.s) + red.offset - h.energy(&s)).abs());
+        }
+        println!("  the reduction is EXACT: min over ancillas + offset vs HUBO energy, worst |diff| {worst:.1e} over 6 states");
+        let mut hits = 0;
+        for seed in 0..5u64 {
+            let mut sm = Sampler::new(&g, 0.02, seed);
+            for k in 0..40 { sm.beta = 0.02 + 8.0 * k as f64 / 39.0; sm.sweeps(25, None); }
+            if overlap(&pats[0], red.project(&sm.s)).abs() > 0.99 { hits += 1; }
+        }
+        let hw6 = ferrotherm::ising::chimera(6, 6, 4, 1.0);
+        let placed = embed::embed_bounded(&g, &hw6, 3, 20, embed::DEFAULT_SEARCH_BUDGET).is_some();
+        println!("  ...and dynamically FROZEN: annealing the reduced model retrieves in {hits} of 5 runs; a 288-site Chimera {} it",
+            if placed { "places" } else { "does not place" });
+        // degree 2 is pairwise: onto the machine by the structured clique
+        let n2 = 12;
+        let (pats2, m2) = (0..64u64).map(|seed| { let p = random_patterns(n2, 2, 500 + seed); let m = DenseMemory::new(p.clone(), Energy::Polynomial(2)); (p, m) })
+            .find(|(p, m)| p.iter().all(|x| m.is_fixed_point(x))).unwrap();
+        let (prog2, _) = m2.to_program(&Schedule::constant(3.0, 100)).unwrap();
+        let g2 = to_pairwise(&prog2).unwrap().program.to_graph().unwrap();
+        let hw = ferrotherm::ising::chimera(3, 3, 4, 1.0);
+        let e = embed::chimera_clique(3, 4).unwrap();
+        e.verify(&g2, &hw).unwrap();
+        let max_w = g2.w.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
+        let ground = Elimination::default().ground_state(&g2).unwrap().ground_energy.unwrap();
+        for cs in [6.0 * max_w, 4.0] {
+            let hwm = embed::apply_with(&g2, &hw, &e, cs);
+            let mut solved = 0;
+            for seed in 0..5u64 {
+                let mut sh = Sampler::new(&hwm.graph, 0.05, 11 + seed);
+                for k in 0..40 { sh.beta = 0.05 + 8.0 * k as f64 / 39.0; sh.sweeps(25, None); }
+                let (logical, broken) = embed::unembed(&e, &sh.s);
+                let ov = pats2.iter().map(|p| overlap(p, &logical).abs()).fold(0.0, f64::max);
+                if broken.is_empty() && (g2.energy(&logical) - ground).abs() < 1e-9 && ov > 0.99 { solved += 1; }
+            }
+            println!("  degree 2 (pairwise, no ancillas) on chimera(3,3,4) by the K_12 clique, chain strength {cs:.2} ({:.0}x max |J|): exact ground state = a stored pattern in {solved} of 5 anneals",
+                cs / max_w);
+        }
+        println!("  chain strength is relative to the couplings: the 4.0 that is right for unit couplings\n  \
+                  elsewhere in this crate is 24x these, and freezes the chains before the problem orders.\n");
+    }
+
+    // ---- 4. equilibrium propagation: the theorem at its two rates, then learning
     let (g, task) = machine();
     let (x, t) = ([1i8, -1], [1i8]);
     let truth = exact_gradient(&g, &task, &x, &t);

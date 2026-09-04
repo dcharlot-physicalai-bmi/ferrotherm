@@ -551,9 +551,12 @@ the capacity **`α_c = 0.1379`** (AGS: 0.138), with retrieval present at `α = 0
 `0.10` in the samplers' own runs. `examples/learning_theory` shows the table. `dense_memory` is the
 modern Hopfield network — degree-2 provably the classical one minus a constant, degree 3 and the
 exponential memory holding hundreds of patterns in 100 spins where the classical one holds 14, and
-Ramsauer's attention as the exponential memory's one-step update — and `eqprop` is equilibrium
-propagation for Boltzmann machines, its gradient theorem held by enumeration at both of its
-convergence rates.
+Ramsauer's attention as the exponential memory's one-step update — and it is a *program*:
+`to_hubo`/`to_program` write the memory as a higher-order `.ftp` model (an identity checked to
+1e-9), from which the native annealer retrieves, the pairwise reduction is measured exact but
+dynamically frozen, and the degree-2 memory reaches its exact ground state on a Chimera. `eqprop`
+is equilibrium propagation for Boltzmann machines, its gradient theorem held by enumeration at
+both of its convergence rates.
 
 ### The machines you can actually rent
 

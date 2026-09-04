@@ -512,8 +512,11 @@ absence confirmed by the samplers. Recorded gaps: replica-symmetry-breaking corr
 
 Dense associative memory with the degree-2 identity to the Hebbian energy, exact fixed-point
 capacity, attention as the exponential memory's update; equilibrium propagation for Boltzmann
-machines with its theorem held at both rates. Recorded gaps: continuous-state units; dense memory
-as a `hubo` program for hardware; Gardner.
+machines with its theorem held at both rates. The memory is a program (`to_hubo`, `to_program`):
+native annealing retrieves; the pairwise reduction is exact and measured dynamically frozen (0 of
+5 anneals, 21 ancillas behind a penalty 50× the signal) and unplaceable at max degree 28; degree 2
+reaches its exact ground state on a Chimera at a chain strength set relative to the couplings.
+Recorded gaps: continuous-state units; Gardner.
 
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.

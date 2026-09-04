@@ -143,9 +143,35 @@ sampled rule agrees within its error bars, and twelve exact steps take a fixed p
 loss from 0.461 to 0.017. It belongs here because its only primitive is *sample two nearby
 Boltzmann distributions* — native on a thermodynamic fabric, alien to a GPU.
 
-Both are Rust-level; `examples/modern_memory` prints all of it. Recorded gaps: continuous-state
-units (the original Hopfield and EqProp formulations), which need a unit type the crate does not
-have; dense memory as a `hubo` program so hardware can run it; the Gardner storage problem.
+**The same memory from the closed form to a machine.** `DenseMemory::to_hubo` expands
+`−c Σ_μ (ξ^μ·s)^k` over `±1` spins into its multilinear monomials — the multinomial weight of each
+monomial is `k! [x^k] sinh(x)^r cosh(x)^{N−r}`, the count of sequences whose odd-multiplicity set is
+that monomial — and `to_program` writes it as a `.ftp` program. The identity that makes the path
+trustworthy holds at degrees 2 and 4 to `1e-9`: HUBO energy plus the dropped constant equals the
+dense energy on random states. From there the crate's existing passes take over, and the
+measurements are the point. `reduce::to_pairwise` lowers the 10-spin degree-4 memory to 31 spins
+with 21 ancillas, and the reduction is **exact** — the minimum over ancillas with the originals
+clamped reproduces the HUBO energy to `2.6e-12` on every state tested — and **dynamically
+frozen**: annealing the reduced model retrieves the pattern in 0 of 5 runs from either start,
+because 21 ancillas each sit behind a penalty of 122 while the memory's signal is about 2.5, and
+at max degree 28 a 288-site Chimera does not place it. The native higher-order annealer retrieves
+at overlap 1.00. That is the `hubo` module's thesis measured on a real model, and the same wall
+D-Wave's constraint-to-penalty compiler died on. At degree 2 the memory *is* pairwise, and it goes
+onto `chimera(3,3,4)` by the structured `K_12` clique and reaches the exact ground state — a
+stored pattern — in 4 of 5 anneals, with no broken chains.
+
+**Chain strength is relative to the couplings.** The first version of that machine run used the
+chain strength of 4 that `examples/chain_strength` measured to be right for unit couplings, and
+reached the ground state in 0 of 5 anneals: the memory's couplings are at most `2/12`, so 4 is 24×
+them, and the chains froze before the logical problem had ordered. Six times the largest coupling
+holds every chain and lets the problem move. And the machine test asserts the *exact ground
+energy* (by elimination), not "a pattern came back" — an earlier draft asked for the pattern from
+a two-pattern set at `α = 0.2`, above the classical capacity, where the pattern was not even a
+fixed point of its own memory.
+
+Both modules are Rust-level; `examples/modern_memory` prints all of it. Recorded gaps:
+continuous-state units (the original Hopfield and EqProp formulations), which need a unit type the
+crate does not have; the Gardner storage problem.
 
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
