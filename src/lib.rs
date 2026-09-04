@@ -80,6 +80,7 @@ pub mod ftp;
 pub mod graph;
 pub mod categorical;
 pub mod certify;
+pub mod calibration;
 pub mod free_energy;
 pub mod meanfield;
 pub mod hopfield;

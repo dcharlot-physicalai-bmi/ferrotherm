@@ -537,7 +537,10 @@ equilibrated; **Bennett's acceptance ratio** steps the precise estimate up the l
 exact anchor, giving `ln Z`, entropy and heat capacity at every rung from the same chains. All three are checked against enumeration, exact elimination, the transfer matrix
 and Onsager before they are trusted; outward rounding of every published bound is a Kani theorem.
 `ebm::log_likelihood_ais` turns it into a likelihood for models past enumeration, with an
-unconditional upper bound. On every surface as `ft_ln_z_*`. And it comes free with an optimisation
+unconditional upper bound. On every surface as `ft_ln_z_*`. And the bars themselves are checked:
+`calibration::calibrate` forms `z = (estimate − truth)/stderr` against exact answers over many
+seeds, so "the error bar is honest" is a test result rather than an assumption — it found one bar
+30% too small, and established that the sampled estimators are never optimistic. And it comes free with an optimisation
 run: `tempering::parallel_tempering_observed` records the ladder it was already sampling, so one
 parallel-tempering run returns the best state *and* the whole free-energy curve — the recording
 proved bit-identical to the unobserved loop.

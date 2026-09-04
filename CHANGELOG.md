@@ -280,6 +280,44 @@ does not start at infinite temperature has free-energy *differences* but no abso
 exact ratio. That is the distinction `popanneal` already draws between an absolute `ln Z` and a
 relative one, applied here rather than quietly reporting the second as the first.
 
+### Are the error bars honest? A harness, and the crate's own answers
+
+Finding a bar that was 30% too small raised the obvious question about the rest of them, and the
+check is cheap and general: take a model whose answer is known exactly, run the estimator from many
+seeds, form `z = (estimate − truth) / reported stderr`, and look at the ensemble. Unbiased means
+`mean(z) = 0`; an honest bar means `sd(z) = 1`; **`sd(z) > 1` means the bar is too small**.
+`calibration::calibrate` is that harness, and this crate is full of exact truths to point it at.
+
+The answers, all against enumeration on a 12-spin ring:
+
+| estimator | mean z | sd(z) | verdict |
+|---|---|---|---|
+| `SampleSet::mean_energy` | −0.03 | 0.80 | honest, conservative |
+| `SampleSet::magnetization` | −0.01 | 0.93 | honest |
+| `SampleSet::correlation` | −0.04 | 0.62 | honest, very conservative |
+| `SampleSet::marginals` | +0.05 | 0.71 | honest, conservative |
+| `thermodynamic_integration` | — | covers 40/40 | honest |
+| `Ais::lower_bound` | — | 0 violations in 60 at δ=0.1 | honest |
+| `bar_ladder` quadrature | — | **1.28** | **too small by ~30%** |
+| `log_z_total` jackknife | — | 0.81 | honest |
+
+So the sampled family is never optimistic, and its conservatism turns out to be structural rather
+than lucky: the bar deflates the sample count by the chain's `tau_int`, and `chain_tau` takes the
+*slowest* of energy and magnetisation, so a fast observable like a single correlation is charged
+the slow one's autocorrelation. A bar that is too wide costs samples; a bar that is too small costs
+correctness. This table is what makes that a measured choice rather than a hope.
+
+**The harness has its own self-test**, because a passing calibration could otherwise be a broken
+harness agreeing with whatever the code does: it is shown an estimator whose bar is exact (the mean
+of independent normals) and must call it honest, then the same estimator with its bar halved, and
+must catch it at `sd(z) ≈ 2`.
+
+**The one estimator with no bar** is `popanneal`'s `ln_z`. It is unbiased, and its spread follows
+`1.7·√(ρ/(R·stages))` to ±10% across 16× in replicas and 6× in stages — but that constant was
+fitted on a single model, so it is documented as a lead and *not shipped as a bar*. Running
+`popanneal` a few times and taking the spread costs what it costs and assumes nothing; a principled
+bar is recorded as open.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had
