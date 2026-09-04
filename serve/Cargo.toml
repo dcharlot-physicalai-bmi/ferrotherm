@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-serve"
-version = "0.17.4"
+version = "0.17.5"
 edition = "2021"
 description = "Agent-facing tier for ferrotherm: an HTTP sampling API and a Model Context Protocol server for thermodynamic sampling, annealing and exact verification over Ising graphs. std-only, zero dependencies."
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ keywords = ["mcp", "thermodynamic", "ising", "sampling", "agent"]
 categories = ["science", "simulation", "api-bindings", "algorithms"]
 
 [dependencies]
-ferrotherm = { version = "0.38", path = ".." }
+ferrotherm = { version = "0.39", path = ".." }
 
 [[bin]]
 name = "ferrotherm-serve"

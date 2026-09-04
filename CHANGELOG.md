@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.39.0
 
 ### Continuous units, and the exact answers that keep them honest
 
