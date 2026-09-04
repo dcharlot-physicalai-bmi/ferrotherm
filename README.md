@@ -526,6 +526,14 @@ rests on is machine-checked by Kani, exhaustively. The one remaining structured 
 recorded: eight chains on Pegasus (busclique's staggered-fragment diagonal). `ft_clique_embed` carries the constructions to Python, Zig and Julia;
 `examples/embedding_tax` shows them beside the search and the frontier.
 
+### Where this stands against the field
+
+`LANDSCAPE.md` scores ferrotherm against every other thermodynamic stack on reach, install friction,
+deployment surface and language lane, measured rather than asserted — including the row where we come
+last (adoption: 1 GitHub star against THRML's 1,151) and the gap that matters most (no notebook-first
+quickstart). The Rust lane is checkably open: the nearest-named competitor, `th-rust`, has had one
+release since April 2023.
+
 ### Free energy, certified
 
 `ln Z` is the number every thermodynamic-computing paper quotes and no sampling stack certifies.
