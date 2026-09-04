@@ -6012,6 +6012,7 @@ pub extern "C" fn ft_ebm_train(
         },
         learning_rate: if learning_rate == 0.0 { d.learning_rate } else { learning_rate },
         batch: if batch == 0 { d.batch } else { batch as usize },
+            persistent: false,
     };
     match crate::ebm::train(&s.graph, &data, &p, seed) {
         Ok(t) => {
