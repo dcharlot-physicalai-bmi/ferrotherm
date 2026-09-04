@@ -494,9 +494,11 @@ three ways — AIS with an *unconditional* Markov lower bound, reverse AIS with 
 thermodynamic integration with a monotonicity bracket, Bennett acceptance ratio for `ln Z` at every
 rung (and with it entropy and heat capacity), clamped AIS for the EBM numerator past enumeration —
 cross-checked against enumeration, elimination, the transfer matrix, Onsager and `popanneal`.
-Recorded gap: `tempering`/`adaptive` return best-found and swap rates, not per-rung energy traces,
-so BAR draws its own chains; an energy-trace observer there would let the curve come free with
-every parallel-tempering run.
+✅ **The observer is in**: `tempering::parallel_tempering_observed` records per-rung energy traces,
+so one run gives the optimiser's best AND the free-energy curve, with recording proved bit-identical
+to the unobserved loop and warm ladders refused an absolute anchor. `adaptive` still returns only
+best-found and swap rates; the same observer there would put the curve on a respaced ladder, where
+equal swap rates mean equal overlap and therefore the best-conditioned BAR steps.
 
 **4.2 Learning theory as oracles.** ✅ **DONE** — `src/meanfield.rs`, `src/hopfield.rs`.
 

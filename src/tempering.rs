@@ -181,6 +181,181 @@ pub fn parallel_tempering(
     }
 }
 
+/// The per-rung energy traces a parallel-tempering run produced.
+///
+/// Parallel tempering already does what free-energy estimation needs: it holds a chain at every
+/// rung of a temperature ladder. Until now [`crate::free_energy`] drew its OWN chains to build a
+/// free-energy curve, doing the same work twice — an optimisation run threw away exactly the
+/// samples a thermodynamics run would have had to generate.
+///
+/// The swap moves STATES between replicas while each replica keeps its own `β`, so replica `i`'s
+/// energy after its sweeps is always a sample at `betas[i]`, which is what
+/// [`crate::free_energy::bar_ladder`] consumes.
+#[derive(Clone, Debug)]
+pub struct LadderTraces {
+    pub betas: Vec<f64>,
+    /// `energies[i]` is the trace at `betas[i]`, one entry per recorded round.
+    pub energies: Vec<Vec<f64>>,
+}
+
+impl LadderTraces {
+    /// The traces as `(β, energies)` pairs, the shape the free-energy estimators take.
+    pub fn as_pairs(&self) -> Vec<(f64, Vec<f64>)> {
+        self.betas.iter().copied().zip(self.energies.iter().cloned()).collect()
+    }
+
+    /// The free-energy curve — `ln Z`, entropy and heat capacity at every rung — from these
+    /// traces, by Bennett's acceptance ratio anchored at `ln Z(0) = n ln 2`.
+    ///
+    /// **Requires the ladder to start at `β = 0`**, because that is where the anchor is exact.
+    /// A ladder that starts warm still has well-defined free-energy *differences*
+    /// ([`Self::log_z_differences`]) but no absolute scale, and this returns `Err` rather than
+    /// quietly reporting a relative number as an absolute one — the same distinction
+    /// [`crate::popanneal::Outcome::free_energy_per_spin`] draws.
+    pub fn thermodynamics(&self, n: usize, z: f64) -> Result<crate::free_energy::Thermo, String> {
+        if self.betas.first() != Some(&0.0) {
+            return Err(format!(
+                "the ladder starts at beta {:?}, not 0, so ln Z has no absolute anchor; use log_z_differences",
+                self.betas.first()
+            ));
+        }
+        Ok(crate::free_energy::bar_ladder(n, &self.as_pairs(), z))
+    }
+
+    /// `ln(Z_{i+1} / Z_i)` for every adjacent pair, by Bennett's acceptance ratio. Defined for any
+    /// ladder, warm start included.
+    pub fn log_z_differences(&self) -> Vec<crate::free_energy::BarPair> {
+        self.betas
+            .windows(2)
+            .enumerate()
+            .map(|(i, w)| crate::free_energy::bar_pair(w[0], &self.energies[i], w[1], &self.energies[i + 1]))
+            .collect()
+    }
+}
+
+/// [`parallel_tempering`], recording each rung's energy trace after `burn_in` rounds.
+///
+/// Same dynamics, same answer, plus the samples: the optimisation result is unchanged and the
+/// traces come out beside it, so one run serves both purposes. Recording costs one `g.energy` per
+/// replica per round, which the best-tracking loop was already paying.
+pub fn parallel_tempering_observed(
+    g: &Graph,
+    betas: &[f64],
+    rounds: usize,
+    swap_every: usize,
+    burn_in: usize,
+    seed: u64,
+    mut ledger: Option<&mut Ledger>,
+) -> (TemperingResult, LadderTraces) {
+    let r = betas.len();
+    assert!(r >= 2);
+    assert!(rounds > burn_in, "every round is burn-in, so there is nothing to record");
+    let mut reps: Vec<Sampler> = (0..r).map(|i| Sampler::new(g, betas[i], seed ^ (i as u64 * 0x9E37))).collect();
+    let mut swap_rng = Pcg::new(seed ^ 0x5A5A, 3);
+    let mut attempts = vec![0u64; r - 1];
+    let mut accepts = vec![0u64; r - 1];
+    let mut best = reps[r - 1].s.clone();
+    let mut best_e = g.energy(&best);
+    let mut energies: Vec<Vec<f64>> = vec![Vec::with_capacity(rounds - burn_in); r];
+    for round in 0..rounds {
+        advance(&mut reps, swap_every, ledger.as_deref_mut());
+        for (i, rep) in reps.iter().enumerate() {
+            let e = g.energy(&rep.s);
+            if e < best_e {
+                best_e = e;
+                best = rep.s.clone();
+            }
+            if round >= burn_in {
+                energies[i].push(e);
+            }
+        }
+        let start = round % 2;
+        for i in (start..r - 1).step_by(2) {
+            let e_i = g.energy(&reps[i].s);
+            let e_j = g.energy(&reps[i + 1].s);
+            let arg = (betas[i + 1] - betas[i]) * (e_j - e_i);
+            attempts[i] += 1;
+            if arg >= 0.0 || swap_rng.f64() < arg.exp() {
+                accepts[i] += 1;
+                let (a, b) = reps.split_at_mut(i + 1);
+                std::mem::swap(&mut a[i].s, &mut b[0].s);
+            }
+        }
+    }
+    (
+        TemperingResult {
+            best,
+            best_e,
+            swap_rates: (0..r - 1).map(|i| accepts[i] as f64 / attempts[i].max(1) as f64).collect(),
+        },
+        LadderTraces { betas: betas.to_vec(), energies },
+    )
+}
+
+#[cfg(test)]
+mod observed_tests {
+    use super::*;
+    use crate::free_energy::ring_log_z;
+    use crate::ising;
+
+    /// One run, two answers: the optimiser's best AND the free-energy curve, and the curve agrees
+    /// with the transfer matrix at every rung.
+    #[test]
+    fn a_tempering_run_yields_the_free_energy_curve_it_used_to_throw_away() {
+        let (n, j, h) = (12usize, 1.0, 0.0);
+        let g = ising::ring(n, j, h);
+        let betas: Vec<f64> = (0..24).map(|k| 2.0 * k as f64 / 23.0).collect();
+        let (res, traces) = parallel_tempering_observed(&g, &betas, 3000, 2, 300, 5, None);
+        assert!(res.best_e <= -10.0, "the optimiser still optimises: {}", res.best_e);
+        assert_eq!(traces.energies.len(), betas.len());
+        assert!(traces.energies.iter().all(|e| e.len() == 2700));
+
+        let th = traces.thermodynamics(n, 3.0).unwrap();
+        for r in &th.rungs[1..] {
+            let truth = ring_log_z(n, j, h, r.beta);
+            assert!((r.log_z - truth).abs() < 0.2 + 4.0 * r.stderr, "beta {}: {} +- {} vs {truth}", r.beta, r.log_z, r.stderr);
+        }
+        // the anchor is exact and the entropy falls toward ln 2 (two ground states)
+        assert!((th.rungs[0].log_z - n as f64 * core::f64::consts::LN_2).abs() < 1e-12);
+        assert!((th.top().entropy - core::f64::consts::LN_2).abs() < 0.4, "S = {}", th.top().entropy);
+    }
+
+    /// OBSERVING IS NOT PARTICIPATING: the recorded run must give bit-identical answers.
+    ///
+    /// The observed variant duplicates the loop to add recording, and a duplicated loop is a loop
+    /// that can drift from its original. Same seed, same ladder, same rounds -- the optimiser's
+    /// state, energy and swap rates must match exactly, or the observer has changed the dynamics
+    /// it was meant to watch.
+    #[test]
+    fn recording_changes_no_answer() {
+        let g = ising::lattice2d(6, 1.0);
+        let betas: Vec<f64> = (0..10).map(|k| 0.1 + 0.9 * k as f64 / 9.0).collect();
+        for seed in 0..4u64 {
+            let plain = parallel_tempering(&g, &betas, 400, 3, seed, None);
+            let (obs, _) = parallel_tempering_observed(&g, &betas, 400, 3, 50, seed, None);
+            assert_eq!(plain.best, obs.best, "seed {seed}: different state");
+            assert_eq!(plain.best_e.to_bits(), obs.best_e.to_bits(), "seed {seed}: different energy");
+            assert_eq!(plain.swap_rates, obs.swap_rates, "seed {seed}: different swap rates");
+        }
+    }
+
+    /// A warm ladder has differences but no absolute scale, and says so rather than guessing.
+    #[test]
+    fn a_ladder_that_skips_infinite_temperature_is_refused_an_absolute_answer() {
+        let g = ising::ring(10, 1.0, 0.1);
+        let betas: Vec<f64> = (0..8).map(|k| 0.5 + 1.0 * k as f64 / 7.0).collect();
+        let (_, traces) = parallel_tempering_observed(&g, &betas, 800, 2, 100, 9, None);
+        let err = traces.thermodynamics(10, 3.0).unwrap_err();
+        assert!(err.contains("no absolute anchor"), "{err}");
+        // but the differences are there, and they telescope to the exact ratio
+        let steps = traces.log_z_differences();
+        assert_eq!(steps.len(), betas.len() - 1);
+        let total: f64 = steps.iter().map(|s| s.delta).sum();
+        let truth = ring_log_z(10, 1.0, 0.1, *betas.last().unwrap()) - ring_log_z(10, 1.0, 0.1, betas[0]);
+        assert!((total - truth).abs() < 0.15, "telescoped {total} vs exact {truth}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

@@ -238,6 +238,30 @@ exist and the search cannot reach them, and there is no margin to tell you which
 The sign of minover's converged margin is a diagnosis the binary problem cannot offer, and that,
 rather than a success rate, is what the test asserts.
 
+### The free-energy curve, out of a run that was optimising anyway
+
+Parallel tempering already does what free-energy estimation needs: it holds a chain at every rung of
+a temperature ladder. Until now `free_energy` drew its *own* chains, so an optimisation run threw
+away exactly the samples a thermodynamics run would have had to generate.
+
+`tempering::parallel_tempering_observed` records each rung's energy trace beside the usual result.
+The swap moves states between replicas while each replica keeps its `β`, so replica `i`'s energy
+after its sweeps is a sample at `betas[i]` — which is what `bar_ladder` consumes. From one run:
+the optimiser's best state, and `ln Z`, entropy and heat capacity at every rung, agreeing with the
+transfer matrix within their error bars on a 12-spin ring. The recording costs one energy
+evaluation per replica per round, which the best-tracking loop was already paying.
+
+**Observing is not participating.** The observed variant duplicates the loop to add recording, and
+a duplicated loop can drift from its original, so the test asserts bit-identical results across
+four seeds — state, energy and swap rates — the same discipline this module already applies to its
+threading floor.
+
+**A warm ladder is refused an absolute answer.** `ln Z(0) = n ln 2` is the anchor, so a ladder that
+does not start at infinite temperature has free-energy *differences* but no absolute scale;
+`thermodynamics` returns `Err` there and points at `log_z_differences`, which telescope to the
+exact ratio. That is the distinction `popanneal` already draws between an absolute `ln Z` and a
+relative one, applied here rather than quietly reporting the second as the first.
+
 **Machine-checked.** Bounds are published through one step of outward rounding, and the seventh
 Kani theorem proves `next_down(x) < x < next_up(x)` for every finite double, with the round trip
 exact — including at `±MAX`, where the neighbour is infinite and the author's own check had

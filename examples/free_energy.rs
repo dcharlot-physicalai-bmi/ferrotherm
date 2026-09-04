@@ -80,6 +80,25 @@ fn main() {
     println!("  truth inside the sandwich: {}   inside the TI bracket: {}\n",
         sw.contains(truth), ti.lower_widened <= truth && truth <= ti.upper_widened);
 
+    // ---- 1b. the same curve for free, out of an optimisation run ------------------------------
+    //
+    // Parallel tempering already holds a chain at every rung of a ladder; until the observer was
+    // added, free_energy drew its own and the optimiser's samples were discarded. Now one run
+    // answers both questions, and the recording is bit-identical to the unobserved loop.
+    {
+        use ferrotherm::tempering::parallel_tempering_observed;
+        let ladder: Vec<f64> = (0..24).map(|k| beta * k as f64 / 23.0).collect();
+        let (res, traces) = parallel_tempering_observed(&g, &ladder, 3000, 2, 300, 5, None);
+        let th = traces.thermodynamics(n, 3.0).unwrap();
+        println!("--- the same ln Z out of a parallel-tempering run that was optimising anyway");
+        println!("  best energy found          {:.4}", res.best_e);
+        println!("  ln Z at the top rung       {:.4} +- {:.4}   (transfer matrix {truth:.4})", th.top().log_z, th.top().stderr);
+        println!("  entropy there              {:.4} nats", th.top().entropy);
+        println!("  heat capacity there        {:.4}", th.top().heat_capacity);
+        println!("  the traces cost one energy evaluation per replica per round, which the");
+        println!("  best-tracking loop was already paying.\n");
+    }
+
     // ---- 2. past enumeration: a 6x6 torus against exact elimination ----------------------------
     let g = ising::lattice2d(6, 1.0);
     let beta = 0.4;
