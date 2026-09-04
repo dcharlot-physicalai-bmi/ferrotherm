@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.38.0
 
 ### Free energy, certified: what a sampler owes, and the bound it can prove it paid
 
