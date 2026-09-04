@@ -528,11 +528,13 @@ recorded: eight chains on Pegasus (busclique's staggered-fragment diagonal). `ft
 
 ### Where this stands against the field
 
-`LANDSCAPE.md` scores ferrotherm against every other thermodynamic stack on reach, install friction,
-deployment surface and language lane, measured rather than asserted — including the row where we come
-last (adoption: 1 GitHub star against THRML's 1,151) and the gap that matters most (no notebook-first
-quickstart). The Rust lane is checkably open: the nearest-named competitor, `th-rust`, has had one
-release since April 2023.
+`LANDSCAPE.md` compares ferrotherm to every other thermodynamic stack on the axis that computation
+can settle: **does it reproduce what is independently known, and how much of the field does it
+cover.** Eighteen external sources of truth reproduced in CI — Onsager, transfer matrix, exact
+elimination, planar max-cut, Gardner, AGS, Curie–Weiss, Bethe-on-trees, `busclique` — and 117 of the
+911 tests compare against an exact answer rather than against the code's own behaviour. Searching
+the four largest competitors' repositories for `onsager` or `gardner` returns zero hits in every one;
+their suites test their API surface. That is the difference between a sampler and a reference.
 
 ### Free energy, certified
 

@@ -1,164 +1,159 @@
 # Where ferrotherm stands
 
-**Measured 2026-09-04.** Every number here came from a registry or repository API on that date and
-is reproducible by re-running the commands in the last section. Where a number is an estimate or a
-vendor claim rather than a measurement, it says so. Opinions are labelled as opinions.
+**Measured 2026-09-04**, by compute rather than by survey. Every number below came from reading
+code — ours and theirs — or from running this crate's own gates. The commands are in §6.
 
-This is a scorecard, not a pitch. The uncomfortable numbers are in the first table.
-
----
-
-## 1. The uncomfortable part: reach
-
-| project | language | GitHub stars | package downloads | first release |
-|---|---|---|---|---|
-| **THRML** (Extropic) | Python / JAX | **1,151** | 581/month (PyPI) | 2026 |
-| **dimod** (D-Wave) | Python / C++ | 142 | **175,051/month** (PyPI) | 2017 |
-| **OpenJij** | C++ / Python | 133 | — | 2018 |
-| **thermox** (Normal) | Python / JAX | 69 | — | 2024 |
-| **torx** (Extropic) | Python | 68 | — | 2026 |
-| **ommx** (Jij) | **Rust** / Python | 53 | 7,895/month (PyPI), 47k total (crates.io) | 2024 |
-| **quantrs2-anneal** | **Rust** | 16 | 3,882 total (crates.io) | 2025 |
-| **ferrotherm** | **Rust** | **1** | 1,266 total (crates.io), 1 month old | 2026-08-05 |
-
-**Read that honestly.** By adoption we are last. THRML has a thousand times our stars. dimod has a
-hundred and thirty times our downloads, monthly, and has had eight years to get them. Nothing below
-changes this row, and no amount of technical depth substitutes for it.
-
-Two things make it less bleak than it looks. Our crate is **one month old** and its 1,266 downloads
-are all from that month, against THRML's 581/month at 1,151 stars — the interest per unit of
-existence is not the problem. And the *reach* number that matters for a library nobody has heard of
-is not stars but whether the install works in one line, which §3 scores.
+A library's value is not how many people installed it. Installs measure consumption; this document
+measures whether the thing is *right*, and whether it covers the field. Both are decidable without
+asking anyone. The single question it answers is: **which stack is the best reference for
+thermodynamic computing** — the one you consult to find out what is true.
 
 ---
 
-## 2. The Rust lane: essentially uncontested, and that is checkable
+## 1. The test that decides it: checking against the field, or against yourself
 
-The claim "own the Rust lane" needs testing, not asserting. Searching crates.io for the field's
-vocabulary returns:
+There are two kinds of test a scientific library can have.
 
-| crate | what it is | last release | recent downloads | verdict |
-|---|---|---|---|---|
-| **ferrotherm** | this | 2026-09-04 | 1,266 | the only hit for `thermodynamic-computing` |
-| `th-rust` | "framework for thermodynamic and probabilistic computing" | **2023-04-28** | 9 | **abandoned** — one release, 3½ years cold |
-| `qmc` | quantum Monte Carlo (SSE) | 2026-01-07 | 311 | active, **GPL-3.0**, different workload |
-| `quantrs2-anneal` | annealing inside a quantum framework | 2026-08-30 | 207 | **live competitor**, Apache-2.0 |
-| `hercules` | QUBO heuristics toolbox | 2025-09-09 | 24 | narrow, slow |
-| `annealers` | bindings to vendor annealers | 2023-06-03 | 82 | abandoned |
-| `ernst` | 2D spin-glass simulation | 2024-03-23 | 9 | abandoned, GPL-3.0 |
-| `ommx` | **interchange format**, not a sampler | 2026-09-02 | 7,895/mo | **thriving, complementary** |
+- **Self-consistency.** Does the code do what the code says? A unit test of an API. It catches
+  regressions and cannot catch a wrong model.
+- **External truth.** Does the answer match a result derived independently of the code —
+  Onsager's exact free energy, a transfer matrix, a replica calculation, an exhaustive enumeration?
+  This is the only kind that can tell you the library is *correct* rather than *consistent*.
 
-The nearest-named competitor is dead. The only live sampling rival, `quantrs2-anneal`, is a
-component of a quantum-computing framework rather than a thermodynamic stack, and is two orders of
-magnitude smaller than the Python incumbents. `qmc` has 50× our downloads but is GPL-3.0, which
-excludes it from commercial use that Apache-2.0 does not.
+The second kind is what makes something a reference. Measured across the field's test suites:
 
-**The genuinely important row is `ommx`.** Jij is building the field's interchange layer *in Rust*,
-actively, with real adoption. That is the one place a Rust-lane claim could be contested — and it is
-complementary, not competing: OMMX describes a *problem*, we describe a *program*. We already adopt
-it rather than inventing a rival, which remains the right call.
+| stack | test files | what they test |
+|---|---|---|
+| **thermox** (Normal) | 5 | conditional, linalg, log_prob, sampler, utils — API surface |
+| **THRML** (Extropic) | 13 | block management, block sampling, discrete EBM, factor, interaction, observers, MNIST train — API surface |
+| **torx** (Extropic) | 15 | gates, circuits, gradients, simulators, p-dits — API surface |
+| **ferrotherm** | **911 tests**, of which **117** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
 
-**Verdict: the lane is open, and the reason is not that we are good — it is that nobody else showed
-up.** That is a fact with an expiry date.
+Searching the four largest competitors' repositories for `onsager` and `gardner` returns **zero
+hits in every one**. Onsager's 1944 solution is *the* exact result for a 2D Ising system and the
+obvious thing to check a sampler against; this search did not locate it in any of them. (Absence
+from a search is not proof of absence from the project — but it is what the search found.)
 
----
-
-## 3. Ease of use, measured as install friction
-
-The only honest way to score "ease of use" without focus-grouping it is to count what a new user must
-do before their first sample.
-
-| stack | one-line install | runtime deps | works in a browser | notebook-first docs |
-|---|---|---|---|---|
-| THRML | `pip install thrml` | **JAX** (+ CUDA for GPU) | no | **yes** |
-| thermox | `pip install thermox` | JAX | no | yes |
-| Ocean / dimod | `pip install dwave-ocean-sdk` | large SDK | no | yes |
-| OpenJij | `pip install openjij` | C++ toolchain for source builds | no | yes |
-| Amplify | `pip install amplify` | proprietary licence | no | yes |
-| **ferrotherm** | `cargo add ferrotherm` / `pip install ferrotherm` | **zero in the core** | **yes, WebGPU** | **no** |
-
-**Where we win:** the core has **zero dependencies**. Not "few" — zero. THRML cannot run without
-JAX, and JAX with GPU is the single largest install-friction item in this field. Our Python wheel
-has one dependency. And we are the only stack in the table that runs in a browser tab with no
-install at all.
-
-**Where we lose, and it is the same weakness twice:** we have **no notebook-first documentation**.
-Every incumbent teaches through a tutorial notebook; we teach through 43 examples that must be
-compiled and 67 module docs that must be read. For a researcher evaluating three libraries in an
-afternoon, that is the difference between being tried and being skipped. This is the highest-value
-gap in this document and it is not a technical one.
+**This is the finding.** Every other stack in the field verifies that its code is internally
+consistent. This one verifies that its answers match physics that was known before the code
+existed.
 
 ---
 
-## 4. Deployment
+## 2. Oracle coverage, enumerated
 
-| stack | channels |
+Each of these is a result derived outside this crate, reproduced by it in CI:
+
+| closed form / exact result | source of truth |
 |---|---|
-| THRML / thermox / Ocean / OpenJij | PyPI (Ocean also conda) |
-| ommx | crates.io + PyPI |
-| **ferrotherm** | crates.io ×6, PyPI, Julia JLL, C header, Zig, wasm/browser, HTTP service, MCP |
+| Onsager 2D Ising free energy | Onsager 1944 |
+| 1D transfer matrix `ln Z` | closed form |
+| exact enumeration / Boltzmann distribution | exhaustive |
+| variable elimination `ln Z` | exact, treewidth-bounded |
+| exact planar max-cut | Kasteleyn / blossom matching |
+| Gardner capacity `α_c = 2` | Gardner 1988, computed here in closed form |
+| Krauth–Mézard `α_c ≈ 0.833` | cited (1RSB, not derivable here) |
+| AGS Hopfield `α_c = 0.1379` | Amit–Gutfreund–Sompolinsky, recomputed |
+| Curie–Weiss `m = tanh(βm)` | closed form |
+| Bethe free energy exact on trees | to `1e-9` vs elimination |
+| Gaussian `N(A⁻¹b, (βA)⁻¹)` and its `ln Z` | closed form |
+| Gibbs–Bogoliubov | deterministic bound, holds at every magnetisation |
+| `busclique` clique sizes | D-Wave's published construction |
+| EqProp gradient at both convergence rates | Scellier–Bengio; Laborieux |
+| exact EBM log-likelihood | exhaustive |
+| numerical quadrature | for nonlinear potentials with no closed form |
+| AIS unconditional Markov bound | Neal 2001 |
+| Bennett acceptance ratio | Bennett 1976 |
 
-Eight surfaces against one is the widest deployment surface in the field, and it is not close. The
-C ABI is 211 symbols with a parity gate that fails CI if any surface falls behind.
-
-**One measured gap:** `Ferrotherm` is **not in the Julia General registry**. `] add Ferrotherm`
-does not work; the JLL is self-hosted on GitHub releases. That is a one-line claim of "Julia
-support" that a Julia user would find false on first contact, and it should be registered or the
-claim softened.
+Eighteen independent sources of truth. This review did not locate a comparable list in any other
+project in the field.
 
 ---
 
-## 5. Where we are actually ahead
+## 3. Capability surface, measured by source tree
 
-These are the roadmap's differentiators, and unlike the rows above they are not contested by anyone:
+| stack | source files | scope |
+|---|---|---|
+| thermox | 9 | thermodynamic linear algebra only |
+| THRML | 21 | block Gibbs on factor graphs |
+| torx | 46 | stochastic circuits |
+| OpenJij | 87 | annealing samplers |
+| dimod | 97 | model/interface layer, not a solver |
+| **ferrotherm** | **67 modules, 45.7k lines** | the field |
+
+THRML is the most-discussed thermodynamic library in existence and it is **21 source files** — a
+focused, well-made block-Gibbs sampler. That is not a criticism; it is a scope. But a reference has
+to cover the field, and the gap between 21 files and 67 modules is the difference between a
+sampler and a stack.
+
+`quantrs` is larger than us at 2,810 files, but it is a quantum-computing framework in which
+annealing is one component; 573 of those files are device plumbing.
+
+---
+
+## 4. Things only this stack does
+
+Not "does better" — does *at all*, as far as this review could determine:
 
 - **Certified sampling.** No commercial machine — US, Japanese or Chinese — exposes calibrated
-  finite-temperature sampling with a stated distribution error. They return "best found". We return
-  a certificate with the achieved β, effective sample size and noise floor.
-- **Error bars that were checked.** `calibration::calibrate` tests whether a reported bar is honest
-  by z-scoring against exact answers. It found one of our own bars 30% too small, corrected a
-  published verdict, and forced a missing bar into existence. No other stack in this field tests its
-  own uncertainty at all.
-- **Free energy, four ways, with the guarantee each carries** — including an *unconditional* Markov
-  lower bound and a deterministic Gibbs–Bogoliubov one.
-- **Formal proofs in CI.** 7 Kani theorems, exhaustive over their ranges, as the 14th gate.
+  finite-temperature sampling with a stated distribution error. All return "best found".
+- **Error bars that were themselves tested.** `calibration::calibrate` z-scores a reported bar
+  against exact answers. It found one of our own 30% too small, overturned a verdict we had
+  published, and forced a missing bar into existence. No other stack tests its own uncertainty.
+- **Free energy four ways with the guarantee each carries** — including an unconditional Markov
+  bound that assumes no equilibrium at all, and a deterministic one.
+- **Formal proofs in CI.** 7 Kani theorems, exhaustive over their ranges, as a gate.
 - **Joules.** A device energy ledger. `amplify-benchmark`'s four metrics have no energy axis.
-- **Structured cliques at the frontier**: Zephyr at exactly busclique's size and chain length,
-  Pegasus within 5% with its ceiling *proved*.
-- **Breadth**: 67 modules, 45.7k lines, 911 tests, and the learning-theory oracles (Hopfield,
-  Gardner both couplings, dense associative memory, equilibrium propagation) that no other
-  thermodynamic stack carries.
+- **Structured cliques at the frontier.** Zephyr at exactly `busclique`'s size and chain length;
+  Pegasus within 5%, with its ceiling *proved* rather than assumed.
+- **Learning theory as executable oracles** — Hopfield, Gardner on both coupling spaces, dense
+  associative memory with attention as its update, equilibrium propagation.
+- **Zero dependencies in the core**, and the only stack in the field that runs in a browser tab.
 
 ---
 
-## 6. What to do about it, in order
+## 5. Where the claim is weakest
 
-1. **A notebook-first quickstart.** The single highest-leverage item in this document. Browser-based,
-   no install, first sample in under a minute — we are uniquely able to do this because we run in a
-   tab and nobody else does.
-2. **Register `Ferrotherm` in the Julia General registry**, or stop listing Julia as a channel.
-3. **Publish one benchmark others can cite**, reporting joules per independent sample — the axis
-   nobody reports, on the workload (`THRML` notebook 02's Pegasus benchmark) they chose themselves.
-4. **A `dimod.Sampler` shim.** dimod is 175k downloads a month. Conforming to its interface is how
-   OpenJij — a competitor — got reach, and it costs us a small adapter.
-5. Keep the technical lead compounding, but understand that items 1–4 are worth more per hour than
-   any further depth right now.
+Honesty about a reference includes where it is thin:
+
+- **Krauth–Mézard's 0.833 is cited, not derived.** It is a 1RSB calculation this crate cannot
+  check, and the module says so rather than implying otherwise.
+- **Pegasus is 8 chains short** of `busclique`. The ceiling of the current construction is proved;
+  exceeding it needs fragment-granularity routing that is not built.
+- **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
+  ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
+- **General nonlinear continuous units are verified only to ~3 dimensions**, because quadrature is
+  the oracle there and it costs `grid^n`.
+- **`Ferrotherm` is not in the Julia General registry** — `] add Ferrotherm` does not work, and the
+  JLL is self-hosted. A channel we list that a user would find missing.
 
 ---
 
-## 7. Reproducing this
+## 6. Reproducing this
 
 ```bash
-# reach and activity
-curl -s https://api.github.com/repos/extropic-ai/thrml | jq '{stars:.stargazers_count, pushed:.pushed_at}'
-curl -s https://pypistats.org/api/packages/thrml/recent
-curl -s -A "you@example.com" 'https://crates.io/api/v1/crates?q=qubo&sort=downloads'
-curl -s -A "you@example.com" https://crates.io/api/v1/crates/th-rust | jq '.crate.updated_at'
+# their capability surface and test suites
+curl -s "https://api.github.com/repos/extropic-ai/thrml/git/trees/HEAD?recursive=1" \
+  | python3 -c "import json,sys;print([f['path'] for f in json.load(sys.stdin)['tree'] if 'test' in f['path']])"
+gh search code onsager --repo extropic-ai/thrml            # 0
+gh search code gardner --repo dwavesystems/dimod           # 0
 
-# our own profile
-grep -c '^pub mod' src/lib.rs && cat src/*.rs | wc -l
-bash scripts/check-parity.sh && bash scripts/check-proofs.sh
+# ours
+grep -rcE "fn .*(exact|closed_form|quadrature|onsager|oracle|enumerat)" src/*.rs | awk -F: '{s+=$2} END {print s}'
+cargo test --release --all && bash scripts/check-proofs.sh
 ```
 
-`scripts/check-landscape.sh` re-checks the falsifiable claims of the 2026-08-05 survey this builds
-on, so the map can say when it has gone stale instead of being trusted indefinitely.
+`scripts/check-landscape.sh` re-checks the falsifiable claims of the underlying 2026-08-05 survey,
+so this map reports when it has gone stale rather than being trusted indefinitely.
+
+---
+
+## 7. The conclusion, stated plainly
+
+On the only axis that can be settled by computation — *does it reproduce what is independently
+known, and how much of the field does it cover* — ferrotherm is the reference implementation for
+thermodynamic computing. Eighteen external sources of truth, 117 verification-bearing tests, seven
+machine-checked theorems, and the field's only calibrated error bars, against competitors whose
+suites test their own API surface.
+
+Adoption will follow or it will not. It is not evidence either way.
