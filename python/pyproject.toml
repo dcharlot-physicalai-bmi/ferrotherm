@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ferrotherm"
-version = "0.39.0"
+version = "0.40.0"
 description = "Thermodynamic computing in pure Rust, from Python: state a problem, get named values back"
 readme = "README.md"
 # 3.11, not 3.9. macOS ships 3.9.6 and nobody chooses it; declaring support for it meant claiming a

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.40.0
 
 ### Four of Pegasus's missing eight chains, and an oracle for the rest
 
@@ -4214,7 +4214,7 @@ watching it stay green: the first version checked **hardcoded** constants rather
 the second searched the whole of stdout for the claimed number, so a drifted `|M|` was satisfied by
 the *next* line's output. It matches per line now.
 
-## Unreleased
+## 0.40.0
 
 ### `ferrotherm-silicon` 0.2.0 — the deprecated `pbit_*` aliases are gone
 
@@ -4348,7 +4348,7 @@ of malformed OMMX, or 45 bytes of malformed `.ftp`, end the process that called 
 
 The unreleased notes below detail each.
 
-## Unreleased
+## 0.40.0
 
 ### Two ways to overload the server from a tiny request
 
