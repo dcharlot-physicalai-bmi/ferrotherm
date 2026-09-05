@@ -176,7 +176,12 @@ echo
 # The load-bearing one. Extropic markets TORX as running on XTR-0 today, and their own torx paper
 # lists native Z1 execution as OPEN WORK; every published "backend" is a simulator class. If device
 # code ever lands in these repos, the empty lane this project occupies has an occupant.
-for repo in extropic-ai/thrml extropic-ai/torx; do
+#
+# sparse-transformers joined the watch on 2026-09-05, the day after the Z1T release. That release is
+# what "models for Z1" ships as, and it is the repo native execution would arrive in -- so far it is
+# JAX training code that runs on GPUs, and the energy figures beside it come from a device model in
+# a blog post rather than from anything in the tree. That gap is the claim.
+for repo in extropic-ai/thrml extropic-ai/torx extropic-ai/sparse-transformers; do
   branch=$(gh api "repos/$repo" --jq .default_branch 2>/dev/null)
   if [[ -z "$branch" ]]; then
     say "$repo" "unreachable (repo moved or private?)"
@@ -196,6 +201,17 @@ done
 # while marketing "up to 1000x". An energy axis appearing in a competitor's benchmark is the single
 # development that would most change this project's positioning, because measuring joules is the
 # lane it is built in.
+#
+# REFINED 2026-09-05 by the Z1T release, which DOES report joules: 294.52 nJ/token split 8.74 Z1 /
+# 285.78 FPGA, against an H100 measured at 40.9 uJ/token. So the prose claim "nobody reports joules"
+# no longer holds as written, and the surviving claim is narrower and still true: nobody reports
+# MEASURED joules for a thermodynamic sampler. Z1 is at tapeout and its term is projected from X0
+# pbits; the only measured number in that ratio is the GPU it is divided by. The arithmetic of that
+# release is reproduced in `examples/z1t_ledger.rs` -- including the part the headline does not
+# contain, that zeroing the sampler entirely moves 138.9x to 143.1x.
+#
+# What this gate watches for is therefore unchanged: a joules axis inside a competitor's BENCHMARK,
+# where a number has to be produced by running something.
 for repo in fixstars/amplify-benchmark; do
   branch=$(gh api "repos/$repo" --jq .default_branch 2>/dev/null)
   hits=$(tree_paths "$repo" "$branch" | count_hits "$ENERGY_RX")
@@ -213,7 +229,8 @@ done
 # Reported rather than judged — the numbers are the output, and a human decides what they mean.
 echo
 echo "Last push, as a staleness proxy:"
-for repo in extropic-ai/thrml extropic-ai/torx normal-computing/thermox OpenJij/OpenJij \
+for repo in extropic-ai/thrml extropic-ai/torx extropic-ai/sparse-transformers \
+            normal-computing/thermox OpenJij/OpenJij \
             dwavesystems/dwave-ocean-sdk fixstars/amplify-benchmark; do
   info=$(gh api "repos/$repo" --jq '"\(.pushed_at[0:10])|\(.stargazers_count)"' 2>/dev/null)
   if [[ -z "$info" ]]; then

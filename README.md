@@ -307,6 +307,13 @@ feeds Kani a false theorem and requires the refutation.
 - `cargo run --release --example z1_ledger` — the crossings tax, executable, at the vendor's own
   SPICE prices (arXiv:2608.01615 Table IV): the generative regime amortizes I/O; a 100 Hz control
   loop is decided by the reflash-rate cap and the unpublished price of clamping an input.
+- `cargo run --release --example z1t_ledger` — **the field's newest efficiency headline, taken
+  apart with its own arithmetic.** Extropic's Z1T (2026-09-04) reports 294.52 nJ/token — 8.74 on Z1,
+  285.78 on the FPGA carrying the rest — against an H100 measured at 40.9 µJ/token, and that
+  reproduces here as 138.9x. What the headline does not contain: setting the *entire thermodynamic
+  contribution to exactly zero joules* moves it to 143.1x, so the sampler is worth 3.1% of the claim
+  and the stated path to 1000x needs the FPGA half 8.9x better. The `hybrid::Split` bound is general
+  — Amdahl's law in joules — and applies to every hybrid this field has benchmarked.
 - `cargo run --release -p ferrotherm-gpu --example duty_cycle` — **the bill for being switched
   on**, and the only place this stack prices the wait rather than subtracting it. Every energy
   comparison in this field, this project's own included, divides joules *above idle* by work done.

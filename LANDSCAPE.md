@@ -106,12 +106,50 @@ Not "does better" — does *at all*, as far as this review could determine:
 - **Free energy four ways with the guarantee each carries** — including an unconditional Markov
   bound that assumes no equilibrium at all, and a deterministic one.
 - **Formal proofs in CI.** 7 Kani theorems, exhaustive over their ranges, as a gate.
-- **Joules.** A device energy ledger. `amplify-benchmark`'s four metrics have no energy axis.
+- **Joules.** A device energy ledger, and the arithmetic that says what a joules headline is
+  *bounded* by. See below: the field's newest efficiency claim reproduces here in eight lines,
+  and so do the three things it does not contain.
 - **Structured cliques at the frontier.** Zephyr at exactly `busclique`'s size and chain length;
   Pegasus within 5%, with its ceiling *proved* rather than assumed.
 - **Learning theory as executable oracles** — Hopfield, Gardner on both coupling spaces, dense
   associative memory with attention as its update, equilibrium propagation.
 - **Zero dependencies in the core**, and the only stack in the field that runs in a browser tab.
+
+### The newest vendor claim, decomposed
+
+Extropic published **Z1T** on 2026-09-04 — transformer-like models for the Z1 sparse probabilistic
+chip — headlined "up to 140x energy efficiency gains over GPUs". The post is unusually complete, so
+the whole thing reproduces from its own numbers (`cargo run --example z1t_ledger`, `src/hybrid.rs`):
+
+| | iso-parameter (as published) | iso-loss (their own ~10x FLOP penalty) |
+|---|---|---|
+| **H100 @ 10% MFU** (the headline's baseline) | **138.9x** | 13.89x |
+| **H100 @ 50% MFU** | 27.8x | 2.78x |
+| **H100 @ 100% MFU** | 13.9x | 1.39x |
+
+Three things the multiplier does not contain, each derived rather than asserted:
+
+1. **The sampler is 3.0% of the bill.** 8.74 nJ/token on Z1, 285.78 nJ/token on the FPGA carrying
+   the rest. Setting the *entire thermodynamic contribution to exactly zero joules* moves 138.9x to
+   143.1x. `Split::ceiling` is that bound, and it is a hard one: no improvement to any sampler, ever,
+   takes a hybrid past what its unaccelerated half already costs.
+2. **The stated path to 1000x is a claim about the FPGA.** `Split::host_speedup_for(1000.0)` says the
+   non-thermodynamic half must improve **8.9x** — 7.0x even with Z1 running free. The post says this
+   itself; the headline does not.
+3. **Iso-parameter is not iso-quality.** The H100 runs "the same next-token step run densely"; the
+   same post says the sparse model needs "about an order of magnitude more FLOPs… to achieve the
+   same loss as a GPT-2 model". Both cannot be inside one multiplier.
+
+And the provenance: the H100 term is *measured* (2026-08-12, batch-1 decode); both halves of the
+numerator are device models. Z1 is at tapeout. Its sampling price also moved — `1.3e-14 J/sample`
+here against `7.09e-15` in the Thermalizers appendix six weeks earlier, **1.83x apart for one
+quantity**. `ledger::Z1_SPICE` and `hybrid::Z1T_PUBLISHED` carry both and assert neither.
+
+None of this is an argument against the substrate — the diagnosis in (2) is correct and is the
+strongest thing in the release. It is what a reference implementation is *for*: the claim arrives as
+a number, and leaves as arithmetic anyone can re-run. `scripts/check-landscape.sh` now watches
+`extropic-ai/sparse-transformers` on the same falsifiable claim as the others, and today it holds —
+the open training recipe is JAX that runs on GPUs, with **no device code in the tree**.
 
 ---
 

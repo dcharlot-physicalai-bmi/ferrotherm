@@ -104,6 +104,7 @@ pub mod ising;
 pub mod device;
 pub mod ledger;
 pub mod duty;
+pub mod hybrid;
 pub mod host;
 pub mod bound;
 pub mod branch;

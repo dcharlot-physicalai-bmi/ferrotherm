@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Amdahl's law in joules, and the newest vendor claim run through it
+
+Every thermodynamic system benchmarked end to end is a hybrid: some layers on the new substrate, the
+rest on a GPU, an FPGA or a host. The vendor reports one multiplier for the whole thing, and that
+multiplier is bounded — hard — by the half that was not accelerated, whatever the sampler does.
+`hybrid::Split` is that bound. `factor` is what gets reported; `ceiling` is what the system reaches
+with the accelerator running at **exactly zero joules**; `headroom` is the difference, and it is a
+property of the machine rather than of the opponent it was pointed at.
+
+The occasion was Extropic's **Z1T** release (2026-09-04) — transformer-like models for the Z1 sparse
+probabilistic chip, headlined "up to 140x energy efficiency gains over GPUs". The post is unusually
+complete, so the whole claim reproduces from its own numbers (`hybrid::Z1T_PUBLISHED`,
+`examples/z1t_ledger.rs`), and so do three things it does not contain:
+
+- **The sampler is 3.0% of the bill.** 8.74 nJ/token on Z1, 285.78 nJ/token on the FPGA. Zeroing the
+  entire thermodynamic contribution moves 138.9x → **143.1x**.
+- **The stated path to 1000x is a claim about the FPGA.** `host_speedup_for(1000.0)` = **8.9x**, and
+  7.0x even with Z1 free. The post diagnoses this itself; the headline does not carry it.
+- **Iso-parameter is not iso-quality.** The H100 runs "the same next-token step run densely", while
+  the same post says the sparse model needs "about an order of magnitude more FLOPs… to achieve the
+  same loss as a GPT-2 model". `with_work_multiplier(10.0)` charges it: 138.9x → 13.9x, and 1.39x
+  against a GPU at full utilisation.
+
+Provenance is carried in the constant, not in prose: the H100 term is *measured*, both halves of the
+numerator are device models, and Z1 is at tapeout. Its sampling price also moved — `1.3e-14 J/sample`
+here against `7.09e-15` in the Thermalizers appendix six weeks earlier, **1.83x apart for one
+quantity**. This crate carries both and asserts neither.
+
+`scripts/check-landscape.sh` now watches `extropic-ai/sparse-transformers` on the same falsifiable
+claim as `thrml` and `torx`, and today it holds: the open training recipe is JAX that runs on GPUs,
+with no device code in the tree. Claim 2 — "nobody reports joules" — is refined rather than broken;
+the surviving statement is that nobody reports *measured* joules for a thermodynamic sampler.
+
 ### Score matching, and the line from energy-based models to diffusion
 
 Training an energy-based model by maximum likelihood needs the gradient of `ln Z`, which needs
