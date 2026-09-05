@@ -460,13 +460,9 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 /// rows are `⋂_x [V(x), V(x)+6(m−1))`, which is `6(m−1) − 4` positions once all three offsets are
 /// in play. Two shores each gives `12(m−1) − 8`: **exactly `K_172`, and exactly eight short**.
 ///
-/// The eight are recovered by letting each chain choose its own segment endpoints, since a pair of
-/// chains needs only ONE of its two possible crossings — which is a search over non-uniform
-/// segments, and is why `busclique` has a dynamic program (`clique_cache.hpp`) rather than a
-/// formula. That DP is the remaining work, and it now has verified fragment machinery to sit on. `busclique` routes on Pegasus's **fragment**
-/// decomposition — each qubit is six fragments — which lets a chain begin and end partway along a
-/// qubit, a shape a whole-qubit segment cannot express. Reaching `K_180` on P₁₆ means building at
-/// that granularity, and this construction's ceiling is proved rather than assumed.
+/// [`pegasus_clique_fragment`] does exactly that search and reaches **`K_176`**, so six of the eight
+/// were an artefact of building at whole-qubit granularity and choosing an orientation. The four
+/// that remain, and why, are recorded there against `busclique` run as an oracle.
 ///
 /// # The four universal wires, and why exactly four
 ///
@@ -518,6 +514,223 @@ pub fn pegasus_clique(m: usize) -> Option<Embedding> {
             chain.push(topo.node(lin(u, w, k, z))?);
         }
         chains.push(chain);
+    }
+    Some(Embedding { chains, sites: topo.graph.n })
+}
+
+/// Pegasus's vertical wire offsets, in FRAGMENT units — `PEGASUS_OFF[0]` halved, one per odd pair.
+///
+/// A vertical wire at fragment column `x` owns rows `[PEG_V[x % 6], PEG_V[x % 6] + 6(m−1))` and
+/// nothing else, which is the entire reason the fragment grid is a staircase rather than a square.
+pub const PEG_V: [usize; 6] = [1, 1, 5, 5, 3, 3];
+/// The same for horizontal wires: row `y` owns columns `[PEG_H[y % 6], PEG_H[y % 6] + 6(m−1))`.
+///
+/// **Not a mirror of [`PEG_V`]**, and that asymmetry is worth a whole clique — see
+/// [`pegasus_clique_fragment`].
+pub const PEG_H: [usize; 6] = [3, 3, 1, 1, 5, 5];
+
+/// The best family the fragment search has found so far: its size, the two arm anchors, and the
+/// (column, row) corners in chain order.
+type Family = (usize, bool, bool, Vec<(usize, usize)>);
+
+/// A native Pegasus clique built at **fragment** granularity: `K_176` on the Advantage's `P_16`.
+///
+/// Four better than [`pegasus_clique`]'s `K_172`, and four short of `busclique`'s `K_180`. Every
+/// size returned here is checked against the shipped fabric by [`Embedding::verify`] in the tests,
+/// and the sizes are checked against `minorminer.busclique` itself — see *Ground truth* below.
+///
+/// | | `P_4` | `P_6` | `P_8` | `P_16` |
+/// |---|---|---|---|---|
+/// | [`pegasus_clique`] | 28 | 52 | 76 | 172 |
+/// | this | **32** | **56** | **80** | **176** |
+/// | `busclique` | 36 | 60 | 84 | 180 |
+///
+/// # The grid this works in, measured rather than assumed
+///
+/// `busclique` cuts each Pegasus qubit into six fragments; the map is `util.hpp::first_fragment`,
+/// and in this crate's coordinates it is
+///
+/// ```text
+///   qubit (u, w, k, z)  ↦  line  w·6 + k/2,  shore k & 1,  positions  z·6 + off[u][k/2] … +6
+/// ```
+///
+/// with `off[0]` = [`PEG_V`] and `off[1]` = [`PEG_H`]. Read back off the shipped fabric at `P_4`
+/// and `P_6`: every existing line spans **exactly** `6(m−1)` consecutive fragment positions from
+/// its own offset, and of the cells those lines make, `L²` carry a full `K_{2,2}` and **none is
+/// partial** — `324` of `576` at `P_4`, `900` of `1296` at `P_6`. So the fragment grid is
+/// `6m − 2` lines each way, each line a length-`L` window at offset `1`, `3` or `5`.
+///
+/// # The chain shape, and the one thing that buys the four
+///
+/// A chain is an **ell**: a run along one fragment column, a run along one fragment row, joined at
+/// their crossing cell `(r, c)`. Chains `i` and `j` are adjacent iff *either* `i`'s column meets
+/// `j`'s row *or* `j`'s column meets `i`'s row — only one of the two is needed, which is what makes
+/// this a search rather than a formula.
+///
+/// Anchoring each arm at a wire end leaves four orientations, and **they are not equivalent**,
+/// because [`PEG_V`] and [`PEG_H`] are not mirror images of each other:
+///
+/// | arms | family | `P_16` |
+/// |---|---|---|
+/// | vertical `[V(c), r]`, horizontal `[c, H(r)+L−1]` | ascending | `K_174` |
+/// | vertical `[r, V(c)+L−1]`, horizontal `[H(r), c]` | ascending | **`K_176`** |
+/// | the two anti-diagonal orientations | descending | smaller |
+///
+/// That was the surprise. The recorded explanation for the old gap — that non-uniform segment
+/// endpoints recover it — is worth *two* chains; **choosing the other orientation is worth two
+/// more**, and it costs nothing to compute. The two ascending orientations cannot be mixed within
+/// one family: for `i∈A`, `j∈B` at `r_i < r_j`, `A`'s vertical stops at `r_i` so it cannot reach
+/// `r_j`, and `B`'s vertical starts at `r_j` so it cannot reach `r_i` — both crossings fail, and
+/// the same argument kills the reverse pairing.
+///
+/// # How the search runs, and why it is exact for this class
+///
+/// Within one orientation the family must be **order-consistent** (sorting by row sorts by column,
+/// or reverses it), so the choice is a longest order-preserving matching between fragment columns
+/// and fragment rows — an `O(nm)` dynamic program over the grid. Two of the constraints are global
+/// rather than per-pair: the extreme row must clear `max V` over every column used, and the extreme
+/// column must clear `min H` over every row used. Both extremes live in `{1, 3, 5}`, so all nine
+/// combinations are enumerated and the DP is run under each; a combination that over-states an
+/// extreme only tightens the filter, so every run is sound and the best of the nine is the exact
+/// optimum of the class. Thirty-six DPs, none of them large.
+///
+/// # What the last four cost, and the oracle that says so
+///
+/// Decoding `minorminer.busclique`'s own answer on `P_4` shows its chains are ells too — no
+/// staircases, no multi-column arms — but their arms are neither anchored at a wire end nor
+/// maximal: one chain there is a **full** vertical wire joined to a **single** horizontal qubit,
+/// its corner sitting mid-arm. Per-pair arm trimming of that kind is what `clique_cache.hpp`'s DP
+/// buys, and it is the remaining four chains. This is now a measurement, not a hypothesis.
+///
+/// ## Ground truth
+///
+/// ```text
+/// pip install minorminer dwave-networkx
+/// python3 -c "import dwave_networkx as dnx; from minorminer import busclique; \
+///   g = dnx.pegasus_graph(16, fabric_only=True); \
+///   print(len(busclique.busgraph_cache(g).largest_clique()))"   # 180
+/// ```
+///
+/// `dnx.pegasus_graph(16, fabric_only=True)` is 5,640 nodes and 40,484 edges — the same graph
+/// [`crate::device::pegasus`] builds, node for node.
+///
+/// `None` for `m < 3`.
+pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
+    if m < 3 {
+        return None;
+    }
+    let l = 6 * (m - 1);
+    let nx = 6 * m;
+    // A fragment line exists unless the fabric trimmed its qubit: k >= 2 at w = 0, k < 10 at
+    // w = m-1, for both orientations. In fragment units that is j >= 1 and j < 5.
+    let exists = |x: usize| -> bool {
+        let (w, j) = (x / 6, x % 6);
+        if w >= m {
+            false
+        } else if w == 0 {
+            j >= 1
+        } else if w == m - 1 {
+            j < 5
+        } else {
+            true
+        }
+    };
+    let vof = |x: usize| PEG_V[x % 6];
+    let hof = |y: usize| PEG_H[y % 6];
+
+    // (vflip, hflip): which end of each wire the arm is anchored at.
+    let mut best: Option<Family> = None;
+    for (vflip, hflip) in [(false, false), (true, true), (false, true), (true, false)] {
+        for &vb in &[1usize, 3, 5] {
+            for &hb in &[1usize, 3, 5] {
+                // Global admissibility. `vb` bounds V over the columns used and `hb` bounds H over
+                // the rows used; over-stating either only tightens this, so every pass is sound.
+                let cols: Vec<usize> = (0..nx)
+                    .filter(|&x| {
+                        exists(x)
+                            && (if vflip { vof(x) >= vb } else { vof(x) <= vb })
+                            && (if hflip { x >= hb } else { x < hb + l })
+                    })
+                    .collect();
+                let rows: Vec<usize> = (0..nx)
+                    .filter(|&y| {
+                        exists(y)
+                            && (if hflip { hof(y) <= hb } else { hof(y) >= hb })
+                            && (if vflip { y < vb + l } else { y >= vb })
+                    })
+                    .collect();
+                if cols.is_empty() || rows.is_empty() {
+                    continue;
+                }
+                // The two anti-diagonal orientations pair ascending rows with DESCENDING columns.
+                let anti = vflip != hflip;
+                let cseq: Vec<usize> =
+                    if anti { cols.iter().rev().copied().collect() } else { cols };
+                let (nc, nr) = (cseq.len(), rows.len());
+                // The corner (r, c) must lie on both wires -- that is the whole per-pair condition
+                // once the globals above hold.
+                let corner = |ci: usize, ri: usize| -> bool {
+                    let (x, y) = (cseq[ci], rows[ri]);
+                    y >= vof(x) && y < vof(x) + l && x >= hof(y) && x < hof(y) + l
+                };
+                let mut g = vec![vec![0usize; nr + 1]; nc + 1];
+                let mut took = vec![vec![false; nr]; nc];
+                for ci in 0..nc {
+                    for ri in 0..nr {
+                        let take = if corner(ci, ri) { g[ci][ri] + 1 } else { 0 };
+                        let skip = g[ci][ri + 1].max(g[ci + 1][ri]);
+                        if take > skip {
+                            g[ci + 1][ri + 1] = take;
+                            took[ci][ri] = true;
+                        } else {
+                            g[ci + 1][ri + 1] = skip;
+                        }
+                    }
+                }
+                let n = g[nc][nr];
+                if best.as_ref().is_none_or(|b| n > b.0) {
+                    let (mut ci, mut ri) = (nc, nr);
+                    let mut picks = Vec::with_capacity(n);
+                    while ci > 0 && ri > 0 {
+                        if took[ci - 1][ri - 1] && g[ci][ri] == g[ci - 1][ri - 1] + 1 {
+                            picks.push((cseq[ci - 1], rows[ri - 1]));
+                            ci -= 1;
+                            ri -= 1;
+                        } else if g[ci - 1][ri] >= g[ci][ri - 1] {
+                            ci -= 1;
+                        } else {
+                            ri -= 1;
+                        }
+                    }
+                    picks.reverse();
+                    best = Some((n, vflip, hflip, picks));
+                }
+            }
+        }
+    }
+    let (_, vflip, hflip, picks) = best?;
+
+    let topo = crate::device::pegasus(m, 1.0);
+    let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
+    let mut chains = Vec::with_capacity(2 * picks.len());
+    for &(x, y) in &picks {
+        let (wc, jc) = (x / 6, x % 6);
+        let (wr, jr) = (y / 6, y % 6);
+        // The qubit each arm turns at: the one whose six fragments contain the corner.
+        let zc = (y - vof(x)) / 6;
+        let zr = (x - hof(y)) / 6;
+        let (vz0, vz1) = if vflip { (zc, m - 2) } else { (0, zc) };
+        let (hz0, hz1) = if hflip { (0, zr) } else { (zr, m - 2) };
+        for p in 0..2 {
+            let mut chain = Vec::with_capacity(m + 1);
+            for z in vz0..=vz1 {
+                chain.push(topo.node(lin(0, wc, 2 * jc + p, z))?); // a hole aborts, never skips
+            }
+            for z in hz0..=hz1 {
+                chain.push(topo.node(lin(1, wr, 2 * jr + p, z))?);
+            }
+            chains.push(chain);
+        }
     }
     Some(Embedding { chains, sites: topo.graph.n })
 }
@@ -776,10 +989,10 @@ mod clique_tests {
 
     /// The Pegasus clique is a valid minor at every size, with uniform chains -- the Advantage row.
     ///
-    /// K_{12(m-2)} at chain m+1, against the same `device::pegasus` the crate ships. On P_16 this is
-    /// K_168 at chain 17 where the frontier (busclique) is K_180 at the same 17 -- the missing
-    /// twelve chains need the boundary odd-coupler repair, recorded as the exact gap. Sizes to P_8
-    /// here for time; the example table carries P_16, verified the same way.
+    /// K_{12(m-2)+4} at chain m+1, against the same `device::pegasus` the crate ships. On P_16 that
+    /// is K_172 where the frontier (busclique, run as an oracle) is K_180 at the same chain 17;
+    /// `pegasus_clique_fragment` closes four of that gap and has its own test. Sizes to P_8 here for
+    /// time; the example table carries P_16, verified the same way.
     #[test]
     fn the_pegasus_clique_is_a_valid_minor_with_bounded_chains() {
         for m in 3..=8usize {
@@ -796,6 +1009,40 @@ mod clique_tests {
         }
         assert!(pegasus_clique(0).is_none());
         assert!(pegasus_clique(2).is_none(), "no interior diagonal below P_3");
+    }
+
+    /// The fragment construction beats the whole-qubit one at every size, and is a real minor.
+    ///
+    /// The sizes on the right are `minorminer.busclique`'s own answers on `dnx.pegasus_graph(m,
+    /// fabric_only=True)` -- the same graph `device::pegasus` builds, node for node -- so this test
+    /// records the remaining gap against an oracle rather than against a recollection of one.
+    #[test]
+    fn the_fragment_clique_beats_the_whole_qubit_one_at_every_size() {
+        // (m, ours, busclique)
+        for &(m, ours, theirs) in &[(3usize, 20usize, 24usize), (4, 32, 36), (5, 44, 48),
+                                    (6, 56, 60), (7, 68, 72), (8, 80, 84)] {
+            let topo = crate::device::pegasus(m, 1.0);
+            let e = pegasus_clique_fragment(m).expect("m >= 3");
+            let k = e.chains.len();
+            assert_eq!(k, ours, "P_{m}");
+            assert!(k > pegasus_clique(m).expect("m >= 3").chains.len(), "P_{m} is an improvement");
+            assert_eq!(k + 4, theirs, "P_{m} is four short of busclique, and that is the open gap");
+            let longest = e.chains.iter().map(|c| c.len()).max().expect("nonempty");
+            assert!(longest <= m + 1, "P_{m}: chain {longest} exceeds m+1");
+            e.verify(&clique(k), &topo.graph).unwrap_or_else(|err| panic!("P_{m}: {err}"));
+        }
+        assert!(pegasus_clique_fragment(2).is_none());
+    }
+
+    /// P_16 is the shipped Advantage, and the one number anybody will quote.
+    #[test]
+    fn the_fragment_clique_places_k176_on_the_advantage() {
+        let m = 16;
+        let topo = crate::device::pegasus(m, 1.0);
+        let e = pegasus_clique_fragment(m).expect("m >= 3");
+        assert_eq!(e.chains.len(), 176, "K_176 on P_16, against busclique's K_180");
+        assert!(e.chains.iter().all(|c| c.len() <= m + 1));
+        e.verify(&clique(176), &topo.graph).expect("a valid minor on the shipped fabric");
     }
 
     /// The embedded model actually runs, and the answer comes back with no broken chains.

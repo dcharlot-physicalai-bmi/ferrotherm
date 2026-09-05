@@ -525,12 +525,16 @@ For a clique on a structured fabric the frontier is a construction, not a search
 places its cliques by writing the answer down. This crate does the same on all three fabrics, and on
 Zephyr it reaches the frontier exactly: `embed::zephyr_clique` places **K_{16m−8} at uniform chain
 m+1 — K_232 on Z₁₅ — the same size and chain length D-Wave's busclique reaches on a perfect
-fabric**. `embed::pegasus_clique` places K_172 on the Advantage's P₁₆ — ells at chain 17 plus the fabric's
-four provably-universal wires at chain 15 (busclique's K_180 is within 5%; the heuristic search
-reaches K_80) — and `embed::chimera_clique` the classic `K_{t·m}`. Each is verified at every size by
-`Embedding::verify` against the shipped fabric, and the interval and quantifier arithmetic each
-rests on is machine-checked by Kani, exhaustively. The one remaining structured gap is exact and
-recorded: eight chains on Pegasus (busclique's staggered-fragment diagonal). `ft_clique_embed` carries the constructions to Python, Zig and Julia;
+fabric**. On Pegasus there are two: `embed::pegasus_clique` writes down **K_172** in closed form with a
+machine-checked ceiling, and `embed::pegasus_clique_fragment` searches the **fragment** grid — six
+per qubit — for **K_176**, four short of busclique's K_180 and against the heuristic's K_80.
+`embed::chimera_clique` is the classic `K_{t·m}`. Each is verified at every size by
+`Embedding::verify` against the shipped fabric, the interval and quantifier arithmetic is
+machine-checked by Kani exhaustively, and the Pegasus sizes are checked against
+`minorminer.busclique` run as an oracle on the same graph. The one remaining structured gap is
+exact, measured, and now understood: four chains, which need per-pair arm trimming — decoding
+busclique's own P₄ answer shows chains whose corner sits mid-arm, a shape an anchored ell cannot
+express. `ft_clique_embed` carries the constructions to Python, Zig and Julia;
 `examples/embedding_tax` shows them beside the search and the frontier.
 
 ### Where this stands against the field

@@ -110,19 +110,25 @@ fn main() {
                 if ok { "yes" } else { "NO" }, "K_33 (K_{4m+1})"
             );
         }
-        // Pegasus K_{12(m-2)}: the diagonal-ell construction, offset-agnostic by covering both
-        // places a crossing can sit, verified against device::pegasus. P_16 is the Advantage.
+        // Pegasus, both constructions on the same fabric. The whole-qubit ell family is
+        // offset-agnostic (it covers both places a crossing can sit) and has a proved ceiling; the
+        // fragment search works at six-per-qubit granularity and is four chains larger. The
+        // frontier column is busclique's own answer, measured with minorminer on this same graph.
         for m in [8usize, 16] {
             let hw = device::pegasus(m, 1.0).graph;
-            let e = embed::pegasus_clique(m).expect("m>=3");
-            let n = e.chains.len();
-            let ok = e.verify(&clique(n), &hw).is_ok();
-            println!(
-                "{:<16} {:>6} {:>7} {:>9} {:>10}",
-                format!("Pegasus P{m}"), format!("K_{n}"),
-                e.chains.iter().map(|c| c.len()).max().unwrap(),
-                if ok { "yes" } else { "NO" }, format!("K_{}", 12 * (m - 1))
-            );
+            for (label, e) in [
+                (format!("Pegasus P{m}"), embed::pegasus_clique(m).expect("m>=3")),
+                (format!("  .. fragment"), embed::pegasus_clique_fragment(m).expect("m>=3")),
+            ] {
+                let n = e.chains.len();
+                let ok = e.verify(&clique(n), &hw).is_ok();
+                println!(
+                    "{:<16} {:>6} {:>7} {:>9} {:>10}",
+                    label, format!("K_{n}"),
+                    e.chains.iter().map(|c| c.len()).max().unwrap(),
+                    if ok { "yes" } else { "NO" }, format!("K_{}", 12 * (m - 1))
+                );
+            }
         }
         // Zephyr K_{2t(2m-1)}: the measured-crossing ell construction, verified against
         // device::zephyr. This IS the busclique frontier size, at the same chain length.
@@ -172,11 +178,15 @@ fn main() {
              fabric's four UNIVERSAL WIRES at chain 15, where the search reaches K_80 at chain 16.\n\
              Four is a theorem, not a choice: the offset lists make exactly the wires on tracks\n\
              {{0,1}} (columns at w = m-1) and {{10,11}} (rows at w = 0) cross every ell, and every\n\
-             other boundary wire provably fails. The frontier is K_{{12(m-1)}} = K_180: the last\n\
-             EIGHT chains need busclique's staggered-fragment diagonal, so the construction is\n\
-             within 5%% of the maximum, instantly, with the remainder recorded. The interval and\n\
-             quantifier arithmetic is a Kani theorem (exhaustive to m = 2^16), and every size still\n\
-             passes Embedding::verify besides.\n\n\
+             other boundary wire provably fails. `pegasus_clique_fragment` then works at FRAGMENT\n\
+             granularity -- six per qubit -- and reaches K_176 at the same chain 17. Two of the\n\
+             recovered four were the granularity; the other two were the arm ORIENTATION, which is\n\
+             not symmetric because the vertical and horizontal offset lists are not mirrors.\n\
+             The frontier is K_{{12(m-1)}} = K_180, measured by running minorminer's busclique on\n\
+             this same graph; the last FOUR need per-pair arm trimming -- busclique's own chains put\n\
+             the corner mid-arm, which no anchored ell expresses. The interval and quantifier\n\
+             arithmetic is a Kani theorem (exhaustive to m = 2^16), and every size still passes\n\
+             Embedding::verify besides.\n\n\
          AND THE ANOMALY, stated rather than trimmed. At K_32 the LARGER machine of each family\n\
          spends more sites than the smaller one -- P16 uses 237 where P6 uses 203. That is not the\n\
          bigger machine being worse. It is the placement heuristic having more room to wander in,\n\

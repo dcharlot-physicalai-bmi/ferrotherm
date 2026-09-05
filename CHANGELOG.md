@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Four of Pegasus's missing eight chains, and an oracle for the rest
+
+`embed::pegasus_clique_fragment` builds a Pegasus clique on the **fragment** grid — `busclique` cuts
+each qubit into six, and the map (`util.hpp::first_fragment`) was already worked out and verified
+here. It reaches **`K_176` on the Advantage's `P_16`** at chain 17, against `pegasus_clique`'s
+`K_172`, the heuristic search's `K_80`, and `busclique`'s `K_180`. Every size is checked by
+`Embedding::verify` against the shipped fabric, and `ft_clique_embed` now returns it, falling back to
+the closed-form construction.
+
+**The surprise was the orientation.** A chain is an ell — a run down a fragment column, a run along a
+fragment row, joined at their crossing. Anchoring each arm at a wire end leaves four orientations,
+and they are **not equivalent**, because the offset lists are not mirror images:
+`PEG_V = [1,1,5,5,3,3]` against `PEG_H = [3,3,1,1,5,5]`. One gives `K_174`, another `K_176`, and the
+two anti-diagonal ones less. The previously recorded explanation — that non-uniform segment endpoints
+recover the eight — is worth *two* chains; choosing the other orientation is worth two more and costs
+nothing to compute. The two ascending orientations provably cannot be mixed within one family.
+
+The search is exact for that class: within one orientation the family must be order-consistent, so it
+is a longest order-preserving matching between fragment columns and rows — an `O(nm)` DP. Two
+constraints are global rather than per-pair; both extremes live in `{1,3,5}`, so all nine
+combinations are enumerated, and over-stating an extreme only tightens the filter. Thirty-six small
+DPs, and the best of them is the optimum of the class.
+
+**And the remaining four are now a measurement.** `minorminer.busclique` was installed and run as an
+oracle on `dnx.pegasus_graph(m, fabric_only=True)` — the same graph `device::pegasus` builds, node
+for node, 5,640 nodes and 40,484 edges at `m = 16`. It returns `K_24/36/48/60/72/84` at `P_3..P_8`
+and `K_180` at `P_16`, all `12(m−1)`, all at chain `m+1`; those are now asserted in the tests.
+Decoding its `P_4` answer shows its chains are ells too — no staircases, no multi-column arms — but
+their arms are neither anchored at a wire end nor maximal: one is a **full** vertical wire joined to
+a **single** horizontal qubit, corner mid-arm. Per-pair arm trimming of that kind is the last four
+chains, and that is a decoded fact now rather than a hypothesis.
+
 ### Amdahl's law in joules, and the newest vendor claim run through it
 
 Every thermodynamic system benchmarked end to end is a hybrid: some layers on the new substrate, the

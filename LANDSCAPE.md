@@ -110,7 +110,8 @@ Not "does better" — does *at all*, as far as this review could determine:
   *bounded* by. See below: the field's newest efficiency claim reproduces here in eight lines,
   and so do the three things it does not contain.
 - **Structured cliques at the frontier.** Zephyr at exactly `busclique`'s size and chain length;
-  Pegasus within 5%, with its ceiling *proved* rather than assumed.
+  Pegasus at `K_176` of `K_180`, with the whole-qubit family's ceiling *proved* rather than assumed
+  and the residual gap measured against `busclique` run as an oracle.
 - **Learning theory as executable oracles** — Hopfield, Gardner on both coupling spaces, dense
   associative memory with attention as its update, equilibrium propagation.
 - **Zero dependencies in the core**, and the only stack in the field that runs in a browser tab.
@@ -162,17 +163,24 @@ Honesty about a reference includes where it is thin:
   `capacity_by_enumeration` reaches `0.8305` from exhaustive counting with no replica assumptions.
   Both agree with the published `0.833` and with each other. The term that decided the derivation
   is the Legendre pairing `−½q̂(1−q)`, not `−½qq̂`.
-- **Pegasus is 8 chains short** of `busclique`, and the cause is now known exactly rather than
-  named. Their source was re-fetched and the fragment map (`util.hpp::first_fragment`) worked out
-  and **verified against our fabric**: each qubit is six fragments, `P_m` is a `6m × 6m` Chimera of
-  shore 2, and at `P_4` exactly 324 of 576 cells carry a full `K_{2,2}` with **none partial**.
-  Building in fragment space and mapping back reproduces `K_172` — the same clique, from an
-  independent direction, so the fragment view is not the missing piece.
-  What costs the eight is that fragment wires are short by six at one end (`V(x) ∈ {1,3,5}`), so a
-  family whose chains share segment endpoints can use only `6(m−1) − 4` positions: `12(m−1) − 8`,
-  which is `K_172` exactly. Recovering them needs per-chain endpoints — a search, which is why
-  `busclique` ships a dynamic program (`clique_cache.hpp`) and not a formula. That DP is the
-  remaining work and now has verified machinery under it.
+- ~~**Pegasus is 8 chains short** of `busclique`~~ — **half closed, and the other half explained.**
+  `pegasus_clique_fragment` builds on the fragment grid and reaches **`K_176`** against busclique's
+  `K_180`, verified at every size and checked against `minorminer.busclique` run as an oracle on the
+  same graph (`K_24/36/48/60/72/84` at `P_3..P_8`, all `12(m−1)`, all at chain `m+1`). Two of the
+  eight were whole-qubit granularity; **two were the arm ORIENTATION** — `PEG_V = [1,1,5,5,3,3]` and
+  `PEG_H = [3,3,1,1,5,5]` are not mirror images, so the four anchored ell orientations are
+  inequivalent and one is strictly better, which costs nothing to compute and was not in the earlier
+  analysis. The last four need per-pair arm trimming: decoding busclique's own `P_4` answer shows
+  chains whose corner sits **mid-arm** — one is a full vertical wire joined to a single horizontal
+  qubit — a shape no anchored ell expresses. That is a measurement now, not a hypothesis.
+  The grid it works in was measured, not assumed: each qubit is six fragments, `P_m` is a `6m × 6m`
+  grid of shore 2, every existing line spans exactly `6(m−1)` consecutive positions from its own
+  offset, and of the cells those lines make, `L²` carry a full `K_{2,2}` with **none partial** —
+  324 of 576 at `P_4`, 900 of 1296 at `P_6`, read back off the shipped fabric.
+- **The whole-qubit construction's ceiling stands, and is still worth having.** `K_{12(m−2)+4}` is
+  optimal for chains made of one vertical and one horizontal wire SEGMENT, proved rather than
+  observed, with the four universal wires a theorem about the offset lists. It stays as
+  `ft_clique_embed`'s fallback: a smaller clique with a machine-checked ceiling beats none.
 - **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
   ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
 - ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed.**

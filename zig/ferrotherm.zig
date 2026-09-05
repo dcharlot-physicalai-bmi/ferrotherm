@@ -254,7 +254,7 @@ pub const Sim = struct {
     /// Store a CLOSED-FORM structured clique embedding, where `hardware` has a known one.
     ///
     /// Where `embed` searches, this writes the answer down: `K_n` with uniform chains and no search.
-    /// Supported today for Pegasus (`K_{12(m-2)+4}`, chains <= m+1 -- K_172 on the Advantage's P16) and
+    /// Supported today for Pegasus (`K_{12(m-1)-4}`, chains <= m+1 -- K_176 on the Advantage's P16) and
     /// Zephyr (`K_{2t(2m-1)}`, chains m+1 -- the busclique frontier size). The clique size is fixed by
     /// the machine and returned; the placement lands on `self` exactly as `embed` does, so
     /// `embedApply`, `unembed` and the `embed*` readers work unchanged. `error.NotSolved` when the
