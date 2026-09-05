@@ -124,12 +124,17 @@ Honesty about a reference includes where it is thin:
   `capacity_by_enumeration` reaches `0.8305` from exhaustive counting with no replica assumptions.
   Both agree with the published `0.833` and with each other. The term that decided the derivation
   is the Legendre pairing `−½q̂(1−q)`, not `−½qq̂`.
-- **Pegasus is 8 chains short** of `busclique`, and this is now the only open *software* gap. The
-  ceiling of the current construction is proved (interior segments forced, boundary exactly two
-  tracks per end), and the obvious extension is measured and ruled out: odd couplers join tracks in
-  fixed pairs at every `z`, but partners share an offset group exactly, so a track hop leaves every
-  crossing condition unchanged. Exceeding `K_172` needs `busclique`'s fragment-granularity routing —
-  a different class of chain, roughly a session's work with their source in hand.
+- **Pegasus is 8 chains short** of `busclique`, and the cause is now known exactly rather than
+  named. Their source was re-fetched and the fragment map (`util.hpp::first_fragment`) worked out
+  and **verified against our fabric**: each qubit is six fragments, `P_m` is a `6m × 6m` Chimera of
+  shore 2, and at `P_4` exactly 324 of 576 cells carry a full `K_{2,2}` with **none partial**.
+  Building in fragment space and mapping back reproduces `K_172` — the same clique, from an
+  independent direction, so the fragment view is not the missing piece.
+  What costs the eight is that fragment wires are short by six at one end (`V(x) ∈ {1,3,5}`), so a
+  family whose chains share segment endpoints can use only `6(m−1) − 4` positions: `12(m−1) − 8`,
+  which is `K_172` exactly. Recovering them needs per-chain endpoints — a search, which is why
+  `busclique` ships a dynamic program (`clique_cache.hpp`) and not a formula. That DP is the
+  remaining work and now has verified machinery under it.
 - **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
   ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
 - ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed.**

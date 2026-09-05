@@ -427,7 +427,43 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 /// knowing before anyone spends a day on it.
 ///
 /// So the remaining eight chains to `busclique`'s `K_{12(m−1)}` are not a missing repair to this
-/// construction; they are outside its class. `busclique` routes on Pegasus's **fragment**
+/// construction; they are outside its class.
+///
+/// # The fragment picture, worked out and verified
+///
+/// `busclique` does not reason about whole qubits. It cuts each Pegasus qubit into **six
+/// fragments** and works in the resulting grid, where the crossing structure is regular. That map
+/// is `minorminer/include/busclique/util.hpp::first_fragment`, and it is exactly:
+///
+/// ```text
+///   qubit (u, w, k, z)  ↦  fragment column  w·6 + k/2
+///                          shore index      k & 1
+///                          rows  z·6 + off[u][k/2]  …  +6
+///   off[0] = [1,1,5,5,3,3]   off[1] = [3,3,1,1,5,5]   (halved from PEGASUS_OFF, every other entry)
+/// ```
+///
+/// so `P_m` is a Chimera of `6m × 6m` cells with **shore 2**. Checked against the shipped fabric at
+/// `P_4`: of 576 cells, **324 carry the full `K_{2,2}` and none is partial** — a cell is either
+/// wholly there or wholly absent, which is what confirms the map. The 324 is `[6(m−1)]²`, and a
+/// Chimera clique on that grid would be `K_{2·6(m−1)} = K_{12(m−1)}`: `busclique`'s number exactly.
+///
+/// Building the ell family in fragment space and mapping back through this inverse produces
+/// `K_172` on `P_16` — **the same clique this module already builds**, verified the same way, from
+/// a completely independent direction. So the fragment view is not itself the missing ingredient.
+///
+/// # What actually costs the last eight, stated exactly
+///
+/// A fragment wire is not full length: vertical wire at column `x` owns only rows
+/// `[V(x), V(x) + 6(m−1))` with `V(x) ∈ {1,3,5}`, and horizontally the mirror. A chain must
+/// TRAVERSE every fragment of its two segments, so if every chain's vertical segment starts at the
+/// same row and every horizontal segment ends at the same column — the uniform family — the usable
+/// rows are `⋂_x [V(x), V(x)+6(m−1))`, which is `6(m−1) − 4` positions once all three offsets are
+/// in play. Two shores each gives `12(m−1) − 8`: **exactly `K_172`, and exactly eight short**.
+///
+/// The eight are recovered by letting each chain choose its own segment endpoints, since a pair of
+/// chains needs only ONE of its two possible crossings — which is a search over non-uniform
+/// segments, and is why `busclique` has a dynamic program (`clique_cache.hpp`) rather than a
+/// formula. That DP is the remaining work, and it now has verified fragment machinery to sit on. `busclique` routes on Pegasus's **fragment**
 /// decomposition — each qubit is six fragments — which lets a chain begin and end partway along a
 /// qubit, a shape a whole-qubit segment cannot express. Reaching `K_180` on P₁₆ means building at
 /// that granularity, and this construction's ceiling is proved rather than assumed.
