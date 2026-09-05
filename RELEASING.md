@@ -13,12 +13,22 @@ someone's head is a release procedure that skips a crate.
 
 Two orderings matter, and one of them is not obvious.
 
-**Publish before you push.** `cargo publish` needs the version bump *committed*, not *pushed* — and
-`check-versions.sh` fails when a pushed commit is ahead of crates.io, which is exactly right and
-exactly what it did to the 0.13.0 release: CI started the moment the commit landed, ran during the
-ninety seconds the five dependents were still uploading, and correctly reported four crates ahead.
-Nothing was wrong except the order. Commit, publish all six, *then* push, and the window does not
-exist.
+**Publish before you push MAIN — but push the TAG first.** `cargo publish` needs the version bump
+*committed*, not *pushed*, and `check-versions.sh` fails when a pushed commit is ahead of crates.io,
+which is exactly right and exactly what it did to the 0.13.0 release: CI started the moment the
+commit landed, ran during the ninety seconds the dependents were still uploading, and correctly
+reported four crates ahead. Nothing was wrong except the order.
+
+That advice used to say "push last", full stop, and then `cut-release.sh` arrived and **requires the
+tag to be on origin** before it will publish anything (the registry must never lead the public
+history). The two rules were never reconciled, and at 0.40.0 they collided: `git push origin main`
+and `git push origin v0.40.0` went out together, CI on main started at 10:39:32, and
+`ferrotherm-silicon 0.2.25` was still uploading. The job failed on ONE crate reading `<- ahead`,
+with nothing wrong but the order — the 0.13.0 incident, a second time, from a document that had
+described only half of the sequence.
+
+So the order is three steps, not two: **push the tag, publish, then push main.** The tag push
+triggers the release workflow, which does not check the registry; main is what CI reads.
 
 **Core first.** crates.io resolves dependencies at publish time, so the core must be **live** before
 anything that pins it can go out. The index takes a few seconds to catch up.
@@ -46,17 +56,26 @@ scripts/check-semantics.sh         # every binding compiles one model to the sam
 scripts/check-answers.sh           # ...and solves it to the same answer on all seven surfaces
 scripts/check-exports.sh           # every exported binding name resolves
 
+git tag -a vX.Y.Z -m "..."          # on the release commit, still local
+git push origin vX.Y.Z             # the TAG first: cut-release.sh refuses an unpushed one
+
+scripts/cut-release.sh X.Y.Z       # publishes all six from a worktree of the tag, in dep order
+                                   # (rerun-safe: a crate already on the registry is skipped)
+
+scripts/check-versions.sh          # and now it should say all six are live
+
+git push origin main               # LAST, so CI never sees a half-published release
+```
+
+By hand, if `cut-release.sh` is unavailable, the publish order is the dependency order:
+
+```sh
 cargo publish -p ferrotherm        # FIRST. Everything below pins it.
 cargo publish -p ferrotherm-meter  # before gpu -- see below
 cargo publish -p ferrotherm-gpu
 cargo publish -p ferrotherm-cloud
 cargo publish -p ferrotherm-silicon
 cargo publish -p ferrotherm-serve
-
-scripts/check-versions.sh          # and now it should say all six are live
-
-git push origin main               # LAST, so CI never sees a half-published release
-git push origin vX.Y.Z
 ```
 
 ## What has to move together

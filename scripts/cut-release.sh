@@ -56,6 +56,32 @@ if ! git ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
     exit 1
 fi
 
+# ---- and MAIN must not be there yet, or CI is already racing these uploads -----------------------
+#
+# This is a warning and not a refusal, because by the time you can read it the push has happened and
+# refusing would leave the release half-made. It exists because the 0.13.0 incident recurred at
+# 0.40.0 for a reason nobody had written down: RELEASING.md said "push last", cut-release.sh requires
+# the TAG pushed first, and the obvious reading -- push both, then publish -- puts CI on main inside
+# the upload window. It ran while ferrotherm-silicon was still going up and failed on one crate
+# reading "<- ahead", with nothing wrong but the order. The order is: tag, publish, THEN main.
+# Ancestry, not equality: by the time anyone reads this, origin/main has usually moved on (the
+# release workflow commits the JLL manifest back), and comparing tip hashes would silently never fire
+# -- a warning that cannot trigger is worse than none, because it reads as "checked, fine".
+main_has_tag=0
+if [[ "$mode" != "--publish-only" ]]; then
+    git fetch -q origin main 2>/dev/null || true
+    git merge-base --is-ancestor "$tag^{commit}" FETCH_HEAD 2>/dev/null && main_has_tag=1
+fi
+if [[ "$main_has_tag" -eq 1 ]]; then
+    echo
+    echo "  NOTE: origin/main already has $tag's commit, so CI is running against a registry that"
+    echo "  does not have these versions yet. check-versions.sh will correctly report the crates"
+    echo "  still uploading as '<- ahead' and that job will go red. It is a race, not a defect:"
+    echo "  when this script reports all six live, re-run the failed job."
+    echo "  Next time: push the tag, run this, and push main LAST (see RELEASING.md)."
+    echo
+fi
+
 # ---- publish from a worktree that contains the tag and nothing else ----------------------------
 wt=$(mktemp -d "${TMPDIR:-/tmp}/ferrotherm-cut-XXXXXX")
 cleanup() { git worktree remove --force "$wt" >/dev/null 2>&1 || true; rm -rf "$wt"; }
