@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.41.0
 
 ### Pegasus reaches busclique's frontier: `K_180` on the Advantage, at chain 17
 
