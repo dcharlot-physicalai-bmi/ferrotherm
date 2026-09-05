@@ -1168,7 +1168,7 @@ is how a dropped GPU dispatch turns into a believable energy.
         """Store a **closed-form** structured clique embedding, where ``hardware`` has a known one.
 
         Where :meth:`embed` searches, this writes the answer down: ``K_n`` with uniform chains and no
-        search. Supported today for **Pegasus** (``K_{12(m-1)-4}``, chains ≤ ``m+1`` — ``K_176`` on the
+        search. Supported today for **Pegasus** (``K_{12(m-1)}``, chains ≤ ``m+1`` — ``K_180`` on the
         Advantage's P₁₆, where the search reaches ``K_80``) and **Zephyr** (``K_{2t(2m-1)}``, chains
         ``m+1`` — ``K_232`` on Z₁₅, the busclique frontier size exactly).
         The clique size is fixed by the machine; this returns it. The placement lands on ``self``

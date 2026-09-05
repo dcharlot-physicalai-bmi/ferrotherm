@@ -481,8 +481,9 @@ mod sparsify_ffi_tests {
 ///
 /// Where [`ft_embed`] searches, this writes the answer down: a `K_n` clique embedding built from the
 /// topology's own minor structure, with uniform chains and no search. Supported today for
-/// **Pegasus** (`ft_pegasus_new`: `K_{12(m-1)-4}`, chains at most `m+1` -- `K_176` on the
-/// Advantage's P_16) and **Zephyr** (`ft_zephyr_new`: `K_{2t*m}`, chains `m+1`).
+/// **Pegasus** (`ft_pegasus_new`: `K_{12(m-1)}`, chains at most `m+1` -- `K_180` on the Advantage's
+/// P_16) and **Zephyr** (`ft_zephyr_new`: `K_{2t*m}`, chains `m+1`). Both are `busclique`'s frontier
+/// size at its own chain length.
 ///
 /// The clique size is FIXED by the machine, not chosen: it is the largest this construction places,
 /// `K_{2t*m}` on `Z_{m,t}`. `n_out`, when non-null, receives it. The placement is stored on
@@ -541,8 +542,8 @@ fn structured_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
             }
         }
         if m >= 3 && 8 * (m - 1) * (3 * m - 1) == n {
-            // The fragment construction is four chains larger at every size; the whole-qubit one
-            // stays as the fallback because it is the one with a machine-checked ceiling, and a
+            // The fragment construction is at busclique's frontier at every size; the whole-qubit
+            // one stays as the fallback because it is the one with a machine-checked ceiling, and a
             // caller is better served by a smaller clique than by none.
             if let Some(e) = crate::embed::pegasus_clique_fragment(m).and_then(sealed) {
                 return Some(e);
@@ -798,8 +799,8 @@ mod embed_ffi_tests {
         assert_eq!(ft_clique_embed(lg, hw, &mut n), 1);
         // The size is the MACHINE's, not the request's: the caller asked for 28 variables and the
         // fabric offers 32, which is what the ABI reports and what the accessors read back.
-        assert_eq!(n, 32, "K_{{12(m-1)-4}} = K_32 on P_4, four short of busclique's K_36");
-        assert_eq!(ft_embed_longest(lg), 5, "fragment ells at m+1 = 5");
+        assert_eq!(n, 36, "K_{{12(m-1)}} = K_36 on P_4, which is busclique's frontier exactly");
+        assert_eq!(ft_embed_longest(lg), 5, "chain m+1 = 5, busclique's chain length too");
         ft_free(lg);
         ft_free(hw);
     }

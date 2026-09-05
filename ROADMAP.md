@@ -553,8 +553,8 @@ oracles — that is the next design question, not a missing function.
 one horizontal wire segment: the interior segments are forced (`α = 0`, `β = 1`, so `w ∈ [1, m−2]`)
 and the boundary admits exactly two tracks at each end (10 and 11 hot, 0 and 1 cold), proved in Kani
 and measured on P₄/P₅/P₈. Every connected candidate is already mutually adjacent, so adjacency is
-not the limit — connectivity is. Routing at FRAGMENT granularity (six per qubit) closes four of the
-eight; see `embed::pegasus_clique_fragment`, and the four that remain.
+not the limit — connectivity is. Routing at FRAGMENT granularity (six per qubit) closes the gap
+entirely; see `embed::pegasus_clique_fragment`.
 
 **3.4 Structured clique constructions.** ✅ **All three fabrics; Zephyr AT the frontier** —
 `embed::pegasus_clique`, `embed::zephyr_clique`, `embed::chimera_clique`.
@@ -565,13 +565,11 @@ on Z₁₅, **exactly busclique's size and chain**: the measured crossing law (`
 offset dependence) makes the two `j` phases first-class tracks, no odd-coupler fusion needed.
 `pegasus_clique` places `K_{12(m−2)+4}` — `K_172` on the Advantage's P₁₆, ells at `m+1` plus the
 four universal wires the offsets provably admit (exactly four: tracks {0,1} at `w = m−1`, {10,11} at
-`w = 0`). `pegasus_clique_fragment` then searches the fragment grid and reaches **`K_176`**, against
-the heuristic's `K_80` and busclique's `K_180`. All coverage and quantifier arguments are Kani
-theorems (exhaustive to `m = 2¹⁶`); every size passes `Embedding::verify`, and every Pegasus size is
-checked against `minorminer.busclique` on the same graph. Remaining bar, exact and now explained:
-**+4 chains**, needing per-pair arm trimming — busclique's own chains put the corner mid-arm, which
-an anchored ell cannot express. Two of the original eight were the whole-qubit granularity and two
-were the arm ORIENTATION, which is not symmetric because `PEG_V` and `PEG_H` are not mirrors.
+`w = 0`). `pegasus_clique_fragment` then builds on the fragment grid and reaches **`K_{12(m−1)}` = `K_180` at
+chain 17 — busclique's frontier exactly, size and chain both**, at every size from P₃ to P₁₆, against
+the heuristic's `K_80`. All coverage and quantifier arguments are Kani theorems (exhaustive to
+`m = 2¹⁶`); every size passes `Embedding::verify`, and every Pegasus size is checked against
+`minorminer.busclique` on the same graph. **No structured clique bar remains on either fabric.**
 
 **3.2 2D adaptive parallel tempering over (β, W0)**, so nobody hand-tunes copy strength.
 *Partly answered another way:* `sparsify::copy_strength` derives a sufficient `W0` from the model's

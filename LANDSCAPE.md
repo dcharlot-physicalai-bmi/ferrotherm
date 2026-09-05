@@ -109,9 +109,9 @@ Not "does better" — does *at all*, as far as this review could determine:
 - **Joules.** A device energy ledger, and the arithmetic that says what a joules headline is
   *bounded* by. See below: the field's newest efficiency claim reproduces here in eight lines,
   and so do the three things it does not contain.
-- **Structured cliques at the frontier.** Zephyr at exactly `busclique`'s size and chain length;
-  Pegasus at `K_176` of `K_180`, with the whole-qubit family's ceiling *proved* rather than assumed
-  and the residual gap measured against `busclique` run as an oracle.
+- **Structured cliques at the frontier, on both fabrics.** Zephyr and Pegasus both at exactly
+  `busclique`'s size and chain length, checked against `busclique` run as an oracle, with the
+  whole-qubit family's ceiling *proved* rather than assumed alongside.
 - **Learning theory as executable oracles** — Hopfield, Gardner on both coupling spaces, dense
   associative memory with attention as its update, equilibrium propagation.
 - **Zero dependencies in the core**, and the only stack in the field that runs in a browser tab.
@@ -163,20 +163,23 @@ Honesty about a reference includes where it is thin:
   `capacity_by_enumeration` reaches `0.8305` from exhaustive counting with no replica assumptions.
   Both agree with the published `0.833` and with each other. The term that decided the derivation
   is the Legendre pairing `−½q̂(1−q)`, not `−½qq̂`.
-- ~~**Pegasus is 8 chains short** of `busclique`~~ — **half closed, and the other half explained.**
-  `pegasus_clique_fragment` builds on the fragment grid and reaches **`K_176`** against busclique's
-  `K_180`, verified at every size and checked against `minorminer.busclique` run as an oracle on the
-  same graph (`K_24/36/48/60/72/84` at `P_3..P_8`, all `12(m−1)`, all at chain `m+1`). Two of the
-  eight were whole-qubit granularity; **two were the arm ORIENTATION** — `PEG_V = [1,1,5,5,3,3]` and
-  `PEG_H = [3,3,1,1,5,5]` are not mirror images, so the four anchored ell orientations are
-  inequivalent and one is strictly better, which costs nothing to compute and was not in the earlier
-  analysis. The last four need per-pair arm trimming: decoding busclique's own `P_4` answer shows
-  chains whose corner sits **mid-arm** — one is a full vertical wire joined to a single horizontal
-  qubit — a shape no anchored ell expresses. That is a measurement now, not a hypothesis.
-  The grid it works in was measured, not assumed: each qubit is six fragments, `P_m` is a `6m × 6m`
-  grid of shore 2, every existing line spans exactly `6(m−1)` consecutive positions from its own
-  offset, and of the cells those lines make, `L²` carry a full `K_{2,2}` with **none partial** —
-  324 of 576 at `P_4`, 900 of 1296 at `P_6`, read back off the shipped fabric.
+- ~~**Pegasus is 8 chains short** of `busclique`~~ — **CLOSED.** `pegasus_clique_fragment` reaches
+  **`K_{12(m−1)}` = `K_180` on `P_16` at chain 17**: busclique's size *and* busclique's chain length,
+  at every size from `P_3` to `P_16`. Checked against `minorminer.busclique` run as an oracle on the
+  same graph — `K_24/36/48/60/72/84/96` at `P_3..P_9`, `K_180` at `P_16` — and verified against the
+  shipped fabric by `Embedding::verify`. **No structured clique gap remains on either fabric.**
+  Two things it took, both of which correct something written here earlier. **The arms are not
+  anchored**: decoding busclique's own `P_4` answer shows chains whose corner sits *mid-arm* (one is
+  a full vertical wire joined to a single horizontal qubit), so each arm here grows only as far as
+  some pair forces it. And the **row-column assignment** is the plain diagonal in the interior with
+  three fixed blocks at the boundary, which is where the offsets bite. Anchored families top out at
+  `K_176` — and the best anchored orientation is worth two chains over the worst, because
+  `PEG_V = [1,1,5,5,3,3]` and `PEG_H = [3,3,1,1,5,5]` are not mirror images.
+  The grid was measured, not assumed: each qubit is six fragments, every existing line spans exactly
+  `6(m−1)` consecutive positions from its own offset, and `L²` of the cells carry a full `K_{2,2}`
+  with **none partial** — 324 of 576 at `P_4`, 900 of 1296 at `P_6`, read off the shipped fabric.
+  `P_3` carries its own assignment (the boundary blocks need 16 columns and `L` is 12 there), found
+  by the same search and **not** busclique's: its columns differ while size and chain agree.
 - **The whole-qubit construction's ceiling stands, and is still worth having.** `K_{12(m−2)+4}` is
   optimal for chains made of one vertical and one horizontal wire SEGMENT, proved rather than
   observed, with the four universal wires a theorem about the offset lists. It stays as

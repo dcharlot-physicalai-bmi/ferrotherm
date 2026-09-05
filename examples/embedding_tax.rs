@@ -118,7 +118,7 @@ fn main() {
             let hw = device::pegasus(m, 1.0).graph;
             for (label, e) in [
                 (format!("Pegasus P{m}"), embed::pegasus_clique(m).expect("m>=3")),
-                (format!("  .. fragment"), embed::pegasus_clique_fragment(m).expect("m>=3")),
+                ("  .. fragment".to_string(), embed::pegasus_clique_fragment(m).expect("m>=3")),
             ] {
                 let n = e.chains.len();
                 let ok = e.verify(&clique(n), &hw).is_ok();
@@ -179,14 +179,15 @@ fn main() {
              Four is a theorem, not a choice: the offset lists make exactly the wires on tracks\n\
              {{0,1}} (columns at w = m-1) and {{10,11}} (rows at w = 0) cross every ell, and every\n\
              other boundary wire provably fails. `pegasus_clique_fragment` then works at FRAGMENT\n\
-             granularity -- six per qubit -- and reaches K_176 at the same chain 17. Two of the\n\
-             recovered four were the granularity; the other two were the arm ORIENTATION, which is\n\
-             not symmetric because the vertical and horizontal offset lists are not mirrors.\n\
-             The frontier is K_{{12(m-1)}} = K_180, measured by running minorminer's busclique on\n\
-             this same graph; the last FOUR need per-pair arm trimming -- busclique's own chains put\n\
-             the corner mid-arm, which no anchored ell expresses. The interval and quantifier\n\
-             arithmetic is a Kani theorem (exhaustive to m = 2^16), and every size still passes\n\
-             Embedding::verify besides.\n\n\
+             granularity -- six per qubit -- and reaches K_{{12(m-1)}} = K_180 at chain 17, which is\n\
+             busclique's frontier EXACTLY, size and chain both, measured by running minorminer on\n\
+             this same graph. Nothing structured is left on this table for either fabric. What it\n\
+             took: arms that are NOT anchored at a wire end (busclique's own chains put the corner\n\
+             mid-arm, and each arm here grows only as far as some pair forces it) and a row-column\n\
+             assignment that is the plain diagonal in the interior with three fixed blocks at the\n\
+             boundary, which is where the offsets bite. The closed form's interval and quantifier\n\
+             arithmetic is still a Kani theorem (exhaustive to m = 2^16), and every size of both\n\
+             constructions passes Embedding::verify besides.\n\n\
          AND THE ANOMALY, stated rather than trimmed. At K_32 the LARGER machine of each family\n\
          spends more sites than the smaller one -- P16 uses 237 where P6 uses 203. That is not the\n\
          bigger machine being worse. It is the placement heuristic having more room to wander in,\n\

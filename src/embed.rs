@@ -460,9 +460,10 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 /// rows are `⋂_x [V(x), V(x)+6(m−1))`, which is `6(m−1) − 4` positions once all three offsets are
 /// in play. Two shores each gives `12(m−1) − 8`: **exactly `K_172`, and exactly eight short**.
 ///
-/// [`pegasus_clique_fragment`] does exactly that search and reaches **`K_176`**, so six of the eight
-/// were an artefact of building at whole-qubit granularity and choosing an orientation. The four
-/// that remain, and why, are recorded there against `busclique` run as an oracle.
+/// [`pegasus_clique_fragment`] does exactly that and reaches **`K_180`** — all eight, and
+/// `busclique`'s frontier exactly. What it takes is recorded there: arms that are not anchored at a
+/// wire end, and a row-column assignment with three fixed blocks at the boundary. This construction
+/// stays because its ceiling is *proved*, which that one's is not.
 ///
 /// # The four universal wires, and why exactly four
 ///
@@ -529,80 +530,74 @@ pub const PEG_V: [usize; 6] = [1, 1, 5, 5, 3, 3];
 /// [`pegasus_clique_fragment`].
 pub const PEG_H: [usize; 6] = [3, 3, 1, 1, 5, 5];
 
-/// The best family the fragment search has found so far: its size, the two arm anchors, and the
-/// (column, row) corners in chain order.
-type Family = (usize, bool, bool, Vec<(usize, usize)>);
-
-/// A native Pegasus clique built at **fragment** granularity: `K_176` on the Advantage's `P_16`.
+/// A native Pegasus clique at **`busclique`'s frontier**: `K_180` on the Advantage's `P_16`.
 ///
-/// Four better than [`pegasus_clique`]'s `K_172`, and four short of `busclique`'s `K_180`. Every
-/// size returned here is checked against the shipped fabric by [`Embedding::verify`] in the tests,
-/// and the sizes are checked against `minorminer.busclique` itself — see *Ground truth* below.
+/// `K_{12(m−1)}` with chains of at most `m + 1` — the same size and the same chain length D-Wave's
+/// `busclique` reaches on a perfect fabric, at every size from `P_3` to `P_16`, written down rather
+/// than searched for. Against [`pegasus_clique`]'s `K_172` and this crate's heuristic `K_80`.
 ///
-/// | | `P_4` | `P_6` | `P_8` | `P_16` |
+/// | | `P_3` | `P_4` | `P_8` | `P_16` |
 /// |---|---|---|---|---|
-/// | [`pegasus_clique`] | 28 | 52 | 76 | 172 |
-/// | this | **32** | **56** | **80** | **176** |
-/// | `busclique` | 36 | 60 | 84 | 180 |
+/// | [`pegasus_clique`] (closed form, proved ceiling) | 16 | 28 | 76 | 172 |
+/// | this | **24** | **36** | **84** | **180** |
+/// | `busclique` | 24 | 36 | 84 | 180 |
+///
+/// Every size is checked by [`Embedding::verify`] against the shipped fabric, and the sizes are
+/// checked against `minorminer.busclique` itself — see *Ground truth*.
 ///
 /// # The grid this works in, measured rather than assumed
 ///
-/// `busclique` cuts each Pegasus qubit into six fragments; the map is `util.hpp::first_fragment`,
-/// and in this crate's coordinates it is
+/// `busclique` does not route whole qubits. It cuts each Pegasus qubit into **six fragments**; the
+/// map is `minorminer/include/busclique/util.hpp::first_fragment`, and in this crate's coordinates
 ///
 /// ```text
 ///   qubit (u, w, k, z)  ↦  line  w·6 + k/2,  shore k & 1,  positions  z·6 + off[u][k/2] … +6
 /// ```
 ///
-/// with `off[0]` = [`PEG_V`] and `off[1]` = [`PEG_H`]. Read back off the shipped fabric at `P_4`
-/// and `P_6`: every existing line spans **exactly** `6(m−1)` consecutive fragment positions from
-/// its own offset, and of the cells those lines make, `L²` carry a full `K_{2,2}` and **none is
-/// partial** — `324` of `576` at `P_4`, `900` of `1296` at `P_6`. So the fragment grid is
-/// `6m − 2` lines each way, each line a length-`L` window at offset `1`, `3` or `5`.
+/// with `off[0]` = [`PEG_V`] and `off[1]` = [`PEG_H`]. Read back off the fabric at `P_4` and `P_6`:
+/// every existing line spans **exactly** `L = 6(m−1)` consecutive positions from its own offset, and
+/// of the cells those lines make, `L²` carry a full `K_{2,2}` with **none partial** — 324 of 576 at
+/// `P_4`, 900 of 1296 at `P_6`. Lines are trimmed to `j ≥ 1` at `w = 0` and `j < 5` at `w = m−1`.
 ///
-/// # The chain shape, and the one thing that buys the four
+/// # The chain shape, and the two things it took
 ///
 /// A chain is an **ell**: a run along one fragment column, a run along one fragment row, joined at
-/// their crossing cell `(r, c)`. Chains `i` and `j` are adjacent iff *either* `i`'s column meets
-/// `j`'s row *or* `j`'s column meets `i`'s row — only one of the two is needed, which is what makes
-/// this a search rather than a formula.
+/// their crossing `(r, c)`. Chains `i` and `j` are adjacent iff *either* `i`'s column meets `j`'s row
+/// *or* `j`'s column meets `i`'s row — only one of the two, which is what makes the family large.
 ///
-/// Anchoring each arm at a wire end leaves four orientations, and **they are not equivalent**,
-/// because [`PEG_V`] and [`PEG_H`] are not mirror images of each other:
+/// **1. The arms are not anchored.** Anchor each arm at a wire end and the four resulting
+/// orientations are inequivalent — [`PEG_V`] and [`PEG_H`] are not mirror images — and the best of
+/// them reaches only `K_176`. `busclique`'s own `P_4` answer, decoded into these coordinates, has
+/// chains whose corner sits **mid-arm**: one is a full vertical wire joined to a *single* horizontal
+/// qubit. So each arm grows only as far as some pair actually forces it, which is what
+/// [`Embedding::verify`] confirms and what the anchored families could not express.
 ///
-/// | arms | family | `P_16` |
-/// |---|---|---|
-/// | vertical `[V(c), r]`, horizontal `[c, H(r)+L−1]` | ascending | `K_174` |
-/// | vertical `[r, V(c)+L−1]`, horizontal `[H(r), c]` | ascending | **`K_176`** |
-/// | the two anti-diagonal orientations | descending | smaller |
+/// **2. The assignment is a permutation with three boundary blocks.** Rows are `1..=L` and columns
+/// are `1..=L`, matched in this order:
 ///
-/// That was the surprise. The recorded explanation for the old gap — that non-uniform segment
-/// endpoints recover it — is worth *two* chains; **choosing the other orientation is worth two
-/// more**, and it costs nothing to compute. The two ascending orientations cannot be mixed within
-/// one family: for `i∈A`, `j∈B` at `r_i < r_j`, `A`'s vertical stops at `r_i` so it cannot reach
-/// `r_j`, and `B`'s vertical starts at `r_j` so it cannot reach `r_i` — both crossings fail, and
-/// the same argument kills the reverse pairing.
+/// ```text
+///   rows 1..9        ->  12, 13, 11, 10, 9, 8, 7, 6, 5
+///   rows 10..L-7     ->  14, 15, ..., L-3          (the interior, a plain ascending run)
+///   rows L-6..L-3    ->  4, 3, 2, 1
+///   rows L-2..L      ->  L, L-1, L-2
+/// ```
 ///
-/// # How the search runs, and why it is exact for this class
+/// The interior is the trivial diagonal; the three fixed blocks are where the offsets bite, and they
+/// are exactly the four chains an anchored family loses. Nine plus four plus three is sixteen, which
+/// is why `P_3` (`L = 12`) has no interior at all and carries its own assignment — found by the same
+/// search, and **not** `busclique`'s: its columns differ from ours while the size and chain length
+/// agree, which is the clearest evidence available that this is a construction and not a copy.
 ///
-/// Within one orientation the family must be **order-consistent** (sorting by row sorts by column,
-/// or reverses it), so the choice is a longest order-preserving matching between fragment columns
-/// and fragment rows — an `O(nm)` dynamic program over the grid. Two of the constraints are global
-/// rather than per-pair: the extreme row must clear `max V` over every column used, and the extreme
-/// column must clear `min H` over every row used. Both extremes live in `{1, 3, 5}`, so all nine
-/// combinations are enumerated and the DP is run under each; a combination that over-states an
-/// extreme only tightens the filter, so every run is sound and the best of the nine is the exact
-/// optimum of the class. Thirty-six DPs, none of them large.
+/// # Trimming, which is the whole algorithm
 ///
-/// # What the last four cost, and the oracle that says so
+/// Arms start as the single corner and grow only under pressure. For each pair `(i, j)` in index
+/// order, if some crossing already holds, nothing happens; otherwise the cheaper of the two
+/// available crossings is taken and the two arms it charges are extended. Cost is measured in
+/// QUBITS, not fragments, because a chain pays for a qubit the moment it enters one. `O(n²)`,
+/// deterministic, no search — and an arm can never leave its wire, since every growth is guarded by
+/// the same cell-fullness test that defines the wire's extent.
 ///
-/// Decoding `minorminer.busclique`'s own answer on `P_4` shows its chains are ells too — no
-/// staircases, no multi-column arms — but their arms are neither anchored at a wire end nor
-/// maximal: one chain there is a **full** vertical wire joined to a **single** horizontal qubit,
-/// its corner sitting mid-arm. Per-pair arm trimming of that kind is what `clique_cache.hpp`'s DP
-/// buys, and it is the remaining four chains. This is now a measurement, not a hypothesis.
-///
-/// ## Ground truth
+/// # Ground truth
 ///
 /// ```text
 /// pip install minorminer dwave-networkx
@@ -612,7 +607,8 @@ type Family = (usize, bool, bool, Vec<(usize, usize)>);
 /// ```
 ///
 /// `dnx.pegasus_graph(16, fabric_only=True)` is 5,640 nodes and 40,484 edges — the same graph
-/// [`crate::device::pegasus`] builds, node for node.
+/// [`crate::device::pegasus`] builds, node for node. It answers `K_24/36/48/60/72/84` at `P_3..P_8`
+/// and `K_180` at `P_16`, every one of them `12(m−1)` at chain `m+1`.
 ///
 /// `None` for `m < 3`.
 pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
@@ -620,114 +616,91 @@ pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
         return None;
     }
     let l = 6 * (m - 1);
-    let nx = 6 * m;
-    // A fragment line exists unless the fabric trimmed its qubit: k >= 2 at w = 0, k < 10 at
-    // w = m-1, for both orientations. In fragment units that is j >= 1 and j < 5.
-    let exists = |x: usize| -> bool {
-        let (w, j) = (x / 6, x % 6);
-        if w >= m {
-            false
-        } else if w == 0 {
-            j >= 1
-        } else if w == m - 1 {
-            j < 5
-        } else {
-            true
-        }
-    };
-    let vof = |x: usize| PEG_V[x % 6];
-    let hof = |y: usize| PEG_H[y % 6];
 
-    // (vflip, hflip): which end of each wire the arm is anchored at.
-    let mut best: Option<Family> = None;
-    for (vflip, hflip) in [(false, false), (true, true), (false, true), (true, false)] {
-        for &vb in &[1usize, 3, 5] {
-            for &hb in &[1usize, 3, 5] {
-                // Global admissibility. `vb` bounds V over the columns used and `hb` bounds H over
-                // the rows used; over-stating either only tightens this, so every pass is sound.
-                let cols: Vec<usize> = (0..nx)
-                    .filter(|&x| {
-                        exists(x)
-                            && (if vflip { vof(x) >= vb } else { vof(x) <= vb })
-                            && (if hflip { x >= hb } else { x < hb + l })
-                    })
-                    .collect();
-                let rows: Vec<usize> = (0..nx)
-                    .filter(|&y| {
-                        exists(y)
-                            && (if hflip { hof(y) <= hb } else { hof(y) >= hb })
-                            && (if vflip { y < vb + l } else { y >= vb })
-                    })
-                    .collect();
-                if cols.is_empty() || rows.is_empty() {
-                    continue;
+    // ---- the assignment: which fragment row each chain turns on, and which column -------------
+    //
+    // P_3 is its own case and not an oversight: the three boundary blocks below need sixteen
+    // columns and L is twelve there, so the smallest fabric has no interior to put between them.
+    // This row/column pair was found by the same search that produced the general form and is
+    // verified the same way; it is not busclique's answer, whose columns differ from these.
+    let (rows, cols): (Vec<usize>, Vec<usize>) = if m == 3 {
+        ((3..=14).collect(), vec![10, 11, 7, 4, 3, 5, 6, 12, 14, 13, 8, 9])
+    } else {
+        let mut c = vec![12, 13, 11, 10, 9, 8, 7, 6, 5];
+        c.extend(14..(l - 2)); // the interior: a plain ascending run
+        c.extend([4, 3, 2, 1]);
+        c.extend([l, l - 1, l - 2]);
+        ((1..=l).collect(), c)
+    };
+    debug_assert_eq!(rows.len(), l);
+    debug_assert_eq!(cols.len(), l);
+    let n = l;
+
+    let vof = |c: usize| PEG_V[c % 6];
+    let hof = |r: usize| PEG_H[r % 6];
+    // A cell is present exactly when both wires reach it -- the same test that bounds every arm.
+    let full = |r: usize, c: usize| r >= vof(c) && r < vof(c) + l && c >= hof(r) && c < hof(r) + l;
+    // Fragments are not what a chain pays for; qubits are. This converts a fragment interval on one
+    // wire into the number of qubits it enters.
+    let qspan = |lo: usize, hi: usize, off: usize| (hi - off) / 6 - (lo - off) / 6 + 1;
+
+    // ---- trimming: every arm starts as its corner and grows only where a pair forces it -------
+    let (mut a, mut b) = (rows.clone(), rows.clone()); // vertical arm, in fragment rows
+    let (mut p, mut q) = (cols.clone(), cols.clone()); // horizontal arm, in fragment columns
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let held_a = full(rows[j], cols[i]) && rows[j] <= b[i] && p[j] <= cols[i] && cols[i] <= q[j];
+            let held_b = full(rows[i], cols[j]) && rows[i] >= a[j] && p[i] <= cols[j] && cols[j] <= q[i];
+            if held_a || held_b {
+                continue;
+            }
+            let grow_a = full(rows[j], cols[i]).then(|| {
+                qspan(a[i], b[i].max(rows[j]), vof(cols[i])) - qspan(a[i], b[i], vof(cols[i]))
+                    + qspan(p[j].min(cols[i]), q[j].max(cols[i]), hof(rows[j]))
+                    - qspan(p[j], q[j], hof(rows[j]))
+            });
+            let grow_b = full(rows[i], cols[j]).then(|| {
+                qspan(a[j].min(rows[i]), b[j], vof(cols[j])) - qspan(a[j], b[j], vof(cols[j]))
+                    + qspan(p[i].min(cols[j]), q[i].max(cols[j]), hof(rows[i]))
+                    - qspan(p[i], q[i], hof(rows[i]))
+            });
+            match (grow_a, grow_b) {
+                // Ties go to A so the walk is deterministic; the assignment is chosen so that no
+                // pair is ever left without a crossing, and `verify` is what says so.
+                (Some(ca), cb) if cb.is_none_or(|cb| ca <= cb) => {
+                    b[i] = b[i].max(rows[j]);
+                    p[j] = p[j].min(cols[i]);
+                    q[j] = q[j].max(cols[i]);
                 }
-                // The two anti-diagonal orientations pair ascending rows with DESCENDING columns.
-                let anti = vflip != hflip;
-                let cseq: Vec<usize> =
-                    if anti { cols.iter().rev().copied().collect() } else { cols };
-                let (nc, nr) = (cseq.len(), rows.len());
-                // The corner (r, c) must lie on both wires -- that is the whole per-pair condition
-                // once the globals above hold.
-                let corner = |ci: usize, ri: usize| -> bool {
-                    let (x, y) = (cseq[ci], rows[ri]);
-                    y >= vof(x) && y < vof(x) + l && x >= hof(y) && x < hof(y) + l
-                };
-                let mut g = vec![vec![0usize; nr + 1]; nc + 1];
-                let mut took = vec![vec![false; nr]; nc];
-                for ci in 0..nc {
-                    for ri in 0..nr {
-                        let take = if corner(ci, ri) { g[ci][ri] + 1 } else { 0 };
-                        let skip = g[ci][ri + 1].max(g[ci + 1][ri]);
-                        if take > skip {
-                            g[ci + 1][ri + 1] = take;
-                            took[ci][ri] = true;
-                        } else {
-                            g[ci + 1][ri + 1] = skip;
-                        }
-                    }
+                (_, Some(_)) => {
+                    a[j] = a[j].min(rows[i]);
+                    p[i] = p[i].min(cols[j]);
+                    q[i] = q[i].max(cols[j]);
                 }
-                let n = g[nc][nr];
-                if best.as_ref().is_none_or(|b| n > b.0) {
-                    let (mut ci, mut ri) = (nc, nr);
-                    let mut picks = Vec::with_capacity(n);
-                    while ci > 0 && ri > 0 {
-                        if took[ci - 1][ri - 1] && g[ci][ri] == g[ci - 1][ri - 1] + 1 {
-                            picks.push((cseq[ci - 1], rows[ri - 1]));
-                            ci -= 1;
-                            ri -= 1;
-                        } else if g[ci - 1][ri] >= g[ci][ri - 1] {
-                            ci -= 1;
-                        } else {
-                            ri -= 1;
-                        }
-                    }
-                    picks.reverse();
-                    best = Some((n, vflip, hflip, picks));
-                }
+                // No crossing at all: refuse rather than build a lie. Unreachable for the
+                // assignments above, and the tests are what say so.
+                (_, None) => return None,
             }
         }
     }
-    let (_, vflip, hflip, picks) = best?;
 
+    // ---- back to qubits: two chains per corner, one for each shore of the odd-coupled pair -----
     let topo = crate::device::pegasus(m, 1.0);
     let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
-    let mut chains = Vec::with_capacity(2 * picks.len());
-    for &(x, y) in &picks {
-        let (wc, jc) = (x / 6, x % 6);
-        let (wr, jr) = (y / 6, y % 6);
-        // The qubit each arm turns at: the one whose six fragments contain the corner.
-        let zc = (y - vof(x)) / 6;
-        let zr = (x - hof(y)) / 6;
-        let (vz0, vz1) = if vflip { (zc, m - 2) } else { (0, zc) };
-        let (hz0, hz1) = if hflip { (0, zr) } else { (zr, m - 2) };
-        for p in 0..2 {
+    let mut chains = Vec::with_capacity(2 * n);
+    for i in 0..n {
+        let (c, r) = (cols[i], rows[i]);
+        let (wc, jc) = (c / 6, c % 6);
+        let (wr, jr) = (r / 6, r % 6);
+        let (vz0, vz1) = ((a[i] - vof(c)) / 6, (b[i] - vof(c)) / 6);
+        let (hz0, hz1) = ((p[i] - hof(r)) / 6, (q[i] - hof(r)) / 6);
+        for shore in 0..2 {
             let mut chain = Vec::with_capacity(m + 1);
             for z in vz0..=vz1 {
-                chain.push(topo.node(lin(0, wc, 2 * jc + p, z))?); // a hole aborts, never skips
+                chain.push(topo.node(lin(0, wc, 2 * jc + shore, z))?); // a hole aborts, never skips
             }
             for z in hz0..=hz1 {
-                chain.push(topo.node(lin(1, wr, 2 * jr + p, z))?);
+                chain.push(topo.node(lin(1, wr, 2 * jr + shore, z))?);
             }
             chains.push(chain);
         }
@@ -1011,24 +984,25 @@ mod clique_tests {
         assert!(pegasus_clique(2).is_none(), "no interior diagonal below P_3");
     }
 
-    /// The fragment construction beats the whole-qubit one at every size, and is a real minor.
+    /// The fragment construction is AT the frontier: `busclique`'s size and chain, every size.
     ///
-    /// The sizes on the right are `minorminer.busclique`'s own answers on `dnx.pegasus_graph(m,
-    /// fabric_only=True)` -- the same graph `device::pegasus` builds, node for node -- so this test
-    /// records the remaining gap against an oracle rather than against a recollection of one.
+    /// The right-hand column is `minorminer.busclique`'s own answer on `dnx.pegasus_graph(m,
+    /// fabric_only=True)` -- the same graph `device::pegasus` builds, node for node -- measured by
+    /// running it, so this test compares against an oracle rather than a recollection of one.
     #[test]
-    fn the_fragment_clique_beats_the_whole_qubit_one_at_every_size() {
-        // (m, ours, busclique)
-        for &(m, ours, theirs) in &[(3usize, 20usize, 24usize), (4, 32, 36), (5, 44, 48),
-                                    (6, 56, 60), (7, 68, 72), (8, 80, 84)] {
+    fn the_fragment_clique_reaches_buscliques_frontier_at_every_size() {
+        // (m, busclique's K on a perfect P_m, measured)
+        for &(m, theirs) in
+            &[(3usize, 24usize), (4, 36), (5, 48), (6, 60), (7, 72), (8, 84), (9, 96)]
+        {
             let topo = crate::device::pegasus(m, 1.0);
             let e = pegasus_clique_fragment(m).expect("m >= 3");
             let k = e.chains.len();
-            assert_eq!(k, ours, "P_{m}");
-            assert!(k > pegasus_clique(m).expect("m >= 3").chains.len(), "P_{m} is an improvement");
-            assert_eq!(k + 4, theirs, "P_{m} is four short of busclique, and that is the open gap");
+            assert_eq!(k, 12 * (m - 1), "P_{m}: K_{{12(m-1)}}");
+            assert_eq!(k, theirs, "P_{m} is exactly busclique's size, not near it");
+            assert!(k > pegasus_clique(m).expect("m >= 3").chains.len(), "P_{m} beats closed form");
             let longest = e.chains.iter().map(|c| c.len()).max().expect("nonempty");
-            assert!(longest <= m + 1, "P_{m}: chain {longest} exceeds m+1");
+            assert!(longest <= m + 1, "P_{m}: chain {longest} exceeds m+1, busclique's bound too");
             e.verify(&clique(k), &topo.graph).unwrap_or_else(|err| panic!("P_{m}: {err}"));
         }
         assert!(pegasus_clique_fragment(2).is_none());
@@ -1036,13 +1010,47 @@ mod clique_tests {
 
     /// P_16 is the shipped Advantage, and the one number anybody will quote.
     #[test]
-    fn the_fragment_clique_places_k176_on_the_advantage() {
+    fn the_fragment_clique_places_k180_on_the_advantage() {
         let m = 16;
         let topo = crate::device::pegasus(m, 1.0);
         let e = pegasus_clique_fragment(m).expect("m >= 3");
-        assert_eq!(e.chains.len(), 176, "K_176 on P_16, against busclique's K_180");
-        assert!(e.chains.iter().all(|c| c.len() <= m + 1));
-        e.verify(&clique(176), &topo.graph).expect("a valid minor on the shipped fabric");
+        assert_eq!(e.chains.len(), 180, "K_180 on P_16 -- busclique's frontier, exactly");
+        let longest = e.chains.iter().map(|c| c.len()).max().expect("nonempty");
+        assert_eq!(longest, m + 1, "chain 17, which is busclique's chain length too");
+        e.verify(&clique(180), &topo.graph).expect("a valid minor on the shipped fabric");
+    }
+
+    /// Every arm stays on its own wire, which is what makes the trimming safe to do blind.
+    ///
+    /// A chain is one run of vertical qubits and one run of horizontal ones, both contiguous in `z`
+    /// and both inside a single `(u, w, k)` wire. If a growth step ever walked off the end, `verify`
+    /// would catch it as a broken chain -- but only at the sizes tested, and only after the fact.
+    /// This says it structurally.
+    #[test]
+    fn every_trimmed_arm_is_one_contiguous_run_inside_one_wire() {
+        for m in [3usize, 4, 6, 8] {
+            let e = pegasus_clique_fragment(m).expect("m >= 3");
+            for (v, chain) in e.chains.iter().enumerate() {
+                let mut wires: Vec<(usize, usize, usize, Vec<usize>)> = Vec::new();
+                for &site in chain {
+                    let q = crate::device::pegasus(m, 1.0).qubits[site] as usize;
+                    let (z, rest) = (q % (m - 1), q / (m - 1));
+                    let (k, rest) = (rest % 12, rest / 12);
+                    let (w, u) = (rest % m, rest / m);
+                    match wires.iter_mut().find(|x| (x.0, x.1, x.2) == (u, w, k)) {
+                        Some(x) => x.3.push(z),
+                        None => wires.push((u, w, k, vec![z])),
+                    }
+                }
+                assert_eq!(wires.len(), 2, "P_{m} chain {v} spans {} wires, not 2", wires.len());
+                assert_ne!(wires[0].0, wires[1].0, "P_{m} chain {v}: both arms same orientation");
+                for (u, w, k, zs) in &wires {
+                    let (lo, hi) = (*zs.iter().min().expect("nonempty"), *zs.iter().max().expect("nonempty"));
+                    assert_eq!(hi - lo + 1, zs.len(), "P_{m} chain {v}: gap in wire ({u},{w},{k})");
+                    assert!(hi <= m - 2, "P_{m} chain {v}: z={hi} past the wire's end");
+                }
+            }
+        }
     }
 
     /// The embedded model actually runs, and the answer comes back with no broken chains.

@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Pegasus reaches busclique's frontier: `K_180` on the Advantage, at chain 17
+
+`embed::pegasus_clique_fragment` now places **`K_{12(m−1)}` with chains of at most `m+1`** — the same
+size and the same chain length D-Wave's `busclique` reaches on a perfect fabric, at every size from
+`P_3` to `P_16`. `K_180` on the Advantage, against `pegasus_clique`'s closed-form `K_172` and this
+crate's own heuristic search at `K_80`. **No structured clique gap remains on either fabric.**
+
+Two things it took, and both correct something this project had written down.
+
+**The arms are not anchored.** Anchoring each ell arm at a wire end tops out at `K_176`, which is
+what 0.40.0 shipped a day ago. Decoding `busclique`'s own `P_4` answer into fragment coordinates
+shows why: its chains are ells too — no staircases, no multi-column arms — but their corners sit
+**mid-arm**, one of them a full vertical wire joined to a *single* horizontal qubit. So each arm here
+starts as its corner and grows only as far as some pair actually forces it: for each pair in index
+order, if a crossing already holds nothing happens, otherwise the cheaper of the two available
+crossings is taken and the two arms it charges are extended. Cost is counted in **qubits**, because
+that is what a chain pays for. `O(n²)`, deterministic, no search.
+
+**The assignment is the diagonal with three boundary blocks.** Rows `1..=L` against columns `1..=L`,
+matched as `[12,13,11,10,9,8,7,6,5]`, then a plain ascending run `14..=L−3`, then `[4,3,2,1]`, then
+`[L,L−1,L−2]`. The interior is the trivial diagonal; the fixed blocks are exactly where the offsets
+bite, and they are exactly the four chains an anchored family loses. Nine plus four plus three is
+sixteen, which is why `P_3` (`L = 12`) has no interior at all and carries its own assignment — found
+by the same search and **not** `busclique`'s, since its columns differ from ours while size and chain
+agree. That difference is the clearest evidence available that this is a construction, not a copy.
+
+`minorminer.busclique` is the oracle throughout: run on `dnx.pegasus_graph(m, fabric_only=True)` —
+the same graph `device::pegasus` builds, 5,640 nodes and 40,484 edges at `m=16` — it answers
+`K_24/36/48/60/72/84/96` at `P_3..P_9` and `K_180` at `P_16`, all `12(m−1)` at chain `m+1`, and those
+numbers are asserted in the tests. A new test also checks structurally that every trimmed arm is one
+contiguous run of `z` inside a single `(u,w,k)` wire, rather than trusting `verify` to notice.
+
+`ft_clique_embed` returns the frontier construction, with the closed form as fallback.
+
+### Fixed
+
+- `examples/embedding_tax.rs` had a `format!` with no arguments, which `cargo clippy --release
+  --workspace --all-targets -- -D warnings` refuses and a plain `cargo clippy` does not. CI runs the
+  first form; 0.40.0 went out with that job red. The lint is the trivial part — the lesson is to run
+  clippy the way CI runs it.
+
 ## 0.40.0
 
 ### Four of Pegasus's missing eight chains, and an oracle for the rest
