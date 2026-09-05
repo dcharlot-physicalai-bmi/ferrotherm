@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+### Joules per *independent* sample, measured — and the two metrics disagree
+
+The field quotes joules per **flip**: flips per second, joules per flip, flips per watt. That prices
+the operation, and nobody buys operations. What a sampler is for is independent draws, and one that
+flips twice as fast while decorrelating three times slower has made the bill worse while improving
+every number in the press release.
+
+`meter/examples/joules_per_sample` measures both, on this machine, with a real wattmeter: a Pegasus
+P₈ spin glass, plain chromatic Gibbs against parallel tempering at an **iso-flip** budget, swept over
+temperature. `J/indep = joules_above_idle / ESS`, `ESS = draws / 2·τ_int`.
+
+| β | J/flip | J/independent sample |
+|---|---|---|
+| 0.5 | Gibbs cheaper by **2.6×** | **PT cheaper by 1.9×** (ESS 252 and 1252; τ to ±6% and ±3%) |
+| 1.0 | Gibbs cheaper by 1.9× | **PT cheaper by ≥604×** — Gibbs produced less than one independent draw |
+
+**The metric the field publishes and the metric that counts name different winners on the same run**,
+and at β = 0.5 both sides are resolved, so that row is a two-sided measurement rather than a bound.
+
+Everything the example refuses, it refuses because an earlier cut of it printed the thing as though
+it meant something:
+
+- **A dead ladder.** A hand-picked 12-rung geometric ladder over this range has its coldest pair at
+  acceptance **0.000** and completes **zero round trips** — measured, on the first run. Pricing it
+  would have priced twelve independent chains with an overhead. The ladder is now built by
+  `adaptive::adapt` and the replica count escalated until the *worst* pair is alive; evenness alone
+  cannot say that, because a ladder too short for its range is evenly dead.
+- **τ in two different units.** The tempering trace has one entry per round and the Gibbs trace one
+  per several sweeps. Both are converted to cold-replica sweeps before anything is divided.
+- **An unresolved τ.** Its relative error is about `1/√ESS`; the first run reported a
+  four-significant-figure verdict at ESS 4. Rows below ESS 25 now print `unresolved`.
+
+What it does *not* refuse is a sampler that produced **less than one** independent draw in the whole
+budget: that is reported as a one-sided bound (`≥X J`), which is a fact rather than an extrapolation,
+and it is the sharpest form the finding takes.
+
+It also measures the instrument. The same Gibbs kernel spans 1.56e-7 to 2.27e-7 J/flip across rows —
+**46%** — which is this machine's reproducibility floor on any J/flip claim, ours or anyone else's,
+and it is printed beside the table.
+
+### Fixed
+
+- ROADMAP 4.5 called the general nonlinear continuous-unit gap open for a full release after 0.39.0
+  closed it with `chain_log_z`. Corrected, along with what genuinely remains there: non-chain
+  topologies past three units, where the transfer operator does not apply.
+
 ## 0.41.0
 
 ### Pegasus reaches busclique's frontier: `K_180` on the Advantage, at chain 17

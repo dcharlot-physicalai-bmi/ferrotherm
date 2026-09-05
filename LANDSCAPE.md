@@ -106,6 +106,12 @@ Not "does better" — does *at all*, as far as this review could determine:
 - **Free energy four ways with the guarantee each carries** — including an unconditional Markov
   bound that assumes no equilibrium at all, and a deterministic one.
 - **Formal proofs in CI.** 7 Kani theorems, exhaustive over their ranges, as a gate.
+- **Joules per *independent* sample.** The field quotes joules per flip, and nobody buys flips.
+  `meter/examples/joules_per_sample` measures both on real silicon and they name **different
+  winners on the same run**: at β = 0.5 parallel tempering is 2.6× worse per flip and 1.9× better
+  per independent sample; at β = 1.0 it is ≥604× better, because plain Gibbs did not decorrelate
+  once in the budget. This review did not locate an ESS-corrected energy figure anywhere else in
+  the field.
 - **Joules.** A device energy ledger, and the arithmetic that says what a joules headline is
   *bounded* by. See below: the field's newest efficiency claim reproduces here in eight lines,
   and so do the three things it does not contain.

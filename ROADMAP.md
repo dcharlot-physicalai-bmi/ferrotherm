@@ -434,11 +434,34 @@ sweep rather than at one point.
 sampler that runs at that speed **in a browser tab with no install**, which is a different claim and
 the only one we should make.
 
-**2.2 The benchmark, reported the way nobody reports it.** Port THRML notebook 02's Pegasus
-flips/ns benchmark exactly, and publish **flips/ns, joules/flip, and joules per *independent*
-sample** (ESS-corrected — nobody reports this) against the three honest comparators the field hands
-us: Extropic's own 8×B200 JAX figure, the ~60 flips/ns baked-in FPGA prior art (arXiv:2303.10728),
-and the 185 flips/ns at 9.168 W Alveo result.
+**2.2 The benchmark, reported the way nobody reports it.** ◐ **The metric exists and is measured;
+the cross-vendor port is still open** — `meter/examples/joules_per_sample.rs`.
+
+Joules per **independent** sample is now a measured quantity on real silicon, not a proposal:
+`J/indep = joules_above_idle / ESS`, `ESS = draws / 2·τ_int`, with τ in one unit for both arms and
+every figure carrying its own error. Measured on a Pegasus P₈ spin glass on an Apple M5 Max, plain
+chromatic Gibbs against parallel tempering at an **iso-flip** budget on a ladder tuned by
+`adaptive::adapt` until its worst pair is alive:
+
+| β | J/flip | J/independent sample |
+|---|---|---|
+| 0.5 | Gibbs cheaper by **2.6×** | **PT cheaper by 1.9×** (ESS 252 / 1252) |
+| 1.0 | Gibbs cheaper by 1.9× | **PT cheaper by ≥604×** — Gibbs never decorrelated once |
+
+**The two metrics name different winners on the same run**, and only one of them is about the cost
+of getting an answer. Below β = 1.5 tempering's own ESS falls under 25 and those rows print
+`unresolved` rather than an estimate. A sampler that produced less than one independent draw is
+reported as a *bound* (`≥X J`), which is a fact rather than an extrapolation.
+
+Two things it measures about the instrument, not the samplers: the same Gibbs kernel spans
+1.56e-7 to 2.27e-7 J/flip across rows — **46%**, this machine's reproducibility floor on any J/flip
+claim, ours or anyone's — and a hand-picked 12-rung geometric ladder over this range has its coldest
+pair at acceptance **0.000** with zero round trips, which is why the ladder is tuned and escalated
+rather than chosen.
+
+*Still open:* the port of THRML notebook 02 itself, and the cross-vendor comparators — Extropic's
+8×B200 JAX figure, the ~60 flips/ns baked-in FPGA prior art (arXiv:2303.10728), and the 185 flips/ns
+at 9.168 W Alveo result.
 **Accept:** every number carries its noise floor and a named, *tuned* classical baseline. An
 untuned baseline is a fabricated win.
 
@@ -539,15 +562,21 @@ model above it. Recorded gap: continuous-state units *inside the EBM graph*, whi
 perceptron did not need (its couplings are a standalone vector) but continuous Hopfield and the
 original EqProp formulation do.
 
-**4.5 Continuous units.** ◐ **Gaussian units done; general nonlinear units open** —
-`src/continuous.rs`.
+**4.5 Continuous units.** ✅ **DONE, including the general nonlinear case** — `src/continuous.rs`.
 
 `Gbm` is a Gaussian–Bernoulli Boltzmann machine with exact oracles at every level: `N(A⁻¹b, (βA)⁻¹)`
 and closed-form `ln Z` with no spins, exact enumerated `ln Z` and marginals with them. Chosen
 because it is checkable; a continuous sampler that cannot be checked should not be trusted.
-Recorded gap: continuous Hopfield's graded response and EqProp's original formulation need a
-general nonlinear unit, whose conditional is not Gaussian and which therefore has none of these
-oracles — that is the next design question, not a missing function.
+
+The recorded gap — continuous Hopfield's graded response and EqProp's original formulation need a
+general nonlinear unit, whose conditional is not Gaussian and which therefore has none of those
+oracles — **closed at 0.39.0.** `ContinuousEbm` carries a `Potential` (quadratic, Hopfield-tanh,
+double-well) sampled by Metropolis-within-Gibbs, and `chain_log_z` is the oracle it was missing: a
+transfer-operator `ln Z`, `O(n · grid²)`, exact to the grid at any chain length, against which the
+nonlinear sampler is verified at twelve units. **Still open, and smaller than it was:** non-chain
+topologies past three units, where the transfer operator does not apply and quadrature is the only
+oracle left. This entry said "open" for a release after it was closed, which is its own small lesson
+about roadmaps.
 
 **3.4a Pegasus's ceiling, proved.** `K_{12(m−2)+4}` is optimal for chains made of one vertical and
 one horizontal wire segment: the interior segments are forced (`α = 0`, `β = 1`, so `w ∈ [1, m−2]`)
