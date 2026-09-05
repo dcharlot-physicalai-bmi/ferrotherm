@@ -303,15 +303,13 @@ impl Search<'_> {
 
         // The cheap bound did not prune. Near the top of the tree, where the residual is still
         // large and the nodes are still few, it is worth asking a much more expensive question.
-        if depth < self.sdp_depth {
-            if let Some(lb2) = self.sdp_bound(fixed_energy) {
-                if lb2 - self.slack >= self.best {
+        if depth < self.sdp_depth
+            && let Some(lb2) = self.sdp_bound(fixed_energy)
+                && lb2 - self.slack >= self.best {
                     self.pruned += 1;
                     self.sdp_prunes += 1;
                     return;
                 }
-            }
-        }
 
         let i = self.order[depth];
         // Greedy value first: the sign that lowers `−s·λ` is the one more likely to hold the

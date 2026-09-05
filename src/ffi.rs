@@ -113,7 +113,7 @@ impl Sim {
 }
 
 /// New 2D nearest-neighbour Ising lattice (periodic), side `l`, coupling `j`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ising2d_new(l: u32, j: f64, beta: f64, seed: u64) -> *mut Sim {
     Sim::new(lattice2d(l as usize, j), beta, seed)
 }
@@ -135,7 +135,7 @@ pub extern "C" fn ft_ising2d_new(l: u32, j: f64, beta: f64, seed: u64) -> *mut S
 /// This sampler samples spins, and a
 /// bridge that silently dropped what it could not represent would return a model that solves a
 /// different problem.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ommx_read(
     bytes: *const u8,
     len: u32,
@@ -164,7 +164,7 @@ pub extern "C" fn ft_ommx_read(
 }
 
 /// Why the last [`ft_ommx_read`] on this thread returned null. Empty when it did not.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ommx_error(buf: *mut u8, cap: u32) -> u32 {
     OMMX_ERROR.with(|e| {
         let e = e.borrow();
@@ -189,7 +189,7 @@ fn set_ommx_error(s: &str) {
 }
 
 /// New Z1-topology grid (degree 16, open boundaries), `w` x `h`, uniform coupling `j`, bias `hb`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_z1_new(w: u32, h: u32, j: f64, hb: f64, beta: f64, seed: u64) -> *mut Sim {
     Sim::new(z1_grid(w as usize, h as usize, j, hb), beta, seed)
 }
@@ -203,7 +203,7 @@ pub extern "C" fn ft_z1_new(w: u32, h: u32, j: f64, hb: f64, beta: f64, seed: u6
 /// [`ft_qubit`] to get the vendor's own qubit number for a node — this crate indexes densely and
 /// Pegasus does not, so the two disagree and programming a machine with our indices would drive
 /// the wrong qubits.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_pegasus_new(m: u32, j: f64, beta: f64, seed: u64) -> *mut Sim {
     let t = crate::device::pegasus(m as usize, j);
     if t.graph.n == 0 {
@@ -219,7 +219,7 @@ pub extern "C" fn ft_pegasus_new(m: u32, j: f64, beta: f64, seed: u64) -> *mut S
 ///
 /// Zephyr's higher degree is what it is for: the same problem embeds with shorter chains, and a
 /// chain that breaks leaves a variable with no value at all. See `examples/embedding_tax.rs`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_zephyr_new(m: u32, t: u32, j: f64, beta: f64, seed: u64) -> *mut Sim {
     let z = crate::device::zephyr(m as usize, t as usize, j);
     if z.graph.n == 0 {
@@ -238,7 +238,7 @@ pub extern "C" fn ft_zephyr_new(m: u32, t: u32, j: f64, beta: f64, seed: u64) ->
 ///
 /// `0xFFFFFFFF` — not 0, which is a valid qubit — for a simulation built from a graph with no
 /// vendor numbering at all, which is every one except [`ft_pegasus_new`] and [`ft_zephyr_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_qubit(sim: *const Sim, i: u32) -> u32 {
     match unsafe { sim.as_ref() } {
         Some(s) => s.qubits.get(i as usize).copied().unwrap_or(u32::MAX),
@@ -319,7 +319,7 @@ mod topology_ffi_tests {
 ///
 /// Read the result back with [`ft_sparsify_project`], which reports which variables' copies
 /// disagreed, and price it with [`ft_sparsify_offset`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify(sim: *const Sim, budget: u32) -> *mut Sim {
     let Some(s) = (unsafe { sim.as_ref() }) else { return core::ptr::null_mut() };
     let Ok(sp) = crate::sparsify::sparsify(&s.graph, budget as usize) else {
@@ -337,14 +337,14 @@ pub extern "C" fn ft_sparsify(sim: *const Sim, budget: u32) -> *mut Sim {
 
 /// Logical variables a sparsified simulation stands for, or 0 if it was not produced by
 /// [`ft_sparsify`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify_variables(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.map_or(0, |s| s.copies.len() as u32)
 }
 
 /// Copy the nodes representing logical variable `v` into `out`. Returns how many were written, or
 /// the count needed when `out` is NULL.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify_copies(sim: *const Sim, v: u32, out: *mut u32, cap: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
     let Some(set) = s.copies.get(v as usize) else { return 0 };
@@ -362,7 +362,7 @@ pub extern "C" fn ft_sparsify_copies(sim: *const Sim, v: u32, out: *mut u32, cap
 /// The copy couplings contribute the same constant in every agreeing state, so they order answers
 /// identically and shift every energy by this amount. Reporting a sparsified energy without it
 /// compares a number from one model against a number from another.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify_offset(sim: *const Sim) -> f64 {
     unsafe { sim.as_ref() }.map_or(0.0, |s| s.sparsify_offset)
 }
@@ -374,7 +374,7 @@ pub extern "C" fn ft_sparsify_offset(sim: *const Sim) -> f64 {
 /// caller still has a complete state to look at, and the count says how much of it to distrust. A
 /// non-zero return means the copy coupling lost, and reading the state as an answer without
 /// checking it is reading a majority vote as though it were one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify_project(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return u32::MAX };
     if s.copies.is_empty() || out.is_null() || (cap as usize) < s.copies.len() {
@@ -495,7 +495,7 @@ mod sparsify_ffi_tests {
 /// Returns 1 on success, 0 on a null handle or a topology with no known construction — in which case
 /// [`ft_embed`] is the fallback, and `ft_site_lower_bound` still answers whether any embedding of a
 /// given clique can exist.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_clique_embed(logical: *mut Sim, hardware: *const Sim, n_out: *mut u32) -> u32 {
     let Some(hw) = (unsafe { hardware.as_ref() }) else { return 0 };
     let Some(lg) = (unsafe { logical.as_mut() }) else { return 0 };
@@ -536,11 +536,10 @@ fn structured_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
         built.verify(&gb.build(), &s.graph).ok().map(|()| built)
     };
     for m in 1..=64usize {
-        if 16 * m * (2 * m + 1) == n {
-            if let Some(e) = crate::embed::zephyr_clique(m, 4).and_then(sealed) {
+        if 16 * m * (2 * m + 1) == n
+            && let Some(e) = crate::embed::zephyr_clique(m, 4).and_then(sealed) {
                 return Some(e);
             }
-        }
         if m >= 3 && 8 * (m - 1) * (3 * m - 1) == n {
             // The fragment construction is at busclique's frontier at every size; the whole-qubit
             // one stays as the fallback because it is the one with a machine-checked ceiling, and a
@@ -570,7 +569,7 @@ fn structured_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
 /// `rounds` of rip-up and reroute, 0 for the default; `budget` shortest-path searches before giving
 /// up, 0 for the default. A large machine wants a larger budget — saying "no" is not free, and on a
 /// hopeless dense input the unbounded search runs for minutes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_embed(
     logical: *mut Sim,
     hardware: *const Sim,
@@ -592,7 +591,7 @@ pub extern "C" fn ft_embed(
 }
 
 /// Physical sites the placement uses in total, or 0 if there is none.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.emb.as_ref())
@@ -604,7 +603,7 @@ pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
 /// Sites are a budget and you either have them or you do not. A chain is a FAILURE MODE: it is held
 /// together by a coupling, and when that coupling loses, the sites of one variable disagree and the
 /// variable has no value at all. Halving this is worth more than halving [`ft_embed_sites`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_embed_longest(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.emb.as_ref())
@@ -613,7 +612,7 @@ pub extern "C" fn ft_embed_longest(sim: *const Sim) -> u32 {
 
 /// Copy the sites holding logical variable `v` into `out`; entries written, or the count needed
 /// when `out` is NULL.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_embed_chain(sim: *const Sim, v: u32, out: *mut u32, cap: u32) -> u32 {
     let Some(e) = unsafe { sim.as_ref() }.and_then(|s| s.emb.as_ref()) else { return 0 };
     let Some(chain) = e.chains.get(v as usize) else { return 0 };
@@ -633,7 +632,7 @@ pub extern "C" fn ft_embed_chain(sim: *const Sim, v: u32, out: *mut u32, cap: u3
 /// `L(d−2) + 2` ports, so a variable of degree `k` needs `⌈(k−2)/(d−2)⌉` sites however cleverly it
 /// is placed. When the sum exceeds the machine, **no embedding exists** — and this answers in
 /// microseconds where [`ft_embed`] would spend its whole budget discovering the same thing.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_site_lower_bound(logical: *const Sim, hardware: *const Sim) -> u32 {
     let (Some(lg), Some(hw)) = (unsafe { logical.as_ref() }, unsafe { hardware.as_ref() }) else {
         return 0;
@@ -649,7 +648,7 @@ pub extern "C" fn ft_site_lower_bound(logical: *const Sim, hardware: *const Sim)
 /// so [`ft_unembed`] works on the result.
 ///
 /// NULL on a null handle or when `logical` carries no placement.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_embed_apply(
     logical: *const Sim,
     hardware: *const Sim,
@@ -676,7 +675,7 @@ pub extern "C" fn ft_embed_apply(
 /// so there is still a complete state to look at, and the count says how much of it to distrust:
 /// non-zero means the chain coupling lost to the problem, and the answer is a stronger coupling or
 /// a shorter chain.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_unembed(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return u32::MAX };
     let Some(e) = s.emb.as_ref() else { return u32::MAX };
@@ -921,7 +920,7 @@ mod embed_ffi_tests {
 }
 
 /// Run `n` chromatic Gibbs sweeps. Returns the total sweeps done so far, or 0 on null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sweep(sim: *mut Sim, n: u32) -> u64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
     let mut smp = Sampler::new(&s.graph, s.beta, s.seed ^ s.sweeps_done.wrapping_mul(0x9E3779B97F4A7C15));
@@ -939,7 +938,7 @@ pub extern "C" fn ft_sweep(sim: *mut Sim, n: u32) -> u64 {
 /// So a caller does not have to guess. An 18-core machine running a sampler on one core is the
 /// commonest way this library is left slow, and the fix is a number the caller has no way to obtain
 /// from the C ABI otherwise. Returns 1 in a browser, which is the truth there.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hardware_threads() -> u32 {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -960,7 +959,7 @@ pub extern "C" fn ft_hardware_threads() -> u32 {
 /// wrote down. [`ft_threads_used`] reports what actually ran.
 ///
 /// `threads` of 0 means "ask the machine", which is [`ft_hardware_threads`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sweep_par(sim: *mut Sim, n: u32, threads: u32) -> u64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
     let threads = if threads == 0 { ft_hardware_threads() } else { threads }.max(1) as usize;
@@ -982,13 +981,13 @@ pub extern "C" fn ft_sweep_par(sim: *mut Sim, n: u32, threads: u32) -> u64 {
 /// Not the number you passed in. A browser has no threads to spread across and answers 1 whatever
 /// was asked, and a colour class with three nodes cannot occupy eight workers. A caller reporting
 /// throughput per thread needs the number that ran, and this is the only place it exists.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_threads_used(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.map_or(0, |s| s.threads_used)
 }
 
 /// Set the inverse temperature (annealing from the host side).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_set_beta(sim: *mut Sim, beta: f64) {
     if let Some(s) = unsafe { sim.as_mut() } {
         s.beta = beta;
@@ -996,19 +995,19 @@ pub extern "C" fn ft_set_beta(sim: *mut Sim, beta: f64) {
 }
 
 /// Number of spins.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_len(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.map_or(0, |s| s.graph.n as u32)
 }
 
 /// Pointer to the spin field (i8 per site, values -1/+1), valid until the next ft_ call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_spins(sim: *const Sim) -> *const i8 {
     unsafe { sim.as_ref() }.map_or(std::ptr::null(), |s| s.sampler_state.as_ptr())
 }
 
 /// Mean magnetization of the current state.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_magnetization(sim: *const Sim) -> f64 {
     // NaN on a null handle, for the reason spelled out on [`ft_energy`]: zero magnetisation is the
     // ordinary state of any unmagnetised model, so 0.0 cannot mean "there is no handle".
@@ -1023,13 +1022,13 @@ pub extern "C" fn ft_magnetization(sim: *const Sim) -> f64 {
 /// it is the energy of any state of an empty model, and of a balanced one — so a caller could not
 /// tell a null handle from an answer. Every later section of this file already answered NaN for a
 /// real-valued result on a refusal; this one and [`ft_magnetization`] were the two that did not.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_energy(sim: *const Sim) -> f64 {
     unsafe { sim.as_ref() }.map_or(f64::NAN, |s| s.graph.energy(&s.sampler_state))
 }
 
 /// Joules this simulation WOULD have cost on a Z1-class device (vendor SPICE prices, pre-silicon).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ledger_joules_z1(sim: *const Sim) -> f64 {
     // Z1_SPICE always states prices, so the NaN branch is unreachable -- but joules()
     // returns Option now precisely so a caller cannot forget that some devices have none.
@@ -1037,12 +1036,12 @@ pub extern "C" fn ft_ledger_joules_z1(sim: *const Sim) -> f64 {
 }
 
 /// Onsager's exact spontaneous magnetization for the 2D lattice at this beta (J = 1).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_onsager(beta: f64) -> f64 {
     onsager_m(beta)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_free(sim: *mut Sim) {
     if !sim.is_null() {
         drop(unsafe { Box::from_raw(sim) });
@@ -1086,7 +1085,7 @@ use crate::tempering::{anneal, geometric_ladder};
 
 /// New graph builder over `n` nodes. Consume it with [`ft_builder_build`] or release it with
 /// [`ft_builder_free`]; dropping the handle without either leaks it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_new(n: u32) -> *mut GraphBuilder {
     if n == 0 {
         return core::ptr::null_mut();
@@ -1096,7 +1095,7 @@ pub extern "C" fn ft_builder_new(n: u32) -> *mut GraphBuilder {
 
 /// Add a coupling. Returns 1 on success, 0 if the handle is null, an index is out of range, `i`
 /// equals `j`, or the weight is not finite.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_couple(b: *mut GraphBuilder, i: u32, j: u32, w: f64) -> u32 {
     let Some(b) = (unsafe { b.as_mut() }) else { return 0 };
     if i == j || !w.is_finite() || i as usize >= b.n() || j as usize >= b.n() {
@@ -1107,7 +1106,7 @@ pub extern "C" fn ft_builder_couple(b: *mut GraphBuilder, i: u32, j: u32, w: f64
 }
 
 /// Add a bias. Returns 1 on success, 0 on a null handle, an out-of-range index, or a non-finite h.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_bias(b: *mut GraphBuilder, i: u32, h: f64) -> u32 {
     let Some(bb) = (unsafe { b.as_mut() }) else { return 0 };
     if !h.is_finite() || i as usize >= bb.n() {
@@ -1118,7 +1117,7 @@ pub extern "C" fn ft_builder_bias(b: *mut GraphBuilder, i: u32, h: f64) -> u32 {
 }
 
 /// Consume the builder into a simulation. The builder handle is invalid after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_build(b: *mut GraphBuilder, beta: f64, seed: u64) -> *mut Sim {
     if b.is_null() {
         return core::ptr::null_mut();
@@ -1128,7 +1127,7 @@ pub extern "C" fn ft_builder_build(b: *mut GraphBuilder, beta: f64, seed: u64) -
 }
 
 /// Release a builder that was never built.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_free(b: *mut GraphBuilder) {
     if !b.is_null() {
         drop(unsafe { Box::from_raw(b) });
@@ -1137,7 +1136,7 @@ pub extern "C" fn ft_builder_free(b: *mut GraphBuilder) {
 
 /// Anneal down a geometric ladder from `beta_min` to `beta_max`, leaving the simulation holding the
 /// lowest-energy state found and returning that energy. Returns NaN on a null handle or bad ladder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_anneal(
     sim: *mut Sim,
     beta_min: f64,
@@ -1161,7 +1160,7 @@ pub extern "C" fn ft_anneal(
 }
 
 /// Node count of a simulation's graph, or 0 on null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_nodes(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() } {
         Some(s) => s.graph.n as u32,
@@ -1170,7 +1169,7 @@ pub extern "C" fn ft_nodes(sim: *const Sim) -> u32 {
 }
 
 /// Total node updates charged to the ledger so far, or 0 on null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ledger_updates(sim: *const Sim) -> u64 {
     match unsafe { sim.as_ref() } {
         Some(s) => s.ledger.samples,
@@ -1242,7 +1241,7 @@ fn ensure_gpu(s: &mut Sim) -> &GpuModel {
 }
 
 /// Row width of the padded interaction rectangle, or 0 on null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_k(sim: *mut Sim) -> u32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).k,
@@ -1251,7 +1250,7 @@ pub extern "C" fn ft_gpu_k(sim: *mut Sim) -> u32 {
 }
 
 /// `n * k` neighbour indices.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_nbr(sim: *mut Sim) -> *const u32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).nbr.as_ptr(),
@@ -1260,7 +1259,7 @@ pub extern "C" fn ft_gpu_nbr(sim: *mut Sim) -> *const u32 {
 }
 
 /// `n * k` couplings as f32, the width a GPU actually has.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_w(sim: *mut Sim) -> *const f32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).w.as_ptr(),
@@ -1269,7 +1268,7 @@ pub extern "C" fn ft_gpu_w(sim: *mut Sim) -> *const f32 {
 }
 
 /// `n` biases as f32.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_h(sim: *mut Sim) -> *const f32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).h.as_ptr(),
@@ -1278,7 +1277,7 @@ pub extern "C" fn ft_gpu_h(sim: *mut Sim) -> *const f32 {
 }
 
 /// Number of colour classes. Nodes within one class share no edge and update together.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_classes(sim: *mut Sim) -> u32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).classes.len() as u32,
@@ -1287,7 +1286,7 @@ pub extern "C" fn ft_gpu_classes(sim: *mut Sim) -> u32 {
 }
 
 /// Length of colour class `c`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_class_len(sim: *mut Sim, c: u32) -> u32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(0, |v| v.len() as u32),
@@ -1296,7 +1295,7 @@ pub extern "C" fn ft_gpu_class_len(sim: *mut Sim, c: u32) -> u32 {
 }
 
 /// Node indices of colour class `c`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_class_ptr(sim: *mut Sim, c: u32) -> *const u32 {
     match unsafe { sim.as_mut() } {
         Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(core::ptr::null(), |v| v.as_ptr()),
@@ -1306,7 +1305,7 @@ pub extern "C" fn ft_gpu_class_ptr(sim: *mut Sim, c: u32) -> *const u32 {
 
 /// Overwrite the simulation's state, so a GPU result can be read back into it and then scored,
 /// certified or annealed by exactly the same code that handles a CPU result.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_set_spins(sim: *mut Sim, ptr: *const i8, len: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
     if ptr.is_null() || len as usize != s.sampler_state.len() {
@@ -1324,12 +1323,12 @@ pub extern "C" fn ft_set_spins(sim: *mut Sim, ptr: *const i8, len: u32) -> u32 {
 ///
 /// The browser takes the shader from here rather than carrying its own copy, so the emitted
 /// arithmetic and the tested arithmetic cannot drift apart.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_shader() -> *const u8 {
     shader_bytes().as_ptr()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_shader_len() -> u32 {
     shader_bytes().len() as u32
 }
@@ -1391,7 +1390,7 @@ mod gpu_tests {
 ///
 /// Exposed so a GPU result can be compared against the field the CPU computes for the same state,
 /// which is a far sharper instrument than comparing the states that come out the other end.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_field(sim: *const Sim, i: u32) -> f64 {
     match unsafe { sim.as_ref() } {
         Some(s) if (i as usize) < s.graph.n => s.graph.field(i as usize, &s.sampler_state),
@@ -1404,7 +1403,7 @@ pub extern "C" fn ft_field(sim: *const Sim, i: u32) -> f64 {
 /// Exposed because a node graph that reports an energy is showing a number nobody can judge. With a
 /// planted instance the same graph reports how far it is from the true optimum, which is the
 /// difference between a demo and a measurement.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_planted_frustrated(l: u32, loops: u32, seed: u64, beta: f64) -> *mut Sim {
     if l < 3 || loops == 0 {
         return core::ptr::null_mut();
@@ -1418,7 +1417,7 @@ pub extern "C" fn ft_planted_frustrated(l: u32, loops: u32, seed: u64, beta: f64
 }
 
 /// The Wishart planted ensemble: dense, and genuinely hard below alpha = 1.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_planted_wishart(n: u32, alpha: f64, seed: u64, beta: f64) -> *mut Sim {
     // `!(alpha > 0.0)` rejects NaN and non-positives but ADMITS +inf, which reaches an allocation
     // sized from it and aborts with "capacity overflow" -- a non-unwinding panic across the C ABI.
@@ -1436,7 +1435,7 @@ pub extern "C" fn ft_planted_wishart(n: u32, alpha: f64, seed: u64, beta: f64) -
 }
 
 /// The known optimum of a planted instance, or NaN if this simulation is not one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ground_energy(sim: *const Sim) -> f64 {
     match unsafe { sim.as_ref() } {
         Some(s) => s.ground.unwrap_or(f64::NAN),
@@ -1487,7 +1486,7 @@ mod planted_ffi_tests {
 /// The certificate is stored on the simulation; read it with the `ft_cert_*` accessors. Returns 1
 /// on success, 0 on a null handle or a degenerate request. Exactly [`ft_collect`] with no burn-in;
 /// the states it drew are kept and reachable through the `ft_samples_*` accessors.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_certify(sim: *mut Sim, draws: u32, thin: u32) -> u32 {
     ft_collect(sim, 0, draws, thin)
 }
@@ -1505,7 +1504,7 @@ pub extern "C" fn ft_certify(sim: *mut Sim, draws: u32, thin: u32) -> u32 {
 /// Z1-class device a read is 1.692 pJ per node against 7.09 fJ per Gibbs cycle -- one read is
 /// worth 239 updates -- so [`ft_ledger_joules_z1`] after this call is now LARGER than it was, and
 /// the earlier figure was the one that was wrong.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_collect(sim: *mut Sim, burn_in: u32, draws: u32, thin: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
     if draws < 16 {
@@ -1523,7 +1522,7 @@ pub extern "C" fn ft_collect(sim: *mut Sim, burn_in: u32, draws: u32, thin: u32)
 }
 
 /// States held by the last [`ft_collect`]. Zero when nothing has been collected.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_len(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(0, |m| m.len() as u32)
 }
@@ -1532,13 +1531,13 @@ pub extern "C" fn ft_samples_len(sim: *const Sim) -> u32 {
 ///
 /// The number a sampler is usually not asked for and usually should be: a run returning 10,000
 /// draws of which 3 are distinct has told you about 3 states, whatever its draw count says.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_distinct(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(0, |m| m.distinct().len() as u32)
 }
 
 /// Lowest energy in the collected set, or NaN if nothing has been collected.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_best_energy(sim: *const Sim) -> f64 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.sm.as_ref())
@@ -1551,7 +1550,7 @@ pub extern "C" fn ft_samples_best_energy(sim: *const Sim) -> f64 {
 /// This is EVIDENCE of degeneracy and not a count of it: a chain proves the states it visited
 /// exist and can prove nothing about the ones it did not. Only exhaustive enumeration counts a
 /// ground manifold, and this ABI does not expose one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_degeneracy(sim: *const Sim, tol: f64) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.sm.as_ref())
@@ -1560,7 +1559,7 @@ pub extern "C" fn ft_samples_degeneracy(sim: *const Sim, tol: f64) -> u32 {
 
 /// The slowest autocorrelation time the chain showed, which every estimate below is deflated by.
 /// NaN when nothing has been collected.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_chain_tau(sim: *const Sim) -> f64 {
     unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(f64::NAN, |m| m.chain_tau())
 }
@@ -1568,7 +1567,7 @@ pub extern "C" fn ft_samples_chain_tau(sim: *const Sim) -> f64 {
 /// Copy state `k` into `out`, which must hold at least `cap` entries. Returns the number written.
 ///
 /// With a NULL `out` it returns the width and writes nothing, so a caller can size its buffer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_state(sim: *const Sim, k: u32, out: *mut i8, cap: u32) -> u32 {
     let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
     let Some(st) = m.states().get(k as usize) else { return 0 };
@@ -1614,7 +1613,7 @@ fn write_estimate(
 /// four on a chain with `tau = 32`, while announcing 95%.
 ///
 /// Returns 0 if nothing has been collected, `i` is out of range, or `out` is NULL.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_mean_spin(sim: *const Sim, i: u32, out: *mut f64) -> u32 {
     let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
     if i as usize >= m.n_spins() {
@@ -1626,7 +1625,7 @@ pub extern "C" fn ft_samples_mean_spin(sim: *const Sim, i: u32, out: *mut f64) -
 /// `<s_i s_j>` with its error bar, in the same four-double layout as [`ft_samples_mean_spin`].
 ///
 /// This and the single-site mean are the two moments contrastive divergence matches.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_correlation(sim: *const Sim, i: u32, j: u32, out: *mut f64) -> u32 {
     let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
     if i as usize >= m.n_spins() || j as usize >= m.n_spins() {
@@ -1640,14 +1639,14 @@ pub extern "C" fn ft_samples_correlation(sim: *const Sim, i: u32, j: u32, out: *
 /// The internal energy, which is the expectation this field asks for most and the one a single
 /// returned state cannot give: [`ft_energy`] reports the energy of the ONE configuration the
 /// machine is holding, and a draw from a distribution is not an estimate of its mean.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_mean_energy(sim: *const Sim, out: *mut f64) -> u32 {
     let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
     write_estimate(m.mean_energy(), out)
 }
 
 /// The order parameter `(1/n) sum_i <s_i>`, in the same four-double layout.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_magnetization(sim: *const Sim, out: *mut f64) -> u32 {
     let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
     write_estimate(m.magnetization(), out)
@@ -1766,8 +1765,8 @@ mod sample_tests {
 }
 
 macro_rules! cert_field {
-    ($name:ident, $f:expr) => {
-        #[no_mangle]
+    ($name:ident, $f:expr_2021) => {
+        #[unsafe(no_mangle)]
         pub extern "C" fn $name(sim: *const Sim) -> f64 {
             match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
                 Some(c) => $f(c),
@@ -1786,7 +1785,7 @@ cert_field!(ft_cert_tv, |c: &crate::certify::Certificate| c.tv_exact.unwrap_or(f
 cert_field!(ft_cert_floor, |c: &crate::certify::Certificate| c.noise_floor.unwrap_or(f64::NAN));
 
 /// 1 if the run certified clean, 0 if it has findings, and 0 with no certificate present.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_cert_passed(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
         Some(c) if c.passed() => 1,
@@ -1795,7 +1794,7 @@ pub extern "C" fn ft_cert_passed(sim: *const Sim) -> u32 {
 }
 
 /// Number of findings. Zero is the only value that means the run is sound.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_cert_findings(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
         Some(c) => c.findings.len() as u32,
@@ -1805,7 +1804,7 @@ pub extern "C" fn ft_cert_findings(sim: *const Sim) -> u32 {
 
 /// Copy finding `i` into `buf` as UTF-8. Returns the byte length written, or the length needed if
 /// `buf` is null, or 0 if there is no such finding.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_cert_finding(sim: *const Sim, i: u32, buf: *mut u8, cap: u32) -> u32 {
     let Some(c) = unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) else { return 0 };
     let Some(f) = c.findings.get(i as usize) else { return 0 };
@@ -1822,7 +1821,7 @@ pub extern "C" fn ft_cert_finding(sim: *const Sim, i: u32, buf: *mut u8, cap: u3
 /// Exact ground energy by variable elimination, or NaN if the induced width exceeds `max_width`.
 ///
 /// This is the oracle that makes a claim checkable on graphs far too large to enumerate.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_ground(sim: *const Sim, max_width: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     crate::exact::Elimination { max_width: max_width as usize }
@@ -1833,7 +1832,7 @@ pub extern "C" fn ft_exact_ground(sim: *const Sim, max_width: u32) -> f64 {
 }
 
 /// Exact `log Z` at `beta`, or NaN if too wide.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_log_z(sim: *const Sim, beta: f64, max_width: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     crate::exact::Elimination { max_width: max_width as usize }
@@ -1845,7 +1844,7 @@ pub extern "C" fn ft_exact_log_z(sim: *const Sim, beta: f64, max_width: u32) -> 
 
 /// Induced width of the elimination order. Cost of exact inference is `2^width`, so this is the
 /// number that decides whether to ask for it at all.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_width(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() } {
         Some(s) => crate::exact::Elimination::default().width(&s.graph) as u32,
@@ -1857,7 +1856,7 @@ pub extern "C" fn ft_exact_width(sim: *const Sim) -> u32 {
 ///
 /// Returns 1 on success, 0 on a null handle, a wrong length, or a graph wider than `max_width`.
 /// The energy alone is not enough for a caller that has to return a solution rather than a bound.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_ground_state(
     sim: *const Sim,
     max_width: u32,
@@ -1892,7 +1891,7 @@ pub extern "C" fn ft_exact_ground_state(
 ///
 /// COST: `2n` eliminations, so `O(n * 2^width)` rather than the single `O(2^width)` of
 /// [`ft_exact_log_z`]. Check [`ft_exact_width`] first.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_marginals(
     sim: *const Sim,
     beta: f64,
@@ -2026,7 +2025,7 @@ pub struct ModelHandle {
     answers: Vec<crate::model::Solution>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_new() -> *mut ModelHandle {
     Box::into_raw(Box::new(ModelHandle {
         model: Model::new(),
@@ -2040,7 +2039,7 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
     }))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_free(m: *mut ModelHandle) {
     if !m.is_null() {
         drop(unsafe { Box::from_raw(m) });
@@ -2048,7 +2047,7 @@ pub extern "C" fn ft_model_free(m: *mut ModelHandle) {
 }
 
 /// Declare a `k`-valued variable. Returns its index, or `u32::MAX` on failure.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_categorical(m: *mut ModelHandle, k: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
     if k < 2 {
@@ -2060,7 +2059,7 @@ pub extern "C" fn ft_model_categorical(m: *mut ModelHandle, k: u32) -> u32 {
 }
 
 /// Declare an integer in `lo..=hi`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_integer(m: *mut ModelHandle, lo: i64, hi: i64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
     if hi <= lo {
@@ -2072,7 +2071,7 @@ pub extern "C" fn ft_model_integer(m: *mut ModelHandle, lo: i64, hi: i64) -> u32
 }
 
 /// Declare a 0/1 variable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_binary(m: *mut ModelHandle) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
     let n = h.model.len();
@@ -2085,7 +2084,7 @@ fn var_of(h: &ModelHandle, i: u32) -> Option<crate::model::Var> {
 }
 
 /// `a != b`. Returns 1 on success.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     match (var_of(h, a), var_of(h, b)) {
@@ -2113,7 +2112,7 @@ pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32
 }
 
 /// `a == b`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     match (var_of(h, a), var_of(h, b)) {
@@ -2141,7 +2140,7 @@ pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
 }
 
 /// Pin a variable to a value.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: i64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     match var_of(h, v) {
@@ -2169,7 +2168,7 @@ pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: i64) -> u32 {
 }
 
 /// Add `coeff · [var == value]` to the objective.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_objective_term(
     m: *mut ModelHandle,
     maximize: u32,
@@ -2191,7 +2190,7 @@ pub extern "C" fn ft_model_objective_term(
 }
 
 /// Add `coeff · [a == av] · [b == bv]` to the objective.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_objective_pair(
     m: *mut ModelHandle,
     maximize: u32,
@@ -2254,7 +2253,7 @@ pub extern "C" fn ft_model_objective_pair(
 /// A product of one literal is an ordinary linear term and a product of two is
 /// [`ft_model_objective_pair`]; both are accepted here so a caller building terms in a loop does
 /// not need three code paths.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_objective_product(
     m: *mut ModelHandle,
     maximize: u32,
@@ -2278,7 +2277,7 @@ pub extern "C" fn ft_model_objective_product(
 
 /// Compile. Returns the spin count, or 0 on failure; the reason is available from
 /// [`ft_model_error`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     // Nothing to push: every objective term went straight into the model as it arrived, which is
@@ -2307,7 +2306,7 @@ pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
 }
 
 /// Anneal the compiled model, keeping the best of `tries`. Returns 1 on success.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_solve(m: *mut ModelHandle, tries: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let Some(c) = h.compiled.as_ref() else { return 0 };
@@ -2329,7 +2328,7 @@ pub extern "C" fn ft_model_solve(m: *mut ModelHandle, tries: u32) -> u32 {
 /// `beta0` to `beta1` over `stages`, `sweeps` per stage, best of `tries`. Zero for any of the four
 /// ladder parameters means "use the default", so a caller can override only what they measured.
 /// A harder model wants a longer ladder than the default, and this is how it says so.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_solve_with(
     m: *mut ModelHandle,
     tries: u32,
@@ -2382,7 +2381,7 @@ fn best_answer(all: &[crate::model::Solution]) -> crate::model::Solution {
 }
 
 /// How many answers the last solve kept — one per try.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_answers(m: *const ModelHandle) -> u32 {
     unsafe { m.as_ref() }.map_or(0, |h| h.answers.len() as u32)
 }
@@ -2401,7 +2400,7 @@ pub extern "C" fn ft_model_answers(m: *const ModelHandle) -> u32 {
 /// optima they landed on exist and prove nothing about the ones they missed. Only feasible answers
 /// are counted, because an assignment that breaks a hard row is not a way to do the job. `tol` is
 /// on the compiled Ising energy, which folds in every penalty; `1e-9` is the value for exact ties.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_optima(m: *const ModelHandle, tol: f64) -> u32 {
     let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
     let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
@@ -2515,7 +2514,7 @@ mod optima_tests {
 /// colouring changed, which is how it was found. Re-solve if you need the solve's own answer.
 ///
 /// Returns 1 on success, 0 for a null handle or an index past the count.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
@@ -2530,7 +2529,7 @@ pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64)
 }
 
 /// The solved value of variable `v`, or `i64::MIN` if it did not decode.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_value(m: *const ModelHandle, v: u32) -> i64 {
     let Some(h) = (unsafe { m.as_ref() }) else { return i64::MIN };
     let Some(s) = h.solution.as_ref() else { return i64::MIN };
@@ -2544,7 +2543,7 @@ pub extern "C" fn ft_model_value(m: *const ModelHandle, v: u32) -> i64 {
 }
 
 /// 1 if every variable decoded.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) if s.feasible() => 1,
@@ -2562,7 +2561,7 @@ pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
 /// The objective needs no correction: the substitution's constant is written INTO the instance, so
 /// `ommx_objective(x) == ferrotherm_energy(s)`. [`ft_model_ommx_constant`] reports that value for
 /// inspection and must not be added on top. See [`crate::ommx`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ommx(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
     let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
     let Some(c) = h.compiled.as_ref() else { return 0 };
@@ -2578,7 +2577,7 @@ pub extern "C" fn ft_model_ommx(m: *const ModelHandle, buf: *mut u8, cap: u32) -
 /// The offset the +/-1 to 0/1 substitution produced, ALREADY FOLDED INTO the instance.
 /// Read it, do not add it: ommx_objective(x) == ferrotherm_energy(s) exactly, and adding it again double-counts.
 /// Reported so the substitution is visible, not because anything downstream must apply it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ommx_constant(m: *const ModelHandle) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) {
         Some(c) => crate::ommx::export(&c.graph).constant,
@@ -2590,7 +2589,7 @@ pub extern "C" fn ft_model_ommx_constant(m: *const ModelHandle) -> f64 {
 ///
 /// A caveat is something the compiler KNOWS is wrong with the model and cannot fix: today, an
 /// encoding no penalty can make exact. Zero before a successful compile.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_caveats(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) {
         Some(c) => c.caveats.len() as u32,
@@ -2608,7 +2607,7 @@ pub extern "C" fn ft_model_caveats(m: *const ModelHandle) -> u32 {
 /// exists. Every other solver in this crate takes a graph of spins, so the modelling layer -- the
 /// one every document here tells a caller to reach for first -- was the one layer that could not
 /// certify its own answer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_solve_by(m: *mut ModelHandle, method: u32, effort: u64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let Some(c) = h.compiled.as_ref() else {
@@ -2653,7 +2652,7 @@ pub extern "C" fn ft_model_solve_by(m: *mut ModelHandle, method: u32, effort: u6
 /// constant. Proved and feasible is a real optimality proof for the model as written, and the
 /// argument uses nothing about the penalty being large enough. Proved and INFEASIBLE proves
 /// something else and still useful: the penalty is too small, and no longer search will fix it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_proved(m: *const ModelHandle) -> u32 {
     u32::from(
         unsafe { m.as_ref() }
@@ -2671,7 +2670,7 @@ pub extern "C" fn ft_model_proved(m: *const ModelHandle) -> u32 {
 /// the constant folded in. That number is about SPINS: it compares two answers to one model and
 /// nothing else, and it moves when the penalty does. A modeller who wrote `maximize 5*mon + 4*tue`
 /// reads their schedule's worth here and reads a number in the hundreds there.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_objective(m: *const ModelHandle) -> f64 {
     unsafe { m.as_ref() }
         .and_then(|h| h.solution.as_ref())
@@ -2680,7 +2679,7 @@ pub extern "C" fn ft_model_objective(m: *const ModelHandle) -> f64 {
 }
 
 /// Whether the answer carries an objective value at all, so a caller need not test for NaN.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_has_objective(m: *const ModelHandle) -> u32 {
     u32::from(
         unsafe { m.as_ref() }
@@ -2690,7 +2689,7 @@ pub extern "C" fn ft_model_has_objective(m: *const ModelHandle) -> u32 {
 }
 
 /// Copy caveat `i` as UTF-8; same two-call protocol as the other text getters.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_caveat(
     m: *const ModelHandle,
     i: u32,
@@ -2712,7 +2711,7 @@ pub extern "C" fn ft_model_caveat(
 /// Spins the higher-order lowering added, or 0 if no term named three or more variables.
 ///
 /// Zero after a failed compile too, so read it beside a non-zero `ft_model_compile`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ancillas(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) {
         Some(c) => c.ancillas as u32,
@@ -2725,7 +2724,7 @@ pub extern "C" fn ft_model_ancillas(m: *const ModelHandle) -> u32 {
 /// Zero when the answer keeps everything it was asked to. Distinct from a variable that did not
 /// decode: a broken constraint means every value read cleanly and one of them is not what was
 /// asked for, which nothing in the values themselves reveals.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_violations(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.violated.len() as u32,
@@ -2734,7 +2733,7 @@ pub extern "C" fn ft_model_violations(m: *const ModelHandle) -> u32 {
 }
 
 /// Copy violation `i` as UTF-8; same two-call protocol as the other text getters.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_violation(
     m: *const ModelHandle,
     i: u32,
@@ -2758,7 +2757,7 @@ pub extern "C" fn ft_model_violation(
 /// if there is no violation `i`. A description says a constraint broke; this says whether it was a
 /// near miss or a rout, which is what a caller ranking repairs or deciding whether a larger penalty
 /// would be enough actually needs.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_violation_amount(m: *const ModelHandle, i: u32) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.violated.get(i as usize).map(|v| v.amount).unwrap_or(f64::NAN),
@@ -2767,7 +2766,7 @@ pub extern "C" fn ft_model_violation_amount(m: *const ModelHandle, i: u32) -> f6
 }
 
 /// Energy of the solution.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_energy(m: *const ModelHandle) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.energy,
@@ -2776,7 +2775,7 @@ pub extern "C" fn ft_model_energy(m: *const ModelHandle) -> f64 {
 }
 
 /// The penalty actually used, after scaling against the objective.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_penalty(m: *const ModelHandle) -> f64 {
     match unsafe { m.as_ref() } {
         Some(h) => h.model.effective_penalty(),
@@ -2785,7 +2784,7 @@ pub extern "C" fn ft_model_penalty(m: *const ModelHandle) -> f64 {
 }
 
 /// Copy the last compile error into `buf`; returns bytes written, or the length needed if null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_error(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
     let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
     let b = h.last_error.as_bytes();
@@ -2798,7 +2797,7 @@ pub extern "C" fn ft_model_error(m: *const ModelHandle, buf: *mut u8, cap: u32) 
 }
 
 /// The compiled program as `.ftp` text; same buffer protocol as [`ft_model_error`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ftp(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
     let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) else { return 0 };
     let text = c.program.to_ftp();
@@ -2888,7 +2887,7 @@ mod model_ffi_tests {
 /// ask the length, then fill a buffer — needs somewhere to write. This grows on demand and is
 /// reused; it is single-threaded like the rest of this ABI, and the caller must copy out before the
 /// next call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_scratch(len: u32) -> *mut u8 {
     use std::cell::RefCell;
     thread_local! {
@@ -2939,7 +2938,7 @@ mod scratch_tests {
 /// Up to four variables, passed positionally with `u32::MAX` for the unused slots — a node graph
 /// has a fixed number of ports, and a variadic call across this boundary would need an allocator on
 /// the caller's side that a browser does not have.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_cardinality(
     m: *mut ModelHandle,
     count: u32,
@@ -2957,7 +2956,7 @@ pub extern "C" fn ft_model_cardinality(
 ///
 /// Costs more spins than the exact form: an inequality needs a slack variable to become an equality
 /// the sampler can square. See [`crate::model::Constraint::AtMost`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_at_most(
     m: *mut ModelHandle,
     count: u32,
@@ -2972,7 +2971,7 @@ pub extern "C" fn ft_model_at_most(
 }
 
 /// At least `k` of up to four variables take `value`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_at_least(
     m: *mut ModelHandle,
     count: u32,
@@ -3000,7 +2999,7 @@ pub extern "C" fn ft_model_at_least(
 /// Only a one-hot or domain-wall indicator is linear in the spins. A binary-encoded variable is
 /// cheapest and can appear in constraints alone; putting it in an objective is refused at compile
 /// time rather than approximated.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_categorical_as(m: *mut ModelHandle, k: u32, encoding: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
     let Some(enc) = encoding_of(encoding, h) else { return u32::MAX };
@@ -3013,7 +3012,7 @@ pub extern "C" fn ft_model_categorical_as(m: *mut ModelHandle, k: u32, encoding:
 }
 
 /// Declare an integer with a chosen encoding. See [`ft_model_categorical_as`] for the codes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_integer_as(
     m: *mut ModelHandle,
     lo: i64,
@@ -3053,7 +3052,7 @@ fn encoding_of(code: u32, h: &mut ModelHandle) -> Option<crate::encode::Encoding
 ///
 /// The list lives on the model and is cleared by every `_n` call, so two constraints cannot bleed
 /// into each other.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     h.lits.clear();
@@ -3069,7 +3068,7 @@ pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
 /// version of this did, and it refused every variable whose domain did not happen to contain the
 /// placeholder -- correctly, since that function's whole job is to reject a value a variable cannot
 /// take. The fix belongs here, where the domain is already known.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_var(m: *mut ModelHandle, var: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     if var as usize >= h.model.len() {
@@ -3087,7 +3086,7 @@ pub extern "C" fn ft_model_var(m: *mut ModelHandle, var: u32) -> u32 {
 }
 
 /// Append "`var` takes `value`" to the pending list. Refuses a value the variable cannot take.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_lit(m: *mut ModelHandle, var: u32, value: i64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     match var_of(h, var) {
@@ -3110,7 +3109,7 @@ pub extern "C" fn ft_model_lit(m: *mut ModelHandle, var: u32, value: i64) -> u32
 /// exactly the counting row it looks like.
 ///
 /// Refuses a value the variable cannot take, and a coefficient that is not a real number.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_lit_weighted(
     m: *mut ModelHandle,
     var: u32,
@@ -3133,7 +3132,7 @@ pub extern "C" fn ft_model_lit_weighted(
 }
 
 /// How many literals are pending, so a caller can check its own bookkeeping.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_lits(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() } {
         Some(h) => h.lits.len() as u32,
@@ -3151,21 +3150,20 @@ pub extern "C" fn ft_model_lits(m: *const ModelHandle) -> u32 {
 ///
 /// Kind 5 shipped without appearing in this comment or in the refusal below, so the ABI's own
 /// error message told callers that the constraint it implements does not exist.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_close(m: *mut ModelHandle, kind: u32, k: u32) -> u32 {
     close_counting(m, kind, k, None)
 }
 
 fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    if let Some(w) = soft {
-        if !(w > 0.0) || !w.is_finite() {
+    if let Some(w) = soft
+        && (!(w > 0.0) || !w.is_finite()) {
             h.last_error = format!("a soft constraint needs a positive price, not {w}");
             h.lits.clear();
             h.coeffs.clear();
             return 0;
         }
-    }
     let lits = core::mem::take(&mut h.lits);
     h.coeffs.clear();
     if lits.len() < 2 {
@@ -3198,11 +3196,10 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
                 // rather than silently treated as one -- an all_different built from spin literals
                 // would otherwise constrain fewer variables than the caller listed and still
                 // report success.
-                if let crate::model::Lit::Is(v, _) = l {
-                    if !vars.contains(v) {
+                if let crate::model::Lit::Is(v, _) = l
+                    && !vars.contains(v) {
                         vars.push(*v);
                     }
-                }
             }
             Constraint::AllDifferent(vars)
         }
@@ -3230,7 +3227,7 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
 ///
 /// The weight is absolute, not scaled. Automatic scaling exists to stop a hard constraint being
 /// outbid by the objective; a soft one is meant to be traded against it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_close_soft(
     m: *mut ModelHandle,
     kind: u32,
@@ -3254,7 +3251,7 @@ pub extern "C" fn ft_model_close_soft(
 /// whether it succeeds or not, so a refused row cannot silently join the next one. The refusals
 /// that depend on the row's arithmetic -- a fractional coefficient on an inequality, a row nothing
 /// can satisfy -- are raised by `ft_model_compile`, and `ft_model_error` carries the reason.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_close_linear(m: *mut ModelHandle, rel: u32, rhs: f64) -> u32 {
     close_linear(m, rel, rhs, None)
 }
@@ -3266,7 +3263,7 @@ pub extern "C" fn ft_model_close_linear(m: *mut ModelHandle, rel: u32, rhs: f64)
 /// soft one is a preference with a number on it, and breaking it costs `weight × amount²` in the
 /// modeller's own units -- exactly the energy the compiled row contributes -- and leaves the answer
 /// feasible. [`ft_model_soft_cost`] totals what was traded.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_close_linear_soft(
     m: *mut ModelHandle,
     rel: u32,
@@ -3281,12 +3278,11 @@ fn close_linear(m: *mut ModelHandle, rel: u32, rhs: f64, soft: Option<f64>) -> u
     let lits = core::mem::take(&mut h.lits);
     let coeffs = core::mem::take(&mut h.coeffs);
     debug_assert_eq!(lits.len(), coeffs.len());
-    if let Some(w) = soft {
-        if !(w > 0.0) || !w.is_finite() {
+    if let Some(w) = soft
+        && (!(w > 0.0) || !w.is_finite()) {
             h.last_error = format!("a soft constraint needs a positive price, not {w}");
             return 0;
         }
-    }
     if lits.is_empty() {
         h.last_error = "a linear row needs at least one term".into();
         return 0;
@@ -3317,7 +3313,7 @@ fn close_linear(m: *mut ModelHandle, rel: u32, rhs: f64, soft: Option<f64>) -> u
 /// For the pairwise constraints — `not_equal`, `equal`, `fix` — which take their arguments
 /// directly rather than through the literal list. Returns 0 if no constraint has been added or the
 /// weight is not a positive number.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_soften_last(m: *mut ModelHandle, weight: f64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     if !(weight > 0.0) || !weight.is_finite() {
@@ -3332,7 +3328,7 @@ pub extern "C" fn ft_model_soften_last(m: *mut ModelHandle, weight: f64) -> u32 
 }
 
 /// What the broken soft constraints cost. Zero when none broke, or before solving.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_soft_cost(m: *const ModelHandle) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.soft_cost(),
@@ -3341,7 +3337,7 @@ pub extern "C" fn ft_model_soft_cost(m: *const ModelHandle) -> f64 {
 }
 
 /// 1 if violation `i` is a hard one, 0 if it is a preference that was traded away.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_violation_is_hard(m: *const ModelHandle, i: u32) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.violated.get(i as usize).map(|v| v.hard as u32).unwrap_or(1),
@@ -3355,7 +3351,7 @@ pub extern "C" fn ft_model_violation_is_hard(m: *const ModelHandle, i: u32) -> u
 /// that merely ties with the objective gets traded away. When `feasible` comes back 0 the remedy is
 /// to raise it, and until now the C surface -- and so Python, Zig, Julia and the editor -- had no
 /// way to. A non-finite or non-positive value is refused.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_fixed_penalty(m: *mut ModelHandle, p: f64) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     if !p.is_finite() || p <= 0.0 {
@@ -3370,7 +3366,7 @@ pub extern "C" fn ft_model_fixed_penalty(m: *mut ModelHandle, p: f64) -> u32 {
 ///
 /// Optional: a variable declared without one is called `v0`, `v1` and so on. Returns 1 on success,
 /// 0 if the index is unknown or the bytes are not UTF-8. `len` is a byte count, not a terminator.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_name(m: *mut ModelHandle, v: u32, name: *const u8, len: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let Some(x) = var_of(h, v) else { return 0 };
@@ -3989,7 +3985,7 @@ mod cardinality_ffi {
 /// The same instrument the rest of the stack uses, reachable from a model rather than from a raw
 /// graph. A solved answer says *what*; a certificate says whether the machine that produced it was
 /// sampling the distribution it claimed. Returns 1 on success.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, thin: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
     let Some(c) = h.compiled.as_ref() else { return 0 };
@@ -4004,8 +4000,8 @@ pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, t
 }
 
 macro_rules! model_cert_field {
-    ($name:ident, $f:expr) => {
-        #[no_mangle]
+    ($name:ident, $f:expr_2021) => {
+        #[unsafe(no_mangle)]
         pub extern "C" fn $name(m: *const ModelHandle) -> f64 {
             match unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) {
                 Some(c) => $f(c),
@@ -4026,7 +4022,7 @@ model_cert_field!(ft_model_cert_floor, |c: &crate::certify::Certificate| c
     .unwrap_or(f64::NAN));
 
 /// Number of findings; zero is the only value meaning the run is sound.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_cert_findings(m: *const ModelHandle) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) {
         Some(c) => c.findings.len() as u32,
@@ -4035,7 +4031,7 @@ pub extern "C" fn ft_model_cert_findings(m: *const ModelHandle) -> u32 {
 }
 
 /// Copy finding `i` as UTF-8; same two-call protocol as the other text getters.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_model_cert_finding(
     m: *const ModelHandle,
     i: u32,
@@ -4100,7 +4096,7 @@ mod model_cert_tests {
 ///
 /// `tenure = 0` means "scale to the graph", matching [`crate::tabu::Params`]; `restart_after = 0`
 /// means never restart.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_tabu(sim: *mut Sim, iterations: u32, tenure: u32, restart_after: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let p = crate::tabu::Params {
@@ -4126,7 +4122,7 @@ pub extern "C" fn ft_tabu(sim: *mut Sim, iterations: u32, tenure: u32, restart_a
 /// Exported rather than left implicit because truncation is invisible from outside otherwise --
 /// the defect that shipped in the first version of that module, where a run that spent 9 of 50,000
 /// iterations returned a result shaped exactly like a completed one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_tabu_iterations(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.tb.as_ref()).map_or(0, |o| o.iterations_run as u64)
 }
@@ -4135,7 +4131,7 @@ pub extern "C" fn ft_tabu_iterations(sim: *const Sim) -> u64 {
 ///
 /// The ladder is linear from `β = 0` to `beta_max` in `stages` steps, which is what makes
 /// [`ft_popanneal_ln_z`] an absolute free energy rather than a ratio.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_popanneal(
     sim: *mut Sim,
     population: u32,
@@ -4171,7 +4167,7 @@ pub extern "C" fn ft_popanneal(
 
 /// Exact `ln Z(beta)` by variable elimination, or NaN if the graph is too wide (induced width
 /// above 24) or the handle is null. Bounded by treewidth, not by spin count.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_exact(sim: *const Sim, beta: f64) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     if !beta.is_finite() || beta < 0.0 {
@@ -4187,7 +4183,7 @@ pub extern "C" fn ft_ln_z_exact(sim: *const Sim, beta: f64) -> f64 {
 /// palindromic sweeps per rung, `runs` independent walks. Returns the point estimate and keeps the
 /// run for [`ft_ln_z_ais_lower`] and [`ft_ln_z_ais_ess`]. NaN on a null handle or `beta <= 0`.
 /// Zero arguments take the defaults 64 / 2 / 128.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_ais(sim: *mut Sim, beta: f64, rungs: u32, sweeps: u32, runs: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     if !beta.is_finite() || beta <= 0.0 {
@@ -4206,7 +4202,7 @@ pub extern "C" fn ft_ln_z_ais(sim: *mut Sim, beta: f64, rungs: u32, sweeps: u32,
 /// `ln Z >= ft_ln_z_ais_lower(delta)` with probability at least `1 - delta`, unconditionally --
 /// Markov's inequality on the unbiased estimator of the last [`ft_ln_z_ais`]. NaN if there was
 /// no run or `delta` is outside `(0, 1)`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_ais_lower(sim: *const Sim, delta: f64) -> f64 {
     if !(delta > 0.0 && delta < 1.0) {
         return f64::NAN;
@@ -4219,7 +4215,7 @@ pub extern "C" fn ft_ln_z_ais_lower(sim: *const Sim, delta: f64) -> f64 {
 
 /// Effective sample size of the last [`ft_ln_z_ais`]'s weights; near 1 means one walk dominated
 /// and the bound, still valid, is loose. NaN if there was no run.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_ais_ess(sim: *const Sim) -> f64 {
     match unsafe { sim.as_ref() }.and_then(|s| s.fe.as_ref()) {
         Some(a) => a.ess,
@@ -4232,7 +4228,7 @@ pub extern "C" fn ft_ln_z_ais_ess(sim: *const Sim) -> f64 {
 /// each mean widened by `z` standard errors -- to `lower_out` / `upper_out` when non-null. The
 /// bracket rests on `d<E>/dbeta <= 0`, a theorem, and on each rung being at equilibrium, which is
 /// not. NaN on a null handle or `beta <= 0`; zero arguments take the defaults 32 / 200 / 2000 / 3.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_ti(
     sim: *const Sim,
     beta: f64,
@@ -4268,7 +4264,7 @@ pub extern "C" fn ft_ln_z_ti(
 /// estimate to sit beside the AIS bound and the TI bracket) to `stderr_out` when non-null. The
 /// full curve -- entropy and heat capacity per rung -- is `free_energy::thermodynamics`,
 /// Rust-only. NaN on a null handle or `beta <= 0`; zero arguments take the defaults 32/200/2000.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_bar(sim: *const Sim, beta: f64, rungs: u32, burn_in: u32, draws: u32, stderr_out: *mut f64) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     if !beta.is_finite() || beta <= 0.0 {
@@ -4289,7 +4285,7 @@ pub extern "C" fn ft_ln_z_bar(sim: *const Sim, beta: f64, rungs: u32, burn_in: u
 /// mean-field fixed point (`meanfield::naive_mean_field`, 2000 damped iterations). No sampling, no
 /// probability of failure -- it holds for every magnetisation, and the fixed point is only where
 /// it is tightest. NaN on a null handle or `beta < 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_mean_field(sim: *const Sim, beta: f64) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     if !beta.is_finite() || beta < 0.0 {
@@ -4301,7 +4297,7 @@ pub extern "C" fn ft_ln_z_mean_field(sim: *const Sim, beta: f64) -> f64 {
 /// `ln Z(beta)` by the Bethe free energy of loopy belief propagation (2000 damped iterations).
 /// EXACT on a tree; an approximation with loops, neither bound nor estimate with an error bar.
 /// NaN on a null handle, `beta < 0`, or a run that did not converge to 1e-8.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_bethe(sim: *const Sim, beta: f64) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     if !beta.is_finite() || beta < 0.0 {
@@ -4317,7 +4313,7 @@ pub extern "C" fn ft_ln_z_bethe(sim: *const Sim, beta: f64) -> f64 {
 /// Population-annealing replicas are not independent -- resampling makes several descend from one
 /// ancestor -- so the bar deletes whole FAMILIES rather than replicas. Calibrated against exact
 /// enumeration (`sd(z)` near 1), not fitted.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_popanneal_ln_z_stderr(sim: *const Sim) -> f64 {
     match unsafe { sim.as_ref() }.and_then(|s| s.pa.as_ref()) {
         Some(o) => o.ln_z_stderr.unwrap_or(f64::NAN),
@@ -4326,7 +4322,7 @@ pub extern "C" fn ft_popanneal_ln_z_stderr(sim: *const Sim) -> f64 {
 }
 
 /// `ln Z` at the final β from the last [`ft_popanneal`], or NaN if there was none.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_popanneal_ln_z(sim: *const Sim) -> f64 {
     match unsafe { sim.as_ref() }.and_then(|s| s.pa.as_ref()) {
         Some(o) if o.ln_z_is_absolute => o.ln_z,
@@ -4340,7 +4336,7 @@ pub extern "C" fn ft_popanneal_ln_z(sim: *const Sim) -> f64 {
 /// `1.0` means every ancestor still has one descendant; the population size means the population
 /// collapsed onto a single ancestor and explored one basin with N copies of one history. NaN if no
 /// run has happened.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_popanneal_rho(sim: *const Sim) -> f64 {
     match unsafe { sim.as_ref() }.and_then(|s| s.pa.as_ref()) {
         Some(o) => o.rho_max,
@@ -4353,7 +4349,7 @@ pub extern "C" fn ft_popanneal_rho(sim: *const Sim) -> f64 {
 /// Returns the lowest energy found. **Whether it is the minimum is a separate question**, answered
 /// by [`ft_branch_proved`]: a run that exhausted its node budget returns the best it saw and says
 /// the proof is missing.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_branch(sim: *mut Sim, max_nodes: u64) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let p = crate::branch::Params {
@@ -4371,7 +4367,7 @@ pub extern "C" fn ft_branch(sim: *mut Sim, max_nodes: u64) -> f64 {
 }
 
 /// 1 if the last [`ft_branch`] exhausted the tree and its answer is the proved minimum, else 0.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_branch_proved(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()) {
         Some(o) => u32::from(o.proved_optimal),
@@ -4380,7 +4376,7 @@ pub extern "C" fn ft_branch_proved(sim: *const Sim) -> u32 {
 }
 
 /// Nodes the last [`ft_branch`] visited. 0 if there was none.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()).map_or(0, |o| o.nodes)
 }
@@ -4399,7 +4395,7 @@ pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
 /// Returns NaN unless the graph is a toroidal grid, whose structure is recovered from the edge list
 /// — a match on all `2n` edges rather than a guess. [`ft_toroidal_attained`] says whether the bound
 /// happens to be achieved by a genuine cut, in which case it is the maximum rather than a bound.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_toroidal_bound(sim: *mut Sim, scale: f64) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     s.tor = None;
@@ -4409,11 +4405,10 @@ pub extern "C" fn ft_toroidal_bound(sim: *mut Sim, scale: f64) -> f64 {
         Ok(b) => {
             // A bound that is attained comes with the state that attains it, and leaving it behind
             // is what makes `ft_energy` the proved minimum in that case.
-            if let Some(st) = &b.state {
-                if st.len() == s.sampler_state.len() {
+            if let Some(st) = &b.state
+                && st.len() == s.sampler_state.len() {
                     s.sampler_state.copy_from_slice(st);
                 }
-            }
             let c = b.cut;
             s.tor = Some(b);
             c
@@ -4427,7 +4422,7 @@ pub extern "C" fn ft_toroidal_bound(sim: *mut Sim, scale: f64) -> f64 {
 /// Attained means the relaxation's optimum two-coloured the graph, so it is a cut and the bound is
 /// the maximum — proved, not bounded. Not attained still leaves the bound standing: every cut is
 /// such a subgraph, so a maximum over the larger set can only be larger.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_toroidal_attained(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() }.and_then(|s| s.tor.as_ref()) {
         Some(b) => u32::from(b.attained),
@@ -4445,7 +4440,7 @@ pub extern "C" fn ft_toroidal_attained(sim: *const Sim) -> u32 {
 /// **The 0.87856 ratio does not apply in general** — it is stated for non-negative edge weights,
 /// which here means non-positive couplings and no fields. [`ft_gw_guaranteed`] says which case this
 /// was, because a guarantee that is always claimed is not a guarantee.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gw_round(sim: *mut Sim, hyperplanes: u32, seed: u64) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let r = crate::sdp::goemans_williamson(&s.graph, &crate::sdp::Params::default(), seed, hyperplanes.max(1) as usize);
@@ -4458,7 +4453,7 @@ pub extern "C" fn ft_gw_round(sim: *mut Sim, hyperplanes: u32, seed: u64) -> f64
 }
 
 /// 1 if the last [`ft_gw_round`] was inside the hypothesis of the 0.87856 guarantee, else 0.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_gw_guaranteed(sim: *const Sim) -> u32 {
     match unsafe { sim.as_ref() }.and_then(|s| s.gw.as_ref()) {
         Some(r) => u32::from(r.guaranteed),
@@ -4475,7 +4470,7 @@ pub extern "C" fn ft_gw_guaranteed(sim: *const Sim) -> u32 {
 ///
 /// Returns the best energy found, or NaN when the graph carries a **field** — the isoenergetic
 /// argument holds only at `h = 0`, and accepting the move anyway would be silently wrong.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_icm(sim: *mut Sim, rungs: u32, rounds: u32, beta_min: f64, beta_max: f64) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     if !(beta_min > 0.0 && beta_max > beta_min) {
@@ -4505,7 +4500,7 @@ pub extern "C" fn ft_icm(sim: *mut Sim, rungs: u32, rounds: u32, beta_min: f64, 
 ///
 /// Reported because a move that never fires is not a move: two replicas that agree everywhere have
 /// no disagreement subgraph and nothing to exchange.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_icm_moves(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.ic.as_ref()).map_or(0, |o| o.icm_moves as u64)
 }
@@ -4516,7 +4511,7 @@ pub extern "C" fn ft_icm_moves(sim: *const Sim) -> u64 {
 /// `gamma_min` over `steps`. **One slice is classical**, which is the honest control rather than a
 /// degenerate case. `gamma_min` must not be zero: `J⊥` diverges there, and it is clamped rather than
 /// divided by. Returns the best classical energy found and leaves that state on the simulation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_sqa(
     sim: *mut Sim,
     trotter: u32,
@@ -4552,7 +4547,7 @@ pub extern "C" fn ft_sqa(
 /// One iteration is one **spin flip**, which is also what [`ft_tabu`] counts — so passing the same
 /// number to both is a matched-budget comparison, and it is the only comparison this ABI can offer
 /// honestly: a wall-clock one needs a quiet machine.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let p = crate::bls::Params {
@@ -4584,7 +4579,7 @@ pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
 /// `block` of 0 takes the default. Blocks are grown as induced TREES, whose width is 1 by
 /// construction, so nothing here can be refused for width. Returns the best energy found, or NaN on
 /// a null handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hfs(sim: *mut Sim, steps: u32, block: u32) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let p = crate::hfs::Params {
@@ -4602,7 +4597,7 @@ pub extern "C" fn ft_hfs(sim: *mut Sim, steps: u32, block: u32) -> f64 {
 }
 
 /// Block moves the last [`ft_hfs`] actually ran. 0 if there was none.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hfs_moves(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.hf.as_ref()).map_or(0, |o| o.moves as u64)
 }
@@ -4611,7 +4606,7 @@ pub extern "C" fn ft_hfs_moves(sim: *const Sim) -> u64 {
 ///
 /// The number that says whether the descent is still going: a run whose blocks all land on a
 /// minimum they already sit in has stopped, and no energy figure shows that.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hfs_improving(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.hf.as_ref()).map_or(0, |o| o.improving as u64)
 }
@@ -4620,13 +4615,13 @@ pub extern "C" fn ft_hfs_improving(sim: *const Sim) -> u64 {
 ///
 /// The number that says whether the search had room to work: a run with a handful of descents spent
 /// its budget inside one basin and is a descent, not a breakout search.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bls_descents(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.descents as u64)
 }
 
 /// Flips the last [`ft_bls`] actually made, which is not always the budget it was given.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bls_iterations(sim: *const Sim) -> u64 {
     unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.iterations_run as u64)
 }
@@ -4635,7 +4630,7 @@ pub extern "C" fn ft_bls_iterations(sim: *const Sim) -> u64 {
 ///
 /// It grows only when a descent returns to the immediately previous local optimum, so a value above
 /// the initial `L0` is direct evidence the adaptive rule fired rather than idled.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bls_max_jump(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.max_jump as u32)
 }
@@ -4650,7 +4645,7 @@ pub extern "C" fn ft_bls_max_jump(sim: *const Sim) -> u32 {
 /// `scale` multiplies every coupling before it is rounded to an integer; pass 1.0 for whole-number
 /// couplings. The matching underneath is exact only in exact arithmetic, so a weight that does not
 /// land on an integer is refused rather than rounded.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_planar_cut(sim: *mut Sim, scale: f64) -> f64 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
     let p = crate::planarcut::Params { scale };
@@ -4671,7 +4666,7 @@ pub extern "C" fn ft_planar_cut(sim: *mut Sim, scale: f64) -> f64 {
 }
 
 /// Faces in the planar embedding from the last [`ft_planar_cut`] — the dual's vertex count.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_planar_faces(sim: *const Sim) -> u64 {
     match unsafe { sim.as_ref() }.and_then(|s| s.pc.as_ref()) {
         Some(Ok(o)) => o.faces as u64,
@@ -4683,7 +4678,7 @@ pub extern "C" fn ft_planar_faces(sim: *const Sim) -> u64 {
 ///
 /// The size of the matching problem, and the real cost driver: this is what makes the method
 /// `O(n³)` rather than `O(2ⁿ)`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_planar_odd_faces(sim: *const Sim) -> u64 {
     match unsafe { sim.as_ref() }.and_then(|s| s.pc.as_ref()) {
         Some(Ok(o)) => o.odd_faces as u64,
@@ -4697,7 +4692,7 @@ pub extern "C" fn ft_planar_odd_faces(sim: *const Sim) -> u64 {
 /// Empty when the last call succeeded or none has happened. Exported because "not planar", "has a
 /// cut vertex", "has fields" and "weights are not integral" are four different things to do next,
 /// and a bare NaN collapses them into one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_planar_error(sim: *const Sim, buf: *mut u8, cap: u32) -> u32 {
     let msg = match unsafe { sim.as_ref() }.and_then(|s| s.pc.as_ref()) {
         Some(Err(e)) => e.as_str(),
@@ -4716,7 +4711,7 @@ pub extern "C" fn ft_planar_error(sim: *const Sim, buf: *mut u8, cap: u32) -> u3
 ///
 /// `min_s E(s) ≥ −Σ|h| − Σ|J|`, in `O(edges)`. Every bound here is sound on its own, so a caller
 /// should take the maximum of the ones it can afford.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_decoupled(sim: *const Sim) -> f64 {
     unsafe { sim.as_ref() }.map_or(f64::NAN, |s| crate::bound::decoupled(&s.graph).value)
 }
@@ -4726,7 +4721,7 @@ pub extern "C" fn ft_bound_decoupled(sim: *const Sim) -> f64 {
 /// **Worth nothing on an instance with no fields**: a tree is never frustrated, so every part
 /// minimises to `−Σ|J|` and this degenerates to [`ft_bound_decoupled`]. Exported anyway, with the
 /// caveat, because a caller comparing bounds should be able to see that for themselves.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_forest(sim: *const Sim, rounds: u32) -> f64 {
     unsafe { sim.as_ref() }
         .map_or(f64::NAN, |s| crate::bound::forest(&s.graph, rounds as usize).value)
@@ -4736,7 +4731,7 @@ pub extern "C" fn ft_bound_forest(sim: *const Sim, rounds: u32) -> f64 {
 ///
 /// Edge-disjointness is what makes the penalties add: two cycles sharing an edge could be paid for
 /// by the same single violation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_odd_cycle(sim: *const Sim, max_len: u32) -> f64 {
     unsafe { sim.as_ref() }
         .map_or(f64::NAN, |s| crate::bound::odd_cycle(&s.graph, max_len as usize).value)
@@ -4749,7 +4744,7 @@ pub extern "C" fn ft_bound_odd_cycle(sim: *const Sim, max_len: u32) -> f64 {
 /// cross, and returns NaN if that fails. A bound that only its own author can reproduce is not a
 /// bound, and a bound crossing a language boundary is exactly the case where the caller cannot
 /// check it themselves.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_sdp(sim: *const Sim, sweeps: u32, seed: u64) -> f64 {
     let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
     let p = crate::sdp::Params { sweeps: sweeps.max(1) as usize, ..crate::sdp::Params::default() };
@@ -4793,7 +4788,7 @@ pub struct HuboHandle {
 }
 
 /// A model over `n` spins. NULL if `n` is zero, since a model with no variables can hold no term.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_new(n: u32) -> *mut HuboHandle {
     if n == 0 {
         return core::ptr::null_mut();
@@ -4808,7 +4803,7 @@ pub extern "C" fn ft_hubo_new(n: u32) -> *mut HuboHandle {
     }))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_free(h: *mut HuboHandle) {
     if !h.is_null() {
         drop(unsafe { Box::from_raw(h) });
@@ -4819,7 +4814,7 @@ pub extern "C" fn ft_hubo_free(h: *mut HuboHandle) {
 ///
 /// The only way the native-versus-reduced comparison this module exists to settle can be set up
 /// from outside Rust: build a graph, lift it, and check that both paths score it identically.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_from_sim(sim: *const Sim) -> *mut HuboHandle {
     let Some(s) = (unsafe { sim.as_ref() }) else { return core::ptr::null_mut() };
     let hubo = Hubo::from_graph(&s.graph);
@@ -4834,7 +4829,7 @@ pub extern "C" fn ft_hubo_from_sim(sim: *const Sim) -> *mut HuboHandle {
 }
 
 /// Start a fresh variable list for the next term.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_vars_clear(h: *mut HuboHandle) -> u32 {
     let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
     hh.vars.clear();
@@ -4846,7 +4841,7 @@ pub extern "C" fn ft_hubo_vars_clear(h: *mut HuboHandle) -> u32 {
 /// The repeat is caught HERE rather than at `ft_hubo_add`, because `s * s = 1` silently changes a
 /// term's order and a caller that learns about it several calls later has to work out which call
 /// was wrong. `Hubo::add` refuses it too; this is the earlier of the two.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_var(h: *mut HuboHandle, var: u32) -> u32 {
     let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
     if var as usize >= hh.hubo.len() {
@@ -4864,7 +4859,7 @@ pub extern "C" fn ft_hubo_var(h: *mut HuboHandle, var: u32) -> u32 {
 }
 
 /// How many variables are pending, so a caller can check its own bookkeeping.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_vars(h: *const HuboHandle) -> u32 {
     match unsafe { h.as_ref() } {
         Some(hh) => hh.vars.len() as u32,
@@ -4876,7 +4871,7 @@ pub extern "C" fn ft_hubo_vars(h: *const HuboHandle) -> u32 {
 ///
 /// Clears the list whether it succeeds or not, and clears it FIRST -- a refused term that left its
 /// variables pending would be silently absorbed by the next one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_add(h: *mut HuboHandle, weight: f64) -> u32 {
     let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
     let vars: Vec<usize> = core::mem::take(&mut hh.vars).iter().map(|&v| v as usize).collect();
@@ -4897,7 +4892,7 @@ pub extern "C" fn ft_hubo_add(h: *mut HuboHandle, weight: f64) -> u32 {
 /// `u32::MAX` in a slot means "no variable there". `count` says how many of `a b c d` to read, so a
 /// caller cannot accidentally add a term of the wrong order by leaving a stale argument in place.
 /// Everything past four goes through `ft_hubo_var` + `ft_hubo_add`, which has no arity ceiling.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_term(
     h: *mut HuboHandle,
     count: u32,
@@ -4925,7 +4920,7 @@ pub extern "C" fn ft_hubo_term(
 }
 
 /// Spins in the model.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_len(h: *const HuboHandle) -> u32 {
     match unsafe { h.as_ref() } {
         Some(hh) => hh.hubo.len() as u32,
@@ -4934,7 +4929,7 @@ pub extern "C" fn ft_hubo_len(h: *const HuboHandle) -> u32 {
 }
 
 /// Terms in the model.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_terms(h: *const HuboHandle) -> u32 {
     match unsafe { h.as_ref() } {
         Some(hh) => hh.hubo.terms() as u32,
@@ -4943,7 +4938,7 @@ pub extern "C" fn ft_hubo_terms(h: *const HuboHandle) -> u32 {
 }
 
 /// The widest term, or 0 for a model with none.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_max_arity(h: *const HuboHandle) -> u32 {
     match unsafe { h.as_ref() } {
         Some(hh) => hh.hubo.max_arity() as u32,
@@ -4956,7 +4951,7 @@ pub extern "C" fn ft_hubo_max_arity(h: *const HuboHandle) -> u32 {
 /// A ceiling rather than a cost: `reduce::to_pairwise` substitutes the commonest pair first, so one
 /// ancilla serves every term containing that pair, and on three terms sharing one it spends one
 /// where this returns three. See [`crate::hubo::Hubo::ancillas_avoided`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_ancillas_avoided(h: *const HuboHandle) -> u32 {
     match unsafe { h.as_ref() } {
         Some(hh) => hh.hubo.ancillas_avoided() as u32,
@@ -4969,7 +4964,7 @@ pub extern "C" fn ft_hubo_ancillas_avoided(h: *const HuboHandle) -> u32 {
 /// Zero for any ladder parameter means "use the default for that one". NaN is refused explicitly
 /// BEFORE that test, because `NaN > 0.0` is false and would otherwise be read as a zero and
 /// silently answered on a ladder the caller never asked for.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_anneal(
     h: *mut HuboHandle,
     beta_min: f64,
@@ -5006,7 +5001,7 @@ pub extern "C" fn ft_hubo_anneal(
 }
 
 /// The current state, or NULL. Valid until the next `ft_hubo_*` call on this handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_spins(h: *const HuboHandle) -> *const i8 {
     match unsafe { h.as_ref() } {
         Some(hh) if !hh.state.is_empty() => hh.state.as_ptr(),
@@ -5015,7 +5010,7 @@ pub extern "C" fn ft_hubo_spins(h: *const HuboHandle) -> *const i8 {
 }
 
 /// Copy the state out. Refuses a length that is not exactly the model's, never writing partially.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_read(h: *const HuboHandle, out: *mut i8, len: u32) -> u32 {
     let Some(hh) = (unsafe { h.as_ref() }) else { return 0 };
     if out.is_null() || len as usize != hh.state.len() {
@@ -5029,7 +5024,7 @@ pub extern "C" fn ft_hubo_read(h: *const HuboHandle, out: *mut i8, len: u32) -> 
 ///
 /// Refuses any element that is not -1 or +1, and refuses the whole write rather than part of it: a
 /// model half-set from a bad buffer would score a state that never existed anywhere.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_set_spins(h: *mut HuboHandle, ptr: *const i8, len: u32) -> u32 {
     let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
     if ptr.is_null() || len as usize != hh.hubo.len() {
@@ -5049,7 +5044,7 @@ pub extern "C" fn ft_hubo_set_spins(h: *mut HuboHandle, ptr: *const i8, len: u32
 }
 
 /// Energy of the current state, or NaN if the handle is null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_energy(h: *const HuboHandle) -> f64 {
     match unsafe { h.as_ref() } {
         Some(hh) if hh.state.len() == hh.hubo.len() => hh.hubo.energy(&hh.state),
@@ -5061,7 +5056,7 @@ pub extern "C" fn ft_hubo_energy(h: *const HuboHandle) -> f64 {
 ///
 /// The higher-order twin of [`ft_field`]: what lets another language, or a GPU, check this
 /// library's arithmetic term by term rather than only comparing a final number.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_delta(h: *const HuboHandle, i: u32) -> f64 {
     match unsafe { h.as_ref() } {
         Some(hh) if (i as usize) < hh.hubo.len() && hh.state.len() == hh.hubo.len() => {
@@ -5072,25 +5067,25 @@ pub extern "C" fn ft_hubo_delta(h: *const HuboHandle, i: u32) -> f64 {
 }
 
 /// Flips proposed by the last run. Without it a run that moved nothing looks like a completed one.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_proposals(h: *const HuboHandle) -> u64 {
     unsafe { h.as_ref() }.and_then(|hh| hh.out.as_ref()).map_or(0, |o| o.proposals)
 }
 
 /// Flips accepted by the last run.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_accepted(h: *const HuboHandle) -> u64 {
     unsafe { h.as_ref() }.and_then(|hh| hh.out.as_ref()).map_or(0, |o| o.accepted)
 }
 
 /// Joules this model WOULD have cost on a Z1-class device (vendor SPICE prices, pre-silicon).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_joules_z1(h: *const HuboHandle) -> f64 {
     unsafe { h.as_ref() }.map_or(f64::NAN, |hh| hh.ledger.joules(&Z1_SPICE).unwrap_or(f64::NAN))
 }
 
 /// The last refusal, as UTF-8. Same two-call protocol as [`ft_model_error`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_error(h: *const HuboHandle, buf: *mut u8, cap: u32) -> u32 {
     let Some(hh) = (unsafe { h.as_ref() }) else { return 0 };
     let b = hh.last_error.as_bytes();
@@ -5915,7 +5910,7 @@ fn set_ebm_error(s: &str) {
 /// Copies at most `cap` bytes into `buf` and returns how many were written; with a null `buf`,
 /// returns the length needed and writes nothing. Not null-terminated. Same shape as
 /// [`ft_ommx_error`], because a second convention for the same job is a second thing to get wrong.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ebm_error(buf: *mut u8, cap: u32) -> u32 {
     EBM_ERROR.with(|e| {
         let e = e.borrow();
@@ -5934,7 +5929,7 @@ pub extern "C" fn ft_ebm_error(buf: *mut u8, cap: u32) -> u32 {
 ///
 /// Visible units are spins `0..visible`, which is what [`ft_ebm_train`] and
 /// [`ft_ebm_log_likelihood`] assume when they clamp a data row on.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ebm_rbm(visible: u32, hidden: u32, beta: f64, seed: u64) -> *mut Sim {
     set_ebm_error("");
     if visible == 0 {
@@ -5950,7 +5945,7 @@ pub extern "C" fn ft_ebm_rbm(visible: u32, hidden: u32, beta: f64, seed: u64) ->
 /// connectivity, which is the arrangement the mixing-expressivity tradeoff is a claim about --
 /// `examples/trained_tradeoff` measures the two against each other and finds the claim's two halves
 /// do not both survive.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ebm_dbm(
     visible: u32,
     layers: *const u32,
@@ -5990,7 +5985,7 @@ pub extern "C" fn ft_ebm_dbm(
 /// `epochs`, `k`, `positive_sweeps` and `batch` clamp up from 0 to the documented defaults of
 /// [`crate::ebm::Params`]. The learning rate DECAYS to a tenth of `learning_rate` across training;
 /// without that decay the fit has a noise floor and never reaches its own fixed point.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn ft_ebm_train(
     sim: *mut Sim,
@@ -6058,7 +6053,7 @@ pub extern "C" fn ft_ebm_train(
 ///
 /// The scale has fixed ends and needs no calibration. A model that has learned nothing scores
 /// `-visible * ln 2`; one that reproduces `n` equiprobable rows scores `-ln n`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ebm_log_likelihood(
     sim: *mut Sim,
     visible: u32,
@@ -6085,7 +6080,7 @@ pub extern "C" fn ft_ebm_log_likelihood(
 /// Writes `2^(side+1) - 2` rows of `side*side` entries each into `out`, row-major, and returns the
 /// row count. Returns the row count WITHOUT writing when `out` is null, so a caller can size its
 /// buffer first; returns 0 if `cap` is too small to hold every row.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ft_ebm_bars_and_stripes(side: u32, out: *mut i8, cap: u32) -> u32 {
     set_ebm_error("");
     if side == 0 || side > 8 {

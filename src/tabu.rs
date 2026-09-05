@@ -221,8 +221,8 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
             since_improve += 1;
         }
 
-        if let Some(after) = p.restart_after {
-            if since_improve >= after {
+        if let Some(after) = p.restart_after
+            && since_improve >= after {
                 s = (0..n).map(|_| rng.spin(0.5)).collect();
                 delta = gains(g, &s);
                 energy = g.energy(&s);
@@ -230,7 +230,6 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
                 since_improve = 0;
                 restarts += 1;
             }
-        }
     }
 
     // Recomputed, not carried. `energy` is accumulated from deltas across thousands of flips and

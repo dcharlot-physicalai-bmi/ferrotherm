@@ -97,11 +97,10 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
         if h.is_empty() {
             break;
         }
-        if let Some((k, v)) = h.split_once(':') {
-            if k.eq_ignore_ascii_case("content-length") {
+        if let Some((k, v)) = h.split_once(':')
+            && k.eq_ignore_ascii_case("content-length") {
                 len = v.trim().parse().unwrap_or(0);
             }
-        }
     }
 
     let resp = if len > MAX_BODY {

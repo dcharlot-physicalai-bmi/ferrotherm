@@ -1258,12 +1258,11 @@ impl Model {
                 Constraint::AtLeast { lits, k } => Some(lits.len().saturating_sub(*k) + 1),
                 _ => None,
             };
-            if let Some(size) = range {
-                if size >= 2 {
+            if let Some(size) = range
+                && size >= 2 {
                     slack_for.insert(ci, user_count + extra.len());
                     extra.push(Domain::Categorical(size));
                 }
-            }
         }
 
         // Lay every variable out, in declaration order, so the layout is stable and inspectable.
@@ -1658,15 +1657,14 @@ impl Model {
             // Reached here rather than at `apply_constraint` so a bad value is refused even when
             // the row turns out to be vacuous and emits nothing at all.
             let d = &self.decls[lit_var(*l).0];
-            if let Lit::Is(_, value) = l {
-                if d.domain.index_of(*value).is_none() {
+            if let Lit::Is(_, value) = l
+                && d.domain.index_of(*value).is_none() {
                     return Err(CompileError::BadValue {
                         var: d.name.clone(),
                         value: *value,
                         domain: d.domain,
                     });
                 }
-            }
         }
         if !rhs.is_finite() {
             return Err(CompileError::NotFinite { what: "linear right-hand side", value: rhs });

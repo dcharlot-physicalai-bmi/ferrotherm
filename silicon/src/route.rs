@@ -40,11 +40,10 @@ pub fn parse_tileconn(text: &str) -> Result<Vec<Conn>, String> {
         }
         let mut map = HashMap::new();
         for p in pairs {
-            if let Json::Arr(pair) = p {
-                if let (Some(a), Some(b)) = (pair.first().and_then(|x| x.as_str()), pair.get(1).and_then(|x| x.as_str())) {
+            if let Json::Arr(pair) = p
+                && let (Some(a), Some(b)) = (pair.first().and_then(|x| x.as_str()), pair.get(1).and_then(|x| x.as_str())) {
                     map.insert(a.to_string(), b.to_string());
                 }
-            }
         }
         out.push(Conn {
             from_type: types[0].as_str().unwrap_or("").to_string(),
@@ -151,13 +150,11 @@ impl<'g> Fabric<'g> {
             let c = &self.conns[ci];
             if let Some(w2) = c.pairs.get(&node.1) {
                 let (nx, ny) = (tile.grid_x as i32 + c.dx, tile.grid_y as i32 + c.dy);
-                if nx >= 0 && ny >= 0 {
-                    if let Some(name) = self.at.get(&(nx as u32, ny as u32)) {
-                        if self.tile_type(name) == Some(c.to_type.as_str()) {
+                if nx >= 0 && ny >= 0
+                    && let Some(name) = self.at.get(&(nx as u32, ny as u32))
+                        && self.tile_type(name) == Some(c.to_type.as_str()) {
                             out.push(((name.clone(), w2.clone()), None));
                         }
-                    }
-                }
             }
         }
         // and inward (the same physical wire, described from the other side)
@@ -166,13 +163,11 @@ impl<'g> Fabric<'g> {
             for (a, b) in &c.pairs {
                 if b == &node.1 {
                     let (nx, ny) = (tile.grid_x as i32 - c.dx, tile.grid_y as i32 - c.dy);
-                    if nx >= 0 && ny >= 0 {
-                        if let Some(name) = self.at.get(&(nx as u32, ny as u32)) {
-                            if self.tile_type(name) == Some(c.from_type.as_str()) {
+                    if nx >= 0 && ny >= 0
+                        && let Some(name) = self.at.get(&(nx as u32, ny as u32))
+                            && self.tile_type(name) == Some(c.from_type.as_str()) {
                                 out.push(((name.clone(), a.clone()), None));
                             }
-                        }
-                    }
                 }
             }
         }
@@ -216,11 +211,10 @@ impl<'g> Fabric<'g> {
                 if seen.contains(&next) {
                     continue;
                 }
-                if let Some(k) = self.tile_type(&next.0) {
-                    if !allow(&next.0, k) {
+                if let Some(k) = self.tile_type(&next.0)
+                    && !allow(&next.0, k) {
                         continue;
                     }
-                }
                 seen.insert(next.clone());
                 prev.insert(next.clone(), (n.clone(), step));
                 q.push_back(next);

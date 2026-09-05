@@ -1255,15 +1255,14 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     )
                 })?),
             };
-            if let Some(w) = soft {
-                if !w.is_finite() || w <= 0.0 {
+            if let Some(w) = soft
+                && (!w.is_finite() || w <= 0.0) {
                     return Err(format!(
                         "constraint {i} ({kind}): \"soft\" must be a positive, finite price, not \
                          {w}. A price of zero or less is not a preference -- omit the field to make \
                          the constraint hard."
                     ));
                 }
-            }
 
             match kind {
                 "not_equal" | "equal" => {
@@ -1850,7 +1849,7 @@ pub fn fit(req: &Json) -> Result<Json, String> {
         .h
         .iter()
         .enumerate()
-        .filter(|(_, &b)| b != 0.0)
+        .filter(|&(_, &b)| b != 0.0)
         .map(|(i, &b)| Json::Arr(vec![Json::n(i as f64), Json::n(b)]))
         .collect();
 

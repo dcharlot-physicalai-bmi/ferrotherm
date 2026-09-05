@@ -1,7 +1,12 @@
 [package]
 name = "ferrotherm-serve"
 version = "0.17.7"
-edition = "2021"
+edition = "2024"
+# MEASURED, not guessed: `scripts/check-msrv.sh` compiles the whole workspace on exactly this
+# toolchain and fails if it does not build, so this line is a checked claim rather than a hope.
+# 1.88 is the floor because edition 2024 needs 1.85 and the let-chains in `embed` and `fabric`
+# need 1.88; 1.85 and 1.86 were tried and rejected by the compiler.
+rust-version = "1.88"
 description = "Agent-facing tier for ferrotherm: an HTTP sampling API and a Model Context Protocol server for thermodynamic sampling, annealing and exact verification over Ising graphs. std-only, zero dependencies."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferrotherm"

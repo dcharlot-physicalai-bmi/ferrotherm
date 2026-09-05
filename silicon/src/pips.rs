@@ -104,7 +104,7 @@ impl PipDb {
     }
 
     /// PIPs driven from `wire` (the routing fan-out).
-    pub fn from(&self, wire: &str) -> impl Iterator<Item = &Pip> + '_ {
+    pub fn from(&self, wire: &str) -> impl Iterator<Item = &Pip> + '_ + use<'_> {
         self.by_src.get(wire).into_iter().flatten().map(move |&i| &self.pips[i as usize])
     }
 }

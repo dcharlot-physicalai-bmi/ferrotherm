@@ -381,11 +381,10 @@ fn pick_eligible(
     let mut pick = usize::MAX;
     let mut low = f64::INFINITY;
     for i in 0..delta.len() {
-        if let Some(v) = side {
-            if s[i] != v {
+        if let Some(v) = side
+            && s[i] != v {
                 continue;
             }
-        }
         let free = tabu_until[i] == usize::MAX || iter > tabu_until[i];
         let aspires = energy + delta[i] < best - 1e-12;
         if (free || aspires) && delta[i] < low {

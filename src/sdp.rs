@@ -628,14 +628,13 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
     }
 
     let mut sweeps_used = 0usize;
-    if let Some((ys, v, c)) = accepted {
-        if v > best_val {
+    if let Some((ys, v, c)) = accepted
+        && v > best_val {
             best_val = v;
             best_y = ys;
             rc = c;
             sweeps_used = p.sweeps;
         }
-    }
 
     let cert = Certificate {
         y: best_y,

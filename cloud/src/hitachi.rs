@@ -528,7 +528,8 @@ mod layout_reporting_tests {
         // The guarantee, held by a test rather than by reading the code. Everything a caller can do
         // before `run` -- construct, describe the fabric, lay out, embed -- is local, and `run`
         // needs a token you passed and an address you can see.
-        std::env::remove_var("ACW_TOKEN");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("ACW_TOKEN") };
         assert!(
             Hitachi::from_env(Machine::Asic).is_err(),
             "no token means no device, rather than a device pointing somewhere by default"

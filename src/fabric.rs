@@ -773,11 +773,10 @@ impl Fabric {
     pub fn check(&self, p: &Program) -> Vec<Unsupported> {
         let mut out = Vec::new();
 
-        if let Some(limit) = self.max_spins {
-            if p.spins > limit {
+        if let Some(limit) = self.max_spins
+            && p.spins > limit {
                 out.push(Unsupported::TooManySpins { need: p.spins, limit });
             }
-        }
 
         // An arity-1 factor is a FIELD. `Program::to_graph` lowers it with `b.bias(...)`, so it is
         // one everywhere in this crate — and checking it as a coupling here let a program whose
@@ -813,13 +812,11 @@ impl Fabric {
             (_, Some(d)) => Some(d),
             _ => None,
         };
-        if let Some(limit) = deg_limit {
-            if let Some((node, &d)) = degree.iter().enumerate().max_by_key(|(_, &d)| d) {
-                if d > limit {
+        if let Some(limit) = deg_limit
+            && let Some((node, &d)) = degree.iter().enumerate().max_by_key(|&(_, &d)| d)
+                && d > limit {
                     out.push(Unsupported::TooHighDegree { node, degree: d, limit });
                 }
-            }
-        }
 
         // A field is a field however it was written.
         let fields: Vec<f64> = p
@@ -840,16 +837,14 @@ impl Fabric {
             vals.filter(|v| !r.holds(*v))
                 .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap_or(core::cmp::Ordering::Equal))
         };
-        if let Some(r) = self.coupling_range {
-            if let Some(w) = worst_of(r, &mut pairs.iter().map(|f| f.weight())) {
+        if let Some(r) = self.coupling_range
+            && let Some(w) = worst_of(r, &mut pairs.iter().map(|f| f.weight())) {
                 out.push(Unsupported::OutOfRange { what: "coupling", value: w, range: r });
             }
-        }
-        if let Some(r) = self.field_range {
-            if let Some(h) = worst_of(r, &mut fields.iter().copied()) {
+        if let Some(r) = self.field_range
+            && let Some(h) = worst_of(r, &mut fields.iter().copied()) {
                 out.push(Unsupported::OutOfRange { what: "field", value: h, range: r });
             }
-        }
 
         if self.uniform_couplings {
             // By VALUE, not by bit pattern. `0.0` and `-0.0` are the same coupling and have

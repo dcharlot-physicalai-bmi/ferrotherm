@@ -942,13 +942,12 @@ mod clique_tests {
                 while let Some(i) = stack.pop() {
                     for e in topo.graph.offset[c[i]]..topo.graph.offset[c[i] + 1] {
                         let y = topo.graph.nbr[e] as usize;
-                        if let Some(j) = c.iter().position(|&v| v == y) {
-                            if !seen[j] {
+                        if let Some(j) = c.iter().position(|&v| v == y)
+                            && !seen[j] {
                                 seen[j] = true;
                                 count += 1;
                                 stack.push(j);
                             }
-                        }
                     }
                 }
                 count == c.len()

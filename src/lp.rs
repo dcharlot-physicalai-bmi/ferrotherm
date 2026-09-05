@@ -155,8 +155,8 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
         // though x were free -- a confident answer to a different problem, from a file the caller
         // did not write and cannot check by eye. Anything other than the implied 0..1 is refused by
         // name rather than silently dropped.
-        if let Some((lo, hi)) = bounds.get(name) {
-            if (*lo, *hi) != (0, 1) {
+        if let Some((lo, hi)) = bounds.get(name)
+            && (*lo, *hi) != (0, 1) {
                 return err(
                     0,
                     format!(
@@ -167,7 +167,6 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
                     ),
                 );
             }
-        }
         vars.insert(name.clone(), m.binary(name));
     }
     for name in &generals {

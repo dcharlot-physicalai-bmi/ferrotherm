@@ -490,7 +490,7 @@ pub fn fit(
     let xs: Vec<(usize, f64)> = mu
         .iter()
         .enumerate()
-        .filter(|(_, &w)| w > 0.0)
+        .filter(|&(_, &w)| w > 0.0)
         .map(|(m, &w)| (m, w))
         .collect();
     for it in 0..iters {

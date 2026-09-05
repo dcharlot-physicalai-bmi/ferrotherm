@@ -108,12 +108,11 @@ pub(crate) fn choose() -> Option<(Domain, &'static str)> {
         // THE INVARIANT: a platform cannot draw less than the chip inside it. Sampled briefly on
         // purpose -- this runs at `detect` time and a long probe would delay every caller.
         let (p, k) = (watts_over(&all[i], 0.4), watts_over(&all[pkg], 0.4));
-        if let (Some(p), Some(k)) = (p, k) {
-            if p >= k {
+        if let (Some(p), Some(k)) = (p, k)
+            && p >= k {
                 let mut all = all;
                 return Some((all.swap_remove(i), "psys"));
             }
-        }
     }
     let mut all = all;
     Some((all.swap_remove(pkg), "package"))
