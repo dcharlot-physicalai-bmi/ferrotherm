@@ -41,9 +41,11 @@ pub struct Kernel {
 }
 
 impl Kernel {
+    #[must_use]
     pub fn n_free(&self) -> usize {
         self.n_out + self.n_hid
     }
+    #[must_use]
     pub fn n_params(&self) -> usize {
         self.e_ff.len() + self.e_if.len() + self.n_free()
     }
@@ -67,6 +69,7 @@ impl Kernel {
     }
 
     /// Exact conditional over OUTPUT states (hidden marginalized): `p[o]` for `o` in `0..2^n_out`.
+    #[must_use]
     pub fn exact_conditional(&self, x: &[i8]) -> Vec<f64> {
         let (no, nh) = (self.n_out, self.n_hid);
         let mut p = vec![0.0f64; 1 << no];
@@ -87,13 +90,14 @@ impl Kernel {
             p[m & ((1 << no) - 1)] += w;
             z += w;
         }
-        for v in p.iter_mut() {
+        for v in &mut p {
             *v /= z;
         }
         p
     }
 
-    /// Exact KL( target(.|x) || P~(.|x) ) for a full target conditional (length 2^n_out).
+    /// Exact KL( target(.|x) || P~(.|x) ) for a full target conditional (length `2^n_out`).
+    #[must_use]
     pub fn kl_from_target(&self, x: &[i8], target: &[f64]) -> f64 {
         let q = self.exact_conditional(x);
         let mut kl = 0.0;
@@ -176,6 +180,7 @@ impl Kernel {
     }
 
     /// Fold clamped-input contributions into effective free-node biases (once per input pattern).
+    #[must_use]
     pub fn fold_bias(&self, x: &[i8]) -> Vec<f64> {
         let mut beff = self.b.clone();
         for (k, &(i, f)) in self.e_if.iter().enumerate() {
@@ -199,6 +204,7 @@ impl Kernel {
     }
 
     /// Exact NLL -log p(y*|x) for a one-hot target, via the folded fast path.
+    #[must_use]
     pub fn nll_onehot(&self, x: &[i8], y_star: usize) -> f64 {
         let beff = self.fold_bias(x);
         let (no, nh) = (self.n_out, self.n_hid);
@@ -224,7 +230,8 @@ impl Kernel {
         -(zy / z).max(1e-300).ln()
     }
 
-    /// Exact argmax_y p(y|x) — the idealized (noise-free) readout.
+    /// Exact `argmax_y` p(y|x) — the idealized (noise-free) readout.
+    #[must_use]
     pub fn argmax_out(&self, x: &[i8]) -> usize {
         let beff = self.fold_bias(x);
         let (no, nh) = (self.n_out, self.n_hid);
@@ -291,10 +298,10 @@ impl Kernel {
                 pair_neg[k] += w * sf(m, a as usize) * sf(m, b as usize);
             }
         }
-        for v in mean_neg.iter_mut() {
+        for v in &mut mean_neg {
             *v /= z;
         }
-        for v in pair_neg.iter_mut() {
+        for v in &mut pair_neg {
             *v /= z;
         }
 
@@ -324,10 +331,10 @@ impl Kernel {
                 pair_pos[k] += w * sf(m, a as usize) * sf(m, b as usize);
             }
         }
-        for v in mean_pos.iter_mut() {
+        for v in &mut mean_pos {
             *v /= zp;
         }
-        for v in pair_pos.iter_mut() {
+        for v in &mut pair_pos {
             *v /= zp;
         }
 
@@ -411,6 +418,7 @@ impl Kernel {
 /// Build a kernel on a `w x h` patch of the Z1-class device graph. Roles are assigned by site
 /// index from the caller-provided role map; only native device edges survive.
 /// role codes: 0 = off (site unused), 1 = input, 2 = output, 3 = hidden.
+#[must_use]
 pub fn patch_kernel(w: usize, h: usize, roles: &[u8], beta: f64, seed: u64) -> Kernel {
     assert_eq!(roles.len(), w * h);
     let g: Graph = crate::device::z1_grid(w, h, 1.0, 0.0); // topology only; weights re-learned
@@ -510,6 +518,7 @@ pub fn fit(
 }
 
 /// Mean KL over mu — the per-factor epsilon of the compilation bound.
+#[must_use]
 pub fn factor_eps(kernel: &Kernel, target: &Cpt, mu: &[f64]) -> f64 {
     let n_in = kernel.n_in;
     let mut eps = 0.0;

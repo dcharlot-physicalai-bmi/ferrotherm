@@ -27,15 +27,16 @@ pub struct Pip {
 
 impl Pip {
     /// The segbits feature name for this PIP in a given tile type: `TILE.DST.SRC`.
+    #[must_use]
     pub fn feature(&self, tile_type: &str) -> String {
         format!("{tile_type}.{}.{}", self.dst, self.src)
     }
 }
 
-/// A site inside a tile (e.g. SLICE_X0Y0) and the tile wire each of its pins lands on.
+/// A site inside a tile (e.g. `SLICE_X0Y0`) and the tile wire each of its pins lands on.
 #[derive(Debug, Clone, Default)]
 pub struct Site {
-    /// Full site name, e.g. "SLICE_X0Y0" (the JSON stores prefix and name separately).
+    /// Full site name, e.g. "`SLICE_X0Y0`" (the JSON stores prefix and name separately).
     pub name: String,
     /// pin name (A, A1..A6, AQ, AMUX, ...) -> tile wire
     pub pins: HashMap<String, String>,
@@ -56,20 +57,20 @@ impl PipDb {
     /// Parse a `tile_type_*.json`.
     pub fn parse(text: &str) -> Result<PipDb, String> {
         let j = parse(text)?;
-        let tile_type = j.get("tile_type").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let tile_type = j.get("tile_type").and_then(super::json::Json::as_str).unwrap_or("").to_string();
         let mut pips = Vec::new();
         if let Some(Json::Obj(list)) = j.get("pips") {
             for (_key, v) in list {
-                let src = v.get("src_wire").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let dst = v.get("dst_wire").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let src = v.get("src_wire").and_then(super::json::Json::as_str).unwrap_or("").to_string();
+                let dst = v.get("dst_wire").and_then(super::json::Json::as_str).unwrap_or("").to_string();
                 if src.is_empty() || dst.is_empty() {
                     continue;
                 }
                 pips.push(Pip {
                     src,
                     dst,
-                    directional: v.get("is_directional").and_then(|x| x.as_str()) == Some("1"),
-                    pseudo: v.get("is_pseudo").and_then(|x| x.as_str()) == Some("1"),
+                    directional: v.get("is_directional").and_then(super::json::Json::as_str) == Some("1"),
+                    pseudo: v.get("is_pseudo").and_then(super::json::Json::as_str) == Some("1"),
                 });
             }
         }
@@ -87,12 +88,12 @@ impl PipDb {
         let mut sites = Vec::new();
         if let Some(Json::Arr(list)) = j.get("sites") {
             for s in list {
-                let prefix = s.get("prefix").and_then(|x| x.as_str()).unwrap_or("");
-                let sname = s.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                let prefix = s.get("prefix").and_then(super::json::Json::as_str).unwrap_or("");
+                let sname = s.get("name").and_then(super::json::Json::as_str).unwrap_or("");
                 let mut pins = HashMap::new();
                 if let Some(Json::Obj(ps)) = s.get("site_pins") {
                     for (pin, v) in ps {
-                        if let Some(w) = v.get("wire").and_then(|x| x.as_str()) {
+                        if let Some(w) = v.get("wire").and_then(super::json::Json::as_str) {
                             pins.insert(pin.to_string(), w.to_string());
                         }
                     }
@@ -116,6 +117,7 @@ pub struct Ppips {
 }
 
 impl Ppips {
+    #[must_use]
     pub fn parse(text: &str) -> Ppips {
         let mut kinds = HashMap::new();
         for line in text.lines() {
@@ -127,6 +129,7 @@ impl Ppips {
         Ppips { kinds }
     }
     /// Pseudo-PIPs carry no configuration bits and must be skipped when emitting.
+    #[must_use]
     pub fn is_pseudo(&self, feature: &str) -> bool {
         self.kinds.contains_key(feature)
     }
@@ -182,8 +185,8 @@ mod tests {
         let db = PipDb::parse(src).unwrap();
         assert_eq!(db.sites.len(), 1);
         assert_eq!(db.sites[0].name, "SLICE_X0Y0");
-        assert_eq!(db.sites[0].pins.get("A").map(|s| s.as_str()), Some("CLBLL_LL_A"));
-        assert_eq!(db.sites[0].pins.get("A6").map(|s| s.as_str()), Some("CLBLL_LL_A6"));
+        assert_eq!(db.sites[0].pins.get("A").map(std::string::String::as_str), Some("CLBLL_LL_A"));
+        assert_eq!(db.sites[0].pins.get("A6").map(std::string::String::as_str), Some("CLBLL_LL_A6"));
     }
 
     #[test]

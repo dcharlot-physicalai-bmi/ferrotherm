@@ -303,7 +303,7 @@ fn gershgorin_verified(cost: &Cost) -> Option<(Vec<f64>, f64)> {
         (0..cost.n).map(|a| cost.row(a).iter().map(|v| v.abs()).sum::<f64>()).collect();
     // A scale for the ADDITIVE part, so an edgeless row is nudged by something meaningful rather
     // than by the smallest positive f64.
-    let scale = rows.iter().cloned().fold(0.0f64, f64::max).max(1.0);
+    let scale = rows.iter().copied().fold(0.0f64, f64::max).max(1.0);
     let mut nudge = scale * (2.0f64).powi(-40);
     for _ in 0..80 {
         let y: Vec<f64> = rows.iter().map(|r| -(r + nudge)).collect();
@@ -423,7 +423,7 @@ fn lanczos_min(cost: &Cost, y: &[f64], steps: usize, seed: u64) -> f64 {
         // here would only mislead the shift search -- but a search that starts in the wrong place
         // costs iterations of dense Cholesky, which is the expensive part.
         for _ in 0..2 {
-            for qi in q.iter() {
+            for qi in &q {
                 let d: f64 = (0..n).map(|i| w[i] * qi[i]).sum();
                 for i in 0..n {
                     w[i] -= d * qi[i];
@@ -492,6 +492,7 @@ pub struct Rounding {
 /// `hyperplanes` draws are taken and the best kept. The guarantee is about the **expectation** of a
 /// single draw, so keeping the best can only help; it does not make the guarantee apply where it
 /// otherwise would not, and [`Rounding::guaranteed`] says which case this was.
+#[must_use]
 pub fn goemans_williamson(g: &Graph, p: &Params, seed: u64, hyperplanes: usize) -> Rounding {
     let n = g.n;
     if n == 0 {
@@ -569,6 +570,7 @@ impl Default for Params {
 /// A certified lower bound on `min_s E(s)`, with the dual point that proves it.
 ///
 /// Never worse than [`crate::bound::decoupled`], because the Gershgorin point is used as a floor.
+#[must_use]
 pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
     let cost = Cost::build(g);
     let n = cost.n;

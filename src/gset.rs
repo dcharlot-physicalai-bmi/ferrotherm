@@ -142,6 +142,7 @@ impl Instance {
     }
 
     /// The cut a state achieves.
+    #[must_use]
     pub fn cut(&self, s: &[i8]) -> f64 {
         (self.total_weight - self.graph.energy(s)) / 2.0
     }
@@ -151,6 +152,7 @@ impl Instance {
     /// `max cut = (W − min E)/2`, and `L ≤ min E`, so `(W − L)/2 ≥ max cut`. Every published G-set
     /// result is a *lower* bound on the max cut (somebody found that cut); this is the other side,
     /// which is what turns "best known" into a gap.
+    #[must_use]
     pub fn cut_upper_bound(&self, energy_lower_bound: f64) -> f64 {
         (self.total_weight - energy_lower_bound) / 2.0
     }

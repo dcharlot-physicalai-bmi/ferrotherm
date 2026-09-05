@@ -1,12 +1,13 @@
 //! Ising-model constructions and the exact results the sampler must reproduce before it is
 //! trusted with anything else: exact Boltzmann enumeration for small systems, and Onsager's
 //! spontaneous magnetization for the 2D nearest-neighbor lattice (Onsager 1944 / Yang 1952):
-//!     M(beta) = (1 - sinh(2 beta J)^-4)^(1/8)   for beta > beta_c = ln(1+sqrt(2))/2 ~ 0.4407,
+//!     M(beta) = (1 - sinh(2 beta J)^-4)^(1/8)   for beta > `beta_c` = ln(1+sqrt(2))/2 ~ 0.4407,
 //!     M = 0 above.
 
 use crate::graph::{Graph, GraphBuilder};
 
 /// Ring of n spins, uniform coupling j, per-site bias h.
+#[must_use]
 pub fn ring(n: usize, j: f64, h: f64) -> Graph {
     let mut gb = GraphBuilder::new(n);
     for i in 0..n {
@@ -19,6 +20,7 @@ pub fn ring(n: usize, j: f64, h: f64) -> Graph {
 }
 
 /// 2D nearest-neighbor square lattice with periodic boundaries, uniform J, no field.
+#[must_use]
 pub fn lattice2d(l: usize, j: f64) -> Graph {
     // A side of 1 wraps every neighbour onto the site itself, so the periodic boundary produces the
     // self-edge (0,0), which `GraphBuilder::couple` refuses with a panic -- reached through
@@ -88,6 +90,7 @@ pub fn lattice2d(l: usize, j: f64) -> Graph {
 ///
 /// `j` is the uniform coupling. For the spin-glass instances these comparisons actually use, build
 /// with `j = 1.0` and rewrite the weights, or use [`chimera_glass`].
+#[must_use]
 pub fn chimera(m: usize, n: usize, t: usize, j: f64) -> Graph {
     let cells = m * n;
     if cells == 0 || t == 0 {
@@ -124,6 +127,7 @@ pub fn chimera(m: usize, n: usize, t: usize, j: f64) -> Graph {
 /// The instance family the annealer-versus-classical literature is written about. Uniform ±1 rather
 /// than Gaussian because that is what the D-Wave benchmark sets used, and the point of having this
 /// is to be able to run the same comparisons rather than adjacent ones.
+#[must_use]
 pub fn chimera_glass(m: usize, n: usize, t: usize, seed: u64) -> Graph {
     let g = chimera(m, n, t, 1.0);
     let mut rng = crate::rng::Pcg::new(seed, 0x00C1_1E5A);
@@ -145,6 +149,7 @@ pub fn chimera_glass(m: usize, n: usize, t: usize, seed: u64) -> Graph {
 /// and neither induces a cycle, which is what makes them the natural blocks for [`crate::hfs`].
 ///
 /// Returns an empty list when the arguments do not describe a graph.
+#[must_use]
 pub fn chimera_shore(m: usize, n: usize, t: usize, u: usize) -> Vec<usize> {
     if m * n == 0 || t == 0 || u > 1 {
         return Vec::new();
@@ -168,6 +173,7 @@ pub fn chimera_shore(m: usize, n: usize, t: usize, u: usize) -> Vec<usize> {
 /// whole reason [`crate::planarcut`] cannot be pointed at it. This is the grid that embeds in the
 /// plane, and it is also the classic planar max-cut instance: a spin glass on a square lattice with
 /// free boundaries.
+#[must_use]
 pub fn grid2d(w: usize, h: usize, j: f64) -> Graph {
     let mut gb = GraphBuilder::new(w * h);
     for y in 0..h {
@@ -184,6 +190,7 @@ pub fn grid2d(w: usize, h: usize, j: f64) -> Graph {
     gb.build()
 }
 
+#[must_use]
 pub fn exact_boltzmann(g: &Graph, beta: f64) -> Vec<f64> {
     assert!(g.n <= 24, "exact enumeration limited to 24 spins");
     let m = 1usize << g.n;
@@ -214,17 +221,18 @@ pub fn exact_boltzmann(g: &Graph, beta: f64) -> Vec<f64> {
         }
     }
     let mut z = 0.0;
-    for v in p.iter_mut() {
+    for v in &mut p {
         *v = (*v - mx).exp();
         z += *v;
     }
-    for v in p.iter_mut() {
+    for v in &mut p {
         *v /= z;
     }
     p
 }
 
 /// Onsager/Yang exact spontaneous magnetization for the infinite 2D lattice (J=1).
+#[must_use]
 pub fn onsager_m(beta: f64) -> f64 {
     let s = (2.0 * beta).sinh();
     let x = 1.0 - s.powi(-4);
@@ -236,6 +244,7 @@ pub fn onsager_m(beta: f64) -> f64 {
 }
 
 /// Total-variation distance between two distributions.
+#[must_use]
 pub fn tv(p: &[f64], q: &[f64]) -> f64 {
     // `zip` stops at the shorter of the two, so mismatched lengths used to return a TRUNCATED
     // distance rather than an error: `tv(&[0.25; 4], &[0.5, 0.5])` gave 0.25 where the honest
@@ -294,8 +303,7 @@ mod tests {
                         assert_eq!(
                             deg,
                             tt + inter,
-                            "({i},{jj},{u},{k}) index {q}: degree {deg}, expected {} + {inter}",
-                            tt
+                            "({i},{jj},{u},{k}) index {q}: degree {deg}, expected {tt} + {inter}"
                         );
                     }
                 }

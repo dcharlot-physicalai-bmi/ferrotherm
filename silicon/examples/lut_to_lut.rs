@@ -73,7 +73,7 @@ fn main() {
     let mut ok = 0usize;
     for s in &path {
         let bits = seg.get(&s.tile_type).and_then(|d| d.get(&s.feature()));
-        let block = grid.tiles.get(&s.tile).and_then(|t| t.logic_block());
+        let block = grid.tiles.get(&s.tile).and_then(ferrotherm_silicon::tilegrid::Tile::logic_block);
         match (bits, block) {
             (Some(b), Some(blk)) => {
                 if fb.apply_feature(&blk, b).is_ok() {

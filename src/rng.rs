@@ -8,6 +8,7 @@ pub struct Pcg {
 }
 
 impl Pcg {
+    #[must_use]
     pub fn new(seed: u64, stream: u64) -> Self {
         let mut r = Pcg { state: 0, inc: (stream << 1) | 1 };
         r.next_u32();

@@ -1,6 +1,6 @@
 //! Run a program on Hitachi's CMOS annealing ASIC through the Device trait.
 //!
-//! Needs ACW_TOKEN. The token is never committed; it comes from the environment.
+//! Needs `ACW_TOKEN`. The token is never committed; it comes from the environment.
 use ferrotherm::fabric::Device;
 use ferrotherm::ftp::Program;
 use ferrotherm::schedule::Schedule;

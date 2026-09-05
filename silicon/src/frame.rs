@@ -12,6 +12,7 @@ pub const WORDS_PER_FRAME: usize = 101;
 
 /// CRC-32C (Castagnoli, reflected, poly 0x1EDC6F41 -> reflected 0x82F63B78) — the function the
 /// 7-series configuration CRC is built from.
+#[must_use]
 pub fn crc32c(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {
@@ -49,6 +50,7 @@ impl ConfigCrc {
 
 /// Assemble the standard 7-series configuration preamble: dummy words, sync, and the header
 /// packets that set the device IDCODE and clear the CRC.
+#[must_use]
 pub fn preamble(idcode: u32) -> Vec<u32> {
     vec![
         DUMMY, DUMMY,
@@ -64,6 +66,7 @@ pub fn preamble(idcode: u32) -> Vec<u32> {
 
 /// Frames written at `far` as one FDRI burst: sets the frame address, then streams the data.
 /// A type-1 FDRI write carries at most 2047 words, so longer bursts use a type-2 continuation.
+#[must_use]
 pub fn frame_write(far: u32, frames: &[u32]) -> Vec<u32> {
     let mut v = vec![type1_write(reg::FAR, 1), far];
     if frames.len() <= 0x7FF {
@@ -77,6 +80,7 @@ pub fn frame_write(far: u32, frames: &[u32]) -> Vec<u32> {
 }
 
 /// The closing sequence: CRC check, startup, desync.
+#[must_use]
 pub fn epilogue(crc: u32) -> Vec<u32> {
     vec![
         type1_write(reg::CRC, 1), crc,
@@ -88,6 +92,7 @@ pub fn epilogue(crc: u32) -> Vec<u32> {
 }
 
 /// Words -> big-endian bytes, the order the configuration port expects.
+#[must_use]
 pub fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|w| w.to_be_bytes()).collect()
 }
@@ -104,6 +109,7 @@ pub const BUS_WIDTH_DETECT: u32 = 0x1122_0044;
 /// bus-width detect, sync, RCRC, TIMER/WBSTAR/COR0/COR1/IDCODE, switch, MASK/CTL0/CTL1, then per
 /// contiguous frame run a FAR write and an FDRI burst, then GRESTORE/LFRM/START/RCRC/DESYNC.
 /// No CRC value is written — RCRC resets the register and the device does not compare.
+#[must_use]
 pub fn assemble(idcode: u32, buf: &crate::framebuf::FrameBuf) -> Vec<u32> {
     let mut w = Vec::new();
     w.extend_from_slice(&[DUMMY; 8]);

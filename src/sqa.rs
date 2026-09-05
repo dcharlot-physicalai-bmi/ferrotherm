@@ -100,11 +100,13 @@ pub struct Outcome {
 }
 
 /// Run simulated quantum annealing.
+#[must_use]
 pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     run_metered(g, p, seed, None)
 }
 
 /// As [`run`], charging every proposal to a [`Ledger`].
+#[must_use]
 pub fn run_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Ledger>) -> Outcome {
     let n = g.n;
     let m = p.trotter.max(1);
@@ -237,7 +239,7 @@ mod tests {
                 }
             }
             let s = c.iter().flatten().fold(0.0f64, |m, &x| m.max(x.abs())).max(1e-300);
-            for row in c.iter_mut() {
+            for row in &mut c {
                 for v in row.iter_mut() {
                     *v /= s;
                 }

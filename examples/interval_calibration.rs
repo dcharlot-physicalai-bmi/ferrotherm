@@ -56,8 +56,7 @@ fn main() {
         ("glass16", glass(16, 5, 3)),
     ];
     println!(
-        "{} chains of {} draws after {} burn-in, every site, against exact enumeration\n",
-        SEEDS, DRAWS, BURN
+        "{SEEDS} chains of {DRAWS} draws after {BURN} burn-in, every site, against exact enumeration\n"
     );
     println!(
         "{:>8} {:>5} {:>9} {:>10} {:>8} {:>12} {:>14}",

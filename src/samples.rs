@@ -94,6 +94,7 @@ pub enum Provenance {
 
 impl Provenance {
     /// The inverse temperature the states belong to, where they belong to one.
+    #[must_use]
     pub fn beta(&self) -> Option<f64> {
         match *self {
             Provenance::Chain { beta, .. }
@@ -104,11 +105,13 @@ impl Provenance {
     }
 
     /// Whether an expectation value taken over these states estimates anything.
+    #[must_use]
     pub fn is_distributional(&self) -> bool {
         !matches!(self, Provenance::Search { .. })
     }
 
     /// A short name, for error messages.
+    #[must_use]
     pub fn label(&self) -> &'static str {
         match self {
             Provenance::Chain { .. } => "chain",
@@ -175,11 +178,13 @@ pub struct Estimate {
 
 impl Estimate {
     /// A 95% interval, `value +- 1.96 * stderr`.
+    #[must_use]
     pub fn ci95(&self) -> (f64, f64) {
         (self.value - 1.96 * self.stderr, self.value + 1.96 * self.stderr)
     }
 
     /// Whether `truth` lies inside [`Self::ci95`]. For calibration checks.
+    #[must_use]
     pub fn covers(&self, truth: f64) -> bool {
         let (lo, hi) = self.ci95();
         lo <= truth && truth <= hi
@@ -215,12 +220,14 @@ pub struct Plan {
 }
 
 impl Plan {
+    #[must_use]
     pub fn new(burn_in: usize, draws: usize, thin: usize) -> Plan {
         Plan { burn_in, draws, thin: thin.max(1) }
     }
 
     /// Total sweeps this plan runs, burn-in included. What the ledger will be charged for
     /// sampling, per free node.
+    #[must_use]
     pub fn sweeps(&self) -> usize {
         self.burn_in + self.draws * self.thin.max(1)
     }
@@ -247,6 +254,7 @@ impl SampleSet {
     ///
     /// # Panics
     /// If `states` and `energies` differ in length, or the states differ in width.
+    #[must_use]
     pub fn from_chain(
         states: Vec<Vec<i8>>,
         energies: Vec<f64>,
@@ -261,6 +269,7 @@ impl SampleSet {
     ///
     /// # Panics
     /// If `states` and `energies` differ in length, or the states differ in width.
+    #[must_use]
     pub fn from_population(
         states: Vec<Vec<i8>>,
         energies: Vec<f64>,
@@ -274,6 +283,7 @@ impl SampleSet {
     ///
     /// # Panics
     /// If `states` and `energies` differ in length, or the states differ in width.
+    #[must_use]
     pub fn from_search(
         states: Vec<Vec<i8>>,
         energies: Vec<f64>,
@@ -295,7 +305,7 @@ impl SampleSet {
             states.len(),
             energies.len()
         );
-        let n = states.first().map_or(0, |s| s.len());
+        let n = states.first().map_or(0, std::vec::Vec::len);
         assert!(
             states.iter().all(|s| s.len() == n),
             "every state must have the same width; mixing widths in one set makes `mean_spin(i)` \
@@ -346,31 +356,38 @@ impl SampleSet {
     /// system's energy jitters quickly around a fixed value while its magnetization does not move
     /// at all -- which is the same pair, for the same reason, that [`crate::certify`] takes the
     /// worse of.
+    #[must_use]
     pub fn chain_tau(&self) -> f64 {
         self.chain_tau
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.states.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.states.is_empty()
     }
 
     /// Spins per state.
+    #[must_use]
     pub fn n_spins(&self) -> usize {
         self.n
     }
 
+    #[must_use]
     pub fn provenance(&self) -> Provenance {
         self.prov
     }
 
+    #[must_use]
     pub fn states(&self) -> &[Vec<i8>] {
         &self.states
     }
 
+    #[must_use]
     pub fn energies(&self) -> &[f64] {
         &self.energies
     }
@@ -379,6 +396,7 @@ impl SampleSet {
     ///
     /// Always available: this is a fact about the states that were seen, and needs no distribution.
     /// Ties go to the first occurrence, so it is deterministic in the order the set was built.
+    #[must_use]
     pub fn best(&self) -> Option<(&[i8], f64)> {
         let mut k = 0usize;
         if self.energies.is_empty() {
@@ -397,6 +415,7 @@ impl SampleSet {
     ///
     /// Always available. Aggregation happens here rather than at construction because it destroys
     /// chain order, and chain order is what `tau_int` is computed from.
+    #[must_use]
     pub fn distinct(&self) -> Vec<(Vec<i8>, f64, usize)> {
         let mut seen: BTreeMap<&[i8], (f64, usize)> = BTreeMap::new();
         for (s, &e) in self.states.iter().zip(self.energies.iter()) {
@@ -414,6 +433,7 @@ impl SampleSet {
     /// This is **evidence of** degeneracy, not a count of it. A set that found three ground states
     /// proves there are at least three; it cannot prove there are no more, and this method makes no
     /// such claim. Only [`Provenance::Enumerated`] can, because only enumeration looked everywhere.
+    #[must_use]
     pub fn ground_states(&self, tol: f64) -> Vec<Vec<i8>> {
         let Some((_, e0)) = self.best() else { return Vec::new() };
         self.distinct()
@@ -569,11 +589,11 @@ pub fn enumerate(g: &Graph, beta: f64) -> Result<SampleSet, Refused> {
     // Shifted, for the same reason `exact_boltzmann` is: `exp(-beta * E)` overflows f64 long
     // before beta gets large, and the shift cancels exactly in the normalised weights.
     let mut z = 0.0;
-    for v in logw.iter_mut() {
+    for v in &mut logw {
         *v = (*v - mx).exp();
         z += *v;
     }
-    for v in logw.iter_mut() {
+    for v in &mut logw {
         *v /= z;
     }
     Ok(SampleSet::build(states, energies, Some(logw), Provenance::Enumerated { beta }))

@@ -34,6 +34,7 @@ pub struct Task {
 }
 
 /// Hamming loss `ℓ(s) = Σ_o (1 − s_o t_o) / 2`, in units of wrong output spins.
+#[must_use]
 pub fn hamming_loss(task: &Task, s: &[i8], target: &[i8]) -> f64 {
     task.outputs.iter().zip(target).map(|(&o, &t)| (1.0 - (s[o] as i32 * t as i32) as f64) / 2.0).sum()
 }
@@ -82,7 +83,7 @@ fn enumerate_moments(g: &Graph, task: &Task, x: &[i8], target: &[i8], nudge: f64
         logs.push(-(g.energy(&s) + nudge * l));
         states.push((s.clone(), l));
     }
-    let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let mx = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let w: Vec<f64> = logs.iter().map(|l| (l - mx).exp()).collect();
     let z: f64 = w.iter().sum();
     let mut mean_l = 0.0;
@@ -120,7 +121,7 @@ pub fn exact_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8]) -> Gradie
         logs.push(-g.energy(&s));
         states.push((s.clone(), hamming_loss(task, &s, target)));
     }
-    let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let mx = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let w: Vec<f64> = logs.iter().map(|l| (l - mx).exp()).collect();
     let z: f64 = w.iter().sum();
     let mean_l: f64 = states.iter().zip(&w).map(|((_, l), wi)| wi / z * l).sum();
@@ -140,6 +141,7 @@ pub fn exact_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8]) -> Gradie
 
 /// Equilibrium propagation by enumeration: the one-sided quotient `(⟨·⟩₀ − ⟨·⟩_β)/β`, or the
 /// centered `(⟨·⟩_{−β} − ⟨·⟩_{+β})/2β` when `centered`.
+#[must_use]
 pub fn eqprop_gradient_exact(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f64, centered: bool) -> Gradient {
     let pairs = pairs_of(g);
     let (_, mp, m1p) = enumerate_moments(g, task, x, target, beta);
@@ -154,6 +156,7 @@ pub fn eqprop_gradient_exact(g: &Graph, task: &Task, x: &[i8], target: &[i8], be
 
 /// The nudged graph: `E + β ℓ` is `E` with `β t_o / 2` added to each output bias (the constant
 /// drops out), so nudging is a field the sampler already understands.
+#[must_use]
 pub fn nudged(g: &Graph, task: &Task, target: &[i8], beta: f64) -> Graph {
     let mut gb = GraphBuilder::new(g.n);
     for (i, j) in pairs_of(g) {
@@ -170,6 +173,7 @@ pub fn nudged(g: &Graph, task: &Task, target: &[i8], beta: f64) -> Graph {
 }
 
 /// Sampled moments `(⟨s_i s_j⟩ per pair, ⟨s_i⟩ per site)` at unit temperature with inputs clamped.
+#[must_use]
 pub fn sampled_moments(g: &Graph, task: &Task, x: &[i8], burn_in: usize, draws: usize, seed: u64) -> (Vec<f64>, Vec<f64>) {
     let pairs = pairs_of(g);
     let mut sm = Sampler::new(g, 1.0, seed);
@@ -194,6 +198,7 @@ pub fn sampled_moments(g: &Graph, task: &Task, x: &[i8], burn_in: usize, draws: 
 
 /// Equilibrium propagation by sampling: two chains (free and nudged, or `∓β` when centered) and
 /// their difference quotient.
+#[must_use]
 pub fn eqprop_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f64, centered: bool, burn_in: usize, draws: usize, seed: u64) -> Gradient {
     let pairs = pairs_of(g);
     let plus = nudged(g, task, target, beta);
@@ -213,6 +218,7 @@ pub fn eqprop_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f6
 }
 
 /// Apply a gradient step `θ ← θ − η ∇`, returning the new graph.
+#[must_use]
 pub fn step(g: &Graph, grad: &Gradient, eta: f64) -> Graph {
     let mut gb = GraphBuilder::new(g.n);
     for (k, &(i, j)) in grad.pairs.iter().enumerate() {

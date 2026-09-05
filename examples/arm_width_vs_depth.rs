@@ -174,7 +174,7 @@ fn run_mppi(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usize,
                     evals += 1;
                 }
             }
-            let best = costs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let best = costs.iter().copied().fold(f64::INFINITY, f64::min);
             let w: Vec<f64> = costs.iter().map(|c| (-(c - best) / lambda).exp()).collect();
             let sw: f64 = w.iter().sum();
             for h in 0..horizon { for d in 0..NJ {
@@ -247,7 +247,7 @@ fn run_mppi_energy(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usi
                     evals += 1;
                 }
             }
-            let best = costs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let best = costs.iter().copied().fold(f64::INFINITY, f64::min);
             let w: Vec<f64> = costs.iter().map(|c| (-(c - best) / lambda).exp()).collect();
             let sw: f64 = w.iter().sum();
             for h in 0..horizon { for d in 0..NJ {
@@ -344,7 +344,7 @@ fn main() {
             let per_action = (rollouts * passes * 12) as f64;
             // The published figure is this formula; the runs also count evaluations for real.
             // Ticks vary (an early success stops sooner), so check per-tick rather than per-run.
-            for r in runs.iter() {
+            for r in &runs {
                 let ticks = (r.evals as f64 / per_action).round();
                 let implied = ticks * per_action;
                 debug_assert!((implied - r.evals as f64).abs() < 1.0,

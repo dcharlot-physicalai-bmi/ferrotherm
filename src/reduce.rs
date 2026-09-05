@@ -66,7 +66,7 @@ fn add(p: &mut Poly, mono: BTreeSet<usize>, c: f64) {
 }
 
 fn degree(p: &Poly) -> usize {
-    p.keys().map(|m| m.len()).max().unwrap_or(0)
+    p.keys().map(std::collections::BTreeSet::len).max().unwrap_or(0)
 }
 
 /// What a reduction cost, and what it assumed.
@@ -92,6 +92,7 @@ pub struct Reduction {
 
 impl Reduction {
     /// Keep only the original spins from a solved state.
+    #[must_use]
     pub fn project<'a>(&self, state: &'a [i8]) -> &'a [i8] {
         &state[..self.original_spins.min(state.len())]
     }
@@ -175,7 +176,7 @@ pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
 
         // Substitute y for {a, b} in every monomial containing both.
         let mut rewritten: Poly = BTreeMap::new();
-        for (m, c) in poly.iter() {
+        for (m, c) in &poly {
             if m.len() > 2 && m.contains(&a) && m.contains(&b) {
                 let mut n: BTreeSet<usize> = m.iter().copied().filter(|v| *v != a && *v != b).collect();
                 n.insert(y);

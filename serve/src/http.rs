@@ -44,6 +44,7 @@ fn reason(status: u16) -> &'static str {
 }
 
 /// Route one parsed request. Kept transport-agnostic so it is directly testable.
+#[must_use]
 pub fn route(req: &Request) -> Response {
     if req.method == "OPTIONS" {
         return Response { status: 200, body: String::new() };
@@ -54,7 +55,7 @@ pub fn route(req: &Request) -> Response {
             200,
             &Json::obj(vec![("ok", Json::Bool(true)), ("service", Json::s("ferrotherm"))]),
         ),
-        ("GET", "/v1/capabilities") | ("GET", "/") => Response::json(200, &api::capabilities()),
+        ("GET", "/v1/capabilities" | "/") => Response::json(200, &api::capabilities()),
         ("POST", p) if p.starts_with("/v1/") => {
             let op = &p[4..];
             match api::parse_body(&req.body) {

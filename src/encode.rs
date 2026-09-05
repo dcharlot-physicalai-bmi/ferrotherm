@@ -39,6 +39,7 @@ pub enum Encoding {
 
 impl Encoding {
     /// Spins needed for a `k`-valued variable.
+    #[must_use]
     pub fn spins(&self, k: usize) -> usize {
         assert!(k >= 2, "a variable with fewer than 2 values is a constant");
         match self {
@@ -49,6 +50,7 @@ impl Encoding {
     }
 
     /// Penalty couplings this encoding drags in for a `k`-valued variable.
+    #[must_use]
     pub fn penalty_couplings(&self, k: usize) -> usize {
         match self {
             Encoding::OneHot => k * (k - 1) / 2,
@@ -79,17 +81,20 @@ pub struct Slot {
 }
 
 impl Slot {
+    #[must_use]
     pub fn new(base: usize, k: usize, encoding: Encoding) -> Self {
         assert!(k >= 2, "a variable with fewer than 2 values is a constant");
         Slot { base, k, encoding }
     }
 
     /// Spins this slot occupies.
+    #[must_use]
     pub fn width(&self) -> usize {
         self.encoding.spins(self.k)
     }
 
     /// Range of spin indices this slot occupies.
+    #[must_use]
     pub fn range(&self) -> std::ops::Range<usize> {
         self.base..self.base + self.width()
     }
@@ -123,6 +128,7 @@ impl Slot {
     /// Returning `None` rather than a nearest-valid guess is deliberate: a sampler that has landed
     /// on an invalid state is telling you the penalty was too weak, and silently rounding that away
     /// is how a constraint violation becomes a wrong answer nobody notices.
+    #[must_use]
     pub fn decode(&self, s: &[i8]) -> Option<usize> {
         let w = self.width();
         let bits = &s[self.base..self.base + w];

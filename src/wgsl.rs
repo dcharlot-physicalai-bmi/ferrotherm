@@ -1,6 +1,6 @@
 //! The sweep, emitted as a WebGPU compute shader.
 //!
-//! Open GPU sampling of Ising models is an empty lane. OpenJij, the reference open sampler, dropped
+//! Open GPU sampling of Ising models is an empty lane. `OpenJij`, the reference open sampler, dropped
 //! GPGPU support in 2023 and is CPU-only, while every commercial engine is GPU, FPGA or ASIC. There
 //! is no open, permissively licensed, browser-capable sampler. This is ours, and it reaches a GPU
 //! without adding a dependency: Rust emits WGSL text the same way [`crate::hdl`] emits Verilog, and
@@ -57,6 +57,7 @@ pub struct GpuModel {
 }
 
 impl GpuModel {
+    #[must_use]
     pub fn from_graph(g: &Graph) -> GpuModel {
         let d = Padded::from_graph(g);
         GpuModel {
@@ -67,11 +68,12 @@ impl GpuModel {
             // weight contributes nothing whether or not a lane knows it is padding
             w: d.w.iter().map(|&x| x as f32).collect(),
             h: d.h.iter().map(|&x| x as f32).collect(),
-            classes: g.classes.iter().map(|c| c.to_vec()).collect(),
+            classes: g.classes.clone(),
         }
     }
 
     /// Bytes of GPU memory this model needs, so a caller can size it before uploading.
+    #[must_use]
     pub fn bytes(&self) -> usize {
         let nk = (self.n as usize) * (self.k as usize);
         nk * 4 + nk * 4 + (self.n as usize) * 4 + (self.n as usize) * 4
@@ -87,6 +89,7 @@ pub const WORKGROUP: u32 = 64;
 /// One invocation per node of the colour class being updated. Nodes of one colour share no edges,
 /// so they can be resampled in the same instant without racing — which is the whole reason this
 /// computation suits a GPU, and it is a property of the *colouring*, not of any locking.
+#[must_use]
 pub fn sweep_shader() -> String {
     format!(
         r#"// ferrotherm: chromatic block-Gibbs sweep.
@@ -132,7 +135,7 @@ fn unit(a0: u32, b0: u32, c0: u32) -> f32 {{
   return f32(hash(a0, b0, c0) >> 8u) * (1.0 / 16777216.0);
 }}
 
-@compute @workgroup_size({wg})
+@compute @workgroup_size({WORKGROUP})
 fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {{
   let t = gid.x;
   if (t >= P.dims.z) {{ return; }}
@@ -156,8 +159,7 @@ fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {{
     spin[i] = -1;
   }}
 }}
-"#,
-        wg = WORKGROUP
+"#
     )
 }
 
@@ -210,7 +212,7 @@ mod tests {
         assert_eq!(m.nbr.len(), 64 * 4);
         assert_eq!(m.w.len(), 64 * 4);
         assert_eq!(m.classes.len(), 2, "a bipartite lattice needs two colours");
-        let total: usize = m.classes.iter().map(|c| c.len()).sum();
+        let total: usize = m.classes.iter().map(std::vec::Vec::len).sum();
         assert_eq!(total, 64, "every node belongs to exactly one class");
     }
 

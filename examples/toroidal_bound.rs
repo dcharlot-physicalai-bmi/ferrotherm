@@ -74,9 +74,9 @@ fn main() {
 
     println!();
     println!("  upper bound   {:>12.0}   (this run, from the toroidal dual)", b.cut);
-    println!("  our cut       {:>12.0}   (this run, breakout local search)", ours_cut);
+    println!("  our cut       {ours_cut:>12.0}   (this run, breakout local search)");
     if let Some(bk) = best_known {
-        println!("  best known    {:>12.0}   (published; a lower bound, somebody achieved it)", bk);
+        println!("  best known    {bk:>12.0}   (published; a lower bound, somebody achieved it)");
         // A cut ABOVE a claimed upper bound would mean the bound is unsound. Worth failing over.
         if bk > b.cut + 1e-6 {
             eprintln!("\n  ** the published cut {bk} EXCEEDS this upper bound {:.0}, so the bound \

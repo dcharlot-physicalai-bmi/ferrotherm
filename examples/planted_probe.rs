@@ -46,6 +46,6 @@ fn main() {
                     .max(p.excess(&Annealer { schedule: sched.clone(), seed: sseed }.solve(&p.graph).0));
             }
         }
-        println!("{alpha:>7.2} {:>9}/{:<4} {:>10.4} {:>12.4}", solved, total, worst, aworst);
+        println!("{alpha:>7.2} {solved:>9}/{total:<4} {worst:>10.4} {aworst:>12.4}");
     }
 }

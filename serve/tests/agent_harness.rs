@@ -273,7 +273,7 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
     let what = first.get("constraint").and_then(|c| c.as_str()).unwrap_or("");
     assert!(what.contains("must differ"), "it says which: {what}");
     assert!(
-        first.get("by").and_then(|b| b.as_f64()).unwrap_or(0.0) > 0.0,
+        first.get("by").and_then(ferrotherm_serve::json::Json::as_f64).unwrap_or(0.0) > 0.0,
         "and by how much: {}",
         write(first)
     );

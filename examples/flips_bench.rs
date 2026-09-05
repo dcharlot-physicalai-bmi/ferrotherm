@@ -50,7 +50,7 @@ fn main() {
     let fps = flips / dt;
     let ns_per_flip = 1e9 / fps;
     println!("single-thread CPU chromatic Gibbs, {} sweeps of {} nodes in {:.2} s:", n_sweeps, g.n, dt);
-    println!("  {:.2e} flips/s   ({:.1} ns/flip)", fps, ns_per_flip);
+    println!("  {fps:.2e} flips/s   ({ns_per_flip:.1} ns/flip)");
     if let Quiet::Yes { load1: Some(l) } = quiet {
         println!("  (1-minute load average {l:.2} -- the machine was this code's)");
     }

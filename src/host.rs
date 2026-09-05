@@ -45,6 +45,7 @@ pub const QUIET_LOAD: f64 = 2.0;
 /// and proceed: refusing to time anything on a platform that exposes no load average would be a
 /// worse failure than timing without the guard, and [`Timing::load1`] records that it was unknown
 /// so the reader can tell the two apart.
+#[must_use]
 pub fn load_average() -> Option<f64> {
     // Linux first: a file read beats spawning a process.
     if let Ok(s) = std::fs::read_to_string("/proc/loadavg") {
@@ -103,11 +104,13 @@ impl Timing {
     }
 
     /// Attach a load reading to seconds measured elsewhere.
+    #[must_use]
     pub fn new(seconds: f64, load1: Option<f64>) -> Timing {
         Timing { seconds, load1 }
     }
 
     /// Was the machine quiet enough for [`Timing::seconds`] to be about the code?
+    #[must_use]
     pub fn trustworthy(&self) -> bool {
         !matches!(self.load1, Some(l) if l > QUIET_LOAD)
     }
@@ -118,6 +121,7 @@ impl Timing {
     /// makes the contaminated case impossible to print in the same shape as a clean one — the
     /// mistake this module exists to prevent was not a missing check, it was a check whose result
     /// nothing was obliged to consult.
+    #[must_use]
     pub fn as_measurement(&self) -> Option<f64> {
         self.trustworthy().then_some(self.seconds)
     }
@@ -127,6 +131,7 @@ impl Timing {
     /// Separate from [`Display`](core::fmt::Display) so a report can print the short form beside
     /// each number and the explanation once at the bottom, rather than repeating four lines of
     /// prose per row.
+    #[must_use]
     pub fn caveat(&self) -> Option<String> {
         match self.load1 {
             Some(l) if l > QUIET_LOAD => Some(format!(
@@ -172,6 +177,7 @@ pub enum Quiet {
 
 impl Quiet {
     /// A one-line note to print beside the numbers, or `None` when there is nothing to say.
+    #[must_use]
     pub fn caveat(&self) -> Option<String> {
         match self {
             Quiet::Yes { .. } => None,

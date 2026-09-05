@@ -51,8 +51,8 @@ struct Cost {
 fn direct(logical: &Graph, hw: &Graph) -> Option<Cost> {
     let e = embed::embed_bounded(logical, hw, 7, 10, embed::DEFAULT_SEARCH_BUDGET)?;
     Some(Cost {
-        sites: e.chains.iter().map(|c| c.len()).sum(),
-        longest: e.chains.iter().map(|c| c.len()).max().unwrap_or(0),
+        sites: e.chains.iter().map(std::vec::Vec::len).sum(),
+        longest: e.chains.iter().map(std::vec::Vec::len).max().unwrap_or(0),
     })
 }
 
@@ -67,7 +67,7 @@ fn via_sparsify(logical: &Graph, hw: &Graph, budget: usize) -> Option<Cost> {
         .map(|set| set.iter().map(|&c| e.chains[c as usize].len()).sum::<usize>())
         .max()
         .unwrap_or(0);
-    Some(Cost { sites: e.chains.iter().map(|c| c.len()).sum(), longest })
+    Some(Cost { sites: e.chains.iter().map(std::vec::Vec::len).sum(), longest })
 }
 
 fn main() {

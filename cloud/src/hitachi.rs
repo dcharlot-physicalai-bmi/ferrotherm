@@ -1,7 +1,7 @@
 //! Hitachi's CMOS annealing machine, through Annealing Cloud Web.
 //!
 //! This is real fabricated Ising silicon reachable from a free public API, and essentially nobody
-//! has used it — two papers in all of OpenAlex mention the service. It is therefore the cheapest
+//! has used it — two papers in all of `OpenAlex` mention the service. It is therefore the cheapest
 //! real fabric in the world to support, and supporting it is what makes "universal" mean something
 //! checkable rather than rhetorical.
 //!
@@ -78,6 +78,7 @@ impl Machine {
         }
     }
     /// Grid side. Sites are `side × side`.
+    #[must_use]
     pub fn side(self) -> usize {
         match self {
             Machine::Asic => 384,
@@ -225,6 +226,7 @@ impl Hitachi {
     }
 
     /// Where this instance will post. See [`Hitachi::with_endpoint`].
+    #[must_use]
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }

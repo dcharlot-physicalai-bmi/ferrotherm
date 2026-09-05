@@ -13,7 +13,7 @@
 //!
 //! Counts, not durations: sweeps and runs are the cost, and they are the same on every machine.
 //!
-//! usage: cargo run --release --example free_energy
+//! usage: cargo run --release --example `free_energy`
 
 use ferrotherm::exact::Elimination;
 use ferrotherm::free_energy::{

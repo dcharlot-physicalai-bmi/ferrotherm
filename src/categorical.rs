@@ -59,6 +59,7 @@ pub struct Categorical {
 
 impl Categorical {
     /// Lay out `n` variables side by side and add the encoding's penalty at strength `p`.
+    #[must_use]
     pub fn new(n: usize, k: usize, encoding: Encoding, p: f64) -> Categorical {
         assert!(n >= 1 && k >= 2);
         let width = encoding.spins(k);
@@ -74,11 +75,13 @@ impl Categorical {
     }
 
     /// Spins this layout occupies.
+    #[must_use]
     pub fn spins(&self) -> usize {
         self.graph.n
     }
 
     /// Fraction of variables that decode to a valid value in `state`.
+    #[must_use]
     pub fn feasible_fraction(&self, state: &[i8]) -> f64 {
         let ok = self.slots.iter().filter(|s| s.decode(state).is_some()).count();
         ok as f64 / self.slots.len() as f64
@@ -88,12 +91,14 @@ impl Categorical {
     ///
     /// The penalty is what has to be satisfied, so this is a pure feasibility measurement: there is
     /// no objective competing with it and any failure is the encoding's.
+    #[must_use]
     pub fn anneal_feasibility(&self, schedule: &Schedule, seed: u64) -> f64 {
         let (best, _) = crate::tempering::anneal_scheduled(&self.graph, schedule, seed, None);
         self.feasible_fraction(&best)
     }
 
     /// Sample at fixed temperature, then report the fraction that decoded.
+    #[must_use]
     pub fn sample_feasibility(&self, beta: f64, sweeps: usize, seed: u64) -> f64 {
         let mut smp = Sampler::new(&self.graph, beta, seed);
         smp.sweeps(sweeps, None);

@@ -34,7 +34,7 @@
 use ferrotherm::ebm::{self, Dataset};
 use ferrotherm::graph::{Graph, GraphBuilder};
 
-/// Per-pixel marginals of a model, by enumeration: E[s_i] under the Boltzmann distribution.
+/// Per-pixel marginals of a model, by enumeration: E[`s_i`] under the Boltzmann distribution.
 fn model_marginals(g: &Graph, visible: usize) -> Vec<f64> {
     let states = 1usize << g.n;
     let mut s = vec![-1i8; g.n];

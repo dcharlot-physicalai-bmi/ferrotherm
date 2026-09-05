@@ -34,7 +34,7 @@ fn stage_cpt(stage: usize) -> Cpt {
             cpt[xm][ym] = (0.12f64).powi(d as i32);
         }
         let z: f64 = cpt[xm].iter().sum();
-        for v in cpt[xm].iter_mut() {
+        for v in &mut cpt[xm] {
             *v /= z;
         }
     }
@@ -86,7 +86,7 @@ fn main() {
         mu0[m] = (0.55f64).powi(m.count_ones() as i32);
     }
     let z: f64 = mu0.iter().sum();
-    for v in mu0.iter_mut() {
+    for v in &mut mu0 {
         *v /= z;
     }
 

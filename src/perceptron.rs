@@ -88,6 +88,7 @@ pub const KRAUTH_MEZARD_CAPACITY: f64 = 0.833;
 ///
 /// `1/2` for odd `N`. For even `N` a tie is a misclassification, so this is
 /// `(1 − C(N, N/2)/2^N)/2`, strictly less.
+#[must_use]
 pub fn p_sat(n: usize) -> f64 {
     if n == 0 {
         return 0.0;
@@ -106,6 +107,7 @@ pub fn p_sat(n: usize) -> f64 {
 }
 
 /// `ln E[Z]` over random patterns: `N ln 2 + P ln p_sat(N)`. Exact at every finite `N`.
+#[must_use]
 pub fn annealed_log_z(n: usize, p: usize) -> f64 {
     n as f64 * core::f64::consts::LN_2 + p as f64 * p_sat(n).ln()
 }
@@ -116,6 +118,7 @@ pub fn annealed_log_z(n: usize, p: usize) -> f64 {
 /// so `P(Z ≥ 1) ≤ E[Z]`, and above this load `E[Z] → 0`. The true capacity is strictly smaller
 /// ([`KRAUTH_MEZARD_CAPACITY`]) because the typical count is far below the mean — a few pattern
 /// sets with very many solutions carry the average.
+#[must_use]
 pub fn annealed_capacity(n: usize) -> f64 {
     core::f64::consts::LN_2 / -p_sat(n).ln()
 }
@@ -140,6 +143,7 @@ pub fn annealed_capacity(n: usize) -> f64 {
 /// `q = ⟨tanh²⟩`, the saddle runs to a corner, and the only branch that survives is the trivial
 /// `q → 0` one — which reproduces the ANNEALED entropy and so vanishes at `α = 1` rather than at
 /// the capacity. Two attempts died there before the derivation was redone.
+#[must_use]
 pub fn rs_entropy(alpha: f64) -> (f64, f64, f64) {
     // The quadrature nodes are built ONCE. `gaussian_expectation` recomputes them per call, and
     // this routine calls it inside a fixed-point loop inside a bisection -- rebuilding a 160-point
@@ -179,6 +183,7 @@ pub fn rs_entropy(alpha: f64) -> (f64, f64, f64) {
 /// [`capacity_by_enumeration`]'s `0.8305` from exhaustive counting, the constant is now reached by
 /// two independent routes — one analytic, one combinatorial — that agree with each other and with
 /// the literature. [`KRAUTH_MEZARD_CAPACITY`] is no longer a number this crate takes on faith.
+#[must_use]
 pub fn capacity_replica() -> f64 {
     let (mut lo, mut hi) = (0.5f64, 1.2f64);
     for _ in 0..40 {
@@ -196,10 +201,11 @@ pub fn capacity_replica() -> f64 {
 ///
 /// Bisects on the integer pattern count and interpolates, using [`Perceptron::solution_count`] —
 /// so this is exact counting, not a heuristic's opinion about satisfiability.
+#[must_use]
 pub fn threshold_at(n: usize, sets: u64, seed: u64) -> Option<f64> {
     let solvable = |p: usize| -> f64 {
         (0..sets)
-            .filter(|&s| Perceptron::random(n, p, seed + s * 7 + n as u64 * 131).solution_count().map(|c| c > 0).unwrap_or(false))
+            .filter(|&s| Perceptron::random(n, p, seed + s * 7 + n as u64 * 131).solution_count().is_ok_and(|c| c > 0))
             .count() as f64
             / sets as f64
     };
@@ -230,6 +236,7 @@ pub fn threshold_at(n: usize, sets: u64, seed: u64) -> Option<f64> {
 /// `0.879, 0.862, 0.880, 0.858, 0.857, 0.854` and the extrapolation gives **`α_c = 0.8305`**
 /// against Krauth & Mézard's `0.833` — agreement to 0.3%, which is what turns their constant from
 /// something this crate quotes into something it has confirmed.
+#[must_use]
 pub fn capacity_by_enumeration(sizes: &[usize], sets: u64, seed: u64) -> Option<(f64, f64)> {
     let pts: Vec<(f64, f64)> = sizes.iter().filter_map(|&n| threshold_at(n, sets, seed).map(|a| (1.0 / n as f64, a))).collect();
     if pts.len() < 3 {
@@ -258,32 +265,38 @@ pub struct Perceptron {
 }
 
 impl Perceptron {
+    #[must_use]
     pub fn new(patterns: Vec<Vec<i8>>) -> Self {
-        let n = patterns.first().map_or(0, |p| p.len());
+        let n = patterns.first().map_or(0, std::vec::Vec::len);
         assert!(n > 0 && patterns.iter().all(|p| p.len() == n));
         Perceptron { patterns, n }
     }
 
     /// `P` random patterns of `n` spins.
+    #[must_use]
     pub fn random(n: usize, p: usize, seed: u64) -> Self {
         Perceptron::new(crate::hopfield::random_patterns(n, p, seed))
     }
 
+    #[must_use]
     pub fn load(&self) -> f64 {
         self.patterns.len() as f64 / self.n as f64
     }
 
     /// The stabilities `J·ξ^μ`, one per pattern.
+    #[must_use]
     pub fn stabilities(&self, j: &[i8]) -> Vec<i32> {
         self.patterns.iter().map(|p| p.iter().zip(j).map(|(&a, &b)| a as i32 * b as i32).sum()).collect()
     }
 
     /// How many patterns `j` misclassifies. A tie counts as an error.
+    #[must_use]
     pub fn errors(&self, j: &[i8]) -> usize {
         self.stabilities(j).iter().filter(|&&h| h <= 0).count()
     }
 
     /// Does `j` classify every pattern correctly?
+    #[must_use]
     pub fn is_solution(&self, j: &[i8]) -> bool {
         self.errors(j) == 0
     }
@@ -345,6 +358,7 @@ impl Perceptron {
     }
 
     /// Anneal from a random start and return the best coupling vector found and its error count.
+    #[must_use]
     pub fn solve(&self, beta_min: f64, beta_max: f64, stages: usize, sweeps_per: usize, seed: u64) -> (Vec<i8>, usize) {
         let mut rng = Pcg::new(seed, 23);
         let mut j: Vec<i8> = (0..self.n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
@@ -413,6 +427,7 @@ fn normal_pdf(x: f64) -> f64 {
 /// that a perceptron stores two patterns per weight — and it decreases with the margin demanded.
 /// Unlike [`KRAUTH_MEZARD_CAPACITY`] this is *computed*, not cited: the replica-symmetric solution
 /// is exact for the spherical case, and the tests check the closed form against quadrature.
+#[must_use]
 pub fn gardner_capacity(kappa: f64) -> f64 {
     1.0 / ((1.0 + kappa * kappa) * normal_cdf(kappa) + kappa * normal_pdf(kappa))
 }
@@ -425,21 +440,25 @@ pub struct SphericalPerceptron {
 }
 
 impl SphericalPerceptron {
+    #[must_use]
     pub fn new(patterns: Vec<Vec<i8>>) -> Self {
-        let n = patterns.first().map_or(0, |p| p.len());
+        let n = patterns.first().map_or(0, std::vec::Vec::len);
         assert!(n > 0 && patterns.iter().all(|p| p.len() == n));
         SphericalPerceptron { patterns, n }
     }
 
+    #[must_use]
     pub fn random(n: usize, p: usize, seed: u64) -> Self {
         SphericalPerceptron::new(crate::hopfield::random_patterns(n, p, seed))
     }
 
+    #[must_use]
     pub fn load(&self) -> f64 {
         self.patterns.len() as f64 / self.n as f64
     }
 
     /// The normalised stabilities `(J·ξ^μ) / (|J| √N)`, which is what `κ` is measured in.
+    #[must_use]
     pub fn stabilities(&self, j: &[f64]) -> Vec<f64> {
         let norm = j.iter().map(|v| v * v).sum::<f64>().sqrt().max(f64::MIN_POSITIVE);
         let scale = 1.0 / (norm * (self.n as f64).sqrt());
@@ -456,6 +475,7 @@ impl SphericalPerceptron {
     /// right algorithm to measure a capacity with — a failure is the problem's, not the search's.
     ///
     /// Returns the coupling vector and its margin.
+    #[must_use]
     pub fn minover(&self, iters: usize) -> (Vec<f64>, f64) {
         let mut j = vec![0.0f64; self.n];
         for p in &self.patterns {

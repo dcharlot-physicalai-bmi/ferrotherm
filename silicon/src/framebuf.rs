@@ -23,14 +23,17 @@ pub struct FrameBuf {
 }
 
 impl FrameBuf {
+    #[must_use]
     pub fn new() -> FrameBuf {
         FrameBuf { frames: BTreeMap::new() }
     }
 
     /// Number of frames the buffer will emit.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.frames.len()
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
@@ -93,6 +96,7 @@ impl FrameBuf {
 
     /// Read a LUT truth table back out of the buffer — used to check what we wrote, never as
     /// evidence about hardware.
+    #[must_use]
     pub fn read_lut_init(&self, block: &BitsBlock, init_bits: &[SegBit]) -> Option<u64> {
         let mut init = 0u64;
         for (i, sb) in init_bits.iter().enumerate() {
@@ -107,6 +111,7 @@ impl FrameBuf {
 
     /// Contiguous runs of frames, as (start address, words). Frames stream through FDRI with the
     /// address auto-incrementing, so each run needs exactly one FAR write.
+    #[must_use]
     pub fn runs(&self) -> Vec<(u32, Vec<u32>)> {
         let mut out: Vec<(u32, Vec<u32>)> = Vec::new();
         let mut cur_start: Option<u32> = None;

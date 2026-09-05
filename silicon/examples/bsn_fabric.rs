@@ -108,14 +108,14 @@ fn main() {
                 let mut all_ok = true;
                 for s in &path {
                     let bits = seg.get(&s.tile_type).and_then(|d| d.get(&s.feature()));
-                    let blk = grid.tiles.get(&s.tile).and_then(|t| t.logic_block());
+                    let blk = grid.tiles.get(&s.tile).and_then(ferrotherm_silicon::tilegrid::Tile::logic_block);
                     match (bits, blk) {
                         (Some(b), Some(bl)) => {
                             if let Err(e) = fb.apply_feature(&bl, b) {
                                 if failed < 2 {
                                     println!("  link {i}: apply failed for {} in {} ({}): {e}",
                                              s.feature(), s.tile, s.tile_type);
-                                    println!("    block = {:?}", bl);
+                                    println!("    block = {bl:?}");
                                 }
                                 all_ok = false;
                             }

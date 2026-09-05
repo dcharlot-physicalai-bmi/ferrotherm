@@ -45,10 +45,10 @@
 //!
 //! # What "deterministic by seed" does and does not promise
 //!
-//! Measured across three machines -- macOS/arm64 (Apple M5 Max), Linux/x86_64 (AMD EPYC 9R14) and
+//! Measured across three machines -- macOS/arm64 (Apple M5 Max), `Linux/x86_64` (AMD EPYC 9R14) and
 //! Linux/aarch64 (Graviton3), all on rustc 1.97.1 -- running the identical program:
 //!
-//! | | macOS arm64 | Linux x86_64 | Linux aarch64 |
+//! | | macOS arm64 | Linux `x86_64` | Linux aarch64 |
 //! |---|---|---|---|
 //! | compiled `.ftp` program | identical | identical | identical |
 //! | CSR neighbour order | identical | identical | identical |

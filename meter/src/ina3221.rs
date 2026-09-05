@@ -1,6 +1,6 @@
 //! INA3221 shunt monitors, as found on Jetson carrier boards and plenty of other Linux hardware.
 //!
-//! The macOS backend asks the SoC what it drew. This asks a current-sense chip on the board, which
+//! The macOS backend asks the `SoC` what it drew. This asks a current-sense chip on the board, which
 //! is the same question posed to different silicon, and on a Jetson it is the only way to ask.
 //!
 //! # The rails do not add up, and that is the whole difficulty
@@ -25,7 +25,7 @@
 //!
 //! The upstream driver exposes **no power attribute at all** — bus voltage in mV and current in mA,
 //! so power is `mV × mA / 1e6` watts. The downstream Jetson driver reports milliwatts directly.
-//! Both are handled; which one a given board presents depends on its JetPack version.
+//! Both are handled; which one a given board presents depends on its `JetPack` version.
 //!
 //! # What is verified, and what is not
 //!
@@ -74,11 +74,10 @@ impl core::fmt::Display for RailError {
             ),
             RailError::NoTotalRail { found } => write!(
                 f,
-                "found rails {:?} but none is labelled as the board total, and these channels are \
+                "found rails {found:?} but none is labelled as the board total, and these channels are \
                  NESTED rather than disjoint -- on a Jetson VDD_IN already contains VDD_CPU_GPU_CV \
                  and VDD_SOC, so summing them roughly doubles the answer. Name the total rail \
-                 explicitly with Rails::with_total_label if you know which it is",
-                found
+                 explicitly with Rails::with_total_label if you know which it is"
             ),
             RailError::Unreadable { path, why } => write!(f, "{path}: {why}"),
         }
@@ -200,13 +199,13 @@ impl Rails {
                 break;
             }
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            let mut names: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+            let mut names: Vec<PathBuf> = entries.filter_map(std::result::Result::ok).map(|e| e.path()).collect();
             names.sort();
             if depth < MAX_DEPTH {
                 for p in &names {
                     // symlink_metadata, not is_dir(): is_dir() follows the link, and /sys is full
                     // of links pointing back up the tree.
-                    if std::fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false) {
+                    if std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()) {
                         stack.push((p.clone(), depth + 1));
                     }
                 }
@@ -245,11 +244,13 @@ impl Rails {
     }
 
     /// Every rail found, in label order. The total is [`Rails::total`].
+    #[must_use]
     pub fn all(&self) -> &[Rail] {
         &self.rails
     }
 
     /// The rail treated as whole-board power.
+    #[must_use]
     pub fn total(&self) -> &Rail {
         &self.rails[self.total]
     }

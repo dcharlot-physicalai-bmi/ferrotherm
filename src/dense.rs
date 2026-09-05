@@ -33,6 +33,7 @@ pub struct Padded {
 }
 
 impl Padded {
+    #[must_use]
     pub fn from_graph(g: &Graph) -> Padded {
         let n = g.n;
         let k = g.max_degree().max(1);
@@ -54,6 +55,7 @@ impl Padded {
     }
 
     /// Local field at node `i`: `sum_j J_ij s_j + h_i`.
+    #[must_use]
     pub fn field(&self, i: usize, s: &[i8]) -> f64 {
         let mut f = self.h[i];
         for slot in 0..self.k {
@@ -64,6 +66,7 @@ impl Padded {
     }
 
     /// Field computed while honouring the mask, for a kernel that branches on it.
+    #[must_use]
     pub fn field_masked(&self, i: usize, s: &[i8]) -> f64 {
         let mut f = self.h[i];
         for slot in 0..self.k {
@@ -77,6 +80,7 @@ impl Padded {
 
     /// Fraction of slots that are real. Low occupancy means a rectangle is the wrong shape for this
     /// graph and the caller is paying for padding it will never use.
+    #[must_use]
     pub fn occupancy(&self) -> f64 {
         if self.active.is_empty() {
             return 1.0;

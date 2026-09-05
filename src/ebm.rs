@@ -395,6 +395,7 @@ impl AisLikelihood {
     /// minus the unconditional lower bound on `ln Z`. `None` when the numerator was itself
     /// estimated — a lower-bounded numerator over a lower-bounded `ln Z` bounds nothing, and an
     /// upper bound on the numerator is reverse AIS's conditional business.
+    #[must_use]
     pub fn upper_bound(&self, delta: f64) -> Option<f64> {
         self.numerator_exact.then(|| self.mean_log_numerator - self.log_z.lower_bound(delta))
     }
@@ -431,7 +432,7 @@ pub fn log_likelihood_ais(
             }
             logs.push(-g.energy(&s));
         }
-        let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let mx = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         total += mx + logs.iter().map(|x| (x - mx).exp()).sum::<f64>().ln();
     }
     let mean_log_numerator = total / data.rows.len() as f64;
@@ -482,6 +483,7 @@ fn check(g: &Graph, data: &Dataset) -> Result<(), Error> {
 }
 
 /// A restricted Boltzmann machine's edge set: `visible` × `hidden`, complete bipartite, no weights.
+#[must_use]
 pub fn rbm(visible: usize, hidden: usize) -> Graph {
     let mut gb = GraphBuilder::new(visible + hidden);
     for v in 0..visible {
@@ -498,6 +500,7 @@ pub fn rbm(visible: usize, hidden: usize) -> Graph {
 /// the field's tradeoff claim is about: "increasing latent variables increases the depth of the
 /// Boltzmann machine, making sampling more difficult". [`rbm`] with the same latent count is the
 /// control, since there every added unit also touches every visible one.
+#[must_use]
 pub fn dbm(visible: usize, hidden: &[usize]) -> Graph {
     let n = visible + hidden.iter().sum::<usize>();
     let mut gb = GraphBuilder::new(n);
@@ -521,6 +524,7 @@ pub fn dbm(visible: usize, hidden: &[usize]) -> Graph {
 /// The standard tiny benchmark for fitting an EBM, chosen here because at nine visible units the
 /// exact likelihood and the exact partition function are both computable, so expressivity is
 /// measured rather than estimated.
+#[must_use]
 pub fn bars_and_stripes(side: usize) -> Dataset {
     let n = side * side;
     let mut seen: Vec<Vec<i8>> = Vec::new();

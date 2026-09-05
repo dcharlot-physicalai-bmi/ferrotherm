@@ -73,11 +73,13 @@ pub struct System {
 
 impl System {
     /// One step of the dynamics.
+    #[must_use]
     pub fn step(&self, x: f64, u: f64) -> f64 {
         self.a * x + self.b * u
     }
 
     /// Stage cost.
+    #[must_use]
     pub fn cost(&self, x: f64, u: f64) -> f64 {
         self.q * x * x + self.r * u * u
     }
@@ -114,6 +116,7 @@ impl Lqr {
     /// Iterating the Riccati recursion converges monotonically from `p = q` for a stabilisable
     /// system, which is both simpler and more obviously correct than the quadratic formula, and it
     /// is checked against the residual in the tests rather than assumed.
+    #[must_use]
     pub fn solve(s: &System) -> Lqr {
         let mut p = s.q;
         for _ in 0..10_000 {
@@ -129,11 +132,13 @@ impl Lqr {
     }
 
     /// The optimal action in state `x`.
+    #[must_use]
     pub fn action(&self, x: f64) -> f64 {
         -self.k * x
     }
 
     /// Optimal infinite-horizon cost from `x0`, which is `p x0²`.
+    #[must_use]
     pub fn cost_to_go(&self, x0: f64) -> f64 {
         self.p * x0 * x0
     }
@@ -203,7 +208,7 @@ impl Mppi {
 
         // Subtract the minimum before exponentiating. Without it, a horizon of any length overflows
         // to zero weight everywhere and the controller silently returns the nominal sequence.
-        let min = costs.iter().cloned().fold(f64::INFINITY, f64::min);
+        let min = costs.iter().copied().fold(f64::INFINITY, f64::min);
         let mut wsum = 0.0;
         let mut w = vec![0.0f64; self.rollouts];
         for r in 0..self.rollouts {
@@ -221,6 +226,7 @@ impl Mppi {
     }
 
     /// Run a closed loop and return the total cost incurred.
+    #[must_use]
     pub fn run(&self, s: &System, x0: f64, steps: usize, seed: u64) -> f64 {
         let mut rng = Pcg::new(seed, 0);
         let mut nominal = vec![0.0f64; self.horizon];

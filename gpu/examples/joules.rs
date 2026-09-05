@@ -90,7 +90,7 @@ fn main() {
     // impossible: one busy core added 0.13 W to a baseline wandering by 1.43 W, so the CPU's own
     // signal was inside the noise. Using the machine fairly and being able to measure it turn out
     // to be the same fix.
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     println!("  (cpu uses all {threads} cores; comparing a whole GPU to one core is not a comparison)\n");
     let mut led = Ledger::default();
     let c_res = row("cpu", &mut || {

@@ -116,8 +116,8 @@ pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
             seed ^ ((epoch as u64) << 17),
             None,
         );
-        let hi = out.swap_rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let lo = out.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hi = out.swap_rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let lo = out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
         spread.push(hi - lo);
         if out.best_e < last.best_e {
             last.best = out.best.clone();
@@ -174,8 +174,8 @@ pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::temp
         } else {
             crate::tempering::parallel_tempering(g, &betas, p.rounds, p.swap_every, seed ^ ((epoch as u64) << 17), None)
         };
-        let hi = out.swap_rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let lo = out.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hi = out.swap_rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let lo = out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
         spread.push(hi - lo);
         if out.best_e < last.best_e {
             last.best = out.best.clone();
@@ -198,6 +198,7 @@ pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::temp
 /// cumulative length does both at once, and needs no density of states.
 ///
 /// The ends never move. They are what the caller asked for.
+#[must_use]
 pub fn respace(betas: &[f64], rates: &[f64]) -> Vec<f64> {
     let r = betas.len();
     if r < 3 || rates.len() + 1 != r {
@@ -252,6 +253,7 @@ pub fn respace(betas: &[f64], rates: &[f64]) -> Vec<f64> {
 /// This is the second tempering axis. Warming a model flattens couplings AND fields together;
 /// scaling the couplings flattens the couplings alone, so a replica can cross a coupling barrier
 /// while still being told by its fields which side to land on.
+#[must_use]
 pub fn scaled(g: &Graph, scale: f64) -> Graph {
     let mut b = GraphBuilder::new(g.n);
     for i in 0..g.n {
@@ -320,7 +322,7 @@ pub fn adapt_2d(
 
     for round in 0..rounds {
         // Each replica already holds its own graph from construction; nothing rebinds it here.
-        for rep in reps.iter_mut() {
+        for rep in &mut reps {
             for _ in 0..swap_every.max(1) {
                 rep.sweep(None);
             }
@@ -373,8 +375,8 @@ pub fn adapt_2d(
     let rates: Vec<f64> = (0..nb.saturating_sub(1))
         .map(|i| accepts[i] as f64 / attempts[i].max(1) as f64)
         .collect();
-    let hi = rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let lo = rates.iter().cloned().fold(f64::INFINITY, f64::min);
+    let hi = rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let lo = rates.iter().copied().fold(f64::INFINITY, f64::min);
     Ok(Outcome {
         best,
         best_e,
@@ -456,7 +458,7 @@ mod tests {
             beta_max: 8.0,
         };
         let out = adapt(&g, &p, 3);
-        let worst = out.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min);
+        let worst = out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
         assert!(worst < 0.02, "this ladder is meant to be dead: {:?}", out.swap_rates);
         assert!(
             *out.spread.last().unwrap() <= out.spread[0] + 1e-12,

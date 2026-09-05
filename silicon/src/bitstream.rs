@@ -44,16 +44,19 @@ pub const SYNC: u32 = 0xAA99_5566;
 pub const NOOP: u32 = 0x2000_0000;
 
 /// Type-1 packet header: read `count` words from `reg`.
+#[must_use]
 pub fn type1_read(reg: u32, count: u32) -> u32 {
     0x2800_0000 | ((reg & 0x3FFF) << 13) | (count & 0x7FF)
 }
 
 /// Type-1 packet header: write `count` words to `reg`.
+#[must_use]
 pub fn type1_write(reg: u32, count: u32) -> u32 {
     0x3000_0000 | ((reg & 0x3FFF) << 13) | (count & 0x7FF)
 }
 
 /// Type-2 packet header: continue the previous register with a long word count.
+#[must_use]
 pub fn type2_write(count: u32) -> u32 {
     0x5000_0000 | (count & 0x07FF_FFFF)
 }
@@ -74,6 +77,7 @@ fn be16(d: &[u8], p: usize) -> usize {
 
 /// Parse a `.bit` container. Falls back to treating the whole buffer as raw configuration data
 /// (a `.bin`) when no recognizable header is present.
+#[must_use]
 pub fn parse_bit(data: &[u8]) -> BitFile<'_> {
     let mut out = BitFile {
         design: String::new(),
@@ -119,6 +123,7 @@ pub fn parse_bit(data: &[u8]) -> BitFile<'_> {
 }
 
 /// Locate the sync word in a configuration payload, returning the offset of the word AFTER it.
+#[must_use]
 pub fn find_sync(config: &[u8]) -> Option<usize> {
     config
         .windows(4)
@@ -140,6 +145,7 @@ pub enum Packet {
 
 /// Walk a configuration word stream from the sync word onward. Returns the packets in order;
 /// stops at the end of the buffer. Used to validate our encoders against real bitstreams.
+#[must_use]
 pub fn decode(words: &[u32]) -> Vec<Packet> {
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -179,6 +185,7 @@ pub fn decode(words: &[u32]) -> Vec<Packet> {
 }
 
 /// Read a big-endian word stream out of raw configuration bytes.
+#[must_use]
 pub fn to_words(config: &[u8]) -> Vec<u32> {
     config.as_chunks::<4>().0.iter().map(|&c| u32::from_be_bytes(c)).collect()
 }
@@ -226,7 +233,7 @@ mod tests {
 
     // Packet encodings against the values documented in UG470.
     /// Our own encoders must decode back to themselves — and the decoder must agree with the
-    /// packet layout the device actually accepts (see examples/decode_bit.rs, run against a
+    /// packet layout the device actually accepts (see `examples/decode_bit.rs`, run against a
     /// real generated bitstream).
     #[test]
     fn encode_decode_roundtrip() {

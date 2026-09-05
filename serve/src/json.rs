@@ -18,18 +18,21 @@ pub enum Json {
 }
 
 impl Json {
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Json> {
         match self {
             Json::Obj(m) => m.iter().find(|(k, _)| k == key).map(|(_, v)| v),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Json::Num(n) => Some(*n),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_usize(&self) -> Option<usize> {
         match self {
             Json::Num(n) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as usize),
@@ -38,24 +41,28 @@ impl Json {
     }
     /// A signed integer, which is what a modeller's value is: an integer variable's range may
     /// start below zero, and `as_usize` would refuse the whole lower half of it.
+    #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Json::Num(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => Some(*n as i64),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Json::Num(n) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as u64),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Json::Str(s) => Some(s),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Json::Bool(b) => Some(*b),
@@ -68,12 +75,14 @@ impl Json {
         }
     }
     /// An object's key-value pairs, for a caller enumerating a schema it did not write.
+    #[must_use]
     pub fn as_obj(&self) -> Option<&[(String, Json)]> {
         match self {
             Json::Obj(m) => Some(m),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_arr(&self) -> Option<&[Json]> {
         match self {
             Json::Arr(a) => Some(a),
@@ -81,12 +90,15 @@ impl Json {
         }
     }
     /// Convenience for building objects in handler code.
+    #[must_use]
     pub fn obj(pairs: Vec<(&str, Json)>) -> Json {
         Json::Obj(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
     }
+    #[must_use]
     pub fn s(v: &str) -> Json {
         Json::Str(v.to_string())
     }
+    #[must_use]
     pub fn n(v: f64) -> Json {
         Json::Num(v)
     }
@@ -94,6 +106,7 @@ impl Json {
 
 // ---- writing ----------------------------------------------------------------------------------
 
+#[must_use]
 pub fn write(v: &Json) -> String {
     let mut out = String::new();
     wr(v, &mut out);
@@ -111,7 +124,7 @@ fn wr(v: &Json, out: &mut String) {
                 if n.fract() == 0.0 && n.abs() < 1e15 {
                     let _ = write!(out, "{}", *n as i64);
                 } else {
-                    let _ = write!(out, "{}", n);
+                    let _ = write!(out, "{n}");
                 }
             } else {
                 out.push_str("null");

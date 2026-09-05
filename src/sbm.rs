@@ -1,14 +1,14 @@
 //! Simulated bifurcation — the Toshiba Ising-machine algorithm line (Goto et al.; ballistic bSB
 //! and discrete dSB per the 2021 Science Advances formulation), as portable deterministic Rust.
 //!
-//! Classical mechanics rather than sampling: each spin is a particle x_i in [-1, 1] with momentum
-//! y_i under a bifurcating potential ramped by a(t): 0 -> a0, coupled through the Ising J. The
+//! Classical mechanics rather than sampling: each spin is a particle `x_i` in [-1, 1] with momentum
+//! `y_i` under a bifurcating potential ramped by a(t): 0 -> a0, coupled through the Ising J. The
 //! symplectic (momentum-first) update with perfectly inelastic walls at |x| = 1:
 //!     y <- y + { -(a0 - a(t)) x + c0 * force } dt ;   x <- x + a0 y dt ;
 //!     wall: |x| > 1  =>  x = sgn(x), y = 0.
-//! bSB uses force_i = sum_j J_ij x_j; dSB uses force_i = sum_j J_ij sgn(x_j) (the discretisation
+//! bSB uses `force_i` = `sum_j` `J_ij` `x_j`; dSB uses `force_i` = `sum_j` `J_ij` `sgn(x_j)` (the discretisation
 //! is what suppresses analog error). Read out sgn(x) EVERY step and keep the best-so-far — the
-//! trajectory is ergodic and the final state is not the best visited. c0 = 0.5 / (J_rms sqrt(N)).
+//! trajectory is ergodic and the final state is not the best visited. c0 = 0.5 / (`J_rms` sqrt(N)).
 
 use crate::graph::Graph;
 use crate::rng::Pcg;
@@ -32,6 +32,7 @@ fn spins_of(x: &[f64]) -> Vec<i8> {
 }
 
 /// One simulated-bifurcation run. Returns (best spins, best energy).
+#[must_use]
 pub fn run(g: &Graph, variant: Variant, n_steps: usize, dt: f64, seed: u64) -> (Vec<i8>, f64) {
     let n = g.n;
     let a0 = 1.0f64;
@@ -80,6 +81,7 @@ pub fn run(g: &Graph, variant: Variant, n_steps: usize, dt: f64, seed: u64) -> (
 }
 
 /// Multi-restart wrapper: `restarts` seeded runs, best result kept.
+#[must_use]
 pub fn run_restarts(
     g: &Graph,
     variant: Variant,

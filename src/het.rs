@@ -7,9 +7,9 @@
 //! class updates as one parallel block — the same chromatic structure as [`crate::gibbs`], which
 //! remains the fast path for the pure-spin pairwise case.
 //!
-//! Energy convention: E(s) = sum over factors f of table_f[index(states of f's nodes)], with
+//! Energy convention: E(s) = sum over factors f of `table_f`[index(states of f's nodes)], with
 //! row-major indexing in node order (spin contributes dimension 2: index 0 = -1, index 1 = +1).
-//! The conditional of node i enumerates its K_i states against the current neighbours:
+//! The conditional of node i enumerates its `K_i` states against the current neighbours:
 //! p(k) proportional to exp(-beta * sum of touching-factor entries).
 
 use crate::rng::Pcg;
@@ -22,6 +22,7 @@ pub enum Kind {
 }
 
 impl Kind {
+    #[must_use]
     pub fn states(&self) -> usize {
         match self {
             Kind::Spin => 2,
@@ -51,6 +52,7 @@ pub struct HetBuilder {
 }
 
 impl HetBuilder {
+    #[must_use]
     pub fn new() -> Self {
         HetBuilder { kinds: Vec::new(), factors: Vec::new() }
     }
@@ -64,7 +66,7 @@ impl HetBuilder {
         assert_eq!(table.len(), want, "table length {} != product of state spaces {}", table.len(), want);
         self.factors.push(Factor { nodes, table });
     }
-    /// Convenience: pairwise spin coupling J (energy -J s_i s_j).
+    /// Convenience: pairwise spin coupling J (energy -J `s_i` `s_j`).
     pub fn couple_spins(&mut self, i: u32, j: u32, jij: f64) {
         self.factor(vec![i, j], vec![-jij, jij, jij, -jij]);
     }
@@ -72,6 +74,7 @@ impl HetBuilder {
     pub fn bias_spin(&mut self, i: u32, h: f64) {
         self.factor(vec![i], vec![h, -h]);
     }
+    #[must_use]
     pub fn build(self) -> HetGraph {
         let n = self.kinds.len();
         let mut touching: Vec<Vec<u32>> = vec![Vec::new(); n];
@@ -113,6 +116,7 @@ impl Default for HetBuilder {
 }
 
 impl HetGraph {
+    #[must_use]
     pub fn n(&self) -> usize {
         self.kinds.len()
     }
@@ -127,6 +131,7 @@ impl HetGraph {
     }
 
     /// Total energy of a full state (each entry the node's state index).
+    #[must_use]
     pub fn energy(&self, state: &[u8]) -> f64 {
         self.factors.iter().map(|f| f.table[self.f_index(f, state)]).sum()
     }
@@ -154,6 +159,7 @@ pub struct HetSampler<'g> {
 }
 
 impl<'g> HetSampler<'g> {
+    #[must_use]
     pub fn new(g: &'g HetGraph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x4E7);
         let state = (0..g.n())
@@ -189,7 +195,7 @@ impl<'g> HetSampler<'g> {
                     }
                 }
                 let mut z = 0.0;
-                for p in probs.iter_mut() {
+                for p in &mut probs {
                     *p = (*p - mx).exp();
                     z += *p;
                 }
@@ -220,6 +226,7 @@ impl<'g> HetSampler<'g> {
 
 /// Exact Boltzmann distribution over all joint states (small systems), indexed mixed-radix
 /// big-endian in node order (node 0 is the highest digit, matching factor-table convention).
+#[must_use]
 pub fn exact_boltzmann(g: &HetGraph, beta: f64) -> Vec<f64> {
     let dims: Vec<usize> = (0..g.n()).map(|i| g.kinds[i].states()).collect();
     let total: usize = dims.iter().product();
@@ -244,11 +251,11 @@ pub fn exact_boltzmann(g: &HetGraph, beta: f64) -> Vec<f64> {
         }
     }
     let mut z = 0.0;
-    for v in p.iter_mut() {
+    for v in &mut p {
         *v = (*v - mx).exp();
         z += *v;
     }
-    for v in p.iter_mut() {
+    for v in &mut p {
         *v /= z;
     }
     p

@@ -53,8 +53,9 @@ pub struct DenseMemory {
 }
 
 impl DenseMemory {
+    #[must_use]
     pub fn new(patterns: Vec<Vec<i8>>, energy: Energy) -> Self {
-        let n = patterns.first().map_or(0, |p| p.len());
+        let n = patterns.first().map_or(0, std::vec::Vec::len);
         assert!(n > 0 && patterns.iter().all(|p| p.len() == n));
         if let Energy::Polynomial(k) = energy {
             assert!(k >= 1);
@@ -83,11 +84,13 @@ impl DenseMemory {
     }
 
     /// The overlaps `x_μ = ξ^μ · s`.
+    #[must_use]
     pub fn overlaps(&self, s: &[i8]) -> Vec<f64> {
         self.patterns.iter().map(|p| p.iter().zip(s).map(|(&a, &b)| (a as i32 * b as i32) as f64).sum()).collect()
     }
 
     /// `E(s) = −c Σ_μ F(ξ^μ · s)`.
+    #[must_use]
     pub fn energy_of(&self, s: &[i8]) -> f64 {
         -self.c() * self.overlaps(s).iter().map(|&x| self.f(x)).sum::<f64>()
     }
@@ -105,12 +108,14 @@ impl DenseMemory {
 
     /// Is `s` a fixed point of the zero-temperature single-flip dynamics — does every flip cost
     /// energy? Exact.
+    #[must_use]
     pub fn is_fixed_point(&self, s: &[i8]) -> bool {
         let x = self.overlaps(s);
         (0..self.n).all(|i| self.delta(s, &x, i) > 0.0)
     }
 
     /// The fraction of stored patterns that are fixed points.
+    #[must_use]
     pub fn stable_fraction(&self) -> f64 {
         let k = self.patterns.iter().filter(|p| self.is_fixed_point(p)).count();
         k as f64 / self.patterns.len() as f64
@@ -132,6 +137,7 @@ impl DenseMemory {
     }
 
     /// Retrieve from `start`: `sweeps` heat-bath sweeps at `beta`, returning the final state.
+    #[must_use]
     pub fn retrieve(&self, start: &[i8], beta: f64, sweeps: usize, seed: u64) -> Vec<i8> {
         let mut s = start.to_vec();
         let mut rng = Pcg::new(seed, 13);
@@ -147,7 +153,7 @@ impl DenseMemory {
     pub fn attention_update(&self, query: &[f64], beta: f64) -> Vec<f64> {
         assert_eq!(query.len(), self.n);
         let logits: Vec<f64> = self.patterns.iter().map(|p| beta * p.iter().zip(query).map(|(&a, &q)| a as f64 * q).sum::<f64>()).collect();
-        let mx = logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let mx = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let w: Vec<f64> = logits.iter().map(|l| (l - mx).exp()).collect();
         let z: f64 = w.iter().sum();
         let mut out = vec![0.0; self.n];
@@ -172,6 +178,7 @@ impl DenseMemory {
 /// The number of length-`k` sequences over `n` symbols whose set of odd-multiplicity symbols is a
 /// FIXED `r`-subset: `k! [x^k] sinh(x)^r cosh(x)^{n−r}`. This is the multinomial weight a monomial
 /// `Π_{i∈S} s_i` receives when `(Σ_i a_i s_i)^k` is expanded over `±1` spins with `a_i² = 1`.
+#[must_use]
 pub fn odd_set_count(k: usize, r: usize, n: usize) -> f64 {
     assert!(r <= k && r <= n);
     // truncated power series in x up to degree k, coefficients as f64
@@ -283,12 +290,14 @@ impl DenseMemory {
 }
 
 /// `pattern` with a random `fraction` of its spins flipped.
+#[must_use]
 pub fn corrupt(pattern: &[i8], fraction: f64, seed: u64) -> Vec<i8> {
     let mut rng = Pcg::new(seed, 17);
     pattern.iter().map(|&v| if rng.f64() < fraction { -v } else { v }).collect()
 }
 
 /// `(1/N) Σ_i ξ_i s_i`.
+#[must_use]
 pub fn overlap(pattern: &[i8], s: &[i8]) -> f64 {
     crate::hopfield::overlap(pattern, s)
 }
@@ -298,7 +307,7 @@ mod tests {
     use super::*;
     use crate::hopfield::{hebbian, random_patterns};
 
-    /// Degree 2 IS the classical memory: E_dense(s) = E_Hebb(s) − P/2 for every state.
+    /// Degree 2 IS the classical memory: `E_dense(s)` = `E_Hebb(s)` − P/2 for every state.
     #[test]
     fn degree_two_is_the_hebbian_energy_up_to_a_constant() {
         let pats = random_patterns(24, 5, 1);

@@ -23,7 +23,7 @@
 //!
 //! # Backends
 //!
-//! - **macOS**: `macmon pipe`, which reads the SoC's own power counters. Detected on `PATH`.
+//! - **macOS**: `macmon pipe`, which reads the `SoC`'s own power counters. Detected on `PATH`.
 //! - **Jetson / Linux**: [`ina3221`], the shunt monitors on the board. Rail discovery, label
 //!   matching, both driver layouts and both unit conversions are tested against fixture
 //!   directories; **no reading has been taken from real hardware**, because the Jetson on this
@@ -110,7 +110,7 @@ pub struct Meter {
 /// anything, and they silently were not: RAPL `package-0` on a laptop with a DISCRETE RTX 4050
 /// reported the GPU arm of a duty-cycle run as 5.5 W marginal, because the card's draw never enters
 /// the CPU package counter. The number was small, plausible, and about the cost of FEEDING the
-/// GPU rather than running it. On an Apple SoC the same code was correct, because `sys_power`
+/// GPU rather than running it. On an Apple `SoC` the same code was correct, because `sys_power`
 /// covers the whole package including the GPU — so the error appears only when the backend changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -199,6 +199,7 @@ impl Meter {
     ///
     /// `None` when no INA3221 is present or readable. See [`ina3221`] for what is tested and what
     /// is not -- no reading from this path has come from real hardware.
+    #[must_use]
     pub fn ina3221() -> Option<Meter> {
         let rails = ina3221::Rails::detect().ok()?;
         let machine = format!("INA3221 rail {}", rails.total().label);
@@ -230,6 +231,7 @@ impl Meter {
     /// See the `rapl` module for the domain that lies: `psys` is documented as whole-platform, reads 0.2 W
     /// on the machine this was written against whether idle or running twenty busy cores, and is
     /// rejected by checking it against the package it is supposed to contain.
+    #[must_use]
     pub fn rapl() -> Option<Meter> {
         let (domain, kind) = rapl::choose()?;
         let readings: Arc<Mutex<Vec<(Instant, f64)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -273,7 +275,8 @@ impl Meter {
         Some(m)
     }
 
-    /// The macOS backend: `macmon pipe`, reading the SoC's own counters.
+    /// The macOS backend: `macmon pipe`, reading the `SoC`'s own counters.
+    #[must_use]
     pub fn macmon() -> Option<Meter> {
         let mut child = Command::new("macmon")
             .args(["pipe", "-s", "0", "-i", &INTERVAL_MS.to_string()])
@@ -338,10 +341,12 @@ impl Meter {
 
     /// What this is measuring.
     /// What this backend's readings cover. Check it before attributing a run to a device.
+    #[must_use]
     pub fn scope(&self) -> Scope {
         self.scope
     }
 
+    #[must_use]
     pub fn machine(&self) -> &str {
         &self.machine
     }

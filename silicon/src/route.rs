@@ -41,7 +41,7 @@ pub fn parse_tileconn(text: &str) -> Result<Vec<Conn>, String> {
         let mut map = HashMap::new();
         for p in pairs {
             if let Json::Arr(pair) = p
-                && let (Some(a), Some(b)) = (pair.first().and_then(|x| x.as_str()), pair.get(1).and_then(|x| x.as_str())) {
+                && let (Some(a), Some(b)) = (pair.first().and_then(super::json::Json::as_str), pair.get(1).and_then(super::json::Json::as_str)) {
                     map.insert(a.to_string(), b.to_string());
                 }
         }
@@ -69,6 +69,7 @@ pub struct RouteStep {
 
 impl RouteStep {
     /// The segbits feature that turns this PIP on.
+    #[must_use]
     pub fn feature(&self) -> String {
         self.pip.feature(&self.tile_type)
     }
@@ -82,7 +83,7 @@ pub struct Fabric<'g> {
     /// zero cost and emitting no bits. `default` and `hint` are router metadata, not conductors.
     pub ppips: HashMap<String, crate::pips::Ppips>,
     pub conns: Vec<Conn>,
-    /// (grid_x, grid_y) -> tile name
+    /// (`grid_x`, `grid_y`) -> tile name
     at: HashMap<(u32, u32), String>,
     /// tile type -> indices of conns that start there
     from_type: HashMap<String, Vec<usize>>,
@@ -90,10 +91,12 @@ pub struct Fabric<'g> {
 }
 
 impl<'g> Fabric<'g> {
+    #[must_use]
     pub fn new(grid: &'g TileGrid, pipdbs: HashMap<String, PipDb>, conns: Vec<Conn>) -> Fabric<'g> {
         Self::with_ppips(grid, pipdbs, HashMap::new(), conns)
     }
 
+    #[must_use]
     pub fn with_ppips(
         grid: &'g TileGrid,
         pipdbs: HashMap<String, PipDb>,
@@ -118,6 +121,7 @@ impl<'g> Fabric<'g> {
     }
 
     /// Successors of a node: PIP hops inside the tile, plus wire continuations into neighbours.
+    #[must_use]
     pub fn successors(&self, node: &Node) -> Vec<(Node, Option<RouteStep>)> {
         let mut out = Vec::new();
         let Some(tile) = self.grid.tiles.get(&node.0) else { return out };
@@ -126,7 +130,7 @@ impl<'g> Fabric<'g> {
             for p in db.from(&node.1) {
                 let feat = p.feature(&tile.kind);
                 let kind = self.ppips.get(&tile.kind).and_then(|pp| pp.kinds.get(&feat));
-                let step = match kind.map(|s| s.as_str()) {
+                let step = match kind.map(std::string::String::as_str) {
                     // permanent wiring: usable, but there is nothing to configure
                     Some("always") => None,
                     // fallback drivers and router hints are not conductors we may rely on
@@ -228,11 +232,13 @@ impl<'g> Fabric<'g> {
 /// break and terminator tiles that continue wires across clock-region and die boundaries.
 /// Excluding the break tiles silently breaks every route that crosses a clock region — the
 /// symptom is a handful of links failing while their neighbours succeed.
+#[must_use]
 pub fn is_interconnect(kind: &str) -> bool {
     kind.starts_with("INT_") || kind.starts_with("BRKH_") || kind.ends_with("_TERM_INT")
 }
 
 /// The default expansion rule: interconnect tiles only.
+#[must_use]
 pub fn interconnect_only(_name: &str, kind: &str) -> bool {
     is_interconnect(kind)
 }
@@ -339,6 +345,6 @@ mod tests {
         let c = parse_tileconn(src).unwrap();
         assert_eq!(c.len(), 1);
         assert_eq!((c[0].dx, c[0].dy), (1, 0));
-        assert_eq!(c[0].pairs.get("EE2A1").map(|s| s.as_str()), Some("EE2END1"));
+        assert_eq!(c[0].pairs.get("EE2A1").map(std::string::String::as_str), Some("EE2END1"));
     }
 }

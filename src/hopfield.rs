@@ -30,14 +30,16 @@ use crate::rng::Pcg;
 use crate::samples::Estimate;
 
 /// `p` random patterns of `n` spins.
+#[must_use]
 pub fn random_patterns(n: usize, p: usize, seed: u64) -> Vec<Vec<i8>> {
     let mut rng = Pcg::new(seed, 7);
     (0..p).map(|_| (0..n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect()).collect()
 }
 
 /// The Hebbian couplings `J_ij = (1/N) Σ_μ ξ_i^μ ξ_j^μ` for `i ≠ j`, as a dense graph.
+#[must_use]
 pub fn hebbian(patterns: &[Vec<i8>]) -> Graph {
-    let n = patterns.first().map_or(0, |p| p.len());
+    let n = patterns.first().map_or(0, std::vec::Vec::len);
     assert!(patterns.iter().all(|p| p.len() == n));
     let mut gb = GraphBuilder::new(n);
     for i in 0..n {
@@ -52,11 +54,13 @@ pub fn hebbian(patterns: &[Vec<i8>]) -> Graph {
 }
 
 /// The overlap `(1/N) Σ_i ξ_i s_i` of a state with a pattern.
+#[must_use]
 pub fn overlap(pattern: &[i8], s: &[i8]) -> f64 {
     pattern.iter().zip(s).map(|(&a, &b)| (a as i32 * b as i32) as f64).sum::<f64>() / pattern.len() as f64
 }
 
 /// Curie–Weiss: the positive solution of `m = tanh(βm)`, or `0` for `β ≤ 1`.
+#[must_use]
 pub fn curie_weiss_m(beta: f64) -> f64 {
     if beta <= 1.0 {
         return 0.0;
@@ -74,6 +78,7 @@ pub fn curie_weiss_m(beta: f64) -> f64 {
 }
 
 /// Gauss–Hermite nodes and weights for `∫ e^{−t²} f(t) dt`, `n` points (physicists' convention).
+#[must_use]
 pub fn gauss_hermite(n: usize) -> (Vec<f64>, Vec<f64>) {
     assert!(n >= 2);
     let mut x = vec![0.0; n];
@@ -134,6 +139,7 @@ pub struct RsSolution {
 
 /// Solve the AGS replica-symmetric equations by damped fixed-point iteration from the retrieval
 /// side (`m = 1`). If the iteration collapses to `m ≈ 0` there is no retrieval state at `(α, β)`.
+#[must_use]
 pub fn ags_rs(alpha: f64, beta: f64) -> RsSolution {
     assert!(alpha >= 0.0 && beta > 0.0);
     let (mut m, mut q, mut r) = (1.0f64, 1.0f64, 1.0f64);
@@ -163,6 +169,7 @@ pub fn ags_rs(alpha: f64, beta: f64) -> RsSolution {
 /// 7.1.26 rational approximation, whose `1.5e-7` error was invisible in the `T = 0` AGS equations
 /// but put `perceptron::gardner_capacity(0)` at `1.9999999980` where the theory says exactly 2.
 /// Beyond `|x| = 5` the complement is below `1.5e-12` and the sign is returned directly.
+#[must_use]
 pub fn erf(x: f64) -> f64 {
     let ax = x.abs();
     if ax > 5.0 {
@@ -192,6 +199,7 @@ pub fn erf(x: f64) -> f64 {
 ///
 /// iterated from the retrieval side. `None` when no retrieval solution survives — `C` reaches 1
 /// or `m` collapses — which happens above the capacity `α_c ≈ 0.138`.
+#[must_use]
 pub fn ags_zero_t(alpha: f64) -> Option<RsSolution> {
     assert!(alpha > 0.0);
     let (mut m, mut r) = (1.0f64, 1.0f64);
@@ -218,6 +226,7 @@ pub fn ags_zero_t(alpha: f64) -> Option<RsSolution> {
 
 /// The `T = 0` capacity: the largest load with a retrieval solution, by bisection on
 /// [`ags_zero_t`] to `1e-6`. The replica-symmetric value is `≈ 0.138`.
+#[must_use]
 pub fn capacity_zero_t() -> f64 {
     let (mut lo, mut hi) = (0.05, 0.30);
     for _ in 0..60 {
@@ -233,6 +242,7 @@ pub fn capacity_zero_t() -> f64 {
 
 /// Retrieval measured: a chain started at `pattern`, `burn_in` sweeps, then `draws` sweeps each
 /// recording the overlap, with an error bar from the trace's autocorrelation.
+#[must_use]
 pub fn retrieval_overlap(g: &Graph, pattern: &[i8], beta: f64, burn_in: usize, draws: usize, seed: u64) -> Estimate {
     let mut sm = Sampler::new(g, beta, seed);
     sm.s.copy_from_slice(pattern);

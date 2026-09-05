@@ -97,7 +97,7 @@ impl Plant {
         for i in 0..n { a[i*n+i] = 0.85; a[i*n + (i+1)%n] = 0.10; }
         Plant { n, a, b: eye(n,1.0), q: eye(n,1.0), r: eye(n,0.5) }
     }
-    /// Iterate the DARE to a fixed point: P = Q + AᵀPA − AᵀPB(R + BᵀPB)⁻¹BᵀPA.
+    /// Iterate the DARE to a fixed point: P = Q + `AᵀPA` − AᵀPB(R + BᵀPB)⁻¹BᵀPA.
     fn riccati(&self) -> Vec<f64> {
         let n = self.n;
         let (at, bt) = (t(&self.a, n), t(&self.b, n));
@@ -149,7 +149,7 @@ fn mppi_cost(p: &Plant, rollouts: usize, passes: usize, horizon: usize,
                     xs = p.step(&xs, &u);
                 }
             }
-            let best = costs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let best = costs.iter().copied().fold(f64::INFINITY, f64::min);
             let w: Vec<f64> = costs.iter().map(|c| (-(c - best)/lambda).exp()).collect();
             let sw: f64 = w.iter().sum();
             for h in 0..horizon { for d in 0..n {

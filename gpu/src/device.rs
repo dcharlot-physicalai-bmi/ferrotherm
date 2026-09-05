@@ -56,16 +56,19 @@ impl GpuDevice {
     /// `None` means **not found here**, never "impossible" — the same contract as
     /// [`Gpu::new`](crate::Gpu::new), and worth preserving because a headless CI runner is the
     /// common case and every test around this skips rather than fails on it.
+    #[must_use]
     pub fn open() -> Option<GpuDevice> {
         Some(GpuDevice::with(crate::Gpu::new()?))
     }
 
     /// Wrap an adapter already opened, so a caller that enumerated once does not enumerate again.
+    #[must_use]
     pub fn with(gpu: crate::Gpu) -> GpuDevice {
         GpuDevice { gpu, model: None, graph: None, state: Vec::new(), ledger: Ledger::default() }
     }
 
     /// What the driver reports, for a caller that needs to know whether this is real silicon.
+    #[must_use]
     pub fn adapter(&self) -> &wgpu::AdapterInfo {
         self.gpu.adapter()
     }

@@ -71,6 +71,7 @@ impl Planted {
     ///
     /// This is the number a benchmark should report, and it is only computable because the optimum
     /// is known rather than assumed to be the best anyone has found.
+    #[must_use]
     pub fn excess(&self, s: &[i8]) -> f64 {
         let e = self.graph.energy(s);
         if self.ground_energy.abs() < 1e-12 {
@@ -91,6 +92,7 @@ impl Planted {
 /// Each planted loop is an elementary 4-cycle with one bond reversed, contributing exactly `-2` to
 /// the ground energy. `loops` controls frustration density: more loops on the same lattice means
 /// more competing constraints and a harder instance.
+#[must_use]
 pub fn frustrated_loops(l: usize, loops: usize, seed: u64) -> Planted {
     assert!(l >= 3, "a periodic lattice smaller than 3x3 has degenerate plaquettes");
     assert!(loops >= 1, "an instance with no frustration is a ferromagnet");
@@ -301,6 +303,7 @@ fn gauss(rng: &mut Pcg) -> f64 {
 /// under 2% at the hardest setting: the landscape is dense with near-degenerate minima, so a solver
 /// gets very close and still misses. Any benchmark reporting mean excess would call this family
 /// easy. Report the solve rate.
+#[must_use]
 pub fn wishart(n: usize, alpha: f64, seed: u64) -> Planted {
     assert!(n >= 3, "a Wishart instance needs at least 3 spins");
     assert!(alpha > 0.0, "alpha must be positive");

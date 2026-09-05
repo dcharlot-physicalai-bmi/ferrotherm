@@ -8,7 +8,7 @@
 //!
 //! # Capabilities are declared, and precision is first-class
 //!
-//! The motivating failure is real and recent. QBoson's coupling weights are int8, that limit is the
+//! The motivating failure is real and recent. `QBoson`'s coupling weights are int8, that limit is the
 //! binding constraint on their entire platform, it appears nowhere in their documentation, and a
 //! third party had to discover it by running experiments. A model quantised from `f64` to `int8`
 //! still runs; it just answers a different question, and nothing tells you.
@@ -178,9 +178,11 @@ pub struct Range {
 }
 
 impl Range {
+    #[must_use]
     pub const fn continuous(lo: f64, hi: f64) -> Range {
         Range { lo, hi, integral: false }
     }
+    #[must_use]
     pub const fn integers(lo: f64, hi: f64) -> Range {
         Range { lo, hi, integral: true }
     }
@@ -199,6 +201,7 @@ impl Range {
     /// neither. Taking the smaller endpoint gives 0 for the second, which scales every coefficient
     /// in the program to zero; taking the larger gives 2 for the first, permitting a `+2` coupling
     /// the machine cannot hold. Both were wrong here, and the first shipped.
+    #[must_use]
     pub fn headroom_for(&self, v: f64) -> f64 {
         if v > 0.0 {
             self.hi / v
@@ -276,6 +279,7 @@ impl Verdict {
         self.caveats.is_empty()
     }
     /// Every reason this is not a promise.
+    #[must_use]
     pub fn caveats(&self) -> &[Caveat] {
         &self.caveats
     }
@@ -365,6 +369,7 @@ impl core::fmt::Display for Unsupported {
 
 impl Fabric {
     /// A simulator: no limits, full precision.
+    #[must_use]
     pub fn unconstrained(name: &'static str, prices: Prices) -> Fabric {
         Fabric {
             name,
@@ -398,7 +403,7 @@ impl Fabric {
     /// coefficients are not in a fixed ratio to each other, and shrinking to fit would collapse
     /// small couplings to zero.
     pub fn scale_to_fit(&self, p: &Program) -> Option<f64> {
-        let couplings: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let couplings: Vec<f64> = p.factors.iter().map(super::factor::Factor::weight).collect();
         let fields: Vec<f64> = p.bias.iter().map(|(_, h)| *h).collect();
 
         // The tightest constraint any single coefficient imposes, over both ranges.
@@ -435,8 +440,8 @@ impl Fabric {
         // computed to satisfy. Verify against the same predicate `check` uses — a scale_to_fit
         // whose result does not pass check is worse than no answer at all.
         let fits = |s: f64| {
-            self.coupling_range.map(|r| couplings.iter().all(|&v| r.holds(v * s))).unwrap_or(true)
-                && self.field_range.map(|r| fields.iter().all(|&v| r.holds(v * s))).unwrap_or(true)
+            self.coupling_range.is_none_or(|r| couplings.iter().all(|&v| r.holds(v * s)))
+                && self.field_range.is_none_or(|r| fields.iter().all(|&v| r.holds(v * s)))
         };
 
         if !lands(s) {
@@ -539,6 +544,7 @@ impl Fabric {
     /// minimises an Ising energy and holds no temperature you set, so a [`crate::certify`]
     /// certificate has no β to check it against. And it does not place one variable per qubit —
     /// see `native_placement`.
+    #[must_use]
     pub fn dwave_advantage2(prices: Prices) -> Fabric {
         Fabric {
             name: "dwave-advantage2",
@@ -567,6 +573,7 @@ impl Fabric {
     /// D-Wave Advantage — Pegasus, 5,640 qubits at 15-way connectivity, from D-Wave's topology
     /// documentation. More qubits than Advantage2 and fewer couplers each, which is the trade the
     /// newer topology reverses.
+    #[must_use]
     pub fn dwave_advantage(prices: Prices) -> Fabric {
         Fabric {
             name: "dwave-advantage",
@@ -601,6 +608,7 @@ impl Fabric {
     /// Note the vendor's own marketing pages quote 8,192 bits and 64-bit gradation for an earlier
     /// generation. The API documentation is what a submission is actually checked against, so it is
     /// what is declared.
+    #[must_use]
     pub fn fujitsu_da3(prices: Prices) -> Fabric {
         Fabric {
             name: "fujitsu-da3",
@@ -636,6 +644,7 @@ impl Fabric {
     /// SQBM+ also offers a PUBO solver taking terms up to **order 4**, which most fabrics cannot
     /// express at all. This declares the QUBO solver, which is what a pairwise `.ftp` maps onto;
     /// a higher-order fabric would be a separate declaration rather than a wider `max_arity` here.
+    #[must_use]
     pub fn toshiba_sqbm(prices: Prices) -> Fabric {
         Fabric {
             name: "toshiba-sqbm-qubo",
@@ -666,6 +675,7 @@ impl Fabric {
     /// a three- or four-body model runs **without** [`crate::reduce`] — no ancillas, no penalty, no
     /// distribution caveat. That is a real difference to a caller and it should be visible in the
     /// declaration rather than in a comment.
+    #[must_use]
     pub fn toshiba_sqbm_pubo(prices: Prices) -> Fabric {
         Fabric {
             name: "toshiba-sqbm-pubo",
@@ -685,7 +695,7 @@ impl Fabric {
         }
     }
 
-    /// QBoson CPQC — a coherent Ising machine, from the Kaiwu SDK's own documentation.
+    /// `QBoson` CPQC — a coherent Ising machine, from the Kaiwu SDK's own documentation.
     ///
     /// An optical machine: a network of degenerate optical parametric oscillators whose steady
     /// state encodes the Ising ground state, with the couplings applied in measurement feedback
@@ -716,6 +726,7 @@ impl Fabric {
     /// it is in the SDK documentation rather than a datasheet, which is where this review had
     /// looked. The claim it is replacing is the reason the wording of an absence matters — "we did
     /// not find it" would have survived being wrong; "it does not exist" did not.
+    #[must_use]
     pub fn qboson_cpqc(prices: Prices) -> Fabric {
         Fabric {
             name: "qboson-cpqc",
@@ -770,6 +781,7 @@ impl Fabric {
     ///
     /// **An empty result is not a promise that the program will run** — see [`Fabric::verdict`],
     /// which says so in the type rather than leaving a caller to read silence as a yes.
+    #[must_use]
     pub fn check(&self, p: &Program) -> Vec<Unsupported> {
         let mut out = Vec::new();
 
@@ -862,8 +874,8 @@ impl Fabric {
         // is not there — it derives a step by rescaling the largest coefficient, which describes a
         // fabric that normalises its input, not one whose grid is the integers. Two statements of
         // the same limit disagreeing is worse than one, so the range wins where it is present.
-        let field_grid = self.field_range.map(|r| r.integral).unwrap_or(false);
-        let coupling_grid = self.coupling_range.map(|r| r.integral).unwrap_or(false);
+        let field_grid = self.field_range.is_some_and(|r| r.integral);
+        let coupling_grid = self.coupling_range.is_some_and(|r| r.integral);
 
         let field_err =
             if field_grid { 0.0 } else { self.field_precision.worst_relative_error(&fields) };
@@ -899,8 +911,9 @@ impl Fabric {
     }
 
     /// Worst relative error that quantising this program's couplings to `bits` would introduce.
+    #[must_use]
     pub fn quantization_error(p: &Program, bits: u32) -> f64 {
-        Self::quantization_error_of(&p.factors.iter().map(|f| f.weight()).collect::<Vec<_>>(), bits)
+        Self::quantization_error_of(&p.factors.iter().map(super::factor::Factor::weight).collect::<Vec<_>>(), bits)
     }
 
     /// The worst relative error quantising these values to `bits` signed bits would introduce.
@@ -938,7 +951,7 @@ impl Fabric {
         if bits == 0 {
             return 0.0;
         }
-        let weights: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let weights: Vec<f64> = p.factors.iter().map(super::factor::Factor::weight).collect();
         let err = self.coupling_precision.worst_relative_error(&weights);
         let max = weights.iter().map(|w| w.abs()).fold(0.0f64, f64::max);
         if max == 0.0 || bits == 1 {
@@ -1685,7 +1698,7 @@ mod tests {
         assert_eq!(bad.len(), 4, "every violation at once, not just the first: {bad:?}");
 
         // and each says what to do about it
-        let text = bad.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(" | ");
+        let text = bad.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(" | ");
         assert!(text.contains("sparsify"), "the degree error should suggest a fix: {text}");
         assert!(text.contains("pairwise"), "the arity error should suggest a fix: {text}");
     }
@@ -1714,9 +1727,9 @@ mod tests {
     #[test]
     fn requantizing_reports_the_damage_it_did() {
         let mut p = prog("ftp 1\nspins 3\nfactor 1000 0 1\nfactor 0.5 1 2\n");
-        let before: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let before: Vec<f64> = p.factors.iter().map(super::super::factor::Factor::weight).collect();
         let err = constrained().requantize(&mut p);
-        let after: Vec<f64> = p.factors.iter().map(|f| f.weight()).collect();
+        let after: Vec<f64> = p.factors.iter().map(super::super::factor::Factor::weight).collect();
         assert!(err > 1e-3, "it should admit a real loss, got {err}");
         assert_ne!(before, after, "and it should actually have changed the weights");
         // afterwards the program fits the fabric it was quantised for

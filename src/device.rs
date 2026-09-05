@@ -13,6 +13,7 @@ pub const Z1_RULES: [(i64, i64); 4] = [(1, 0), (2, 1), (2, 3), (4, 1)];
 
 /// Build a Z1-style grid graph of `w x h` nodes with uniform coupling `j` and bias `bias`.
 /// Node index = y * w + x. Open boundaries (edge nodes have lower degree, as on a real die).
+#[must_use]
 pub fn z1_grid(w: usize, h: usize, j: f64, bias: f64) -> Graph {
     let mut gb = GraphBuilder::new(w * h);
     let rots = |a: i64, b: i64| [(a, b), (-b, a), (-a, -b), (b, -a)];
@@ -39,6 +40,7 @@ pub fn z1_grid(w: usize, h: usize, j: f64, bias: f64) -> Graph {
 }
 
 /// Checkerboard parity of a grid node — the 2-coloring the odd-Manhattan rules guarantee.
+#[must_use]
 pub fn parity(w: usize, i: usize) -> u8 {
     let (x, y) = (i % w, i / w);
     ((x + y) % 2) as u8
@@ -112,6 +114,7 @@ impl core::fmt::Debug for Topology {
 
 impl Topology {
     /// The vendor's linear qubit index for one of our nodes.
+    #[must_use]
     pub fn qubit(&self, node: usize) -> Option<u32> {
         self.qubits.get(node).copied()
     }
@@ -121,6 +124,7 @@ impl Topology {
     /// `None` is a real answer, not a lookup failure: Pegasus's linear indexing covers qubits its
     /// fabric does not contain, and a caller reading a machine's output back needs to know which
     /// of those it just received.
+    #[must_use]
     pub fn node(&self, qubit: u32) -> Option<usize> {
         self.qubits.binary_search(&qubit).ok()
     }
@@ -184,6 +188,7 @@ const PEGASUS_OFF: [[usize; 12]; 2] = [
 /// [`crate::fabric`] ask.
 ///
 /// Returns an empty topology for `m < 2`, matching the reference: `P₁` has no qubits.
+#[must_use]
 pub fn pegasus(m: usize, j: f64) -> Topology {
     if m < 2 {
         return Topology { graph: GraphBuilder::new(0).build(), qubits: Vec::new() };
@@ -286,6 +291,7 @@ fn z_plus(shifted: bool) -> usize {
 ///
 /// `t` is the tile parameter and is 4 on every shipped machine. Returns an empty topology when
 /// `m` or `t` is zero.
+#[must_use]
 pub fn zephyr(m: usize, t: usize, j: f64) -> Topology {
     if m == 0 || t == 0 {
         return Topology { graph: GraphBuilder::new(0).build(), qubits: Vec::new() };
@@ -451,7 +457,7 @@ mod topology_tests {
                                "{name}: adjacent nodes share a colour");
                 }
             }
-            assert_eq!(g.classes.iter().map(|c| c.len()).sum::<usize>(), g.n,
+            assert_eq!(g.classes.iter().map(std::vec::Vec::len).sum::<usize>(), g.n,
                        "{name}: every node lands in exactly one class");
             let mut s = crate::gibbs::Sampler::new(g, 0.3, 7);
             let set = s.collect(&crate::samples::Plan::new(200, 200, 1), None);

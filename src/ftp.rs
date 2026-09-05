@@ -104,6 +104,7 @@ fn err<T>(line: usize, message: impl Into<String>) -> Result<T, FtpError> {
 
 impl Program {
     /// Build a program from a graph and a schedule.
+    #[must_use]
     pub fn from_graph(g: &Graph, schedule: &Schedule) -> Program {
         let mut factors = Vec::new();
         for i in 0..g.n {
@@ -157,6 +158,7 @@ impl Program {
     }
 
     /// Serialise. The output re-parses to an equal program and re-writes byte-identically.
+    #[must_use]
     pub fn to_ftp(&self) -> String {
         let mut o = String::new();
         o.push_str(&format!("ftp {VERSION}\n"));
@@ -373,6 +375,7 @@ impl Program {
     ///
     /// FNV-1a over the serialisation. Not a security hash and not claimed to be one; it answers
     /// "is this the same program" and nothing else.
+    #[must_use]
     pub fn digest(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for b in self.to_ftp().as_bytes() {

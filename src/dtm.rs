@@ -15,18 +15,20 @@ use crate::rng::Pcg;
 
 /// Gamma(t) = ln( (1 + (M-1) e^{-gamma t}) / (1 - e^{-gamma t}) ) — the coupling strength that
 /// writes the closed-form jump kernel as (1/Z) exp(Gamma * delta_{x', x}).
+#[must_use]
 pub fn gamma_coupling(gamma: f64, t: f64, m: usize) -> f64 {
     let e = (-gamma * t).exp();
     ((1.0 + (m as f64 - 1.0) * e) / (1.0 - e)).ln()
 }
 
 /// Keep-probability of the M-state uniform-jump kernel over time t.
+#[must_use]
 pub fn keep_prob(gamma: f64, t: f64, m: usize) -> f64 {
     let e = (-gamma * t).exp();
     (1.0 + (m as f64 - 1.0) * e) / m as f64
 }
 
-/// One forward step for binary spins: each site keeps its value w.p. keep_prob, else flips.
+/// One forward step for binary spins: each site keeps its value w.p. `keep_prob`, else flips.
 pub fn forward_step(x: &mut [i8], gamma: f64, dt: f64, rng: &mut Pcg) {
     let keep = keep_prob(gamma, dt, 2);
     for s in x.iter_mut() {
@@ -45,6 +47,7 @@ pub const G12: [(i64, i64); 3] = [(0, 1), (4, 1), (9, 10)];
 pub const G16: [(i64, i64); 4] = [(0, 1), (4, 1), (8, 7), (14, 9)];
 
 /// Edge list of an L x L pattern grid (open boundaries, deduplicated undirected edges).
+#[must_use]
 pub fn pattern_grid(l: usize, rules: &[(i64, i64)]) -> Vec<(u32, u32)> {
     let mut edges = Vec::new();
     for y in 0..l as i64 {
@@ -89,6 +92,7 @@ pub struct Ebm {
 }
 
 impl Ebm {
+    #[must_use]
     pub fn new(n: usize, edges: Vec<(u16, u16)>) -> Ebm {
         // Endpoints are u16 while `n` is usize, so an n past the u16 space means a caller narrowing
         // its own indices aliases them and builds a DIFFERENT GRAPH without error: every truncated
@@ -160,6 +164,7 @@ impl Ebm {
         Ebm { n, edges, j: vec![0.0; ne], h: vec![0.0; n], offset, nbr, eidx, classes, bipartite }
     }
 
+    #[must_use]
     pub fn is_bipartite(&self) -> bool {
         // The BFS above already knows. This used to re-infer it as `!classes[1].is_empty()`, which
         // is a different question: a graph with NO EDGES is bipartite, every node lands in class 0,
@@ -168,6 +173,7 @@ impl Ebm {
         self.bipartite
     }
 
+    #[must_use]
     pub fn energy(&self, s: &[i8]) -> f64 {
         let mut e = 0.0;
         for (k, &(a, b)) in self.edges.iter().enumerate() {
@@ -191,7 +197,7 @@ impl Ebm {
 
     /// Gibbs sweeps over the nodes in `free`, with per-node extra external fields.
     pub fn gibbs(&self, s: &mut [i8], free: &[usize], extra: &[f64], sweeps: usize, rng: &mut Pcg) {
-        self.gibbs_at(s, free, extra, sweeps, 1.0, rng)
+        self.gibbs_at(s, free, extra, sweeps, 1.0, rng);
     }
 
     /// As [`Self::gibbs`], with beta as a runtime parameter.
@@ -214,7 +220,7 @@ impl Ebm {
 
     /// Chromatic sweeps over ALL nodes: two half sweeps per sweep, the schedule hardware uses.
     pub fn gibbs_chromatic(&self, s: &mut [i8], extra: &[f64], sweeps: usize, rng: &mut Pcg) {
-        self.gibbs_chromatic_at(s, extra, sweeps, 1.0, rng)
+        self.gibbs_chromatic_at(s, extra, sweeps, 1.0, rng);
     }
 
     /// As [`Self::gibbs_chromatic`], with beta as a runtime parameter.
@@ -255,7 +261,7 @@ impl Ebm {
 // ---------- the DTM ----------
 
 /// A T-step DTM over `n` sites per step (first `nv` visible, rest latent), binary spins,
-/// uniform forward jump rate `gamma`, step times t_0 < .. < t_T.
+/// uniform forward jump rate `gamma`, step times `t_0` < .. < `t_T`.
 pub struct Dtm {
     pub steps: Vec<Ebm>,
     pub nv: usize,
@@ -264,6 +270,7 @@ pub struct Dtm {
 }
 
 impl Dtm {
+    #[must_use]
     pub fn new(t_steps: usize, n: usize, nv: usize, edges: Vec<(u16, u16)>, gamma: f64, times: Vec<f64>) -> Dtm {
         assert_eq!(times.len(), t_steps + 1);
         Dtm {
@@ -274,7 +281,7 @@ impl Dtm {
         }
     }
 
-    /// The forward-coupling field on visible site i from the clamped x^t value: Gamma(dt)/2 * x^t_i.
+    /// The forward-coupling field on visible site i from the clamped x^t value: Gamma(dt)/2 * `x^t_i`.
     /// (The NEGATIVE-sign energy E^f = -(1/2) sum Gamma x^t x^{t-1}; the paper's printed Eq. D1
     /// sign fails the keep-probability test below.)
     fn clamp_field(&self, t: usize, xt: &[i8]) -> Vec<f64> {
@@ -289,8 +296,8 @@ impl Dtm {
     }
 
     /// One contrastive gradient step at chain position t (0-based: models P(x^t | x^{t+1})),
-    /// from a batch of (x_prev = x^t, x_next = x^{t+1}) pairs, with K Gibbs sweeps per phase.
-    /// Returns the parameter update applied (for inspection). lambda_tc weights the TC penalty.
+    /// from a batch of (`x_prev` = x^t, `x_next` = x^{t+1}) pairs, with K Gibbs sweeps per phase.
+    /// Returns the parameter update applied (for inspection). `lambda_tc` weights the TC penalty.
     pub fn train_step(
         &mut self,
         t: usize,
@@ -355,7 +362,7 @@ impl Dtm {
     }
 
     /// Reverse-chain sampling: x^T uniform, then for t = T-1 down to 0 clamp x^{t+1} and Gibbs
-    /// (x^t, z) jointly for k_mix sweeps. Returns x^0 (visible sites).
+    /// (x^t, z) jointly for `k_mix` sweeps. Returns x^0 (visible sites).
     pub fn sample(&self, k_mix: usize, rng: &mut Pcg) -> Vec<i8> {
         let n = self.steps[0].n;
         let nv = self.nv;
@@ -372,7 +379,8 @@ impl Dtm {
 
     // ---------- exact-enumeration reference machinery (small systems only) ----------
 
-    /// Exact log P_theta(x_prev | x_next) at step t (latents summed out).
+    /// Exact log `P_theta(x_prev` | `x_next`) at step t (latents summed out).
+    #[must_use]
     pub fn exact_log_cond(&self, t: usize, x_prev: &[i8], x_next: &[i8]) -> f64 {
         let n = self.steps[t].n;
         let nv = self.nv;
@@ -396,12 +404,12 @@ impl Dtm {
         // conditional log-probability into NaN at exactly the low temperatures a denoiser runs at.
         // Shifting by the max is exact: it cancels in the ratio.
         let lse = |mut acc: Vec<f64>| -> f64 {
-            let mx = acc.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mx = acc.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             if !mx.is_finite() {
                 return mx; // all -inf, or an already-broken energy; do not manufacture a number
             }
             let mut s = 0.0;
-            for v in acc.iter_mut() {
+            for v in &mut acc {
                 s += (*v - mx).exp();
             }
             mx + s.ln()
@@ -424,8 +432,9 @@ impl Dtm {
         lse(num_l) - lse(den_l)
     }
 
-    /// Exact theta-dependent loss: NLL(theta) = -E_Q[ sum_t ln P_theta(x^t | x^{t+1}) ] where Q
+    /// Exact theta-dependent loss: NLL(theta) = -`E_Q`[ `sum_t` ln `P_theta(x^t` | x^{t+1}) ] where Q
     /// is the exact forward chain from a uniform mixture over `data` patterns.
+    #[must_use]
     pub fn exact_nll(&self, data: &[Vec<i8>]) -> f64 {
         let nv = self.nv;
         let t_steps = self.steps.len();
@@ -484,7 +493,8 @@ impl Dtm {
 }
 
 /// The ACP (autocorrelation-penalty) controller update law (DTM paper, Appendix H):
-/// eps = 0.03, delta = 0.2, lambda_min = 1e-4 are the published defaults.
+/// eps = 0.03, delta = 0.2, `lambda_min` = 1e-4 are the published defaults.
+#[must_use]
 pub fn acp_update(
     lambda: f64,
     a_m: f64,
@@ -509,6 +519,7 @@ pub fn acp_update(
 }
 
 /// Normalized autocorrelation of a series at lag k (time-average estimator).
+#[must_use]
 pub fn autocorr(series: &[f64], k: usize) -> f64 {
     let n = series.len();
     assert!(k < n);
@@ -633,7 +644,7 @@ mod tests {
         }
         let want = [0.01, 0.012, 0.012, 0.0096];
         for (got, want) in traj.iter().zip(&want) {
-            assert!((got - want).abs() < 1e-12, "traj {:?} vs {:?}", traj, want);
+            assert!((got - want).abs() < 1e-12, "traj {traj:?} vs {want:?}");
         }
     }
 
@@ -657,10 +668,10 @@ mod tests {
         // arbitrary small parameters
         let mut rng = Pcg::new(0x601D, 1);
         for t in 0..2 {
-            for j in dtm.steps[t].j.iter_mut() {
+            for j in &mut dtm.steps[t].j {
                 *j = (rng.f64() - 0.5) * 0.6;
             }
-            for h in dtm.steps[t].h.iter_mut() {
+            for h in &mut dtm.steps[t].h {
                 *h = (rng.f64() - 0.5) * 0.4;
             }
         }
@@ -738,10 +749,10 @@ mod tests {
                     }
                 }
             }
-            for v in ess.iter_mut() {
+            for v in &mut ess {
                 *v /= zsum;
             }
-            for v in es.iter_mut() {
+            for v in &mut es {
                 *v /= zsum;
             }
             (ess, es)

@@ -15,8 +15,8 @@
 //! case for a thermodynamic fabric reduces to one number about its own standby power -- not to
 //! joules per flip, not to throughput, not to physics.
 //!
-//! Which is where the field stops being able to answer. `ledger::Z1_SPICE` carries e_sample, e_read,
-//! e_write and a reflash cap, because those are what Table IV states. There is no standby term
+//! Which is where the field stops being able to answer. `ledger::Z1_SPICE` carries `e_sample`, `e_read`,
+//! `e_write` and a reflash cap, because those are what Table IV states. There is no standby term
 //! because no thermodynamic vendor publishes one. This example therefore prints the budget and
 //! stops, rather than filling the gap with a number nobody measured.
 //!
@@ -218,7 +218,7 @@ fn main() {
         None
     };
 
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let mut led = Ledger::default();
     let c_m = row("cpu", &mut || {
         let mut s = Sampler::new(&g, 0.7, 1);
@@ -264,7 +264,7 @@ fn main() {
                 m.joules_per_period(task_work, period),
                 m.standby_budget(task_work, period),
             ) else {
-                println!("  {:<16} {who}: cannot sustain this cadence", label);
+                println!("  {label:<16} {who}: cannot sustain this cadence");
                 continue;
             };
             let above = m.marginal_watts * m.run_seconds(task_work);

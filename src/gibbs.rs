@@ -69,6 +69,7 @@ pub struct Sampler<'g> {
 pub const MIN_CHUNK: usize = 1024;
 
 impl<'g> Sampler<'g> {
+    #[must_use]
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x5EED);
         let s = (0..g.n).map(|_| rng.spin(0.5)).collect();
@@ -168,6 +169,7 @@ impl<'g> Sampler<'g> {
     /// for: a class of five across four threads is a chunk of two, so three threads run. Always 1
     /// in a browser, whatever was requested. A caller that reports throughput per thread needs
     /// this number rather than the one it passed in.
+    #[must_use]
     pub fn threads_used(&self) -> usize {
         self.threads_used
     }
@@ -247,7 +249,7 @@ impl<'g> Sampler<'g> {
         //  -->   1024 |   1.02   0.98   1.27   2.06   2.68
         //        4096 |   1.00   0.99   1.02   0.98   1.42
         //
-        let smallest = self.g.classes.iter().map(|c| c.len()).min().unwrap_or(0);
+        let smallest = self.g.classes.iter().map(std::vec::Vec::len).min().unwrap_or(0);
         let threads = threads.min((smallest / MIN_CHUNK).max(1));
         if threads <= 1 {
             for _ in 0..n { self.sweep(None); }
@@ -343,6 +345,7 @@ impl<'g> Sampler<'g> {
 
     /// Read the full state (device price: one read per node). Prefer [`Self::read_subset`]:
     /// full-state readback is the crossings-tax regime.
+    #[must_use]
     pub fn read_all(&self, ledger: Option<&mut Ledger>) -> Vec<i8> {
         if let Some(l) = ledger {
             l.reads += self.g.n as u64;
@@ -351,6 +354,7 @@ impl<'g> Sampler<'g> {
     }
 
     /// Read only the named nodes (e.g. action bits).
+    #[must_use]
     pub fn read_subset(&self, idx: &[usize], ledger: Option<&mut Ledger>) -> Vec<i8> {
         if let Some(l) = ledger {
             l.reads += idx.len() as u64;
@@ -388,7 +392,7 @@ mod tests {
             p_exact[m as usize] = w;
             z += w;
         }
-        for p in p_exact.iter_mut() {
+        for p in &mut p_exact {
             *p /= z;
         }
 
@@ -421,9 +425,7 @@ mod tests {
         let g = crate::ising::lattice2d(48, 1.0);
         let beta = 0.6;
         let mut smp = Sampler::new(&g, beta, 0x9A7);
-        for s in smp.s.iter_mut() {
-            *s = 1;
-        }
+        smp.s.fill(1);
         smp.sweeps_par(2000, 8, None);
         let mut acc = 0.0;
         let reads = 2000;

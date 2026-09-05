@@ -7,7 +7,7 @@
 //! COMPLETED TASK, with the compute counted in the same sum as the motors.
 //!
 //! This measures the compute half at the wall. It runs the same rollout inner loop the arm
-//! controller runs, under the SoC's own power counters, and divides by the evaluations performed.
+//! controller runs, under the `SoC`'s own power counters, and divides by the evaluations performed.
 //! Multiply that by the evaluations a completed task costs and the two halves finally add.
 //!
 //! Deliberately NOT a port of the arm bench. The rollout kernel below is the loop the `evals`
@@ -110,7 +110,7 @@ fn main() {
         // the meter refused it, which is the same wall `joules.rs` hit and solved the same way. The
         // other reason is fidelity. Rollouts are the parallel dimension of a sampling controller,
         // so a planner that used one core would be a planner nobody would ship.
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+        let threads = std::thread::available_parallelism().map_or(8, std::num::NonZero::get);
         let evals = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let sink = std::sync::Arc::new(std::sync::Mutex::new(0.0f64));
         let run = match meter.measure(idle, || {

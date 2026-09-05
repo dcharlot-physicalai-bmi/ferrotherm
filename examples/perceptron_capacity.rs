@@ -3,7 +3,7 @@
 //! A theorem (the first moment), a replica value (cited), and exact enumeration -- then the
 //! measurement neither of them makes: where a local algorithm actually reaches.
 //!
-//! usage: cargo run --release --example perceptron_capacity
+//! usage: cargo run --release --example `perceptron_capacity`
 
 use ferrotherm::perceptron::{
     annealed_capacity, annealed_log_z, gardner_capacity, p_sat, Perceptron, SphericalPerceptron, KRAUTH_MEZARD_CAPACITY,

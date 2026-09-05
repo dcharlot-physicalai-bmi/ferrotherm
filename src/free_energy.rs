@@ -82,6 +82,7 @@ use crate::samples::Estimate;
 // ---- exact oracles ---------------------------------------------------------------------------
 
 /// `ln Z(β)` by enumeration. Panics past 24 spins; use [`crate::exact::Elimination`] there.
+#[must_use]
 pub fn exact_log_z(g: &Graph, beta: f64) -> f64 {
     assert!(g.n <= 24, "exact enumeration limited to 24 spins");
     let m = 1usize << g.n;
@@ -101,6 +102,7 @@ pub fn exact_log_z(g: &Graph, beta: f64) -> f64 {
 /// Transfer matrix `T = [[e^{β(J+h)}, e^{−βJ}], [e^{−βJ}, e^{β(J−h)}]]`, `Z = Tr Tⁿ = λ₊ⁿ + λ₋ⁿ`
 /// with `λ± = e^{βJ} cosh βh ± √(e^{2βJ} sinh² βh + e^{−2βJ})`. This is what
 /// [`crate::ising::ring`] builds, and the enumeration test pins the sign conventions.
+#[must_use]
 pub fn ring_log_z(n: usize, j: f64, h: f64, beta: f64) -> f64 {
     assert!(n >= 3, "a ring needs three sites to have distinct edges");
     let (bj, bh) = (beta * j, beta * h);
@@ -122,6 +124,7 @@ pub fn ring_log_z(n: usize, j: f64, h: f64, beta: f64) -> f64 {
 /// Evaluated by a periodic midpoint rule, which converges exponentially away from `K_c`; the
 /// integrand has a logarithmic singularity at criticality, so a value near `K_c ≈ 0.4407` is
 /// accurate only to the grid. `grid` points per axis; 512 is enough for `1e-9` at `K = 0.3`.
+#[must_use]
 pub fn onsager_log_z_density(beta: f64, j: f64, grid: usize) -> f64 {
     let k = beta * j;
     let (c2, s2) = ((2.0 * k).cosh(), (2.0 * k).sinh());
@@ -170,6 +173,7 @@ pub fn palindromic_sweep_masked(g: &Graph, beta: f64, s: &mut [i8], rng: &mut Pc
 /// This is the numerator of an energy-based model's likelihood, `ln Σ_h exp(−E(v, h))`, for a
 /// hidden part too large to enumerate. The bound is the same Markov bound as [`ais`], with the
 /// same unconditional standing. `n` in the result counts the free sites.
+#[must_use]
 pub fn ais_clamped(g: &Graph, fixed: &[(usize, i8)], ladder: &[f64], sweeps: usize, runs: usize, seed: u64) -> Ais {
     check_ladder(ladder);
     assert!(runs >= 1);
@@ -211,6 +215,7 @@ fn uniform_state(n: usize, rng: &mut Pcg) -> Vec<i8> {
 /// estimates landed a nat from the truth in both directions while the bounds, being bounds, still
 /// held. The variance of AIS is governed by the largest `Δβ · spread(E)` on the ladder, so equal
 /// steps are the right first guess and more of them is the right second one.
+#[must_use]
 pub fn linear_ladder(beta: f64, rungs: usize) -> Vec<f64> {
     assert!(rungs >= 2 && beta > 0.0);
     let k = (rungs - 1) as f64;
@@ -226,7 +231,7 @@ fn check_ladder(ladder: &[f64]) {
 }
 
 fn log_sum_exp(v: &[f64]) -> f64 {
-    let mx = v.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let mx = v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if mx == f64::NEG_INFINITY {
         return mx;
     }
@@ -257,6 +262,7 @@ impl Ais {
     ///
     /// Markov's inequality on the unbiased estimator: `P(Ẑ ≥ Z e^t) ≤ e^{−t}`, so with `t = ln(1/δ)`
     /// the event `ln Z < ln Ẑ − t` has probability at most `δ`. Rounded outward.
+    #[must_use]
     pub fn lower_bound(&self, delta: f64) -> f64 {
         assert!(delta > 0.0 && delta < 1.0);
         next_down(self.log_z - (1.0 / delta).ln())
@@ -265,6 +271,7 @@ impl Ais {
 
 /// Forward annealed importance sampling: `runs` independent walks up `ladder`, `sweeps` palindromic
 /// sweeps at every rung above zero. `ladder[0]` must be `0`.
+#[must_use]
 pub fn ais(g: &Graph, ladder: &[f64], sweeps: usize, runs: usize, seed: u64) -> Ais {
     check_ladder(ladder);
     assert!(runs >= 1);
@@ -308,6 +315,7 @@ pub struct ReverseAis {
 impl ReverseAis {
     /// `ln Z ≤ upper_bound(delta)` with probability at least `1 − delta`, **conditional on the
     /// starting states having been exact draws from the target**. Rounded outward.
+    #[must_use]
     pub fn upper_bound(&self, delta: f64) -> f64 {
         assert!(delta > 0.0 && delta < 1.0);
         next_up(self.log_z + (1.0 / delta).ln())
@@ -319,6 +327,7 @@ impl ReverseAis {
 /// Each start must be a draw from the Boltzmann distribution at `ladder.last()` for the bound to
 /// hold; the caller vouches for that, and should say how (an enumerated draw, or a chain whose
 /// `tau_int` it reports beside the result).
+#[must_use]
 pub fn reverse_ais(g: &Graph, ladder: &[f64], sweeps: usize, starts: &[Vec<i8>], seed: u64) -> ReverseAis {
     check_ladder(ladder);
     assert!(!starts.is_empty());
@@ -354,15 +363,18 @@ pub struct Sandwich {
 
 impl Sandwich {
     /// Combine at per-side risk `delta`. The upper side inherits reverse AIS's condition.
+    #[must_use]
     pub fn new(fwd: &Ais, rev: &ReverseAis, delta: f64) -> Sandwich {
         assert_eq!(fwd.n, rev.n);
         Sandwich { lower: fwd.lower_bound(delta), upper: rev.upper_bound(delta), confidence: 1.0 - 2.0 * delta }
     }
 
+    #[must_use]
     pub fn contains(&self, log_z: f64) -> bool {
         self.lower <= log_z && log_z <= self.upper
     }
 
+    #[must_use]
     pub fn width(&self) -> f64 {
         self.upper - self.lower
     }
@@ -387,6 +399,7 @@ pub struct Ti {
 }
 
 impl Ti {
+    #[must_use]
     pub fn midpoint(&self) -> f64 {
         0.5 * (self.lower + self.upper)
     }
@@ -395,6 +408,7 @@ impl Ti {
 /// Thermodynamic integration up `ladder`: at every rung above zero, a chromatic chain of
 /// `burn_in + draws` palindromic sweeps measures `⟨E⟩` with its own error bar; the bracket follows
 /// from `⟨E⟩` being non-increasing in `β`. `z` is how many standard errors widen each mean.
+#[must_use]
 pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z: f64, seed: u64) -> Ti {
     check_ladder(ladder);
     assert!(draws >= 4);
@@ -406,6 +420,7 @@ pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draw
 /// The energies of `draws` states at every rung: exact uniform draws at `β = 0`, and a chromatic
 /// chain of `burn_in + draws` palindromic sweeps at every rung above it. Shared by TI and BAR, so
 /// the two estimators can be compared on the SAME samples.
+#[must_use]
 pub fn sample_ladder_energies(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, seed: u64) -> Vec<(f64, Vec<f64>)> {
     check_ladder(ladder);
     assert!(draws >= 4);
@@ -430,6 +445,7 @@ pub fn sample_ladder_energies(g: &Graph, ladder: &[f64], burn_in: usize, draws: 
 
 /// The TI bracket from per-rung mean energies. The zero rung's mean is set to its exact value `0`
 /// (uniform spins are uncorrelated), and the anchor `n ln 2` is exact.
+#[must_use]
 pub fn ti_from_rungs(n: usize, mut rungs: Vec<(f64, Estimate)>, z: f64) -> Ti {
     rungs[0].1 = Estimate { value: 0.0, stderr: 0.0, ess: f64::INFINITY, tau_int: 0.0 };
     // Left sum uses the mean at the lower end of each interval (the larger value), right sum the
@@ -503,6 +519,7 @@ fn fermi(x: f64) -> f64 {
 /// estimators built from the two samples it has minimum asymptotic variance (Bennett; Shirts et
 /// al. 2003), which is why it beats one-directional exponential averaging when the rungs overlap.
 /// The standard error is Bennett's, with `N` replaced by `N / 2τ_int` of each side's `ℓ` trace.
+#[must_use]
 pub fn bar_pair(beta_a: f64, energies_a: &[f64], beta_b: f64, energies_b: &[f64]) -> BarPair {
     assert!(beta_b > beta_a && energies_a.len() >= 2 && energies_b.len() >= 2);
     let d = beta_b - beta_a;
@@ -582,6 +599,7 @@ pub struct Thermo {
 }
 
 impl Thermo {
+    #[must_use]
     pub fn top(&self) -> &ThermoRung {
         self.rungs.last().unwrap()
     }
@@ -590,6 +608,7 @@ impl Thermo {
 /// `ln Z` at every rung by BAR steps from the exact anchor `ln Z(0) = n ln 2`, given the
 /// energies of samples at each rung (the zero rung's must be exact uniform draws, which
 /// [`sample_ladder_energies`] provides). Also the TI bracket from the same means.
+#[must_use]
 pub fn bar_ladder(n: usize, traces: &[(f64, Vec<f64>)], z: f64) -> Thermo {
     assert!(traces.len() >= 2 && traces[0].0 == 0.0, "the curve is anchored at beta = 0");
     let mut log_z = n as f64 * core::f64::consts::LN_2;
@@ -619,6 +638,7 @@ pub fn bar_ladder(n: usize, traces: &[(f64, Vec<f64>)], z: f64) -> Thermo {
 }
 
 /// Draw the chains and build the curve: [`sample_ladder_energies`] then [`bar_ladder`].
+#[must_use]
 pub fn thermodynamics(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z: f64, seed: u64) -> Thermo {
     bar_ladder(g.n, &sample_ladder_energies(g, ladder, burn_in, draws, seed), z)
 }
@@ -626,6 +646,7 @@ pub fn thermodynamics(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z
 // ---- outward rounding --------------------------------------------------------------------------
 
 /// The largest `f64` strictly below `x` (for finite `x`); `x` itself for NaN and `−∞`.
+#[must_use]
 pub fn next_down(x: f64) -> f64 {
     if x.is_nan() || x == f64::NEG_INFINITY {
         return x;
@@ -644,6 +665,7 @@ pub fn next_down(x: f64) -> f64 {
 }
 
 /// The smallest `f64` strictly above `x` (for finite `x`); `x` itself for NaN and `+∞`.
+#[must_use]
 pub fn next_up(x: f64) -> f64 {
     if x.is_nan() || x == f64::INFINITY {
         return x;

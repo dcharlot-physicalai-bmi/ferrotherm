@@ -43,11 +43,13 @@ pub struct Schedule {
 }
 
 impl Schedule {
+    #[must_use]
     pub fn new() -> Self {
         Schedule { stages: Vec::new() }
     }
 
     /// One temperature, held.
+    #[must_use]
     pub fn constant(beta: f64, sweeps: usize) -> Self {
         Schedule { stages: vec![Stage { beta, sweeps, penalties: Penalties::default() }] }
     }
@@ -56,6 +58,7 @@ impl Schedule {
     ///
     /// Geometric rather than linear because the interesting physics is spread evenly in log beta,
     /// not in beta: a linear ladder spends most of its stages in the cold, already-frozen regime.
+    #[must_use]
     pub fn geometric(beta_min: f64, beta_max: f64, stages: usize, sweeps_per: usize) -> Self {
         assert!(beta_min > 0.0, "beta_min must be positive; a geometric ladder cannot start at 0");
         assert!(beta_max > beta_min, "need beta_max > beta_min");
@@ -75,6 +78,7 @@ impl Schedule {
     /// Ramp a penalty geometrically from `start` to `end` across the existing stages.
     ///
     /// Applied after the temperature ladder, so the two are specified independently.
+    #[must_use]
     pub fn ramp_domain_wall(mut self, start: f64, end: f64) -> Self {
         for (i, s) in ramp(start, end, self.stages.len()).into_iter().enumerate() {
             self.stages[i].penalties.domain_wall = s;
@@ -83,6 +87,7 @@ impl Schedule {
     }
 
     /// Ramp the copy-agreement penalty geometrically across the existing stages.
+    #[must_use]
     pub fn ramp_copy(mut self, start: f64, end: f64) -> Self {
         for (i, s) in ramp(start, end, self.stages.len()).into_iter().enumerate() {
             self.stages[i].penalties.copy = s;
@@ -94,24 +99,29 @@ impl Schedule {
         self.stages.push(stage);
     }
 
+    #[must_use]
     pub fn stages(&self) -> &[Stage] {
         &self.stages
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.stages.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.stages.is_empty()
     }
 
     /// Total sweeps across every stage, for sizing a run before starting it.
+    #[must_use]
     pub fn total_sweeps(&self) -> u64 {
         self.stages.iter().map(|s| s.sweeps as u64).sum()
     }
 
     /// Node updates this schedule will charge for a graph of `n` nodes.
+    #[must_use]
     pub fn node_updates(&self, n: usize) -> u64 {
         self.total_sweeps() * n as u64
     }

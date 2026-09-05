@@ -91,8 +91,8 @@ fn main() {
             let betas = tempering::geometric_ladder(BETA_MIN, BETA_MAX, REPLICAS);
             let base = tempering::parallel_tempering(&g, &betas, ROUNDS, SWAP_EVERY, seed, None);
             geo.push(base.best_e);
-            let hi = base.swap_rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let lo = base.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hi = base.swap_rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let lo = base.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
             spread0.push(hi - lo);
 
             // Adapted, with the SAME total rounds split across epochs, so adaptation is not
@@ -153,8 +153,8 @@ fn main() {
             let betas = tempering::geometric_ladder(BETA_MIN, BETA_MAX, 4);
             let base = tempering::parallel_tempering(&g, &betas, ROUNDS, SWAP_EVERY, seed, None);
             geo.push(base.best_e);
-            let hi = base.swap_rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let lo = base.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hi = base.swap_rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let lo = base.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
             s0.push(hi - lo);
             w0.push(lo);
 
@@ -170,7 +170,7 @@ fn main() {
             let out = adaptive::adapt(&g, &p, seed);
             ada.push(out.best_e);
             s1.push(*out.spread.last().unwrap());
-            w1.push(out.swap_rates.iter().cloned().fold(f64::INFINITY, f64::min));
+            w1.push(out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min));
         }
         let (gm, gs) = stat(&geo);
         let (am, asd) = stat(&ada);

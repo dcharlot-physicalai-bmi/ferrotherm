@@ -58,7 +58,7 @@ fn stat(v: &[f64]) -> (f64, f64) {
     (m, s)
 }
 
-/// tau_int of the fitted model at its own weights, with the energy as the observable.
+/// `tau_int` of the fitted model at its own weights, with the energy as the observable.
 fn mixing(g: &Graph, seed: u64) -> f64 {
     let mut smp = gibbs::Sampler::new(g, 1.0, seed);
     smp.sweeps(BURN, None);

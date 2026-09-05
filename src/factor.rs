@@ -85,10 +85,12 @@ impl Factor {
         self.vars.iter().map(|&v| v as usize)
     }
 
+    #[must_use]
     pub fn arity(&self) -> usize {
         self.vars.len()
     }
 
+    #[must_use]
     pub fn weight(&self) -> f64 {
         self.weight
     }
@@ -97,6 +99,7 @@ impl Factor {
     ///
     /// The sign is the same convention as the rest of the crate: energy is
     /// `-sum_ij J_ij s_i s_j - sum_i h_i s_i`, so a positive weight prefers the product to be +1.
+    #[must_use]
     pub fn energy(&self, s: &[i8]) -> f64 {
         let mut p = 1.0;
         for &v in &self.vars {

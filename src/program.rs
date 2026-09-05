@@ -10,7 +10,7 @@
 //!    Works for every gate here, including a full Gibbs kernel (each spin update is a Bernoulli
 //!    with known probability, so the trajectory log-density is exact — no approximation).
 //!  * **Parameter shift** for sigmoid-mixture gates (the flip family): the kernel is
-//!    K_theta = sigma(theta) K_flip + (1-sigma(theta)) K_id, so
+//!    `K_theta` = sigma(theta) `K_flip` + (1-sigma(theta)) `K_id`, so
 //!    dE/dtheta = sigma'(theta) (E[L|flip] - E[L|no-flip]), evaluated with common random
 //!    numbers downstream. Exact in expectation, two branch runs per gate.
 //!  * **Finite differences with common random numbers** — the referee both must agree with.
@@ -43,12 +43,12 @@ pub enum Gate {
     /// Stage-cost accumulator: `reals[acc] += q * reals[x]^2 + r * reals[u]^2`. Deterministic.
     CostQuad { acc: usize, x: usize, u: usize, q: f64, r: f64 },
     /// `sweeps` chromatic Glauber sweeps of graph `g` over `bits[0..g.n]`, at inverse
-    /// temperature `beta`, with per-node bias params[p_h0 + i] REPLACING the graph's h.
+    /// temperature `beta`, with per-node bias params[`p_h0` + i] REPLACING the graph's h.
     GibbsK { g: usize, sweeps: usize, beta: f64, p_h0: usize },
     /// EXACT Boltzmann resample of graph `g`'s spins (enumeration; g.n <= 20) with bias
-    /// params[p_h0 + i] replacing the graph's h, at inverse temperature `beta`. This is the
+    /// params[`p_h0` + i] replacing the graph's h, at inverse temperature `beta`. This is the
     /// Boltzmann-form gate the EBM-kernel gradient estimator applies to; its REINFORCE score is
-    /// also exact (beta * (s_i - <s_i>)), so the two estimators cross-validate on the same gate.
+    /// also exact (beta * (`s_i` - <`s_i`>)), so the two estimators cross-validate on the same gate.
     BoltzExact { g: usize, beta: f64, p_h0: usize },
 }
 
@@ -62,7 +62,7 @@ pub struct Program {
 #[derive(Clone, Copy)]
 pub enum Force {
     None,
-    /// Force the PNot at `gate_idx` to flip (true) or hold (false). The RNG draw is still
+    /// Force the `PNot` at `gate_idx` to flip (true) or hold (false). The RNG draw is still
     /// consumed so downstream randomness is identical across branches.
     PNot { gate_idx: usize, flip: bool },
 }
@@ -166,7 +166,7 @@ impl Program {
         st
     }
 
-    /// REINFORCE gradient of `E[L]` with a batch-mean baseline. Returns (grad, mean_loss).
+    /// REINFORCE gradient of `E[L]` with a batch-mean baseline. Returns (grad, `mean_loss`).
     pub fn reinforce_grad<F: Fn(&State) -> f64>(
         &self,
         init: &State,
@@ -192,13 +192,13 @@ impl Program {
                 grad[j] += adv * scores[e][j];
             }
         }
-        for gj in grad.iter_mut() {
+        for gj in &mut grad {
             *gj /= episodes as f64;
         }
         (grad, mean)
     }
 
-    /// Parameter-shift gradient for the PNot at `gate_idx`:
+    /// Parameter-shift gradient for the `PNot` at `gate_idx`:
     /// sigma'(theta) * (E[L | forced flip] - E[L | forced hold]), common random numbers.
     pub fn pshift_grad_pnot<F: Fn(&State) -> f64>(
         &self,
@@ -209,9 +209,8 @@ impl Program {
         episodes: usize,
         seed: u64,
     ) -> f64 {
-        let p_theta = match self.gates[gate_idx] {
-            Gate::PNot { p_theta, .. } => p_theta,
-            _ => panic!("pshift_grad_pnot on a non-PNot gate"),
+        let Gate::PNot { p_theta, .. } = self.gates[gate_idx] else {
+            panic!("pshift_grad_pnot on a non-PNot gate")
         };
         let th = params[p_theta];
         let dsig = sigma(th) * sigma(-th);
@@ -227,11 +226,11 @@ impl Program {
     }
 
     /// The EBM-kernel gradient estimator (the third estimator; arXiv:2608.01612 Sec III C):
-    /// for gates of Boltzmann form, grad_theta log G(y|x) = -grad E(y) + E_y'[grad E(y')], so one
+    /// for gates of Boltzmann form, `grad_theta` log G(y|x) = -grad E(y) + `E_y`'[grad E(y')], so one
     /// circuit trajectory plus ONE auxiliary re-draw of the gate gives the unbiased single-sample
-    /// estimate  f(z_final) * (grad E(aux) - grad E(traj)). Applies to [`Gate::BoltzExact`]
-    /// parameters (grad_h (beta E) = -beta s_i); other gates' parameters are left at zero here —
-    /// combine with [`Self::reinforce_grad`] for them. Returns (grad, mean_loss).
+    /// estimate  `f(z_final)` * (grad E(aux) - grad E(traj)). Applies to [`Gate::BoltzExact`]
+    /// parameters (`grad_h` (beta E) = -beta `s_i`); other gates' parameters are left at zero here —
+    /// combine with [`Self::reinforce_grad`] for them. Returns (grad, `mean_loss`).
     pub fn ebm_kernel_grad<F: Fn(&State) -> f64>(
         &self,
         init: &State,
@@ -266,7 +265,7 @@ impl Program {
                 }
             }
         }
-        for g in grad.iter_mut() {
+        for g in &mut grad {
             *g /= episodes as f64;
         }
         (grad, mean / episodes as f64)
@@ -307,7 +306,7 @@ fn gauss(rng: &mut Pcg) -> f64 {
 }
 
 /// Exact Boltzmann draw over all 2^n spin states of `gr` with external biases `h` at inverse
-/// temperature `beta`. Returns (sampled mask, exact per-spin means <s_i>). Enumeration; n <= 20.
+/// temperature `beta`. Returns (sampled mask, exact per-spin means <`s_i`>). Enumeration; n <= 20.
 fn boltz_exact_draw(gr: &Graph, beta: f64, h: &[f64], rng: &mut Pcg) -> (usize, Vec<f64>) {
     let n = gr.n;
     assert!(n <= 20, "BoltzExact enumeration limited to 20 spins");
@@ -338,7 +337,7 @@ fn boltz_exact_draw(gr: &Graph, beta: f64, h: &[f64], rng: &mut Pcg) -> (usize, 
         }
     }
     let mut z = 0.0;
-    for v in w.iter_mut() {
+    for v in &mut w {
         *v = (*v - mx).exp();
         z += *v;
     }
@@ -419,7 +418,7 @@ mod tests {
             pm[m] = (-beta * e).exp();
             z += pm[m];
         }
-        for v in pm.iter_mut() {
+        for v in &mut pm {
             *v /= z;
         }
         let gm = |m: usize| {
@@ -448,7 +447,7 @@ mod tests {
         }
     }
 
-    /// Analytic check: single PNot on a +1 bit, L(s) = s. E[L] = 1 - 2 sigma(th),
+    /// Analytic check: single `PNot` on a +1 bit, L(s) = s. E[L] = 1 - 2 sigma(th),
     /// dE/dth = -2 sigma'(th). REINFORCE must match analytically.
     #[test]
     fn reinforce_matches_analytic() {

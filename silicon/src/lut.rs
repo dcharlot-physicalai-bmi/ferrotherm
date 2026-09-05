@@ -9,6 +9,7 @@
 //! exact grade (grade B). Both hold the same law: software == emulator == silicon configuration.
 
 /// LUT6 init word for the stochastic-threshold p-bit update.
+#[must_use]
 pub fn bsn_threshold_init(threshold: u8) -> u64 {
     let mut init = 0u64;
     for idx in 0u64..64 {
@@ -22,6 +23,7 @@ pub fn bsn_threshold_init(threshold: u8) -> u64 {
 }
 
 /// LUT6 init word for an LFSR feedback bit: XOR of the tapped inputs (tap indices 0..6).
+#[must_use]
 pub fn lfsr_feedback_init(taps: &[u8]) -> u64 {
     let mut init = 0u64;
     for idx in 0u64..64 {
@@ -38,6 +40,7 @@ pub fn lfsr_feedback_init(taps: &[u8]) -> u64 {
 
 /// The probability that a threshold p-bit fires given `k` high neighbours, under a fair random
 /// bit: exact closed form for verifying fabric statistics against the ferrotherm model layer.
+#[must_use]
 pub fn bsn_fire_prob(threshold: u8, k: u8) -> f64 {
     // out = 1 if k + r >= threshold, r ~ Bernoulli(1/2)
     if k >= threshold {

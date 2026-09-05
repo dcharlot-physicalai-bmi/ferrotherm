@@ -40,7 +40,7 @@ fn glass(l: usize) -> Graph {
 }
 
 fn main() {
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     println!("Parallel sweeps against serial, on {threads} threads\n");
     println!(
         "Both arms are run back to back inside one loop, four times, best of four. The ratio is\n\
@@ -56,7 +56,7 @@ fn main() {
     for l in [32usize, 48, 64, 96, 128, 181] {
         let g = glass(l);
         let sweeps = if l >= 96 { 300 } else { 2000 };
-        let smallest = g.classes.iter().map(|c| c.len()).min().unwrap_or(0);
+        let smallest = g.classes.iter().map(std::vec::Vec::len).min().unwrap_or(0);
         let mut s = Sampler::new(&g, 0.6, 3);
         s.sweeps(20, None);
         let (mut ser, mut par) = (f64::INFINITY, f64::INFINITY);

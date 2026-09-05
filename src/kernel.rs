@@ -23,6 +23,7 @@ use crate::rng::Pcg;
 ///
 /// `field` is `sum_j J_ij s_j + h_i` with beta *excluded*; beta is applied here.
 #[inline]
+#[must_use]
 pub fn p_up(field: f64, beta: f64) -> f64 {
     // Written as the logistic of 2*beta*f. The factor of two is the gap between the two states of
     // a +/-1 spin: flipping s_i changes the energy by 2*f_i, not f_i. Dropping it is the classic
@@ -46,6 +47,7 @@ pub fn draw(field: f64, beta: f64, rng: &mut Pcg) -> i8 {
 /// differentiable-program layer used to carry its own copy of the sweep: it needs the score
 /// alongside the draw. Exposing it here means it can have the draw *and* the shared kernel.
 #[inline]
+#[must_use]
 pub fn score_dh(field: f64, beta: f64, s_new: i8) -> f64 {
     // log p(s) = log sigma(2 beta f s)  =>  d/dh = 2 beta s sigma(-2 beta f s)
     let s = s_new as f64;
@@ -55,6 +57,7 @@ pub fn score_dh(field: f64, beta: f64, s_new: i8) -> f64 {
 
 /// Energy change if site `i` were to flip from its current value, given its local field.
 #[inline]
+#[must_use]
 pub fn delta_e(field: f64, s_i: i8) -> f64 {
     2.0 * field * s_i as f64
 }

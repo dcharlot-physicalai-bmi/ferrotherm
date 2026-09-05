@@ -1,7 +1,7 @@
 //! Modern memory and learning from two equilibria: dense associative memory, attention as its
 //! update, and equilibrium propagation -- each held against something exact.
 //!
-//! usage: cargo run --release --example modern_memory
+//! usage: cargo run --release --example `modern_memory`
 
 use ferrotherm::dense_memory::{corrupt, overlap, DenseMemory, Energy};
 use ferrotherm::eqprop::{eqprop_gradient_exact, exact_gradient, step, Gradient, Task};
@@ -128,7 +128,7 @@ fn main() {
     for beta in [0.4, 0.2, 0.1, 0.05, 0.025] {
         let e1 = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, beta, false), &truth);
         let e2 = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, beta, true), &truth);
-        println!("{:<8.3} {:>14.3e} {:>14.3e}", beta, e1, e2);
+        println!("{beta:<8.3} {e1:>14.3e} {e2:>14.3e}");
     }
     println!("  one-sided error falls as beta, centered as beta^2 -- Scellier-Bengio 2017, Laborieux et al. 2021.\n");
     let mut g2 = g.clone_graph();

@@ -191,7 +191,7 @@ fn min_fill_order(n: usize, adj: &[Vec<usize>]) -> (Vec<usize>, usize) {
         let mut dirty: BTreeSet<usize> = BTreeSet::new();
         for &u in &ns {
             dirty.insert(u);
-            for &w in nbr[u].iter() {
+            for &w in &nbr[u] {
                 if alive[w] {
                     dirty.insert(w);
                 }
@@ -294,6 +294,7 @@ impl Elimination {
     }
 
     /// Induced width of the order this would use, without running anything.
+    #[must_use]
     pub fn width(&self, g: &Graph) -> usize {
         min_fill_order(g.n, &adjacency(g)).1
     }

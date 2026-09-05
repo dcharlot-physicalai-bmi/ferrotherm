@@ -482,7 +482,7 @@ mod sparsify_ffi_tests {
 /// Where [`ft_embed`] searches, this writes the answer down: a `K_n` clique embedding built from the
 /// topology's own minor structure, with uniform chains and no search. Supported today for
 /// **Pegasus** (`ft_pegasus_new`: `K_{12(m-1)}`, chains at most `m+1` -- `K_180` on the Advantage's
-/// P_16) and **Zephyr** (`ft_zephyr_new`: `K_{2t*m}`, chains `m+1`). Both are `busclique`'s frontier
+/// `P_16`) and **Zephyr** (`ft_zephyr_new`: `K_{2t*m}`, chains `m+1`). Both are `busclique`'s frontier
 /// size at its own chain length.
 ///
 /// The clique size is FIXED by the machine, not chosen: it is the largest this construction places,
@@ -516,7 +516,7 @@ pub extern "C" fn ft_clique_embed(logical: *mut Sim, hardware: *const Sim, n_out
 
 /// The structured clique for a simulation, when its shape and numbering say it is a device topology.
 ///
-/// Recovers the device parameter from the site count -- |Z_{m,4}| = 16m(2m+1), |P_m| fabric =
+/// Recovers the device parameter from the site count -- |Z_{m,4}| = 16m(2m+1), |`P_m`| fabric =
 /// 8(m-1)(3m-1) -- and requires an exact match AND the vendor numbering, so an arbitrary graph of
 /// the same size cannot be mistaken for a machine. The last line of defence is unconditional
 /// either way: the construction must verify against THIS graph before it is returned.
@@ -595,7 +595,7 @@ pub extern "C" fn ft_embed(
 pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.emb.as_ref())
-        .map_or(0, |e| e.chains.iter().map(|c| c.len()).sum::<usize>() as u32)
+        .map_or(0, |e| e.chains.iter().map(std::vec::Vec::len).sum::<usize>() as u32)
 }
 
 /// The longest chain, which is the number that decides whether an answer survives.
@@ -607,7 +607,7 @@ pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
 pub extern "C" fn ft_embed_longest(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.emb.as_ref())
-        .map_or(0, |e| e.chains.iter().map(|c| c.len()).max().unwrap_or(0) as u32)
+        .map_or(0, |e| e.chains.iter().map(std::vec::Vec::len).max().unwrap_or(0) as u32)
 }
 
 /// Copy the sites holding logical variable `v` into `out`; entries written, or the count needed
@@ -888,7 +888,7 @@ mod embed_ffi_tests {
 
     /// The bound proves impossibility; the search only reports failure.
     ///
-    /// A P2 has 40 sites at degree 13. A K_24 variable has degree 23, and a chain of L sites offers
+    /// A P2 has 40 sites at degree 13. A `K_24` variable has degree 23, and a chain of L sites offers
     /// L(13-2)+2 ports, so it needs 2 sites -- 48 for the twenty-four of them, which is more than
     /// the machine has. No embedding exists, and the library says so in microseconds without
     /// searching. That is the whole point of having a bound beside a heuristic.
@@ -1298,7 +1298,7 @@ pub extern "C" fn ft_gpu_class_len(sim: *mut Sim, c: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_class_ptr(sim: *mut Sim, c: u32) -> *const u32 {
     match unsafe { sim.as_mut() } {
-        Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(core::ptr::null(), |v| v.as_ptr()),
+        Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(core::ptr::null(), std::vec::Vec::as_ptr),
         None => core::ptr::null(),
     }
 }
@@ -1561,7 +1561,7 @@ pub extern "C" fn ft_samples_degeneracy(sim: *const Sim, tol: f64) -> u32 {
 /// NaN when nothing has been collected.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_chain_tau(sim: *const Sim) -> f64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(f64::NAN, |m| m.chain_tau())
+    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(f64::NAN, super::samples::SampleSet::chain_tau)
 }
 
 /// Copy state `k` into `out`, which must hold at least `cap` entries. Returns the number written.
@@ -2575,7 +2575,7 @@ pub extern "C" fn ft_model_ommx(m: *const ModelHandle, buf: *mut u8, cap: u32) -
 }
 
 /// The offset the +/-1 to 0/1 substitution produced, ALREADY FOLDED INTO the instance.
-/// Read it, do not add it: ommx_objective(x) == ferrotherm_energy(s) exactly, and adding it again double-counts.
+/// Read it, do not add it: `ommx_objective(x)` == `ferrotherm_energy(s)` exactly, and adding it again double-counts.
 /// Reported so the substitution is visible, not because anything downstream must apply it.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ommx_constant(m: *const ModelHandle) -> f64 {
@@ -2760,7 +2760,7 @@ pub extern "C" fn ft_model_violation(
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_violation_amount(m: *const ModelHandle, i: u32) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
-        Some(s) => s.violated.get(i as usize).map(|v| v.amount).unwrap_or(f64::NAN),
+        Some(s) => s.violated.get(i as usize).map_or(f64::NAN, |v| v.amount),
         None => f64::NAN,
     }
 }
@@ -3340,7 +3340,7 @@ pub extern "C" fn ft_model_soft_cost(m: *const ModelHandle) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_violation_is_hard(m: *const ModelHandle, i: u32) -> u32 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
-        Some(s) => s.violated.get(i as usize).map(|v| v.hard as u32).unwrap_or(1),
+        Some(s) => s.violated.get(i as usize).map_or(1, |v| v.hard as u32),
         None => 1,
     }
 }
@@ -6117,7 +6117,7 @@ fn read_dataset(visible: u32, rows: *const i8, n_rows: u32) -> Option<crate::ebm
         unsafe { core::slice::from_raw_parts(rows, n_rows as usize * visible as usize) };
     Some(crate::ebm::Dataset {
         visible: visible as usize,
-        rows: flat.chunks(visible as usize).map(|c| c.to_vec()).collect(),
+        rows: flat.chunks(visible as usize).map(<[i8]>::to_vec).collect(),
     })
 }
 

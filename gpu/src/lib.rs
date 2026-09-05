@@ -30,8 +30,8 @@
 //!
 //! | | adapter | API | tests |
 //! |---|---|---|---|
-//! | Apple M5 Max | IntegratedGpu | Metal | 6/6 |
-//! | NVIDIA L4 (EC2 g6.xlarge) | DiscreteGpu | Vulkan 1.4 | 6/6 |
+//! | Apple M5 Max | `IntegratedGpu` | Metal | 6/6 |
+//! | NVIDIA L4 (EC2 g6.xlarge) | `DiscreteGpu` | Vulkan 1.4 | 6/6 |
 //! | Microsoft Basic Render Driver (EC2 Windows) | **Cpu** | DX12 | 6/6 |
 //!
 //! All three run the same WGSL from the core crate and all three reproduce the exact mean energy
@@ -79,6 +79,7 @@ impl Gpu {
     ///
     /// `None` means **not found on this machine**, never "impossible". A headless CI runner with no
     /// driver is the common case, which is why every test here skips rather than fails on it.
+    #[must_use]
     pub fn new() -> Option<Gpu> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -110,8 +111,9 @@ impl Gpu {
     /// What the driver says this is.
     ///
     /// Read it before quoting a speedup. `DeviceType::Cpu` is a software rasteriser — lavapipe,
-    /// SwiftShader, WARP — which runs the shader correctly and tells you nothing about a GPU, and a
+    /// `SwiftShader`, WARP — which runs the shader correctly and tells you nothing about a GPU, and a
     /// benchmark that does not check this reports the wrong machine with full confidence.
+    #[must_use]
     pub fn adapter(&self) -> &wgpu::AdapterInfo {
         &self.info
     }

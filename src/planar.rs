@@ -52,22 +52,26 @@ pub struct Embedding {
 
 impl Embedding {
     /// Neighbours of `v`, in cyclic order.
+    #[must_use]
     pub fn rotation(&self, v: usize) -> &[usize] {
         &self.adj[v]
     }
 
     /// Nodes.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.n
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
 
     /// Undirected edges.
+    #[must_use]
     pub fn edges(&self) -> usize {
-        self.adj.iter().map(|a| a.len()).sum::<usize>() / 2
+        self.adj.iter().map(std::vec::Vec::len).sum::<usize>() / 2
     }
 
     /// Trace the faces, each as the sequence of directed edges bounding it.
@@ -76,6 +80,7 @@ impl Embedding {
     /// **before** `u` in `v`'s rotation. Every dart belongs to exactly one face, so the traces
     /// partition the `2E` darts — which is what makes the Euler check below meaningful rather than
     /// circular.
+    #[must_use]
     pub fn faces(&self) -> Vec<Vec<(usize, usize)>> {
         let mut seen: Vec<Vec<bool>> = self.adj.iter().map(|a| vec![false; a.len()]).collect();
         let mut out = Vec::new();
@@ -111,6 +116,7 @@ impl Embedding {
     /// *which surface* a list of lists actually describes, and everything downstream turns on it:
     /// the dual argument behind [`crate::planarcut`] gives an exact maximum on the sphere and only
     /// an upper bound above it.
+    #[must_use]
     pub fn euler(&self) -> i64 {
         if self.n == 0 {
             return 2;
@@ -119,6 +125,7 @@ impl Embedding {
     }
 
     /// Orientable genus, from Euler's formula `χ = 2 − 2g`. `None` if `χ` is odd or positive.
+    #[must_use]
     pub fn genus(&self) -> Option<usize> {
         let c = self.euler();
         if c > 2 || (2 - c) % 2 != 0 {
@@ -131,6 +138,7 @@ impl Embedding {
     ///
     /// Euler: `V − E + F = 2`. Checked rather than assumed, because a rotation system is just a
     /// list of lists — nothing about its type says the faces it traces close up into a sphere.
+    #[must_use]
     pub fn is_consistent(&self) -> bool {
         if self.n == 0 {
             return true;
@@ -152,6 +160,7 @@ impl Embedding {
 /// `w` and `h` must be at least 3. At 2 the periodic grid has a doubled edge between neighbours —
 /// two distinct edges the graph type cannot tell apart — and an embedding of a multigraph is a
 /// different object from an embedding of its underlying simple graph.
+#[must_use]
 pub fn torus_grid(w: usize, h: usize) -> Option<Embedding> {
     if w < 3 || h < 3 {
         return None;
@@ -180,6 +189,7 @@ pub fn torus_grid(w: usize, h: usize) -> Option<Embedding> {
 /// right places cannot happen by accident.
 ///
 /// Measured on the three toroidal G-set instances: G11 is 8 × 100, G12 is 16 × 50, G13 is 32 × 25.
+#[must_use]
 pub fn torus_grid_of(g: &Graph) -> Option<Embedding> {
     let n = g.n;
     if n < 9 {
@@ -234,6 +244,7 @@ pub fn torus_grid_of(g: &Graph) -> Option<Embedding> {
 /// relation must be symmetric, and every dart must land on exactly one traced face. A rotation
 /// system that fails any of those is not an embedding of anything, and the faces it would trace
 /// would be a dual of nothing.
+#[must_use]
 pub fn from_rotation(adj: Vec<Vec<usize>>) -> Option<Embedding> {
     let n = adj.len();
     for (v, list) in adj.iter().enumerate() {
@@ -255,7 +266,7 @@ pub fn from_rotation(adj: Vec<Vec<usize>>) -> Option<Embedding> {
     }
     let e = Embedding { n, adj };
     // The dart count is the check that the traced faces really partition the embedding.
-    let darts: usize = e.faces().iter().map(|f| f.len()).sum();
+    let darts: usize = e.faces().iter().map(std::vec::Vec::len).sum();
     (darts == 2 * e.edges()).then_some(e)
 }
 
@@ -273,6 +284,7 @@ pub fn from_rotation(adj: Vec<Vec<usize>>) -> Option<Embedding> {
 ///
 /// The distinction matters to a caller: max-cut decomposes exactly across biconnected components,
 /// so "not 2-connected" is an instruction to split the graph, where "not planar" is not.
+#[must_use]
 pub fn embed(g: &Graph) -> Option<Embedding> {
     let n = g.n;
     if n == 0 {
@@ -292,7 +304,7 @@ pub fn embed(g: &Graph) -> Option<Embedding> {
         return None;
     }
     // A tree or a single edge has no cycle to start from, and is planar with one face.
-    let m: usize = nbr.iter().map(|a| a.len()).sum::<usize>() / 2;
+    let m: usize = nbr.iter().map(std::vec::Vec::len).sum::<usize>() / 2;
     if m + 1 == n {
         return Some(tree_embedding(&nbr));
     }
@@ -315,6 +327,7 @@ pub fn embed(g: &Graph) -> Option<Embedding> {
 ///
 /// Separated out so a caller can act: "not 2-connected" is an instruction to split into blocks,
 /// "not planar" is a fact about the instance, and "disconnected" is usually a bug upstream.
+#[must_use]
 pub fn why(g: &Graph) -> Option<Refusal> {
     let n = g.n;
     if n == 0 {
@@ -332,7 +345,7 @@ pub fn why(g: &Graph) -> Option<Refusal> {
     if !connected(&nbr) {
         return Some(Refusal::Disconnected);
     }
-    let m: usize = nbr.iter().map(|a| a.len()).sum::<usize>() / 2;
+    let m: usize = nbr.iter().map(std::vec::Vec::len).sum::<usize>() / 2;
     if m + 1 == n {
         return None; // a tree, which embeds
     }
@@ -465,7 +478,7 @@ impl Demoucron {
     }
 
     fn edge_count(&self) -> usize {
-        self.nbr.iter().map(|a| a.len()).sum::<usize>() / 2
+        self.nbr.iter().map(std::vec::Vec::len).sum::<usize>() / 2
     }
 
     fn drawn_count(&self) -> usize {
@@ -858,7 +871,7 @@ mod tests {
             assert_eq!(got, want, "vertex {v}");
         }
         // And every dart is on exactly one face, so the traces partition 2E.
-        let darts: usize = e.faces().iter().map(|f| f.len()).sum();
+        let darts: usize = e.faces().iter().map(std::vec::Vec::len).sum();
         assert_eq!(darts, 2 * e.edges());
     }
 
@@ -874,7 +887,7 @@ mod tests {
             assert_eq!(e.genus(), Some(1));
             assert!(!e.is_consistent(), "it is a valid embedding, and NOT a planar one");
             // Every dart on exactly one face, which is what makes the dual well defined.
-            assert_eq!(e.faces().iter().map(|f| f.len()).sum::<usize>(), 2 * e.edges());
+            assert_eq!(e.faces().iter().map(std::vec::Vec::len).sum::<usize>(), 2 * e.edges());
         }
         // Below 3 the periodic grid has doubled edges, and an embedding of a multigraph is a
         // different object from an embedding of its underlying simple graph.

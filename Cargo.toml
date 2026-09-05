@@ -59,6 +59,79 @@ neg_cmp_op_on_partial_ord = "allow"
 # ledger into a struct to satisfy a count of seven moves the arity, it does not reduce it.
 too_many_arguments = "allow"
 
+# ---- the pedantic set, decided rather than inherited ------------------------------------------
+#
+# `cargo clippy -W clippy::pedantic -W clippy::nursery` reports 4,266 findings on this workspace.
+# Fixing 4,266 things is not a quality programme, it is a way to spend a week changing code that
+# was already correct -- and several of those lints are actively WRONG for a numerics crate that
+# checks itself against closed forms. So the set is chosen, each choice is justified here, and CI
+# runs at `-D warnings`, which makes the count zero by construction and keeps it there.
+#
+# DENIED: lints whose findings were real and are now fixed.
+must_use_candidate = "deny"           # a result nobody is forced to read is a result nobody reads;
+                                      # this one found 3 tests discarding a solver's answer
+redundant_closure_for_method_calls = "deny"
+cloned_instead_of_copied = "deny"
+explicit_iter_loop = "deny"
+uninlined_format_args = "deny"
+semicolon_if_nothing_returned = "deny"
+manual_let_else = "deny"
+redundant_else = "deny"
+inefficient_to_string = "deny"
+implicit_clone = "deny"
+map_unwrap_or = "deny"
+unnested_or_patterns = "deny"
+doc_markdown = "deny"
+
+# ALLOWED, with the reason. Each of these is a lint that is right in general and wrong here.
+#
+# 465 sites, and every one is a count being divided: `samples as f64 / n as f64`. A spin index or
+# a sample count that exceeded 2^53 would have exhausted memory long before it exhausted the
+# mantissa, and rewriting them as fallible conversions would put a `?` on arithmetic that cannot
+# fail.
+cast_precision_loss = "allow"
+# 428 sites, and THIS ONE CHANGES ANSWERS. `a*b + c` fused into `mul_add` keeps an extra internal
+# bit, so the result differs in the last place -- which is exactly where this crate does its work:
+# `free_energy`, `hopfield` and `continuous` are verified against closed forms at 1e-9, and
+# `wgsl`/`ffi` parity tests compare CPU against GPU and against other bindings BIT FOR BIT. A lint
+# that silently improves accuracy on one side of a bit-exactness test is a lint that breaks it.
+suboptimal_flops = "allow"
+# Every long literal in this crate is TRANSCRIBED from a published source and checked by reading it
+# against that source: 6364136223846793005 is PCG's multiplier as the paper prints it, 1304000 is an
+# Alveo U55C's LUT count as the datasheet prints it, 0x9E3779B97F4A7C15 is the golden-ratio constant
+# as the hashing literature prints it. Underscores make those comparisons harder, and a constant
+# nobody can check against its source is the failure this project cares about far more than
+# readability.
+unreadable_literal = "allow"
+# This codebase declares a `const` immediately above its use, with the comment that justifies the
+# VALUE directly above the const -- `MAX_COLOUR_CLASSES` in `ftp`, `LIM` in `certify`, `FLOOR` in
+# `adaptive`. Hoisting them to the top of the function separates each number from the paragraph
+# explaining why it is that number, which is the only thing making it reviewable.
+items_after_statements = "allow"
+# `Precision::Exact => 0.0` and `Precision::Unstated => 0.0` return the same value and mean opposite
+# things -- "nothing is lost" versus "nobody said". Collapsing them to `Exact | Unstated` would erase
+# in the source exactly the distinction the comment beside them exists to preserve, and it is the
+# distinction `Verdict::LimitsUnstated` is built on.
+match_same_arms = "allow"
+# `device::Topology`, `graph::Graph`, `ledger::Ledger`. The module IS the namespace and the
+# repetition is what makes `use ferrotherm::ledger::Ledger` read correctly at the call site.
+module_name_repetitions = "allow"
+# Vendor qubit indices are `u32` because the C ABI and every device file say `u32`; the graph is
+# indexed by `usize` because that is what slices take. The conversion is the boundary, and it is
+# checked where it matters (`Topology::node` returns `Option`).
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+# Under RATCHET rather than allow-and-forget: `scripts/check-lints.sh` records the exact count of
+# each and fails if it RISES. These are real gaps, they are large, and writing 662 doc sections in
+# one sitting produces 662 sentences that say nothing -- which is worse than an honest count.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# 142 sites. Some are exact-equality assertions that are CORRECT (a bit-exactness test must compare
+# bits) and some are ordinary float sloppiness. Telling them apart is a per-site read, so the count
+# is ratcheted rather than blanket-allowed.
+float_cmp = "allow"
+
 # `cfg(kani)` guards the machine-checked proof harnesses in src/*.rs. Declaring it at the
 # WORKSPACE level -- the crate inherits with `[lints] workspace = true`, and a member-level
 # `[lints.rust]` beside that inheritance is a Cargo error, which is how this line found its home --

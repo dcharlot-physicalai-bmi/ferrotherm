@@ -88,11 +88,13 @@ impl Calibration {
     /// `sd(z)` above `tolerance` fails. The default worth using is around `1.1`: sampling `sd` from
     /// `n` runs has its own error of roughly `1/√(2n)`, so 24 runs cannot distinguish `1.0` from
     /// `1.15`, and a threshold tighter than the measurement is theatre.
+    #[must_use]
     pub fn bar_is_honest(&self, tolerance: f64) -> bool {
         self.sd_z <= tolerance
     }
 
     /// Is the estimator unbiased, to within the noise of `runs` samples?
+    #[must_use]
     pub fn looks_unbiased(&self, sigmas: f64) -> bool {
         self.mean_z.abs() <= sigmas * self.sd_z.max(1e-12) / (self.runs as f64).sqrt()
     }
@@ -103,6 +105,7 @@ impl Calibration {
 /// **Read this before believing a calibration.** At 24 runs it is 14% of the value, so 24 runs
 /// cannot tell `0.8` from `1.1` — which is not a hypothetical: a table in this crate reported a bar
 /// as conservative at `0.81` from 24 runs, and 200 runs put the same bar at `1.25`.
+#[must_use]
 pub fn sd_z_uncertainty(c: &Calibration) -> f64 {
     c.sd_z / (2.0 * c.runs as f64).sqrt()
 }

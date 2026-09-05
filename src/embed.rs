@@ -130,13 +130,15 @@ pub struct Embedding {
 impl Embedding {
     /// The longest chain. Chains cost coupling budget and dilute the model, so this is the number
     /// to compare two embeddings by.
+    #[must_use]
     pub fn longest_chain(&self) -> usize {
-        self.chains.iter().map(|c| c.len()).max().unwrap_or(0)
+        self.chains.iter().map(std::vec::Vec::len).max().unwrap_or(0)
     }
 
     /// Total sites used.
+    #[must_use]
     pub fn used(&self) -> usize {
-        self.chains.iter().map(|c| c.len()).sum()
+        self.chains.iter().map(std::vec::Vec::len).sum()
     }
 
     /// Is this actually an embedding of `logical` into `hardware`?
@@ -211,6 +213,7 @@ fn touching(a: &[usize], b: &[usize], h: &Graph) -> bool {
 ///
 /// `None` means not found. Deciding whether a minor exists is NP-hard, so an honest answer here is
 /// never "impossible" — a different seed, a longer run, or a better heuristic may succeed.
+#[must_use]
 pub fn embed(logical: &Graph, hardware: &Graph, seed: u64) -> Option<Embedding> {
     embed_with(logical, hardware, seed, 20)
 }
@@ -227,12 +230,13 @@ pub fn embed(logical: &Graph, hardware: &Graph, seed: u64) -> Option<Embedding> 
 /// failure to find one, which is the only place in this module where `None` means "impossible"
 /// rather than "not found". [`embed_with`] checks it before searching, which is what turns a
 /// hopeless dense input from ninety-five seconds of futile rip-up into a few microseconds of
-/// arithmetic: K_60 and K_100 on a 512-site Chimera are refused instantly, while K_33 and K_40 —
+/// arithmetic: `K_60` and `K_100` on a 512-site Chimera are refused instantly, while `K_33` and `K_40` —
 /// which the counting argument cannot rule out — are still searched for properly.
 ///
 /// The bound is loose by design. It ignores that ports must reach DISTINCT chains, that chains
 /// compete for the same sites, and every question of geometry, so passing it says nothing at all
 /// about whether an embedding exists.
+#[must_use]
 pub fn site_lower_bound(logical: &Graph, hardware: &Graph) -> usize {
     let d = (0..hardware.n)
         .map(|s| hardware.offset[s + 1] - hardware.offset[s])
@@ -286,6 +290,7 @@ pub fn site_lower_bound(logical: &Graph, hardware: &Graph) -> usize {
 /// with those numbers as the bar.
 ///
 /// Returns `None` when `m == 0` or `t == 0`, where there is no clique to speak of.
+#[must_use]
 pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
     if m == 0 || t == 0 {
         return None;
@@ -345,6 +350,7 @@ pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
 /// And the result is still not trusted: every size goes through [`Embedding::verify`] against the
 /// same `device::zephyr` the rest of the crate builds — chains connected, disjoint, an edge behind
 /// every logical pair. Chains are indexed `((w-1)·t + k)·2 + j`. `None` for `m == 0` or `t == 0`.
+#[must_use]
 pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
     if m == 0 || t == 0 {
         return None;
@@ -484,6 +490,7 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
 ///
 /// Chains are indexed `(w - 1) * 12 + k`, then the four universal wires in the order above.
 /// `None` for `m < 3`, where no interior diagonal exists.
+#[must_use]
 pub fn pegasus_clique(m: usize) -> Option<Embedding> {
     if m < 3 {
         return None;
@@ -611,6 +618,7 @@ pub const PEG_H: [usize; 6] = [3, 3, 1, 1, 5, 5];
 /// and `K_180` at `P_16`, every one of them `12(m−1)` at chain `m+1`.
 ///
 /// `None` for `m < 3`.
+#[must_use]
 pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
     if m < 3 {
         return None;
@@ -874,7 +882,7 @@ mod clique_tests {
 
         let built = chimera_clique(m, 4).unwrap();
         assert_eq!(built.chains.len(), 32);
-        let built_longest = built.chains.iter().map(|c| c.len()).max().unwrap();
+        let built_longest = built.chains.iter().map(std::vec::Vec::len).max().unwrap();
         assert_eq!(built_longest, 9);
         built.verify(&clique(32), &hw).expect("K_32 by construction");
 
@@ -883,7 +891,7 @@ mod clique_tests {
         // than the construction needs for K_32.
         let searched = embed_bounded(&clique(18), &hw, 7, 10, DEFAULT_SEARCH_BUDGET)
             .expect("the tables record K_18 as found");
-        let searched_longest = searched.chains.iter().map(|c| c.len()).max().unwrap();
+        let searched_longest = searched.chains.iter().map(std::vec::Vec::len).max().unwrap();
         assert!(
             searched_longest > built_longest,
             "search: chain {searched_longest} for K_18; construction: chain {built_longest} for K_32"
@@ -952,8 +960,8 @@ mod clique_tests {
                 }
                 count == c.len()
             };
-            let hot: Vec<usize> = (0..12).filter(|&k| build(0, k).map(|c| connected(&c)).unwrap_or(false)).collect();
-            let cold: Vec<usize> = (0..12).filter(|&k| build(m - 1, k).map(|c| connected(&c)).unwrap_or(false)).collect();
+            let hot: Vec<usize> = (0..12).filter(|&k| build(0, k).is_some_and(|c| connected(&c))).collect();
+            let cold: Vec<usize> = (0..12).filter(|&k| build(m - 1, k).is_some_and(|c| connected(&c))).collect();
             assert_eq!(hot, vec![10, 11], "P{m}: hot-end tracks");
             assert_eq!(cold, vec![0, 1], "P{m}: cold-end tracks");
         }
@@ -961,10 +969,10 @@ mod clique_tests {
 
     /// The Pegasus clique is a valid minor at every size, with uniform chains -- the Advantage row.
     ///
-    /// K_{12(m-2)+4} at chain m+1, against the same `device::pegasus` the crate ships. On P_16 that
-    /// is K_172 where the frontier (busclique, run as an oracle) is K_180 at the same chain 17;
-    /// `pegasus_clique_fragment` closes four of that gap and has its own test. Sizes to P_8 here for
-    /// time; the example table carries P_16, verified the same way.
+    /// K_{12(m-2)+4} at chain m+1, against the same `device::pegasus` the crate ships. On `P_16` that
+    /// is `K_172` where the frontier (busclique, run as an oracle) is `K_180` at the same chain 17;
+    /// `pegasus_clique_fragment` closes four of that gap and has its own test. Sizes to `P_8` here for
+    /// time; the example table carries `P_16`, verified the same way.
     #[test]
     fn the_pegasus_clique_is_a_valid_minor_with_bounded_chains() {
         for m in 3..=8usize {
@@ -1000,21 +1008,21 @@ mod clique_tests {
             assert_eq!(k, 12 * (m - 1), "P_{m}: K_{{12(m-1)}}");
             assert_eq!(k, theirs, "P_{m} is exactly busclique's size, not near it");
             assert!(k > pegasus_clique(m).expect("m >= 3").chains.len(), "P_{m} beats closed form");
-            let longest = e.chains.iter().map(|c| c.len()).max().expect("nonempty");
+            let longest = e.chains.iter().map(std::vec::Vec::len).max().expect("nonempty");
             assert!(longest <= m + 1, "P_{m}: chain {longest} exceeds m+1, busclique's bound too");
             e.verify(&clique(k), &topo.graph).unwrap_or_else(|err| panic!("P_{m}: {err}"));
         }
         assert!(pegasus_clique_fragment(2).is_none());
     }
 
-    /// P_16 is the shipped Advantage, and the one number anybody will quote.
+    /// `P_16` is the shipped Advantage, and the one number anybody will quote.
     #[test]
     fn the_fragment_clique_places_k180_on_the_advantage() {
         let m = 16;
         let topo = crate::device::pegasus(m, 1.0);
         let e = pegasus_clique_fragment(m).expect("m >= 3");
         assert_eq!(e.chains.len(), 180, "K_180 on P_16 -- busclique's frontier, exactly");
-        let longest = e.chains.iter().map(|c| c.len()).max().expect("nonempty");
+        let longest = e.chains.iter().map(std::vec::Vec::len).max().expect("nonempty");
         assert_eq!(longest, m + 1, "chain 17, which is busclique's chain length too");
         e.verify(&clique(180), &topo.graph).expect("a valid minor on the shipped fabric");
     }
@@ -1078,14 +1086,14 @@ mod clique_tests {
 /// could not route, so a hopeless input returned `None` in microseconds — it never spent its round
 /// budget because it never reached round 1. Fixing that abort is most of why cliques embed at all
 /// now, and it also means a hopeless input runs the search it was always supposed to run. Measured
-/// on chimera(8,8,4), unbounded: K_33 1.9 s, K_40 2.5 s, K_60 16.9 s, K_100 95.3 s to answer "no".
+/// on chimera(8,8,4), unbounded: `K_33` 1.9 s, `K_40` 2.5 s, `K_60` 16.9 s, `K_100` 95.3 s to answer "no".
 ///
 /// Ninety-five seconds with no output is not an answer a library may give a caller, and
 /// [`crate::fabric`] and the Hitachi driver both reach this path. So the work is bounded.
 ///
 /// The number is one Dijkstra per placed neighbour per variable per round. 200,000 of them is
 /// roughly a second on the hardware this was measured on, and it is far above what any input that
-/// SUCCEEDS has been observed to need — the whole K_8..K_24 sweep on chimera(8,8,4) fits inside
+/// SUCCEEDS has been observed to need — the whole `K_8..K_24` sweep on chimera(8,8,4) fits inside
 /// 5,000. A bound that cut off a case that would have succeeded would be worse than the latency it
 /// prevents, so it is set an order of magnitude clear of the worst success, not at it.
 pub const DEFAULT_SEARCH_BUDGET: u64 = 200_000;
@@ -1096,6 +1104,7 @@ pub const DEFAULT_SEARCH_BUDGET: u64 = 200_000;
 /// same thing: this heuristic did not find an embedding. It never means none exists. Raise the
 /// budget for a large machine, or pass `u64::MAX` for the unbounded search — and see
 /// [`DEFAULT_SEARCH_BUDGET`] for what unbounded costs on a dense input that cannot be placed.
+#[must_use]
 pub fn embed_bounded(
     logical: &Graph,
     hardware: &Graph,
@@ -1107,6 +1116,7 @@ pub fn embed_bounded(
 }
 
 /// As [`embed`], with an explicit number of rip-up rounds.
+#[must_use]
 pub fn embed_with(logical: &Graph, hardware: &Graph, seed: u64, rounds: usize) -> Option<Embedding> {
     embed_inner(logical, hardware, seed, rounds, DEFAULT_SEARCH_BUDGET)
 }
@@ -1265,7 +1275,7 @@ fn embed_inner(
             break;
         }
 
-        let here = (excess, chains.iter().map(|c| c.len()).sum::<usize>());
+        let here = (excess, chains.iter().map(std::vec::Vec::len).sum::<usize>());
         if here < best {
             best = here;
             stale = 0;
@@ -1275,7 +1285,7 @@ fn embed_inner(
         if stale >= STALL {
             // Not converging. Rip the whole placement up rather than spending the remaining
             // rounds refining an arrangement that has stopped getting better.
-            for c in chains.iter_mut() {
+            for c in &mut chains {
                 c.clear();
             }
             order.sort_by_key(|&v| core::cmp::Reverse(degree(logical, v)));
@@ -1531,6 +1541,7 @@ pub struct Embedded {
 ///
 /// Couplings are shared out across the hardware edges that realise each logical edge, and fields
 /// are shared out along each chain, so the total weight is unchanged however long a chain is.
+#[must_use]
 pub fn apply(logical: &Graph, hardware: &Graph, e: &Embedding) -> Embedded {
     apply_with(logical, hardware, e, DEFAULT_CHAIN_MULTIPLE * worst_coefficient(logical))
 }
@@ -1592,6 +1603,7 @@ pub fn worst_coefficient(logical: &Graph) -> f64 {
 ///
 /// A non-finite or non-positive `chain_strength` falls back to the default rather than building a
 /// model whose chains do not hold.
+#[must_use]
 pub fn apply_with(
     logical: &Graph,
     hardware: &Graph,
@@ -1665,6 +1677,7 @@ pub fn apply_with(
 /// Returns the values and the variables whose chains **broke** — disagreed with themselves. A
 /// broken chain means the answer for that variable is a coin toss dressed as a result, so it is
 /// reported rather than silently resolved.
+#[must_use]
 pub fn unembed(e: &Embedding, state: &[i8]) -> (Vec<i8>, Vec<usize>) {
     let mut out = vec![0i8; e.chains.len()];
     let mut broken = Vec::new();
@@ -1700,6 +1713,7 @@ pub mod topology {
     /// A King's graph: an `l` by `l` grid where each site couples to its eight neighbours.
     ///
     /// Hitachi's CMOS annealer. Site `(x, y)` is index `y * l + x`.
+    #[must_use]
     pub fn king(l: usize) -> Graph {
         let mut b = GraphBuilder::new(l * l);
         let at = |x: usize, y: usize| y * l + x;
@@ -1717,6 +1731,7 @@ pub mod topology {
     }
 
     /// A plain `l` by `l` grid, four neighbours per site.
+    #[must_use]
     pub fn grid(l: usize) -> Graph {
         let mut b = GraphBuilder::new(l * l);
         for y in 0..l {
@@ -1733,6 +1748,7 @@ pub mod topology {
     }
 
     /// A complete graph on `n` sites, for testing that embedding into something generous is easy.
+    #[must_use]
     pub fn complete(n: usize) -> Graph {
         let mut b = GraphBuilder::new(n);
         for i in 0..n {
@@ -1934,7 +1950,7 @@ mod tests {
         let c = clique(16, 1.0);
         let ok = (0..8u64)
             .filter(|&s| {
-                embed(&c, &hardware, s).map(|e| e.verify(&c, &hardware).is_ok()).unwrap_or(false)
+                embed(&c, &hardware, s).is_some_and(|e| e.verify(&c, &hardware).is_ok())
             })
             .count();
         assert!(ok >= 6, "K_16 embedded on only {ok} of 8 seeds");

@@ -1,0 +1,4 @@
+missing_docs 509
+missing_errors_doc 62
+missing_panics_doc 91
+float_cmp 142

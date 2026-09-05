@@ -348,6 +348,7 @@ pub struct Outcome {
 }
 
 /// Run the descent from a random start.
+#[must_use]
 pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     let mut rng = Pcg::new(seed, 0x004F_5300);
     let s: Vec<i8> = (0..g.n).map(|_| rng.spin(0.5)).collect();
@@ -359,6 +360,7 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
 /// The composable form. HFS is a descent: it never raises the energy, so it cannot undo whatever
 /// found the state it starts from, and starting it from a good state is strictly better than
 /// starting it from noise.
+#[must_use]
 pub fn run_from(g: &Graph, start: Vec<i8>, p: &Params, seed: u64) -> Outcome {
     let el = Elimination { max_width: p.max_width.max(1) };
     let mut rng = Pcg::new(seed, 0x0048_4653);

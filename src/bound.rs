@@ -109,6 +109,7 @@ impl Bound {
     /// Never negative for a sound bound, and a negative result means the bound is wrong rather than
     /// the state remarkable — which is why [`forest`] takes the maximum over rounds of quantities
     /// each individually valid, rather than trusting the last one.
+    #[must_use]
     pub fn gap(&self, g: &Graph, s: &[i8]) -> f64 {
         g.energy(s) - self.value
     }
@@ -130,6 +131,7 @@ impl Bound {
 ///
 /// Loose by construction and worth having anyway: it costs one pass, it never fails, and it is the
 /// floor every other method here must beat to have earned its cost.
+#[must_use]
 pub fn decoupled(g: &Graph) -> Bound {
     let mut v = 0.0;
     for i in 0..g.n {
@@ -160,6 +162,7 @@ pub fn decoupled(g: &Graph) -> Bound {
 /// valid bound — every round produces one, and this returns **the largest seen**. Taking the last
 /// would be a bug: subgradient ascent is not monotone, and the final iterate is routinely worse
 /// than one from the middle of the run.
+#[must_use]
 pub fn forest(g: &Graph, rounds: usize) -> Bound {
     let parts = forest_partition(g);
     if parts.is_empty() {
@@ -651,7 +654,7 @@ mod tests {
             .iter()
             .flat_map(|p| p.iter().map(|&(i, j, _)| (i, j)))
             .collect();
-        let total: usize = parts.iter().map(|p| p.len()).sum();
+        let total: usize = parts.iter().map(std::vec::Vec::len).sum();
         seen.sort_unstable();
         seen.dedup();
         assert_eq!(seen.len(), total, "an edge appears in two parts");

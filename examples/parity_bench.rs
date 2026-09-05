@@ -34,7 +34,7 @@ fn main() {
     }
     println!("  {:>10} {:>14} {:>12} {:>10}", "threads", "flips/s", "ns/flip", "speedup");
     let mut base = 0.0;
-    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(8);
+    let cores = std::thread::available_parallelism().map_or(8, std::num::NonZero::get);
     for &t in &[1usize, 2, 4, 8, cores] {
         let mut smp = Sampler::new(&g, 0.9, 0xBE7C);
         // warmup

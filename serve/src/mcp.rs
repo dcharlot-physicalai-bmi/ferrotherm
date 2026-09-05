@@ -47,6 +47,7 @@ fn tool(name: &str, desc: &str, props: Vec<(&str, Json)>, required: Vec<&str>) -
     ])
 }
 
+#[must_use]
 pub fn tools() -> Json {
     Json::Arr(vec![
         tool(
@@ -354,6 +355,7 @@ fn tool_result(text: String, is_error: bool) -> Json {
 }
 
 /// Handle one JSON-RPC message. Returns None for notifications, which take no reply.
+#[must_use]
 pub fn handle(line: &str) -> Option<String> {
     let msg = match parse(line) {
         Ok(m) => m,

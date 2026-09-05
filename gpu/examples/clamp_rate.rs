@@ -54,7 +54,7 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
-fn minimum(v: &[f64]) -> f64 { v.iter().cloned().fold(f64::INFINITY, f64::min) }
+fn minimum(v: &[f64]) -> f64 { v.iter().copied().fold(f64::INFINITY, f64::min) }
 
 /// This machine runs other work. A first pass at this bench took five samples per point and
 /// produced a fit whose worst residual was 47 percent, with k=256 timing FASTER than the line
@@ -208,7 +208,7 @@ fn main() {
                 })
                 .collect(),
         );
-        println!("{:>6}  {:>8}  {:>14.4}  {:>14.4}", l, n, cpu_ms, clamp);
+        println!("{l:>6}  {n:>8}  {cpu_ms:>14.4}  {clamp:>14.4}");
     }
 
     println!();
@@ -221,7 +221,7 @@ fn main() {
     for hz in [10, 30, 50, 100] { print!("  {:>10}", format!("{hz} Hz res")); }
     println!();
     for &(l, n, restream, clamp, _, _) in &rows {
-        print!("{:>6}  {:>8}", l, n);
+        print!("{l:>6}  {n:>8}");
         for hz in [10.0, 30.0, 50.0, 100.0] {
             let budget = 1e3 / hz;
             let k = ((budget - restream) / clamp.max(1e-9)).floor().max(0.0);

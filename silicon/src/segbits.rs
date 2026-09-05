@@ -29,6 +29,7 @@ pub struct SegBit {
 
 impl SegBit {
     /// The word this bit lives in, and its position within that word.
+    #[must_use]
     pub fn word_and_pos(&self) -> (u16, u16) {
         (self.bit / 32, self.bit % 32)
     }
@@ -41,6 +42,7 @@ pub struct SegBits {
 }
 
 /// Parse one `FF_BB` (optionally `!`-prefixed) coordinate.
+#[must_use]
 pub fn parse_bit(tok: &str) -> Option<SegBit> {
     let (set, body) = match tok.strip_prefix('!') {
         Some(rest) => (false, rest),
@@ -69,14 +71,16 @@ impl SegBits {
         SegBits { features }
     }
 
+    #[must_use]
     pub fn get(&self, feature: &str) -> Option<&[SegBit]> {
-        self.features.get(feature).map(|v| v.as_slice())
+        self.features.get(feature).map(std::vec::Vec::as_slice)
     }
 
     /// Collect a LUT's 64 INIT bits in index order, e.g. prefix
     /// `CLBLL_L.SLICEL_X0.ALUT` -> the bits for `INIT[00]` ..= `INIT[63]`.
     /// Returns `None` if any index is missing, because a partial map would silently write a
     /// truth table with holes in it.
+    #[must_use]
     pub fn lut_init_bits(&self, lut_prefix: &str) -> Option<Vec<SegBit>> {
         let mut out = Vec::with_capacity(64);
         for i in 0..64 {
@@ -91,7 +95,7 @@ impl SegBits {
 
     /// Every feature name sharing a prefix (for discovery/inspection).
     pub fn with_prefix<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.features.keys().filter(move |k| k.starts_with(prefix)).map(|s| s.as_str())
+        self.features.keys().filter(move |k| k.starts_with(prefix)).map(std::string::String::as_str)
     }
 }
 

@@ -26,6 +26,7 @@ pub struct Spd {
 }
 
 impl Spd {
+    #[must_use]
     pub fn new(n: usize, a: Vec<f64>, b: Vec<f64>) -> Spd {
         assert_eq!(a.len(), n * n);
         assert_eq!(b.len(), n);
@@ -60,7 +61,8 @@ pub struct TlaResult {
 }
 
 /// Simulate the OU network and return the thermodynamic solve. `dt` must satisfy
-/// dt < 2 / lambda_max(A) for stability; `burn` steps equilibrate, `measure` steps average.
+/// dt < 2 / `lambda_max(A)` for stability; `burn` steps equilibrate, `measure` steps average.
+#[must_use]
 pub fn solve_spd(sys: &Spd, beta: f64, dt: f64, burn: usize, measure: usize, seed: u64) -> TlaResult {
     let n = sys.n;
     let mut rng = Pcg::new(seed, 0x71A);
@@ -90,7 +92,7 @@ pub fn solve_spd(sys: &Spd, beta: f64, dt: f64, burn: usize, measure: usize, see
         }
     }
     let m = measure as f64;
-    for v in mean.iter_mut() {
+    for v in &mut mean {
         *v /= m;
     }
     let mut a_inv = vec![0.0; n * n];
@@ -111,6 +113,7 @@ pub fn solve_spd(sys: &Spd, beta: f64, dt: f64, burn: usize, measure: usize, see
 ///     eta ~ N(0, beta^-1 A^-1 (I - exp(-2 A h))),
 /// evaluated in the eigenbasis of A (Aifer et al., arXiv:2308.05660, Eq. 35). Strides of a few
 /// relaxation times give near-independent samples.
+#[must_use]
 pub fn solve_spd_exact_ou(
     sys: &Spd,
     beta: f64,
@@ -194,6 +197,7 @@ pub fn solve_spd_exact_ou(
 }
 
 /// Exact reference solve by Gaussian elimination with partial pivoting (for verification).
+#[must_use]
 pub fn solve_exact(sys: &Spd) -> Vec<f64> {
     let n = sys.n;
     let mut aug = vec![0.0; n * (n + 1)];
@@ -303,7 +307,7 @@ mod tests {
         }
     }
 
-    /// The sample covariance must estimate A^-1: check A * a_inv ~ I.
+    /// The sample covariance must estimate A^-1: check A * `a_inv` ~ I.
     #[test]
     fn covariance_estimates_inverse() {
         let sys = test_system();

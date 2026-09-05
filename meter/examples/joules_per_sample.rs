@@ -50,7 +50,7 @@ use ferrotherm::host;
 use ferrotherm::rng::Pcg;
 use ferrotherm::tempering::parallel_tempering_observed;
 
-/// A hardware-native instance: the Advantage's own P_8 fabric, random +-1 couplings, no fields.
+/// A hardware-native instance: the Advantage's own `P_8` fabric, random +-1 couplings, no fields.
 ///
 /// Not a lattice. The point of a device graph is that it is the graph the machine has, and a
 /// spin glass on it is the workload the machine exists for.
@@ -112,15 +112,12 @@ fn main() {
             std::process::exit(3);
         }
     };
-    let mut meter = match ferrotherm_meter::Meter::detect() {
-        Some(m) => m,
-        None => {
-            eprintln!(
-                "no power backend on this machine, so there are no joules to report and this \
-                 example refuses to print a modelled number in their place."
-            );
-            std::process::exit(2);
-        }
+    let Some(mut meter) = ferrotherm_meter::Meter::detect() else {
+        eprintln!(
+            "no power backend on this machine, so there are no joules to report and this \
+             example refuses to print a modelled number in their place."
+        );
+        std::process::exit(2);
     };
 
     let m = 8usize;

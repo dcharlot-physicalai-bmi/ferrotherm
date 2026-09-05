@@ -1,7 +1,7 @@
 //! What a node update costs on THIS machine, measured, beside what it was being priced at.
 //!
 //! The ledger has always counted operations exactly. Until now the only price table in the tree was
-//! Z1_SPICE -- pre-silicon estimates for an accelerator nobody has characterised -- and every
+//! `Z1_SPICE` -- pre-silicon estimates for an accelerator nobody has characterised -- and every
 //! fabric declared it, so a laptop reported another company's unfabricated chip's energy. This
 //! replaces the borrowed number with a measured one and prints both, because the ratio is the
 //! interesting part and neither number means much alone.

@@ -70,24 +70,29 @@ pub struct Hubo {
 }
 
 impl Hubo {
+    #[must_use]
     pub fn new(n: usize) -> Hubo {
         Hubo { n, terms: Vec::new(), incident: vec![Vec::new(); n] }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.n
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
 
     /// Terms in the model.
+    #[must_use]
     pub fn terms(&self) -> usize {
         self.terms.len()
     }
 
     /// The widest term. This is the number [`crate::reduce`] exists to bring down to two.
+    #[must_use]
     pub fn max_arity(&self) -> usize {
         self.terms.iter().map(|(v, _)| v.len()).max().unwrap_or(0)
     }
@@ -107,6 +112,7 @@ impl Hubo {
     /// So this is the ceiling, not the cost. Reduce the model and read [`crate::reduce::Reduction`]
     /// for what a reduction actually costs; `examples/hubo_vs_reduction` does exactly that, which
     /// is why its table is right and this doc comment was wrong until it was checked.
+    #[must_use]
     pub fn ancillas_avoided(&self) -> usize {
         self.terms.iter().map(|(v, _)| v.len().saturating_sub(2)).sum()
     }
@@ -129,6 +135,7 @@ impl Hubo {
     ///
     /// Exists so the native and reduced paths can be compared on one model. The energies must agree
     /// exactly, which is the test that says this convention is the crate's convention.
+    #[must_use]
     pub fn from_graph(g: &Graph) -> Hubo {
         let mut h = Hubo::new(g.n);
         for i in 0..g.n {
@@ -151,6 +158,7 @@ impl Hubo {
     }
 
     /// `E(s) = −Σ_T w_T Π s_i`.
+    #[must_use]
     pub fn energy(&self, s: &[i8]) -> f64 {
         self.terms
             .iter()
@@ -162,6 +170,7 @@ impl Hubo {
     }
 
     /// The energy change from flipping spin `i`, in `O(terms containing i)`.
+    #[must_use]
     pub fn delta(&self, s: &[i8], i: usize) -> f64 {
         2.0 * self.incident[i]
             .iter()
@@ -204,11 +213,13 @@ pub struct Outcome {
 }
 
 /// Anneal a higher-order model directly, with no reduction and no ancillas.
+#[must_use]
 pub fn anneal(h: &Hubo, p: &Params, seed: u64) -> Outcome {
     anneal_metered(h, p, seed, None)
 }
 
 /// As [`anneal`], charging every proposal to a [`Ledger`].
+#[must_use]
 pub fn anneal_metered(h: &Hubo, p: &Params, seed: u64, mut ledger: Option<&mut Ledger>) -> Outcome {
     let n = h.n;
     if n == 0 {

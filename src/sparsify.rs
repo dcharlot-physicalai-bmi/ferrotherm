@@ -12,7 +12,7 @@
 //!   bias split evenly. The result is a different, larger, sparser model with the SAME ground
 //!   states, and any degree-`d` fabric can then take it.
 //!
-//! The field states this as an open problem in exactly those terms — OPUSLab's answer is one MATLAB
+//! The field states this as an open problem in exactly those terms — `OPUSLab`'s answer is one MATLAB
 //! file from June 2025, and their repository named `SparsifyDenseGraph` is empty — so it is worth
 //! owning, and worth owning with the correctness property checked rather than asserted.
 //!
@@ -90,6 +90,7 @@ impl core::fmt::Display for Refused {
 /// One when it already fits. Otherwise the smallest `c` with `c(d−2) + 2 ≥ k`, which is the port
 /// count of a path of `c` copies. Identical to the per-variable term of
 /// [`crate::embed::site_lower_bound`], for the same reason.
+#[must_use]
 pub fn copies_for(k: usize, d: usize) -> usize {
     if d < 3 {
         return 1; // meaningless; callers are refused before reaching here
@@ -235,6 +236,7 @@ impl Sparsified {
     /// `None` rather than a number, because there is no logical state to price: a variable whose
     /// copies disagree has not been assigned a value, and returning the sparse energy would be
     /// answering a question about a different model.
+    #[must_use]
     pub fn logical_energy(&self, g: &Graph, state: &[i8]) -> Option<f64> {
         let (s, broken) = project(self, state);
         broken.is_empty().then(|| g.energy(&s))
@@ -247,6 +249,7 @@ impl Sparsified {
 /// returned so the caller still has a complete state to look at, and the index is reported — a
 /// broken copy set means the coupling lost, and a caller that ignores the list is reading a
 /// majority vote as though it were an answer.
+#[must_use]
 pub fn project(s: &Sparsified, state: &[i8]) -> (Vec<i8>, Vec<usize>) {
     let mut out = Vec::with_capacity(s.copies.len());
     let mut broken = Vec::new();

@@ -161,11 +161,13 @@ pub struct Outcome {
 }
 
 /// Run breakout local search from a random state.
+#[must_use]
 pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
     search_metered(g, p, seed, None)
 }
 
 /// As [`search`], charging every spin update to a [`Ledger`].
+#[must_use]
 pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Ledger>) -> Outcome {
     let n = g.n;
     if n == 0 {

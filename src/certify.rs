@@ -193,6 +193,7 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 /// `tau_int = 1/2 + sum_k rho(k)`, truncated at the smallest window `W` satisfying `W >= 5 tau`.
 /// Truncation is not optional: the tail of an empirical autocorrelation is noise, and summing all
 /// of it produces a number that grows with the length of the run rather than describing it.
+#[must_use]
 pub fn tau_int(trace: &[f64]) -> f64 {
     let n = trace.len();
     if n < 16 {
@@ -223,6 +224,7 @@ pub fn tau_int(trace: &[f64]) -> f64 {
 ///
 /// `trace` is a scalar observable, one value per sample, used for the autocorrelation estimate;
 /// energy is the usual choice. Samples must be in chain order for `tau_int` to mean anything.
+#[must_use]
 pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64]) -> Certificate {
     let draws = samples.len();
     if draws < 16 {
@@ -325,7 +327,7 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
             }
             hist[k] += 1.0;
         }
-        for h in hist.iter_mut() {
+        for h in &mut hist {
             *h /= draws as f64;
         }
         let tv = crate::ising::tv(&hist, &exact);

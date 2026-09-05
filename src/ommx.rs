@@ -107,6 +107,7 @@ pub struct Export {
 /// written below; the algebra is checked against the sampler in `an_exported_instance_scores_every
 /// _state_the_way_ferrotherm_does`, which enumerates every state of a small graph rather than
 /// trusting the derivation.
+#[must_use]
 pub fn export(g: &Graph) -> Export {
     let n = g.n;
     let mut quad: Vec<(u64, u64, f64)> = Vec::new();

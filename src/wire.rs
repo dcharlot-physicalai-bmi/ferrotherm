@@ -122,6 +122,7 @@ pub enum Value<'a> {
 
 impl Value<'_> {
     /// The `double` this holds, or `None` if it is not a `fixed64`.
+    #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::Fixed64(v) => Some(f64::from_bits(*v)),
@@ -129,18 +130,21 @@ impl Value<'_> {
         }
     }
     /// The `float` this holds, widened, or `None` if it is not a `fixed32`.
+    #[must_use]
     pub fn as_f32(&self) -> Option<f32> {
         match self {
             Value::Fixed32(v) => Some(f32::from_bits(*v)),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Value::Varint(v) => Some(*v),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             Value::Bytes(b) => Some(b),
@@ -167,11 +171,13 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[must_use]
     pub fn new(b: &'a [u8]) -> Self {
         Reader { b, i: 0 }
     }
 
     /// How many bytes have been consumed. Useful for reporting where a higher layer gave up.
+    #[must_use]
     pub fn position(&self) -> usize {
         self.i
     }
@@ -405,7 +411,7 @@ mod tests {
         // ~2^64. `self.i + len as usize` wrapped, and the wrapped end passed the bounds check.
         let bytes = [0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
         match all(&bytes) {
-            Err(WireError::LengthOutOfRange { .. }) | Err(WireError::Truncated { .. }) => {}
+            Err(WireError::LengthOutOfRange { .. } | WireError::Truncated { .. }) => {}
             other => panic!("expected a named refusal, got {other:?}"),
         }
     }

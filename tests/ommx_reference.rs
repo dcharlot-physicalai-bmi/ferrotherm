@@ -21,8 +21,7 @@ fn the_reference_implementation_scores_every_state_as_we_do() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
     if !has {
         eprintln!("no `ommx` for {py}; skipping the reference check");
         return;
@@ -92,7 +91,7 @@ fn we_can_read_an_instance_the_reference_built() {
     let has = Command::new(&py)
         .args(["-c", "import ommx.v1"])
         .stdout(Stdio::null()).stderr(Stdio::null()).status()
-        .map(|s| s.success()).unwrap_or(false);
+        .is_ok_and(|s| s.success());
     if !has {
         eprintln!("no `ommx` for {py}; skipping");
         return;
@@ -121,7 +120,7 @@ open(r"{}", "w").write("\n".join(rows))
 "#,
         inst.display(), table.display()
     );
-    let ok = Command::new(&py).args(["-c", &build]).status().map(|s| s.success()).unwrap_or(false);
+    let ok = Command::new(&py).args(["-c", &build]).status().is_ok_and(|s| s.success());
     assert!(ok, "the reference failed to build its own instance");
 
     let (g, constant) = ferrotherm::ommx::import(&std::fs::read(&inst).unwrap())

@@ -79,6 +79,7 @@ impl Ledger {
     /// `Option`, not a number, and not zero. A machine whose per-operation energy nobody has
     /// published does not cost nothing, and a caller that has to unwrap this cannot accidentally
     /// print a figure for a device that has none.
+    #[must_use]
     pub fn joules(&self, p: &Prices) -> Option<f64> {
         p.is_stated().then_some({
             self.samples as f64 * p.e_sample
@@ -92,6 +93,7 @@ impl Ledger {
     ///
     /// A run that reflashes faster than the hardware sustains is not fast; it is unphysical, and
     /// pricing it describes something that could not have happened.
+    #[must_use]
     pub fn reflash_seconds(&self, p: &Prices, graph_nodes: u64) -> Option<f64> {
         let hz = p.reflash_hz_cap?;
         if graph_nodes == 0 || hz <= 0.0 {
@@ -101,6 +103,7 @@ impl Ledger {
     }
 
     /// Fractional breakdown (sample, read, write) of total energy under prices `p`.
+    #[must_use]
     pub fn shares(&self, p: &Prices) -> (f64, f64, f64) {
         if !p.is_stated() {
             return (f64::NAN, f64::NAN, f64::NAN);

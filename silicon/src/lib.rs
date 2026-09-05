@@ -54,6 +54,7 @@ pub mod device {
 
     impl PtV2 {
         /// The declared capabilities, without needing a board attached.
+        #[must_use]
         pub fn describe() -> Fabric {
             Fabric {
                 name: "alchitry-pt-v2",
@@ -97,6 +98,7 @@ pub mod device {
         }
 
         #[cfg(not(feature = "flash"))]
+        #[must_use]
         pub fn attached() -> bool {
             false
         }

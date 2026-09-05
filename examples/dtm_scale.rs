@@ -109,8 +109,7 @@ fn main() {
             println!("\nmeasured: {:.2} ms per chromatic sweep of {n} nodes ({:.2e} node updates/s)",
                      per_sweep * 1e3, n as f64 / per_sweep);
             let step_cost = per_sweep * k_sweeps as f64 * 2.0 * batch as f64 * t_steps as f64;
-            println!("one training step (batch {batch}, K={k_sweeps}, both phases, {t_steps} layers): {:.2} s",
-                     step_cost);
+            println!("one training step (batch {batch}, K={k_sweeps}, both phases, {t_steps} layers): {step_cost:.2} s");
         }
         None => {
             println!("\nper-sweep cost: {sweep_t}");

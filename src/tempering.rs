@@ -13,6 +13,7 @@ use crate::ledger::Ledger;
 use crate::rng::Pcg;
 
 /// Simulated annealing: sweep while raising beta along `schedule`, tracking the best state seen.
+#[must_use]
 pub fn anneal(
     g: &Graph,
     schedule: &[(f64, usize)], // (beta, sweeps at that beta)
@@ -37,6 +38,7 @@ pub fn anneal(
 }
 
 /// Geometric beta ladder from `beta_min` to `beta_max`.
+#[must_use]
 pub fn geometric_ladder(beta_min: f64, beta_max: f64, n: usize) -> Vec<f64> {
     assert!(n >= 2 && beta_min > 0.0 && beta_max > beta_min);
     let r = (beta_max / beta_min).powf(1.0 / (n - 1) as f64);
@@ -132,8 +134,9 @@ pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&m
 
 
 /// Parallel tempering over a beta ladder. Every `swap_every` sweeps, adjacent replicas attempt a
-/// state exchange with probability min(1, exp(delta_beta * delta_E)) — the standard replica-
+/// state exchange with probability min(1, `exp(delta_beta` * `delta_E`)) — the standard replica-
 /// exchange criterion, alternating even/odd pairs so a state can traverse the whole ladder.
+#[must_use]
 pub fn parallel_tempering(
     g: &Graph,
     betas: &[f64],
@@ -153,7 +156,7 @@ pub fn parallel_tempering(
     for round in 0..rounds {
         advance(&mut reps, swap_every, ledger.as_deref_mut());
         // coldest replica is the optimizer; track its best
-        for rep in reps.iter() {
+        for rep in &reps {
             let e = g.energy(&rep.s);
             if e < best_e {
                 best_e = e;
@@ -214,6 +217,7 @@ pub struct LadderTraces {
 impl LadderTraces {
     /// How many round trips fit in the recorded stretch — the effective number of independent
     /// ladder traversals a jackknife has to work with.
+    #[must_use]
     pub fn independent_traversals(&self) -> Option<f64> {
         let len = self.energies.first()?.len() as f64;
         self.round_trip_time.map(|t| len / t)
@@ -222,6 +226,7 @@ impl LadderTraces {
 
 impl LadderTraces {
     /// The traces as `(β, energies)` pairs, the shape the free-energy estimators take.
+    #[must_use]
     pub fn as_pairs(&self) -> Vec<(f64, Vec<f64>)> {
         self.betas.iter().copied().zip(self.energies.iter().cloned()).collect()
     }
@@ -253,6 +258,7 @@ impl LadderTraces {
     /// scrambled seeds, the quadrature bar understates the true spread by about 50% —
     /// `sd(z) = 1.50 ± 0.08` where a calibrated bar gives 1. [`Self::log_z_total`] does it
     /// properly, at `1.05 ± 0.05`.
+    #[must_use]
     pub fn log_z_differences(&self) -> Vec<crate::free_energy::BarPair> {
         self.betas
             .windows(2)
@@ -297,7 +303,7 @@ impl LadderTraces {
         if blocks < 4 {
             return Err(format!("{blocks} blocks is too few for a jackknife variance; use at least 4"));
         }
-        let len = self.energies.first().map_or(0, |e| e.len());
+        let len = self.energies.first().map_or(0, std::vec::Vec::len);
         if self.energies.iter().any(|e| e.len() != len) {
             return Err("the rungs have different trace lengths".into());
         }
@@ -333,6 +339,7 @@ impl LadderTraces {
 /// Same dynamics, same answer, plus the samples: the optimisation result is unchanged and the
 /// traces come out beside it, so one run serves both purposes. Recording costs one `g.energy` per
 /// replica per round, which the best-tracking loop was already paying.
+#[must_use]
 pub fn parallel_tempering_observed(
     g: &Graph,
     betas: &[f64],
@@ -576,12 +583,12 @@ mod tests {
             let mut best = reps[r - 1].s.clone();
             let mut best_e = g.energy(&best);
             for round in 0..30 {
-                for rep in reps.iter_mut() {
+                for rep in &mut reps {
                     for _ in 0..4 {
                         rep.sweep(None);
                     }
                 }
-                for rep in reps.iter() {
+                for rep in &reps {
                     let e = g.energy(&rep.s);
                     if e < best_e {
                         best_e = e;
@@ -610,7 +617,10 @@ mod tests {
         let g = crate::ising::lattice2d(12, 1.0);
         let betas = geometric_ladder(0.2, 2.0, 6);
         let mut led = Ledger::default();
-        parallel_tempering(&g, &betas, 10, 3, 7, Some(&mut led));
+        // The subject here is the LEDGER, not the answer: the solver runs only to accumulate
+        // operation counts, and the assertion below is about those. `let _` says so explicitly,
+        // which is what `must_use` is for -- it made these three sites declare their intent.
+        let _ = parallel_tempering(&g, &betas, 10, 3, 7, Some(&mut led));
         // 6 replicas x 10 rounds x 3 sweeps x n nodes, and integer addition does not care in which
         // order the threads finished.
         assert_eq!(led.samples, 6 * 10 * 3 * g.n as u64);
@@ -656,7 +666,7 @@ mod tests {
         // annealing sanity on the same instance
         let sched: Vec<(f64, usize)> = geometric_ladder(0.1, 3.0, 30).into_iter().map(|b| (b, 40)).collect();
         let (_, e_sa) = anneal(&g, &sched, 0xA11, None);
-        assert!((e_sa - e0).abs() < 1e-9, "SA found {} vs exact {}", e_sa, e0);
+        assert!((e_sa - e0).abs() < 1e-9, "SA found {e_sa} vs exact {e0}");
     }
 }
 
@@ -665,6 +675,7 @@ mod tests {
 /// The graph is borrowed and never rebuilt: every quantity that varies during the run comes from
 /// the schedule. That is the whole point of the type, and `anneal_never_rebuilds_the_program`
 /// below is what keeps it true.
+#[must_use]
 pub fn anneal_scheduled(
     g: &Graph,
     schedule: &crate::schedule::Schedule,
@@ -749,7 +760,10 @@ mod schedule_contract {
         let g = crate::ising::lattice2d(10, 1.0);
         let schedule = Schedule::geometric(0.1, 2.0, 30, 7);
         let mut led = Ledger::default();
-        anneal_scheduled(&g, &schedule, 1, Some(&mut led));
+        // The subject here is the LEDGER, not the answer: the solver runs only to accumulate
+        // operation counts, and the assertion below is about those. `let _` says so explicitly,
+        // which is what `must_use` is for -- it made these three sites declare their intent.
+        let _ = anneal_scheduled(&g, &schedule, 1, Some(&mut led));
         assert_eq!(led.samples, schedule.node_updates(g.n));
     }
 }

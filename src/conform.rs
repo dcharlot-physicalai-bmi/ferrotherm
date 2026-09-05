@@ -181,7 +181,7 @@ pub fn run(dev: &mut dyn Device) -> Report {
             "does the certificate catch an unequilibrated chain",
             ok,
             if ok {
-                format!("caught it: {}", c.findings.first().map(|f| f.to_string()).unwrap_or_default())
+                format!("caught it: {}", c.findings.first().map(std::string::ToString::to_string).unwrap_or_default())
             } else {
                 "blessed a chain that never left its initial condition".into()
             },
@@ -215,7 +215,7 @@ fn solve(dev: &mut dyn Device, p: &Program, seed: u64) -> Result<Vec<i8>, String
     if !bad.is_empty() {
         return Err(format!(
             "refused: {}",
-            bad.iter().map(|u| u.to_string()).collect::<Vec<_>>().join("; ")
+            bad.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join("; ")
         ));
     }
     dev.run(&ladder(), seed)

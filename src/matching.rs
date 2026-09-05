@@ -51,6 +51,7 @@ pub const FORBIDDEN: i64 = 1 << 50;
 /// `cost` is row-major `n × n`; only the off-diagonal entries are read, and `cost[i*n+j]` must
 /// equal `cost[j*n+i]`. Returns `(mate, total)` where `mate[i]` is the partner of `i`, or `None`
 /// when `n` is odd or no perfect matching exists over the finite-cost edges.
+#[must_use]
 pub fn min_weight_perfect(n: usize, cost: &[i64]) -> Option<(Vec<usize>, i64)> {
     if n == 0 {
         return Some((Vec::new(), 0));
@@ -704,7 +705,7 @@ mod tests {
         for n in [4usize, 6, 8] {
             for seed in 0..20u64 {
                 let mut c = random_cost(n, seed + 77, 40);
-                for v in c.iter_mut() {
+                for v in &mut c {
                     *v -= 20;
                 }
                 for i in 0..n {

@@ -14,24 +14,28 @@ pub enum Json<'a> {
 }
 
 impl<'a> Json<'a> {
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Json<'a>> {
         match self {
             Json::Obj(m) => m.iter().find(|(k, _)| *k == key).map(|(_, v)| v),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_str(&self) -> Option<&'a str> {
         match self {
             Json::Str(s) => Some(s),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Json::Num(n) => Some(*n as u64),
             _ => None,
         }
     }
+    #[must_use]
     pub fn entries(&self) -> &[(&'a str, Json<'a>)] {
         match self {
             Json::Obj(m) => m,

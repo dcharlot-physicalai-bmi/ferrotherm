@@ -1,7 +1,7 @@
 //! GPU against CPU on the same model, with the adapter named.
 //!
 //! Prints the adapter FIRST and refuses to quote a speedup against a software rasteriser. lavapipe,
-//! SwiftShader and WARP all run this shader correctly and tell you nothing about a GPU, and a
+//! `SwiftShader` and WARP all run this shader correctly and tell you nothing about a GPU, and a
 //! benchmark that does not check produces a real-looking number for the wrong machine.
 
 use ferrotherm::{gibbs::Sampler, ising::lattice2d, wgsl::GpuModel};
@@ -71,7 +71,7 @@ fn main() {
     }
     println!();
     println!("THE CPU COLUMN IS ONE CORE. `Sampler::sweeps` is single-threaded, so every ratio above");
-    println!("is a whole GPU against one core of {}, which is the oldest way to flatter a GPU", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    println!("is a whole GPU against one core of {}, which is the oldest way to flatter a GPU", std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
     println!("benchmark. Measured against all cores it is 12x, not 54x -- see examples/joules.rs,");
     println!("which also prices both sides in joules and finds the GPU 10x cheaper per update.");
     println!();

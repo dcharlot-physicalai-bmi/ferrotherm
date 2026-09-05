@@ -59,7 +59,7 @@ fn main() {
             let logical = clique(k);
             match embed::embed_bounded(&logical, g, 7, 10, embed::DEFAULT_SEARCH_BUDGET) {
                 Some(e) => {
-                    let lens: Vec<usize> = e.chains.iter().map(|c| c.len()).collect();
+                    let lens: Vec<usize> = e.chains.iter().map(std::vec::Vec::len).collect();
                     let used: usize = lens.iter().sum();
                     println!(
                         "{name:<14} {:>6} {:>5} {used:>8} {:>9} {:>7.2}",
@@ -106,7 +106,7 @@ fn main() {
             let ok = e.verify(&clique(32), &hw).is_ok();
             println!(
                 "{:<16} {:>6} {:>7} {:>9} {:>10}",
-                "Chimera C8", "K_32", e.chains.iter().map(|c| c.len()).max().unwrap(),
+                "Chimera C8", "K_32", e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
                 if ok { "yes" } else { "NO" }, "K_33 (K_{4m+1})"
             );
         }
@@ -125,7 +125,7 @@ fn main() {
                 println!(
                     "{:<16} {:>6} {:>7} {:>9} {:>10}",
                     label, format!("K_{n}"),
-                    e.chains.iter().map(|c| c.len()).max().unwrap(),
+                    e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
                     if ok { "yes" } else { "NO" }, format!("K_{}", 12 * (m - 1))
                 );
             }
@@ -140,7 +140,7 @@ fn main() {
             println!(
                 "{:<16} {:>6} {:>7} {:>9} {:>10}",
                 format!("Zephyr Z{m}"), format!("K_{n}"),
-                e.chains.iter().map(|c| c.len()).max().unwrap(),
+                e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
                 if ok { "yes" } else { "NO" }, format!("K_{}", 16 * m - 8)
             );
         }

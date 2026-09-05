@@ -71,6 +71,7 @@ impl Domain {
     }
 
     /// How many values it can take.
+    #[must_use]
     pub fn size(&self) -> usize {
         match self {
             Domain::Spin | Domain::Binary => 2,
@@ -102,6 +103,7 @@ impl Domain {
     }
 
     /// Which one-hot slot holds `value`, or `None` if the domain does not contain it.
+    #[must_use]
     pub fn index_of(&self, value: i64) -> Option<usize> {
         let step = if matches!(self, Domain::Spin) { 2 } else { 1 };
         let off = value.checked_sub(self.lo())?;
@@ -122,6 +124,7 @@ impl Domain {
     }
 
     /// How a domain reads in an error message.
+    #[must_use]
     pub fn describe(&self) -> String {
         match self {
             Domain::Spin => "the spins -1 and +1".into(),
@@ -145,10 +148,12 @@ pub struct Index {
 
 impl Index {
     /// The shape it was declared with.
+    #[must_use]
     pub fn dims(&self) -> &[usize] {
         &self.dims
     }
     /// Every variable, in row-major order.
+    #[must_use]
     pub fn all(&self) -> &[Var] {
         &self.vars
     }
@@ -156,6 +161,7 @@ impl Index {
     ///
     /// The shape a cardinality constraint is usually over — "exactly one shift per worker" — and
     /// writing it by hand is where the index arithmetic goes wrong.
+    #[must_use]
     pub fn row(&self, prefix: &[usize]) -> Vec<Var> {
         assert!(
             prefix.len() < self.dims.len(),
@@ -179,6 +185,7 @@ impl Index {
         out
     }
     /// One column of the first dimension: `a.column(&[s])` is every worker for shift `s`.
+    #[must_use]
     pub fn column(&self, suffix: &[usize]) -> Vec<Var> {
         assert!(
             suffix.len() < self.dims.len(),
@@ -244,11 +251,13 @@ impl Var {
     /// let e = 5.0 * x.is(2) - 1.0 * x.is(0);
     /// # let _ = e;
     /// ```
+    #[must_use]
     pub fn is(self, value: i64) -> Lit {
         Lit::Is(self, value)
     }
 
     /// The ±1 spin value, for `Spin` and `Binary` variables.
+    #[must_use]
     pub fn spin(self) -> Lit {
         Lit::Spin(self)
     }
@@ -289,6 +298,7 @@ pub struct Expr {
 }
 
 impl Expr {
+    #[must_use]
     pub fn zero() -> Expr {
         Expr::default()
     }
@@ -306,14 +316,17 @@ impl Expr {
         Ok(())
     }
     /// `c`, a constant.
+    #[must_use]
     pub fn constant(c: f64) -> Expr {
         Expr { terms: Vec::new(), constant: c }
     }
     /// `c · l`.
+    #[must_use]
     pub fn lit(c: f64, l: Lit) -> Expr {
         Expr { terms: vec![Term { coeff: c, lits: vec![l] }], constant: 0.0 }
     }
     /// `c · l₁ · l₂`.
+    #[must_use]
     pub fn pair(c: f64, a: Lit, b: Lit) -> Expr {
         Expr { terms: vec![Term { coeff: c, lits: vec![a, b] }], constant: 0.0 }
     }
@@ -322,16 +335,19 @@ impl Expr {
     /// Three or more needs [`crate::reduce`], which the compiler applies for you and charges in
     /// ancilla spins. `Compiled::ancillas` says how many; the pass's own docs say what it costs at
     /// finite temperature.
+    #[must_use]
     pub fn product(c: f64, lits: &[Lit]) -> Expr {
         Expr { terms: vec![Term { coeff: c, lits: lits.to_vec() }], constant: 0.0 }
     }
     /// Add another expression.
+    #[must_use]
     pub fn plus(mut self, other: Expr) -> Expr {
         self.terms.extend(other.terms);
         self.constant += other.constant;
         self
     }
     /// Scale every term.
+    #[must_use]
     pub fn scaled(mut self, k: f64) -> Expr {
         for t in &mut self.terms {
             t.coeff *= k;
@@ -446,7 +462,7 @@ impl core::ops::Sub<Lit> for Expr {
 /// Sum an iterator of terms, for objectives built in a loop.
 impl core::iter::Sum<Expr> for Expr {
     fn sum<I: Iterator<Item = Expr>>(iter: I) -> Expr {
-        iter.fold(Expr::zero(), |a, b| a.plus(b))
+        iter.fold(Expr::zero(), Expr::plus)
     }
 }
 
@@ -468,6 +484,7 @@ pub enum Rel {
 
 impl Rel {
     /// The symbol a modeller wrote, for reporting a row back in their own notation.
+    #[must_use]
     pub fn symbol(&self) -> &'static str {
         match self {
             Rel::Le => "≤",
@@ -803,6 +820,7 @@ impl core::fmt::Display for CompileError {
 }
 
 impl Model {
+    #[must_use]
     pub fn new() -> Model {
         Model {
             decls: Vec::new(),
@@ -830,7 +848,7 @@ impl Model {
     ///
     /// Without this, every real model begins with a hand-rolled loop and a `format!` — which works,
     /// and loses the shape: nothing downstream knows those variables were a grid, and an off-by-one
-    /// in the index arithmetic is silent. JijModeling's indexed variables are the idea; this is the
+    /// in the index arithmetic is silent. `JijModeling`'s indexed variables are the idea; this is the
     /// same idea with the bounds checked.
     pub fn grid(
         &mut self,
@@ -846,7 +864,7 @@ impl Model {
         for _ in 0..total {
             let label = format!(
                 "{name}[{}]",
-                sub.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+                sub.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",")
             );
             vars.push(declare(self, &label));
             // odometer, last index fastest, so the layout matches the subscript order
@@ -907,11 +925,13 @@ impl Model {
 
     /// The handle for the `i`-th declared variable, for callers that track variables by position
     /// rather than by handle — an FFI, or a node graph that already has its own names.
+    #[must_use]
     pub fn var_at(&self, i: usize) -> Var {
         assert!(i < self.decls.len(), "no variable at index {i}");
         Var(i)
     }
 
+    #[must_use]
     pub fn name_of(&self, v: Var) -> &str {
         &self.decls[v.0].name
     }
@@ -925,12 +945,15 @@ impl Model {
         self.decls[v.0].name = name.into();
         self
     }
+    #[must_use]
     pub fn domain_of(&self, v: Var) -> Domain {
         self.decls[v.0].domain
     }
+    #[must_use]
     pub fn len(&self) -> usize {
         self.decls.len()
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.decls.is_empty()
     }
@@ -1358,7 +1381,7 @@ impl Model {
                     // panic waiting for the first slack whose encoding could not be made exact.
                     // The trap was armed and unreached; naming the slot is both the fix and the
                     // more useful message.
-                    self.decls.get(i).map(|d| d.name.as_str()).unwrap_or("a compiler slack variable"),
+                    self.decls.get(i).map_or("a compiler slack variable", |d| d.name.as_str()),
                     s.encoding,
                     1usize << spins,
                 ));
@@ -2282,11 +2305,13 @@ pub struct Compiled {
 }
 
 impl Compiled {
+    #[must_use]
     pub fn spins(&self) -> usize {
         self.graph.n
     }
 
     /// Decode a spin state into named values.
+    #[must_use]
     pub fn decode(&self, state: &[i8]) -> Solution {
         let mut values = BTreeMap::new();
         let mut invalid = Vec::new();
@@ -2523,6 +2548,7 @@ impl Compiled {
     /// The answer is decoded and re-checked exactly as [`Self::solve_annealed`]'s is: a method that
     /// finds a lower compiled energy has not thereby found a feasible answer, and
     /// [`Solution::feasible`] is still the thing to read first.
+    #[must_use]
     pub fn solve_by(&self, method: Method, seed: u64) -> Solution {
         let state = match method {
             Method::Anneal => return self.solve_annealed(seed),
@@ -2578,12 +2604,14 @@ impl Compiled {
         Some(s)
     }
 
+    #[must_use]
     pub fn solve_annealed(&self, seed: u64) -> Solution {
         self.solve_with(&Self::default_schedule(), seed)
     }
 
     /// The ladder used when a caller does not supply one. Deliberately conservative: it is better
     /// for a first answer to be slow and right than fast and quietly infeasible.
+    #[must_use]
     pub fn default_schedule() -> Schedule {
         let (hot, cold, stages, per) = Self::DEFAULT_LADDER;
         Schedule::geometric(hot, cold, stages, per)
@@ -2601,17 +2629,20 @@ impl Compiled {
     /// A harder model wants a longer one. The default is tuned for the models people write first,
     /// not for the largest they will eventually write, and a caller who has measured their own
     /// instance should be able to say so.
+    #[must_use]
     pub fn solve_with(&self, sched: &Schedule, seed: u64) -> Solution {
         let (best, _) = crate::tempering::anneal_scheduled(&self.graph, sched, seed, None);
         self.decode(&best)
     }
 
     /// Anneal several times on a caller's ladder and keep the best feasible answer.
+    #[must_use]
     pub fn solve_best_with(&self, sched: &Schedule, tries: u64) -> Solution {
         self.best_of(tries, |s| self.solve_with(sched, s))
     }
 
     /// Anneal several times and keep the best feasible answer, or the best overall if none is.
+    #[must_use]
     pub fn solve_best_of(&self, tries: u64) -> Solution {
         self.best_of(tries, |s| self.solve_annealed(s))
     }
@@ -2625,6 +2656,7 @@ impl Compiled {
     ///
     /// Seeds are `0..tries`, the same ones [`Self::solve_best_with`] uses, so the best answer here
     /// is the answer that call returns.
+    #[must_use]
     pub fn solve_all_with(&self, sched: &Schedule, tries: u64) -> Vec<Solution> {
         (0..tries.max(1)).map(|s| self.solve_with(sched, s)).collect()
     }
@@ -2686,6 +2718,7 @@ impl Compiled {
 /// When several optima tie — the case this function exists for — the head is therefore the
 /// lexicographically first of them and NOT necessarily the one [`Compiled::solve_best_with`]
 /// returned, which is whichever seed reached the minimum first. Both are optimal.
+#[must_use]
 pub fn distinct_optima(answers: &[Solution], tol: f64) -> Vec<Solution> {
     let feasible: Vec<&Solution> = answers.iter().filter(|s| s.feasible()).collect();
     let Some(best) = feasible.iter().map(|s| s.energy).fold(None, |acc: Option<f64>, e| {
@@ -2803,6 +2836,7 @@ impl Solution {
     ///
     /// Panics if the variable did not decode, and says which of the two things went wrong —
     /// an unknown name is a typo, a variable in `invalid` is an under-weighted penalty.
+    #[must_use]
     pub fn value(&self, name: &str) -> i64 {
         if let Some(v) = self.values.get(name) {
             return *v;
@@ -2817,6 +2851,7 @@ impl Solution {
         panic!("no variable named '{name}'");
     }
 
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<i64> {
         self.values.get(name).copied()
     }
@@ -2843,6 +2878,7 @@ impl Solution {
     /// Zero when none broke. Read beside `energy`: this is the part of the score that came from
     /// preferences rather than from the objective, and separating them is the point of saying a
     /// constraint is soft.
+    #[must_use]
     pub fn soft_cost(&self) -> f64 {
         // `+ 0.0` is not redundant: `Sum for f64` folds from -0.0, which is the correct additive
         // identity but prints as "-0" through every binding that formats a float. A price with a
@@ -4148,7 +4184,7 @@ mod tests {
         let assignments: std::collections::BTreeSet<_> = at_min
             .iter()
             .map(|st| comp.decode(st))
-            .filter(|sol| sol.feasible())
+            .filter(super::Solution::feasible)
             .map(|sol| sol.values.clone())
             .collect();
 
@@ -4178,7 +4214,7 @@ mod tests {
         let answers = comp.solve_all_with(&Schedule::geometric(0.05, 8.0, 60, 20), 8);
         let opt = distinct_optima(&answers, 1e-9);
         assert!(
-            opt.iter().all(|s| s.feasible()),
+            opt.iter().all(super::Solution::feasible),
             "an assignment that breaks a hard row is not a way to do the job"
         );
     }
@@ -4208,9 +4244,8 @@ mod tests {
         let mut m = Model::new();
         let x = m.categorical_as("x", 4, Encoding::DomainWall);
         m.objective(Sense::Minimize, Expr::lit(1.0, Lit::Is(x, 2)));
-        let e = match m.compile() {
-            Err(e) => e,
-            Ok(_) => panic!("a domain-wall variable in an expression must be refused"),
+        let Err(e) = m.compile() else {
+            panic!("a domain-wall variable in an expression must be refused")
         };
         assert!(matches!(e, CompileError::NeedsOneHot { .. }));
         assert!(e.to_string().contains("quartic"), "{e}");
@@ -4665,7 +4700,7 @@ mod tests {
         // format! and index arithmetic nobody checks.
         let (workers, shifts) = (3, 3);
         let mut m = Model::new();
-        let a = m.grid("assign", &[workers, shifts], |m, n| m.binary(n));
+        let a = m.grid("assign", &[workers, shifts], super::Model::binary);
 
         for w in 0..workers {
             m.exactly_one(a.row(&[w]).iter().map(|&v| Lit::Is(v, 1)).collect());
@@ -4690,7 +4725,7 @@ mod tests {
     #[test]
     fn a_grid_names_its_variables_so_the_answer_still_reads() {
         let mut m = Model::new();
-        let a = m.grid("x", &[2, 2], |m, n| m.binary(n));
+        let a = m.grid("x", &[2, 2], super::Model::binary);
         m.fix(a[[1, 0]], 1);
         let s = m.compile().unwrap().solve_best_of(8);
         assert_eq!(s.value("x[1,0]"), 1, "subscripts are part of the name: {s}");
@@ -4703,7 +4738,7 @@ mod tests {
         // A silent wrap is an off-by-one that reaches the answer, and it is the exact mistake the
         // hand-rolled version makes.
         let mut m = Model::new();
-        let a = m.grid("x", &[2, 3], |m, n| m.binary(n));
+        let a = m.grid("x", &[2, 3], super::Model::binary);
         assert_eq!(a.all().len(), 6, "row-major, last index fastest");
         let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a[[0, 3]]));
         assert!(caught.is_err(), "index 3 of a dimension of 3 must not silently wrap");
@@ -4714,7 +4749,7 @@ mod tests {
     #[test]
     fn rows_and_columns_pick_out_what_a_constraint_is_usually_over() {
         let mut m = Model::new();
-        let a = m.grid("x", &[2, 3], |m, n| m.binary(n));
+        let a = m.grid("x", &[2, 3], super::Model::binary);
         let r = a.row(&[1]);
         assert_eq!(r.len(), 3, "a row is the last dimension");
         assert_eq!(r[0], a[[1, 0]]);

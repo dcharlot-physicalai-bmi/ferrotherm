@@ -62,6 +62,7 @@ impl Params {
     ///
     /// Linear, not geometric, and that is forced: a geometric ladder cannot contain zero, and
     /// without `β = 0` the free energy is only known up to an unmeasured constant.
+    #[must_use]
     pub fn linear_from_zero(population: usize, sweeps: usize, beta_max: f64, stages: usize) -> Params {
         let stages = stages.max(1);
         let betas = (0..=stages).map(|i| beta_max * i as f64 / stages as f64).collect();
@@ -69,6 +70,7 @@ impl Params {
     }
 
     /// Keep the final population. See [`Outcome::population`] for what it is worth.
+    #[must_use]
     pub fn keeping_population(mut self) -> Params {
         self.keep_population = true;
         self
@@ -129,6 +131,7 @@ pub struct Outcome {
 
 impl Outcome {
     /// The free energy per spin at the final `β`, or `None` when `β` is zero or `ln_z` is relative.
+    #[must_use]
     pub fn free_energy_per_spin(&self, beta_end: f64, n: usize) -> Option<f64> {
         (self.ln_z_is_absolute && beta_end > 0.0 && n > 0)
             .then(|| -self.ln_z / (beta_end * n as f64))
@@ -215,7 +218,7 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
         // shift by the running maximum is exact in every quantity used below, because `Q` and the
         // `τ_i` that divide by it are shifted by the same constant.
         let x: Vec<f64> = energy.iter().map(|e| -d_beta * e).collect();
-        let m = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let m = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         if !m.is_finite() {
             break;
         }
@@ -325,7 +328,7 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
         }
     }
 
-    let rho_max = rho.iter().cloned().fold(1.0f64, f64::max);
+    let rho_max = rho.iter().copied().fold(1.0f64, f64::max);
     // The LAST rho, not the worst one: families are tracked from the initial population and never
     // reset, so this is the cumulative diversity of the population being handed over. `rho_max`
     // answers a different question -- whether to believe `ln_z`, which depends on the worst rung
@@ -477,7 +480,7 @@ mod tests {
             min = min.min(e);
             xs.push(-beta * e);
         }
-        let m = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let m = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let ln_z = m + xs.iter().map(|x| (x - m).exp()).sum::<f64>().ln();
         (ln_z, min)
     }

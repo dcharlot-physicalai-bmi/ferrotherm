@@ -51,6 +51,7 @@ impl FpgaTarget {
     /// realized on Versal silicon (~55.5k p-bits per VP1902; arXiv:2606.25313) — with LUT6
     /// fabrics weighted 1.6x. The first version of this model assumed 60 LUT/p-bit and was
     /// caught ~10x optimistic by the anchor test below; this is the corrected, measured density.
+    #[must_use]
     pub fn est_pbits(&self) -> u32 {
         let lut4_eq = if self.lut6 { self.luts as f64 * 1.6 } else { self.luts as f64 };
         (lut4_eq / 150.0) as u32
@@ -58,6 +59,7 @@ impl FpgaTarget {
     /// [EST, anchored] flips/s with 4-color scheduling at the dense-SAMPLING-fabric clock: the
     /// part's midpoint clock capped at 33 MHz, the highest a full-die colored-Gibbs fabric has
     /// actually closed timing at (DSIM-2). Small parts run below the cap on their own clocks.
+    #[must_use]
     pub fn est_flips_per_s(&self) -> f64 {
         let mid = 0.5 * (self.clock_mhz.0 as f64 + self.clock_mhz.1 as f64) * 1e6;
         let clk = mid.min(33e6);

@@ -27,9 +27,7 @@ fn main() {
         let mut smp = Sampler::new(&g, beta, 0x150D ^ (beta * 1000.0) as u64);
         // ordered start below Tc avoids domain-wall trapping; disordered above
         if beta > 0.45 {
-            for s in smp.s.iter_mut() {
-                *s = 1;
-            }
+            smp.s.fill(1);
         }
         smp.sweeps(burn, None);
         let mut acc = 0.0;

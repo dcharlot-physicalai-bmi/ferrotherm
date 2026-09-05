@@ -127,7 +127,7 @@ fn tau_over_seeds(g: &Graph, beta: f64) -> (f64, f64, f64) {
         (0..SEEDS).map(|s| measure(g, beta, DRAWS, 1, 11 + s).0.tau_int).collect();
     let mean = taus.iter().sum::<f64>() / taus.len() as f64;
     let var = taus.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / taus.len() as f64;
-    let worst = taus.iter().cloned().fold(0.0f64, f64::max);
+    let worst = taus.iter().copied().fold(0.0f64, f64::max);
     (mean, var.sqrt(), DRAWS as f64 / worst.max(1e-9))
 }
 

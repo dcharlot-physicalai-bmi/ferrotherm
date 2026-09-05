@@ -2,7 +2,7 @@
 //! CN101 "stochastic sampling with lattice random walk" (arXiv:2508.20883).
 //!
 //! Simulates dx = f(x,t) dt + sigma(x,t) dW (diagonal noise) using only ternary increments per
-//! coordinate: Delta_i in {-dx_i, 0, +dx_i} with
+//! coordinate: `Delta_i` in {-`dx_i`, 0, +`dx_i`} with
 //!     P[Delta = +-dx] = 0.5 * (dt/dx) * ( +-f + sigma^2/dx ),
 //! which gives EXACT conditional moments `E[Delta] = dt f` and `E[Delta^2] = dt sigma^2`. With
 //! dx = sqrt(dt) * sigma the zero branch vanishes (a pure coin flip). The stability mechanism,
@@ -28,8 +28,9 @@ pub fn step_coord(f: f64, sigma: f64, dt: f64, dx: f64, rng: &mut Pcg) -> f64 {
     }
 }
 
-/// The clipped branch probabilities (p_minus, p_plus).
+/// The clipped branch probabilities (`p_minus`, `p_plus`).
 #[inline]
+#[must_use]
 pub fn probs(f: f64, sigma: f64, dt: f64, dx: f64) -> (f64, f64) {
     // clip sigma so dt*sigma^2/dx^2 <= 1 (total jump probability <= 1)
     let s2 = (sigma * sigma).min(dx * dx / dt);
@@ -42,7 +43,7 @@ pub fn probs(f: f64, sigma: f64, dt: f64, dx: f64) -> (f64, f64) {
 }
 
 /// Integrate a d-dimensional SDE for `n_steps` from `x`, with per-coordinate drift and noise
-/// closures. `dx_lat` per coordinate (rule of thumb: sqrt(dt) * sigma_max).
+/// closures. `dx_lat` per coordinate (rule of thumb: sqrt(dt) * `sigma_max`).
 pub fn integrate<D, S>(
     x: &mut [f64],
     t0: f64,

@@ -83,7 +83,7 @@ fn main() {
         dirty = dirty.or_else(|| t.caveat());
         rows.push((
             "parallel tempering".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("{stages} stages x {per} sweeps"),
         ));
@@ -101,7 +101,7 @@ fn main() {
         dirty = dirty.or_else(|| t.caveat());
         rows.push((
             "tabu search".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("{iters} iterations"),
         ));
@@ -122,7 +122,7 @@ fn main() {
         let jump = out.iter().map(|o| o.2).max().unwrap_or(0);
         rows.push((
             "breakout local search".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("{descents} descents, L<={jump}"),
         ));
@@ -155,9 +155,9 @@ fn main() {
         } else {
             rows.push((
                 "isoenergetic cluster".into(),
-                cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+                cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
                 cuts.iter().sum::<f64>() / cuts.len() as f64,
-                format!("{} replicas x {rounds} x {per}", replicas),
+                format!("{replicas} replicas x {rounds} x {per}"),
             ));
         }
     }
@@ -182,7 +182,7 @@ fn main() {
         dirty = dirty.or_else(|| t2.caveat());
         rows.push((
             "simulated quantum".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("M={trotter}, {steps} steps x {per}"),
         ));
@@ -200,7 +200,7 @@ fn main() {
         dirty = dirty.or_else(|| t2.caveat());
         rows.push((
             label.into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("{steps} steps"),
         ));
@@ -218,7 +218,7 @@ fn main() {
         dirty = dirty.or_else(|| t2.caveat());
         rows.push((
             "population annealing".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("R={population}, {stages} rungs x {per}"),
         ));
@@ -244,7 +244,7 @@ fn main() {
         let improving: usize = out.iter().map(|o| o.1).sum::<usize>() / out.len();
         rows.push((
             "HFS block descent".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             format!("{steps} blocks of {block}, {improving} improving"),
         ));
@@ -273,7 +273,7 @@ fn main() {
         dirty = dirty.or_else(|| t2.caveat());
         rows.push((
             "tabu then HFS polish".into(),
-            cuts.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             cuts.iter().sum::<f64>() / cuts.len() as f64,
             "90% tabu, 10% blocks".into(),
         ));

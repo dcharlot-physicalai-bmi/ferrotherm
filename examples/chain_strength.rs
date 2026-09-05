@@ -41,7 +41,7 @@ const SEEDS: u64 = 24;
 /// machine, small enough that branch and bound proves the optimum for every instance.
 ///
 /// THIS USED TO SAY SIX, AND THE REASON IT DID IS THE POINT. The placer could not embed any clique
-/// past K_7, so the only sizes this file could measure were ones whose chains barely existed --
+/// past `K_7`, so the only sizes this file could measure were ones whose chains barely existed --
 /// which meant the upper half of the sweep was untested rather than passed, because exhibiting a
 /// chain strength so large it swamps the model needs a problem hard enough for a swamped search to
 /// lose. The placer is repaired, so the question can now be asked at a size where it means
@@ -109,7 +109,7 @@ fn main() {
     }
     let longest = cases
         .iter()
-        .flat_map(|c| c.emb.chains.iter().map(|ch| ch.len()))
+        .flat_map(|c| c.emb.chains.iter().map(std::vec::Vec::len))
         .max()
         .unwrap_or(0);
     println!(

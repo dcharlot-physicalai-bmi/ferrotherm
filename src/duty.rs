@@ -296,6 +296,7 @@ impl Machine {
     }
 
     /// Seconds of computation `work` units need.
+    #[must_use]
     pub fn run_seconds(&self, work: u64) -> f64 {
         work as f64 / self.rate
     }

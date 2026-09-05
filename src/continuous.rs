@@ -36,6 +36,7 @@ use crate::rng::Pcg;
 /// Cholesky factor `L` of a symmetric positive-definite `a` (row-major `n×n`), or `None` if `a` is
 /// not positive definite — which is the honest way to answer, since the sampler's variance
 /// `1/(βA_ii)` is meaningless otherwise.
+#[must_use]
 pub fn cholesky(a: &[f64], n: usize) -> Option<Vec<f64>> {
     let mut l = vec![0.0f64; n * n];
     for i in 0..n {
@@ -58,11 +59,13 @@ pub fn cholesky(a: &[f64], n: usize) -> Option<Vec<f64>> {
 }
 
 /// `ln det A` from its Cholesky factor: `2 Σ ln L_ii`.
+#[must_use]
 pub fn log_det(a: &[f64], n: usize) -> Option<f64> {
     cholesky(a, n).map(|l| 2.0 * (0..n).map(|i| l[i * n + i].ln()).sum::<f64>())
 }
 
 /// Solve `A y = v` by Cholesky substitution.
+#[must_use]
 pub fn solve(a: &[f64], n: usize, v: &[f64]) -> Option<Vec<f64>> {
     let l = cholesky(a, n)?;
     let mut y = vec![0.0; n];
@@ -85,6 +88,7 @@ pub fn solve(a: &[f64], n: usize, v: &[f64]) -> Option<Vec<f64>> {
 }
 
 /// `A⁻¹`, column by column.
+#[must_use]
 pub fn inverse(a: &[f64], n: usize) -> Option<Vec<f64>> {
     let mut inv = vec![0.0; n * n];
     for c in 0..n {
@@ -119,6 +123,7 @@ pub struct Gbm {
 
 impl Gbm {
     /// A purely continuous model.
+    #[must_use]
     pub fn gaussian(n: usize, a: Vec<f64>, b: Vec<f64>) -> Gbm {
         assert_eq!(a.len(), n * n);
         assert_eq!(b.len(), n);
@@ -126,6 +131,7 @@ impl Gbm {
     }
 
     /// `E(x, s)`.
+    #[must_use]
     pub fn energy(&self, x: &[f64], s: &[i8]) -> f64 {
         let (n, m) = (self.n_real, self.n_spin);
         let mut e = 0.0;
@@ -181,6 +187,7 @@ impl Gbm {
     }
 
     /// Draw after `burn_in` sweeps, recording `draws` states.
+    #[must_use]
     pub fn collect(&self, beta: f64, burn_in: usize, draws: usize, seed: u64) -> (Vec<Vec<f64>>, Vec<Vec<i8>>) {
         let mut rng = Pcg::new(seed, 31);
         let mut x = vec![0.0; self.n_real];
@@ -201,6 +208,7 @@ impl Gbm {
     ///
     /// `N(A⁻¹b, (βA)⁻¹)` and `ln Z = (β/2) bᵀA⁻¹b + (n/2) ln(2π/β) − ½ ln det A`. `None` when `A` is
     /// not positive definite.
+    #[must_use]
     pub fn exact_gaussian(&self, beta: f64) -> Option<(Vec<f64>, Vec<f64>, f64)> {
         assert_eq!(self.n_spin, 0, "use exact_log_z when there are spins");
         let n = self.n_real;
@@ -247,7 +255,7 @@ impl Gbm {
             }
             terms.push(beta * (spin + 0.5 * quad));
         }
-        let mx = terms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let mx = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         Some(base + mx + terms.iter().map(|t| (t - mx).exp()).sum::<f64>().ln())
     }
 }
@@ -442,6 +450,7 @@ pub enum Potential {
 
 impl Potential {
     /// `V(x)`, or `f64::INFINITY` outside the support.
+    #[must_use]
     pub fn energy(&self, x: f64) -> f64 {
         match *self {
             Potential::Quadratic { a, b } => 0.5 * a * x * x - b * x,
@@ -457,6 +466,7 @@ impl Potential {
     }
 
     /// The interval outside which the energy is infinite, for quadrature and for proposals.
+    #[must_use]
     pub fn support(&self) -> (f64, f64) {
         match *self {
             Potential::HopfieldTanh { .. } => (-1.0, 1.0),
@@ -474,6 +484,7 @@ pub struct ContinuousEbm {
 }
 
 impl ContinuousEbm {
+    #[must_use]
     pub fn new(potentials: Vec<Potential>, w: Vec<f64>) -> Self {
         let n = potentials.len();
         assert_eq!(w.len(), n * n);
@@ -485,11 +496,13 @@ impl ContinuousEbm {
         ContinuousEbm { potentials, w }
     }
 
+    #[must_use]
     pub fn n(&self) -> usize {
         self.potentials.len()
     }
 
     /// `E(x)`.
+    #[must_use]
     pub fn energy(&self, x: &[f64]) -> f64 {
         let n = self.n();
         let mut e = 0.0;
@@ -543,6 +556,7 @@ impl ContinuousEbm {
     /// The target is the one-dimensional optimum for a random-walk Metropolis chain; adapting only
     /// during burn-in keeps the recorded chain a proper Markov chain, since a step size that keeps
     /// changing with the history is not one.
+    #[must_use]
     pub fn run(&self, beta: f64, burn_in: usize, draws: usize, seed: u64) -> Vec<Vec<f64>> {
         let n = self.n();
         let mut rng = Pcg::new(seed, 41);
@@ -608,7 +622,7 @@ impl ContinuousEbm {
                 break;
             }
         }
-        let mx = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let mx = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let ws: Vec<f64> = logs.iter().map(|l| (l - mx).exp()).collect();
         let sum: f64 = ws.iter().sum();
         let ln_z = mx + sum.ln() + n as f64 * h.ln();
@@ -674,11 +688,11 @@ impl ContinuousEbm {
                 }
                 next[b] = acc;
             }
-            let mx = next.iter().cloned().fold(0.0f64, f64::max);
+            let mx = next.iter().copied().fold(0.0f64, f64::max);
             if !(mx > 0.0) {
                 return None;
             }
-            for u in next.iter_mut() {
+            for u in &mut next {
                 *u /= mx;
             }
             log_scale += mx.ln();
@@ -838,6 +852,7 @@ mod nonlinear_tests {
 ///
 /// `J = mean over data of ( ½‖Ax − b‖² − tr A )`. Lower is better; the minimiser is
 /// [`score_match_gaussian`].
+#[must_use]
 pub fn score_matching_objective(g: &Gbm, data: &[Vec<f64>]) -> f64 {
     assert_eq!(g.n_spin, 0, "score matching here is for the continuous part");
     let n = g.n_real;
@@ -862,6 +877,7 @@ pub fn score_matching_objective(g: &Gbm, data: &[Vec<f64>]) -> f64 {
 /// sampling, no partition function, one pass. `None` when the sample covariance is singular, which
 /// is the honest answer for data that does not determine a model (fewer samples than dimensions,
 /// or an exactly collinear coordinate).
+#[must_use]
 pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
     let n = data.first()?.len();
     let k = data.len() as f64;
@@ -877,7 +893,7 @@ pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
             }
         }
     }
-    for v in cov.iter_mut() {
+    for v in &mut cov {
         *v /= k - 1.0;
     }
     let a = inverse(&cov, n)?;
@@ -905,6 +921,7 @@ pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
 ///
 /// which the test verifies by generating from a known `Σ` and recovering it. `None` on the same
 /// condition as [`score_match_gaussian`].
+#[must_use]
 pub fn denoising_score_match_gaussian(data: &[Vec<f64>], sigma: f64) -> Option<Gbm> {
     assert!(sigma >= 0.0, "a noise level is not negative");
     let n = data.first()?.len();
@@ -921,7 +938,7 @@ pub fn denoising_score_match_gaussian(data: &[Vec<f64>], sigma: f64) -> Option<G
             }
         }
     }
-    for v in cov.iter_mut() {
+    for v in &mut cov {
         *v /= k - 1.0;
     }
     // the perturbed covariance, which is what the denoising objective is fitting

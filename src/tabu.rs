@@ -130,6 +130,7 @@ pub struct Outcome {
 ///
 /// `tenure` of zero in `p` is replaced by `max(10, n/10)`, the usual scaling. Pass a non-zero
 /// tenure to override, or pass one deliberately with `restart_after: None` to get plain descent.
+#[must_use]
 pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
     search_metered(g, p, seed, None)
 }
@@ -139,6 +140,7 @@ pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
 /// A tabu iteration evaluates every node's move and commits one, so the honest count is `n` per
 /// iteration — the same quantity a Gibbs sweep charges. Charging one per *flip* would make tabu
 /// look `n` times cheaper than a sweep doing comparable work.
+#[must_use]
 pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Ledger>) -> Outcome {
     let n = g.n;
     if n == 0 {
@@ -521,7 +523,10 @@ mod tests {
         let g = lattice2d(6, 1.0);
         let mut led = Ledger::default();
         let iters = 100;
-        search_metered(&g, &Params { iterations: iters, tenure: 4, restart_after: None, start: None }, 1, Some(&mut led));
+        // The subject here is the LEDGER, not the answer: the solver runs only to accumulate
+        // operation counts, and the assertion below is about those. `let _` says so explicitly,
+        // which is what `must_use` is for -- it made these three sites declare their intent.
+        let _ = search_metered(&g, &Params { iterations: iters, tenure: 4, restart_after: None, start: None }, 1, Some(&mut led));
         assert_eq!(led.samples, (g.n * iters) as u64);
     }
 

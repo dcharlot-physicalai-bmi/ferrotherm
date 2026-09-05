@@ -235,7 +235,7 @@ pub fn run_metered(
             crate::tempering::advance(set, p.sweeps_per_round.max(1), ledger.as_deref_mut());
         }
         for set in [&set_a, &set_b] {
-            for rep in set.iter() {
+            for rep in set {
                 let e = g.energy(&rep.s);
                 if e < best_e {
                     best_e = e;
@@ -256,7 +256,7 @@ pub fn run_metered(
                 }
             }
             for set in [&set_a, &set_b] {
-                for rep in set.iter() {
+                for rep in set {
                     let e = g.energy(&rep.s);
                     if e < best_e {
                         best_e = e;

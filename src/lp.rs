@@ -1,7 +1,7 @@
 //! Read a problem written in LP format.
 //!
 //! LP is how optimisation problems are exchanged. Every solver worth the name reads it — CPLEX,
-//! Gurobi, HiGHS, SCIP, and `dimod.lp.load` on the annealing side — so a stack that cannot is a
+//! Gurobi, `HiGHS`, SCIP, and `dimod.lp.load` on the annealing side — so a stack that cannot is a
 //! stack you have to hand-translate into. That was this one.
 //!
 //! ```text

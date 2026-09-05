@@ -58,7 +58,7 @@ fn main() {
                 if seen.contains(&next) {
                     continue;
                 }
-                if !grid.tiles.get(&next.0).map(|t| interconnect_only(&next.0, &t.kind)).unwrap_or(false) {
+                if !grid.tiles.get(&next.0).is_some_and(|t| interconnect_only(&next.0, &t.kind)) {
                     continue;
                 }
                 if next.1.starts_with("IMUX") && next.0 != src.0 && found.len() < 3 {
@@ -79,12 +79,9 @@ fn main() {
     };
 
     println!("\nrouting {} / {}  ->  {} / {}", src.0, src.1, dt, dw);
-    let path = match fab.route(&src, &(dt.clone(), dw.clone()), 400_000, &interconnect_only) {
-        Some(p) => p,
-        None => {
-            println!("no route found");
-            return;
-        }
+    let Some(path) = fab.route(&src, &(dt.clone(), dw.clone()), 400_000, &interconnect_only) else {
+        println!("no route found");
+        return;
     };
     println!("route: {} PIPs", path.len());
     for s in &path {
@@ -101,7 +98,7 @@ fn main() {
             miss += 1;
             continue;
         };
-        let Some(block) = grid.tiles.get(&s.tile).and_then(|t| t.logic_block()) else {
+        let Some(block) = grid.tiles.get(&s.tile).and_then(ferrotherm_silicon::tilegrid::Tile::logic_block) else {
             miss += 1;
             continue;
         };

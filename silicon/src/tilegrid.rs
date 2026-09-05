@@ -41,14 +41,15 @@ pub struct Tile {
     pub kind: String,
     pub grid_x: u32,
     pub grid_y: u32,
-    /// block name (e.g. "CLB_IO_CLK", "BLOCK_RAM") -> address block
+    /// block name (e.g. "`CLB_IO_CLK`", "`BLOCK_RAM`") -> address block
     pub bits: Vec<(String, BitsBlock)>,
-    /// site name -> site type (e.g. SLICE_X0Y0 -> SLICEL)
+    /// site name -> site type (e.g. `SLICE_X0Y0` -> SLICEL)
     pub sites: Vec<(String, String)>,
 }
 
 impl Tile {
     /// The tile's primary configuration block (CLB/IO/CLK logic), if it has one.
+    #[must_use]
     pub fn logic_block(&self) -> Option<BitsBlock> {
         self.bits
             .iter()
@@ -70,6 +71,7 @@ impl BitsBlock {
     /// Resolve a tile-relative segbit to its physical position. Returns `None` when the segbit
     /// falls outside the block's declared extent — a mismatched database and part must fail
     /// loudly rather than write into a neighbouring tile.
+    #[must_use]
     pub fn resolve(&self, sb: SegBit) -> Option<BitAddr> {
         if sb.frame >= self.frames {
             return None;
@@ -97,24 +99,24 @@ impl TileGrid {
         let j = parse(text)?;
         let mut tiles = HashMap::new();
         for (name, v) in j.entries() {
-            let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            let grid_x = v.get("grid_x").and_then(|t| t.as_u64()).unwrap_or(0) as u32;
-            let grid_y = v.get("grid_y").and_then(|t| t.as_u64()).unwrap_or(0) as u32;
+            let kind = v.get("type").and_then(super::json::Json::as_str).unwrap_or("").to_string();
+            let grid_x = v.get("grid_x").and_then(super::json::Json::as_u64).unwrap_or(0) as u32;
+            let grid_y = v.get("grid_y").and_then(super::json::Json::as_u64).unwrap_or(0) as u32;
             let mut bits = Vec::new();
             if let Some(Json::Obj(blocks)) = v.get("bits") {
                 for (bname, b) in blocks {
                     let base = b
                         .get("baseaddr")
-                        .and_then(|x| x.as_str())
+                        .and_then(super::json::Json::as_str)
                         .and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok());
                     if let Some(baseaddr) = base {
                         bits.push((
                             bname.to_string(),
                             BitsBlock {
                                 baseaddr,
-                                frames: b.get("frames").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
-                                offset: b.get("offset").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
-                                words: b.get("words").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
+                                frames: b.get("frames").and_then(super::json::Json::as_u64).unwrap_or(0) as u16,
+                                offset: b.get("offset").and_then(super::json::Json::as_u64).unwrap_or(0) as u16,
+                                words: b.get("words").and_then(super::json::Json::as_u64).unwrap_or(0) as u16,
                             },
                         ));
                     }
@@ -139,7 +141,8 @@ impl TileGrid {
         Ok(TileGrid { tiles })
     }
 
-    /// Find the tile containing a given site (e.g. "SLICE_X0Y0").
+    /// Find the tile containing a given site (e.g. "`SLICE_X0Y0`").
+    #[must_use]
     pub fn tile_of_site(&self, site: &str) -> Option<&Tile> {
         self.tiles.values().find(|t| t.sites.iter().any(|(n, _)| n == site))
     }
@@ -160,6 +163,7 @@ pub struct Far {
 }
 
 impl Far {
+    #[must_use]
     pub fn decode(far: u32) -> Far {
         Far {
             block_type: ((far >> 23) & 0x7) as u8,
@@ -169,6 +173,7 @@ impl Far {
             minor: (far & 0x7F) as u8,
         }
     }
+    #[must_use]
     pub fn encode(&self) -> u32 {
         ((self.block_type as u32 & 0x7) << 23)
             | ((self.bottom_half as u32) << 22)
@@ -205,8 +210,8 @@ mod tests {
         assert_eq!(g.tile_of_site("SLICE_X1Y0").unwrap().name, "CLBLL_L_X2Y0");
     }
 
-    /// The address arithmetic, worked by hand: INIT[00] of SLICEL_X0's A-LUT sits at segbit
-    /// 32_15, so in this tile it is frame baseaddr+32, word 0, bit 15.
+    /// The address arithmetic, worked by hand: INIT[00] of `SLICEL_X0`'s A-LUT sits at segbit
+    /// `32_15`, so in this tile it is frame baseaddr+32, word 0, bit 15.
     #[test]
     fn resolves_a_segbit_to_a_physical_position() {
         let g = TileGrid::parse(REAL).unwrap();
@@ -231,7 +236,7 @@ mod tests {
     /// THE MULTI-WORD TRAP. prjxray's second coordinate is a bit index across the tile's whole
     /// word window, not a bit within one word. The naive reading (word = offset, bit = MM)
     /// happens to agree for 2-word tiles like a CLB, and silently writes every multi-word tile
-    /// (BRAM words=10, IOB words=4, CFG_CENTER_MID words=101) into the wrong word. The correct
+    /// (BRAM words=10, IOB words=4, `CFG_CENTER_MID` words=101) into the wrong word. The correct
     /// arithmetic is offset*32 + MM, then split — which is what `resolve` computes.
     #[test]
     fn multi_word_tiles_split_correctly() {

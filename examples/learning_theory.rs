@@ -6,7 +6,7 @@
 //! tree and degrading with loops, and the Hopfield memory against Curie-Weiss and the
 //! Amit-Gutfreund-Sompolinsky replica theory, capacity included.
 //!
-//! usage: cargo run --release --example learning_theory
+//! usage: cargo run --release --example `learning_theory`
 
 use ferrotherm::exact::Elimination;
 use ferrotherm::free_energy::exact_log_z;

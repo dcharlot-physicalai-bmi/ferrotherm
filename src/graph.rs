@@ -1,9 +1,9 @@
 //! Sparse pairwise energy-based model over binary spins, with graph coloring for parallel Gibbs.
 //!
 //! Energy convention (statistical-mechanics standard):
-//!     E(s) = - sum_{(i,j)} J_ij s_i s_j  -  sum_i h_i s_i,      s_i in {-1,+1}
+//!     E(s) = - sum_{(i,j)} `J_ij` `s_i` `s_j`  -  `sum_i` `h_i` `s_i`,      `s_i` in {-1,+1}
 //! so positive J is ferromagnetic (alignment lowers energy) and the Gibbs conditional is
-//!     P(s_i = +1 | rest) = sigma(2 beta (sum_j J_ij s_j + h_i)).
+//!     `P(s_i` = +1 | rest) = sigma(2 beta (`sum_j` `J_ij` `s_j` + `h_i`)).
 
 // Builder-side edge list; finalized into CSR by Graph::build.
 thread_local! {
@@ -20,8 +20,9 @@ thread_local! {
 /// anything", and a process-wide counter answers a different question the moment two runs share a
 /// process. That is not hypothetical -- it is exactly what a parallel test runner does, and a
 /// global counter here failed for that reason before this line existed.
+#[must_use]
 pub fn graph_builds() -> u64 {
-    BUILDS.with(|b| b.get())
+    BUILDS.with(std::cell::Cell::get)
 }
 
 pub struct GraphBuilder {
@@ -31,22 +32,24 @@ pub struct GraphBuilder {
 }
 
 impl GraphBuilder {
+    #[must_use]
     pub fn new(n: usize) -> Self {
         GraphBuilder { n, edges: Vec::new(), bias: vec![0.0; n] }
     }
 
     /// Node count, so a caller across an FFI boundary can bounds-check before adding an edge.
+    #[must_use]
     pub fn n(&self) -> usize {
         self.n
     }
 
-    /// Add an undirected coupling J_ij. Duplicate pairs are summed at build time.
+    /// Add an undirected coupling `J_ij`. Duplicate pairs are summed at build time.
     pub fn couple(&mut self, i: usize, j: usize, jij: f64) {
         assert!(i < self.n && j < self.n && i != j, "bad edge ({i},{j}) n={}", self.n);
         self.edges.push((i as u32, j as u32, jij));
     }
 
-    /// Add bias h_i. Repeated calls on one node **accumulate**, matching `couple`.
+    /// Add bias `h_i`. Repeated calls on one node **accumulate**, matching `couple`.
     ///
     /// This replaced rather than accumulated until the domain-wall encoding caught it: with k = 2
     /// that encoding puts both of its boundary terms on the single spin, where they must cancel,
@@ -62,6 +65,7 @@ impl GraphBuilder {
         self.bias[i] = h;
     }
 
+    #[must_use]
     pub fn build(self) -> Graph {
         BUILDS.with(|b| b.set(b.get() + 1));
         let n = self.n;
@@ -102,7 +106,7 @@ impl GraphBuilder {
         let mut nbr = vec![0u32; m2];
         let mut w = vec![0.0f64; m2];
         let mut cursor = offset.clone();
-        for (&(a, b), &j) in merged.iter() {
+        for (&(a, b), &j) in &merged {
             nbr[cursor[a as usize]] = b;
             w[cursor[a as usize]] = j;
             cursor[a as usize] += 1;
@@ -134,8 +138,9 @@ pub struct Graph {
 }
 
 impl Graph {
-    /// Local field at node i: sum_j J_ij s_j + h_i.
+    /// Local field at node i: `sum_j` `J_ij` `s_j` + `h_i`.
     #[inline]
+    #[must_use]
     pub fn field(&self, i: usize, s: &[i8]) -> f64 {
         let mut f = self.h[i];
         for k in self.offset[i]..self.offset[i + 1] {
@@ -144,7 +149,8 @@ impl Graph {
         f
     }
 
-    /// Total energy E(s) = -sum_edges J s s - sum_i h s.
+    /// Total energy E(s) = -`sum_edges` J s s - `sum_i` h s.
+    #[must_use]
     pub fn energy(&self, s: &[i8]) -> f64 {
         let mut e = 0.0;
         for i in 0..self.n {
@@ -160,6 +166,7 @@ impl Graph {
         e
     }
 
+    #[must_use]
     pub fn max_degree(&self) -> usize {
         (0..self.n).map(|i| self.offset[i + 1] - self.offset[i]).max().unwrap_or(0)
     }
@@ -331,6 +338,7 @@ fn color_dsatur(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
 }
 
 /// Colours DSATUR needs for this graph, for measurement and for the tests that compare it.
+#[must_use]
 pub fn dsatur_colours(g: &Graph) -> usize {
     color_dsatur(g.n, &g.offset, &g.nbr).iter().max().map_or(0, |&c| c as usize + 1)
 }
@@ -435,7 +443,7 @@ mod tests {
             }
         }
         // classes partition the vertex set
-        let total: usize = g.classes.iter().map(|c| c.len()).sum();
+        let total: usize = g.classes.iter().map(std::vec::Vec::len).sum();
         assert_eq!(total, g.n);
     }
 
@@ -534,7 +542,7 @@ mod dsatur_tests {
             assert_eq!(g.classes.len(), adopted, "{name}: colour classes actually used");
             assert_eq!(dsatur_colours(&g), dsatur, "{name}: what DSATUR alone would spend");
             assert_eq!(
-                g.classes.iter().map(|c| c.len()).sum::<usize>(),
+                g.classes.iter().map(std::vec::Vec::len).sum::<usize>(),
                 g.n,
                 "{name}: every node in exactly one class"
             );

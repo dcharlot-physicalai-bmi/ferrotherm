@@ -52,6 +52,7 @@ pub struct FixedFabric {
 impl FixedFabric {
     /// Quantize a graph at inverse temperature `beta` into the fabric. Panics unless the
     /// coloring is exactly two classes (the lattice / device-topology case v1 targets).
+    #[must_use]
     pub fn new(g: &Graph, beta: f64, seed: u64) -> FixedFabric {
         assert_eq!(g.classes.len(), 2, "v1 fabric requires a bipartite (2-colorable) graph");
         let scale = (1u32 << FRAC) as f64;
@@ -117,6 +118,7 @@ impl FixedFabric {
         }
     }
 
+    #[must_use]
     pub fn magnetization(&self) -> f64 {
         let up = self.s.iter().filter(|&&b| b).count() as f64;
         (2.0 * up - self.n as f64) / self.n as f64
@@ -129,6 +131,7 @@ impl FixedFabric {
     }
 
     /// Emit the synthesizable fabric module.
+    #[must_use]
     pub fn emit_verilog(&self, module: &str) -> String {
         let n = self.n;
         let mut v = String::new();
@@ -185,7 +188,7 @@ impl FixedFabric {
     }
 
     /// Emit a self-checking testbench plus the expected per-sweep state trace (hex lines) from
-    /// the emulator. The testbench prints FERROTHERM_PASS only on a bit-exact match.
+    /// the emulator. The testbench prints `FERROTHERM_PASS` only on a bit-exact match.
     pub fn emit_testbench(&mut self, module: &str, sweeps: usize) -> (String, String) {
         self.reset();
         let n = self.n;
@@ -225,9 +228,7 @@ mod tests {
         let g = lattice2d(24, 1.0);
         let beta = 0.5;
         let mut fab = FixedFabric::new(&g, beta, 0xFAB);
-        for s in fab.s.iter_mut() {
-            *s = true;
-        }
+        fab.s.fill(true);
         for _ in 0..1500 {
             fab.sweep();
         }

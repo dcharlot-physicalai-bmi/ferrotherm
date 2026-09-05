@@ -164,6 +164,7 @@ pub struct Outcome {
 }
 
 /// Search for the minimum energy, with a proof when the budget allows.
+#[must_use]
 pub fn solve(g: &Graph, p: &Params) -> Outcome {
     let n = g.n;
     if n == 0 {

@@ -41,6 +41,7 @@ use crate::graph::Graph;
 ///
 /// A theorem for every `m`, so a caller may pass anything; [`naive_mean_field`] passes the fixed
 /// point, where it is tightest. Entropy terms use `x ln x → 0` at the endpoints.
+#[must_use]
 pub fn gibbs_bogoliubov(g: &Graph, beta: f64, m: &[f64]) -> f64 {
     assert_eq!(m.len(), g.n);
     let mut energy = 0.0; // −⟨E⟩_q = Σ h m + Σ_{i<j} J m m
@@ -78,6 +79,7 @@ pub struct MeanField {
 }
 
 impl MeanField {
+    #[must_use]
     pub fn converged(&self, tol: f64) -> bool {
         self.residual < tol
     }
@@ -85,6 +87,7 @@ impl MeanField {
 
 /// Naive mean field: damped iteration of `m_i = tanh(β(h_i + Σ_j J_ij m_j))` from `m = 0.01`,
 /// returning the Gibbs–Bogoliubov **lower bound** on `ln Z` at the last iterate.
+#[must_use]
 pub fn naive_mean_field(g: &Graph, beta: f64, iters: usize, damping: f64) -> MeanField {
     let mut m = vec![0.01; g.n];
     let mut residual = f64::INFINITY;
@@ -109,6 +112,7 @@ pub fn naive_mean_field(g: &Graph, beta: f64, iters: usize, damping: f64) -> Mea
 
 /// TAP: naive mean field with the Onsager reaction term, returning the second-order Plefka free
 /// energy `ln Z_TAP = ln Z_MF(m) + (β²/2) Σ_{i<j} J_ij² (1 − m_i²)(1 − m_j²)`. Not a bound.
+#[must_use]
 pub fn tap(g: &Graph, beta: f64, iters: usize, damping: f64) -> MeanField {
     let mut m = vec![0.01; g.n];
     let mut residual = f64::INFINITY;
@@ -157,6 +161,7 @@ pub struct Bethe {
 }
 
 impl Bethe {
+    #[must_use]
     pub fn converged(&self, tol: f64) -> bool {
         self.residual < tol
     }
@@ -173,6 +178,7 @@ impl Bethe {
 ///   Z_i  = Σ_s exp(β H_i s),                       H_i = h_i + Σ_{k∈∂i} u_{k→i}
 ///   Z_ij = Σ_{s,t} exp(β(J_ij s t + H_i^{∖j} s + H_j^{∖i} t)),   H_i^{∖j} = H_i − u_{j→i}.
 /// ```
+#[must_use]
 pub fn belief_propagation(g: &Graph, beta: f64, iters: usize, damping: f64) -> Bethe {
     let ne = g.nbr.len();
     let mut u = vec![0.0f64; ne]; // u[e] = message from nbr[e] into the owner of slot e

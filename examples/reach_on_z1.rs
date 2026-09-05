@@ -92,7 +92,7 @@ fn expert(q: &[f64; NJ], tgt: (f64, f64)) -> [f64; NJ] {
     }
     let n: f64 = out.iter().map(|v| v * v).sum::<f64>().sqrt();
     if n > VCAP {
-        for v in out.iter_mut() {
+        for v in &mut out {
             *v *= VCAP / n;
         }
     }
@@ -135,7 +135,7 @@ struct Enc {
 }
 fn ebin(v: f64) -> u8 {
     let mut k = 0u8;
-    for &t in ETH.iter() {
+    for &t in &ETH {
         if v > t {
             k += 1;
         }
@@ -186,7 +186,7 @@ impl Enc {
     }
 }
 
-/// Target action mask for a state key: the expert law J(q_c)^T e_c evaluated at bin centers,
+/// Target action mask for a state key: the expert law `J(q_c)^T` `e_c` evaluated at bin centers,
 /// then per-joint nearest-level thermometer quantization.
 fn a_star(enc: &Enc, k: &Key) -> usize {
     let (qc, exc, eyc) = enc.centers(k);
@@ -204,7 +204,7 @@ fn a_star(enc: &Enc, k: &Key) -> usize {
     }
     let n: f64 = u.iter().map(|v| v * v).sum::<f64>().sqrt();
     if n > VCAP {
-        for v in u.iter_mut() {
+        for v in &mut u {
             *v *= VCAP / n;
         }
     }
@@ -237,7 +237,7 @@ fn decode_action(mask: usize) -> [f64; NJ] {
     }
     let n: f64 = u.iter().map(|v| v * v).sum::<f64>().sqrt();
     if n > VCAP {
-        for v in u.iter_mut() {
+        for v in &mut u {
             *v *= VCAP / n;
         }
     }
@@ -431,7 +431,7 @@ fn main() {
     // ---- trajectory-level post-training (the Thermalizers refinement = DAgger, measured this
     // morning to be the fix for exactly this failure): roll the COMPILED policy, label the states
     // IT visits with the programmatic expert, aggregate, retrain. ----
-    let mut agg: BTreeMap<Key, u64> = pats[..kcap].iter().cloned().collect();
+    let mut agg: BTreeMap<Key, u64> = pats[..kcap].iter().copied().collect();
     for round in 0..2 {
         for i in 0..80u64 {
             let mut rr = Pcg::new(0xDA66E ^ (round as u64 * 1000 + i), 1);
@@ -499,7 +499,7 @@ fn main() {
         }
         mask
     }));
-    println!("closed loop, IDEALIZED readout (exact argmax): {:.0}% success, {:.2} s, {:.1} J actuation", s1, t1, e1);
+    println!("closed loop, IDEALIZED readout (exact argmax): {s1:.0}% success, {t1:.2} s, {e1:.1} J actuation");
 
     // ---- closed loop, arm 2: device-semantics readout (Gibbs, per-joint majority of 5) ----
     let sweeps = 40usize;
@@ -550,7 +550,7 @@ fn main() {
         }
         (100.0 * nok as f64 / 60.0, st / 60.0, se / 60.0, st, ticks)
     };
-    println!("closed loop, DEVICE readout (Gibbs x{sweeps} sweeps, majority of {n_votes}): {:.0}% success, {:.2} s, {:.1} J actuation\n", s2, t2, e2);
+    println!("closed loop, DEVICE readout (Gibbs x{sweeps} sweeps, majority of {n_votes}): {s2:.0}% success, {t2:.2} s, {e2:.1} J actuation\n");
 
     // ---- the energy table: same trajectories, two compute platforms ----
     let p = Z1_SPICE;
@@ -560,7 +560,7 @@ fn main() {
         let clamp_j = op_clamps as f64 * if clamp_as_write { p.e_write } else { p.e_read };
         (op_samples as f64 * p.e_sample + op_reads as f64 * p.e_read + clamp_j + program_writes) / 60.0
     };
-    println!("E_task per attempt (device-readout arm; actuation {:.1} J):", e2);
+    println!("E_task per attempt (device-readout arm; actuation {e2:.1} J):");
     println!("  compute on Jetson-class 30 W x wall-clock:          {:>10.2} J   -> E_task = {:.1} J", e_cmp_jetson, e_cmp_jetson + e2);
     println!("  compute on Z1 device model (clamp = read-class):    {:>10.2e} J   -> E_task = {:.1} J", per_attempt(false), per_attempt(false) + e2);
     println!("  compute on Z1 device model (clamp = write-class):   {:>10.2e} J   -> E_task = {:.1} J", per_attempt(true), per_attempt(true) + e2);
@@ -568,7 +568,7 @@ fn main() {
     println!("  clamp ops: {clamp_rate:.0}/s vs the <=1/s coupling-reflash cap — if clamping is flash-class, the");
     println!("  loop is INFEASIBLE as specced regardless of joules; if read-class, feasible. That one unpublished");
     println!("  line item decides embodied viability. (SPICE prices for taped-out, uncharacterized silicon.)");
-    println!("\nREADING — the boundary is the result. A coherent quantized reach target exists (gate {:.0}%), and", gs);
+    println!("\nREADING — the boundary is the result. A coherent quantized reach target exists (gate {gs:.0}%), and");
     println!("the capacity ladder climbs but plateaus far below it: single 13-spin patch kernel 15-30% closed-loop;");
     println!("per-joint factorization (exact for a deterministic target) {:.0}-{:.0}%; trajectory-level post-training", s1.min(s2), s1.max(s2));
     // "~3 points" is a PRIOR measurement, not something this run computes -- post-training here
