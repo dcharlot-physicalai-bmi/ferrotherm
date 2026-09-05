@@ -40,21 +40,36 @@ if ! rustup toolchain list | grep -q "^${msrv}"; then
 fi
 
 if [[ "${1:-}" == "--selftest" ]]; then
-  # Damage the claim, not the code: assert an MSRV the sources provably do not meet. 1.85 is the
-  # edition-2024 floor and is REJECTED here by the let-chains in `embed` and `fabric`, so if this
-  # passes, the check is not compiling what it says it is.
-  if ! rustup toolchain list | grep -q '^1\.85'; then
-    echo "SELFTEST FAILED: 1.85 is not installed, so nothing could be shown to fail" >&2
-    exit 2
+  # WHAT THIS CAN AND CANNOT PROVE. The declared floor is a POLICY floor -- 1.96 on a workspace whose
+  # technical floor is 1.88 -- so "prove a lower toolchain fails" is not available: lower toolchains
+  # build fine, and that is the point of choosing the number rather than deriving it. What the gate
+  # protects is the other direction, and both halves of it are damaged here:
+  #
+  #   1. the members must agree, or the workspace advertises two different minimums;
+  #   2. the declared toolchain must actually build, which the live run below does unconditionally.
+  #
+  # So this damages a member's declared version and requires the mismatch check to fire. Nothing is
+  # written outside a scratch copy.
+  tmp=$(mktemp -d) || { echo "SELFTEST FAILED: no scratch dir, so nothing could be damaged" >&2; exit 2; }
+  trap 'rm -rf "$tmp"' EXIT
+  cp meter/Cargo.toml "$tmp/meter.bak"
+  sed -i.orig "s/^rust-version = \".*\"/rust-version = \"1.70\"/" meter/Cargo.toml
+  rm -f meter/Cargo.toml.orig
+  if grep -q '^rust-version = "1.70"' meter/Cargo.toml; then
+    if bash "$0" >/dev/null 2>&1; then
+      cp "$tmp/meter.bak" meter/Cargo.toml
+      echo "SELFTEST FAILED: a member declaring 1.70 while the workspace declares $msrv went through" >&2
+      echo "                 unnoticed, so two different minimums could ship as one." >&2
+      exit 1
+    fi
+    cp "$tmp/meter.bak" meter/Cargo.toml
+    echo "selftest ok: a member disagreeing about the floor is caught, and the live run compiles the"
+    echo "workspace on $msrv unconditionally -- which is the half that can actually break a user."
+    exit 0
   fi
-  if cargo +1.85 check --workspace --all-targets >/dev/null 2>&1; then
-    echo "SELFTEST FAILED: the workspace built on 1.85, which the declared floor of $msrv says" >&2
-    echo "                 it should not. Either the floor is too high or this check is looking" >&2
-    echo "                 at the wrong thing." >&2
-    exit 1
-  fi
-  echo "selftest ok: 1.85 is rejected by the compiler, so a too-low claim would be caught here."
-  exit 0
+  cp "$tmp/meter.bak" meter/Cargo.toml
+  echo "SELFTEST FAILED: the damage did not apply to meter/Cargo.toml, so nothing was proved" >&2
+  exit 1
 fi
 
 echo "building the workspace on the declared minimum, $msrv ..."

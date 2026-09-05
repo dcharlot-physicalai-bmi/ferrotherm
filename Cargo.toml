@@ -2,11 +2,18 @@
 name = "ferrotherm"
 version = "0.41.0"
 edition = "2024"
-# MEASURED, not guessed: `scripts/check-msrv.sh` compiles the whole workspace on exactly this
-# toolchain and fails if it does not build, so this line is a checked claim rather than a hope.
-# 1.88 is the floor because edition 2024 needs 1.85 and the let-chains in `embed` and `fabric`
-# need 1.88; 1.85 and 1.86 were tried and rejected by the compiler.
-rust-version = "1.88"
+# A POLICY floor, deliberately above the technical one, and it is stated that way so nobody
+# later "corrects" it downward on the grounds that older toolchains happen to work.
+#
+# The technical floor is 1.88: edition 2024 needs 1.85, and the let-chains in `embed` and `fabric`
+# need 1.88 (1.85 and 1.86 were installed and rejected by the compiler). This crate declares 1.96
+# anyway. It is a 2026 library for hardware that does not exist yet, and carrying compatibility with
+# toolchains a year old buys nothing and costs the ability to use the language as it is now.
+#
+# `scripts/check-msrv.sh` compiles the ENTIRE workspace, tests and examples included, on exactly
+# this toolchain, so the line is a checked claim rather than a hope -- what it verifies is that the
+# floor is high enough, which is the direction that can break a user.
+rust-version = "1.96"
 description = "Thermodynamic computing in pure Rust: sparse energy-based models, chromatic block-Gibbs, parallel tempering, thermodynamic linear algebra, stochastic differentiable programs, a variational compiler onto device topologies, exact inference by variable elimination, planted instances with known optima, sampler certificates, and a first-class joules ledger. std-only, zero dependencies, wasm-clean, deterministic by seed."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferrotherm"
