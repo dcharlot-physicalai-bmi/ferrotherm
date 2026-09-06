@@ -79,6 +79,8 @@ score. Scoring it found three defects on the first run.
 | Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
 | Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped**; the page verifies itself against Onsager in your browser before reporting a rate |
 | **Fabricated CMOS annealing silicon (Hitachi)** | `ferrotherm-cloud::hitachi` — 384×384 King's graph, four-bit coefficients, over a free public API | **shipped, conventions measured** |
+| Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
+| Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
 | Exact ground-state **counting** (GenericTensorNetworks.jl) | `exact::ground_degeneracy` — the cold limit of `log Z` | **shipped, verified** against a closed form at 101 spins |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
@@ -719,6 +721,65 @@ refuted: enumerating `at most two of four` exactly gives eleven assignments and 
 minimum-energy states, because the penalty that makes a row hold also pins its slack. The real
 reason is that the count must be a statement about the model rather than about how the compiler
 chose to represent it.
+
+### An answer that says how far from optimal it might be
+
+Every other solver here, and every commercial machine in this field, returns "best found" and
+nothing. `Method::Branch` returns a bracket:
+
+```text
+  bound  ≤  true optimum  ≤  energy          gap = energy − bound
+```
+
+The search already evaluated `fixed_energy − free_h_abs − free_abs` at every node to decide prunes
+and discarded it. The minimum over the subtrees the node budget forced it to **abandon** is a valid
+lower bound on the whole problem, so a truncated run reports how far off it might be. When the tree
+is exhausted nothing is abandoned, `bound == energy`, and `proved_optimal` becomes a corollary of a
+zero gap rather than a flag to be trusted on its own.
+
+`Solution::gap` carries it up in the modeller's own units. The compiled energy is the objective plus
+soft costs plus a constant offset that is identical for every feasible fully-decoded state, so the
+offset cancels in a difference — no offset is computed and no convention is chosen:
+
+```text
+  objective(this) − objective(best)  =  energy(this) − energy(best)
+```
+
+**The falsifier is penalty invariance**, and it needs no enumeration. Compile the same model at
+penalty 2, 20 and 200: the energies move by hundreds, the gap does not move at all. A sign error, a
+dropped constant, or a bound in the wrong units all survive an agreement test against one
+compilation, and none survive this.
+
+The first version of the bound was not a bound, and exhaustive enumeration said so — −13.675 against
+a true minimum of −14.913. When the budget runs out deep inside the first branch, the loop returns
+before entering the second, so that sibling is abandoned and unrecorded.
+
+### A penalty proved sufficient
+
+`Model::effective_penalty` takes twice the largest pull on one literal set. Relaxing a constraint
+frees every term touching its *support*, and those live in different literal sets:
+
+```text
+  Fix(a,0)  against  maximize a.is(1) + Σᵢ a.is(1)·bᵢ.is(1)
+
+  n=2  auto_penalty=2  feasible=false  invalid=["a"]
+  n=3  auto_penalty=2  feasible=false  violated=1
+  n=4  auto_penalty=2  feasible=false  invalid=["a"]
+```
+
+Satisfiable models whose compiled optimum is not a solution, failing in two different shapes.
+
+`Model::certified_penalty` proves one sufficient. The objective is a sum of terms contributing `c`
+or `0`, so its whole range is `Σ|c|` and no change of assignment can gain more. Breaking a hard row
+or an encoding costs `p·d`, where `d` is the smallest violation the compiled form admits — 1 for a
+hard row and one-hot, 2 for domain-wall, since a violation there is an extra wall and every wall
+costs `2p`. So `p·d > Σ|c|`, returned with one ULP added because the argument needs a strict
+inequality and a tie is something the sampler may take.
+
+It **refuses** rather than guessing where the argument does not reach. A binary encoding whose `k`
+is not a power of two has invalid codewords costing exactly what valid ones cost — `add_penalty`
+returns `false` — so `d = 0` and no penalty certifies it at any size. That is a fact about the
+encoding, not a limit of the argument.
 
 ### How many ground states are there — counted, not estimated
 
