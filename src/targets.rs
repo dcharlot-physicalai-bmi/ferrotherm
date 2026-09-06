@@ -71,6 +71,32 @@ pub struct FpgaTarget {
     pub provenance: &'static str,
 }
 
+/// **MEASURED** LUTs per p-bit for THIS crate's fabric, on a real part.
+///
+/// Distinct from the `150 LUT4-equivalents` anchor in [`FpgaTarget::est_pbits`], and deliberately
+/// not a replacement for it: that figure is DSIM-2's density on Versal, a different design with
+/// different features. This one is what [`crate::hdl::FixedFabric::emit_verilog`] actually costs.
+///
+/// Vivado 2026.1, `xck26-sfvc784-2LV-c`, 2026-09-06. Out-of-context synthesis at three sizes fits a
+/// straight line — 3,177 / 11,712 / 26,306 CLB LUTs at 64 / 256 / 576 p-bits — for a slope of
+/// **45.2 LUTs per p-bit** and about 225 LUTs of fixed AXI-shell overhead. A full implementation at
+/// 1,024 p-bits then landed at 45,330 LUTs, or **44.3 per p-bit**, confirming the slope.
+///
+/// The registers are the sharper confirmation: **exactly 33.0 per p-bit at every size**, which is
+/// the 32-bit xorshift state plus one spin. The synthesiser reproduces the architecture on the nose,
+/// which is the evidence that it is building what this crate thinks it is building.
+///
+/// In the LUT4-equivalent convention [`FpgaTarget::est_pbits`] uses (LUT6 fabrics weighted 1.6x)
+/// that is about **71**, against the 150 the DSIM-2 anchor assumes — so this fabric is roughly
+/// twice as dense as that anchor, and a KV260 holds about **2,560 p-bits** rather than the ~1,250
+/// the generic model predicts.
+pub const MEASURED_LUT_PER_PBIT: f64 = 44.3;
+
+/// **MEASURED** registers per p-bit: the 32-bit xorshift32 state plus one spin bit.
+///
+/// Held at exactly this value across 64, 256, 576 and 1,024 p-bits on `xck26`.
+pub const MEASURED_REG_PER_PBIT: f64 = 33.0;
+
 impl FpgaTarget {
     /// [EST, anchored] p-bit capacity at ~150 LUT4-equivalents per p-bit — the density DSIM-2
     /// realized on Versal silicon (~55.5k p-bits per VP1902; arXiv:2606.25313) — with LUT6
@@ -89,6 +115,17 @@ impl FpgaTarget {
         let mid = 0.5 * (self.clock_mhz.0 as f64 + self.clock_mhz.1 as f64) * 1e6;
         let clk = mid.min(33e6);
         self.est_pbits() as f64 / 4.0 * clk
+    }
+
+    /// p-bit capacity of THIS crate's fabric, from [`MEASURED_LUT_PER_PBIT`] rather than a model.
+    ///
+    /// Reported beside [`Self::est_pbits`] instead of replacing it, because the two answer different
+    /// questions: that one asks what a generic dense sampling fabric costs, this one asks what
+    /// `hdl::FixedFabric` costs. On a KV260 they differ by about 2x, and conflating them would hide
+    /// which fabric a capacity claim is about.
+    #[must_use]
+    pub fn measured_pbits(&self) -> u32 {
+        (self.luts as f64 / MEASURED_LUT_PER_PBIT) as u32
     }
 }
 
@@ -221,5 +258,40 @@ mod tests {
         let up5k = &TARGETS[0];
         let v80 = TARGETS.iter().find(|t| t.name.contains("V80")).unwrap();
         assert!(up5k.est_pbits() < v80.est_pbits());
+    }
+}
+
+#[cfg(test)]
+mod measured_tests {
+    use super::*;
+
+    /// The measured density, and the gap between it and the generic model.
+    ///
+    /// Both numbers are kept deliberately. A capacity claim is only meaningful with the fabric it
+    /// belongs to attached, and these two fabrics differ by about a factor of two on the same part.
+    #[test]
+    fn the_kv260_capacity_is_measured_and_differs_from_the_generic_model() {
+        let kv = TARGETS
+            .iter()
+            .find(|t| t.name.contains("KV260"))
+            .expect("the KV260 is in the database");
+        assert_eq!(kv.luts, 117_120, "XCK26 LUT6 count, from the datasheet");
+
+        // Measured: 45,330 LUTs held 1,024 p-bits in a real implementation.
+        let implemented = 45_330.0 / 1024.0;
+        assert!(
+            (implemented - MEASURED_LUT_PER_PBIT).abs() < 1.0,
+            "the implementation says {implemented:.1} LUTs/p-bit, the constant says {MEASURED_LUT_PER_PBIT}"
+        );
+        assert!(
+            (2500..2700).contains(&kv.measured_pbits()),
+            "a KV260 holds about 2,560 of THIS fabric's p-bits, got {}",
+            kv.measured_pbits()
+        );
+
+        // And the generic anchor says something materially different on the same silicon, which is
+        // why both are reported rather than one silently overwriting the other.
+        let ratio = f64::from(kv.measured_pbits()) / f64::from(kv.est_pbits());
+        assert!(ratio > 1.8, "this fabric is denser than the DSIM-2 anchor by {ratio:.2}x");
     }
 }

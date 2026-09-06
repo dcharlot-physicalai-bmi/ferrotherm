@@ -65,6 +65,80 @@ pub const Z1_SPICE: Prices = Prices {
              silicon, not measured. Applies to that device model and to nothing else.",
 };
 
+/// **MEASURED** per-sample energy of this crate's own p-bit fabric on real silicon.
+///
+/// Every other `Prices` in this crate describes a device MODEL. This one describes a board that ran
+/// the workload, on a wattmeter, and it is the only figure here that was not projected by anybody.
+///
+/// # What was measured
+///
+/// A Kria KV260 (`xck26-sfvc784-2LV-c`), 2026-09-06. [`crate::hdl::FixedFabric::emit_verilog`]
+/// emitted a 1,024 p-bit fabric — `lattice2d(32)`, Q.8 weights, 1024-entry sigmoid ROM, one
+/// xorshift32 per node — implemented in Vivado 2026.1 against the PS's `pl_clk0` at 100 MHz and
+/// flashed through `fpga_manager`. Board power came from the SOM's own INA260 on the 5 V rail, so
+/// the scope is **whole board including regulator loss**: an upper bound on the die, and the same
+/// convention `ferrotherm_meter` uses everywhere else.
+///
+/// ```text
+///   PL idle      3.1362 W  +- 0.0848   (24 samples)
+///   fabric on    3.6917 W  +- 0.0815   (24 samples)
+///   delta        0.5554 W  se 0.0240   -> 23.1 sigma
+///   throughput   1024 p-bits x 100 MHz / 2 clocks per sweep = 51.2 flips/ns
+///   ==>          10.85 +- 0.47 pJ per single-node update
+/// ```
+///
+/// # It survived a re-measurement
+///
+/// A single reading is not reproducible until it has been taken twice. A second, independently
+/// dmesg-verified flash of the same bitstream read **3.6993 W +- 0.0847** against the first run's
+/// **3.6917 W +- 0.0815** — 7.6 mW apart, inside the noise on either. Across the two flashes the
+/// delta is **0.559 +- 0.008 W**, a 1.4% run-to-run spread, and the per-flip figure moves from
+/// 10.85 to 10.9 pJ. The constant keeps the first run's value; the second is what says it is real.
+///
+/// # Three things that make it a measurement rather than a plausible number
+///
+/// 1. **The instrument was validated before it was trusted.** Loading the four A53 cores moved the
+///    same sensor by +0.778 W against an idle spread of 0.087 W. A sensor that does not respond to
+///    load makes every figure downstream unfalsifiable, and that check is cheap.
+/// 2. **The flash was verified by `dmesg`, not by `state`.** Writing a filename to
+///    `/sys/class/fpga_manager/fpga0/firmware` **silently no-ops** when `/lib/firmware/<f>` is
+///    missing: the old bitstream keeps running and `state` still reads `operating`. The run that
+///    produced this number carries `writing ft_fabric.bit.bin to Xilinx ZynqMP FPGA Manager` with no
+///    error. An earlier attempt here loaded nothing and honestly reported `-0.006 W`.
+/// 3. **The logic had to be kept alive.** With no observable sink the synthesiser dead-code-
+///    eliminates the entire fabric to about one LUT, and the board then measures a correct zero for
+///    a design that is not there. The vehicle carries `DONT_TOUCH` and folds all 1,024 state bits
+///    into one registered bit.
+///
+/// # The finding worth carrying
+///
+/// Vivado's own estimator, run on the implemented design, put the PL at **0.100 W** — clocks 0.077,
+/// CLB logic 0.016, signals 0.007. The board drew **0.5554 W**. The vendor tool under-predicted by
+/// **5.6x**, and the reason generalises: without a switching-activity file it assumes a default
+/// toggle rate near 12.5%, while this fabric IS a randomness engine — 1,024 xorshift32 generators
+/// each flipping about half of 32 bits every clock. Every projected p-bit energy in this field is a
+/// model of that kind, and here is one caught under-predicting a stochastic sampler in the direction
+/// that flatters it.
+///
+/// Against [`Z1_SPICE`]'s projected `7.09e-15` J per sample, this measured `1.085e-11` is **~1,530x**
+/// more per flip. That is the honest shape of the gap between 16 nm FPGA CMOS and a thermodynamic
+/// p-bit — and it is the first entry in that comparison that is not itself a projection.
+///
+/// # Why reads and writes are unstated
+///
+/// They were not measured. This run clocked a free-running fabric with no host traffic, so
+/// [`Ledger::joules`] **refuses** any workload that touches them rather than pricing them at zero.
+/// That refusal is the point of the type.
+pub const KV260_MEASURED: Prices = Prices {
+    e_sample: 1.0848e-11,
+    e_read: f64::NAN,
+    e_write: f64::NAN,
+    reflash_hz_cap: None,
+    source: "MEASURED on a Kria KV260 (xck26), 2026-09-06: 1,024 p-bits at 100 MHz drew 0.5554 W \
+             above an idle PL on the SOM's INA260 (5 V rail, whole board), 23.1 sigma, over 51.2 \
+             flips/ns. Reads and writes were not exercised and are unstated, not zero.",
+};
+
 /// Operation counts accumulated by a run.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ledger {
@@ -84,11 +158,31 @@ impl Ledger {
     /// print a figure for a device that has none.
     #[must_use]
     pub fn joules(&self, p: &Prices) -> Option<f64> {
-        p.is_stated().then_some({
-            self.samples as f64 * p.e_sample
-                + self.reads as f64 * p.e_read
-                + self.writes as f64 * p.e_write
-        })
+        // Per-OPERATION, not all-or-nothing. A price set that states what this run actually did can
+        // price it, and one that does not cannot -- which is a finer and more useful question than
+        // "are all three stated". It matters because real measurements arrive partial:
+        // `KV260_MEASURED` came off a wattmeter running a free-running fabric with no host traffic,
+        // so it states a per-sample energy and nothing else. Under the old rule that measurement
+        // could price NOTHING, including the very workload it was taken from. Under this one it
+        // prices sampling exactly and still refuses the reads and writes nobody metered.
+        //
+        // A zero count needs no price: a run that performed no writes is not made unpriceable by an
+        // unstated write cost. An unstated price for an operation the run DID perform still yields
+        // `None`, which is the refusal this type exists for.
+        let charge = |count: u64, price: f64| -> Option<f64> {
+            if count == 0 {
+                Some(0.0)
+            } else if price.is_finite() {
+                Some(count as f64 * price)
+            } else {
+                None
+            }
+        };
+        Some(
+            charge(self.samples, p.e_sample)?
+                + charge(self.reads, p.e_read)?
+                + charge(self.writes, p.e_write)?,
+        )
     }
 
     /// The wall-clock floor this many full-graph reflashes implies, or `None` if the device states
@@ -130,6 +224,36 @@ mod tests {
         assert!((ratio - 21664.0).abs() < 100.0, "write/sample = {ratio}");
         let rr = Z1_SPICE.e_read / Z1_SPICE.e_sample;
         assert!((rr - 238.6).abs() < 5.0, "read/sample = {rr}");
+    }
+
+    /// The measured board figure, and the gap it puts a number on.
+    ///
+    /// This is the only price in the crate that came off a wattmeter rather than out of a model, so
+    /// the test that guards it checks the two things that would make it a lie: that it prices
+    /// sampling, and that it REFUSES to price the reads and writes nobody measured.
+    #[test]
+    fn the_measured_board_price_prices_sampling_and_refuses_the_rest() {
+        // 1,024 p-bits at 100 MHz, two clocks per sweep, one second of running.
+        let flips = 1024u64 * 50_000_000;
+        let l = Ledger { samples: flips, reads: 0, writes: 0 };
+        let joules = l.joules(&KV260_MEASURED).expect("sampling alone is priced");
+        // 0.5554 W for one second, reproduced from the per-flip figure.
+        assert!((joules - 0.5554).abs() < 0.005, "one second of the measured fabric = {joules} J");
+
+        // The gap against the projection this crate exists to test, stated as a ratio rather than
+        // as a slogan. Extropic's SPICE table says 7.09 fJ; this board says 10.85 pJ.
+        let ratio = KV260_MEASURED.e_sample / Z1_SPICE.e_sample;
+        assert!((1500.0..1560.0).contains(&ratio), "measured / projected = {ratio}");
+
+        // A workload that reads or writes cannot be priced from a sampling-only measurement, and
+        // the ledger says so instead of charging zero for the parts nobody metered.
+        assert!(!KV260_MEASURED.is_stated(), "reads and writes are unstated, not free");
+        let with_io = Ledger { samples: flips, reads: 1, writes: 0 };
+        assert_eq!(
+            with_io.joules(&KV260_MEASURED),
+            None,
+            "pricing a read against a run that never performed one would be a fabricated number"
+        );
     }
 
     #[test]

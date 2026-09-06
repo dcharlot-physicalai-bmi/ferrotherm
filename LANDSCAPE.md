@@ -190,8 +190,25 @@ Honesty about a reference includes where it is thin:
   optimal for chains made of one vertical and one horizontal wire SEGMENT, proved rather than
   observed, with the four universal wires a theorem about the offset lists. It stays as
   `ft_clique_embed`'s fallback: a smaller clique with a machine-checked ceiling beats none.
-- **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
-  ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
+- ~~**No silicon measurement.** Every joule figure is a device-model price~~ — **CLOSED.**
+  `ledger::KV260_MEASURED` is a wattmeter reading. A 1,024 p-bit fabric emitted by `hdl`, implemented
+  in Vivado for `xck26`, flashed to a Kria KV260 and metered on the SOM's own INA260: **0.5554 W
+  above an idle PL at 23.1 sigma**, over 51.2 flips/ns, giving **10.85 +- 0.47 pJ per node update**.
+  Against Extropic's projected `7.09 fJ` that is **~1,530x**, and it is the first entry in that
+  comparison that is not itself a projection.
+
+  **And the vendor tool was caught under-predicting.** Vivado's own estimator put the PL at
+  **0.100 W**; the board drew **0.5554 W** — **5.6x** low. Without a switching-activity file it
+  assumes a toggle rate near 12.5%, while this fabric IS a randomness engine. Every projected p-bit
+  energy in this field is a model of that kind.
+
+  Three checks separate this from a plausible number: the sensor was validated against a CPU load
+  (+0.778 W on a 0.087 W noise floor) before it was trusted; the flash was verified in `dmesg`
+  rather than by `state`, because writing to `fpga_manager/firmware` **silently no-ops** and leaves
+  the old bitstream running — an earlier attempt here loaded nothing and honestly reported
+  `-0.006 W`; and the design carries `DONT_TOUCH` with a registered fold, because with no observable
+  sink the synthesiser deletes the whole fabric and the board measures a correct zero for something
+  that is not there.
 - ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed, twice.**
   `chain_log_z` is a transfer-operator oracle, `O(n · grid²)`, exact to the grid at any chain
   length. ~~Non-chain topologies past three units remain quadrature-bound~~ — `eliminate_log_z`

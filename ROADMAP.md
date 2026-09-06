@@ -465,9 +465,17 @@ at 9.168 W Alveo result.
 **Accept:** every number carries its noise floor and a named, *tuned* classical baseline. An
 untuned baseline is a fabricated win.
 
-**2.3 The path to silicon.** Sequential fabric on the Alchitry Pt V2 — flip-flops, clock, a running
-sampler, state read back — then the same `.ftp` running on CPU, browser and FPGA with matching
-results.
+**2.3 The path to silicon.** ◐ **A fabric RAN ON SILICON AND WAS METERED** — the joules half is
+done; the `.ftp`-on-three-backends half is not.
+
+A 1,024 p-bit fabric emitted by `hdl`, implemented in Vivado 2026.1 for `xck26`, flashed to a Kria
+KV260 through `fpga_manager`, and metered on the SOM's own INA260: **0.5554 W above an idle PL at
+23.1 sigma**, 51.2 flips/ns, **10.85 +- 0.47 pJ per node update** (`ledger::KV260_MEASURED`).
+Utilisation confirms the architecture: 44.3 LUTs and **exactly 33.0 registers** per p-bit — the
+32-bit xorshift state plus one spin.
+
+*Still open here:* the same `.ftp` running on CPU, browser and FPGA with matching results, and the
+Alchitry path (that board never enumerated over USB).
 *Why:* **no library in this field has a public path to any silicon.** Extropic's packages contain
 zero device code; every "backend" is a simulator. Closing library→bitstream→board→readback in the
 open is a first, and we already own the whole toolchain.

@@ -1,5 +1,128 @@
 # Changelog
 
+## Unreleased
+
+### The first joules this crate ever measured instead of modelled
+
+`ledger::KV260_MEASURED` is a wattmeter reading. Every other `Prices` here describes a device model;
+this one describes a board that ran the workload.
+
+A 1,024 p-bit fabric emitted by `hdl::FixedFabric::emit_verilog` — `lattice2d(32)`, Q.8 weights,
+1024-entry sigmoid ROM, one xorshift32 per node — implemented in Vivado 2026.1 for
+`xck26-sfvc784-2LV-c`, flashed to a Kria KV260 through `fpga_manager`, and metered on the SOM's own
+INA260 on the 5 V rail:
+
+```text
+  PL idle      3.1362 W  +- 0.0848   (24 samples)
+  fabric on    3.6917 W  +- 0.0815   (24 samples)
+  delta        0.5554 W  se 0.0240   -> 23.1 sigma
+  throughput   1024 p-bits x 100 MHz / 2 clocks per sweep = 51.2 flips/ns
+  ==>          10.85 +- 0.47 pJ per node update
+```
+
+Against Extropic's projected `7.09 fJ` per sample that is **~1,530x** — the honest shape of the gap
+between 16 nm FPGA CMOS and a thermodynamic p-bit, and the first entry in that comparison that is
+not itself a projection.
+
+**It survived a re-measurement.** A second, independently dmesg-verified flash read
+`3.6993 W ± 0.0847` against the first run's `3.6917 W ± 0.0815` — 7.6 mW apart, inside the noise on
+either. Across both flashes the delta is `0.559 ± 0.008 W`, a 1.4% run-to-run spread. One reading is
+not reproducible until it has been taken twice.
+
+**The vendor's own estimator was caught under-predicting by 5.6x.** Vivado put the PL at 0.100 W
+(clocks 0.077, CLB logic 0.016, signals 0.007); the board drew 0.5554 W. Without a switching-activity
+file it assumes a toggle rate near 12.5%, and this fabric IS a randomness engine — 1,024 xorshift32
+generators each flipping about half of 32 bits every clock. Every projected p-bit energy in this
+field is a model of that kind, and this one erred in the direction that flatters it.
+
+Three checks separate the number from a plausible one, each of which has a recorded failure behind
+it:
+
+- **The instrument was validated before it was trusted.** Loading the four A53 cores moved the same
+  sensor +0.778 W against an idle spread of 0.087 W.
+- **The flash was verified in `dmesg`, not by `state`.** Writing to `fpga_manager/firmware`
+  **silently no-ops** when `/lib/firmware/<f>` is missing: the old bitstream keeps running and
+  `state` still reads `operating`. An earlier attempt here loaded nothing and honestly reported
+  `-0.006 W`.
+- **The logic had to be kept alive.** With no observable sink the synthesiser deletes the whole
+  fabric to about one LUT, and the board then measures a correct zero for a design that is not there.
+  The vehicle carries `DONT_TOUCH` and folds all 1,024 state bits into one registered bit.
+
+### `Ledger::joules` prices per operation, because real measurements arrive partial
+
+The measurement above forced a design fix. `joules` used to demand that **all three** of
+sample/read/write be stated, so `KV260_MEASURED` — taken on a free-running fabric with no host
+traffic, and therefore stating only `e_sample` — could price **nothing, including the very workload
+it was taken from**.
+
+It now charges per operation: a zero count needs no price, and an unstated price for an operation the
+run actually performed still returns `None`. Adding a single read to a sampling-only ledger flips it
+back to `None`, which the test asserts. That is a finer question than "are all three stated" and it
+is the one the type was always trying to ask.
+
+### Measured density, kept beside the model rather than replacing it
+
+`targets::MEASURED_LUT_PER_PBIT` (44.3) and `MEASURED_REG_PER_PBIT` (33.0), with `measured_pbits()`.
+Out-of-context synthesis at 64/256/576 p-bits fits a straight line for 45.2 LUTs/p-bit plus ~225 LUTs
+of fixed shell; the 1,024 p-bit implementation landed at 44.3. The registers are the sharper
+confirmation: **exactly 33.0 per p-bit at every size** — the 32-bit xorshift state plus one spin, so
+the synthesiser is demonstrably building what this crate thinks it is.
+
+The existing `150 LUT4-equivalent` anchor is **not** overwritten. That figure is DSIM-2's density on
+Versal — a different fabric — and conflating the two would hide which fabric a capacity claim is
+about. Both are reported, and a test asserts they differ by more than 1.8x on the same silicon so the
+discrepancy cannot quietly vanish. A KV260 holds ~2,560 of this fabric's p-bits, not the ~1,250 the
+generic model predicts.
+
+### The shell's popcount was the critical path, and the fix is measured too
+
+`emit_axi_shell` exposes `popcount(state)` so a host reads magnetisation in one word. Written flat —
+one `always @(*)` over every state bit — that is an n-input adder tree, and synthesis said so:
+
+| 576 p-bits @ 250 MHz | WNS | failing endpoints | LUTs |
+|---|---|---|---|
+| flat | **-0.432 ns** | **5** | 26,306 |
+| pipelined | **+1.536 ns** | **0** | 26,339 |
+
+Fmax had been falling 447 → 288 → 226 MHz across 64 → 256 → 576 p-bits. Splitting the count into
+per-32-bit-word stages, both registered, recovers **1.968 ns of slack for 33 LUTs** — 0.13% area for
+**1.80x the clock**, taking 576 p-bits from 65 to **117 flips/ns**. The two cycles of latency land on
+a status register a host polls asynchronously, where they cost nothing.
+
+This did not affect the KV260 energy measurement, which ran at 100 MHz with enormous margin. It was a
+defect introduced in the same change that added the shell, found by reading the timing report rather
+than by anything failing.
+
+### The AXI shell's gate was measuring nothing, and it was hiding a real defect
+
+`emit_axi_shell` shipped with a simulation gate that **never passed and never failed** — it hung in
+`vvp`. It went unnoticed because the run was piped into `tail`, so the exit status read was `tail`'s
+rather than cargo's. A gate that cannot fail in bounded time is not a gate, and this one was reported
+as green.
+
+Underneath it was an RTL bug that a working gate would have caught immediately: the write `case`
+decoded `awaddr_r` **in the same cycle a non-blocking assignment was loading it**, so it saw the
+*previous* address and every register write landed on the wrong register.
+
+Both halves are fixed. AXI4-Lite's write address and write data are independent channels, so the
+shell now accepts each on its own handshake and commits only once both beats have arrived, with
+`awaddr_r` and `wdata_r` settled. The testbench drops each `valid` on its own `ready` instead of
+waiting for both and then racing a `bready` that had already consumed the response. And the
+testbench carries a **simulation watchdog**, because the failure actually encountered was a silent
+hour-long hang rather than a wrong answer.
+
+The KV260 energy measurement is unaffected: that bitstream drove the fabric directly with `en` tied
+high and never instantiated the shell.
+
+### Also
+
+- `hdl::FixedFabric::emit_axi_shell` — an AXI4-Lite register map around the fabric (run/stop, target
+  sweeps, sweeps done, state words, `popcount(state)`), serving both an AWS F2 OCL port and a KV260
+  `M_AXI_HPM0_FPD`. Now genuinely gated: a simulation drives it exactly as a host does and checks
+  sweeps, popcount and state against the emulator, in bounded time.
+- An `en` port on the fabric, with the bit-exactness gate still passing at `en` tied high — which is
+  what shows the sampling logic is byte-for-byte unchanged.
+
 ## 0.42.0
 
 ### Rust 2024, a compiled MSRV, and a lint policy instead of a lint backlog

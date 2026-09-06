@@ -233,6 +233,14 @@ impl FixedFabric {
     /// A sweep is two clocks, one per colour class, so the counter advances on the phase that
     /// closes it rather than on every edge.
     ///
+    /// `0x10` carries **two cycles of pipeline latency**, and that is bought rather than conceded.
+    /// A flat combinational popcount over every state bit was measured as the critical path on an
+    /// `xck26`: at 576 p-bits it missed 250 MHz by 0.432 ns with five failing endpoints, and Fmax
+    /// fell 447 to 288 to 226 MHz across 64, 256 and 576. Splitting it into per-word counts and
+    /// their sum, both registered, recovers **1.968 ns of slack for 33 extra LUTs** — 0.13% area for
+    /// 1.80x the clock, and zero failing endpoints. On a register a host polls asynchronously the
+    /// latency costs nothing.
+    ///
     /// # What this deliberately does not do
     ///
     /// It exposes no power register. Board power is measured by the platform — the AWS shell's own
@@ -279,17 +287,45 @@ module {module} (
     end
   end
 
-  // popcount, so a host reads magnetisation in one word instead of pulling n bits over AXI
-  integer pi;
+  // popcount, so a host reads magnetisation in one word instead of pulling n bits over AXI --
+  // PIPELINED, because the flat version WAS the critical path and this is measured, not guessed.
+  // One always @(*) summing all {n} bits is an n-input adder tree: on an xck26 at 576 p-bits it
+  // missed 250 MHz by 0.432 ns with 5 failing endpoints, and Fmax fell 447 -> 288 -> 226 MHz across
+  // 64 -> 256 -> 576. Two registered stages -- per-32-bit-word counts, then their sum -- cost two
+  // cycles of latency on a status register a host polls asynchronously, and buy the clock back.
+  //
+  // The padding is a generate-if rather than a replication because {{0{{1'b0}}}} is illegal Verilog,
+  // and n is a multiple of 32 exactly when the fabric is a convenient size.
+  localparam NPB = {n};
+  localparam NW  = (NPB + 31) / 32;
+  wire [NW*32-1:0] pstate;
+  genvar gi;
+  generate for (gi = 0; gi < NW*32; gi = gi + 1) begin : pad
+    if (gi < NPB) begin : real_bit
+      assign pstate[gi] = state[gi];
+    end else begin : zero_bit
+      assign pstate[gi] = 1'b0;
+    end
+  end endgenerate
+  function [6:0] pc32; input [31:0] x; integer k; begin
+    pc32 = 7'd0;
+    for (k = 0; k < 32; k = k + 1) pc32 = pc32 + {{6'd0, x[k]}};
+  end endfunction
+  reg [6:0] cpop [0:NW-1];
   reg [31:0] popc;
-  always @(*) begin
-    popc = 32'd0;
-    for (pi = 0; pi < {n}; pi = pi + 1) popc = popc + {{31'd0, state[pi]}};
+  integer wi, wj;
+  reg [31:0] pacc;
+  always @(posedge {clock}) for (wi = 0; wi < NW; wi = wi + 1) cpop[wi] <= pc32(pstate[wi*32 +: 32]);
+  always @(posedge {clock}) begin
+    pacc = 32'd0;
+    for (wj = 0; wj < NW; wj = wj + 1) pacc = pacc + {{25'd0, cpop[wj]}};
+    popc <= pacc;
   end
 
   // AXI4-Lite slave: one outstanding transaction, which is all a register file needs.
   reg awready_r = 1'b0, wready_r = 1'b0, bvalid_r = 1'b0, arready_r = 1'b0, rvalid_r = 1'b0;
-  reg [31:0] awaddr_r = 32'd0, araddr_r = 32'd0, rdata_r = 32'd0;
+  reg aw_seen = 1'b0, w_seen = 1'b0;
+  reg [31:0] awaddr_r = 32'd0, araddr_r = 32'd0, rdata_r = 32'd0, wdata_r = 32'd0;
   assign s_axi_awready = awready_r; assign s_axi_wready = wready_r;
   assign s_axi_bvalid  = bvalid_r;  assign s_axi_bresp  = 2'b00;
   assign s_axi_arready = arready_r; assign s_axi_rvalid = rvalid_r;
@@ -299,20 +335,40 @@ module {module} (
     if (!rst_n) begin
       awready_r <= 1'b0; wready_r <= 1'b0; bvalid_r <= 1'b0;
       arready_r <= 1'b0; rvalid_r <= 1'b0;
+      aw_seen <= 1'b0; w_seen <= 1'b0;
       run <= 1'b0; target <= 32'd0; soft_rst <= 1'b0;
     end else begin
       soft_rst <= 1'b0;
-      if (s_axi_awvalid && !awready_r && !bvalid_r) begin awaddr_r <= s_axi_awaddr; awready_r <= 1'b1; end
-      else awready_r <= 1'b0;
-      if (s_axi_wvalid && !wready_r && !bvalid_r) begin
-        wready_r <= 1'b1; bvalid_r <= 1'b1;
+      // AXI4-Lite's write address and write data are INDEPENDENT channels: a master may present
+      // them in either order or together, and the write commits only once both have arrived. The
+      // first cut of this collapsed them into one `if` and decoded `awaddr_r` in the same cycle it
+      // was being loaded, so the case read the PREVIOUS address and every write landed on the wrong
+      // register. It also drove `bvalid` from the data beat alone, which meant the response could be
+      // consumed before a master that waits for both handshakes ever looked for it.
+      if (s_axi_awvalid && !aw_seen) begin
+        awaddr_r <= s_axi_awaddr;
+        aw_seen <= 1'b1;
+        awready_r <= 1'b1;
+      end else awready_r <= 1'b0;
+      if (s_axi_wvalid && !w_seen) begin
+        wdata_r <= s_axi_wdata;
+        w_seen <= 1'b1;
+        wready_r <= 1'b1;
+      end else wready_r <= 1'b0;
+      // Commit on the cycle after both beats have landed, so `awaddr_r` and `wdata_r` are settled.
+      if (aw_seen && w_seen && !bvalid_r) begin
         case (awaddr_r[7:0])
-          8'h00: begin run <= s_axi_wdata[0]; soft_rst <= s_axi_wdata[1]; end
-          8'h08: target <= s_axi_wdata;
+          8'h00: begin run <= wdata_r[0]; soft_rst <= wdata_r[1]; end
+          8'h08: target <= wdata_r;
           default: ;
         endcase
-      end else wready_r <= 1'b0;
-      if (bvalid_r && s_axi_bready) bvalid_r <= 1'b0;
+        bvalid_r <= 1'b1;
+      end
+      if (bvalid_r && s_axi_bready) begin
+        bvalid_r <= 1'b0;
+        aw_seen <= 1'b0;
+        w_seen <= 1'b0;
+      end
       if (s_axi_arvalid && !arready_r && !rvalid_r) begin araddr_r <= s_axi_araddr; arready_r <= 1'b1; end
       else arready_r <= 1'b0;
       if (arready_r) begin
@@ -442,12 +498,21 @@ module tb;
   always #5 clk = ~clk;
   reg [31:0] got_state, got_pop, got_done, got_status;
   integer guard;
+  // AXI4-Lite's two write channels are independent and their readies need not coincide, so each
+  // valid is dropped on its OWN ready. The first cut waited for both at once and then looked for
+  // `bvalid` a cycle later -- by which time `bready` being tied high had already consumed the
+  // response, and the task waited forever. That hang is what this task's shape is for.
+  reg aw_done, w_done;
   task wr(input [31:0] a, input [31:0] d);
     begin
+      aw_done = 0; w_done = 0;
       @(posedge clk); awaddr <= a; wdata <= d; awvalid <= 1; wvalid <= 1;
-      @(posedge clk); while (!(awready && wready)) @(posedge clk);
-      awvalid <= 0; wvalid <= 0;
-      @(posedge clk); while (!bvalid) @(posedge clk);
+      while (!aw_done || !w_done) begin
+        @(posedge clk);
+        if (awready) begin awvalid <= 0; aw_done = 1; end
+        if (wready)  begin wvalid  <= 0; w_done  = 1; end
+      end
+      while (!bvalid) @(posedge clk);
       @(posedge clk);
     end
   endtask
@@ -461,6 +526,14 @@ module tb;
       @(posedge clk);
     end
   endtask
+  // A watchdog, because the failure this gate actually hit was a HANG, not a wrong answer: the
+  // suite sat in `vvp` for over an hour and reported nothing. A test that cannot fail in bounded
+  // time is not a gate.
+  initial begin
+    #2000000;
+    $display("FERROTHERM_FAIL watchdog: the shell never reached its target");
+    $finish;
+  end
   initial begin
     repeat (4) @(posedge clk); rst_n = 1; repeat (2) @(posedge clk);
     wr(32'h08, 32'd{sweeps});     // target sweeps
