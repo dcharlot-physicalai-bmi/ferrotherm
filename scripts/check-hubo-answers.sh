@@ -155,6 +155,9 @@ attempt() { attempted="$attempted $1"; }
 # ---- rust: the reference ---------------------------------------------------------------------
 mkdir -p examples
 cat > examples/_hans.rs <<'RS'
+// The workspace denies `missing_docs`, and this generated example is a program with no API
+// surface for that lint to guard -- same reason every checked-in example carries the allow.
+#![allow(missing_docs)]
 fn main() {
     use ferrotherm::hubo::{anneal, Hubo, Params};
     let mut h = Hubo::new(3);
