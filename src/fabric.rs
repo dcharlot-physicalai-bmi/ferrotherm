@@ -117,6 +117,25 @@ pub enum Precision {
         /// Total bits including the sign.
         bits: u32,
     },
+    /// Signed fixed-point on an **absolute** grid: every value is rounded to a multiple of `step`,
+    /// with no reference to the largest coefficient present.
+    ///
+    /// Distinct from [`Precision::Fixed`], and the distinction is the whole reason this exists.
+    /// `Fixed` describes a fabric that normalises: give it small numbers and it spends its bits on
+    /// them, so the relative error stays bounded however small the coefficients are. A fabric that
+    /// quantises to a fixed grid does the opposite — small enough coefficients round to **zero**,
+    /// and the machine then runs a graph with no couplings in it.
+    ///
+    /// `hdl::FixedFabric` is the second kind: `(w * 256).round()`, Q.8, absolute. Declaring it as
+    /// `Fixed { bits: 12 }` said the first kind, and `check` accordingly waved through a program
+    /// whose weights were all `0.001` — computing a step of `0.001/2047` and a relative error of
+    /// ~0 — which the fabric then quantised to an empty graph. An undeclared precision is the
+    /// defect this module exists to prevent; a MIS-declared one is the same defect wearing a
+    /// number.
+    Grid {
+        /// The quantisation step. One unit of the grid, in the same units as the coefficients.
+        step: f64,
+    },
     /// IEEE binary floating point with `mantissa` significand bits — 24 for `f32`, 53 for `f64`.
     Float {
         /// Significand bits: 24 for `f32`, 53 for `f64`.
@@ -133,6 +152,25 @@ impl Precision {
             // is the claim this variant exists to avoid making; `Verdict::LimitsUnstated` is where
             // it surfaces instead.
             Precision::Unstated => 0.0,
+            Precision::Grid { step } => {
+                if !(step > 0.0) {
+                    // A grid with no step quantises nothing meaningful; refuse to certify it
+                    // rather than report a zero error for an unusable declaration.
+                    return 1.0;
+                }
+                vals.iter()
+                    .map(|&w| {
+                        if w == 0.0 {
+                            0.0
+                        } else {
+                            // A coefficient below half a step rounds to zero, and the relative
+                            // error is then 1.0 -- the value is gone. That is the case `Fixed`
+                            // cannot express and the reason this variant exists.
+                            ((w / step).round() * step - w).abs() / w.abs()
+                        }
+                    })
+                    .fold(0.0f64, f64::max)
+            }
             Precision::Float { mantissa } => {
                 if vals.iter().all(|v| *v == 0.0) {
                     0.0
@@ -951,7 +989,9 @@ impl Fabric {
             out.push(Unsupported::CouplingPrecision {
                 bits: match self.field_precision {
                     Precision::Fixed { bits } | Precision::Float { mantissa: bits } => bits,
-                    Precision::Exact | Precision::Unstated => 0,
+                    // A grid is described by its step, not by a bit count; 0 says "not a
+                    // bit-width question" rather than "no bits".
+                    Precision::Grid { .. } | Precision::Exact | Precision::Unstated => 0,
                 },
                 worst_relative_error: field_err,
             });
@@ -960,7 +1000,7 @@ impl Fabric {
         {
             let bits = match self.coupling_precision {
                 Precision::Fixed { bits } | Precision::Float { mantissa: bits } => bits,
-                Precision::Exact | Precision::Unstated => 0,
+                Precision::Grid { .. } | Precision::Exact | Precision::Unstated => 0,
             };
             let err = if coupling_grid {
                 0.0
@@ -1163,14 +1203,12 @@ impl Device for Cpu {
 
     fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String> {
         let g = self.graph.as_ref().ok_or("no program loaded")?;
+        // Both terms come from `anneal_scheduled`: the sweeps as `samples`, and the per-sweep
+        // whole-state scoring that keeps the running best as `reads`. This used to add the read
+        // term here, which made it a property of the BACKEND rather than of the work -- and
+        // `Compiled::solve_with`, calling the same function, then priced the same anneal 244x
+        // cheaper. Charging at the site that reads is what keeps the two honest.
         let (best, _) = crate::tempering::anneal_scheduled(g, schedule, seed, Some(&mut self.ledger));
-        // `anneal_scheduled` scores `g.energy(&smp.s)` after EVERY sweep to keep a running best.
-        // That is a full read of the state per sweep, and until this line it was charged nothing --
-        // on a laptop it costs no wall-clock, but the ledger's counts are what make two backends
-        // comparable, and one backend reading for free is how a search that is expensive comes to
-        // look cheap.
-        let sweeps: u64 = schedule.stages().iter().map(|s| s.sweeps as u64).sum();
-        self.ledger.reads += sweeps * g.n as u64;
         self.state = best.clone();
         Ok(best)
     }

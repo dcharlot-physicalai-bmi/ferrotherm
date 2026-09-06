@@ -716,6 +716,19 @@ pub fn anneal_scheduled(
         for _ in 0..stage.sweeps {
             smp.sweep(ledger.as_deref_mut());
             let e = g.energy(&smp.s);
+            // Scoring the whole state is a READ of the whole state, and it is charged HERE --
+            // at the site that performs it -- rather than by each caller.
+            //
+            // It was charged by a caller, once: `Cpu::run` added `reads += sweeps * n` and
+            // `Compiled::solve_with` added nothing, so the identical call was billed 4.99e-8 J
+            // through the device and 2.04e-10 J through the model API, and
+            // `Solution::joules(&KV260_MEASURED)` returned a measured-silicon figure for a run
+            // that performed tens of thousands of readbacks that board never metered -- the exact
+            // case its `Option` exists to refuse. Two call sites, two answers, one computation.
+            // The same shape as `best_of_all`: the charge belongs where the work is.
+            if let Some(l) = ledger.as_deref_mut() {
+                l.reads += g.n as u64;
+            }
             if e < best_e {
                 best_e = e;
                 best = smp.s.clone();
@@ -791,5 +804,10 @@ mod schedule_contract {
         // which is what `must_use` is for -- it made these three sites declare their intent.
         let _ = anneal_scheduled(&g, &schedule, 1, Some(&mut led));
         assert_eq!(led.samples, schedule.node_updates(g.n));
+        // And the readback this function performs to keep a running best: one full state per
+        // sweep. Charged here rather than by the callers, because two callers charging it
+        // differently is how the same anneal came to have two prices.
+        let sweeps: u64 = schedule.stages().iter().map(|s| s.sweeps as u64).sum();
+        assert_eq!(led.reads, sweeps * g.n as u64);
     }
 }

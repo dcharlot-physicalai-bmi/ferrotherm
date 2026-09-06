@@ -136,6 +136,7 @@ class Grid:
 
 class Hubo:
     """A higher-order model, solved without quadratising it."""
+    n: int
     def __init__(self, n: int) -> None:
         ...
     @property
@@ -184,6 +185,7 @@ class Literal:
 
 class Model:
     """A graph under construction: add couplings and biases, then :meth:`build` it."""
+    n: int
     def __init__(self, n: int) -> None:
         ...
     def bias(self, i: int, h: float) -> 'Model':

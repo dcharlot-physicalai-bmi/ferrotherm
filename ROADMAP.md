@@ -497,6 +497,15 @@ run: `FixedFabric` is a cycle-exact emulator of the emitted Verilog and the icar
 replays its per-sweep trace against the RTL. So the distribution above is the netlist's, and the
 netlist is what was metered on the KV260.
 
+That sentence had to be *earned* rather than asserted. `RtlFabric::run` originally carried spin
+state between ladder rungs so a schedule annealed — and the netlist cannot do that. `emit_verilog`'s
+module has `clk`, `rst`, `en`, an **output** `state` and `phase`; there is no state input, and the
+AXI shell's state words at `0x20 + 4k` are read-only. A reconfigured fabric comes up from the seeds
+baked into its bitstream. The backend was therefore better than the board it models, in the one
+direction a model must never err. A multi-rung schedule is now what it is in hardware — N
+independent implementations, each run from reset, best kept — and the result above was
+**re-measured after that change**, not carried over from before it.
+
 **And the browser certifies the same chain, not merely the same optimum.**
 `scripts/check-browser-certificate.sh` builds `ring(10, 1.0, 0.3)` through the C ABI on both sides,
 certifies at β 0.5 / seed 11 / 3,000 draws thinned by 8, and compares. The expectation was two

@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+### An adversarial audit of this session's own work found seven defects, four of them mine from hours earlier
+
+A six-dimension multi-agent review of the 2,611-line change, each finding put to two independent
+skeptics instructed to refute it. What it found is recorded here in full, including the parts that
+say the session's own headline fix was incomplete.
+
+**The ledger was still reporting a fraction of its own bill — on the path users actually call.**
+`Cpu::run` was taught to charge `sweeps × n` reads for the whole-state scoring `anneal_scheduled`
+performs every sweep. `Compiled::solve_with` calls the *same function* and charged nothing, so:
+
+```text
+  Cpu::run          samples 28,800  reads 28,800   Z1  4.99e-08 J   KV260  None
+  solve_with        samples 28,800  reads      0   Z1  2.04e-10 J   KV260  Some(3.12e-07)
+```
+
+Same computation, 244× apart. Worse than the number: `KV260_MEASURED` states no `e_read` precisely
+so that a run which read cannot be priced against it — and the model API returned `Some(...)`, a
+measured-silicon figure for a workload that board never metered. Python printed that figure by
+default. **And the session's own new test asserted `reads == 0`, locking it in.**
+
+The fix is structural, and it is the `best_of_all` lesson again: the charge now lives in
+`anneal_scheduled`, at the site that performs the read, and `Cpu::run` no longer adds its own. Two
+callers cannot price one computation differently if neither of them does the pricing.
+
+**Three of five `solve_by` methods reported a search as free.** `Solution::cost`'s doc claimed it
+was "filled in by every `solve_*` path". Tabu and Breakout called the *unmetered* `search` while
+`search_metered` sat beside it in both modules, and Branch ran a full warm-start anneal and threw
+its ledger away. All three returned an all-zero `Ledger`, and `Ledger::joules` charges per
+operation — so every count being zero yields `Some(0.0)`: not a refusal a caller must unwrap, **a
+number** saying five million tabu moves cost nothing. All three now report what they spent.
+
+**`RtlFabric` declared a precision it does not implement.** `Precision::Fixed { bits }` means, in
+this crate, a step of `max|w| / (2^(bits-1) − 1)` — a fabric that *normalises* to the coefficients
+it is given. `FixedFabric::new` computes `(w × 256).round()`: an **absolute** grid. Under the wrong
+declaration `Fabric::check` computed a relative error of ~0 for a program whose weights were all
+`0.001` and accepted it; the fabric then rounded every coupling to zero and sampled a graph with no
+edges. Nothing raised. A mis-declared precision is the same defect as an undeclared one wearing a
+number, and `fabric.rs` exists to prevent exactly that. New `Precision::Grid { step }` says what the
+hardware does, and that program is now refused with `worst_relative_error = 1.0` — the coefficient
+lost all of itself.
+
+**`RtlFabric::run` was better than the board it models.** It carried spin state between ladder rungs
+so a schedule annealed. The emitted netlist cannot: `emit_verilog`'s module has `clk`, `rst`, `en`,
+an **output** `state` and `phase` — no state input — and the AXI shell's state words at `0x20 + 4k`
+are read-only. A reconfigured fabric comes up from the seeds baked into its bitstream. Since this
+type's doc promises that a distribution produced here is *the netlist's*, the backend now does what
+the netlist does: a multi-rung schedule is N independent implementations, each from reset, best
+kept. **Re-measured, the conformance result is unchanged** — still 0.00% above the planted optimum —
+so the published number survives and is now one the hardware could produce.
+
+**Enumerating optima silently reset the receipt.** `ft_model_select_optimum` — the documented way to
+walk tied optima — assigned a Solution straight out of `h.answers`, which holds one per *try*, each
+carrying a single try's ledger and `agreement == (1, 1)`. A 12-try solve reported its full receipt
+until the caller looked at their alternatives, at which point the bill became one twelfth. The cost
+and the agreement are facts about the search, not about which of its answers you are reading, and
+are now carried across.
+
+**Two gates could not fail the way they were written.** `_certificates_agree.py` compared with `>=`
+and `>`, both False on NaN — so a browser certificate carrying no measurement at all (`tv` and
+`floor` are `unwrap_or(NAN)` when a graph is too wide to enumerate) passed as "the same chain".
+Non-finite fields are now refused before any comparison. And the new slot rule only inspected
+`__slots__`, exempting every class that does not use them; it now reads each unslotted class's
+`__init__` for public assignments, which immediately found `Hubo.n` and `Model.n` undescribed.
+
+
 ### The browser certifies the same chain, not merely the same optimum
 
 `check-answers.sh` already solves one model through the wasm build in a real browser engine and

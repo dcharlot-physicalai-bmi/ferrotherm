@@ -14,6 +14,7 @@ Two verdicts, and they answer different questions:
 """
 
 import json
+import math
 import sys
 
 FIELDS = ("beta_eff", "beta_lo", "beta_hi", "tau", "ess", "tv", "floor")
@@ -27,6 +28,23 @@ def rel(a, b):
 
 def main():
     native, wasm, tol = json.loads(sys.argv[1]), json.loads(sys.argv[2]), float(sys.argv[3])
+
+    # NON-FINITE FIRST, because every comparison below silently passes on NaN.
+    #
+    # `ft_cert_tv` and `ft_cert_floor` return `tv_exact.unwrap_or(NAN)` and
+    # `noise_floor.unwrap_or(NAN)`: a graph too wide to enumerate exactly has no `tv` at all. If one
+    # side ever came back that way -- which is precisely the kind of divergence between a 64-bit
+    # host and a 32-bit wasm target this gate exists to catch -- then `spread >= floor` is
+    # `nan >= nan`, which is False, and `worst > tol` is `nan > tol`, also False. Both verdicts pass
+    # and the gate prints "the same chain" about a certificate carrying no measurement whatsoever.
+    for name, c in (("native", native), ("browser", wasm)):
+        bad = [f for f in FIELDS if not isinstance(c.get(f), (int, float))
+               or not math.isfinite(float(c[f]))]
+        if bad:
+            print(f"the {name} certificate has no measurement for {', '.join(bad)} -- there is "
+                  f"nothing to compare, and a comparison against a non-number silently passes",
+                  file=sys.stderr)
+            return 1
 
     for name, c in (("native", native), ("browser", wasm)):
         if not c.get("passed"):

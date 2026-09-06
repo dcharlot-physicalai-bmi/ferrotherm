@@ -18,6 +18,7 @@ surface, and claiming them would put their names in our stub.
 """
 
 import inspect
+import io
 import sys
 
 
@@ -66,6 +67,55 @@ def unannotated_slots(namespace, declared):
     return out
 
 
+def undescribed_attributes(namespace, declared, source):
+    """Public instance attributes an exported class sets but never annotates.
+
+    The slot rule above only looks at ``__slots__``, so a class that does not use them was exempt
+    entirely -- ``Hubo``, ``Model``, ``Problem``, ``Sim`` and ``SampleSet`` are all in ``__all__``,
+    all set public attributes in ``__init__``, and all passed. ``gen-stubs.py`` emits class-level
+    lines only from ``__annotations__``, so those attributes are missing from the stub and from the
+    freshly generated one alike, and the byte comparison agrees about a class neither describes.
+
+    Found by reading each class's ``__init__`` in the module source: every ``self.NAME = ...`` whose
+    NAME is public and has no annotation on the class.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    out = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name not in declared:
+            continue
+        obj = namespace.get(node.name)
+        if not inspect.isclass(obj):
+            continue
+        ann = set(getattr(obj, "__annotations__", {}))
+        slots = getattr(obj, "__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        # A slotted class is the other rule's subject; do not report it twice.
+        if slots:
+            continue
+        assigned = set()
+        for fn in node.body:
+            if not isinstance(fn, ast.FunctionDef) or fn.name != "__init__":
+                continue
+            for sub in ast.walk(fn):
+                if not isinstance(sub, ast.Assign):
+                    continue
+                for tgt in sub.targets:
+                    if (
+                        isinstance(tgt, ast.Attribute)
+                        and isinstance(tgt.value, ast.Name)
+                        and tgt.value.id == "self"
+                        and not tgt.attr.startswith("_")
+                    ):
+                        assigned.add(tgt.attr)
+        for a in sorted(assigned - ann):
+            out.append(f"{node.name}.{a}")
+    return out
+
+
 def _selftest():
     """A rule that cannot fail is the same evidence as no rule."""
     class Kept:
@@ -93,6 +143,28 @@ def _selftest():
     assert got2 == ["Slotted.bare"], f"the slot rule reported {got2}"
     print("selftest: a slot with no annotation is caught, and a private one is not")
 
+    # And the rule for classes that use no __slots__ at all, which the one above cannot see.
+    class Plain:
+        described: int
+
+        def __init__(self):
+            self.described = 1
+            self.bare = 2
+            self._private = 3
+    Plain.__module__ = "ferrotherm"
+
+    src = (
+        "class Plain:\n"
+        "    described: int\n"
+        "    def __init__(self):\n"
+        "        self.described = 1\n"
+        "        self.bare = 2\n"
+        "        self._private = 3\n"
+    )
+    got3 = undescribed_attributes({"Plain": Plain}, {"Plain"}, src)
+    assert got3 == ["Plain.bare"], f"the attribute rule reported {got3}"
+    print("selftest: a public attribute on an unslotted class is caught too")
+
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
@@ -111,11 +183,14 @@ if __name__ == "__main__":
         print("\nadd them to __all__ and rerun scripts/gen-stubs.py", file=sys.stderr)
         raise SystemExit(1)
     bare = unannotated_slots(vars(ft), set(ft.__all__))
+    src = io.open("python/ferrotherm/__init__.py", encoding="utf-8").read()
+    bare += undescribed_attributes(vars(ft), set(ft.__all__), src)
     if bare:
-        print("slots with no annotation, so the stub cannot describe them:", file=sys.stderr)
+        print("public attributes with no annotation, so the stub cannot describe them:",
+              file=sys.stderr)
         for n in bare:
             print(f"  {n}", file=sys.stderr)
-        print("\nannotate them beside __slots__ and rerun scripts/gen-stubs.py", file=sys.stderr)
+        print("\nannotate them on the class and rerun scripts/gen-stubs.py", file=sys.stderr)
         raise SystemExit(1)
     print(f"__all__ covers every public name the module defines ({len(ft.__all__)} of them), and "
-          "every slot they declare is annotated")
+          "every public attribute they set is annotated")

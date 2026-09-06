@@ -1767,6 +1767,46 @@ mod sample_tests {
         ft_free(sim);
     }
 
+    /// Looking at the alternatives must not change what the search cost.
+    ///
+    /// `ft_model_select_optimum` is the documented way to enumerate tied optima, and it used to
+    /// assign a Solution straight out of `h.answers` -- which holds one per TRY, each carrying a
+    /// single try's ledger and `agreement == (1, 1)`. So a 12-try solve reported its full receipt
+    /// until the caller asked to see their other options, at which point the bill silently became
+    /// one twelfth and the agreement became (1, 1). No error, no warning: exactly the defect
+    /// `best_of_all` was written to close, arriving through a second door.
+    #[test]
+    fn enumerating_optima_does_not_reset_the_receipt() {
+        let m = ft_model_new();
+        let a = ft_model_categorical(m, 3);
+        let b = ft_model_categorical(m, 3);
+        assert_eq!(ft_model_not_equal(m, a, b), 1);
+        assert_eq!(ft_model_objective_term(m, 0, 1.0, a, 0), 1);
+        assert_eq!(ft_model_compile(m), 6);
+        assert_eq!(ft_model_solve_with(m, 12, 0.0, 0.0, 0, 0), 1);
+
+        let (samples, reads, tries) =
+            (ft_model_cost_samples(m), ft_model_cost_reads(m), ft_model_tries(m));
+        assert_eq!(tries, 12);
+        assert!(samples > 0 && reads > 0);
+
+        // Walk the alternatives, which is what this call is for.
+        let mut seen = 0;
+        while ft_model_select_optimum(m, seen, 1e-9) == 1 {
+            assert_eq!(
+                (ft_model_cost_samples(m), ft_model_cost_reads(m), ft_model_tries(m)),
+                (samples, reads, tries),
+                "selecting optimum {seen} changed what the search cost"
+            );
+            seen += 1;
+            if seen > 32 {
+                break;
+            }
+        }
+        assert!(seen >= 1, "the solve found no optima to enumerate");
+        ft_model_free(m);
+    }
+
     /// The C ABI must report the same receipt the Rust API does, for the same solve.
     ///
     /// The defect this locks out, and it shipped: `ft_model_solve_with` re-derived the winner from
@@ -2644,7 +2684,20 @@ pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64)
     let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
     let opt = crate::model::distinct_optima(&h.answers, tol);
     match opt.into_iter().nth(i as usize) {
-        Some(s) => {
+        Some(mut s) => {
+            // The RECEIPT belongs to the search, not to whichever of its answers you are looking
+            // at. `h.answers` holds one Solution per try, each carrying that try's own ledger and
+            // `agreement == (1, 1)`; assigning one of them wholesale rolled the aggregated cost
+            // back to a twelfth of itself and agreement back to (1, 1), with no error -- and the
+            // documented way to enumerate tied optima is exactly this call, so a caller who looked
+            // at their alternatives was silently handed a cheaper bill for the same work.
+            //
+            // What is selected is an ANSWER. What it cost and how much of the search agreed are
+            // facts about the run that produced all of them, so they are carried across.
+            if let Some(prev) = h.solution.as_ref() {
+                s.cost = prev.cost;
+                s.agreement = prev.agreement;
+            }
             h.solution = Some(s);
             1
         }

@@ -491,11 +491,17 @@ impl RtlFabric {
         let mut f = crate::fabric::Fabric::unconstrained("ferrotherm-pbit-rtl", crate::ledger::KV260_MEASURED);
         f.max_spins = max_spins;
         f.max_arity = 2;
-        // Q.8: one unit is 1/256, and the accumulated field saturates at [-2048, 2047] in those
-        // units. Twelve bits including the sign -- the clamp is the real limit, not the width of
-        // any one constant in the netlist.
-        f.coupling_precision = Precision::Fixed { bits: 12 };
-        f.field_precision = Precision::Fixed { bits: 12 };
+        // Q.8 on an ABSOLUTE grid: `FixedFabric::new` computes `(w * 256).round()`, with no
+        // reference to the largest coefficient present.
+        //
+        // This said `Precision::Fixed { bits: 12 }`, which in this crate means something else --
+        // a step of `max|w| / (2^(bits-1) - 1)`, i.e. a fabric that NORMALISES. Under that
+        // declaration `Fabric::check` waved through a program whose weights were all 0.001,
+        // computing a relative error of ~0, and the fabric then quantised every one of them to
+        // zero and sampled a graph with no couplings in it. `Precision::Grid` is the variant that
+        // says what this hardware actually does, and `check` now refuses that program.
+        f.coupling_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };
+        f.field_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };
         f.coupling_range = Some(Range::continuous(-8.0, 2047.0 / 256.0));
         f.field_range = Some(Range::continuous(-8.0, 2047.0 / 256.0));
         f
@@ -552,7 +558,6 @@ impl crate::fabric::Device for RtlFabric {
         if schedule.stages().is_empty() {
             return Err("a schedule with no stages advances nothing".into());
         }
-        let mut carried: Option<Vec<bool>> = None;
         // The best state the schedule reached, per the trait -- and the readback that finding it
         // costs, charged. On this fabric that cost is not notional: a p-bit array holds its state
         // on-chip, so scoring a sweep means carrying n spins to the host, and the board this
@@ -560,15 +565,24 @@ impl crate::fabric::Device for RtlFabric {
         // that inspects every sweep reads far more than it samples.
         let mut best: Option<Vec<i8>> = None;
         let mut best_e = f64::INFINITY;
+        let mut last: Option<Vec<bool>> = None;
         for (rung, stage) in schedule.stages().iter().enumerate() {
             // Each rung is its own quantisation of beta*J, which on hardware is its own bitstream.
             let mut fab = FixedFabric::new(g, stage.beta, seed ^ (rung as u64).wrapping_mul(0x9E37));
-            // Carry the state across rungs so a ladder anneals rather than restarting cold at each
-            // temperature. The RNG streams deliberately do NOT carry: a reconfigured fabric comes
-            // up with the seeds baked into it, which is what the emitted Verilog does on reset.
-            if let Some(prev) = carried.take() {
-                fab.s.copy_from_slice(&prev);
-                // Every rung after the first reprograms the weights, and the ledger says so.
+            // EACH RUNG STARTS WHERE THE NETLIST STARTS, which is not where the last one finished.
+            //
+            // This used to copy the previous rung's spins in, so a ladder annealed. The emitted
+            // hardware cannot do that: `emit_verilog`'s module has ports `clk, rst, en`, an OUTPUT
+            // `state` and `phase` — there is no state input — and the AXI shell's state words at
+            // `0x20 + 4k` are read-only. A reconfigured fabric comes up from the seeds baked into
+            // its bitstream, full stop. Carrying state made this backend better than the board it
+            // models, which is the direction a model must never err in: the doc on this type says
+            // a distribution produced here is the NETLIST's, and it has to stay true.
+            //
+            // So a multi-rung schedule on this fabric is what it is on the hardware: N independent
+            // implementations, each run from reset, best answer kept.
+            if rung > 0 {
+                // A new bitstream is a full reprogram of every node, and the ledger says so.
                 self.ledger.writes += g.n as u64;
             }
             for _ in 0..stage.sweeps {
@@ -582,14 +596,13 @@ impl crate::fabric::Device for RtlFabric {
             }
             self.ledger.samples += (g.n as u64) * (stage.sweeps as u64);
             self.ledger.reads += (g.n as u64) * (stage.sweeps as u64);
-            carried = Some(fab.s.clone());
+            last = Some(fab.s.clone());
         }
         // A schedule whose stages all declare zero sweeps advances nothing, so there is no state
         // to have been best -- fall back to the configuration the fabric came up in rather than
         // panicking on a program that is merely pointless.
         self.state = best.unwrap_or_else(|| {
-            carried
-                .expect("at least one stage")
+            last.expect("at least one stage")
                 .iter()
                 .map(|&up| if up { 1i8 } else { -1 })
                 .collect()
@@ -807,6 +820,72 @@ endmodule
         let stdout = String::from_utf8_lossy(&run.stdout);
         assert!(stdout.contains("FERROTHERM_PASS"), "RTL/emulator divergence:\n{stdout}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod declared_precision {
+    use super::*;
+    use crate::fabric::{Device, Precision, Unsupported};
+    use crate::ftp::Program;
+
+    /// The fabric must declare the quantisation it performs, not one that flatters it.
+    ///
+    /// `describe` said `Precision::Fixed { bits: 12 }`. In this crate that means a step of
+    /// `max|w| / (2^(bits-1) - 1)` — a fabric that spends its bits on whatever scale it is given.
+    /// `FixedFabric::new` does `(w * 256).round()`: an absolute grid. Under the wrong declaration
+    /// `Fabric::check` computed a relative error of ~0 for a program whose weights were all 0.001
+    /// and accepted it; the fabric then rounded every coupling to zero and sampled a graph with no
+    /// edges. Nothing raised, nothing logged, and the answer looked like an answer.
+    #[test]
+    fn a_program_that_quantises_to_nothing_is_refused_rather_than_run() {
+        let mut src = String::from("ftp 1\nname tiny-weights\nspins 4\n");
+        for i in 0..4 {
+            src.push_str(&format!("factor 0.001 {i} {}\n", (i + 1) % 4));
+        }
+        let p = Program::from_ftp(&src).expect("a well-formed program");
+
+        // The weights really do vanish on this fabric's grid: 0.001 * 256 = 0.256, which rounds
+        // to 0. This is the fact the declaration has to be about.
+        assert_eq!((0.001_f64 * 256.0).round() as i32, 0);
+
+        let mut d = RtlFabric::new();
+        let bad = d.program(&p);
+        let found = bad
+            .iter()
+            .find(|u| matches!(u, Unsupported::CouplingPrecision { .. }))
+            .expect("a program that quantises to an empty graph must be refused");
+        match found {
+            Unsupported::CouplingPrecision { worst_relative_error, .. } => assert!(
+                (*worst_relative_error - 1.0).abs() < 1e-12,
+                "a coefficient rounded to zero has lost ALL of itself: {worst_relative_error}"
+            ),
+            _ => unreachable!(),
+        }
+    }
+
+    /// And the declaration names the grid the emitter actually uses.
+    #[test]
+    fn the_declared_step_is_the_one_the_emitter_quantises_on() {
+        let Precision::Grid { step } = RtlFabric::describe(None).coupling_precision else {
+            panic!("this fabric quantises to an absolute grid and must say so");
+        };
+        assert_eq!(step, 1.0 / 256.0, "FRAC is 8, so one unit is 1/256");
+        // Not a restatement of the constant: this is what `FixedFabric::new` does to a weight.
+        let w = 0.7_f64;
+        assert_eq!((w * 256.0).round() as i32, (w / step).round() as i32);
+    }
+
+    /// A program at a scale the fabric can hold is still accepted.
+    #[test]
+    fn an_ordinary_program_is_not_refused_by_the_stricter_declaration() {
+        let mut src = String::from("ftp 1\nname ordinary\nspins 4\n");
+        for i in 0..4 {
+            src.push_str(&format!("factor 1 {i} {}\n", (i + 1) % 4));
+        }
+        let p = Program::from_ftp(&src).expect("a well-formed program");
+        let mut d = RtlFabric::new();
+        assert!(d.program(&p).is_empty(), "unit couplings sit exactly on a 1/256 grid");
     }
 }
 

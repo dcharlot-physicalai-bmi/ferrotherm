@@ -772,6 +772,9 @@ class Hubo:
     1
     """
 
+    #: Spins in the model.
+    n: int
+
     def __init__(self, n: int) -> None:
         if n < 1:
             raise ValueError("a model with no variables can hold no term")
@@ -912,6 +915,9 @@ class Model:
     Rejected entries raise immediately rather than being silently dropped, because a coupling that
     vanishes without complaint is a model that is quietly wrong.
     """
+
+    #: Nodes in the graph.
+    n: int
 
     def __init__(self, n: int) -> None:
         if n < 1:

@@ -2686,6 +2686,15 @@ impl Compiled {
     /// [`Solution::feasible`] is still the thing to read first.
     #[must_use]
     pub fn solve_by(&self, method: Method, seed: u64) -> Solution {
+        // Every arm accumulates into ONE ledger, and every arm fills it.
+        //
+        // Three of them did not. Tabu and breakout called the unmetered `search` while
+        // `search_metered` sat beside it in both modules, and branch ran a full warm-start anneal
+        // and threw its ledger away -- so `solve_by(Tabu { iterations: 5_000_000 }, _)` returned a
+        // `Solution` whose `cost` was all zeros and whose `joules` was `Some(0.0)`: not a refusal,
+        // a NUMBER, saying five million moves were free. `Solution::cost`'s own doc claimed it was
+        // "filled in by every `solve_*` path" while three of the five left it empty.
+        let mut cost = crate::ledger::Ledger::default();
         let state = match method {
             Method::Anneal => return self.solve_annealed(seed),
             Method::Tabu { iterations } => {
@@ -2693,14 +2702,14 @@ impl Compiled {
                     iterations: iterations.max(1),
                     ..crate::tabu::Params::default()
                 };
-                crate::tabu::search(&self.graph, &p, seed).state
+                crate::tabu::search_metered(&self.graph, &p, seed, Some(&mut cost)).state
             }
             Method::Breakout { iterations } => {
                 let p = crate::bls::Params {
                     iterations: iterations.max(1),
                     ..crate::bls::Params::default()
                 };
-                crate::bls::search(&self.graph, &p, seed).state
+                crate::bls::search_metered(&self.graph, &p, seed, Some(&mut cost)).state
             }
             Method::Branch { max_nodes } => {
                 // Warm-started from a short anneal. A good incumbent prunes from the first node and
@@ -2708,6 +2717,11 @@ impl Compiled {
                 // handing branch a random incumbent would make the proof arrive far later for no
                 // reason a caller chose.
                 let warm = self.solve_annealed(seed);
+                // The warm start is real work on the modelled device and its receipt was being
+                // discarded with the rest of `warm`. Branch's own search is a HOST tree walk that
+                // performs no device operation, so what this answer cost the device is exactly
+                // what the anneal cost -- which is a number, and was being reported as zero.
+                cost = warm.cost;
                 let incumbent = self.state_of(&warm);
                 let p = crate::branch::Params {
                     max_nodes: max_nodes.max(1),
@@ -2717,10 +2731,13 @@ impl Compiled {
                 let out = crate::branch::solve(&self.graph, &p);
                 let mut sol = self.decode(&out.state);
                 sol.proved_optimal = out.proved_optimal;
+                sol.cost = cost;
                 return sol;
             }
         };
-        self.decode(&state)
+        let mut sol = self.decode(&state);
+        sol.cost = cost;
+        sol
     }
 
     /// Re-encode a decoded answer back to spins, for a solver that wants a starting state.
@@ -2840,13 +2857,35 @@ mod receipt_tests {
         // has to agree with it exactly -- a count that merely looks plausible is not a count.
         let want = Compiled::default_schedule().node_updates(c.graph.n);
         assert_eq!(sol.cost.samples, want, "the receipt must match what the schedule prescribes");
-        assert_eq!(sol.cost.reads, 0, "an anneal that reads nothing back is charged for no reads");
 
-        // And it can be priced, in one line, against either a projection or a measurement.
-        let projected = sol.joules(&Z1_SPICE).expect("sampling alone is priced");
-        let measured = sol.joules(&KV260_MEASURED).expect("the measured price states e_sample");
-        assert!(projected > 0.0 && measured > 0.0);
-        let ratio = measured / projected;
+        // AND the readback. This line used to assert `reads == 0` with the comment "an anneal that
+        // reads nothing back is charged for no reads" -- a claim about `anneal_scheduled` that was
+        // false, and a test that locked a 244x under-report in place. It scores the whole state
+        // after every sweep to keep a running best, which is one full read per sweep.
+        let sweeps: u64 = Compiled::default_schedule().stages().iter().map(|s| s.sweeps as u64).sum();
+        assert_eq!(
+            sol.cost.reads,
+            sweeps * c.graph.n as u64,
+            "an anneal keeps a running best, and it can only do that by reading the state"
+        );
+
+        // And it can be priced, in one line, against a projection that states every price.
+        let projected = sol.joules(&Z1_SPICE).expect("Z1_SPICE states all three prices");
+        assert!(projected > 0.0);
+
+        // The measured board is the interesting case, and the answer is NONE. `KV260_MEASURED`
+        // states `e_sample` and leaves `e_read` unstated, because reads were never exercised on
+        // that board -- so a run that read cannot be priced there. It used to return `Some`, and
+        // that number was the one Python printed by default: a measured-silicon figure for a
+        // workload the measurement never covered.
+        assert_eq!(
+            sol.joules(&KV260_MEASURED),
+            None,
+            "this run read the state back, and the KV260 measurement states no price for a read"
+        );
+
+        // The ratio that comparison is FOR still holds, on the term both machines do state.
+        let ratio = KV260_MEASURED.e_sample / Z1_SPICE.e_sample;
         assert!(
             (1500.0..1560.0).contains(&ratio),
             "measured silicon against projected thermodynamic hardware = {ratio:.0}x"
@@ -2854,6 +2893,46 @@ mod receipt_tests {
 
         // A machine nobody metered does not cost zero.
         assert_eq!(sol.joules(&Prices::UNSTATED), None);
+    }
+
+    /// Every method fills the receipt, including the three that did not.
+    ///
+    /// `solve_by` routed tabu and breakout through the UNMETERED `search` while `search_metered`
+    /// sat beside it in both modules, and branch discarded the ledger of the warm-start anneal it
+    /// ran. All three returned `cost: Ledger::default()` -- and `Ledger::joules` charges per
+    /// operation, so every count being zero yields `Some(0.0)`: not a refusal a caller must
+    /// unwrap, a number saying the search was free.
+    #[test]
+    fn every_method_reports_what_it_spent_rather_than_zero() {
+        let c = tiny();
+        for method in [
+            Method::Tabu { iterations: 2_000 },
+            Method::Breakout { iterations: 2_000 },
+            Method::Branch { max_nodes: 5_000 },
+        ] {
+            let s = c.solve_by(method, 3);
+            assert!(
+                s.cost.samples > 0,
+                "{method:?} reported {} node updates for a search that ran",
+                s.cost.samples
+            );
+            // And the joules follow. `Some(0.0)` is the shape of the defect: a real number,
+            // indistinguishable from a correct one, for work that happened.
+            let j = s.joules(&Z1_SPICE).expect("Z1_SPICE prices every operation");
+            assert!(j > 0.0, "{method:?} priced a search that ran at {j} J");
+        }
+    }
+
+    /// Branch carries the anneal it warm-starts from, which is the only device work it does.
+    #[test]
+    fn branch_carries_the_warm_start_it_used_to_discard() {
+        let c = tiny();
+        let anneal = c.solve_annealed(3);
+        let branched = c.solve_by(Method::Branch { max_nodes: 5_000 }, 3);
+        // Same seed, same warm start: branch's own tree walk is a host search that touches no
+        // device, so the receipts must match exactly rather than merely both being non-zero.
+        assert_eq!(branched.cost.samples, anneal.cost.samples);
+        assert_eq!(branched.cost.reads, anneal.cost.reads);
     }
 
     /// A best-of-N search is charged for all N, not for the one that won.
@@ -2931,8 +3010,13 @@ mod receipt_tests {
             four.cost.samples,
             one.cost.samples
         );
+        assert_eq!(four.cost.reads, 4 * one.cost.reads, "and the readback, four times over");
+        // Z1_SPICE, not KV260_MEASURED: an anneal reads the state back every sweep, and the
+        // measured board states no price for a read, so it correctly refuses to price this at all.
+        // That refusal is asserted in `an_answer_arrives_with_its_own_receipt`.
         assert!(
-            four.joules(&KV260_MEASURED).expect("priced") > one.joules(&KV260_MEASURED).expect("priced"),
+            four.joules(&Z1_SPICE).expect("Z1_SPICE prices every operation")
+                > one.joules(&Z1_SPICE).expect("Z1_SPICE prices every operation"),
             "and the joules follow the count"
         );
     }
