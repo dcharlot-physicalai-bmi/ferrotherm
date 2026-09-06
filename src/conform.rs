@@ -82,6 +82,11 @@ fn ladder() -> Schedule {
 }
 
 /// Run the suite.
+///
+/// # Panics
+///
+/// If a case's own reference answer cannot be computed, which would mean the suite is broken
+/// rather than the device.
 pub fn run(dev: &mut dyn Device) -> Report {
     let fabric = dev.fabric().name.to_string();
     let mut cases = Vec::new();

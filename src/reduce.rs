@@ -135,6 +135,14 @@ pub const MAX_ARITY: usize = 20;
 ///
 /// A program already pairwise comes back unchanged with no ancillas, so this is safe to apply
 /// unconditionally.
+///
+/// # Errors
+///
+/// [`ReduceError::TooWide`] for a term of higher arity than this reduction handles.
+///
+/// # Panics
+///
+/// Never on a program built by this crate: the ancillas it introduces are in range by construction.
 pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
     if let Some(f) = p.factors.iter().find(|f| f.arity() > MAX_ARITY) {
         return Err(ReduceError::TooWide { arity: f.arity(), limit: MAX_ARITY });

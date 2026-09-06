@@ -313,6 +313,11 @@ impl Perceptron {
     ///
     /// Each step flips one spin and updates the `P` stabilities, so the cost is `2^N × P` rather
     /// than `2^N × N × P`. Refuses above [`MAX_ENUMERATED`] rather than running for a day.
+    ///
+    /// # Errors
+    ///
+    /// A message when the dimension is past what can be enumerated, since this counts over `2^N`
+    /// coupling vectors.
     pub fn solution_count(&self) -> Result<u64, String> {
         if self.n > MAX_ENUMERATED {
             return Err(format!("enumeration refuses {} spins, the limit is {MAX_ENUMERATED}", self.n));

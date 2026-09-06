@@ -62,6 +62,11 @@ impl Schedule {
     ///
     /// Geometric rather than linear because the interesting physics is spread evenly in log beta,
     /// not in beta: a linear ladder spends most of its stages in the cold, already-frozen regime.
+    ///
+    /// # Panics
+    ///
+    /// If `beta_min` is not positive -- a geometric ladder cannot start at zero -- or `beta_max` is not
+    /// above it.
     #[must_use]
     pub fn geometric(beta_min: f64, beta_max: f64, stages: usize, sweeps_per: usize) -> Self {
         assert!(beta_min > 0.0, "beta_min must be positive; a geometric ladder cannot start at 0");

@@ -37,6 +37,10 @@ pub fn random_patterns(n: usize, p: usize, seed: u64) -> Vec<Vec<i8>> {
 }
 
 /// The Hebbian couplings `J_ij = (1/N) Σ_μ ξ_i^μ ξ_j^μ` for `i ≠ j`, as a dense graph.
+///
+/// # Panics
+///
+/// If the patterns are empty or not all the same length.
 #[must_use]
 pub fn hebbian(patterns: &[Vec<i8>]) -> Graph {
     let n = patterns.first().map_or(0, std::vec::Vec::len);
@@ -78,6 +82,10 @@ pub fn curie_weiss_m(beta: f64) -> f64 {
 }
 
 /// Gauss–Hermite nodes and weights for `∫ e^{−t²} f(t) dt`, `n` points (physicists' convention).
+///
+/// # Panics
+///
+/// If `n` is below 2.
 #[must_use]
 pub fn gauss_hermite(n: usize) -> (Vec<f64>, Vec<f64>) {
     assert!(n >= 2);
@@ -144,6 +152,10 @@ pub struct RsSolution {
 
 /// Solve the AGS replica-symmetric equations by damped fixed-point iteration from the retrieval
 /// side (`m = 1`). If the iteration collapses to `m ≈ 0` there is no retrieval state at `(α, β)`.
+///
+/// # Panics
+///
+/// If `alpha` is negative or `beta` is not positive.
 #[must_use]
 pub fn ags_rs(alpha: f64, beta: f64) -> RsSolution {
     assert!(alpha >= 0.0 && beta > 0.0);
@@ -204,6 +216,10 @@ pub fn erf(x: f64) -> f64 {
 ///
 /// iterated from the retrieval side. `None` when no retrieval solution survives — `C` reaches 1
 /// or `m` collapses — which happens above the capacity `α_c ≈ 0.138`.
+///
+/// # Panics
+///
+/// If `alpha` is not positive.
 #[must_use]
 pub fn ags_zero_t(alpha: f64) -> Option<RsSolution> {
     assert!(alpha > 0.0);

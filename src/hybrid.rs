@@ -102,6 +102,10 @@ impl core::fmt::Display for HybridError {
 
 impl Split {
     /// Refuses anything that is not a physical split.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridError::NotPhysical`] when any of the three energies is negative, infinite or NaN.
     pub fn new(
         accel_joules: f64,
         host_joules: f64,
@@ -127,6 +131,10 @@ impl Split {
     }
 
     /// The reported multiplier: `baseline / total`.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridError::NoWorkPriced`] when the hybrid spends nothing, so there is no ratio to report.
     pub fn factor(&self) -> Result<f64, HybridError> {
         let t = self.total();
         if t <= 0.0 {
@@ -139,6 +147,10 @@ impl Split {
     ///
     /// On [`Z1T_PUBLISHED`] this is 3.0%, which is the whole finding restated: two thirds of the
     /// press release is about a term worth three percent of the arithmetic.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridError::NoWorkPriced`] when the hybrid spends nothing.
     pub fn accel_share(&self) -> Result<f64, HybridError> {
         let t = self.total();
         if t <= 0.0 {
@@ -153,6 +165,11 @@ impl Split {
     /// takes the system past this, because the host still has to do its half. Report it next to
     /// [`Split::factor`] and the reader can see immediately whether the claim is about the physics
     /// or about the plumbing.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridError::NothingLeftOnTheHost`] when the unaccelerated half is zero, which has no
+    /// finite ceiling and is a claim about a system nobody has demonstrated.
     pub fn ceiling(&self) -> Result<f64, HybridError> {
         if self.host_joules <= 0.0 {
             return Err(HybridError::NothingLeftOnTheHost);
@@ -165,6 +182,11 @@ impl Split {
     /// Equivalently `total / host`, so it does not depend on the baseline at all: it is a property
     /// of the machine, not of the comparison. A headroom of 1.03 means the accelerator has already
     /// given the system 97% of everything it will ever give it.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridError::NothingLeftOnTheHost`] when the host half is zero, or
+    /// [`HybridError::NoWorkPriced`] when the whole system spends nothing.
     pub fn headroom(&self) -> Result<f64, HybridError> {
         if self.host_joules <= 0.0 {
             return Err(HybridError::NothingLeftOnTheHost);
@@ -180,6 +202,12 @@ impl Split {
     ///
     /// Errors with [`HybridError::AboveCeiling`] when the target is unreachable at any accelerator
     /// efficiency, which is the answer more often than not.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridError::NotPhysical`] for a target that is not finite and positive, and
+    /// [`HybridError::AboveCeiling`] when no host energy reaches it -- carrying the ceiling, so the
+    /// caller can see how far short the target is.
     pub fn host_joules_for(&self, target: f64) -> Result<f64, HybridError> {
         if !target.is_finite() || target <= 0.0 {
             return Err(HybridError::NotPhysical("a target multiplier must be finite and positive"));
@@ -196,6 +224,11 @@ impl Split {
     ///
     /// The number that turns a roadmap into an engineering statement about a specific chip that is
     /// not the sampler.
+    ///
+    /// # Errors
+    ///
+    /// As [`Split::host_joules_for`], plus [`HybridError::NothingLeftOnTheHost`] when there is no
+    /// host half to improve.
     pub fn host_speedup_for(&self, target: f64) -> Result<f64, HybridError> {
         let need = self.host_joules_for(target)?;
         if self.host_joules <= 0.0 {

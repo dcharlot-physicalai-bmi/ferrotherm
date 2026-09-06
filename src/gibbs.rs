@@ -222,6 +222,10 @@ impl<'g> Sampler<'g> {
     /// must finish a class before any thread starts the next. Every worker waits at every class
     /// boundary INCLUDING the ones where it has no chunk, or the barrier count would not match and
     /// the run would deadlock.
+    ///
+    /// # Panics
+    ///
+    /// If `threads` is zero.
     pub fn sweeps_par(&mut self, n: usize, threads: usize, ledger: Option<&mut Ledger>) {
         assert!(threads >= 1);
         if n == 0 {

@@ -138,6 +138,10 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
 }
 
 /// Listen until killed, one thread per connection.
+///
+/// # Errors
+///
+/// Whatever binding or accepting the socket returns.
 pub fn serve(addr: &str) -> std::io::Result<()> {
     let l = TcpListener::bind(addr)?;
     eprintln!("ferrotherm serving on http://{addr}");

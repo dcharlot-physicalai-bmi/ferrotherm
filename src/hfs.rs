@@ -86,6 +86,14 @@ use crate::rng::Pcg;
 ///
 /// Duplicate entries in `block` are ignored rather than refused: a block is a SET, and a grower that
 /// offers the same node twice has said nothing new.
+///
+/// # Errors
+///
+/// [`crate::exact::TooWide`] when the block's induced width exceeds the cap.
+///
+/// # Panics
+///
+/// If `s` is not one spin per node, or the block indexes outside the graph.
 pub fn step(g: &Graph, s: &mut [i8], block: &[usize], el: &Elimination) -> Result<f64, TooWide> {
     // `map[i]` is the residual index of `i`, or usize::MAX when `i` is outside the block.
     let mut map = vec![usize::MAX; g.n];

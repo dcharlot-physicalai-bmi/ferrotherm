@@ -122,6 +122,10 @@ impl Hubo {
 
     /// Add a term. Rejects the same things [`crate::factor::Factor`] rejects, and for the same
     /// reason: a term that is silently not what was written is worse than one that is refused.
+    ///
+    /// # Errors
+    ///
+    /// [`FactorError`], as [`crate::factor::Factor::new`].
     pub fn add(&mut self, vars: &[usize], weight: f64) -> Result<(), FactorError> {
         let f = crate::factor::Factor::new(vars, weight, self.n)?;
         let mut vs: Vec<u32> = f.vars().map(|v| v as u32).collect();
@@ -138,6 +142,10 @@ impl Hubo {
     ///
     /// Exists so the native and reduced paths can be compared on one model. The energies must agree
     /// exactly, which is the test that says this convention is the crate's convention.
+    ///
+    /// # Panics
+    ///
+    /// If the graph carries an edge this crate would itself reject.
     #[must_use]
     pub fn from_graph(g: &Graph) -> Hubo {
         let mut h = Hubo::new(g.n);

@@ -223,6 +223,11 @@ impl DeviceRun {
     }
 
     /// Energy for this period's operations, ignoring standby.
+    ///
+    /// # Errors
+    ///
+    /// [`DutyError::PricesUnstated`] when the device publishes no per-operation energy. Not a device
+    /// that is expensive: a fact about the literature.
     pub fn compute_joules(&self) -> Result<f64, DutyError> {
         self.per_period.joules(&self.prices).ok_or(DutyError::PricesUnstated)
     }
@@ -232,6 +237,12 @@ impl DeviceRun {
     /// Checked BEFORE any energy, because a fabric that cannot reload in time cannot run the loop
     /// at any price, and a joules figure for it prices a run that could not have happened. A device
     /// stating no cap implies no floor, so this passes -- unknown is not a violation.
+    ///
+    /// # Errors
+    ///
+    /// [`DutyError::Empty`] for a period that is not a positive duration, and
+    /// [`DutyError::DeviceCannotSustain`] when the reflash cap alone makes this cadence impossible --
+    /// a feasibility verdict that arrives before any joules.
     pub fn check_sustains(&self, period_s: f64) -> Result<(), DutyError> {
         if !period_s.is_finite() || period_s <= 0.0 {
             return Err(DutyError::Empty("the period must be a finite positive number of seconds"));
@@ -247,6 +258,12 @@ impl DeviceRun {
     /// Total joules over one period: the operations, plus the wait.
     ///
     /// Refuses without a standby figure. That refusal is the point of the type.
+    ///
+    /// # Errors
+    ///
+    /// As [`DeviceRun::check_sustains`], plus [`DutyError::StandbyUnpublished`] when the device states
+    /// no standby power -- which is the variant this module exists to produce, since at low duty cycle
+    /// standby IS the comparison.
     pub fn joules_per_period(&self, period_s: f64) -> Result<f64, DutyError> {
         self.check_sustains(period_s)?;
         let standby = self.standby_watts.ok_or(DutyError::StandbyUnpublished)?;
@@ -279,6 +296,12 @@ impl Machine {
     /// `marginal_watts` of zero is allowed and means the workload did not rise above idle, which is
     /// a real measurement outcome; a NEGATIVE marginal is not, and the meter's own noise floor
     /// once turned one into zero silently.
+    ///
+    /// # Errors
+    ///
+    /// [`DutyError::NotPhysical`] for a negative or non-finite watt figure or a non-positive rate. A
+    /// marginal of zero is allowed and means the workload did not rise above idle, which is a real
+    /// measurement outcome; a NEGATIVE marginal is the meter's noise, not a machine generating power.
     pub fn new(idle_watts: f64, marginal_watts: f64, rate: f64) -> Result<Machine, DutyError> {
         if !idle_watts.is_finite() || idle_watts < 0.0 {
             return Err(DutyError::NotPhysical("idle power must be finite and non-negative"));
@@ -322,6 +345,11 @@ impl Machine {
     }
 
     /// Fraction of a period spent computing, or an error if the cadence is unsustainable.
+    ///
+    /// # Errors
+    ///
+    /// [`DutyError::Empty`] for no work or a non-positive period, and [`DutyError::CannotSustain`]
+    /// when the work needs more seconds than the cadence allows.
     pub fn duty(&self, work: u64, period_s: f64) -> Result<f64, DutyError> {
         if work == 0 {
             return Err(DutyError::Empty("no work was done, so there is no duty cycle"));
@@ -341,6 +369,10 @@ impl Machine {
     /// `marginal * t_run + idle * period`. Idle is NOT subtracted, which is the entire point --
     /// a machine that must stay available pays for staying available, and the workload is the
     /// reason it is switched on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Machine::duty`].
     pub fn joules_per_period(&self, work: u64, period_s: f64) -> Result<f64, DutyError> {
         self.duty(work, period_s)?;
         Ok(self.marginal_watts * self.run_seconds(work) + self.idle_watts * period_s)
@@ -350,6 +382,10 @@ impl Machine {
     ///
     /// Compare against the above-idle figure the meter reports: this one rises without bound as
     /// the cadence slackens, and that divergence is the honest shape of intermittent compute.
+    ///
+    /// # Errors
+    ///
+    /// As [`Machine::duty`].
     pub fn joules_per_unit(&self, work: u64, period_s: f64) -> Result<f64, DutyError> {
         Ok(self.joules_per_period(work, period_s)? / work as f64)
     }
@@ -364,6 +400,10 @@ impl Machine {
     /// As the cadence slackens this collapses to the incumbent's idle draw, and the challenger's
     /// entire case reduces to one number about its own standby -- not to anything about physics,
     /// throughput or joules per flip.
+    ///
+    /// # Errors
+    ///
+    /// As [`Machine::duty`].
     pub fn standby_budget(&self, work: u64, period_s: f64) -> Result<f64, DutyError> {
         let d = self.duty(work, period_s)?;
         Ok(self.idle_watts + self.marginal_watts * d)
@@ -380,6 +420,10 @@ impl Machine {
     /// device that samples differently does not do the same number of operations, so a per-op
     /// price would not be comparable. Price it with [`Ledger::joules`](crate::ledger::Ledger::joules)
     /// against that device's own [`crate::ledger::Prices`], which is what the ledger is for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Machine::duty`], for the incumbent side of the comparison.
     pub fn beaten_by(
         &self,
         challenger_standby_watts: f64,
@@ -421,6 +465,11 @@ impl Machine {
     /// Checks arrive in the order that makes the verdict meaningful: FEASIBILITY first (a fabric
     /// that cannot reflash in time loses at any price), then whether its computation is priced at
     /// all, then standby.
+    ///
+    /// # Errors
+    ///
+    /// As [`Machine::duty`] for the incumbent, and [`DeviceRun::joules_per_period`] for the
+    /// challenger -- so a device stating no standby power terminates the comparison here.
     pub fn beaten_by_device(
         &self,
         device: &DeviceRun,

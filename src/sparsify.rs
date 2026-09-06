@@ -136,6 +136,10 @@ pub fn copy_strength(g: &Graph) -> f64 {
 }
 
 /// Rewrite `g` so no variable exceeds degree `budget`, using [`copy_strength`].
+///
+/// # Errors
+///
+/// [`Refused::BudgetTooSmall`] when the copy budget is below what the graph needs.
 pub fn sparsify(g: &Graph, budget: usize) -> Result<Sparsified, Refused> {
     sparsify_with(g, budget, copy_strength(g))
 }
@@ -146,6 +150,14 @@ pub fn sparsify(g: &Graph, budget: usize) -> Result<Sparsified, Refused> {
 /// copies disagreeing, which is a real thing to want to study and exactly what
 /// `a_copy_coupling_below_the_bound_stops_preserving_the_ground_states` does. [`project`] reports
 /// which variables broke, so the caller can see it happen rather than read a silently wrong answer.
+///
+/// # Errors
+///
+/// [`Refused::BudgetTooSmall`], as `sparsify`.
+///
+/// # Panics
+///
+/// If `w0` is not finite and positive; it is the chain coupling holding the copies together.
 pub fn sparsify_with(g: &Graph, budget: usize, w0: f64) -> Result<Sparsified, Refused> {
     if budget < 3 {
         return Err(Refused::BudgetTooSmall { budget });

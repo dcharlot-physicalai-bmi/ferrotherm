@@ -49,6 +49,10 @@ impl FrameBuf {
 
     /// Apply one resolved bit. Returns an error when the word index is outside the frame, which
     /// means the tilegrid and the segbits disagree about the part.
+    ///
+    /// # Errors
+    ///
+    /// A message when the word or bit index is outside a frame.
     pub fn apply(&mut self, a: BitAddr) -> Result<(), String> {
         if a.word as usize >= WORDS_PER_FRAME {
             return Err(format!(
@@ -67,6 +71,10 @@ impl FrameBuf {
     }
 
     /// Apply a feature's segbits within a tile's configuration block.
+    ///
+    /// # Errors
+    ///
+    /// A message when a bit falls outside the block's frames or words.
     pub fn apply_feature(&mut self, block: &BitsBlock, bits: &[SegBit]) -> Result<(), String> {
         for sb in bits {
             let a = block
@@ -79,6 +87,10 @@ impl FrameBuf {
 
     /// Write a LUT truth table: `init_bits` are the 64 INIT segbits in index order, `init` is
     /// the truth table (bit i = output for input combination i).
+    ///
+    /// # Errors
+    ///
+    /// A message when the LUT init does not fit the block, or the block is not a logic block.
     pub fn write_lut_init(
         &mut self,
         block: &BitsBlock,

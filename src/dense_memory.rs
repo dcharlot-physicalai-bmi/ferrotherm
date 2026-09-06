@@ -161,6 +161,10 @@ impl DenseMemory {
     /// The continuous update of the exponential memory — softmax attention over the patterns
     /// (Ramsauer et al. 2020): `ξᵀ softmax(β ξ q)`. One step retrieves a stored pattern from a
     /// query near it when `β` is large enough that one term dominates.
+    ///
+    /// # Panics
+    ///
+    /// If `query` is not the pattern length.
     pub fn attention_update(&self, query: &[f64], beta: f64) -> Vec<f64> {
         assert_eq!(query.len(), self.n);
         let logits: Vec<f64> = self.patterns.iter().map(|p| beta * p.iter().zip(query).map(|(&a, &q)| a as f64 * q).sum::<f64>()).collect();
@@ -189,6 +193,10 @@ impl DenseMemory {
 /// The number of length-`k` sequences over `n` symbols whose set of odd-multiplicity symbols is a
 /// FIXED `r`-subset: `k! [x^k] sinh(x)^r cosh(x)^{n−r}`. This is the multinomial weight a monomial
 /// `Π_{i∈S} s_i` receives when `(Σ_i a_i s_i)^k` is expanded over `±1` spins with `a_i² = 1`.
+///
+/// # Panics
+///
+/// If `r` exceeds `k` or `n`.
 #[must_use]
 pub fn odd_set_count(k: usize, r: usize, n: usize) -> f64 {
     assert!(r <= k && r <= n);
@@ -234,6 +242,11 @@ impl DenseMemory {
     /// energies and the exponential one, which are not polynomials in the spins.
     ///
     /// Term count is `Σ_r C(N, r)`, so degree 4 at `N = 40` is 92 000 terms; keep `N` modest.
+    ///
+    /// # Errors
+    ///
+    /// A message when the energy is not polynomial, since only the polynomial separation functions have
+    /// a finite-degree HUBO form at all.
     pub fn to_hubo(&self) -> Result<(crate::hubo::Hubo, f64), String> {
         let k = match self.energy {
             Energy::Polynomial(k) if k % 2 == 0 => k as usize,
@@ -276,6 +289,10 @@ impl DenseMemory {
     }
 
     /// The memory as a `.ftp` program: the HUBO's terms as factors, with `schedule`.
+    ///
+    /// # Errors
+    ///
+    /// As [`DenseMemory::to_hubo`], plus anything the pairwise reduction refuses.
     pub fn to_program(&self, schedule: &crate::schedule::Schedule) -> Result<(crate::ftp::Program, f64), String> {
         let (h, offset) = self.to_hubo()?;
         let mut factors = Vec::with_capacity(h.terms());

@@ -51,6 +51,10 @@ pub const RETAINED_SPIN_BUDGET: usize = 20_000_000;
 ///
 /// Explicit: `{"n": 4, "couplings": [[0,1,1.0]], "biases": [[0,0.5]]}`
 /// Family:   `{"builtin": "lattice2d", "l": 32, "j": 1.0}`
+///
+/// # Errors
+///
+/// A message naming the field that is missing, of the wrong type, or out of range.
 pub fn graph_from(v: &Json) -> Result<Graph, String> {
     if let Some(kind) = v.get("builtin").and_then(Json::as_str) {
         return match kind {
@@ -348,6 +352,17 @@ fn state_json(s: &[i8]) -> Json {
 // ---- handlers ---------------------------------------------------------------------------------
 
 /// Draw samples by chromatic block-Gibbs at fixed inverse temperature.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
+///
+/// # Panics
+///
+/// Never on a request this accepted: the set it certifies is the chain it just collected, so its
+/// provenance is a chain by construction.
 pub fn sample(req: &Json) -> Result<Json, String> {
     let gv = req.get("graph").ok_or("missing \"graph\"")?;
     let g = graph_from(gv)?;
@@ -429,6 +444,12 @@ pub fn sample(req: &Json) -> Result<Json, String> {
 }
 
 /// Simulated annealing down a geometric beta ladder, tracking the best state seen.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn anneal(req: &Json) -> Result<Json, String> {
     let gv = req.get("graph").ok_or("missing \"graph\"")?;
     let g = graph_from(gv)?;
@@ -488,6 +509,12 @@ pub fn anneal(req: &Json) -> Result<Json, String> {
 }
 
 /// Energy of a supplied state under a supplied graph.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn energy(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
     let sv = req.get("state").and_then(Json::as_arr).ok_or("missing \"state\" array")?;
@@ -523,6 +550,12 @@ pub fn energy(req: &Json) -> Result<Json, String> {
 /// All four bounds are sound on their own, so `best` is their maximum. They disagree by a lot and
 /// in both directions: `odd_cycle` wins on sparse frustrated lattices, `sdp` by more the denser the
 /// instance gets, and `forest` is worth nothing at all on a graph with no fields.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn bound(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
     let rounds = opt_usize(req, "forest_rounds", 40).clamp(0, 10_000);
@@ -600,6 +633,12 @@ pub fn bound(req: &Json) -> Result<Json, String> {
 /// a cycle in the dual, so the problem becomes a minimum-weight T-join and then a minimum-weight
 /// perfect matching. There is no budget and no seed — the same request always returns the same
 /// answer, because there is only one.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn exact_planar(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
     let scale = opt_f64(req, "scale", 1.0);
@@ -644,6 +683,12 @@ pub fn exact_planar(req: &Json) -> Result<Json, String> {
 /// The side of the G-set table nobody publishes: every figure there is a best cut *found*, a lower
 /// bound. This is the other end of the bracket. On G11 it closes it, proving the twenty-five-year-old
 /// best-known cut of 564 optimal.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn toroidal_bound(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
     let scale = opt_f64(req, "scale", 1.0);
@@ -696,6 +741,12 @@ fn o_state(s: Vec<i8>) -> Vec<i8> {
 /// `anneal` runs one chain down a ladder and hands back the best state it saw. These are the three
 /// things that do more than that: `tabu` remembers where it has been, `population` reports whether
 /// its own answer is trustworthy, and `branch` returns a PROOF or says it has none.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn optimize(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
     let method = req.get("method").and_then(Json::as_str).unwrap_or("tabu").to_string();
@@ -1020,6 +1071,12 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
 ///
 /// This is the tool that lets a caller check the sampler rather than trust it. It is capped at 20
 /// nodes because the enumeration is 2^n.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn verify(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
     if g.n > 20 {
@@ -1160,6 +1217,12 @@ fn op(name: &str, what: &str, fields: &str) -> Json {
 /// gives back an array of ±1; this one takes named variables with domains and constraints, and
 /// gives back **named values**. An agent that has to compute spin indices to express "these two
 /// must differ" is doing the compiler's job.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn solve(req: &Json) -> Result<Json, String> {
     let vars = req
         .get("variables")
@@ -1673,6 +1736,12 @@ pub fn solve(req: &Json) -> Result<Json, String> {
 /// the landscape rigid rather than merely larger.
 ///
 /// Terms are `{"vars": [i, j, k, ...], "weight": w}` over 0-based spin indices, any arity.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn hubo(req: &Json) -> Result<Json, String> {
     let n = value_of(req, "spins", 0, "hubo")?;
     if n < 1 {
@@ -1764,6 +1833,12 @@ pub fn hubo(req: &Json) -> Result<Json, String> {
 /// an agent can fit here and then sample, anneal, bound or certify the result with no export step
 /// and no second format. That round trip is the whole point of returning a graph rather than an
 /// opaque handle.
+///
+/// # Errors
+///
+/// A message describing what the request was missing or malformed, or what the solver refused. Every
+/// refusal names the field, since a message without one is not actionable from the other side of an
+/// HTTP boundary.
 pub fn fit(req: &Json) -> Result<Json, String> {
     let visible = value_of(req, "visible", 0, "fit")?;
     if visible < 1 {
@@ -2007,6 +2082,10 @@ pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
 }
 
 /// Parse a request body, with the error phrased for whoever has to fix it.
+///
+/// # Errors
+///
+/// A message from the JSON parser saying what was wrong and where.
 pub fn parse_body(body: &str) -> Result<Json, String> {
     if body.trim().is_empty() {
         return Ok(Json::Obj(Vec::new()));

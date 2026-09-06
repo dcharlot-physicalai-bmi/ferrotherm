@@ -344,6 +344,13 @@ impl core::fmt::Display for ImportError {
 /// Repeated scalar fields are accepted **packed or unpacked**. The reference implementation packs;
 /// this crate's own encoder did not until it was checked. A decoder that handled only one of them
 /// would read half the files it is given.
+///
+/// # Errors
+///
+/// [`ImportError::UnsupportedKind`] or [`ImportError::NotBinary`] for a variable this reader
+/// cannot represent as a spin, and [`ImportError::HasConstraints`] for an instance carrying
+/// constraints -- refused rather than skipped, since dropping them silently solves a different
+/// problem than the one written.
 pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
     use crate::wire::Value;
 

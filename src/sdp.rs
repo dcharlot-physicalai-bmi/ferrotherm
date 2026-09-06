@@ -668,6 +668,11 @@ impl Certificate {
     /// Rebuilds the cost matrix, re-verifies positive definiteness and re-sums `y`. It never looks
     /// at the mixing method, the rank, Lanczos, or the seed — which is the point: the bound stands
     /// on the dual point alone.
+    ///
+    /// # Errors
+    ///
+    /// [`CertError`] when the certificate does not check out against this graph -- a wrong shape, or a
+    /// dual that is not feasible. A certificate that cannot be verified is not a bound.
     pub fn verify(&self, g: &Graph) -> Result<f64, CertError> {
         let cost = Cost::build(g);
         if self.y.len() != cost.n {

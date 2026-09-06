@@ -129,11 +129,14 @@ module_name_repetitions = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
-# Under RATCHET rather than allow-and-forget: `scripts/check-lints.sh` records the exact count of
-# each and fails if it RISES. These are real gaps, they are large, and writing 662 doc sections in
-# one sitting produces 662 sentences that say nothing -- which is worse than an honest count.
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+# Both were ratcheted at 62 and 84 and are now zero, so they are denied like the rest. A `# Errors`
+# section names the variants a call actually returns; a `# Panics` section names the assertion that
+# fires, INCLUDING the ones whose honest answer is "never, and here is the invariant that makes it
+# never" -- `exact::marginals` cannot exceed a width cap it already checked, and saying so is worth
+# more than an empty section. `scripts/check-lints.sh` and its baseline were deleted with the last
+# family: a ratchet tracking nothing is a gate that reads as work and does none.
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
 # AUDITED, 2026-09-05, and the verdict is uniform: 142 sites, no defect. 131 are assertions on
 # values that are exact by construction -- integer-valued Ising energies (-12.0, -3.0), powers of two
 # (0.25), a padded slot that must weigh EXACTLY zero, a serialiser round-trip of 1e16 -- where an

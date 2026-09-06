@@ -1510,6 +1510,11 @@ pub extern "C" fn ft_certify(sim: *mut Sim, draws: u32, thin: u32) -> u32 {
 /// Z1-class device a read is 1.692 pJ per node against 7.09 fJ per Gibbs cycle -- one read is
 /// worth 239 updates -- so [`ft_ledger_joules_z1`] after this call is now LARGER than it was, and
 /// the earlier figure was the one that was wrong.
+///
+/// # Panics
+///
+/// Never: the set this certifies is the chain it just collected, so its provenance is a chain by
+/// construction.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_collect(sim: *mut Sim, burn_in: u32, draws: u32, thin: u32) -> u32 {
     let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
@@ -3994,6 +3999,10 @@ mod cardinality_ffi {
 /// The same instrument the rest of the stack uses, reachable from a model rather than from a raw
 /// graph. A solved answer says *what*; a certificate says whether the machine that produced it was
 /// sampling the distribution it claimed. Returns 1 on success.
+///
+/// # Panics
+///
+/// Never, for the same reason as `ft_collect`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, thin: u32) -> u32 {
     let Some(h) = (unsafe { m.as_mut() }) else { return 0 };

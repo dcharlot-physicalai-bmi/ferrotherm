@@ -38,6 +38,10 @@ pub fn anneal(
 }
 
 /// Geometric beta ladder from `beta_min` to `beta_max`.
+///
+/// # Panics
+///
+/// If `n` is below 2, `beta_min` is not positive, or `beta_max` is not above `beta_min`.
 #[must_use]
 pub fn geometric_ladder(beta_min: f64, beta_max: f64, n: usize) -> Vec<f64> {
     assert!(n >= 2 && beta_min > 0.0 && beta_max > beta_min);
@@ -139,6 +143,10 @@ pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&m
 /// Parallel tempering over a beta ladder. Every `swap_every` sweeps, adjacent replicas attempt a
 /// state exchange with probability min(1, `exp(delta_beta` * `delta_E`)) — the standard replica-
 /// exchange criterion, alternating even/odd pairs so a state can traverse the whole ladder.
+///
+/// # Panics
+///
+/// If the ladder has fewer than two rungs, which cannot swap.
 #[must_use]
 pub fn parallel_tempering(
     g: &Graph,
@@ -243,6 +251,11 @@ impl LadderTraces {
     /// ([`Self::log_z_differences`]) but no absolute scale, and this returns `Err` rather than
     /// quietly reporting a relative number as an absolute one — the same distinction
     /// [`crate::popanneal::Outcome::free_energy_per_spin`] draws.
+    ///
+    /// # Errors
+    ///
+    /// A message when a BAR step between adjacent rungs has no overlap to work with, which is the
+    /// ladder telling you it is too sparse rather than this returning a number built on nothing.
     pub fn thermodynamics(&self, n: usize, z: f64) -> Result<crate::free_energy::Thermo, String> {
         if self.betas.first() != Some(&0.0) {
             return Err(format!(
@@ -303,6 +316,11 @@ impl LadderTraces {
     /// experiment was 56 to 2,250 rounds long — 5 to 200 round trips per block, so blocks were
     /// never the problem. What was the problem is that 24 runs cannot measure an `sd` to better
     /// than 14%.
+    ///
+    /// # Errors
+    ///
+    /// A message when there are fewer recorded rounds than blocks, so the jackknife would resample
+    /// data it does not have.
     pub fn log_z_total(&self, blocks: usize) -> Result<(f64, f64), String> {
         if blocks < 4 {
             return Err(format!("{blocks} blocks is too few for a jackknife variance; use at least 4"));
@@ -343,6 +361,10 @@ impl LadderTraces {
 /// Same dynamics, same answer, plus the samples: the optimisation result is unchanged and the
 /// traces come out beside it, so one run serves both purposes. Recording costs one `g.energy` per
 /// replica per round, which the best-tracking loop was already paying.
+///
+/// # Panics
+///
+/// If the ladder has fewer than two rungs, or every round is burn-in so nothing is recorded.
 #[must_use]
 pub fn parallel_tempering_observed(
     g: &Graph,

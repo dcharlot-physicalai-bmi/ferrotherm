@@ -249,6 +249,12 @@ pub fn onsager_m(beta: f64) -> f64 {
 }
 
 /// Total-variation distance between two distributions.
+///
+/// # Panics
+///
+/// If the two distributions are different lengths. Deliberate: this is used as
+/// `assert!(tv < tolerance)`, and silently comparing a prefix would make the failure direction
+/// safe-looking.
 #[must_use]
 pub fn tv(p: &[f64], q: &[f64]) -> f64 {
     // `zip` stops at the shorter of the two, so mismatched lengths used to return a TRUNCATED

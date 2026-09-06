@@ -192,11 +192,20 @@ pub fn houdayer_move(
 }
 
 /// Parallel tempering with isoenergetic cluster moves.
+///
+/// # Errors
+///
+/// [`Error::HasFields`] when the graph carries a field, which breaks the isoenergetic argument the
+/// cluster move rests on, and [`Error::LadderTooShort`] below two rungs.
 pub fn run(g: &Graph, p: &Params, seed: u64) -> Result<Outcome, Error> {
     run_metered(g, p, seed, None)
 }
 
 /// As [`run`], charging every sweep to a [`Ledger`].
+///
+/// # Errors
+///
+/// As `run`.
 pub fn run_metered(
     g: &Graph,
     p: &Params,

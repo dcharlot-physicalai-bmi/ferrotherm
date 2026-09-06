@@ -151,6 +151,13 @@ fn read_f64(p: &Path) -> Result<f64, RailError> {
 
 impl Rails {
     /// Find an INA3221 on this machine.
+    ///
+    /// # Errors
+    ///
+    /// [`RailError::NotFound`] with the paths searched, [`RailError::NoTotalRail`] when rails exist but
+    /// none says it is the total -- deliberately fatal, since the channels are nested and no arithmetic
+    /// turns some rails into board power -- or [`RailError::Unreadable`] for a file that is not what its
+    /// name promises.
     pub fn detect() -> Result<Rails, RailError> {
         let roots = search_roots();
         for root in &roots {
@@ -168,6 +175,10 @@ impl Rails {
     /// Public because it is the seam that makes every part of this testable without a Jetson: the
     /// tests build a directory of the right shape and point this at it. A backend whose only entry
     /// point hard-codes `/sys` is a backend that can only be tested by owning the hardware.
+    ///
+    /// # Errors
+    ///
+    /// As [`Rails::detect`], but searching only under `root`.
     pub fn at(root: &Path) -> Result<Rails, RailError> {
         let mut rails = Rails::scan(root)?;
         if rails.is_empty() {
@@ -189,6 +200,10 @@ impl Rails {
     /// naming gap, not a way to opt out of the nesting problem: whatever you name here is treated
     /// as the whole board, so naming a subsidiary rail will under-report by however much the rest
     /// of the board draws.
+    ///
+    /// # Errors
+    ///
+    /// [`RailError::NoTotalRail`] when no channel carries that label, listing the ones that were found.
     pub fn with_total_label(mut self, label: &str) -> Result<Rails, RailError> {
         let want = label.to_ascii_lowercase();
         self.total = self
@@ -278,6 +293,11 @@ impl Rails {
     /// Whole-board power, in **watts**.
     ///
     /// One rail, never a sum. See the module docs for why that is not a simplification.
+    ///
+    /// # Errors
+    ///
+    /// [`RailError::Unreadable`] when a rail file disappeared or stopped holding a number between
+    /// detection and this read.
     pub fn watts(&self) -> Result<f64, RailError> {
         match &self.total().source {
             // mV x mA = uW, so divide by 1e6 for watts. Getting this wrong by a factor of 1000 is

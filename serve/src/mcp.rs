@@ -420,6 +420,10 @@ pub fn handle(line: &str) -> Option<String> {
 }
 
 /// Read newline-delimited JSON-RPC from stdin until it closes.
+///
+/// # Errors
+///
+/// Whatever reading or writing the standard streams returns.
 pub fn serve() -> std::io::Result<()> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();

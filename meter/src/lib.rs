@@ -202,6 +202,10 @@ impl Meter {
     ///
     /// `None` when no INA3221 is present or readable. See [`ina3221`] for what is tested and what
     /// is not -- no reading from this path has come from real hardware.
+    ///
+    /// # Panics
+    ///
+    /// Never. A missing or unreadable monitor is `None`, not a panic.
     #[must_use]
     pub fn ina3221() -> Option<Meter> {
         let rails = ina3221::Rails::detect().ok()?;
@@ -234,6 +238,10 @@ impl Meter {
     /// See the `rapl` module for the domain that lies: `psys` is documented as whole-platform, reads 0.2 W
     /// on the machine this was written against whether idle or running twenty busy cores, and is
     /// rejected by checking it against the package it is supposed to contain.
+    ///
+    /// # Panics
+    ///
+    /// Never. An unreadable counter is `None`.
     #[must_use]
     pub fn rapl() -> Option<Meter> {
         let (domain, kind) = rapl::choose()?;
@@ -279,6 +287,10 @@ impl Meter {
     }
 
     /// The macOS backend: `macmon pipe`, reading the `SoC`'s own counters.
+    ///
+    /// # Panics
+    ///
+    /// Never. A missing `macmon` is `None`.
     #[must_use]
     pub fn macmon() -> Option<Meter> {
         let mut child = Command::new("macmon")
@@ -360,6 +372,15 @@ impl Meter {
     /// Take it immediately before or after the run rather than once at startup: idle drifts with
     /// temperature and with whatever else the machine is doing, and a stale baseline subtracts the
     /// wrong number.
+    ///
+    /// # Errors
+    ///
+    /// A message when too few readings arrived for the window, or the machine is not idle -- a busy
+    /// machine has no idle, and a baseline taken on one makes every later delta read low or negative.
+    ///
+    /// # Panics
+    ///
+    /// Never: a busy machine or a short window is an `Err`, not a panic.
     pub fn idle(&mut self, at_least: Duration) -> Result<Baseline, String> {
         // Settle first. Measured without this on a machine that had just finished a build: idle
         // came out at 67.6 W and the workload that followed averaged 65.9 W, so the subtraction
@@ -393,6 +414,11 @@ impl Meter {
     }
 
     /// Run `f`, sampling wall power throughout.
+    ///
+    /// # Errors
+    ///
+    /// A message when the workload drew less above the baseline than the baseline's own drift, since
+    /// dividing that delta by a work count reports precision the measurement does not have.
     pub fn measure<R>(&mut self, idle: Baseline, f: impl FnOnce() -> R) -> Result<Run, String> {
         let idle_watts = idle.watts;
         let t0 = Instant::now();
@@ -481,6 +507,11 @@ impl Run {
     /// attributes everything to the operation that dominated and refuses when none did — running a
     /// sample-heavy workload and a write-heavy one and solving the pair is the real procedure, and
     /// this is the honest single-workload version of it.
+    ///
+    /// # Errors
+    ///
+    /// A message when the run counted no operations, or was not sample-dominated. One measurement
+    /// cannot separate three costs; the honest procedure is a sample-heavy run and a write-heavy one.
     pub fn prices_from(&self, l: &Ledger) -> Result<Prices, String> {
         let (s, r, w) = (l.samples as f64, l.reads as f64, l.writes as f64);
         let total = s + r + w;

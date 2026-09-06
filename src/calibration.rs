@@ -120,6 +120,11 @@ pub fn sd_z_uncertainty(c: &Calibration) -> f64 {
 ///
 /// Panics on fewer than 8 runs — an `sd` over seven numbers is not a measurement — but 8 is a floor,
 /// not a recommendation: see [`sd_z_uncertainty`].
+///
+/// # Panics
+///
+/// If `runs` is below 8. Fewer cannot estimate a spread: `sd(z)` carries its own uncertainty of
+/// `sd/sqrt(2n)`, which is already 25% at 8 runs.
 pub fn calibrate(truth: f64, runs: usize, run: impl Fn(u64) -> (f64, f64)) -> Calibration {
     assert!(runs >= 8, "{runs} runs is too few to estimate a spread");
     let z: Vec<f64> = (0..runs as u64)

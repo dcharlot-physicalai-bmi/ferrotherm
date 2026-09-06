@@ -122,6 +122,10 @@ pub fn solve_spd(sys: &Spd, beta: f64, dt: f64, burn: usize, measure: usize, see
 ///     eta ~ N(0, beta^-1 A^-1 (I - exp(-2 A h))),
 /// evaluated in the eigenbasis of A (Aifer et al., arXiv:2308.05660, Eq. 35). Strides of a few
 /// relaxation times give near-independent samples.
+///
+/// # Panics
+///
+/// If `A` is not positive definite, where the stationary distribution does not exist.
 #[must_use]
 pub fn solve_spd_exact_ou(
     sys: &Spd,

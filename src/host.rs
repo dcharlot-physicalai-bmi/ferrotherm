@@ -207,6 +207,12 @@ impl Quiet {
 ///
 /// So callers that print results annotate them with [`Timing`], and callers that print rates call
 /// this and stop. `what` names the thing being refused, and appears in the message.
+///
+/// # Errors
+///
+/// A message naming the load average and the override when the machine is too busy for the
+/// measurement to mean anything. Every number in a timing run is a wall clock divided into
+/// something, so on a contended machine it reports the run queue rather than the code.
 pub fn require_quiet(what: &str) -> Result<Quiet, String> {
     let allow = match std::env::var(ALLOW_BUSY) {
         Ok(v) => !v.is_empty() && v != "0",

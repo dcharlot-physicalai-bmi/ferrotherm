@@ -63,6 +63,10 @@ pub struct Categorical {
 
 impl Categorical {
     /// Lay out `n` variables side by side and add the encoding's penalty at strength `p`.
+    ///
+    /// # Panics
+    ///
+    /// If `n` is zero or `k` is below 2 -- a variable with fewer than two values is a constant.
     #[must_use]
     pub fn new(n: usize, k: usize, encoding: Encoding, p: f64) -> Categorical {
         assert!(n >= 1 && k >= 2);

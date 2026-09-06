@@ -119,6 +119,11 @@ fn err<T>(line: usize, message: impl Into<String>) -> Result<T, FtpError> {
 
 impl Program {
     /// Build a program from a graph and a schedule.
+///
+/// # Panics
+///
+/// If the graph carries an edge this crate would itself reject, which would mean it was built by
+/// something other than [`crate::graph::GraphBuilder`].
     #[must_use]
     pub fn from_graph(g: &Graph, schedule: &Schedule) -> Program {
         let mut factors = Vec::new();
@@ -147,6 +152,10 @@ impl Program {
 
     /// Rebuild a graph from this program. Factors of arity above two are refused here rather than
     /// silently dropped; lowering them to pairwise is a separate pass with its own ancillas.
+    ///
+    /// # Errors
+    ///
+    /// [`FtpError`] when the program has a factor of arity above two, which no pairwise graph holds.
     pub fn to_graph(&self) -> Result<Graph, FtpError> {
         let mut b = GraphBuilder::new(self.spins);
         for &(i, h) in &self.bias {
@@ -226,6 +235,15 @@ impl Program {
 
     /// Parse. Errors carry the line number, because a format nobody can debug is a format nobody
     /// adopts.
+///
+/// # Errors
+///
+/// [`FtpError`] with the line number, for a malformed header, an unknown directive, an index past
+/// the declared spin count, or a colour class the spins do not support.
+///
+/// # Panics
+///
+/// Never: every malformed input is reported as an [`FtpError`] with its line rather than asserted.
     pub fn from_ftp(text: &str) -> Result<Program, FtpError> {
         let mut p = Program::default();
         let mut saw_header = false;

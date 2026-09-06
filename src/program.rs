@@ -273,6 +273,10 @@ impl Program {
 
     /// Parameter-shift gradient for the `PNot` at `gate_idx`:
     /// sigma'(theta) * (E[L | forced flip] - E[L | forced hold]), common random numbers.
+///
+/// # Panics
+///
+/// If the gate at `gate_idx` is not a [`Gate::PNot`]; the parameter shift is defined for that gate.
     pub fn pshift_grad_pnot<F: Fn(&State) -> f64>(
         &self,
         gate_idx: usize,

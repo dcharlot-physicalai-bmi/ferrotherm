@@ -229,6 +229,10 @@ impl Hitachi {
     }
 
     /// From `ACW_TOKEN` in the environment.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the environment variable that is missing or unusable.
     pub fn from_env(machine: Machine) -> Result<Hitachi, String> {
         std::env::var("ACW_TOKEN")
             .map(|t| Hitachi::new(t, machine))
@@ -265,6 +269,10 @@ impl Hitachi {
     /// The embedded model is not the model that was written. Chains add couplings at
     /// `chain_strength`, and a program that fitted the grid already is placed unchanged, so the
     /// returned embedding is the identity and the distinction costs nothing.
+    ///
+    /// # Errors
+    ///
+    /// A message when the program cannot be laid out on the device's fixed grid.
     pub fn place(&mut self, p: &Program) -> Result<Embedding, String> {
         let side = self.machine.side();
         if self.layout(p).is_ok() {
@@ -297,6 +305,12 @@ impl Hitachi {
     ///
     /// Requires every coupling to be King-adjacent already. [`Hitachi::place`] embeds when it is
     /// not, and is what a caller who has not laid their model out by hand wants.
+    ///
+    /// # Errors
+    ///
+    /// [`LayoutError::NotAdjacent`] for a coupling between spins that are not neighbours on the grid,
+    /// [`LayoutError::OutOfGrid`] for a spin with no position, and [`LayoutError::CoefficientRange`]
+    /// for a value outside what the device represents.
     pub fn layout(&mut self, p: &Program) -> Result<(), LayoutError> {
         let side = self.machine.side();
         let lim = self.machine.coefficient_limit();

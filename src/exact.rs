@@ -240,11 +240,20 @@ fn adjacency(g: &Graph) -> Vec<Vec<usize>> {
 
 impl Elimination {
     /// Exact ground state and its energy.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`] when the elimination order's induced width exceeds the cap, since a table costs
+    /// `2^width`. The width is a property of the graph's SHAPE, not its size.
     pub fn ground_state(&self, g: &Graph) -> Result<Exact, TooWide> {
         self.run(g, 1.0, true)
     }
 
     /// Exact `log Z` at inverse temperature `beta`.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`], as [`Elimination::ground_state`].
     pub fn log_partition(&self, g: &Graph, beta: f64) -> Result<Exact, TooWide> {
         self.run(g, beta, false)
     }
@@ -279,6 +288,15 @@ impl Elimination {
     ///
     /// Conditioning changes the graph but never its width — pinning a node only REMOVES edges — so
     /// a model whose `log_partition` succeeds cannot have a marginal that is refused for width.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`], as [`Elimination::ground_state`].
+    ///
+    /// # Panics
+    ///
+    /// Never on a graph this accepted: the pinned eliminations reuse the order already checked against
+    /// the width cap.
     pub fn marginals(&self, g: &Graph, beta: f64) -> Result<Vec<f64>, TooWide> {
         // Refuse up front on the unconditioned graph, so a caller learns the width before paying
         // for 2n eliminations rather than after the first one.

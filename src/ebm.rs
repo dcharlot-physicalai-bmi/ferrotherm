@@ -223,6 +223,11 @@ impl core::fmt::Debug for Trained {
 ///
 /// `structure` supplies the EDGE SET and nothing else: its weights are the starting point and are
 /// overwritten. Biases on latent units are fitted too.
+///
+/// # Errors
+///
+/// [`Error::RowWidth`] or [`Error::NotASpin`] for malformed data, and [`Error::TooSmall`] when the
+/// model has fewer spins than the data has visible units.
 pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result<Trained, Error> {
     check(structure, data)?;
     let n = structure.n;
@@ -360,6 +365,11 @@ pub const MAX_ENUMERATED: usize = 22;
 /// mixing is worst.
 ///
 /// Refuses above [`MAX_ENUMERATED`] spins rather than returning something cheaper.
+///
+/// # Errors
+///
+/// As `train`, plus [`Error::TooLarge`] past the size that can be enumerated exactly -- this walks
+/// all `2^n` states and refuses rather than taking a very long time.
 pub fn exact_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     check(g, data)?;
     if g.n > MAX_ENUMERATED {
@@ -434,6 +444,11 @@ impl AisLikelihood {
 /// bound is unconditional and therefore gives [`AisLikelihood::upper_bound`] the same standing.
 /// Refuses when `hidden > MAX_ENUMERATED`; a clamped AIS for the numerator is the recorded next
 /// step past that.
+///
+/// # Errors
+///
+/// As `train`. Unlike `exact_log_likelihood` there is no size limit, because AIS estimates rather
+/// than enumerates.
 pub fn log_likelihood_ais(
     g: &Graph,
     data: &Dataset,
@@ -471,6 +486,10 @@ pub fn log_likelihood_ais(
 ///
 /// One AIS per row, so the cost is `rows × runs × rungs × sweeps` sweeps over the hidden units.
 /// The result carries a point estimate and no bound — see [`AisLikelihood::upper_bound`].
+///
+/// # Errors
+///
+/// As `log_likelihood_ais`.
 pub fn log_likelihood_ais_clamped(
     g: &Graph,
     data: &Dataset,

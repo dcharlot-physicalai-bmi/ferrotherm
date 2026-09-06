@@ -61,6 +61,11 @@ pub struct Factor {
 
 impl Factor {
     /// Build a factor, rejecting everything that would make it silently not what was written.
+    ///
+    /// # Errors
+    ///
+    /// [`FactorError::RepeatedVariable`] when a variable appears twice -- `s_i * s_i` is 1 and the
+    /// term is not what was written -- and [`FactorError::OutOfRange`] for an index past `n`.
     pub fn new(vars: &[usize], weight: f64, n: usize) -> Result<Factor, FactorError> {
         if vars.is_empty() {
             return Err(FactorError::Empty);

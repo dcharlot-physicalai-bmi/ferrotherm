@@ -95,6 +95,10 @@ impl Planted {
 /// Each planted loop is an elementary 4-cycle with one bond reversed, contributing exactly `-2` to
 /// the ground energy. `loops` controls frustration density: more loops on the same lattice means
 /// more competing constraints and a harder instance.
+///
+/// # Panics
+///
+/// If `l` is below 3, where a periodic lattice has degenerate plaquettes.
 #[must_use]
 pub fn frustrated_loops(l: usize, loops: usize, seed: u64) -> Planted {
     assert!(l >= 3, "a periodic lattice smaller than 3x3 has degenerate plaquettes");
@@ -306,6 +310,10 @@ fn gauss(rng: &mut Pcg) -> f64 {
 /// under 2% at the hardest setting: the landscape is dense with near-degenerate minima, so a solver
 /// gets very close and still misses. Any benchmark reporting mean excess would call this family
 /// easy. Report the solve rate.
+///
+/// # Panics
+///
+/// If `n` is below 3.
 #[must_use]
 pub fn wishart(n: usize, alpha: f64, seed: u64) -> Planted {
     assert!(n >= 3, "a Wishart instance needs at least 3 spins");

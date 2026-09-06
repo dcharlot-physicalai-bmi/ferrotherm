@@ -120,6 +120,13 @@ impl core::fmt::Debug for Instance {
 
 impl Instance {
     /// Parse the G-set edge-list format.
+///
+/// # Errors
+///
+/// [`GsetError::Header`] for a missing or malformed header, [`GsetError::Line`] for a body line
+/// that is not `i j w`, [`GsetError::Vertex`] for a vertex outside `1..=n`, and
+/// [`GsetError::Count`] when the body length disagrees with the header -- the shape a truncated
+/// download takes, which otherwise parses into a valid smaller instance nobody can compare.
     pub fn parse(text: &str) -> Result<Instance, GsetError> {
         let mut lines = text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty());
         let (_, head) = lines.next().ok_or_else(|| GsetError::Header(String::new()))?;

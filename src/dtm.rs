@@ -101,6 +101,10 @@ pub struct Ebm {
 impl Ebm {
     #[must_use]
     /// An unweighted model on this edge list: all couplings and fields zero.
+    ///
+    /// # Panics
+    ///
+    /// If any edge names a site outside `0..n`, or is a self-loop.
     pub fn new(n: usize, edges: Vec<(u16, u16)>) -> Ebm {
         // Endpoints are u16 while `n` is usize, so an n past the u16 space means a caller narrowing
         // its own indices aliases them and builds a DIFFERENT GRAPH without error: every truncated
@@ -513,6 +517,10 @@ impl Dtm {
 
 /// The ACP (autocorrelation-penalty) controller update law (DTM paper, Appendix H):
 /// eps = 0.03, delta = 0.2, `lambda_min` = 1e-4 are the published defaults.
+///
+/// # Panics
+///
+/// If `k` is not below the number of sites.
 #[must_use]
 pub fn acp_update(
     lambda: f64,
@@ -538,6 +546,10 @@ pub fn acp_update(
 }
 
 /// Normalized autocorrelation of a series at lag k (time-average estimator).
+///
+/// # Panics
+///
+/// If the lag `k` is not shorter than the series.
 #[must_use]
 pub fn autocorr(series: &[f64], k: usize) -> f64 {
     let n = series.len();

@@ -217,6 +217,11 @@ impl core::fmt::Display for Error {
 /// exact genus-`g` algorithm exists and needs modular arithmetic over a nested-dissection solve;
 /// the 2026 survey of toroidal max-cut offers a heuristic and this same relaxation as the upper
 /// bound. Nothing here claims otherwise.
+///
+/// # Errors
+///
+/// [`Error::HasFields`], [`Error::NotIntegral`] for a weight that is not whole after scaling, or
+/// [`Error::NotEmbeddable`] carrying the reason.
 pub fn bound_on_surface(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, Error> {
     solve_inner(g, emb, p)
 }
@@ -242,6 +247,12 @@ pub struct SurfaceBound {
 }
 
 /// Solve max-cut exactly on a planar graph.
+///
+/// # Errors
+///
+/// As `bound_on_surface`, plus [`Error::NoMatching`], [`Error::NotACut`] and
+/// [`Error::Disagreement`] -- the three self-checks, reported rather than unwrapped so a bug here
+/// surfaces as a refusal instead of a wrong number.
 pub fn solve(g: &Graph, p: &Params) -> Result<Outcome, Error> {
     if g.n == 0 {
         return Ok(Outcome { state: Vec::new(), cut: 0.0, energy: 0.0, faces: 0, odd_faces: 0 });

@@ -84,6 +84,10 @@ pub fn run(g: &Graph, variant: Variant, n_steps: usize, dt: f64, seed: u64) -> (
 }
 
 /// Multi-restart wrapper: `restarts` seeded runs, best result kept.
+///
+/// # Panics
+///
+/// If the graph has more than 20 spins, since the exact comparison enumerates them.
 #[must_use]
 pub fn run_restarts(
     g: &Graph,

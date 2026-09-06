@@ -41,6 +41,10 @@ use crate::graph::Graph;
 ///
 /// A theorem for every `m`, so a caller may pass anything; [`naive_mean_field`] passes the fixed
 /// point, where it is tightest. Entropy terms use `x ln x → 0` at the endpoints.
+///
+/// # Panics
+///
+/// If `m` is not one magnetisation per node.
 #[must_use]
 pub fn gibbs_bogoliubov(g: &Graph, beta: f64, m: &[f64]) -> f64 {
     assert_eq!(m.len(), g.n);
@@ -184,6 +188,11 @@ impl Bethe {
 ///   Z_i  = Σ_s exp(β H_i s),                       H_i = h_i + Σ_{k∈∂i} u_{k→i}
 ///   Z_ij = Σ_{s,t} exp(β(J_ij s t + H_i^{∖j} s + H_j^{∖i} t)),   H_i^{∖j} = H_i − u_{j→i}.
 /// ```
+///
+/// # Panics
+///
+/// If the adjacency is not symmetric, which would mean the graph was not built by
+/// [`crate::graph::GraphBuilder`].
 #[must_use]
 pub fn belief_propagation(g: &Graph, beta: f64, iters: usize, damping: f64) -> Bethe {
     let ne = g.nbr.len();

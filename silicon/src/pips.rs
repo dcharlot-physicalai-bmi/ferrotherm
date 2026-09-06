@@ -64,6 +64,10 @@ pub struct PipDb {
 
 impl PipDb {
     /// Parse a `tile_type_*.json`.
+    ///
+    /// # Errors
+    ///
+    /// A message when the database is not the JSON shape a `*.json` PIP file has.
     pub fn parse(text: &str) -> Result<PipDb, String> {
         let j = parse(text)?;
         let tile_type = j.get("tile_type").and_then(super::json::Json::as_str).unwrap_or("").to_string();

@@ -109,6 +109,10 @@ fn enumerate_moments(g: &Graph, task: &Task, x: &[i8], target: &[i8], nudge: f64
 
 /// The exact gradient `d⟨ℓ⟩₀/dθ` by enumeration: the covariances of the loss with the sufficient
 /// statistics under the free distribution.
+///
+/// # Panics
+///
+/// If the graph has more than 20 spins, since the exact gradient enumerates them.
 pub fn exact_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8]) -> Gradient {
     assert!(g.n <= 20);
     let pairs = pairs_of(g);
@@ -161,6 +165,10 @@ pub fn eqprop_gradient_exact(g: &Graph, task: &Task, x: &[i8], target: &[i8], be
 
 /// The nudged graph: `E + β ℓ` is `E` with `β t_o / 2` added to each output bias (the constant
 /// drops out), so nudging is a field the sampler already understands.
+///
+/// # Panics
+///
+/// If `target` does not cover the task's outputs.
 #[must_use]
 pub fn nudged(g: &Graph, task: &Task, target: &[i8], beta: f64) -> Graph {
     let mut gb = GraphBuilder::new(g.n);
@@ -223,6 +231,10 @@ pub fn eqprop_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f6
 }
 
 /// Apply a gradient step `θ ← θ − η ∇`, returning the new graph.
+///
+/// # Panics
+///
+/// If the gradient was computed for a different graph, so its pairs do not index this one.
 #[must_use]
 pub fn step(g: &Graph, grad: &Gradient, eta: f64) -> Graph {
     let mut gb = GraphBuilder::new(g.n);

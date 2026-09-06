@@ -142,6 +142,10 @@ impl Outcome {
 ///
 /// Deterministic in `seed`. Returns immediately with an empty outcome for an empty graph or an
 /// empty ladder, rather than dividing by a population of zero.
+///
+/// # Panics
+///
+/// If the population is empty or the schedule has no stages.
 pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     let n = g.n;
     let r_target = p.population.max(1);

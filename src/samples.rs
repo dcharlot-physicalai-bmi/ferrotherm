@@ -479,28 +479,49 @@ impl SampleSet {
     }
 
     /// `<E>`.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`] when the states came from a search rather than a sampler, so
+    /// they are distributed by nothing and an average over them estimates nothing.
     pub fn mean_energy(&self) -> Result<Estimate, Refused> {
         let e = self.energies.clone();
         self.estimate_from(&e)
     }
 
     /// `<s_i>`, in `[-1, 1]`. Multiply by `0.5` and add `0.5` for `P(s_i = +1)`.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`], as [`SampleSet::mean_energy`].
     pub fn mean_spin(&self, i: usize) -> Result<Estimate, Refused> {
         self.expectation(|s| s[i] as f64)
     }
 
     /// Every `<s_i>` at once, with each site's own autocorrelation.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`], as [`SampleSet::mean_energy`].
     pub fn marginals(&self) -> Result<Vec<Estimate>, Refused> {
         (0..self.n).map(|i| self.mean_spin(i)).collect()
     }
 
     /// `<s_i s_j>`. This and [`Self::mean_spin`] are the two moments contrastive divergence
     /// matches; see [`crate::ebm`].
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`], as [`SampleSet::mean_energy`].
     pub fn correlation(&self, i: usize, j: usize) -> Result<Estimate, Refused> {
         self.expectation(|s| (s[i] * s[j]) as f64)
     }
 
     /// `(1/n) * sum_i <s_i>`, the order parameter.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`], as [`SampleSet::mean_energy`].
     pub fn magnetization(&self) -> Result<Estimate, Refused> {
         let n = self.n as f64;
         self.expectation(move |s| s.iter().map(|&v| v as f64).sum::<f64>() / n)
@@ -510,6 +531,10 @@ impl SampleSet {
     ///
     /// The autocorrelation is measured on this observable's own trace, so the error bar is the one
     /// that belongs to this quantity rather than a shared summary.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`], as [`SampleSet::mean_energy`].
     pub fn expectation<F: Fn(&[i8]) -> f64>(&self, f: F) -> Result<Estimate, Refused> {
         let vals: Vec<f64> = self.states.iter().map(|s| f(s)).collect();
         self.estimate_from(&vals)
@@ -578,6 +603,11 @@ impl SampleSet {
     /// [`crate::certify::certify`] directly produces a certificate whose two headline numbers are
     /// computed from an ordering that means nothing — which is worse than no certificate, because
     /// it looks like one.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotDistributional`] for search output, and [`Refused::NotAChain`] for anything
+    /// whose provenance is not a chain -- only a chain has an autocorrelation time to certify.
     pub fn certificate(&self, g: &Graph) -> Result<Certificate, Refused> {
         match self.prov {
             Provenance::Chain { beta, .. } => {
@@ -601,6 +631,10 @@ pub const ENUMERATION_LIMIT: usize = 20;
 /// This is the oracle: expectation values taken from it are exact, and their standard error is
 /// zero because nothing was sampled. It is what the sampled sets in this module's tests are
 /// checked against.
+///
+/// # Errors
+///
+/// [`Refused::TooLargeToEnumerate`] past the exact limit, since enumeration visits `2^n` states.
 pub fn enumerate(g: &Graph, beta: f64) -> Result<SampleSet, Refused> {
     if g.n > ENUMERATION_LIMIT {
         return Err(Refused::TooLargeToEnumerate { spins: g.n, limit: ENUMERATION_LIMIT });

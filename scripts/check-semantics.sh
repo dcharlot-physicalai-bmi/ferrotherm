@@ -96,6 +96,9 @@ JS
 # ---- rust: the reference -----------------------------------------------------------------------
 mkdir -p examples
 cat > examples/_sem.rs <<'RS'
+// The workspace denies `missing_docs`, and this generated example is a program with no API
+// surface for that lint to guard -- same reason every checked-in example carries the allow.
+#![allow(missing_docs)]
 fn main() {
     use ferrotherm::encode::Encoding;
     use ferrotherm::model::{Expr, Lit, Model, Sense};

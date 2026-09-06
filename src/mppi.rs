@@ -175,6 +175,10 @@ impl Mppi {
     ///
     /// `nominal` is warm-started from the previous solve in a real loop, which is what makes MPPI
     /// work at all: a cold start every step throws away the search that the last step paid for.
+    ///
+    /// # Panics
+    ///
+    /// If `nominal` is not the horizon length.
     pub fn action(&self, s: &System, x: f64, nominal: &mut [f64], rng: &mut Pcg) -> f64 {
         assert_eq!(nominal.len(), self.horizon, "nominal must cover the horizon");
         for _ in 0..self.iters.max(1) {

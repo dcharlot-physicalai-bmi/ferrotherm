@@ -49,12 +49,6 @@ jobs:
         run: rustup toolchain install $(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2) --profile minimal
       - name: The crate builds on the minimum toolchain it advertises
         run: scripts/check-msrv.sh
-      # The lint families that are real, large, and not honestly closable in a sitting. Denied lints
-      # are already zero by construction (clippy runs at -D warnings below); these are counted, and
-      # the count may only fall. --selftest first, because a ratchet that cannot fire is a file
-      # nobody reads.
-      - name: Tracked lint families have not grown
-        run: scripts/check-lints.sh --selftest && scripts/check-lints.sh
       - name: Every C ABI symbol reaches every binding, or the gap is written down
         # --selftest first. This gate discovered symbols by grepping for `pub extern "C" fn`, which
         # cannot see the twelve certificate accessors a macro generates -- so twelve exports were

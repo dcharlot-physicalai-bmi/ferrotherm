@@ -80,6 +80,10 @@ impl HetBuilder {
         (self.kinds.len() - 1) as u32
     }
     /// Add a factor over `nodes` with the given energy table (row-major over their state spaces).
+    ///
+    /// # Panics
+    ///
+    /// If the table length is not the product of the nodes' state counts.
     pub fn factor(&mut self, nodes: Vec<u32>, table: Vec<f64>) {
         let want: usize = nodes.iter().map(|&n| self.kinds[n as usize].states()).product();
         assert_eq!(table.len(), want, "table length {} != product of state spaces {}", table.len(), want);
@@ -197,6 +201,10 @@ impl<'g> HetSampler<'g> {
     }
 
     /// Hold node `i` at state index `k` until it is unclamped; sweeps skip it.
+    ///
+    /// # Panics
+    ///
+    /// If `k` is not a state this node has.
     pub fn clamp(&mut self, i: usize, k: u8) {
         assert!((k as usize) < self.g.kinds[i].states());
         self.state[i] = k;
@@ -256,6 +264,10 @@ impl<'g> HetSampler<'g> {
 
 /// Exact Boltzmann distribution over all joint states (small systems), indexed mixed-radix
 /// big-endian in node order (node 0 is the highest digit, matching factor-table convention).
+///
+/// # Panics
+///
+/// If the product of the state spaces exceeds `2^22`, which is the enumeration limit.
 #[must_use]
 pub fn exact_boltzmann(g: &HetGraph, beta: f64) -> Vec<f64> {
     let dims: Vec<usize> = (0..g.n()).map(|i| g.kinds[i].states()).collect();

@@ -49,6 +49,10 @@ impl GraphBuilder {
     }
 
     /// Add an undirected coupling `J_ij`. Duplicate pairs are summed at build time.
+    ///
+    /// # Panics
+    ///
+    /// If either index is past the node count, or they are equal -- a self-coupling is a constant.
     pub fn couple(&mut self, i: usize, j: usize, jij: f64) {
         assert!(i < self.n && j < self.n && i != j, "bad edge ({i},{j}) n={}", self.n);
         self.edges.push((i as u32, j as u32, jij));

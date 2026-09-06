@@ -188,6 +188,11 @@ const PEGASUS_OFF: [[usize; 12]; 2] = [
 /// [`crate::fabric`] ask.
 ///
 /// Returns an empty topology for `m < 2`, matching the reference: `P₁` has no qubits.
+///
+/// # Panics
+///
+/// Never for a valid `m`: the offset lists are twelve entries by construction, and the `expect`
+/// calls guard that rather than user input.
 #[must_use]
 pub fn pegasus(m: usize, j: f64) -> Topology {
     if m < 2 {

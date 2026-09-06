@@ -283,6 +283,14 @@ pub fn scaled(g: &Graph, scale: f64) -> Graph {
 ///
 /// Returns the best state found under the ORIGINAL model — that is, at `scale = 1`, which must be
 /// one of `scales` or the answer is about a model the caller did not ask about.
+///
+/// # Errors
+///
+/// A message naming the axis whose bounds are not a usable range.
+///
+/// # Panics
+///
+/// If either axis has fewer than two rungs, or its bounds are not an increasing positive range.
 pub fn adapt_2d(
     g: &Graph,
     betas: &[f64],

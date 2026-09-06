@@ -222,6 +222,11 @@ impl<'a> Reader<'a> {
     /// old decoder had and that this module exists to remove. Clippy flags the name collision, and
     /// it is right to -- a reader whose failure mode is a truncated-looking success should not wear
     /// the clothes of one that cannot fail.
+    ///
+    /// # Errors
+    ///
+    /// A [`WireError`] carrying the byte offset: a truncated field, a non-canonical varint, a length
+    /// that cannot be a length here, a group or unknown wire type, or field number zero.
     pub fn read_field(&mut self) -> Result<Option<Field<'a>>, WireError> {
         if self.i >= self.b.len() {
             return Ok(None);
@@ -316,6 +321,10 @@ fn read_varint(b: &[u8], start: usize) -> Result<(u64, usize), WireError> {
 /// The old version was `while let Some(..)`, which stopped at the first bad byte and returned what it
 /// had — so a corrupt packed array silently became a shorter valid one. Same fault as the
 /// message-level `Option`, one level down.
+///
+/// # Errors
+///
+/// [`WireError::Truncated`] or [`WireError::VarintNotCanonical`], each with its offset.
 pub fn packed_varints(p: &[u8]) -> Result<Vec<u64>, WireError> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -332,6 +341,10 @@ pub fn packed_varints(p: &[u8]) -> Result<Vec<u64>, WireError> {
 /// A packed `double` array is a whole number of eight-byte groups by construction; a trailing
 /// remainder means the bytes are not what they claim to be, and a chunking iterator would have
 /// dropped it without a word.
+///
+/// # Errors
+///
+/// [`WireError::Truncated`] when the payload is not a whole number of eight-byte doubles.
 pub fn packed_doubles(p: &[u8]) -> Result<Vec<f64>, WireError> {
     if !p.len().is_multiple_of(8) {
         return Err(WireError::Truncated { at: p.len() - (p.len() % 8), needed: 8 - (p.len() % 8) });

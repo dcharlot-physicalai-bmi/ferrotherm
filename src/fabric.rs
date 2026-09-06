@@ -822,6 +822,11 @@ impl Fabric {
     /// topology allows is placed as a CHAIN of physical sites, and whether such a placement exists
     /// is minor embedding — NP-hard, and dependent on the program's structure rather than on any
     /// number a fabric can declare. Returning an empty violation list there would be read as a yes.
+    ///
+    /// # Errors
+    ///
+    /// Every way the program exceeds the fabric, collected rather than the first -- one round of
+    /// fixes should not surface the next refusal.
     pub fn verdict(&self, p: &Program) -> Result<Verdict, Vec<Unsupported>> {
         let bad = self.check(p);
         if !bad.is_empty() {
@@ -1006,6 +1011,11 @@ impl Fabric {
     ///
     /// Explicit by design. A fabric that quantises silently is answering a different question than
     /// the one it was asked, and the caller is the last to find out.
+    ///
+    /// # Panics
+    ///
+    /// Never on a program built by this crate: the rewritten factors have the same variables as the
+    /// ones they replace.
     pub fn requantize(&self, p: &mut Program) -> f64 {
         // Only fixed point actually moves a coefficient onto a grid. Floating point rounds it in
         // the last significand bits, which is not something to do here on the caller's behalf, and
@@ -1051,6 +1061,10 @@ pub trait Device {
     fn program(&mut self, p: &Program) -> Vec<Unsupported>;
 
     /// Run a schedule and return the final state.
+    ///
+    /// # Errors
+    ///
+    /// A message from the backend when the run could not be made.
     fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String>;
 
     /// Operations charged so far, for the ledger.

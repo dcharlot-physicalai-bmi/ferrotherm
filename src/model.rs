@@ -166,6 +166,10 @@ impl Index {
     ///
     /// The shape a cardinality constraint is usually over — "exactly one shift per worker" — and
     /// writing it by hand is where the index arithmetic goes wrong.
+    ///
+    /// # Panics
+    ///
+    /// If `prefix` is not one shorter than the grid's dimension count, or indexes outside it.
     #[must_use]
     pub fn row(&self, prefix: &[usize]) -> Vec<Var> {
         assert!(
@@ -190,6 +194,10 @@ impl Index {
         out
     }
     /// One column of the first dimension: `a.column(&[s])` is every worker for shift `s`.
+    ///
+    /// # Panics
+    ///
+    /// If `suffix` is not one shorter than the grid's dimension count, or indexes outside it.
     #[must_use]
     pub fn column(&self, suffix: &[usize]) -> Vec<Var> {
         assert!(
@@ -932,6 +940,10 @@ impl Model {
     /// and loses the shape: nothing downstream knows those variables were a grid, and an off-by-one
     /// in the index arithmetic is silent. `JijModeling`'s indexed variables are the idea; this is the
     /// same idea with the bounds checked.
+    ///
+    /// # Panics
+    ///
+    /// If `dims` is empty.
     pub fn grid(
         &mut self,
         name: &str,
@@ -972,6 +984,10 @@ impl Model {
     }
 
     /// A `k`-valued variable, one-hot by default so it may appear in expressions.
+    ///
+    /// # Panics
+    ///
+    /// If `k` is below 2 -- a variable with fewer than two values is a constant.
     pub fn categorical(&mut self, name: &str, k: usize) -> Var {
         assert!(k >= 2, "a variable with fewer than two values is a constant");
         self.declare(name, Domain::Categorical(k), Encoding::OneHot)
@@ -982,6 +998,10 @@ impl Model {
     /// Domain-wall costs one fewer spin and a linear rather than quadratic penalty, and tolerates a
     /// penalty about three times weaker — but a variable encoded that way may only appear in
     /// constraints, not in expressions. [`Model::compile`] enforces that rather than discovering it.
+    ///
+    /// # Panics
+    ///
+    /// If `k` is below 2.
     pub fn categorical_as(&mut self, name: &str, k: usize, encoding: Encoding) -> Var {
         assert!(k >= 2);
         self.declare(name, Domain::Categorical(k), encoding)
@@ -994,12 +1014,20 @@ impl Model {
     /// one-hot makes every pair two flips apart. It also costs `k-1` spins instead of `k`. The
     /// default stays one-hot because only a one-hot indicator is linear in the spins, so only a
     /// one-hot variable can appear in an objective — see [`CompileError::NeedsOneHot`].
+    ///
+    /// # Panics
+    ///
+    /// If `hi` is not above `lo`.
     pub fn integer_as(&mut self, name: &str, lo: i64, hi: i64, encoding: Encoding) -> Var {
         assert!(hi > lo, "an integer range needs at least two values");
         self.declare(name, Domain::Integer { lo, hi }, encoding)
     }
 
     /// An integer in `lo..=hi`.
+    ///
+    /// # Panics
+    ///
+    /// If `hi` is not above `lo`.
     pub fn integer(&mut self, name: &str, lo: i64, hi: i64) -> Var {
         assert!(hi > lo, "an integer range needs at least two values");
         self.declare(name, Domain::Integer { lo, hi }, Encoding::OneHot)
@@ -1007,6 +1035,10 @@ impl Model {
 
     /// The handle for the `i`-th declared variable, for callers that track variables by position
     /// rather than by handle — an FFI, or a node graph that already has its own names.
+    ///
+    /// # Panics
+    ///
+    /// If there is no variable at that index.
     #[must_use]
     pub fn var_at(&self, i: usize) -> Var {
         assert!(i < self.decls.len(), "no variable at index {i}");
@@ -1149,6 +1181,10 @@ impl Model {
     /// The weight is absolute, not scaled. Automatic scaling exists to stop a hard constraint
     /// being outbid by the objective; a soft constraint is *meant* to be traded against it, so
     /// scaling it would defeat the point.
+    ///
+    /// # Panics
+    ///
+    /// If the weight is not finite and positive. A soft constraint needs a price.
     pub fn soft(&mut self, c: Constraint, weight: f64) -> &mut Self {
         assert!(weight.is_finite() && weight > 0.0, "a soft constraint needs a positive price");
         self.constraints.push((c, weight, false));
@@ -1275,6 +1311,11 @@ impl Model {
     ///
     /// So by default the penalty is `max(model.penalty, 2 × largest objective coefficient)`. Call
     /// [`Model::fixed_penalty`] to take that decision yourself.
+    ///
+    /// # Errors
+    ///
+    /// A [`CompileError`] naming the variable, row or coefficient at fault. Every variant is a refusal
+    /// to lower something that would otherwise produce a confident, feasible-looking, wrong answer.
     pub fn compile(&self) -> Result<Compiled, CompileError> {
         if self.decls.is_empty() {
             return Err(CompileError::Empty);
@@ -2929,6 +2970,10 @@ impl Solution {
     ///
     /// Panics if the variable did not decode, and says which of the two things went wrong —
     /// an unknown name is a typo, a variable in `invalid` is an under-weighted penalty.
+    ///
+    /// # Panics
+    ///
+    /// If the solution has no variable of that name. Use [`Solution::get`] to ask without asserting.
     #[must_use]
     pub fn value(&self, name: &str) -> i64 {
         if let Some(v) = self.values.get(name) {

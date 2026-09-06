@@ -123,6 +123,10 @@ pub struct Gbm {
 
 impl Gbm {
     /// A purely continuous model.
+    ///
+    /// # Panics
+    ///
+    /// If `a` is not `n * n` or `b` is not `n` long.
     #[must_use]
     pub fn gaussian(n: usize, a: Vec<f64>, b: Vec<f64>) -> Gbm {
         assert_eq!(a.len(), n * n);
@@ -208,6 +212,10 @@ impl Gbm {
     ///
     /// `N(A⁻¹b, (βA)⁻¹)` and `ln Z = (β/2) bᵀA⁻¹b + (n/2) ln(2π/β) − ½ ln det A`. `None` when `A` is
     /// not positive definite.
+    ///
+    /// # Panics
+    ///
+    /// If the model has spins. Use [`Gbm::exact_log_z`], which enumerates them.
     #[must_use]
     pub fn exact_gaussian(&self, beta: f64) -> Option<(Vec<f64>, Vec<f64>, f64)> {
         assert_eq!(self.n_spin, 0, "use exact_log_z when there are spins");
@@ -224,6 +232,10 @@ impl Gbm {
     ///
     /// For each spin state the `x` integral is Gaussian with `b → b + Cs`, so the whole partition
     /// function is a finite sum of exact terms. Refuses above 20 spins.
+    ///
+    /// # Panics
+    ///
+    /// If the model has more than 20 spins, since this enumerates all `2^m` of them.
     pub fn exact_log_z(&self, beta: f64) -> Option<f64> {
         let (n, m) = (self.n_real, self.n_spin);
         assert!(m <= 20, "enumeration refuses {m} spins");
@@ -613,6 +625,12 @@ impl ContinuousEbm {
     ///
     /// The oracle for everything above. Exact to the grid, and refused above three units because
     /// `grid^n` is what it costs — an answer that takes a week is not an oracle.
+    ///
+    /// # Panics
+    ///
+    /// If the model has more than three units -- a product rule costs `grid^n` -- or `grid` is below 2.
+    /// [`ContinuousEbm::eliminate_log_z`] is the way past that, and the bound there is the induced
+    /// width rather than `n`.
     pub fn exact_by_quadrature(&self, beta: f64, lo: f64, hi: f64, grid: usize) -> (f64, Vec<f64>) {
         let n = self.n();
         assert!(n <= 3, "quadrature refuses {n} units; it costs grid^n");
@@ -871,6 +889,10 @@ impl ContinuousEbm {
     ///
     /// Requires the couplings to form an open chain: only `W_{i,i+1}` may be non-zero. Returns
     /// `None` otherwise rather than silently pretending the extra couplings are not there.
+    ///
+    /// # Panics
+    ///
+    /// If `grid` is below 2, which is not a discretisation.
     pub fn chain_log_z(&self, beta: f64, lo: f64, hi: f64, grid: usize) -> Option<f64> {
         let n = self.n();
         assert!(grid >= 2);
@@ -1178,6 +1200,10 @@ mod nonlinear_tests {
 ///
 /// `J = mean over data of ( ½‖Ax − b‖² − tr A )`. Lower is better; the minimiser is
 /// [`score_match_gaussian`].
+///
+/// # Panics
+///
+/// If the model has spins: this is the objective for the continuous part.
 #[must_use]
 pub fn score_matching_objective(g: &Gbm, data: &[Vec<f64>]) -> f64 {
     assert_eq!(g.n_spin, 0, "score matching here is for the continuous part");
@@ -1247,6 +1273,10 @@ pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
 ///
 /// which the test verifies by generating from a known `Σ` and recovering it. `None` on the same
 /// condition as [`score_match_gaussian`].
+///
+/// # Panics
+///
+/// If `sigma` is negative. A noise level of zero is allowed and reduces to plain score matching.
 #[must_use]
 pub fn denoising_score_match_gaussian(data: &[Vec<f64>], sigma: f64) -> Option<Gbm> {
     assert!(sigma >= 0.0, "a noise level is not negative");

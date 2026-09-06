@@ -81,6 +81,10 @@ impl Embedding {
     /// **before** `u` in `v`'s rotation. Every dart belongs to exactly one face, so the traces
     /// partition the `2E` darts — which is what makes the Euler check below meaningful rather than
     /// circular.
+    ///
+    /// # Panics
+    ///
+    /// If the embedding is not a valid rotation system, so some dart has no reverse.
     #[must_use]
     pub fn faces(&self) -> Vec<Vec<(usize, usize)>> {
         let mut seen: Vec<Vec<bool>> = self.adj.iter().map(|a| vec![false; a.len()]).collect();

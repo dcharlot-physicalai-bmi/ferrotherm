@@ -64,6 +64,11 @@ pub struct FixedFabric {
 impl FixedFabric {
     /// Quantize a graph at inverse temperature `beta` into the fabric. Panics unless the
     /// coloring is exactly two classes (the lattice / device-topology case v1 targets).
+    ///
+    /// # Panics
+    ///
+    /// If the graph is not bipartite. The v1 fabric updates two colour classes and has nowhere to put
+    /// a third.
     #[must_use]
     pub fn new(g: &Graph, beta: f64, seed: u64) -> FixedFabric {
         assert_eq!(g.classes.len(), 2, "v1 fabric requires a bipartite (2-colorable) graph");

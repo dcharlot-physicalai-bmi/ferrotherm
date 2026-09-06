@@ -39,6 +39,10 @@ pub enum Encoding {
 
 impl Encoding {
     /// Spins needed for a `k`-valued variable.
+    ///
+    /// # Panics
+    ///
+    /// If `k` is below 2 -- a variable with fewer than two values is a constant.
     #[must_use]
     pub fn spins(&self, k: usize) -> usize {
         assert!(k >= 2, "a variable with fewer than 2 values is a constant");
@@ -86,6 +90,10 @@ pub struct Slot {
 impl Slot {
     #[must_use]
     /// A slot of `k` spins starting at `base`, read under `encoding`.
+    ///
+    /// # Panics
+    ///
+    /// If `k` is below 2.
     pub fn new(base: usize, k: usize, encoding: Encoding) -> Self {
         assert!(k >= 2, "a variable with fewer than 2 values is a constant");
         Slot { base, k, encoding }
@@ -104,6 +112,10 @@ impl Slot {
     }
 
     /// Write `value` into `s` in this encoding.
+    ///
+    /// # Panics
+    ///
+    /// If `value` is outside the variable's range, or `s` is too short for the slot.
     pub fn encode(&self, value: usize, s: &mut [i8]) {
         assert!(value < self.k, "value {value} out of range for a {}-valued variable", self.k);
         let w = self.width();

@@ -431,6 +431,10 @@ impl Kernel {
 /// Build a kernel on a `w x h` patch of the Z1-class device graph. Roles are assigned by site
 /// index from the caller-provided role map; only native device edges survive.
 /// role codes: 0 = off (site unused), 1 = input, 2 = output, 3 = hidden.
+///
+/// # Panics
+///
+/// If `roles` is not `w * h` long.
 #[must_use]
 pub fn patch_kernel(w: usize, h: usize, roles: &[u8], beta: f64, seed: u64) -> Kernel {
     assert_eq!(roles.len(), w * h);

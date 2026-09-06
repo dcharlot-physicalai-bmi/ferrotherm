@@ -129,6 +129,14 @@ impl Gpu {
     /// One dispatch per colour class per sweep, which is what makes the update correct: nodes in a
     /// class share no edge, so they can be resampled simultaneously without any of them reading a
     /// neighbour another lane is writing. Dispatching all nodes at once would be faster and wrong.
+    ///
+    /// # Panics
+    ///
+    /// If the state length does not match the model the device was built from.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the GPU backend returns when a buffer cannot be mapped or the queue is lost.
     pub fn sweep(
         &self,
         m: &GpuModel,
@@ -154,6 +162,14 @@ impl Gpu {
     /// accepted one and ignored it would report reproducibility it does not have -- the caller
     /// varies the seed, gets the same answer every time, and concludes the sampler is confident
     /// rather than deaf.
+    ///
+    /// # Panics
+    ///
+    /// If the state length does not match the model the device was built from.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the GPU backend returns when a buffer cannot be mapped or the queue is lost.
     pub fn sweep_seeded(
         &self,
         m: &GpuModel,

@@ -146,6 +146,13 @@ impl Embedding {
     /// Two properties, and both matter: a chain that is not connected is not one variable, and a
     /// logical edge with no hardware edge between the chains is an interaction the machine cannot
     /// represent. Returns the first failure in words.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the first defect found: an empty chain, a site used twice, a site past the end
+    /// of the machine, a chain that is not connected in the hardware, or a logical edge whose two
+    /// chains never touch. The message names the variables, because a placement that is wrong is only
+    /// actionable if you know where.
     pub fn verify(&self, logical: &Graph, hardware: &Graph) -> Result<(), String> {
         let mut seen = vec![usize::MAX; hardware.n];
         for (v, chain) in self.chains.iter().enumerate() {

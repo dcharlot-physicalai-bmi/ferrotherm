@@ -81,6 +81,10 @@ struct Atom {
 /// which is cheaper; every other row becomes a [`crate::model::Constraint::Linear`], carrying its
 /// coefficients. A fractional coefficient on an inequality, and a row nothing can satisfy, are
 /// refused here rather than at compile time, so the message keeps its line number.
+///
+/// # Errors
+///
+/// [`LpError`] with the line number and what was wrong with it.
 pub fn parse(src: &str) -> Result<Model, LpError> {
     let mut section = Section::None;
     let mut objective: Vec<Atom> = Vec::new();
