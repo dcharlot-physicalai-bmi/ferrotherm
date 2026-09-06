@@ -15,6 +15,19 @@ __version__: str
 
 class Answer:
     """A solved problem, read by name."""
+    agreement: 'tuple[int, int]'
+    ancillas: int
+    caveats: 'list[str]'
+    cost: 'Cost'
+    energy: float
+    feasible: bool
+    objective: 'float | None'
+    penalty: float
+    proved_optimal: bool
+    soft_cost: float
+    spins: int
+    values: 'dict[str, int | None]'
+    violated: 'list[Violation]'
     def __init__(self, **kw: Any) -> None:
         ...
     @property
@@ -24,6 +37,10 @@ class Answer:
 
 class Bounds:
     """Lower bounds on the ground energy. All sound, so :attr:`best` is their maximum."""
+    decoupled: 'float'
+    forest: 'float'
+    odd_cycle: 'float'
+    sdp: "'float | None'"
     def __init__(self, decoupled: float, forest: float, odd_cycle: float, sdp: 'float | None') -> None:
         ...
     @property
@@ -37,16 +54,31 @@ class Bounds:
 
 class BranchResult:
     """What branch and bound found, and whether it proved it."""
+    energy: 'float'
+    nodes: 'int'
+    proved: 'bool'
     def __init__(self, energy: float, proved: bool, nodes: int) -> None:
         ...
 
 class BreakoutRun:
     """A breakout-local-search run, with the evidence that it actually broke out."""
+    descents: 'int'
+    energy: 'float'
+    iterations_run: 'int'
+    max_jump: 'int'
     def __init__(self, energy: float, descents: int, iterations_run: int, max_jump: int) -> None:
         ...
 
 class Certificate:
     """What a run actually did, computed from its samples rather than from its own account."""
+    beta_ci: 'tuple[float, float] | None'
+    beta_eff: float
+    draws: int
+    ess: float
+    findings: 'list[str]'
+    noise_floor: float
+    tau_int: float
+    tv: float
     def __init__(self, **kw: Any) -> None:
         ...
     @property
@@ -55,11 +87,16 @@ class Certificate:
 
 class ClusterRun:
     """A PT+ICM run. ``moves`` is how many cluster moves actually fired — none means the replicas never disagreed, and the move was doing nothing."""
+    energy: 'float'
+    moves: 'int'
     def __init__(self, energy: float, moves: int) -> None:
         ...
 
 class Cost:
     """What a solve actually did, in operations — the receipt that comes back with every answer."""
+    reads: int
+    samples: int
+    writes: int
     def __init__(self, samples: int, reads: int, writes: int) -> None:
         ...
     def joules(self, prices: 'Prices | None' = None) -> 'float | None':
@@ -68,6 +105,10 @@ class Cost:
 
 class Estimate:
     """An expectation value with an error bar that accounts for how correlated the draws were."""
+    ess: 'float'
+    stderr: 'float'
+    tau_int: 'float'
+    value: 'float'
     def __init__(self, value: float, stderr: float, ess: float, tau_int: float) -> None:
         ...
     @property
@@ -78,6 +119,8 @@ class Estimate:
 
 class Grid:
     """A grid of variables, subscripted like an array."""
+    dims: "'tuple[int, ...]'"
+    name: 'str'
     def __init__(self, name: str, dims: 'tuple[int, ...]', vars: 'list[Variable]') -> None:
         ...
     @property
@@ -134,6 +177,8 @@ class Hubo:
 
 class Literal:
     """The claim that one variable takes one value. Multiply it by a number to weight it."""
+    value: 'int'
+    var: "'Variable'"
     def __init__(self, var: 'Variable', value: int) -> None:
         ...
 
@@ -156,11 +201,20 @@ class Model:
 
 class PlanarCut:
     """An **exact** maximum cut on a planar graph. Not the best found — the maximum."""
+    cut: 'float'
+    energy: 'float'
+    faces: 'int'
+    odd_faces: 'int'
     def __init__(self, cut: float, energy: float, faces: int, odd_faces: int) -> None:
         ...
 
 class PopulationRun:
     """A population-annealing run, with the diagnostic that says whether to believe it."""
+    energy: 'float'
+    ln_z: "'float | None'"
+    ln_z_stderr: "'float | None'"
+    population: 'int'
+    rho: 'float'
     def __init__(self, energy: float, ln_z: 'float | None', rho: float, population: int, ln_z_stderr: 'float | None' = None) -> None:
         ...
     def free_energy(self, beta: float, n: int) -> 'float | None':
@@ -173,6 +227,12 @@ class PopulationRun:
 
 class Prices:
     """What one machine charges per operation, and **whose** machine it is."""
+    e_read: float
+    e_sample: float
+    e_write: float
+    name: str
+    reflash_hz_cap: float
+    source: str
     def __init__(self, name: str, e_sample: float, e_read: float, e_write: float, reflash_hz_cap: float, source: str) -> None:
         ...
     @property
@@ -260,6 +320,9 @@ class Problem:
 
 class Rounded:
     """A state rounded out of the semidefinite relaxation, and whether the guarantee covers it."""
+    cut: 'float'
+    energy: 'float'
+    guaranteed: 'bool'
     def __init__(self, cut: float, energy: float, guaranteed: bool) -> None:
         ...
 
@@ -489,6 +552,7 @@ class Sim:
 
 class Term:
     """A piece of an objective. Build these with arithmetic, not by calling the constructor."""
+    parts: "'list[tuple[float, list]]'"
     def __init__(self, parts: 'list[tuple[float, list]]') -> None:
         ...
     @property
@@ -498,11 +562,15 @@ class Term:
 
 class ToroidalBound:
     """An upper bound on the maximum cut of a torus, and whether it is achieved."""
+    attained: 'bool'
+    cut: 'float'
     def __init__(self, cut: float, attained: bool) -> None:
         ...
 
 class Variable:
     """A declared variable. Ask it for a literal with ``is_(value)``."""
+    domain: 'str'
+    name: 'str'
     def __init__(self, problem: 'Problem', index: int, name: str, domain: str) -> None:
         ...
     def is_(self, value: int) -> Literal:
@@ -511,6 +579,9 @@ class Variable:
 
 class Violation:
     """A constraint the answer breaks, and by how much."""
+    by: float
+    detail: str
+    hard: bool
     def __init__(self, detail: str, by: float, hard: bool = True) -> None:
         ...
 

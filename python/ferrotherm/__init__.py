@@ -392,6 +392,11 @@ class Bounds:
 
     __slots__ = ("decoupled", "forest", "odd_cycle", "sdp")
 
+    decoupled: "float"
+    forest: "float"
+    odd_cycle: "float"
+    sdp: "'float | None'"
+
     def __init__(self, decoupled: float, forest: float, odd_cycle: float,
                  sdp: "float | None") -> None:
         self.decoupled, self.forest, self.odd_cycle, self.sdp = decoupled, forest, odd_cycle, sdp
@@ -429,6 +434,11 @@ class PlanarCut:
 
     __slots__ = ("cut", "energy", "faces", "odd_faces")
 
+    cut: "float"
+    energy: "float"
+    faces: "int"
+    odd_faces: "int"
+
     def __init__(self, cut: float, energy: float, faces: int, odd_faces: int) -> None:
         self.cut, self.energy = cut, energy
         self.faces, self.odd_faces = faces, odd_faces
@@ -448,6 +458,9 @@ class ToroidalBound:
 
     __slots__ = ("cut", "attained")
 
+    cut: "float"
+    attained: "bool"
+
     def __init__(self, cut: float, attained: bool) -> None:
         self.cut, self.attained = cut, attained
 
@@ -460,6 +473,10 @@ class Rounded:
     """A state rounded out of the semidefinite relaxation, and whether the guarantee covers it."""
 
     __slots__ = ("cut", "energy", "guaranteed")
+
+    cut: "float"
+    energy: "float"
+    guaranteed: "bool"
 
     def __init__(self, cut: float, energy: float, guaranteed: bool) -> None:
         self.cut, self.energy, self.guaranteed = cut, energy, guaranteed
@@ -474,6 +491,9 @@ class ClusterRun:
     never disagreed, and the move was doing nothing."""
 
     __slots__ = ("energy", "moves")
+
+    energy: "float"
+    moves: "int"
 
     def __init__(self, energy: float, moves: int) -> None:
         self.energy, self.moves = energy, moves
@@ -492,6 +512,11 @@ class BreakoutRun:
 
     __slots__ = ("energy", "descents", "iterations_run", "max_jump")
 
+    energy: "float"
+    descents: "int"
+    iterations_run: "int"
+    max_jump: "int"
+
     def __init__(self, energy: float, descents: int, iterations_run: int, max_jump: int) -> None:
         self.energy, self.descents = energy, descents
         self.iterations_run, self.max_jump = iterations_run, max_jump
@@ -509,6 +534,10 @@ class BranchResult:
     """
 
     __slots__ = ("energy", "proved", "nodes")
+
+    energy: "float"
+    proved: "bool"
+    nodes: "int"
 
     def __init__(self, energy: float, proved: bool, nodes: int) -> None:
         self.energy, self.proved, self.nodes = energy, proved, nodes
@@ -538,6 +567,12 @@ class PopulationRun:
     """
 
     __slots__ = ("energy", "ln_z", "ln_z_stderr", "rho", "population")
+
+    energy: "float"
+    ln_z: "'float | None'"
+    ln_z_stderr: "'float | None'"
+    rho: "float"
+    population: "int"
 
     def __init__(self, energy: float, ln_z: "float | None", rho: float, population: int,
                  ln_z_stderr: "float | None" = None) -> None:
@@ -572,6 +607,11 @@ class Estimate:
     """
 
     __slots__ = ("value", "stderr", "ess", "tau_int")
+
+    value: "float"
+    stderr: "float"
+    ess: "float"
+    tau_int: "float"
 
     def __init__(self, value: float, stderr: float, ess: float, tau_int: float) -> None:
         self.value, self.stderr, self.ess, self.tau_int = value, stderr, ess, tau_int
@@ -684,6 +724,15 @@ class Certificate:
     """
 
     __slots__ = ("draws", "beta_eff", "beta_ci", "tau_int", "ess", "tv", "noise_floor", "findings")
+
+    draws: int
+    beta_eff: float
+    beta_ci: "tuple[float, float] | None"
+    tau_int: float
+    ess: float
+    tv: float
+    noise_floor: float
+    findings: "list[str]"
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -1969,6 +2018,8 @@ class Term:
 
     __slots__ = ("parts",)
 
+    parts: "'list[tuple[float, list]]'"
+
     def __init__(self, parts: "list[tuple[float, list]]") -> None:
         self.parts = parts
 
@@ -2019,6 +2070,9 @@ class Literal:
     """The claim that one variable takes one value. Multiply it by a number to weight it."""
 
     __slots__ = ("var", "value")
+
+    var: "'Variable'"
+    value: "int"
 
     def __init__(self, var: "Variable", value: int) -> None:
         self.var, self.value = var, value
@@ -2093,6 +2147,9 @@ class Variable:
 
     __slots__ = ("_problem", "_index", "name", "domain")
 
+    name: "str"
+    domain: "str"
+
     def __init__(self, problem: "Problem", index: int, name: str, domain: str) -> None:
         self._problem, self._index, self.name, self.domain = problem, index, name, domain
 
@@ -2112,6 +2169,10 @@ class Violation:
     """
 
     __slots__ = ("detail", "by", "hard")
+
+    detail: str
+    by: float
+    hard: bool
 
     def __init__(self, detail: str, by: float, hard: bool = True) -> None:
         self.detail, self.by, self.hard = detail, float(by), bool(hard)
@@ -2135,6 +2196,9 @@ class Grid:
     """
 
     __slots__ = ("name", "dims", "_vars")
+
+    name: "str"
+    dims: "'tuple[int, ...]'"
 
     def __init__(self, name: str, dims: "tuple[int, ...]", vars: "list[Variable]") -> None:
         self.name, self.dims, self._vars = name, tuple(dims), vars
@@ -2206,6 +2270,13 @@ class Prices:
 
     __slots__ = ("name", "e_sample", "e_read", "e_write", "reflash_hz_cap", "source")
 
+    name: str
+    e_sample: float
+    e_read: float
+    e_write: float
+    reflash_hz_cap: float
+    source: str
+
     def __init__(self, name: str, e_sample: float, e_read: float, e_write: float,
                  reflash_hz_cap: float, source: str) -> None:
         self.name = name
@@ -2264,6 +2335,10 @@ class Cost:
     """
 
     __slots__ = ("samples", "reads", "writes")
+
+    samples: int
+    reads: int
+    writes: int
 
     def __init__(self, samples: int, reads: int, writes: int) -> None:
         self.samples = samples
@@ -2346,6 +2421,23 @@ class Answer:
 
     __slots__ = ("values", "feasible", "energy", "objective", "proved_optimal", "spins", "penalty",
                  "violated", "soft_cost", "ancillas", "caveats", "cost", "agreement")
+
+    # Annotated as well as slotted, so the generated stub can describe them. `__slots__` carries no
+    # types, and a bare annotation carries a type without creating a class attribute -- so the two
+    # compose, and `answer.enrgy` becomes a type error rather than an AttributeError at runtime.
+    values: "dict[str, int | None]"
+    feasible: bool
+    energy: float
+    objective: "float | None"
+    proved_optimal: bool
+    spins: int
+    penalty: float
+    violated: "list[Violation]"
+    soft_cost: float
+    ancillas: int
+    caveats: "list[str]"
+    cost: "Cost"
+    agreement: "tuple[int, int]"
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:

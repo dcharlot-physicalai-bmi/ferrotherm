@@ -144,6 +144,20 @@ def build():
         doc = summary(c)
         if doc:
             out.append(f'    """{doc}"""')
+        # Class-level annotations, which is how a `__slots__` class declares its attributes.
+        #
+        # Without these the stub described `Answer` -- the class every caller reads results from --
+        # with an `__init__(**kw)` and one property. Nothing said `answer.energy` exists, so a type
+        # checker could not catch `answer.enrgy`, and completion offered nothing. `__slots__` alone
+        # carries no types; a bare annotation carries the type without creating a class attribute,
+        # so the two compose.
+        annotated = getattr(c, "__annotations__", {})
+        for m in sorted(annotated):
+            if m.startswith("_"):
+                continue
+            a = annotated[m]
+            out.append(f"    {m}: {a if isinstance(a, str) else render_annotation(a) or 'Any'}")
+
         members = []
         for m, v in sorted(vars(c).items()):
             if m.startswith("_") and m != "__init__":
@@ -152,7 +166,7 @@ def build():
                 members.append((m, v.fget, True))
             elif inspect.isfunction(v):
                 members.append((m, v, False))
-        if not members:
+        if not members and not annotated:
             out.append("    ...")
         for m, v, is_prop in members:
             emit_callable(m, v, "    ", out, is_prop)

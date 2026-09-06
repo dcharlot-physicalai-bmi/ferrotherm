@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### The type stub described `Answer` in two lines
+
+The same blind spot as `__all__`, one level down. `gen-stubs.py` emitted properties and methods but
+not attributes, and every result class in this package is `__slots__`-based — so `Answer`, the class
+every caller reads results from, was described by an `__init__(**kw)` and one property. Nothing said
+`answer.energy` exists, `answer.enrgy` was not a type error, and completion offered nothing. Across
+15 classes, **46 attributes** were undescribed: `certificate.beta_eff`, `bounds.best`,
+`variable.domain`, all of them.
+
+`__slots__` carries no types and a bare annotation carries a type without creating a class
+attribute, so the two compose. The result classes are annotated beside their slots — the types taken
+from each class's own constructor rather than guessed — and the generator emits them. The stub went
+from 578 to 649 lines describing the same library.
+
+And the hole is closed rather than filled: `_all_covers_module.py` now also requires every public
+slot to carry an annotation, so a slot added without one fails the gate instead of quietly vanishing
+from both files the byte comparison reads. Both rules have selftests.
+
 ### An annealed answer now says how much of the search agreed with it
 
 `proved_optimal` is only ever set by branch and bound, so for the method a caller actually reaches

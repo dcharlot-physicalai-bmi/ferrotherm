@@ -41,6 +41,31 @@ def missing_from_all(namespace, declared):
     return out
 
 
+def unannotated_slots(namespace, declared):
+    """Exported classes whose ``__slots__`` carry attributes no annotation describes.
+
+    The second half of the same hole. ``gen-stubs.py`` now emits class-level annotations, which is
+    how a ``__slots__`` class declares its attributes — but ``__slots__`` alone carries no types, so
+    a slot added without an annotation is missing from the stub and from the freshly generated one
+    alike, and the byte comparison agrees about a class neither describes. That is exactly how
+    ``Answer`` came to be documented by an ``__init__(**kw)`` and one property, with nothing saying
+    ``answer.energy`` exists.
+    """
+    out = []
+    for name in sorted(declared):
+        obj = namespace.get(name)
+        if not inspect.isclass(obj):
+            continue
+        slots = getattr(obj, "__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        ann = getattr(obj, "__annotations__", {})
+        for s in slots:
+            if not s.startswith("_") and s not in ann:
+                out.append(f"{name}.{s}")
+    return out
+
+
 def _selftest():
     """A rule that cannot fail is the same evidence as no rule."""
     class Kept:
@@ -59,6 +84,15 @@ def _selftest():
     assert missing_from_all(ns, {"Kept", "Forgotten", "TABLE"}) == []
     print("selftest: a public name left out of __all__ is caught, and an imported one is not")
 
+    class Slotted:
+        __slots__ = ("described", "bare", "_private")
+        described: int
+    Slotted.__module__ = "ferrotherm"
+
+    got2 = unannotated_slots({"Slotted": Slotted}, {"Slotted"})
+    assert got2 == ["Slotted.bare"], f"the slot rule reported {got2}"
+    print("selftest: a slot with no annotation is caught, and a private one is not")
+
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
@@ -76,4 +110,12 @@ if __name__ == "__main__":
             print(f"  {n}", file=sys.stderr)
         print("\nadd them to __all__ and rerun scripts/gen-stubs.py", file=sys.stderr)
         raise SystemExit(1)
-    print(f"__all__ covers every public name the module defines ({len(ft.__all__)} of them)")
+    bare = unannotated_slots(vars(ft), set(ft.__all__))
+    if bare:
+        print("slots with no annotation, so the stub cannot describe them:", file=sys.stderr)
+        for n in bare:
+            print(f"  {n}", file=sys.stderr)
+        print("\nannotate them beside __slots__ and rerun scripts/gen-stubs.py", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"__all__ covers every public name the module defines ({len(ft.__all__)} of them), and "
+          "every slot they declare is annotated")
