@@ -166,6 +166,10 @@ impl Device for GpuDevice {
             let stage_seed = seed.wrapping_add(i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
             self.gpu.sweep_seeded(m, &mut self.state, st.beta, st.sweeps as u32, stage_seed)?;
             self.ledger.samples += m.n as u64 * st.sweeps as u64;
+            // `sweep_seeded` brings the state back to the host, and scoring it below is why. One
+            // full readback per stage, charged -- on this backend it is the PCIe copy, the term a
+            // GPU sampler actually pays for, and it had been free.
+            self.ledger.reads += m.n as u64;
             let e = g.energy(&self.state);
             if e < best_e {
                 best_e = e;

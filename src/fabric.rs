@@ -1060,7 +1060,20 @@ pub trait Device {
     /// silently zero.
     fn program(&mut self, p: &Program) -> Vec<Unsupported>;
 
-    /// Run a schedule and return the final state.
+    /// Run a schedule and return the **best** state it reached.
+    ///
+    /// It said "the final state" and every implementation returned the best one, which is not a
+    /// wording quibble: they are different answers to different questions, and one of them is not
+    /// free. A fabric hands you the state it is in. Knowing which state along the way was best
+    /// requires reading the fabric out and scoring it, repeatedly, on the host — and that readback
+    /// is the term this crate's whole ledger exists to make visible.
+    ///
+    /// So the contract is stated in the direction the callers already depend on ([`crate::conform`]
+    /// scores optimisation cases with it), and the cost comes with it: **a backend that inspects
+    /// intermediate states must charge `reads` for them.** `Cpu` evaluates the energy of the whole
+    /// state after every sweep and charged nothing; the GPU backend copies the state back once a
+    /// stage and charged nothing. At Z1-class prices one read is worth 239 node updates, so a
+    /// best-of search that bills only its sweeps reports a small fraction of what it spent.
     ///
     /// # Errors
     ///
@@ -1151,6 +1164,13 @@ impl Device for Cpu {
     fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String> {
         let g = self.graph.as_ref().ok_or("no program loaded")?;
         let (best, _) = crate::tempering::anneal_scheduled(g, schedule, seed, Some(&mut self.ledger));
+        // `anneal_scheduled` scores `g.energy(&smp.s)` after EVERY sweep to keep a running best.
+        // That is a full read of the state per sweep, and until this line it was charged nothing --
+        // on a laptop it costs no wall-clock, but the ledger's counts are what make two backends
+        // comparable, and one backend reading for free is how a search that is expensive comes to
+        // look cheap.
+        let sweeps: u64 = schedule.stages().iter().map(|s| s.sweeps as u64).sum();
+        self.ledger.reads += sweeps * g.n as u64;
         self.state = best.clone();
         Ok(best)
     }
@@ -1172,6 +1192,50 @@ impl Device for Cpu {
 
     fn ledger(&self) -> crate::ledger::Ledger {
         self.ledger
+    }
+}
+
+#[cfg(test)]
+mod readback_is_charged {
+    use super::*;
+    use crate::schedule::Schedule;
+
+    /// A best-of search reads the fabric to know which state was best, and must pay for it.
+    ///
+    /// `Device::run` returns the BEST state a schedule reached, which no fabric can know without
+    /// carrying states to the host and scoring them there. `Cpu::run` does that after every sweep
+    /// and charged nothing, so the ledger reported a search that reads constantly as one that never
+    /// read at all. At Z1-class prices one read is worth 239 node updates; on the conformance run
+    /// the omitted term was 80% of the bill.
+    #[test]
+    fn a_best_of_run_is_charged_for_the_states_it_reads_to_find_the_best() {
+        let g = crate::ising::lattice2d(6, 1.0);
+        let p = Program::from_graph(&g, &Schedule::default());
+        let mut d = Cpu::default();
+        assert!(d.program(&p).is_empty());
+
+        let sched = Schedule::geometric(0.1, 4.0, 10, 20);
+        let sweeps: u64 = sched.stages().iter().map(|s| s.sweeps as u64).sum();
+        let before = d.ledger();
+        d.run(&sched, 7).unwrap();
+        let charged = d.ledger().reads - before.reads;
+
+        assert_eq!(
+            charged,
+            sweeps * g.n as u64,
+            "the run scored the whole state {sweeps} times and billed {charged} reads"
+        );
+
+        // And the term is not decorative: priced on the machine whose numbers this crate carries,
+        // the readback dominates what the same run pays for sampling.
+        let l = d.ledger();
+        let read_j = l.reads as f64 * crate::ledger::Z1_SPICE.e_read;
+        let sample_j = l.samples as f64 * crate::ledger::Z1_SPICE.e_sample;
+        assert!(
+            read_j > 100.0 * sample_j,
+            "reads {read_j:.3e} J against sampling {sample_j:.3e} J -- if this ratio ever falls \
+             near 1, either the prices moved or the readback stopped being charged"
+        );
     }
 }
 

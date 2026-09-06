@@ -553,6 +553,13 @@ impl crate::fabric::Device for RtlFabric {
             return Err("a schedule with no stages advances nothing".into());
         }
         let mut carried: Option<Vec<bool>> = None;
+        // The best state the schedule reached, per the trait -- and the readback that finding it
+        // costs, charged. On this fabric that cost is not notional: a p-bit array holds its state
+        // on-chip, so scoring a sweep means carrying n spins to the host, and the board this
+        // netlist ran on prices a node update at 10.85 pJ with the readback unstated. A ladder
+        // that inspects every sweep reads far more than it samples.
+        let mut best: Option<Vec<i8>> = None;
+        let mut best_e = f64::INFINITY;
         for (rung, stage) in schedule.stages().iter().enumerate() {
             // Each rung is its own quantisation of beta*J, which on hardware is its own bitstream.
             let mut fab = FixedFabric::new(g, stage.beta, seed ^ (rung as u64).wrapping_mul(0x9E37));
@@ -566,15 +573,27 @@ impl crate::fabric::Device for RtlFabric {
             }
             for _ in 0..stage.sweeps {
                 fab.sweep();
+                let st: Vec<i8> = fab.s.iter().map(|&up| if up { 1i8 } else { -1 }).collect();
+                let e = g.energy(&st);
+                if e < best_e {
+                    best_e = e;
+                    best = Some(st);
+                }
             }
             self.ledger.samples += (g.n as u64) * (stage.sweeps as u64);
+            self.ledger.reads += (g.n as u64) * (stage.sweeps as u64);
             carried = Some(fab.s.clone());
         }
-        let last = carried.expect("at least one stage ran");
-        self.state = last.iter().map(|&up| if up { 1i8 } else { -1 }).collect();
-        // Reading the fabric out to the host edge is a read per node, and charging it is the
-        // difference between a sampling story and a bill.
-        self.ledger.reads += g.n as u64;
+        // A schedule whose stages all declare zero sweeps advances nothing, so there is no state
+        // to have been best -- fall back to the configuration the fabric came up in rather than
+        // panicking on a program that is merely pointless.
+        self.state = best.unwrap_or_else(|| {
+            carried
+                .expect("at least one stage")
+                .iter()
+                .map(|&up| if up { 1i8 } else { -1 })
+                .collect()
+        });
         Ok(self.state.clone())
     }
 

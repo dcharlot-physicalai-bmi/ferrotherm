@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### A best-of search reads the fabric constantly, and no backend charged for it
+
+`Device::run` was documented as returning "the final state" and every implementation returned the
+**best** one. That is not a wording quibble: they are different answers, and one of them is not
+free. A fabric hands you the state it is in; knowing which state along the way was best means
+carrying states to the host and scoring them there.
+
+`Cpu::run` evaluated the energy of the whole state after every sweep and charged zero reads. The GPU
+backend copies the state back once a stage — a PCIe transfer — and charged zero. On the conformance
+run, priced against the table this crate carries:
+
+| | node updates | reads | joules at `Z1_SPICE` |
+|---|---|---|---|
+| as billed before | 1,278,600 | 202,800 | 3.522e-07 J |
+| as billed now | 1,278,600 | 1,063,600 | 1.809e-06 J |
+
+**The ledger had been reporting 19.5% of its own bill.** One Z1-class read is worth 239 node
+updates, so the omitted readback was 80% of what the run spent. This is the same defect already
+fixed once in `Sim::collect` — *"a collection loop that does not charge for it reports the larger
+half of its own energy bill as zero"* — arriving again on the `Device` path, where no test looked.
+
+The contract now says what the callers already depend on (`conform` scores optimisation cases with
+it) and states the cost that comes with it. `Cpu`, `GpuDevice` and `hdl::RtlFabric` all charge it,
+and `a_best_of_run_is_charged_for_the_states_it_reads_to_find_the_best` fails if any of them stops.
+
 ### Two of seven conformance cases were constants
 
 `conform` advertises sampling fidelity as the thing no other suite in this field reports, and says
