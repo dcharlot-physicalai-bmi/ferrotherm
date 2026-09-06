@@ -93,6 +93,7 @@ pub mod dense;
 pub mod embed;
 pub mod encode;
 pub mod exact;
+pub mod tensor;
 pub mod fabric;
 pub mod factor;
 pub mod kernel;
