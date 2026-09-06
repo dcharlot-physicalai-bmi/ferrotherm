@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### The browser certifies the same chain, not merely the same optimum
+
+`check-answers.sh` already solves one model through the wasm build in a real browser engine and
+requires the same answer — but that is a claim about **one state**. The deployment ladder's
+acceptance criterion is written about all of them, and a sampler can agree about the optimum, which
+is where the distribution is highest, while disagreeing about what shape it is.
+
+`scripts/check-browser-certificate.sh` builds `ring(10, 1.0, 0.3)` through the C ABI on both sides —
+both halves entering by the same door, because a comparison whose two sides use different ones
+measures the doors as much as the library — certifies at β 0.5, seed 11, 3,000 draws thinned by 8,
+and compares the certificates. Ten spins, so the exact Boltzmann distribution is enumerable and `tv`
+is a real distance rather than an estimate.
+
+The expected answer was "two distributions inside the noise floor": `exp` and `ln` come from the
+platform's libm, wasm32's need not agree with aarch64's in the last ulp, and one ulp changes an
+acceptance, which changes a chain. What was measured is much stronger:
+
+```text
+one graph certified on two builds: tv 0.1567 native, 0.1567 in the browser,
+  5.55e-17 apart against a 0.3070 noise floor
+  worst field 3.54e-16 at tv -- the same chain, not merely the same distribution
+```
+
+`beta_eff`, `beta_lo`, `beta_hi`, `tau` and `ess` are **bit-identical**; `tv` differs by 2 ulps. The
+gate's 1e-9 bound is set from that measurement — seven orders above what was observed so a libm
+shifting a few ulps does not turn it red, and seven orders below a real divergence, which moves
+these quantities in the second decimal place. Its selftest nudges one field by 1e-6 and requires the
+comparison to say no.
+
+This closes the browser arm for the **sampler**. The WebGPU arm is still open and is a design
+decision rather than a missing function: `Device` is synchronous and browser WebGPU is not.
+
 ### The type stub described `Answer` in two lines
 
 The same blind spot as `__all__`, one level down. `gen-stubs.py` emitted properties and methods but

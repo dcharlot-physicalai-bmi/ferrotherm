@@ -88,6 +88,14 @@ jobs:
         env:
           FERROTHERM_REQUIRE_ALL: "1"
         run: scripts/check-hubo-answers.sh --selftest && scripts/check-hubo-answers.sh
+      # Those gates all ask about ONE STATE. A sampler can agree about the optimum -- where the
+      # distribution is highest -- and disagree about what shape it is, and the deployment ladder's
+      # acceptance criterion is written about the shape. So: certify the same graph natively and in
+      # the browser, and compare the certificates rather than the answers.
+      - name: The browser samples the same distribution, not merely the same optimum
+        env:
+          FERROTHERM_REQUIRE_ALL: "1"
+        run: scripts/check-browser-certificate.sh --selftest && scripts/check-browser-certificate.sh
       # Parity proves a symbol is DECLARED in each binding. For Julia that is an @cfn line, which
       # says nothing about whether a function wraps it -- both OMMX functions were once declared and
       # exported with no body in between, and the module loaded fine.

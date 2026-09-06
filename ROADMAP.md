@@ -497,9 +497,19 @@ run: `FixedFabric` is a cycle-exact emulator of the emitted Verilog and the icar
 replays its per-sweep trace against the RTL. So the distribution above is the netlist's, and the
 netlist is what was metered on the KV260.
 
-*Still open here:* the browser arm — wasm/WebGPU behind the same `Device` trait, rather than the
-native wgpu backend standing in for it — and the Alchitry path (that board never enumerated over
-USB).
+**And the browser certifies the same chain, not merely the same optimum.**
+`scripts/check-browser-certificate.sh` builds `ring(10, 1.0, 0.3)` through the C ABI on both sides,
+certifies at β 0.5 / seed 11 / 3,000 draws thinned by 8, and compares. The expectation was two
+distributions inside the noise floor, since `exp` and `ln` come from the platform's libm and
+wasm32's need not match aarch64's in the last ulp. What was measured is stronger: `beta_eff`,
+`beta_lo`, `beta_hi`, `tau` and `ess` are **bit-identical**, and `tv` differs by **2 ulps**
+(relative 3.5e-16) against a 0.3070 sampling-noise floor.
+
+*Still open here:* the browser's **WebGPU** arm specifically — that check certifies the wasm build
+of this crate's own sampler, which is the CPU path compiled to wasm32; running the GPU backend
+behind `Device` in a browser needs an async trait or a worker bridge, since `Device` is synchronous
+and browser WebGPU is not. That is a design decision rather than a missing function. Also open: the
+Alchitry path (that board never enumerated over USB).
 *Why:* **no library in this field has a public path to any silicon.** Extropic's packages contain
 zero device code; every "backend" is a simulator. Closing library→bitstream→board→readback in the
 open is a first, and we already own the whole toolchain.
