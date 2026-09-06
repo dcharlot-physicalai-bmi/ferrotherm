@@ -1,6 +1,56 @@
 # Changelog
 
-## Unreleased
+## 0.42.0
+
+### Rust 2024, a compiled MSRV, and a lint policy instead of a lint backlog
+
+All six crates move to **edition 2024** on rustc 1.98. The migration is `cargo fix --edition` plus
+`cargo clippy --fix`, and the diff is almost entirely one thing: 201 `#[no_mangle]` become
+`#[unsafe(no_mangle)]`. That is the right direction here specifically — the C ABI is where a wrong
+symbol name is a silent action-at-a-distance bug, and the edition now makes every one of those
+declarations say out loud that it is unsafe.
+
+**`rust-version = "1.96"`, declared in all six manifests and labelled as a POLICY floor.** The
+technical floor is 1.88: edition 2024 needs 1.85 and the let-chains the fix introduced need 1.88,
+both established by installing those toolchains and watching the compiler refuse. 1.96 is chosen, not
+derived — this is a 2026 library and carrying compatibility with year-old toolchains costs the
+ability to use the language as it is. Written down that way so nobody later reads "declares 1.96,
+builds on 1.88" as a stale line and helpfully corrects it downward. `scripts/check-msrv.sh` compiles
+the whole workspace, tests and examples included, on exactly the declared toolchain.
+
+**The lint set is decided, not inherited.** `-W clippy::pedantic -W clippy::nursery` reports 4,266
+findings here. Fixing all of them spends a week rewriting correct code and, for several, breaks it —
+`suboptimal_flops` fuses multiply-add and changes results this crate verifies at `1e-9` and compares
+bit-for-bit across bindings. So 16 families are denied and fixed (665 findings, now zero by
+construction), and every allow carries its reason in the manifest. `must_use_candidate` earned its
+place immediately: it caught three tests running a solver and discarding the answer.
+
+### Every public item is documented, and it is enforced
+
+`missing_docs` was 509 in the core crate and 165 across serve, meter, cloud and silicon. It is now
+**zero and denied**. `missing_errors_doc` was 62 and `missing_panics_doc` 84; both are zero and
+denied. `float_cmp`'s 142 sites were audited individually and none is a defect — two use exact
+equality as the *mechanism* (finding where `f64` saturates past `2^53`; asserting an unaligned write
+produced the same bits) — so it is an allow with an audit behind it rather than a count.
+
+The standard: a doc carries an invariant, a unit, a range or a provenance, never a restatement of the
+name. `Graph::offset` says the neighbours of `i` are `nbr[offset[i]..offset[i+1]]`; `Graph::n_edges`
+says it is `nbr.len() / 2`. A `# Panics` section whose honest answer is "never" gives the invariant
+that makes it never, which is worth more than an empty heading.
+
+### `ln Z` for any continuous topology, and a limit that was misstated
+
+`ContinuousEbm::eliminate_log_z` is discretised variable elimination. The chain transfer operator is
+this at induced width 1 and quadrature is this with no elimination at all, so all three agree where
+they overlap — `1e-9` against the transfer operator on a chain, `1e-9` against quadrature on a
+**triangle**, which the transfer operator refuses.
+
+The recorded gap was "non-chain topologies past three units". That puts the bound on `n`, and **the
+bound was never on `n`**: it is the induced width of the coupling graph, a property of its shape. A
+chain, tree or forest eliminates at width 1 in `O(n · grid²)` at any size; a complete graph at `n−1`,
+which is quadrature under another name. So a **hundred-unit tree is exact and cheap** while a
+**complete graph on six is refused**, with `64^6` in the error. A twelve-unit binary tree matches the
+Gaussian closed form to `1e-3`.
 
 ### Joules per *independent* sample, measured — and the two metrics disagree
 

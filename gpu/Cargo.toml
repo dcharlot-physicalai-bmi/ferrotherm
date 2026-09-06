@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-gpu"
-version = "0.3.23"
+version = "0.3.24"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, and it is stated that way so nobody
 # later "corrects" it downward on the grounds that older toolchains happen to work.
@@ -26,7 +26,7 @@ categories = ["science", "algorithms", "simulation"]
 # and to a microcontroller. A GPU backend needs a driver stack, so it lives out here beside
 # `silicon`, `serve` and `cloud` -- each of which exists for the same reason.
 [dependencies]
-ferrotherm = { version = "0.41", path = ".." }
+ferrotherm = { version = "0.42", path = ".." }
 wgpu = "30"
 pollster = "0.4"
 
