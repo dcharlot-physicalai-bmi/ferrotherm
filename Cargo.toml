@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm"
-version = "0.42.0"
+version = "0.43.0"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, and it is stated that way so nobody
 # later "corrects" it downward on the grounds that older toolchains happen to work.

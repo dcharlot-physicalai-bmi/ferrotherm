@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.43.0
 
 ### The first joules this crate ever measured instead of modelled
 
