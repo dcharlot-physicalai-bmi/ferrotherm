@@ -113,7 +113,7 @@ mutations=(
   # Solution out of `h.answers`, which holds one per TRY. Without the recompute a 12-try solve
   # reports its full receipt until the caller enumerates optima, at which point agreement silently
   # becomes (1, 1).
-  "src/ffi.rs|            s.agreement = s.agreement_among(&h.answers);|            let _ = \&h.answers;|enumerating_optima|selecting an optimum resets the receipt"
+  "src/ffi.rs|            s.agreement = s.agreement_among(&h.answers);|            let _ = h.answers.len();|enumerating_optima|selecting an optimum resets the receipt"
 
   # A RECONFIGURED FABRIC HOLDS NOTHING IT CAN REUSE. The reflash was charged with `if rung > 0` --
   # relative to the CALL -- so a second run's first bitstream was free while the fabric held the
