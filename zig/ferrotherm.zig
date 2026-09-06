@@ -2906,6 +2906,20 @@ test "an answer arrives priced, and on a machine that names itself" {
 
     // The receipt is not opt-in: a solve that ran did work, and the count says so.
     try std.testing.expect(p.costSamples() > 0);
+
+    // And it counts EVERY try, not the winning one. This is the shape of a defect that shipped:
+    // the ABI re-derived the winner with its own copy of the selection rule and aggregated
+    // nothing, so 1, 4 and 12 tries all reported one try's ledger to every binding.
+    const a = p.agreement();
+    try std.testing.expectEqual(@as(u32, 4), a.tries);
+    try std.testing.expect(a.agreed >= 1 and a.agreed <= a.tries);
+    var one = try Problem.init();
+    defer one.deinit();
+    const s1 = try one.integer("shift", 0, 3);
+    try one.prefer(.maximize, 3.0, s1.is(3));
+    try one.solve(1);
+    try std.testing.expectEqual(@as(u32, 1), one.agreement().tries);
+    try std.testing.expect(p.costSamples() > one.costSamples());
     const j = p.joulesOn(kv);
     try std.testing.expectApproxEqAbs(@as(f64, @floatFromInt(p.costSamples())) * kv.e_sample, j, 1e-18);
 
