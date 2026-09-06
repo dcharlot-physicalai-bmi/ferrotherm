@@ -104,6 +104,90 @@ impl Measured {
     }
 }
 
+/// One metered pair at one temperature: Gibbs and tempering, iso-flip, on the same tuned ladder.
+///
+/// Separated from `main` because the budget escalates -- this is called repeatedly with a larger
+/// `rounds` until the tempering arm's effective sample size clears the floor.
+fn measure_pair(
+    meter: &mut ferrotherm_meter::Meter,
+    idle: ferrotherm_meter::Baseline,
+    g: &Graph,
+    beta_cold: f64,
+    betas: &[f64],
+    rounds: usize,
+    burn_in: usize,
+) -> (Measured, Measured, ferrotherm::tempering::LadderTraces) {
+    let n = g.n;
+    let rungs = betas.len();
+
+    // A. plain chromatic Gibbs, given the LADDER's whole flip budget, so the two arms are iso-flip
+    // and the only difference is what the flips bought. One draw per `rungs` sweeps, converted back
+    // to cold-replica sweeps below so both tau values are the same quantity.
+    let sweeps_a = rounds * rungs;
+    let mut trace_a: Vec<f64> = Vec::with_capacity(rounds);
+    let run_a = meter
+        .measure(idle, || {
+            let mut smp = Sampler::new(g, beta_cold, 0xA11CE);
+            for r in 0..sweeps_a {
+                smp.sweep(None);
+                if r % rungs == 0 && r / rungs >= burn_in {
+                    trace_a.push(g.energy(&smp.s));
+                }
+            }
+        })
+        .unwrap_or_else(|e| {
+            // The meter refuses a delta inside its own noise, and the usual cause is that the
+            // machine was not idle when the baseline was taken -- a build finishing during the
+            // settle window puts the baseline tens of watts high, and every workload afterwards
+            // reads BELOW it. That is a fact about the machine, not a bug here, so say which.
+            eprintln!("\n  this run could not be priced: {e}");
+            eprintln!("  Build first, let the machine settle, and run the compiled binary directly:");
+            eprintln!("    cargo build --release -p ferrotherm-meter --example joules_per_sample");
+            eprintln!("    ./target/release/examples/joules_per_sample");
+            std::process::exit(2);
+        });
+    let a = Measured {
+        label: "chromatic Gibbs",
+        flips: (n * sweeps_a) as f64,
+        seconds: run_a.seconds,
+        joules: run_a.joules_above_idle,
+        joules_total: run_a.joules_total,
+        tau: tau_int(&trace_a) * rungs as f64,
+        draws: trace_a.len(),
+    };
+
+    // B. parallel tempering on the tuned ladder. One round advances every replica by one sweep, so
+    // the cold trace is already one draw per cold sweep.
+    let mut out = None;
+    let run_b = meter
+        .measure(idle, || {
+            out = Some(parallel_tempering_observed(g, betas, rounds, 1, burn_in, 0xB0B, None));
+        })
+        .unwrap_or_else(|e| {
+            // The meter refuses a delta inside its own noise, and the usual cause is that the
+            // machine was not idle when the baseline was taken -- a build finishing during the
+            // settle window puts the baseline tens of watts high, and every workload afterwards
+            // reads BELOW it. That is a fact about the machine, not a bug here, so say which.
+            eprintln!("\n  this run could not be priced: {e}");
+            eprintln!("  Build first, let the machine settle, and run the compiled binary directly:");
+            eprintln!("    cargo build --release -p ferrotherm-meter --example joules_per_sample");
+            eprintln!("    ./target/release/examples/joules_per_sample");
+            std::process::exit(2);
+        });
+    let (_res, tr) = out.expect("the closure ran");
+    let cold = tr.energies.last().expect("a ladder has rungs");
+    let b = Measured {
+        label: "parallel tempering",
+        flips: (n * rounds * rungs) as f64,
+        seconds: run_b.seconds,
+        joules: run_b.joules_above_idle,
+        joules_total: run_b.joules_total,
+        tau: tau_int(cold),
+        draws: cold.len(),
+    };
+    (a, b, tr)
+}
+
 fn main() {
     let quiet = match host::require_quiet("a power and timing measurement") {
         Ok(q) => q,
@@ -123,13 +207,18 @@ fn main() {
     let m = 8usize;
     let g = pegasus_glass(m, 0xC0FFEE);
     let n = g.n;
-    let rounds = 8_000usize;
-    let burn_in = 800usize;
+    // The budget is not fixed: each temperature ESCALATES until the tempering arm actually resolves,
+    // because "unresolved" in a results table is a statement about what was spent, not about the
+    // samplers, and printing it as though it were a finding is the thing this example refuses to do.
+    // Gibbs is a different case and does not gate the escalation -- below one effective sample it
+    // yields a BOUND, which is an answer.
+    let rounds_start = 8_000usize;
+    let rounds_cap = 256_000usize;
 
     println!("JOULES PER INDEPENDENT SAMPLE, ACROSS TEMPERATURE");
     println!("  graph      Pegasus P_{m} fabric, {n} nodes, random +-1 couplings, no fields");
     println!("  machine    {}", meter.machine());
-    println!("  budget     {rounds} rounds per point, {burn_in} burn-in, iso-flip between samplers");
+    println!("  budget     escalates from {rounds_start} rounds per point to at most {rounds_cap}, iso-flip");
 
     let idle = match meter.idle(std::time::Duration::from_secs(3)) {
         Ok(b) => b,
@@ -147,7 +236,7 @@ fn main() {
     );
 
     println!("  {:>5} {:>6} {:>7}   {:>11} {:>11}   {:>13} {:>13}   {:>7} {:>8}  cheaper",
-             "beta", "rungs", "trips", "J/flip Gibbs", "J/flip PT", "J/ind Gibbs", "J/ind PT",
+             "beta", "rungs", "rounds", "J/flip Gibbs", "J/flip PT", "J/ind Gibbs", "J/ind PT",
              "flip", "indep");
     println!("  {:>62}   {:>7} {:>8}", "", "Gibbs by", "PT by");
     let mut rows: Vec<(f64, String)> = Vec::new();
@@ -179,66 +268,41 @@ fn main() {
             continue;
         }
 
-        // ---- A. plain chromatic Gibbs, given the ladder's whole flip budget --------------------
-        let sweeps_a = rounds * rungs;
-        let mut trace_a: Vec<f64> = Vec::with_capacity(rounds);
-        let run_a = meter
-            .measure(idle, || {
-                let mut s = Sampler::new(&g, beta_cold, 0xA11CE);
-                for r in 0..sweeps_a {
-                    s.sweep(None);
-                    if r % rungs == 0 && r / rungs >= burn_in {
-                        trace_a.push(g.energy(&s.s));
-                    }
-                }
-            })
-            .expect("the meter was open a moment ago");
-        let a = Measured {
-            label: "chromatic Gibbs",
-            flips: (n * sweeps_a) as f64,
-            seconds: run_a.seconds,
-            joules: run_a.joules_above_idle,
-            joules_total: run_a.joules_total,
-            tau: tau_int(&trace_a) * rungs as f64, // draws -> cold-replica sweeps
-            draws: trace_a.len(),
+        // ---- escalate the budget until tempering resolves, or the cap says how far it got -----
+        let mut rounds = rounds_start;
+        let (a, b, tr) = loop {
+            let burn_in = rounds / 10;
+            let (a, b, tr) = measure_pair(&mut meter, idle, &g, beta_cold, &betas, rounds, burn_in);
+            if b.ess() >= MIN_ESS || rounds >= rounds_cap {
+                break (a, b, tr);
+            }
+            // tau is roughly fixed, so ESS grows with the budget: ask for what the shortfall implies,
+            // with a little headroom, rather than doubling blindly.
+            let want = ((MIN_ESS / b.ess().max(0.25)) * 1.3).ceil() as usize;
+            rounds = (rounds * want.clamp(2, 8)).min(rounds_cap);
         };
-
-        // ---- B. parallel tempering on the tuned ladder, same flip budget -----------------------
-        let mut out = None;
-        let run_b = meter
-            .measure(idle, || {
-                out = Some(parallel_tempering_observed(&g, &betas, rounds, 1, burn_in, 0xB0B, None));
-            })
-            .expect("the meter was open a moment ago");
-        let (_res, tr) = out.expect("the closure ran");
-        let cold = tr.energies.last().expect("a ladder has rungs");
-        let b = Measured {
-            label: "parallel tempering",
-            flips: (n * rounds * rungs) as f64,
-            seconds: run_b.seconds,
-            joules: run_b.joules_above_idle,
-            joules_total: run_b.joules_total,
-            tau: tau_int(cold),
-            draws: cold.len(),
-        };
-
         // ---- report ----------------------------------------------------------------------------
         // A sampler below one effective sample did not produce an independent draw at all. That is
         // reported as a BOUND -- J/indep is at least the whole run's joules -- rather than refused,
         // because it is a fact and it is the sharpest form this finding takes.
+        // Three states, and only one of them is an absence of information:
+        //   a resolved figure; a BOUND, when the sampler produced under one independent draw, which
+        //   is an answer; and `capped`, reachable only when the escalation hit its ceiling.
         let cell = |x: &Measured| -> String {
             if x.ess() < 1.0 {
                 format!(">={:.2}", x.joules)
             } else if x.ess() < MIN_ESS {
-                "unresolved".to_string()
+                format!("capped@{:.0}", x.ess())
             } else {
                 format!("{:.4}", x.j_per_independent())
             }
         };
-        let verdict = if a.ess() < 1.0 && b.ess() >= MIN_ESS {
+        let verdict = if b.ess() < MIN_ESS {
+            "capped"
+        } else if a.ess() < 1.0 {
             "PT only"
-        } else if a.ess() < MIN_ESS || b.ess() < MIN_ESS {
-            "unresolved"
+        } else if a.ess() < MIN_ESS {
+            format!("PT (Gibbs ESS {:.0})", a.ess()).leak()
         } else if b.j_per_independent() < a.j_per_independent() {
             "PT"
         } else {
@@ -257,7 +321,7 @@ fn main() {
         };
         println!(
             "  {beta_cold:>5.2} {rungs:>6} {:>7}   {:>11.3e} {:>11.3e}   {:>13} {:>13}   {:>7} {indep_x:>8}  {verdict}",
-            tr.round_trips,
+            rounds,
             a.j_per_flip(),
             b.j_per_flip(),
             cell(&a),
@@ -268,9 +332,11 @@ fn main() {
         rows.push((
             beta_cold,
             format!(
-                "beta {beta_cold}: {} tau {:.0} sweeps, ESS {:.1} (+-{:.0}% on tau); {} tau {:.0}, \
+                "beta {beta_cold}: {rounds} rounds, {} ladder round trips. {} tau {:.0} sweeps, \
+                 ESS {:.1} (+-{:.0}% on tau); {} tau {:.0}, \
                  ESS {:.1} (+-{:.0}%). Above idle {:.2} J and {:.2} J against an idle drift of \
                  +-{:.2} J; at the wall, idle included, {:.2} J and {:.2} J.",
+                tr.round_trips,
                 a.label,
                 a.tau,
                 a.ess(),

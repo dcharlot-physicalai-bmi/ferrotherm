@@ -135,7 +135,7 @@ impl core::fmt::Display for TooWide {
 /// is what this crate builds most, and where it grows with the side — and smallest on dense random
 /// ones, which are the case the naive bound is worst for. A reader looking for `O(n² d²)` becoming
 /// something else will not find it here.
-fn min_fill_order(n: usize, adj: &[Vec<usize>]) -> (Vec<usize>, usize) {
+pub(crate) fn min_fill_order(n: usize, adj: &[Vec<usize>]) -> (Vec<usize>, usize) {
     use std::collections::BTreeSet;
     let mut nbr: Vec<BTreeSet<usize>> = adj.iter().map(|v| v.iter().copied().collect()).collect();
     let mut alive: Vec<bool> = vec![true; n];

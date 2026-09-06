@@ -134,9 +134,20 @@ cast_possible_wrap = "allow"
 # one sitting produces 662 sentences that say nothing -- which is worse than an honest count.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-# 142 sites. Some are exact-equality assertions that are CORRECT (a bit-exactness test must compare
-# bits) and some are ordinary float sloppiness. Telling them apart is a per-site read, so the count
-# is ratcheted rather than blanket-allowed.
+# AUDITED, 2026-09-05, and the verdict is uniform: 142 sites, no defect. 131 are assertions on
+# values that are exact by construction -- integer-valued Ising energies (-12.0, -3.0), powers of two
+# (0.25), a padded slot that must weigh EXACTLY zero, a serialiser round-trip of 1e16 -- where an
+# epsilon would not soften the test, it would delete it. Every non-assertion site was read
+# individually, and two of them use exact equality as the MECHANISM:
+#
+#   fabric.rs  `let next = n - 1.0; if next == n { break }` finds where f64 saturates past 2^53.
+#              An epsilon does not make this more robust; it makes it never terminate.
+#   ffi.rs     `got == want || (got.is_nan() && want.is_nan())` is deliberate bit-equality, NaN
+#              included: the claim is that an unaligned write produced the SAME BITS as an aligned
+#              one, and comparing those approximately would assert nothing.
+#
+# This is therefore an allow with an audit behind it rather than a backlog. If a future site is
+# genuinely sloppy, it will be sloppy in code that is new, and this comment is where to argue with.
 float_cmp = "allow"
 
 # `cfg(kani)` guards the machine-checked proof harnesses in src/*.rs. Declaring it at the

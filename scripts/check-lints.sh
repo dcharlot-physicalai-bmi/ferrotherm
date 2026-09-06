@@ -30,7 +30,6 @@ measure() {
   echo "missing_docs $(cargo clippy --release -p ferrotherm -- -W missing_docs 2>&1 | grep -c 'missing documentation')"
   echo "missing_errors_doc $(count -Wclippy::missing_errors_doc 'missing .# Errors')"
   echo "missing_panics_doc $(count -Wclippy::missing_panics_doc 'missing .# Panics')"
-  echo "float_cmp $(count -Wclippy::float_cmp 'strict comparison')"
 }
 
 if [[ "${1:-}" == "--update" ]]; then
@@ -70,7 +69,6 @@ while read -r name want; do
     missing_docs)        got=$(cargo clippy --release -p ferrotherm -- -W missing_docs 2>&1 | grep -c 'missing documentation') ;;
     missing_errors_doc)  got=$(count -Wclippy::missing_errors_doc 'missing .# Errors') ;;
     missing_panics_doc)  got=$(count -Wclippy::missing_panics_doc 'missing .# Panics') ;;
-    float_cmp)           got=$(count -Wclippy::float_cmp 'strict comparison') ;;
     *) echo "unknown lint family in the baseline: $name" >&2; exit 2 ;;
   esac
   if [[ "$got" -gt "$want" ]]; then

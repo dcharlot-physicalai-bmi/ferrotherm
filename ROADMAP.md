@@ -573,10 +573,21 @@ general nonlinear unit, whose conditional is not Gaussian and which therefore ha
 oracles — **closed at 0.39.0.** `ContinuousEbm` carries a `Potential` (quadratic, Hopfield-tanh,
 double-well) sampled by Metropolis-within-Gibbs, and `chain_log_z` is the oracle it was missing: a
 transfer-operator `ln Z`, `O(n · grid²)`, exact to the grid at any chain length, against which the
-nonlinear sampler is verified at twelve units. **Still open, and smaller than it was:** non-chain
-topologies past three units, where the transfer operator does not apply and quadrature is the only
-oracle left. This entry said "open" for a release after it was closed, which is its own small lesson
-about roadmaps.
+nonlinear sampler is verified at twelve units.
+
+~~Still open: non-chain topologies past three units~~ — **closed, and the limit was misstated.**
+`eliminate_log_z` is discretised variable elimination: the chain transfer operator is this at
+induced width 1, and quadrature is this with no elimination at all. The three agree where they
+overlap — to `1e-9` against the transfer operator on a chain, and to `1e-9` against quadrature on a
+TRIANGLE, which the transfer operator refuses.
+
+**The bound was never on `n`.** It is the induced width of the coupling graph, which is a property
+of its shape: a chain, tree or forest eliminates at width 1 for `O(n · grid²)` at any size; a loop
+or ladder at width 2; a complete graph at `n−1`, which is quadrature. So a **hundred-unit tree** is
+exact and cheap while a **complete graph on six** is refused — with the cost in the error, `64^6`.
+Stating the old limit as "past three units" hid every tractable non-chain model in between.
+Verified beyond stability: a twelve-unit binary tree matches the Gaussian closed form
+`(n/2)ln(2π/β) − ½ln det A` to `1e-3`.
 
 **3.4a Pegasus's ceiling, proved.** `K_{12(m−2)+4}` is optimal for chains made of one vertical and
 one horizontal wire segment: the interior segments are forced (`α = 0`, `β = 1`, so `w ∈ [1, m−2]`)

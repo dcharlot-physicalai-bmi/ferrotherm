@@ -633,7 +633,207 @@ impl ContinuousEbm {
     }
 }
 
+/// Why a continuous model could not be eliminated exactly.
+///
+/// Carries the numbers rather than a sentence, because the caller's next move — coarsen the
+/// grid, or accept a different model — depends on which of them is the problem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TooWide {
+    /// Induced width of the elimination order the coupling graph admits.
+    pub width: usize,
+    /// The largest width the caller allowed.
+    pub allowed: usize,
+    /// Points per axis, which is the base of the cost.
+    pub grid: usize,
+}
+
+impl core::fmt::Display for TooWide {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "this coupling graph eliminates at induced width {}, so an exact table costs \
+             {}^{} entries; the cap allowed width {}. Widen the cap, coarsen the grid, or use \
+             a sparser model -- the cost is a property of the graph's SHAPE, not its size",
+            self.width,
+            self.grid,
+            self.width + 1,
+            self.allowed
+        )
+    }
+}
+
 impl ContinuousEbm {
+    /// `ln Z` of ANY continuous topology by discretised variable elimination — exact to the grid.
+    ///
+    /// [`Self::chain_log_z`] is this at induced width 1, and [`Self::exact_by_quadrature`] is this
+    /// with no elimination at all. The three agree where they overlap, which is how this is tested.
+    ///
+    /// # What it costs, and why that is the right shape
+    ///
+    /// Discretising each unit on `grid` points turns the model into a discrete graphical model
+    /// whose factors are `exp(−β·½V_i)` per unit and `exp(+β·W_ij·x_a·x_b)` per coupling. Summing
+    /// out one variable at a time costs `grid^(w+1)` where `w` is the **induced width** of the
+    /// elimination order — a property of the graph's shape, not of `n`. So:
+    ///
+    /// | topology | width | cost |
+    /// |---|---|---|
+    /// | chain, tree, forest | 1 | `O(n · grid²)` — any size |
+    /// | single loop, ladder | 2 | `O(n · grid³)` |
+    /// | `k × n` grid | `k` | `O(n · grid^(k+1))` |
+    /// | complete graph | `n−1` | `grid^n`, i.e. quadrature |
+    ///
+    /// That table is the honest statement of the limit this replaced. The old one was "past three
+    /// units, only quadrature", which is a bound on `n`. The real bound was never on `n` at all:
+    /// **a tree of a thousand units is exact and cheap, and a complete graph of five is not**, and
+    /// conflating the two hid every tractable non-chain model in between.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`] when the elimination order's induced width exceeds `max_width`, carrying the
+    /// width, the cap and the grid so the caller can see which one to move. The order comes from
+    /// the same min-fill heuristic [`crate::exact`] uses on discrete models; finding the optimal
+    /// order is NP-hard, so a refusal means *this order* was too wide, not that none exists.
+    ///
+    /// # Panics
+    ///
+    /// If `grid < 2`, which is not a discretisation.
+    pub fn eliminate_log_z(
+        &self,
+        beta: f64,
+        lo: f64,
+        hi: f64,
+        grid: usize,
+        max_width: usize,
+    ) -> Result<f64, TooWide> {
+        assert!(grid >= 2, "a grid of {grid} points is not a discretisation");
+        let n = self.n();
+        if n == 0 {
+            return Ok(0.0);
+        }
+        // The coupling graph, which is the only thing that decides the cost.
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if self.w[i * n + j] != 0.0 {
+                    adj[i].push(j);
+                    adj[j].push(i);
+                }
+            }
+        }
+        let (order, width) = crate::exact::min_fill_order(n, &adj);
+        if width > max_width {
+            return Err(TooWide { width, allowed: max_width, grid });
+        }
+
+        let h = (hi - lo) / grid as f64;
+        let x: Vec<f64> = (0..grid).map(|k| lo + (k as f64 + 0.5) * h).collect();
+
+        // A factor is a scope and a table over `grid^|scope|`, plus a log offset so a long
+        // elimination cannot underflow the way the chain's running vector would without rescaling.
+        struct Factor {
+            scope: Vec<usize>,
+            table: Vec<f64>,
+            log_scale: f64,
+        }
+        let index = |scope: &[usize], assign: &[usize]| -> usize {
+            let mut k = 0;
+            for (p, _) in scope.iter().enumerate() {
+                k = k * grid + assign[p];
+            }
+            k
+        };
+
+        let mut factors: Vec<Factor> = Vec::new();
+        for i in 0..n {
+            let table: Vec<f64> =
+                x.iter().map(|&u| (-beta * self.potentials[i].energy(u)).exp()).collect();
+            factors.push(Factor { scope: vec![i], table, log_scale: 0.0 });
+        }
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let w = self.w[i * n + j];
+                if w == 0.0 {
+                    continue;
+                }
+                // E contains `-W x_i x_j`, so the Boltzmann factor is `exp(+beta W x_i x_j)`.
+                let mut table = vec![0.0f64; grid * grid];
+                for (a, &xa) in x.iter().enumerate() {
+                    for (b, &xb) in x.iter().enumerate() {
+                        table[a * grid + b] = (beta * w * xa * xb).exp();
+                    }
+                }
+                factors.push(Factor { scope: vec![i, j], table, log_scale: 0.0 });
+            }
+        }
+
+        let mut log_total = 0.0f64;
+        for &v in &order {
+            // Everything touching `v` multiplies together; everything else is untouched.
+            let (touching, rest): (Vec<Factor>, Vec<Factor>) =
+                factors.into_iter().partition(|f| f.scope.contains(&v));
+            factors = rest;
+            if touching.is_empty() {
+                continue;
+            }
+            // The product's scope, with `v` last so summing it out is a stride-1 fold.
+            let mut scope: Vec<usize> = Vec::new();
+            for f in &touching {
+                for &u in &f.scope {
+                    if u != v && !scope.contains(&u) {
+                        scope.push(u);
+                    }
+                }
+            }
+            let mut full = scope.clone();
+            full.push(v);
+            let size = grid.pow(full.len() as u32);
+            let mut prod = vec![1.0f64; size];
+            let mut log_scale: f64 = touching.iter().map(|f| f.log_scale).sum();
+            let mut assign = vec![0usize; full.len()];
+            for (k, cell) in prod.iter_mut().enumerate() {
+                // decode k into the assignment over `full`
+                let mut rem = k;
+                for p in (0..full.len()).rev() {
+                    assign[p] = rem % grid;
+                    rem /= grid;
+                }
+                for f in &touching {
+                    let sub: Vec<usize> = f
+                        .scope
+                        .iter()
+                        .map(|u| assign[full.iter().position(|q| q == u).expect("scope subset")])
+                        .collect();
+                    *cell *= f.table[index(&f.scope, &sub)];
+                }
+            }
+            // Sum out `v`, which is the LAST axis, so the fold is over contiguous blocks of `grid`.
+            let outer = size / grid;
+            let mut summed = vec![0.0f64; outer];
+            for (o, s) in summed.iter_mut().enumerate() {
+                *s = prod[o * grid..(o + 1) * grid].iter().sum();
+            }
+            // Rescale so a thousand-unit chain cannot underflow to zero halfway along.
+            let mx = summed.iter().copied().fold(0.0f64, f64::max);
+            if mx > 0.0 && mx.is_finite() {
+                for u in &mut summed {
+                    *u /= mx;
+                }
+                log_scale += mx.ln();
+            }
+            if scope.is_empty() {
+                log_total += log_scale + summed[0].max(f64::MIN_POSITIVE).ln();
+            } else {
+                factors.push(Factor { scope, table: summed, log_scale });
+            }
+        }
+        // Anything left is a scalar: a disconnected piece whose variables all eliminated cleanly.
+        for f in &factors {
+            log_total += f.log_scale + f.table.iter().sum::<f64>().max(f64::MIN_POSITIVE).ln();
+        }
+        // One `h` per integrated dimension, exactly as the chain and the quadrature do.
+        Ok(log_total + n as f64 * h.ln())
+    }
+
     /// `ln Z` of an open CHAIN by the transfer operator — exact to the grid, at any length.
     ///
     /// [`Self::exact_by_quadrature`] is capped near three units because a product rule costs
@@ -747,6 +947,112 @@ mod nonlinear_tests {
     }
 
     /// The transfer operator agrees with quadrature, and then goes where quadrature cannot.
+    /// Elimination agrees with BOTH narrower oracles where they overlap, and goes where neither can.
+    ///
+    /// The chain transfer operator is elimination at width 1 and quadrature is elimination with no
+    /// elimination at all, so on the models those accept, all three must return the same number.
+    /// The point of the third is the case neither could reach: a LOOP, which is not a chain, and a
+    /// TREE of twelve units, which quadrature refuses at four.
+    #[test]
+    fn elimination_agrees_with_the_chain_and_with_quadrature_and_passes_both() {
+        let chain = |n: usize, p: Potential, w: f64| {
+            let mut m = vec![0.0; n * n];
+            for i in 0..(n - 1) {
+                m[i * n + i + 1] = w;
+                m[(i + 1) * n + i] = w;
+            }
+            ContinuousEbm::new(vec![p; n], m)
+        };
+
+        // 1. against the transfer operator, on a chain, at the same grid: the same arithmetic by a
+        //    different route, so this is tight rather than approximate.
+        let c = chain(6, Potential::DoubleWell { a: 1.0, b: 2.0 }, 0.4);
+        let tr = c.chain_log_z(1.0, -3.0, 3.0, 200).expect("a chain");
+        let el = c.eliminate_log_z(1.0, -3.0, 3.0, 200, 4).expect("width 1");
+        assert!((tr - el).abs() < 1e-9, "transfer {tr} vs elimination {el}");
+
+        // 2. against quadrature, on a graph the transfer operator REFUSES: a triangle.
+        let mut w = vec![0.0; 9];
+        for (i, j) in [(0, 1), (1, 2), (0, 2)] {
+            w[i * 3 + j] = 0.35;
+            w[j * 3 + i] = 0.35;
+        }
+        let tri = ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.3 }; 3], w);
+        assert!(tri.chain_log_z(1.0, -3.0, 3.0, 200).is_none(), "a triangle is not a chain");
+        let (q, _) = tri.exact_by_quadrature(1.0, -3.0, 3.0, 220);
+        let e2 = tri.eliminate_log_z(1.0, -3.0, 3.0, 220, 4).expect("width 2");
+        assert!((q - e2).abs() < 1e-9, "quadrature {q} vs elimination {e2}");
+
+        // 3. the case that was out of reach: a TREE of twelve units. Not a chain, so the transfer
+        //    operator refuses; twelve dimensions, so quadrature would need grid^12.
+        let n = 12usize;
+        let mut w = vec![0.0; n * n];
+        for i in 1..n {
+            let parent = (i - 1) / 2; // a binary tree
+            w[i * n + parent] = 0.3;
+            w[parent * n + i] = 0.3;
+        }
+        let tree = ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; n], w.clone());
+        assert!(tree.chain_log_z(1.0, -6.0, 6.0, 200).is_none(), "a binary tree is not a chain");
+        let t1 = tree.eliminate_log_z(1.0, -6.0, 6.0, 200, 4).expect("a tree eliminates at width 1");
+        let t2 = tree.eliminate_log_z(1.0, -6.0, 6.0, 600, 4).expect("a tree eliminates at width 1");
+        assert!((t1 - t2).abs() < 1e-6, "grid 200 gives {t1}, grid 600 gives {t2}");
+
+        // ... and it is RIGHT, not merely stable: for quadratic potentials the model is Gaussian
+        // with A = diag(a) - W, and ln Z = (n/2) ln(2 pi / beta) - (1/2) ln det A in closed form.
+        let mut a_mat = vec![0.0; n * n];
+        for i in 0..n {
+            a_mat[i * n + i] = 2.0;
+            for j in 0..n {
+                if i != j {
+                    a_mat[i * n + j] = -w[i * n + j];
+                }
+            }
+        }
+        let ld = log_det(&a_mat, n).expect("A is positive definite here");
+        let closed = 0.5 * n as f64 * (2.0 * core::f64::consts::PI / 1.0).ln() - 0.5 * ld;
+        assert!(
+            (t2 - closed).abs() < 1e-3,
+            "twelve-unit tree: elimination {t2} vs the Gaussian closed form {closed}"
+        );
+    }
+
+    /// The cost is a property of the graph's SHAPE, and the refusal says so with numbers.
+    #[test]
+    fn elimination_refuses_by_width_rather_than_by_size() {
+        // A complete graph on six units has induced width 5, so an exact table is grid^6.
+        let n = 6usize;
+        let mut w = vec![0.0; n * n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                w[i * n + j] = 0.2;
+                w[j * n + i] = 0.2;
+            }
+        }
+        let dense = ContinuousEbm::new(vec![Potential::Quadratic { a: 3.0, b: 0.0 }; n], w);
+        match dense.eliminate_log_z(1.0, -4.0, 4.0, 64, 3) {
+            Err(e) => {
+                assert_eq!(e.width, n - 1, "a complete graph eliminates at n-1");
+                assert_eq!(e.allowed, 3);
+                assert!(e.to_string().contains("64^6"), "{e}");
+            }
+            Ok(v) => panic!("a complete graph on six units must not be answered: {v}"),
+        }
+
+        // And a TREE of a hundred units, which is far larger and eliminates at width 1, is fine --
+        // which is the whole point: n was never the bound.
+        let n = 100usize;
+        let mut w = vec![0.0; n * n];
+        for i in 1..n {
+            let parent = (i - 1) / 2;
+            w[i * n + parent] = 0.15;
+            w[parent * n + i] = 0.15;
+        }
+        let big = ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; n], w);
+        let lz = big.eliminate_log_z(1.0, -6.0, 6.0, 120, 2).expect("a tree is width 1");
+        assert!(lz.is_finite(), "a hundred-unit tree has a finite ln Z, got {lz}");
+    }
+
     #[test]
     fn the_transfer_operator_matches_quadrature_and_scales_past_it() {
         let chain = |n: usize, p: Potential, w: f64| {

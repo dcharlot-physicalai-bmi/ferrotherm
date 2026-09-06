@@ -192,10 +192,14 @@ Honesty about a reference includes where it is thin:
   `ft_clique_embed`'s fallback: a smaller clique with a machine-checked ceiling beats none.
 - **No silicon measurement.** Every joule figure is a device-model price, honestly labelled. The
   ledger is exact arithmetic over a vendor's SPICE table, not a wattmeter.
-- ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed.**
+- ~~General nonlinear continuous units are verified only to ~3 dimensions~~ — **closed, twice.**
   `chain_log_z` is a transfer-operator oracle, `O(n · grid²)`, exact to the grid at any chain
-  length; the nonlinear sampler is now verified at twelve units against an exact mean energy.
-  Non-chain topologies past three units remain quadrature-bound.
+  length. ~~Non-chain topologies past three units remain quadrature-bound~~ — `eliminate_log_z`
+  is discretised variable elimination and subsumes both: it agrees with the transfer operator on a
+  chain and with quadrature on a **triangle**, each to `1e-9`, and a twelve-unit binary tree matches
+  the Gaussian closed form to `1e-3`. **The limit was misstated as a bound on `n`; it is the induced
+  width.** A hundred-unit tree is exact and cheap (width 1); a complete graph on six is refused,
+  with `64^6` in the error. Every tractable non-chain model in between was hidden by the old phrasing.
 - ~~`Ferrotherm` is not in the Julia General registry, a channel we list that a user would find
   missing~~ — **this entry was wrong, and the error is mine.** It is true that `] add Ferrotherm`
   does not work, but that is a documented decision, not an oversight: `PACKAGING.md` analyses it and
