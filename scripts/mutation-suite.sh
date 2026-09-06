@@ -85,6 +85,41 @@ mutations=(
   # over rounds 0..r and no test could see inside that; `Bound::best_round` exists to make the
   # difference observable from outside.
   "src/bound.rs|        if total > best {|        if true {|bound|optimality bound takes the last round"
+
+  # ---- the 0.44.0 receipt, whose defects all shipped once ----------------------------------------
+
+  # THE READBACK, CHARGED WHERE IT HAPPENS. `anneal_scheduled` scores the whole state after every
+  # sweep to keep a running best; that is a read of the whole state. It was charged by the CALLER,
+  # so `Cpu::run` billed it and `Compiled::solve_with` -- the function a caller actually reaches
+  # for -- billed nothing, pricing the identical anneal 244x apart. Worse, `KV260_MEASURED` states
+  # no `e_read` precisely so a run that read cannot be priced against it, and the model API
+  # returned a measured-silicon figure anyway. Set the charge to zero and the receipt test must go
+  # red on BOTH the count and the refusal.
+  "src/tempering.rs|                l.reads += g.n as u64;|                l.reads += 0;|receipt_tests|the readback goes uncharged"
+
+  # A BEST-OF SEARCH PAYS FOR EVERY TRY. `best_of_all` sums the ledgers of all N; carrying only the
+  # winner's makes an N-restart search read as one run. This shipped across the whole C ABI -- 1, 4
+  # and 12 tries all reported 19,200 node updates -- because selection and aggregation lived in two
+  # functions and only one of them was fixed.
+  "src/model.rs|        winner.cost = total;|        let _ = total;|best_of_n|best-of carries only the winner"
+
+  # THE FABRIC MUST DECLARE THE QUANTISATION IT PERFORMS. `Precision::Fixed` is scale-relative in
+  # this crate (step = max|w| / levels); `FixedFabric` uses an absolute Q.8 grid. Under the wrong
+  # declaration `check` computed ~0 relative error for a program whose weights were all 0.001 and
+  # accepted it, and the fabric quantised every coupling to zero and sampled an empty graph.
+  "src/hdl.rs|        f.coupling_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };|        f.coupling_precision = Precision::Fixed { bits: 12 };|declared_precision|fabric mis-declares its grid"
+
+  # LOOKING AT THE ALTERNATIVES MUST NOT CHANGE THE RECEIPT. `ft_model_select_optimum` assigns a
+  # Solution out of `h.answers`, which holds one per TRY. Without the recompute a 12-try solve
+  # reports its full receipt until the caller enumerates optima, at which point agreement silently
+  # becomes (1, 1).
+  "src/ffi.rs|            s.agreement = s.agreement_among(&h.answers);|            let _ = \&h.answers;|enumerating_optima|selecting an optimum resets the receipt"
+
+  # A RECONFIGURED FABRIC HOLDS NOTHING IT CAN REUSE. The reflash was charged with `if rung > 0` --
+  # relative to the CALL -- so a second run's first bitstream was free while the fabric held the
+  # previous run's weights and seeds. One write is worth 21,664 node updates at Z1_SPICE, so the
+  # missing term was the largest line in the ledger.
+  "src/hdl.rs|                self.load_unused = true;|                self.load_unused = false;|a_second_run_pays|second run reflashes for free"
 )
 
 bad=0
