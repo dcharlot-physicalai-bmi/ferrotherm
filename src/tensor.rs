@@ -332,6 +332,21 @@ pub enum Order {
 /// A tensor's shape during planning: indices with their widths, and no data.
 type Shape = Vec<(Index, usize)>;
 
+/// Entries a shape holds, saturating rather than overflowing.
+///
+/// `product()` on a `u128` iterator panics on overflow in debug and wraps in release. Both are
+/// wrong here and the second is worse: `peak_entries` is the number [`Network::contract_with`]
+/// refuses on, so a wrapped value makes an impossible network look affordable — a rank-130 network
+/// of binary indices reported `2^66` instead of `2^130`, understating by a factor of `2^64`. That
+/// defeats the module's premise that a bad order is slow or refused, never wrong.
+///
+/// Saturating is the safe direction: `u128::MAX` exceeds any budget a caller can state, so a
+/// saturated peak refuses. It is reachable — 128 binary indices on one intermediate — through the
+/// open-index mode, where nothing is summed and the final tensor carries every index at once.
+fn extent(shape: &[(Index, usize)]) -> u128 {
+    shape.iter().fold(1u128, |acc, &(_, d)| acc.saturating_mul(d as u128))
+}
+
 impl Network {
     /// An empty network.
     #[must_use]
@@ -402,8 +417,7 @@ impl Network {
             .collect();
 
         let mut steps = Vec::new();
-        let mut peak: u128 =
-            shapes.iter().map(|s| s.iter().map(|&(_, d)| d as u128).product::<u128>()).max().unwrap_or(1);
+        let mut peak: u128 = shapes.iter().map(|s| extent(s)).max().unwrap_or(1);
         let mut flops: u128 = 0;
 
         while shapes.len() > 1 {
@@ -417,7 +431,7 @@ impl Network {
                         for b in (a + 1)..shapes.len() {
                             let (res, _) =
                                 merge(&shapes[a], &shapes[b], &counts, &self.open);
-                            let size: u128 = res.iter().map(|&(_, d)| d as u128).product();
+                            let size: u128 = extent(&res);
                             if size < best_size {
                                 best_size = size;
                                 best = (a, b);
@@ -429,7 +443,7 @@ impl Network {
             };
 
             let (res, work) = merge(&shapes[i], &shapes[j], &counts, &self.open);
-            peak = peak.max(res.iter().map(|&(_, d)| d as u128).product::<u128>());
+            peak = peak.max(extent(&res));
             flops = flops.saturating_add(work);
 
             let (lo, hi) = if i < j { (i, j) } else { (j, i) };
@@ -529,6 +543,23 @@ impl Network {
         let mut net = Network::new();
         let s = [-1.0f64, 1.0];
         for i in 0..g.n {
+            // A SPIN IN NO FACTOR IS STILL A SPIN. With no field and no edges it would appear on no
+            // tensor at all, so its index would not exist and nothing would sum over it — losing a
+            // factor of 2 from Z, silently.
+            //
+            // This is worth more than the two lines it costs. `exact.rs` had the identical hole for
+            // the identical reason (its `initial_tables` emits nothing for such a spin, and `run`
+            // then skips a variable no table mentions), so the agreement test between the two
+            // engines RATIFIED the wrong number to the last ulp instead of catching it. Two
+            // implementations are evidence only when they do not share a blind spot, and these two
+            // shared this one because both were written from the same picture of a graph as its
+            // edges.
+            if g.h[i] == 0.0 && g.offset[i] == g.offset[i + 1] {
+                net.push(
+                    Tensor::new(vec![i as Index], vec![2], vec![1.0, 1.0])
+                        .expect("a rank-1 tensor of two entries is well formed"),
+                );
+            }
             if g.h[i] != 0.0 {
                 let data = vec![(beta * g.h[i] * s[0]).exp(), (beta * g.h[i] * s[1]).exp()];
                 net.push(
@@ -605,7 +636,7 @@ fn merge(
             out.push((i, d));
         }
     }
-    let free: u128 = out.iter().map(|&(_, d)| d as u128).product();
+    let free: u128 = extent(&out);
     (out, free.saturating_mul(sum_extent))
 }
 
@@ -835,6 +866,41 @@ mod tests {
                 assert_eq!(index, 0);
             }
             other => panic!("expected a width mismatch, got {other:?}"),
+        }
+    }
+
+    /// A network too wide to count is refused, not wrapped around.
+    ///
+    /// `peak_entries` was a non-saturating `u128` product while its neighbours saturated. At rank
+    /// 128 over binary indices that panics in debug — from a function whose docs list only
+    /// `Uncontractable::Malformed` and carry no `# Panics` — and WRAPS in release, reporting `2^66`
+    /// for a `2^130` intermediate. `contract_with` refuses on exactly that number, so an impossible
+    /// network looked affordable, which is the opposite of "slow or refused, never wrong".
+    ///
+    /// Reachable through the documented open-index mode, where nothing is summed and the final
+    /// tensor carries every index at once.
+    #[test]
+    fn an_intermediate_too_wide_to_count_saturates_and_refuses() {
+        let mut net = Network::new();
+        for i in 0..130u32 {
+            net.push(Tensor::new(vec![i], vec![2], vec![1.0, 1.0]).unwrap());
+            net.open(i);
+        }
+        // Neither order may panic, and both must report something a budget can refuse.
+        for order in [Order::Sequential, Order::GreedySize] {
+            let plan = net.plan(order).expect("a shape-only plan does not allocate");
+            assert_eq!(
+                plan.peak_entries,
+                u128::MAX,
+                "a 2^130 intermediate must saturate rather than wrap: {order:?}"
+            );
+            match net.contract_with(order, 1 << 26) {
+                Err(Uncontractable::TooWide { entries, max }) => {
+                    assert_eq!(entries, u128::MAX);
+                    assert_eq!(max, 1 << 26);
+                }
+                other => panic!("a saturated peak must refuse, got {other:?}"),
+            }
         }
     }
 

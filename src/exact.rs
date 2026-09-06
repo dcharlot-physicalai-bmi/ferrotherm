@@ -83,6 +83,261 @@ pub struct Exact {
     pub log_z: Option<f64>,
 }
 
+#[cfg(test)]
+mod degeneracy_tests {
+    use super::*;
+    use crate::graph::GraphBuilder;
+
+    /// Count ground states by brute force. The oracle, and it is deliberately the dumbest thing
+    /// that could work: an independent count with no shared machinery.
+    fn brute(g: &Graph) -> u64 {
+        assert!(g.n <= 22, "brute force is the oracle, not the method");
+        let mut best = f64::INFINITY;
+        let mut count = 0u64;
+        for mask in 0u64..(1u64 << g.n) {
+            let s: Vec<i8> =
+                (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let e = g.energy(&s);
+            if e < best - 1e-9 {
+                best = e;
+                count = 1;
+            } else if (e - best).abs() <= 1e-9 {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// The cold limit of `log Z` counts the ground states, checked against brute force.
+    ///
+    /// `samples.rs` says its own degeneracy is "evidence of degeneracy, not a count of it", and
+    /// `oracle::Exhaustive` stops at 26 spins. This counts on anything narrow, which is a claim
+    /// about shape rather than size — so it is checked where both can run, and then used where
+    /// only one can.
+    #[test]
+    fn the_cold_limit_counts_the_ground_states() {
+        let e = Elimination::default();
+        let cases: Vec<(&str, Graph)> = vec![
+            // A ferromagnetic chain: all-up and all-down, so exactly 2.
+            ("ferro chain 10", {
+                let mut b = GraphBuilder::new(10);
+                for i in 0..9 {
+                    b.couple(i, i + 1, 1.0);
+                }
+                b.build()
+            }),
+            // An ODD antiferromagnetic ring is frustrated: one bond must break, and it can be any
+            // of the N of them, in either global orientation -- exactly 2N ground states. A closed
+            // form, so this row does not lean on the brute-force oracle at all.
+            ("odd AF ring 9", crate::ising::ring(9, -1.0, 0.0)),
+            ("odd AF ring 11", crate::ising::ring(11, -1.0, 0.0)),
+            // An EVEN antiferromagnetic ring is unfrustrated: two alternating states.
+            ("even AF ring 10", crate::ising::ring(10, -1.0, 0.0)),
+            // A field breaks the global flip symmetry, leaving one.
+            ("ferro chain 8 with field", {
+                let mut b = GraphBuilder::new(8);
+                for i in 0..7 {
+                    b.couple(i, i + 1, 1.0);
+                }
+                for i in 0..8 {
+                    b.set_bias(i, 0.25);
+                }
+                b.build()
+            }),
+        ];
+
+        for (name, g) in cases {
+            let d = e.ground_degeneracy(&g, (20.0, 40.0)).expect("these are narrow");
+            let want = brute(&g);
+            assert_eq!(
+                d.count,
+                Some(want),
+                "{name}: counted {:?}, brute force says {want} (warm {:?}, cold {:?}, residual {:.2e})",
+                d.count,
+                d.warm,
+                d.cold,
+                d.residual()
+            );
+        }
+    }
+
+    /// A spin in no factor is still a spin, and sum-product owes it a factor of two.
+    ///
+    /// `initial_tables` emits nothing for a spin with no field and no edges, and `run` then skips a
+    /// variable no table mentions. Correct for min-sum — a free spin adds zero energy — and wrong
+    /// for sum-product, where summing over it multiplies `Z` by 2. `log_partition` was short by
+    /// `ln 2` per free spin and `ground_degeneracy` reported a count too small by `2^free`, as a
+    /// CONFIDENT integer: the error is identical at both temperatures, so the residual was 1e-15
+    /// and the convergence guard certified it.
+    ///
+    /// SCORED AGAINST BRUTE FORCE, NOT AGAINST THE TENSOR ENGINE. `tensor::Network::from_ising` had
+    /// the identical hole for the identical reason, so the cross-check between the two engines
+    /// agreed on the wrong number to the last ulp. Two implementations are evidence only when they
+    /// do not share a blind spot.
+    #[test]
+    fn a_spin_in_no_factor_still_doubles_the_partition_function() {
+        let e = Elimination::default();
+
+        // One coupled pair and `free` spins that appear in nothing at all.
+        for free in 0..4usize {
+            let n = 2 + free;
+            let mut b = GraphBuilder::new(n);
+            b.couple(0, 1, 1.0);
+            let g = b.build();
+
+            for beta in [0.5f64, 1.0, 2.0] {
+                let ln_z = e.log_partition(&g, beta).unwrap().log_z.unwrap();
+                let mut acc = 0.0f64;
+                for m in 0u64..(1u64 << n) {
+                    let s: Vec<i8> =
+                        (0..n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                    acc += (-beta * g.energy(&s)).exp();
+                }
+                assert!(
+                    (ln_z - acc.ln()).abs() < 1e-9,
+                    "{free} free spins at beta {beta}: elimination {ln_z}, enumeration {}",
+                    acc.ln()
+                );
+            }
+
+            // And the count doubles per free spin: 2 orientations of the pair, times 2^free.
+            let d = e.ground_degeneracy(&g, (20.0, 40.0)).unwrap();
+            assert_eq!(
+                d.count,
+                Some(2u64 << free),
+                "{free} free spins: counted {:?}, expected {}",
+                d.count,
+                2u64 << free
+            );
+        }
+    }
+
+    /// The odd antiferromagnetic ring's closed form, at a size brute force cannot reach.
+    ///
+    /// 2N ground states for an odd N-ring. Checked at N = 101, where enumeration would need 2^101
+    /// states and elimination needs 2^2 — which is the entire point of doing it this way.
+    #[test]
+    fn an_odd_antiferromagnetic_ring_has_exactly_two_n_ground_states() {
+        let e = Elimination::default();
+        for n in [21usize, 51, 101] {
+            let g = crate::ising::ring(n, -1.0, 0.0);
+            let d = e.ground_degeneracy(&g, (30.0, 60.0)).expect("a ring has width 2");
+            assert_eq!(
+                d.count,
+                Some(2 * n as u64),
+                "an odd AF {n}-ring has 2N = {} ground states; got {:?} (residual {:.2e})",
+                2 * n,
+                d.count,
+                d.residual()
+            );
+        }
+    }
+
+    /// The estimate is an UPPER bound and the colder temperature is the tighter one.
+    ///
+    /// This is the property that makes a `None` count still worth returning: the bracket is sound
+    /// even when the integer is withheld. Asserting only the converged case would leave the claim
+    /// about unconverged ones untested.
+    #[test]
+    fn the_estimate_approaches_the_truth_from_above() {
+        let e = Elimination::default();
+        let g = crate::ising::ring(9, -1.0, 0.0);
+        let truth = brute(&g) as f64;
+
+        // Deliberately WARM, where the excited levels still contribute and it has not converged.
+        let d = e.ground_degeneracy(&g, (0.5, 1.0)).expect("a ring is narrow");
+        assert!(d.warm.1 >= truth, "the warm estimate {} is below the truth {truth}", d.warm.1);
+        assert!(d.cold.1 >= truth, "the cold estimate {} is below the truth {truth}", d.cold.1);
+        assert!(
+            d.cold.1 <= d.warm.1,
+            "colder must be tighter: warm {} cold {}",
+            d.warm.1,
+            d.cold.1
+        );
+        assert!(
+            d.count.is_none(),
+            "at beta 0.5 and 1.0 this has not converged and must not name an integer, got {:?}",
+            d.count
+        );
+        assert!(d.residual() > 1e-6, "an unconverged pair should show a residual");
+    }
+
+    /// A degenerate temperature names no integer, and does not panic.
+    ///
+    /// The doc claims a non-finite or nonsensical beta gives back an unnamed bracket rather than a
+    /// rounded number. Asserted here rather than asserted in prose, because "it returns None" is
+    /// exactly the kind of claim that is true until someone changes the guard.
+    #[test]
+    fn a_temperature_that_says_nothing_names_no_number() {
+        let e = Elimination::default();
+        let g = crate::ising::ring(9, -1.0, 0.0);
+        for betas in [
+            (f64::NAN, 40.0),
+            (20.0, f64::NAN),
+            (f64::INFINITY, 40.0),
+            // Equal temperatures agree trivially. This one reported Some(512) -- 2^n, the total
+            // state count -- because the residual was zero for a reason unrelated to convergence.
+            (0.0, 0.0),
+            (30.0, 30.0),
+            (-20.0, -40.0),
+        ] {
+            let d = e.ground_degeneracy(&g, betas).expect("a ring is narrow whatever the beta");
+            assert!(
+                d.count.is_none(),
+                "betas {betas:?} must name no integer, got {:?} (warm {:?}, cold {:?})",
+                d.count,
+                d.warm,
+                d.cold
+            );
+        }
+    }
+
+    /// Betas may be given in either order; the colder is used as the estimate.
+    #[test]
+    fn the_two_temperatures_may_be_given_either_way_round() {
+        let e = Elimination::default();
+        let g = crate::ising::ring(9, -1.0, 0.0);
+        let a = e.ground_degeneracy(&g, (20.0, 40.0)).unwrap();
+        let b = e.ground_degeneracy(&g, (40.0, 20.0)).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.cold.0, 40.0);
+    }
+}
+
+/// How many states sit at the ground energy, with the evidence for the number.
+///
+/// Produced by [`Elimination::ground_degeneracy`]. Both estimates are UPPER BOUNDS on the true
+/// count — every excited level contributes a positive term — and the colder one is the tighter.
+/// Carrying both is what lets a reader see the convergence instead of trusting it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Degeneracy {
+    /// The ground energy, from the same min-sum elimination.
+    pub ground_energy: f64,
+    /// `(beta, estimate)` at the warmer temperature. The looser bound.
+    pub warm: (f64, f64),
+    /// `(beta, estimate)` at the colder temperature. The tighter bound.
+    pub cold: (f64, f64),
+    /// The count, when the two temperatures agree on an integer and the colder has converged to it.
+    ///
+    /// `None` means the estimates had not settled — a small spectral gap, or couplings continuous
+    /// enough that near-degenerate states crowd the ground level. The bracket in `warm` and `cold`
+    /// is still valid and still an upper bound; only the integer is withheld.
+    pub count: Option<u64>,
+}
+
+impl Degeneracy {
+    /// How far apart the two temperatures still are, as a fraction of the tighter estimate.
+    ///
+    /// The convergence made visible: near zero means the cold limit has been reached and `count`
+    /// can be believed, large means it has not and the number would be a guess.
+    #[must_use]
+    pub fn residual(&self) -> f64 {
+        let (_, w) = self.warm;
+        let (_, c) = self.cold;
+        if c.abs() > 0.0 { (w - c).abs() / c.abs() } else { (w - c).abs() }
+    }
+}
+
 /// Why elimination declined.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TooWide {
@@ -258,6 +513,100 @@ impl Elimination {
         self.run(g, beta, false)
     }
 
+    /// How many ground states there are, estimated from the partition function's cold limit.
+    ///
+    /// [`crate::samples::SampleSet`] can only report "evidence of degeneracy, not a count of it",
+    /// and [`crate::oracle::Exhaustive`] dies at about twenty-six spins. This counts on anything
+    /// narrow enough to eliminate, which is a statement about the graph's shape rather than its
+    /// size — the same trade the rest of this module makes.
+    ///
+    /// # Why this works, and it is not an approximation scheme
+    ///
+    /// Write the spectrum as levels: `g0` states at the ground energy `E0`, `g1` at `E0 + D`, and
+    /// so on for a spectral gap `D > 0`. Then
+    ///
+    /// ```text
+    ///   Z(beta) = g0 e^{-beta E0} (1 + (g1/g0) e^{-beta D} + ...)
+    ///   ln Z(beta) + beta E0 = ln g0 + ln(1 + (g1/g0) e^{-beta D} + ...)
+    /// ```
+    ///
+    /// so `exp(ln Z + beta E0)` converges to `g0` as `beta` grows, with error
+    /// `O((g1/g0) e^{-beta D})`. This is Maslov dequantization — the tropical semiring as the
+    /// zero-temperature limit of the log semiring — and it is why the ground state and the
+    /// partition function are the same contraction over two different arithmetics.
+    ///
+    /// # The estimate approaches from ABOVE, which is what makes it reportable
+    ///
+    /// Every excited level contributes a positive term, so the estimate is never below the truth:
+    /// it is an upper bound on `g0` that tightens as `beta` grows. Two temperatures are used rather
+    /// than one so the caller can see the convergence rather than take it on faith — [`Degeneracy`]
+    /// carries both, and `count` is filled in only when they agree on an integer.
+    ///
+    /// # When it declines to name a number
+    ///
+    /// A `count` of `None` is not a failure; it means the two temperatures had not converged, which
+    /// happens when the spectral gap is small relative to `1/beta` or when the couplings are
+    /// continuous enough that near-degenerate states crowd the ground level. The bracket is still
+    /// returned, and it is still an upper bound.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`], as [`Elimination::ground_state`] — three eliminations rather than one, at the
+    /// same width.
+    ///
+    /// # Panics
+    ///
+    /// If a min-sum run reports no ground energy or a sum-product run reports no `log Z`. Both are
+    /// assertions about this module's own elimination contract — it fills exactly one of the two
+    /// according to the flag it was passed — rather than conditions a caller can reach.
+    ///
+    /// No integer is named unless the two temperatures are finite, positive and **distinct**. Equal
+    /// betas agree trivially — the residual is zero for a reason unrelated to convergence — and at
+    /// `(0.0, 0.0)` that reported `2^n`, the total number of states, as though it were the ground
+    /// count. A non-finite or negative beta likewise returns the bracket unnamed rather than
+    /// rounding it into a number.
+    pub fn ground_degeneracy(&self, g: &Graph, betas: (f64, f64)) -> Result<Degeneracy, TooWide> {
+        let (warm, cold) = if betas.0 < betas.1 { betas } else { (betas.1, betas.0) };
+        let e0 = self
+            .ground_state(g)?
+            .ground_energy
+            .expect("min-sum was run, so it reports a ground energy");
+
+        let at = |beta: f64| -> Result<f64, TooWide> {
+            let ln_z = self
+                .log_partition(g, beta)?
+                .log_z
+                .expect("sum-product was run, so it reports log Z");
+            Ok((ln_z + beta * e0).exp())
+        };
+        let warm_est = at(warm)?;
+        let cold_est = at(cold)?;
+
+        // TWO TEMPERATURES THAT ARE THE SAME TEMPERATURE AGREE ABOUT NOTHING.
+        //
+        // The whole convergence argument is that the estimate falls towards g0 as beta rises, so
+        // two betas agreeing is evidence the fall has finished. Hand it the same beta twice and the
+        // residual is exactly zero for a reason that has nothing to do with convergence. At
+        // `(0.0, 0.0)` on a 9-spin ring that reported `Some(512)` — every state weighs 1 at beta 0,
+        // so the estimate is 2^n, a perfectly valid UPPER BOUND named as if it were the count.
+        //
+        // This is the crate's own "identical verdicts" tell, in its smallest form: the two subjects
+        // agreed because they were one subject.
+        let usable = warm.is_finite()
+            && cold.is_finite()
+            && warm > 0.0
+            && cold > warm;
+        let n = cold_est.round();
+        let count = (usable
+            && n >= 1.0
+            && n <= u64::MAX as f64
+            && warm_est.round() == n
+            && (cold_est - n).abs() < 1e-6)
+            .then_some(n as u64);
+
+        Ok(Degeneracy { ground_energy: e0, warm: (warm, warm_est), cold: (cold, cold_est), count })
+    }
+
     /// Exact single-site marginals `P(s_i = +1)` at inverse temperature `beta`.
     ///
     /// The module says sum-product gives log Z "and with it exact marginals, which is what lets a
@@ -339,6 +688,32 @@ impl Elimination {
                 tables.into_iter().partition(|t| t.vars.contains(&v));
             tables = rest;
             if mine.is_empty() {
+                // A VARIABLE NO TABLE MENTIONS IS STILL A VARIABLE, and the two semirings owe it
+                // different amounts.
+                //
+                // `initial_tables` emits nothing for a spin with no field and no edges, so such a
+                // spin reaches here with an empty bucket. Skipping it outright is right for
+                // min-sum -- a free spin adds zero to the energy, and back-substitution has no
+                // decision to record. It is WRONG for sum-product: summing over a spin that
+                // appears in no factor multiplies Z by its number of states, so `log Z` must gain
+                // `ln 2` and did not.
+                //
+                // The cost of that: `log_partition` was short by `ln 2` per free spin, which
+                // `ground_degeneracy` turned into a count too small by a factor of `2^free` --
+                // reported as a confident integer, because the error is identical at both
+                // temperatures and the convergence guard saw a residual of 1e-15.
+                //
+                // Nothing caught it. `log_z_matches_enumeration` builds with `random_sparse`,
+                // which puts a nonzero bias on every node; the chain test uses connected chains.
+                // Neither family contains an isolated spin, so the case existed and was never
+                // sampled.
+                // MINUS, because `constant` accumulates NEGATIVE log-weights: the sum-product
+                // branch below stores `-(logsumexp of -energy)` and the function returns
+                // `log_z: Some(-constant)`. Adding here would have doubled the error instead of
+                // removing it, which is what a first pass at this did.
+                if !min_sum {
+                    constant -= core::f64::consts::LN_2;
+                }
                 continue;
             }
 
