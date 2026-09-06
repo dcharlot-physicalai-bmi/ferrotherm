@@ -37,6 +37,10 @@ pub const MAX_NODES: usize = 4_000_000;
 /// 100,000 holds one request to roughly 3.4 MB and 1.3 s, and still admits a one-hot over 447
 /// values -- far past any model anyone writes by hand.
 pub const MAX_COUPLINGS: usize = 100_000;
+/// Ceiling on the node updates one request may ask for.
+///
+/// A bound on WORK rather than on wall time: the same request must cost the same on a fast machine
+/// and a slow one, or the API's refusals depend on who is asking.
 pub const MAX_NODE_UPDATES: u64 = 20_000_000_000;
 /// Total spins retained across all certified draws, bounding memory at about 20 MB.
 pub const RETAINED_SPIN_BUDGET: usize = 20_000_000;
@@ -1976,6 +1980,12 @@ fn start_from(req: &Json, n: usize) -> Result<Option<Vec<i8>>, String> {
     ))
 }
 
+/// Route one operation to its handler.
+///
+/// # Errors
+///
+/// A message naming the operation when `op` is unknown, or the handler's own error when the request
+/// is malformed or asks for more than [`MAX_NODE_UPDATES`].
 pub fn dispatch(op: &str, req: &Json) -> Result<Json, String> {
     match op {
         "sample" => sample(req),

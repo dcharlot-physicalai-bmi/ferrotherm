@@ -8,17 +8,28 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 #[derive(Clone, Debug, PartialEq)]
+/// A JSON value.
+///
+/// Objects keep INSERTION ORDER rather than sorting, so a response reads in the order the handler
+/// wrote it and two runs of the same request produce byte-identical output.
 pub enum Json {
+    /// `null`.
     Null,
+    /// `true` or `false`.
     Bool(bool),
+    /// A number. JSON has one numeric type and it is a double.
     Num(f64),
+    /// A string, already unescaped.
     Str(String),
+    /// An array.
     Arr(Vec<Json>),
+    /// An object, in insertion order.
     Obj(Vec<(String, Json)>),
 }
 
 impl Json {
     #[must_use]
+    /// The value at `key`, or `None` if this is not an object or has no such key.
     pub fn get(&self, key: &str) -> Option<&Json> {
         match self {
             Json::Obj(m) => m.iter().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -26,6 +37,7 @@ impl Json {
         }
     }
     #[must_use]
+    /// As a number, or `None` if this is not one.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Json::Num(n) => Some(*n),
@@ -33,6 +45,7 @@ impl Json {
         }
     }
     #[must_use]
+    /// As a `usize`, or `None` if this is not a non-negative whole number that fits.
     pub fn as_usize(&self) -> Option<usize> {
         match self {
             Json::Num(n) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as usize),
@@ -49,6 +62,7 @@ impl Json {
         }
     }
     #[must_use]
+    /// As a `u64`, or `None` if this is not a non-negative whole number that fits.
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Json::Num(n) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as u64),
@@ -56,6 +70,7 @@ impl Json {
         }
     }
     #[must_use]
+    /// As a string, or `None` if this is not one.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Json::Str(s) => Some(s),
@@ -63,6 +78,7 @@ impl Json {
         }
     }
     #[must_use]
+    /// As a boolean, or `None` if this is not one.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Json::Bool(b) => Some(*b),
@@ -83,6 +99,7 @@ impl Json {
         }
     }
     #[must_use]
+    /// As an array, or `None` if this is not one.
     pub fn as_arr(&self) -> Option<&[Json]> {
         match self {
             Json::Arr(a) => Some(a),
@@ -95,11 +112,13 @@ impl Json {
         Json::Obj(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
     }
     #[must_use]
-    pub fn s(v: &str) -> Json {
+    /// A JSON string, for building responses without ceremony.
+pub fn s(v: &str) -> Json {
         Json::Str(v.to_string())
     }
     #[must_use]
-    pub fn n(v: f64) -> Json {
+    /// A JSON number. Non-finite values become `null`, since JSON cannot express them.
+pub fn n(v: f64) -> Json {
         Json::Num(v)
     }
 }
@@ -107,6 +126,7 @@ impl Json {
 // ---- writing ----------------------------------------------------------------------------------
 
 #[must_use]
+/// Serialise to compact JSON text, objects in insertion order.
 pub fn write(v: &Json) -> String {
     let mut out = String::new();
     wr(v, &mut out);
@@ -176,6 +196,12 @@ fn wr_str(s: &str, out: &mut String) {
 
 // ---- parsing ----------------------------------------------------------------------------------
 
+/// Parse JSON text.
+///
+/// # Errors
+///
+/// A message describing what was wrong and where, since a parse failure without a position is not
+/// actionable.
 pub fn parse(text: &str) -> Result<Json, String> {
     let b: Vec<char> = text.chars().collect();
     let mut i = 0;

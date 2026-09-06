@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // THE FLAGSHIP: a reach controller compiled onto the Z1 device fabric, closed-loop on the arm,
 // with total task energy accounted on both platforms — embodied AI on the thermodynamic stack,
 // which the entire thermodynamic-computing corpus currently does not attempt.

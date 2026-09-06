@@ -137,9 +137,29 @@ fn king_adjacent(a: (usize, usize), b: (usize, usize)) -> bool {
 /// Why a model could not be laid out on the grid.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayoutError {
-    NotAdjacent { i: usize, j: usize, a: (usize, usize), b: (usize, usize) },
-    OutOfGrid { i: usize },
-    CoefficientRange { value: f64, limit: f64 },
+    /// Two coupled spins are not neighbours on the device's fixed grid.
+    NotAdjacent {
+        /// One endpoint's spin index.
+        i: usize,
+        /// The other's.
+        j: usize,
+        /// Where `i` sits on the grid.
+        a: (usize, usize),
+        /// Where `j` sits, which is not next to `a`.
+        b: (usize, usize),
+    },
+    /// A spin has no position on the grid at all.
+    OutOfGrid {
+        /// The spin that has no grid position.
+        i: usize,
+    },
+    /// A coupling or field is outside the range the device represents.
+    CoefficientRange {
+        /// The coefficient asked for.
+        value: f64,
+        /// The largest magnitude the device accepts.
+        limit: f64,
+    },
 }
 
 impl core::fmt::Display for LayoutError {

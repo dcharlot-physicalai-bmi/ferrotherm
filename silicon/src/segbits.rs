@@ -38,6 +38,7 @@ impl SegBit {
 /// A parsed segbits database: feature name -> the bits that define it.
 #[derive(Debug, Clone, Default)]
 pub struct SegBits {
+    /// Feature name to the bits that define it. A feature is on when every bit is at its stated value.
     pub features: HashMap<String, Vec<SegBit>>,
 }
 
@@ -72,6 +73,7 @@ impl SegBits {
     }
 
     #[must_use]
+    /// The bits defining one feature, or `None` if the database does not have it.
     pub fn get(&self, feature: &str) -> Option<&[SegBit]> {
         self.features.get(feature).map(std::vec::Vec::as_slice)
     }

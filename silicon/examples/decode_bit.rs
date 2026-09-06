@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // Validate our configuration-packet layer against an OUTSIDE WITNESS: a real bitstream that a
 // real device accepts. If our decoder walks the whole stream cleanly and the registers it
 // reports match what a 7-series part expects, the encoder half is trustworthy too.

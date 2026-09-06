@@ -68,8 +68,11 @@ pub const Z1_SPICE: Prices = Prices {
 /// Operation counts accumulated by a run.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ledger {
+    /// Single-node Gibbs updates performed.
     pub samples: u64,
+    /// Node values read out to the chip edge.
     pub reads: u64,
+    /// Node couplings, biases or clamp state flashed.
     pub writes: u64,
 }
 

@@ -6,41 +6,71 @@
 
 /// Configuration register addresses (UG470 Table 5-23).
 pub mod reg {
+    /// CRC check.
     pub const CRC: u32 = 0x00;
+    /// Frame Address Register.
     pub const FAR: u32 = 0x01;
+    /// Frame Data Register, input.
     pub const FDRI: u32 = 0x02;
+    /// Frame Data Register, output.
     pub const FDRO: u32 = 0x03;
+    /// Command register.
     pub const CMD: u32 = 0x04;
+    /// Control register 0.
     pub const CTL0: u32 = 0x05;
+    /// Mask for CTL0/CTL1 writes.
     pub const MASK: u32 = 0x06;
+    /// Status register.
     pub const STAT: u32 = 0x07;
+    /// Legacy output for daisy chains.
     pub const LOUT: u32 = 0x08;
+    /// Configuration Option Register 0.
     pub const COR0: u32 = 0x09;
+    /// Device ID, checked against the target part.
     pub const IDCODE: u32 = 0x0C;
+    /// Configuration Option Register 1.
     pub const COR1: u32 = 0x0E;
+    /// Warm Boot Start Address.
     pub const WBSTAR: u32 = 0x10;
+    /// Watchdog timer.
     pub const TIMER: u32 = 0x11;
+    /// Boot history.
     pub const BOOTSTS: u32 = 0x16;
+    /// Control register 1.
     pub const CTL1: u32 = 0x18;
 }
 
 /// CMD register opcodes (UG470 Table 5-24).
 pub mod cmd {
+    /// No operation.
     pub const NULL: u32 = 0x00;
+    /// Write configuration data.
     pub const WCFG: u32 = 0x01;
+    /// Last frame.
     pub const LFRM: u32 = 0x03;
+    /// Read configuration data.
     pub const RCFG: u32 = 0x04;
+    /// Begin the startup sequence.
     pub const START: u32 = 0x05;
+    /// Reset the CAPTURE signal.
     pub const RCAP: u32 = 0x06;
+    /// Pulse GRESTORE, restoring flip-flop initial values.
     pub const GRESTORE: u32 = 0x0A;
+    /// Switch to the configured clock rate.
     pub const SWITCH: u32 = 0x09;
+    /// Reset the CRC register.
     pub const RCRC: u32 = 0x07;
+    /// Leave the synchronised state.
     pub const DESYNC: u32 = 0x0D;
+    /// Internal reconfiguration.
     pub const IPROG: u32 = 0x0F;
 }
 
+/// Dummy word, clocked in before the sync word to flush the configuration pipeline.
 pub const DUMMY: u32 = 0xFFFF_FFFF;
+/// The sync word. Everything before it is ignored; everything after is packets.
 pub const SYNC: u32 = 0xAA99_5566;
+/// A type-1 packet with zero payload: the padding between real commands.
 pub const NOOP: u32 = 0x2000_0000;
 
 /// Type-1 packet header: read `count` words from `reg`.
@@ -64,10 +94,15 @@ pub fn type2_write(count: u32) -> u32 {
 /// The payload of a Xilinx `.bit` container, plus whatever metadata the header carried.
 #[derive(Debug, Clone)]
 pub struct BitFile<'a> {
+    /// Design name from the header.
     pub design: String,
+    /// Target part, which must match the `IDCODE` the stream writes.
     pub part: String,
+    /// Build date from the header.
     pub date: String,
+    /// Build time from the header.
     pub time: String,
+    /// The raw configuration stream, still borrowing the input.
     pub config: &'a [u8],
 }
 
@@ -135,11 +170,28 @@ pub fn find_sync(config: &[u8]) -> Option<usize> {
 /// A decoded configuration packet.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
+    /// A no-op word.
     Nop,
-    Write { reg: u32, data: Vec<u32> },
-    Read { reg: u32, count: u32 },
+    /// A write to a configuration register.
+    Write {
+        /// Register address, from [`reg`].
+        reg: u32,
+        /// Payload words.
+        data: Vec<u32>,
+    },
+    /// A read request.
+    Read {
+        /// Register address.
+        reg: u32,
+        /// Words requested.
+        count: u32,
+    },
     /// Type-2 continuation of the previous register.
-    Continue { words: usize },
+    Continue {
+        /// Payload words that follow.
+        words: usize,
+    },
+    /// A header word this decoder does not recognise, carried rather than dropped.
     Unknown(u32),
 }
 

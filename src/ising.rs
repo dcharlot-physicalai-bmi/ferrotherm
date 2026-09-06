@@ -191,6 +191,11 @@ pub fn grid2d(w: usize, h: usize, j: f64) -> Graph {
 }
 
 #[must_use]
+/// Exact Boltzmann probability of every one of the `2^n` states, by enumeration.
+///
+/// # Panics
+///
+/// If the model is too large to enumerate.
 pub fn exact_boltzmann(g: &Graph, beta: f64) -> Vec<f64> {
     assert!(g.n <= 24, "exact enumeration limited to 24 spins");
     let m = 1usize << g.n;

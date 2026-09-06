@@ -158,6 +158,13 @@ float_cmp = "allow"
 # invisible to every other build.
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+# Every public item in the core crate carries a doc, and this is what keeps it that way. It was 509
+# short; the standard applied to close it was that a doc must carry an INVARIANT, a unit, a range or
+# a provenance rather than restate the field's name -- `Graph::offset` says the neighbours of `i` are
+# `nbr[offset[i]..offset[i+1]]`, `Graph::n_edges` says it is `nbr.len() / 2` and not `nbr.len()`,
+# `FpgaTarget::provenance` says where the datasheet numbers came from. A deny rather than a ratchet,
+# because zero is only stable if nothing may re-add the first one.
+missing_docs = "deny"
 
 [workspace]
 members = [".", "silicon", "serve", "cloud", "gpu", "meter"]

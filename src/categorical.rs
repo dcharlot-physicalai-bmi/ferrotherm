@@ -39,9 +39,13 @@ use crate::schedule::Schedule;
 
 /// A block of `n` independent `k`-valued variables in one encoding.
 pub struct Categorical {
+    /// Where each variable's spins live.
     pub slots: Vec<Slot>,
+    /// The spin graph the encoding lowered to.
     pub graph: crate::graph::Graph,
+    /// Which encoding was used, which decides how spins read back as values.
     pub encoding: Encoding,
+    /// States per variable.
     pub k: usize,
     /// Whether the penalty pins these variables to their codewords EXACTLY.
     ///

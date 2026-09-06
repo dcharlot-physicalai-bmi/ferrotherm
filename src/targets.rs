@@ -20,7 +20,7 @@ pub enum Class {
     Edge,
     /// Rented by the hour from a cloud provider; no hardware to own.
     CloudInstance,
-    /// A card that goes in a host machine's PCIe slot.
+    /// A card that goes in a host machine's `PCIe` slot.
     PcieCard,
     /// A shared cluster with academic access terms rather than a purchase price.
     AcademicCluster,

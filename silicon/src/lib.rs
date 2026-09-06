@@ -99,6 +99,7 @@ pub mod device {
 
         #[cfg(not(feature = "flash"))]
         #[must_use]
+        /// Whether a board is attached. Always `false` without the `flash` feature.
         pub fn attached() -> bool {
             false
         }

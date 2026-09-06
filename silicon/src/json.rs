@@ -4,17 +4,25 @@
 //! slices rather than a general-purpose document model.
 
 #[derive(Debug, Clone, PartialEq)]
+/// A JSON value borrowed from the input, so parsing a 40 MB part database copies no strings.
 pub enum Json<'a> {
+    /// `null`.
     Null,
+    /// `true` or `false`.
     Bool(bool),
+    /// A number.
     Num(f64),
+    /// A string slice of the input.
     Str(&'a str),
+    /// An array.
     Arr(Vec<Json<'a>>),
+    /// An object, in insertion order.
     Obj(Vec<(&'a str, Json<'a>)>),
 }
 
 impl<'a> Json<'a> {
     #[must_use]
+    /// The value at `key`, or `None` if this is not an object or has no such key.
     pub fn get(&self, key: &str) -> Option<&Json<'a>> {
         match self {
             Json::Obj(m) => m.iter().find(|(k, _)| *k == key).map(|(_, v)| v),
@@ -22,6 +30,7 @@ impl<'a> Json<'a> {
         }
     }
     #[must_use]
+    /// As a string slice of the input, or `None` if this is not a string.
     pub fn as_str(&self) -> Option<&'a str> {
         match self {
             Json::Str(s) => Some(s),
@@ -29,6 +38,7 @@ impl<'a> Json<'a> {
         }
     }
     #[must_use]
+    /// As a `u64`, or `None` if this is not a non-negative whole number that fits.
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Json::Num(n) => Some(*n as u64),
@@ -36,6 +46,7 @@ impl<'a> Json<'a> {
         }
     }
     #[must_use]
+    /// An object's entries in order, or an empty slice if this is not an object.
     pub fn entries(&self) -> &[(&'a str, Json<'a>)] {
         match self {
             Json::Obj(m) => m,
@@ -44,6 +55,11 @@ impl<'a> Json<'a> {
     }
 }
 
+/// Parse JSON, borrowing every string from `src`.
+///
+/// # Errors
+///
+/// A message describing what was wrong and where.
 pub fn parse(src: &str) -> Result<Json<'_>, String> {
     let b = src.as_bytes();
     let mut i = 0usize;

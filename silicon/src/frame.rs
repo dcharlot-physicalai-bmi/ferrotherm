@@ -28,10 +28,12 @@ pub fn crc32c(data: &[u8]) -> u32 {
 /// quantity (5-bit address, then 32-bit data, LSB first) into the register.
 #[derive(Default, Clone, Copy)]
 pub struct ConfigCrc {
+    /// The running CRC. Zero after a reset, and what a `CRC` register write is checked against.
     pub value: u32,
 }
 
 impl ConfigCrc {
+    /// Fold one register write into the CRC: 32 data bits then 5 address bits, LSB first.
     pub fn update(&mut self, addr: u32, data: u32) {
         // shift the 32 data bits then the 5 address bits through the CRC-32C polynomial
         for i in 0..37 {
@@ -43,6 +45,7 @@ impl ConfigCrc {
             }
         }
     }
+    /// Clear the CRC, as the `RCRC` command does on the device.
     pub fn reset(&mut self) {
         self.value = 0;
     }
@@ -100,6 +103,7 @@ pub fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 
 /// Bus-width auto-detect pattern that precedes the sync word.
 pub const BUS_WIDTH_SYNC: u32 = 0x0000_00BB;
+/// The second half of the bus-width auto-detect pattern.
 pub const BUS_WIDTH_DETECT: u32 = 0x1122_0044;
 
 /// Assemble a complete 7-series configuration stream for a sparse set of frames.

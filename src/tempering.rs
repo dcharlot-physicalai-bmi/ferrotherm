@@ -45,8 +45,11 @@ pub fn geometric_ladder(beta_min: f64, beta_max: f64, n: usize) -> Vec<f64> {
     (0..n).map(|i| beta_min * r.powi(i as i32)).collect()
 }
 
+/// What a parallel-tempering run found, with the diagnostic that says whether to believe it.
 pub struct TemperingResult {
+    /// Lowest-energy state seen at any rung.
     pub best: Vec<i8>,
+    /// Its energy, recomputed from the state.
     pub best_e: f64,
     /// Swap acceptance rate per adjacent pair — the ladder-health diagnostic. Healthy ladders sit
     /// roughly in [0.2, 0.6]; near-zero pairs mean the ladder has a gap replicas cannot cross.
@@ -196,6 +199,7 @@ pub fn parallel_tempering(
 /// [`crate::free_energy::bar_ladder`] consumes.
 #[derive(Clone, Debug)]
 pub struct LadderTraces {
+    /// The ladder, hot end first.
     pub betas: Vec<f64>,
     /// `energies[i]` is the trace at `betas[i]`, one entry per recorded round.
     pub energies: Vec<Vec<f64>>,

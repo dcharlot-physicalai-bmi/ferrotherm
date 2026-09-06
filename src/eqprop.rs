@@ -29,7 +29,9 @@ use crate::graph::{Graph, GraphBuilder};
 /// A supervised task on a Boltzmann machine: which spins are inputs, which are outputs.
 #[derive(Clone, Debug)]
 pub struct Task {
+    /// Nodes clamped to the example, held fixed in both phases.
     pub inputs: Vec<usize>,
+    /// Nodes the loss is read from, and nudged in the second phase.
     pub outputs: Vec<usize>,
 }
 
@@ -43,8 +45,11 @@ pub fn hamming_loss(task: &Task, s: &[i8], target: &[i8]) -> f64 {
 /// bias, in the layout `(couplings, biases)` where couplings follow `pairs`.
 #[derive(Clone, Debug)]
 pub struct Gradient {
+    /// The edges the coupling gradients belong to, parallel to `d_couplings`.
     pub pairs: Vec<(usize, usize)>,
+    /// Gradient with respect to each coupling.
     pub d_couplings: Vec<f64>,
+    /// Gradient with respect to each node's bias.
     pub d_biases: Vec<f64>,
 }
 

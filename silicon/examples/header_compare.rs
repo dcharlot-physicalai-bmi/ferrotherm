@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // OUTSIDE-WITNESS CHECK on the generator: assemble a bitstream with our own code and compare its
 // configuration header, word for word, against a bitstream a real device accepted. If our packet
 // order or register values differ, this prints the first divergence.

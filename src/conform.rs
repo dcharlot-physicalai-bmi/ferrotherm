@@ -29,9 +29,11 @@ use crate::schedule::Schedule;
 /// One case's outcome.
 #[derive(Clone, Debug)]
 pub struct CaseResult {
+    /// The case's name, as the suite declares it.
     pub name: &'static str,
     /// What the case is checking, in one line.
     pub asks: &'static str,
+    /// Whether the fabric produced the answer the case demands.
     pub passed: bool,
     /// The measurement, whether it passed or not.
     pub detail: String,
@@ -40,15 +42,19 @@ pub struct CaseResult {
 /// What a fabric scored.
 #[derive(Clone, Debug)]
 pub struct Report {
+    /// Which fabric was put through the suite.
     pub fabric: String,
+    /// One result per case, in the order they ran.
     pub cases: Vec<CaseResult>,
 }
 
 impl Report {
     #[must_use = "a certificate with findings is a certificate that failed; ignoring this is reporting a sound run that was not one"]
+    /// Whether every case passed.
     pub fn passed(&self) -> bool {
         self.cases.iter().all(|c| c.passed)
     }
+    /// Just the cases that failed, which is what a report should lead with.
     pub fn failures(&self) -> impl Iterator<Item = &CaseResult> {
         self.cases.iter().filter(|c| !c.passed)
     }

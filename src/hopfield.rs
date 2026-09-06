@@ -128,12 +128,17 @@ pub fn gaussian_expectation(n: usize, f: impl Fn(f64) -> f64) -> f64 {
 /// A replica-symmetric solution of the AGS equations.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RsSolution {
+    /// Load `alpha = P / N` the solution was found at.
     pub alpha: f64,
+    /// Inverse temperature.
     pub beta: f64,
     /// Retrieval overlap; `0` (to tolerance) means no retrieval state at this load.
     pub m: f64,
+    /// Spin-glass order parameter: the mean squared local magnetisation.
     pub q: f64,
+    /// Mean squared crosstalk from the non-retrieved patterns.
     pub r: f64,
+    /// Fixed-point iterations run before the residual met tolerance.
     pub iterations: usize,
 }
 

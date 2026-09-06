@@ -75,13 +75,17 @@ impl Encoding {
 /// Where one categorical variable's spins live in a graph.
 #[derive(Clone, Copy, Debug)]
 pub struct Slot {
+    /// Index of the group's first spin; it occupies `base..base + k`.
     pub base: usize,
+    /// Spins in the group.
     pub k: usize,
+    /// How those spins map back to a value.
     pub encoding: Encoding,
 }
 
 impl Slot {
     #[must_use]
+    /// A slot of `k` spins starting at `base`, read under `encoding`.
     pub fn new(base: usize, k: usize, encoding: Encoding) -> Self {
         assert!(k >= 2, "a variable with fewer than 2 values is a constant");
         Slot { base, k, encoding }

@@ -2,6 +2,10 @@
 //! Determinism is a feature: every published number must be reproducible from its seed.
 
 #[derive(Clone)]
+/// PCG-XSH-RR, a small deterministic generator with independent streams.
+///
+/// Deterministic by seed is load-bearing: every result in this crate must be reproducible from its
+/// seed alone, and a generator with hidden global state cannot promise that.
 pub struct Pcg {
     state: u64,
     inc: u64,
@@ -9,6 +13,7 @@ pub struct Pcg {
 
 impl Pcg {
     #[must_use]
+    /// A generator on `stream`, started at `seed`. Different streams do not correlate.
     pub fn new(seed: u64, stream: u64) -> Self {
         let mut r = Pcg { state: 0, inc: (stream << 1) | 1 };
         r.next_u32();
@@ -18,6 +23,7 @@ impl Pcg {
     }
 
     #[inline]
+    /// The next 32 bits, advancing the state once.
     pub fn next_u32(&mut self) -> u32 {
         let old = self.state;
         self.state = old.wrapping_mul(6364136223846793005).wrapping_add(self.inc);

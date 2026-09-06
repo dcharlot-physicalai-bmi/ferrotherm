@@ -78,18 +78,36 @@ pub enum Provenance {
     /// [`crate::certify`] both read it. A set built with this provenance from states that were
     /// shuffled, sorted, or pooled from several chains is mislabelled, and everything downstream
     /// will believe it.
-    Chain { beta: f64, burn_in: usize, thin: usize },
+    Chain {
+        /// Inverse temperature the chain ran at.
+        beta: f64,
+        /// Sweeps discarded before recording began.
+        burn_in: usize,
+        /// Sweeps between recorded states.
+        thin: usize,
+    },
     /// The final population of a sequential Monte Carlo run at `beta`, with the family statistic
     /// `rho` that says how much of it is genuinely distinct.
     ///
     /// Replicas are independent chains, so there is no autocorrelation along an index — but
     /// resampling means several replicas can descend from one ancestor, and `rho` is exactly the
     /// factor by which that shrinks the effective count. See [`crate::popanneal::Outcome::rho`].
-    Population { beta: f64, rho: f64 },
+    Population {
+        /// Inverse temperature of the final population.
+        beta: f64,
+        /// Family statistic: how much shared ancestry shrinks the effective count.
+        rho: f64,
+    },
     /// Every state in the model, with its exact Boltzmann weight. Nothing was sampled.
-    Enumerated { beta: f64 },
+    Enumerated {
+        /// Inverse temperature the exact weights were computed at.
+        beta: f64,
+    },
     /// States a search visited on its way downhill. Distributed by nothing.
-    Search { method: &'static str },
+    Search {
+        /// Which search produced them, so a reader sees they are not a sample.
+        method: &'static str,
+    },
 }
 
 impl Provenance {
@@ -126,13 +144,24 @@ impl Provenance {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Refused {
     /// The states came from a search, so their frequencies are a fact about the search.
-    NotDistributional { method: &'static str },
+    NotDistributional {
+        /// The search that produced the states.
+        method: &'static str,
+    },
     /// The question needs chain order, and this set has none.
-    NotAChain { provenance: &'static str },
+    NotAChain {
+        /// What the set actually is, since only a chain has an autocorrelation time.
+        provenance: &'static str,
+    },
     /// There is nothing to average.
     Empty,
     /// The model has more spins than exhaustive enumeration will materialise.
-    TooLargeToEnumerate { spins: usize, limit: usize },
+    TooLargeToEnumerate {
+        /// Spins in the model.
+        spins: usize,
+        /// The largest that can be enumerated exactly.
+        limit: usize,
+    },
 }
 
 impl core::fmt::Display for Refused {

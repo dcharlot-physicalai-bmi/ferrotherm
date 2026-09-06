@@ -9,14 +9,21 @@ use std::time::Duration;
 /// Bodies larger than this are refused before they are read into memory.
 pub const MAX_BODY: usize = 64 * 1024 * 1024;
 
+/// One parsed HTTP request: only the parts this server acts on.
 pub struct Request {
+    /// The method, uppercased as sent.
     pub method: String,
+    /// Request path, query string included.
     pub path: String,
+    /// Body, empty when there is none.
     pub body: String,
 }
 
+/// One HTTP response: a status and a body, since every route here returns JSON.
 pub struct Response {
+    /// HTTP status code.
     pub status: u16,
+    /// Response body.
     pub body: String,
 }
 

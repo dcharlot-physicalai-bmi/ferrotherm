@@ -34,6 +34,7 @@ pub struct Padded {
 
 impl Padded {
     #[must_use]
+    /// Pad a CSR graph to a fixed row width, so every node's neighbour loop is the same length.
     pub fn from_graph(g: &Graph) -> Padded {
         let n = g.n;
         let k = g.max_degree().max(1);

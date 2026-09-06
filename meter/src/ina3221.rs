@@ -53,14 +53,25 @@ const TOTAL_RAIL_NAMES: &[&str] = &["vdd_in", "vdd_sys_in", "sum of shunt voltag
 #[derive(Clone, Debug, PartialEq)]
 pub enum RailError {
     /// No INA3221 present, or none readable by this user.
-    NotFound { looked_in: Vec<String> },
+    NotFound {
+        /// The sysfs paths that were searched, so the absence is checkable.
+        looked_in: Vec<String>,
+    },
     /// Rails were found, but none of them says it is the total.
     ///
     /// Deliberately fatal. The channels are nested, so there is no arithmetic — not a sum, not a
     /// maximum — that turns "some rails" into board power without knowing which is which.
-    NoTotalRail { found: Vec<String> },
+    NoTotalRail {
+        /// The rails that were found, none of which is labelled as the total.
+        found: Vec<String>,
+    },
     /// A file existed and did not contain what its name promises.
-    Unreadable { path: String, why: String },
+    Unreadable {
+        /// The file that did not contain what its name promises.
+        path: String,
+        /// What was wrong with it.
+        why: String,
+    },
 }
 
 impl core::fmt::Display for RailError {
@@ -87,6 +98,7 @@ impl core::fmt::Display for RailError {
 /// One INA3221 channel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rail {
+    /// The channel's label, as the driver reports it. This is what identifies the total rail.
     pub label: String,
     /// Where its reading comes from, already resolved to a layout.
     pub source: RailSource,
@@ -96,9 +108,17 @@ pub struct Rail {
 #[derive(Clone, Debug, PartialEq)]
 pub enum RailSource {
     /// Upstream hwmon: bus voltage in mV times current in mA.
-    VoltsAmps { volt: PathBuf, curr: PathBuf },
+    VoltsAmps {
+        /// Bus voltage file, in millivolts.
+        volt: PathBuf,
+        /// Current file, in milliamps.
+        curr: PathBuf,
+    },
     /// L4T downstream: milliwatts, directly.
-    Milliwatts { power: PathBuf },
+    Milliwatts {
+        /// Power file, in milliwatts.
+        power: PathBuf,
+    },
 }
 
 /// The rails on one INA3221, and which of them is the board total.

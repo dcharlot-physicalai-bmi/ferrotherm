@@ -32,15 +32,44 @@ use crate::graph::Graph;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Finding {
     /// The temperature the samples were drawn at is not the temperature that was requested.
-    BetaMismatch { requested: f64, effective: f64, ci: (f64, f64) },
+    BetaMismatch {
+        /// The inverse temperature asked for.
+        requested: f64,
+        /// The one the samples are consistent with.
+        effective: f64,
+        /// 95% interval on `effective`, widened for autocorrelation.
+        ci: (f64, f64),
+    },
     /// Successive samples are too correlated for the count to mean what it says.
-    Undermixed { tau_int: f64, ess: f64, draws: usize },
+    Undermixed {
+        /// Integrated autocorrelation time, in draws.
+        tau_int: f64,
+        /// Effective sample size these draws are worth.
+        ess: f64,
+        /// Draws taken.
+        draws: usize,
+    },
     /// The distribution is measurably not the Boltzmann distribution, beyond sampling noise.
-    AboveNoiseFloor { tv: f64, floor: f64 },
+    AboveNoiseFloor {
+        /// Measured total-variation distance from the exact distribution.
+        tv: f64,
+        /// The distance finite sampling alone produces. Never quote a `tv` below this.
+        floor: f64,
+    },
     /// The chain was still drifting: early samples do not look like late ones.
-    NotConverged { early: f64, late: f64, sigma: f64 },
+    NotConverged {
+        /// Mean energy over the first half of the run.
+        early: f64,
+        /// Mean over the second half.
+        late: f64,
+        /// Standard error the gap is judged against.
+        sigma: f64,
+    },
     /// Too few samples to say anything. Reported rather than guessed at.
-    TooFewSamples { draws: usize },
+    TooFewSamples {
+        /// Draws taken, which is too few to estimate anything here.
+        draws: usize,
+    },
 }
 
 impl core::fmt::Display for Finding {

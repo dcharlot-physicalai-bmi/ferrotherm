@@ -140,9 +140,11 @@ impl Scope {
 /// than the baseline's own variation is not a small measurement, it is not a measurement.
 #[derive(Clone, Copy, Debug)]
 pub struct Baseline {
+    /// Mean whole-system power over the baseline window.
     pub watts: f64,
     /// Standard deviation of the readings the baseline was computed from.
     pub sigma: f64,
+    /// Readings the mean was computed from.
     pub samples: usize,
     /// The machine's 1-minute load average while the baseline was taken, or `None` where it could
     /// not be read.
@@ -176,6 +178,7 @@ pub struct Run {
     pub samples: usize,
     /// What produced these numbers.
     pub machine: String,
+    /// Which power backend produced these readings.
     pub backend: &'static str,
 }
 
@@ -347,6 +350,7 @@ impl Meter {
     }
 
     #[must_use]
+    /// The machine this meter is reading, as the backend names it.
     pub fn machine(&self) -> &str {
         &self.machine
     }

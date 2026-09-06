@@ -43,6 +43,7 @@ use crate::graph::Graph;
 
 /// Buffer contents for the emitted shader, in the layout it expects.
 pub struct GpuModel {
+    /// Node count, as the shader sees it.
     pub n: u32,
     /// Row width of the padded interaction rectangle.
     pub k: u32,
@@ -58,6 +59,7 @@ pub struct GpuModel {
 
 impl GpuModel {
     #[must_use]
+    /// Flatten a CSR graph into the padded `f32` buffers the shader binds.
     pub fn from_graph(g: &Graph) -> GpuModel {
         let d = Padded::from_graph(g);
         GpuModel {

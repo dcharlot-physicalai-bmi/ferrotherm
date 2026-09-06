@@ -48,6 +48,7 @@ fn tool(name: &str, desc: &str, props: Vec<(&str, Json)>, required: Vec<&str>) -
 }
 
 #[must_use]
+/// The MCP tool manifest this server advertises, as a JSON value.
 pub fn tools() -> Json {
     Json::Arr(vec![
         tool(

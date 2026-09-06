@@ -443,11 +443,18 @@ pub fn gardner_capacity(kappa: f64) -> f64 {
 /// The same storage problem with couplings on the sphere `|J|² = N` instead of the hypercube.
 #[derive(Clone, Debug)]
 pub struct SphericalPerceptron {
+    /// The patterns to classify, gauged so every target is `+1`.
     pub patterns: Vec<Vec<i8>>,
+    /// Spins per pattern, which is the weight vector's dimension.
     pub n: usize,
 }
 
 impl SphericalPerceptron {
+    /// Build from gauged patterns.
+    ///
+    /// # Panics
+    ///
+    /// If the patterns are empty or not all the same length.
     #[must_use]
     pub fn new(patterns: Vec<Vec<i8>>) -> Self {
         let n = patterns.first().map_or(0, std::vec::Vec::len);
@@ -455,11 +462,13 @@ impl SphericalPerceptron {
         SphericalPerceptron { patterns, n }
     }
 
+    /// `p` random patterns of `n` spins.
     #[must_use]
     pub fn random(n: usize, p: usize, seed: u64) -> Self {
         SphericalPerceptron::new(crate::hopfield::random_patterns(n, p, seed))
     }
 
+    /// The load `alpha = P / N`: patterns per dimension, the axis capacity is stated on.
     #[must_use]
     pub fn load(&self) -> f64 {
         self.patterns.len() as f64 / self.n as f64

@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // Route a real signal across the real fabric: one LUT's output (LOGIC_OUTS) to another LUT's
 // input (IMUX) in a different interconnect tile, then resolve every PIP on the path to physical
 // configuration bits. This is the last capability between a ferrotherm fabric and silicon.

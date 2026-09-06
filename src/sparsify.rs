@@ -69,7 +69,10 @@ pub struct Sparsified {
 pub enum Refused {
     /// A budget of two or less: a path of any length offers only two ports, so no number of copies
     /// makes a variable of degree three fit. The bound divides by `d − 2` and this is that.
-    BudgetTooSmall { budget: usize },
+    BudgetTooSmall {
+        /// Copies allowed, which is fewer than the graph needs.
+        budget: usize,
+    },
 }
 
 impl core::fmt::Display for Refused {

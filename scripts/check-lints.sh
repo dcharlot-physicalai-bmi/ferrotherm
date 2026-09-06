@@ -27,7 +27,6 @@ count() { # $1 = clippy flag, $2 = the phrase its finding prints
   cargo clippy --release -p ferrotherm --all-targets -- "$1" 2>&1 | grep -c "$2"
 }
 measure() {
-  echo "missing_docs $(cargo clippy --release -p ferrotherm -- -W missing_docs 2>&1 | grep -c 'missing documentation')"
   echo "missing_errors_doc $(count -Wclippy::missing_errors_doc 'missing .# Errors')"
   echo "missing_panics_doc $(count -Wclippy::missing_panics_doc 'missing .# Panics')"
 }
@@ -66,7 +65,6 @@ fail=0
 while read -r name want; do
   [[ -n "$name" ]] || continue
   case "$name" in
-    missing_docs)        got=$(cargo clippy --release -p ferrotherm -- -W missing_docs 2>&1 | grep -c 'missing documentation') ;;
     missing_errors_doc)  got=$(count -Wclippy::missing_errors_doc 'missing .# Errors') ;;
     missing_panics_doc)  got=$(count -Wclippy::missing_panics_doc 'missing .# Panics') ;;
     *) echo "unknown lint family in the baseline: $name" >&2; exit 2 ;;

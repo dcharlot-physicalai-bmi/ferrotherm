@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // THE BINDING: route one LUT's output pin to another LUT's input pin, across real slices and
 // real interconnect. This is the connection a p-bit fabric is built from — a neighbour's state
 // arriving at a p-bit's LUT input — and the last routing capability needed before a ferrotherm

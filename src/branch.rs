@@ -160,6 +160,7 @@ pub struct Outcome {
     /// Both zero when [`Params::sdp_depth`] is `None`. `sdp_prunes / sdp_calls` is what the dial is
     /// actually worth on this instance — a ratio of zero means every Cholesky was wasted.
     pub sdp_calls: u64,
+    /// Nodes cut by the SDP bound rather than by enumeration.
     pub sdp_prunes: u64,
 }
 

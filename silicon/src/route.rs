@@ -17,14 +17,23 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// One inter-tile connectivity rule.
 #[derive(Debug)]
 pub struct Conn {
+    /// Tile type the rule starts in.
     pub from_type: String,
+    /// Tile type it reaches.
     pub to_type: String,
+    /// Column offset from the source tile to the destination.
     pub dx: i32,
+    /// Row offset.
     pub dy: i32,
     /// wire in `from_type` -> wire in `to_type`
     pub pairs: HashMap<String, String>,
 }
 
+/// Parse a `tileconn.json` from the part database.
+///
+/// # Errors
+///
+/// A message naming what was malformed.
 pub fn parse_tileconn(text: &str) -> Result<Vec<Conn>, String> {
     let j = parse(text)?;
     let Json::Arr(items) = j else { return Err("tileconn.json must be an array".into()) };
@@ -62,8 +71,11 @@ pub type Node = (String, String); // (tile name, wire name)
 /// One step of a route: the PIP that was taken, in the tile it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteStep {
+    /// The tile the PIP is in.
     pub tile: String,
+    /// That tile's type, which names the segbits feature.
     pub tile_type: String,
+    /// The programmable interconnect point taken.
     pub pip: Pip,
 }
 
@@ -75,13 +87,16 @@ impl RouteStep {
     }
 }
 
+/// The routable fabric: a tile grid plus what connects to what, within tiles and between them.
 pub struct Fabric<'g> {
+    /// The tile grid being routed over.
     pub grid: &'g TileGrid,
     /// tile type -> PIPs
     pub pipdbs: HashMap<String, PipDb>,
     /// tile type -> pseudo-PIP kinds. `always` connections are PERMANENT wiring: traversable at
     /// zero cost and emitting no bits. `default` and `hint` are router metadata, not conductors.
     pub ppips: HashMap<String, crate::pips::Ppips>,
+    /// Inter-tile connectivity rules.
     pub conns: Vec<Conn>,
     /// (`grid_x`, `grid_y`) -> tile name
     at: HashMap<(u32, u32), String>,
@@ -92,11 +107,13 @@ pub struct Fabric<'g> {
 
 impl<'g> Fabric<'g> {
     #[must_use]
+    /// A fabric with no pseudo-PIPs.
     pub fn new(grid: &'g TileGrid, pipdbs: HashMap<String, PipDb>, conns: Vec<Conn>) -> Fabric<'g> {
         Self::with_ppips(grid, pipdbs, HashMap::new(), conns)
     }
 
     #[must_use]
+    /// A fabric that also knows its pseudo-PIPs, so `always` wiring is traversable at zero cost.
     pub fn with_ppips(
         grid: &'g TileGrid,
         pipdbs: HashMap<String, PipDb>,

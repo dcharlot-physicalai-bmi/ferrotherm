@@ -59,8 +59,11 @@ use crate::rng::Pcg;
 
 /// An instance with its optimum known by construction.
 pub struct Planted {
+    /// The instance, built around a state chosen first.
     pub graph: Graph,
+    /// That state, the true optimum by construction rather than by search.
     pub ground_state: Vec<i8>,
+    /// Its energy, so a solver's answer can be scored exactly.
     pub ground_energy: f64,
     /// How many frustrated cycles were planted. Higher is harder, up to a point.
     pub loops: usize,

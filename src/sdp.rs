@@ -89,6 +89,7 @@ pub struct Certificate {
     pub rump_c: f64,
     /// Mixing sweeps run, and the rank used.
     pub sweeps: usize,
+    /// Rank of the factorisation the solution was found at.
     pub rank: usize,
 }
 
@@ -96,7 +97,12 @@ pub struct Certificate {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CertError {
     /// `y` is not the length this graph implies.
-    Shape { got: usize, want: usize },
+    Shape {
+        /// Length supplied.
+        got: usize,
+        /// Length required.
+        want: usize,
+    },
     /// The Cholesky did not complete: `C − Diag(y)` is not provably PSD.
     NotPsd,
     /// A non-finite entry.

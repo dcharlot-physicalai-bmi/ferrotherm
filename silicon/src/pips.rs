@@ -18,10 +18,15 @@ use crate::json::{parse, Json};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// One programmable interconnect point: a switch inside a tile joining two wires.
 pub struct Pip {
+    /// Wire the PIP drives from.
     pub src: String,
+    /// Wire it drives to.
     pub dst: String,
+    /// Whether it conducts only `src` to `dst`.
     pub directional: bool,
+    /// Whether it is a pseudo-PIP: permanent wiring or router metadata rather than a switch.
     pub pseudo: bool,
 }
 
@@ -43,11 +48,15 @@ pub struct Site {
 }
 
 #[derive(Debug, Default)]
+/// Every PIP of one tile type, indexed for routing.
 pub struct PipDb {
+    /// The tile type this database describes.
     pub tile_type: String,
+    /// Its PIPs.
     pub pips: Vec<Pip>,
     /// wire name -> indices of PIPs driving FROM it
     pub by_src: HashMap<String, Vec<u32>>,
+    /// Every wire name mentioned by any PIP, which is the routable node set in this tile.
     pub wires: HashSet<String>,
     /// sites in this tile type, in declaration order (X0Y0, X1Y0, ...)
     pub sites: Vec<Site>,
@@ -113,11 +122,13 @@ impl PipDb {
 /// Pseudo-PIP set from a `ppips_*.db` (feature -> kind: always / default / hint).
 #[derive(Debug, Default)]
 pub struct Ppips {
+    /// Feature name to kind. `always` is permanent wiring; `default` and `hint` are metadata.
     pub kinds: HashMap<String, String>,
 }
 
 impl Ppips {
     #[must_use]
+    /// Parse a `ppips_*.db`. Unrecognised lines are skipped rather than refused.
     pub fn parse(text: &str) -> Ppips {
         let mut kinds = HashMap::new();
         for line in text.lines() {

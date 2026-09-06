@@ -14,8 +14,11 @@ use crate::graph::Graph;
 use crate::rng::Pcg;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// Which simulated-bifurcation update to use.
 pub enum Variant {
+    /// Positions evolve continuously and are only clipped at the walls.
     Ballistic,
+    /// The coupling term reads the SIGN of each position: cheaper, and often mixes better.
     Discrete,
 }
 

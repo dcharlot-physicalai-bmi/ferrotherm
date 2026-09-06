@@ -105,7 +105,12 @@ pub enum ReduceError {
     ///
     /// Converting a k-body spin product to binary produces 2^k monomials, so this is a real wall
     /// rather than a tidiness rule. Refused loudly instead of allocating until something dies.
-    TooWide { arity: usize, limit: usize },
+    TooWide {
+        /// Arity of the term that could not be reduced.
+        arity: usize,
+        /// The largest arity this reduction handles.
+        limit: usize,
+    },
     /// The program has no factors and nothing to reduce.
     Empty,
 }

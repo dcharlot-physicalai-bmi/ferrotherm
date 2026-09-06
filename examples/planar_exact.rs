@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // Exact max-cut on a planar spin glass, at sizes no search in this crate can reach.
 //
 // `exact_reach` measured where branch and bound stops: 76 spins sparse, 52 dense, and that is with

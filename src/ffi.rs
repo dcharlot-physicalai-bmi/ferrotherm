@@ -45,6 +45,10 @@ use crate::graph::Graph;
 use crate::ising::{lattice2d, onsager_m};
 use crate::ledger::{Ledger, Z1_SPICE};
 
+/// An opaque handle to one model and everything derived from it, owned across the C ABI.
+///
+/// Callers see a pointer and nothing else; every accessor below takes one and checks it for null,
+/// because a null dereference across an ABI is the caller's crash and not their bug report.
 pub struct Sim {
     graph: Box<Graph>,
     /// Built on first request; a GPU model is pure derived data and most runs never ask for one.
@@ -1042,6 +1046,7 @@ pub extern "C" fn ft_onsager(beta: f64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+/// Free a [`Sim`]. Null is accepted and does nothing.
 pub extern "C" fn ft_free(sim: *mut Sim) {
     if !sim.is_null() {
         drop(unsafe { Box::from_raw(sim) });
@@ -1329,6 +1334,7 @@ pub extern "C" fn ft_shader() -> *const u8 {
 }
 
 #[unsafe(no_mangle)]
+/// Byte length of the WGSL shader source, so a caller can size a buffer before asking for it.
 pub extern "C" fn ft_shader_len() -> u32 {
     shader_bytes().len() as u32
 }
@@ -1767,6 +1773,7 @@ mod sample_tests {
 macro_rules! cert_field {
     ($name:ident, $f:expr_2021) => {
         #[unsafe(no_mangle)]
+        /// One field of the run's certificate, or `NaN` when there is no certificate.
         pub extern "C" fn $name(sim: *const Sim) -> f64 {
             match unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) {
                 Some(c) => $f(c),
@@ -2026,6 +2033,7 @@ pub struct ModelHandle {
 }
 
 #[unsafe(no_mangle)]
+/// Allocate an empty model handle. Free it with `ft_model_free`.
 pub extern "C" fn ft_model_new() -> *mut ModelHandle {
     Box::into_raw(Box::new(ModelHandle {
         model: Model::new(),
@@ -2040,6 +2048,7 @@ pub extern "C" fn ft_model_new() -> *mut ModelHandle {
 }
 
 #[unsafe(no_mangle)]
+/// Free a model handle. Null is accepted and does nothing.
 pub extern "C" fn ft_model_free(m: *mut ModelHandle) {
     if !m.is_null() {
         drop(unsafe { Box::from_raw(m) });
@@ -4002,6 +4011,7 @@ pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, t
 macro_rules! model_cert_field {
     ($name:ident, $f:expr_2021) => {
         #[unsafe(no_mangle)]
+        /// One field of the model run's certificate, or `NaN` when there is no certificate.
         pub extern "C" fn $name(m: *const ModelHandle) -> f64 {
             match unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) {
                 Some(c) => $f(c),
@@ -4804,6 +4814,7 @@ pub extern "C" fn ft_hubo_new(n: u32) -> *mut HuboHandle {
 }
 
 #[unsafe(no_mangle)]
+/// Free a HUBO handle. Null is accepted and does nothing.
 pub extern "C" fn ft_hubo_free(h: *mut HuboHandle) {
     if !h.is_null() {
         drop(unsafe { Box::from_raw(h) });

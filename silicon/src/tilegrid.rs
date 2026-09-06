@@ -29,17 +29,26 @@ use std::collections::HashMap;
 /// One configuration block of a tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitsBlock {
+    /// Frame address this block starts at.
     pub baseaddr: u32,
+    /// Frames the block spans.
     pub frames: u16,
+    /// Word offset within each frame.
     pub offset: u16,
+    /// Words the block occupies in each frame.
     pub words: u16,
 }
 
 #[derive(Debug, Clone)]
+/// One tile of the fabric, with where its configuration bits live.
 pub struct Tile {
+    /// The tile's name, as the part database gives it.
     pub name: String,
+    /// Its type, which decides which PIP database applies.
     pub kind: String,
+    /// Column in the tile grid.
     pub grid_x: u32,
+    /// Row in the tile grid.
     pub grid_y: u32,
     /// block name (e.g. "`CLB_IO_CLK`", "`BLOCK_RAM`") -> address block
     pub bits: Vec<(String, BitsBlock)>,
@@ -61,9 +70,13 @@ impl Tile {
 /// A physical configuration-bit position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitAddr {
+    /// Absolute frame address.
     pub frame: u32,
+    /// Word within the frame.
     pub word: u16,
+    /// Bit within the word.
     pub bit: u16,
+    /// Whether the feature sets the bit or clears it.
     pub set: bool,
 }
 
@@ -90,11 +103,19 @@ impl BitsBlock {
 }
 
 #[derive(Debug, Default)]
+/// Every tile of a part, indexed by name.
 pub struct TileGrid {
+    /// Tiles by name.
     pub tiles: HashMap<String, Tile>,
 }
 
 impl TileGrid {
+    /// Parse a `tilegrid.json` from the part database.
+    ///
+    /// # Errors
+    ///
+    /// A message naming what was malformed, since a bad grid produces bits at the wrong addresses
+    /// rather than an obvious failure.
     pub fn parse(text: &str) -> Result<TileGrid, String> {
         let j = parse(text)?;
         let mut tiles = HashMap::new();
@@ -147,6 +168,7 @@ impl TileGrid {
         self.tiles.values().find(|t| t.sites.iter().any(|(n, _)| n == site))
     }
 
+    /// Every tile of one type.
     pub fn of_kind<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a Tile> + 'a {
         self.tiles.values().filter(move |t| t.kind == kind)
     }
@@ -155,15 +177,21 @@ impl TileGrid {
 /// Decode a 7-series frame address (UG470): block type, half, row, column, minor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Far {
+    /// Block type: 0 is CLB/IO/CLK, 1 is block RAM content.
     pub block_type: u8,
+    /// Which half of the device, since rows are numbered outward from the centre.
     pub bottom_half: bool,
+    /// Clock row.
     pub row: u8,
+    /// Major column.
     pub column: u16,
+    /// Minor address: the frame within the column.
     pub minor: u8,
 }
 
 impl Far {
     #[must_use]
+    /// Split a packed frame address into its fields.
     pub fn decode(far: u32) -> Far {
         Far {
             block_type: ((far >> 23) & 0x7) as u8,
@@ -174,6 +202,7 @@ impl Far {
         }
     }
     #[must_use]
+    /// Pack the fields back into a frame address. Inverse of [`Far::decode`].
     pub fn encode(&self) -> u32 {
         ((self.block_type as u32 & 0x7) << 23)
             | ((self.bottom_half as u32) << 22)

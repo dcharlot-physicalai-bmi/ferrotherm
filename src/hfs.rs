@@ -334,6 +334,7 @@ impl Default for Params {
 /// What the descent did.
 #[derive(Clone, Debug)]
 pub struct Outcome {
+    /// The best state found.
     pub state: Vec<i8>,
     /// Recomputed from the state, not accumulated: an energy carried along a run of deltas drifts,
     /// and a drifting energy is indistinguishable from a search that is doing well.

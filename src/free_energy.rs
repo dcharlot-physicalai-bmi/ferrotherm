@@ -255,6 +255,7 @@ pub struct Ais {
     /// Effective sample size of the weights, `(Σw)² / Σw²`. Near 1 means one run dominates and
     /// the lower bound, while still valid, is loose.
     /// Effective sample size of the weights: how many of the `n` runs the estimate really rests on.
+    /// Effective sample size of the weights: how many runs the estimate really rests on.
     pub ess: f64,
 }
 
@@ -304,12 +305,15 @@ fn finish_ais(n: usize, beta: f64, log_weights: Vec<f64>) -> Ais {
 /// What a reverse AIS run produced.
 #[derive(Clone, Debug)]
 pub struct ReverseAis {
+    /// Spins in the model.
     pub n: usize,
+    /// Inverse temperature the run targeted.
     pub beta: f64,
     /// One log weight per run for `Z_0 / Z`, excluding the reference term.
     pub log_weights: Vec<f64>,
     /// The point estimate `ln Ẑ = n ln 2 − ln mean(w')`. Biased *high* for `ln Z`.
     pub log_z: f64,
+    /// Effective sample size of the weights: how many runs the estimate really rests on.
     pub ess: f64,
 }
 
@@ -390,12 +394,15 @@ impl Sandwich {
 /// What thermodynamic integration produced: the bracket and every rung's mean energy.
 #[derive(Clone, Debug)]
 pub struct Ti {
+    /// Spins in the model.
     pub n: usize,
+    /// Inverse temperature the run targeted.
     pub beta: f64,
     /// `(β_k, ⟨E⟩_{β_k})` for every rung; the zero rung's mean is exactly `0`.
     pub rungs: Vec<(f64, Estimate)>,
     /// The bracket on `ln Z` from monotonicity alone, means taken at face value.
     pub lower: f64,
+    /// Upper end of the bracket, means at face value.
     pub upper: f64,
     /// The bracket with every mean widened by `z` standard errors first.
     pub lower_widened: f64,
@@ -580,6 +587,7 @@ pub fn bar_pair(beta_a: f64, energies_a: &[f64], beta_b: f64, energies_b: &[f64]
 /// One rung of the free-energy curve.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThermoRung {
+    /// Inverse temperature of this rung.
     pub beta: f64,
     /// Absolute `ln Z(β)`: `n ln 2` plus the BAR steps up the ladder.
     pub log_z: f64,
@@ -604,6 +612,7 @@ pub struct ThermoRung {
 /// The free-energy curve and what follows from it.
 #[derive(Clone, Debug)]
 pub struct Thermo {
+    /// Spins in the model.
     pub n: usize,
     /// Every rung of the ladder, hot end first.
     pub rungs: Vec<ThermoRung>,

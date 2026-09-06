@@ -170,9 +170,15 @@ pub const ALLOW_BUSY: &str = "FERROTHERM_ALLOW_BUSY";
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Quiet {
     /// The machine was quiet, or the platform does not report load at all.
-    Yes { load1: Option<f64> },
+    Yes {
+        /// The 1-minute load average read, or `None` where it could not be.
+        load1: Option<f64>,
+    },
     /// Busy, but [`ALLOW_BUSY`] was set. The number is still spoiled; the caller asked for it.
-    Overridden { load1: f64 },
+    Overridden {
+        /// The load average at the time of the override, carried so a result stays auditable.
+        load1: f64,
+    },
 }
 
 impl Quiet {

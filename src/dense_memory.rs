@@ -41,19 +41,30 @@ pub enum Energy {
     /// makes degree 2 the classical Hebbian energy exactly.
     Polynomial(u32),
     /// `F(x) = exp(b (x − N)) / b`, shifted so the term of a perfectly matched pattern is `1/b`.
-    Exponential { b: f64 },
+    Exponential {
+        /// Base of the exponential separation function; larger stores more patterns.
+        b: f64,
+    },
 }
 
 /// A dense associative memory over `±1` spins.
 #[derive(Clone, Debug)]
 pub struct DenseMemory {
+    /// The stored patterns.
     pub patterns: Vec<Vec<i8>>,
+    /// Spins per pattern.
     pub n: usize,
+    /// Which separation function the energy uses, and therefore the capacity law.
     pub energy: Energy,
 }
 
 impl DenseMemory {
     #[must_use]
+    /// Store these patterns under this energy.
+    ///
+    /// # Panics
+    ///
+    /// If the patterns are empty or not all the same length.
     pub fn new(patterns: Vec<Vec<i8>>, energy: Energy) -> Self {
         let n = patterns.first().map_or(0, std::vec::Vec::len);
         assert!(n > 0 && patterns.iter().all(|p| p.len() == n));

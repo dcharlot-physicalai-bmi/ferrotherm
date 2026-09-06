@@ -153,6 +153,7 @@ pub fn tap(g: &Graph, beta: f64, iters: usize, damping: f64) -> MeanField {
 /// What belief propagation produced.
 #[derive(Clone, Debug)]
 pub struct Bethe {
+    /// Inverse temperature the messages were passed at.
     pub beta: f64,
     /// BP marginals `⟨s_i⟩`.
     pub m: Vec<f64>,

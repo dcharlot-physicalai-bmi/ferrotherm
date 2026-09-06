@@ -102,7 +102,12 @@ pub struct Outcome {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
     /// A field breaks the isoenergetic argument. See the module note.
-    HasFields { node: usize, h: f64 },
+    HasFields {
+        /// The first node carrying a field.
+        node: usize,
+        /// Its bias.
+        h: f64,
+    },
     /// Fewer than two rungs, so there is no ladder.
     LadderTooShort(usize),
 }

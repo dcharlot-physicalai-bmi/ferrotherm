@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // Does a certified SDP bound INSIDE the branch-and-bound tree pay, and at what depth?
 //
 // `exact_reach` measured where the cheap bound runs out: 76 spins at mean degree 6, 44 at mean

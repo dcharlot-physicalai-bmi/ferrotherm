@@ -322,12 +322,14 @@ impl core::fmt::Display for Verdict {
 /// Why a program cannot run on a fabric.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Unsupported {
+    /// The program needs more spins than the fabric has.
     TooManySpins {
         /// Spins the program needs.
         need: usize,
         /// Spins the fabric has.
         limit: usize,
     },
+    /// A node's degree exceeds what the fabric can wire.
     TooHighDegree {
         /// The first node over the limit.
         node: usize,
@@ -336,12 +338,14 @@ pub enum Unsupported {
         /// The fabric's maximum.
         limit: usize,
     },
+    /// A factor touches more variables than the fabric evaluates natively.
     ArityTooHigh {
         /// Arity of the offending factor.
         arity: usize,
         /// The largest the fabric evaluates natively.
         limit: usize,
     },
+    /// The program sets fields and the fabric applies none.
     NoFieldSupport {
         /// How many nodes carry a nonzero field the fabric cannot apply.
         nodes: usize,

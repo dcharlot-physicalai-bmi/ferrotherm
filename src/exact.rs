@@ -87,7 +87,12 @@ pub struct Exact {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TooWide {
     /// The best order this found still needs a table of `2^width`.
-    Width { width: usize, max: usize },
+    Width {
+        /// Induced width of the order found.
+        width: usize,
+        /// The largest width allowed, since a table costs `2^width`.
+        max: usize,
+    },
 }
 
 impl core::fmt::Display for TooWide {

@@ -64,6 +64,7 @@ impl Embedding {
     }
 
     #[must_use]
+    /// Whether the embedding has no faces.
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }

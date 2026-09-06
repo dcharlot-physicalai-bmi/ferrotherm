@@ -77,7 +77,9 @@ impl Default for Params {
 /// What an adaptive run did, including the evidence that it helped or did not.
 #[derive(Clone, Debug)]
 pub struct Outcome {
+    /// Lowest-energy state seen anywhere on the ladder.
     pub best: Vec<i8>,
+    /// Its energy, recomputed from the state.
     pub best_e: f64,
     /// The ladder it finished with.
     pub betas: Vec<f64>,

@@ -42,7 +42,9 @@ use std::collections::BTreeMap;
 /// Why a file could not be read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LpError {
+    /// 1-based line where parsing stopped.
     pub line: usize,
+    /// What was wrong, in the format's terms.
     pub message: String,
 }
 

@@ -14,9 +14,11 @@ use crate::segbits::SegBit;
 use crate::tilegrid::{BitAddr, BitsBlock};
 use std::collections::BTreeMap;
 
+/// Words in one 7-series configuration frame.
 pub const WORDS_PER_FRAME: usize = 101;
 
 #[derive(Debug, Default, Clone)]
+/// A sparse set of configuration frames, keyed by frame address and kept in address order.
 pub struct FrameBuf {
     /// frame address -> 101 words
     pub frames: BTreeMap<u32, Vec<u32>>,
@@ -24,6 +26,7 @@ pub struct FrameBuf {
 
 impl FrameBuf {
     #[must_use]
+    /// An empty buffer.
     pub fn new() -> FrameBuf {
         FrameBuf { frames: BTreeMap::new() }
     }
@@ -34,6 +37,7 @@ impl FrameBuf {
         self.frames.len()
     }
     #[must_use]
+    /// Whether it holds no frames.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }

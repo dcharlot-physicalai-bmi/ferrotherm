@@ -20,13 +20,21 @@ fn gauss(rng: &mut Pcg) -> f64 {
 
 /// Dense symmetric positive-definite system, row-major.
 pub struct Spd {
+    /// Dimension.
     pub n: usize,
+    /// The matrix `A`, row-major, `n * n`.
     pub a: Vec<f64>,
+    /// The right-hand side `b`, length `n`.
     pub b: Vec<f64>,
 }
 
 impl Spd {
     #[must_use]
+    /// Build the system `A x = b`.
+    ///
+    /// # Panics
+    ///
+    /// If `a` is not `n * n`, or `b` is not `n` long.
     pub fn new(n: usize, a: Vec<f64>, b: Vec<f64>) -> Spd {
         assert_eq!(a.len(), n * n);
         assert_eq!(b.len(), n);
@@ -51,6 +59,7 @@ impl Spd {
     }
 }
 
+/// What a thermodynamic linear-algebra run estimated, and from how many samples.
 pub struct TlaResult {
     /// Time-averaged state — the estimate of A^-1 b.
     pub x: Vec<f64>,

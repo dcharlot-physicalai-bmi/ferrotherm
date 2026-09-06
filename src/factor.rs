@@ -17,9 +17,19 @@ pub enum FactorError {
     /// No variables. A factor over nothing is a constant, which belongs in the energy offset.
     Empty,
     /// A variable appears more than once, which silently changes the factor's order.
-    RepeatedVariable { var: usize, times: usize },
+    RepeatedVariable {
+        /// The variable listed more than once.
+        var: usize,
+        /// How many times it appeared.
+        times: usize,
+    },
     /// A variable index is not in the model.
-    OutOfRange { var: usize, n: usize },
+    OutOfRange {
+        /// The offending variable index.
+        var: usize,
+        /// Spins in the model, so valid indices are `0..n`.
+        n: usize,
+    },
     /// A weight that is NaN or infinite poisons every energy it touches.
     NonFinite,
 }
@@ -81,16 +91,19 @@ impl Factor {
         Ok(Factor { vars: vars.iter().map(|&v| v as u32).collect(), weight })
     }
 
+    /// The variables this factor touches, in order.
     pub fn vars(&self) -> impl Iterator<Item = usize> + '_ {
         self.vars.iter().map(|&v| v as usize)
     }
 
     #[must_use]
+    /// How many variables it touches.
     pub fn arity(&self) -> usize {
         self.vars.len()
     }
 
     #[must_use]
+    /// Its coefficient: the energy contributed when the spin product is `-1`.
     pub fn weight(&self) -> f64 {
         self.weight
     }

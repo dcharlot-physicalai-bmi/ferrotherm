@@ -433,7 +433,12 @@ mod tests {
 pub enum Potential {
     /// `½ a x² − b x`. Recovers the Gaussian case, so the general sampler can be checked against
     /// [`Gbm`]'s closed forms as well as against quadrature.
-    Quadratic { a: f64, b: f64 },
+    Quadratic {
+        /// Curvature; must be positive for the density to be normalisable.
+        a: f64,
+        /// Linear term, which shifts the mean.
+        b: f64,
+    },
     /// Continuous Hopfield's graded-neuron term (Hopfield 1984), `gain · ∫₀ˣ atanh(u) du`
     /// `= gain · (x·atanh(x) + ½ ln(1 − x²))`, finite only on `(−1, 1)`.
     ///
@@ -442,10 +447,18 @@ pub enum Potential {
     /// points of the dynamics are the fixed points of `x = tanh(gain · field)`. Its domain is a
     /// hard box, which the sampler respects by rejecting rather than by clamping — a clamp would
     /// pile probability on the boundary that the model does not put there.
-    HopfieldTanh { gain: f64 },
+    HopfieldTanh {
+        /// Transfer-function gain. Larger means a sharper `tanh` and a stiffer unit.
+        gain: f64,
+    },
     /// `a x⁴ − b x²`, the double well: not log-concave, so the conditional is bimodal and a sampler
     /// that quietly assumes unimodality will be caught.
-    DoubleWell { a: f64, b: f64 },
+    DoubleWell {
+        /// Quartic coefficient, positive so the potential is bounded below.
+        a: f64,
+        /// Quadratic coefficient; positive puts the minima at `+-sqrt(b/2a)`.
+        b: f64,
+    },
 }
 
 impl Potential {
@@ -478,6 +491,7 @@ impl Potential {
 /// A continuous energy-based model with arbitrary local terms: `E(x) = Σ V_i(x_i) − Σ_{i<j} W_ij x_i x_j`.
 #[derive(Clone, Debug)]
 pub struct ContinuousEbm {
+    /// One potential per unit; its length is the model's dimension.
     pub potentials: Vec<Potential>,
     /// Row-major `n×n`, symmetric, diagonal ignored.
     pub w: Vec<f64>,
@@ -485,6 +499,11 @@ pub struct ContinuousEbm {
 
 impl ContinuousEbm {
     #[must_use]
+    /// Build from per-unit potentials and a symmetric coupling matrix.
+    ///
+    /// # Panics
+    ///
+    /// If `w` is not `n * n`, or is not symmetric to `1e-12`.
     pub fn new(potentials: Vec<Potential>, w: Vec<f64>) -> Self {
         let n = potentials.len();
         assert_eq!(w.len(), n * n);
@@ -497,6 +516,7 @@ impl ContinuousEbm {
     }
 
     #[must_use]
+    /// Units in the model.
     pub fn n(&self) -> usize {
         self.potentials.len()
     }

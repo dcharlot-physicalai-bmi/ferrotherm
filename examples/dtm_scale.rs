@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program, and its helpers are private to it -- so the lint has nothing to guard and asks for
+// doc comments on `fn main`'s scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // DTM at the published flagship scale: L=70 grid, G12 connectivity, T=8 chained EBMs, trained on
 // binarized Fashion-MNIST. This is the configuration the architecture's own paper reports
 // (arXiv:2510.23972): 4,900 nodes per layer, visible sites drawn uniformly at random.
