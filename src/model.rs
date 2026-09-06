@@ -2469,6 +2469,9 @@ impl Compiled {
             // Decoding a state performs no device operations. A caller that ran something attaches
             // what it spent; `decode` on its own is free and says so.
             cost: crate::ledger::Ledger::default(),
+            // One try, agreeing with itself, which is no evidence. `best_of` overwrites this
+            // with the count that means something.
+            agreement: (1, 1),
             // Decoding a state says nothing about whether it is optimal. Only `solve_by` with
             // `Method::Branch` can set this, and it sets it on the Solution it returns.
             proved_optimal: false,
@@ -2802,31 +2805,10 @@ impl Compiled {
     }
 
     fn best_of(&self, tries: u64, run: impl Fn(u64) -> Solution) -> Solution {
-        let mut best: Option<Solution> = None;
-        // Every try is paid for, not just the one that wins. Carrying only the winner's ledger
-        // would make an N-restart search read as costing a single run, and the whole reason to
-        // count operations is to see that trade.
-        let mut total = crate::ledger::Ledger::default();
-        for s in 0..tries.max(1) {
-            let cand = run(s);
-            total.samples += cand.cost.samples;
-            total.reads += cand.cost.reads;
-            total.writes += cand.cost.writes;
-            let better = match &best {
-                None => true,
-                Some(b) => match (b.feasible(), cand.feasible()) {
-                    (false, true) => true,
-                    (true, false) => false,
-                    _ => cand.energy < b.energy,
-                },
-            };
-            if better {
-                best = Some(cand);
-            }
-        }
-        let mut winner = best.expect("at least one try");
-        winner.cost = total;
-        winner
+        // Collected rather than streamed, so selection and aggregation stay one decision made in
+        // one place. See `Solution::best_of_all` for what splitting them cost.
+        let all: Vec<Solution> = (0..tries.max(1)).map(&run).collect();
+        Solution::best_of_all(&all)
     }
 }
 
@@ -2878,6 +2860,65 @@ mod receipt_tests {
     ///
     /// Carrying only the winner's ledger would make an N-restart search read as costing a single
     /// run, which is precisely how something expensive comes to look cheap.
+    /// An annealed answer arrives with evidence, and a single one admits it has none.
+    #[test]
+    fn agreement_counts_the_tries_that_reached_the_answer() {
+        let c = tiny();
+
+        // One try agrees with itself, which is worth nothing and is reported as (1, 1) rather than
+        // as a full-marks 100%.
+        assert_eq!(c.solve_annealed(0).agreement, (1, 1));
+
+        let s = c.solve_best_of(12);
+        let (agreed, tries) = s.agreement;
+        assert_eq!(tries, 12, "every try must be counted, not only the ones that won");
+        assert!((1..=tries).contains(&agreed), "{agreed} of {tries} is not a count of 12 tries");
+    }
+
+    /// The counting rule itself, driven with tries whose verdicts are chosen rather than annealed.
+    ///
+    /// Two properties that a run over a real model cannot pin down, because it cannot be made to
+    /// produce a specific mix of outcomes:
+    ///
+    /// * agreement is counted against the FINAL winner, not whoever was leading when a try
+    ///   arrived -- a counter incremented in flight gets this wrong whenever the winner changes;
+    /// * an INFEASIBLE run at the winner's energy does not agree with it. The compiled energy folds
+    ///   every penalty in, so two states can price alike and mean opposite things, and counting
+    ///   those inflates confidence in exactly the case where the penalty is too small.
+    #[test]
+    fn agreement_is_counted_against_the_winner_and_on_feasibility_too() {
+        let c = tiny();
+        let base = c.solve_annealed(0);
+        let make = |energy: f64, feasible: bool| {
+            let mut s = base.clone();
+            s.energy = energy;
+            s.violated = if feasible {
+                Vec::new()
+            } else {
+                vec![Violation { detail: "a hard row broke".into(), hard: true, amount: 1.0, cost: 0.0 }]
+            };
+            s
+        };
+
+        // Tries arrive worst-first, so the winner is the LAST one -- the case a running counter
+        // gets wrong. Three feasible tries sit at -10.0; one INFEASIBLE try also sits at -10.0 and
+        // must not be counted; one sits elsewhere.
+        let plan = [(-1.0, true), (-10.0, true), (-10.0, false), (-10.0, true), (-10.0, true)];
+        let out = c.best_of(plan.len() as u64, |i| {
+            let (e, f) = plan[i as usize];
+            make(e, f)
+        });
+
+        assert_eq!(out.energy, -10.0);
+        assert!(out.feasible());
+        assert_eq!(
+            out.agreement,
+            (3, 5),
+            "three feasible tries reached -10.0; the infeasible one at the same energy is a \
+             different answer, and the -1.0 try is not this answer at all"
+        );
+    }
+
     #[test]
     fn best_of_n_is_charged_for_every_try() {
         let c = tiny();
@@ -3052,6 +3093,32 @@ pub struct Solution {
     /// `proved_optimal` with an INFEASIBLE answer proves something different and still useful: the
     /// penalty was too small, and no larger search will fix it. Raise the penalty.
     pub proved_optimal: bool,
+    /// How many independent tries this answer was chosen from, and how many of them reached it.
+    ///
+    /// `(1, 1)` for a single solve, which is honest rather than flattering: one try that agrees
+    /// with itself is no evidence at all.
+    ///
+    /// # How to read it, and the asymmetry that matters
+    ///
+    /// This is the trust signal an annealed answer otherwise arrives without. Every commercial
+    /// machine in this field returns "best found" and nothing else, and `proved_optimal` is only
+    /// available from [`Method::Branch`] — so for the method a caller actually reaches for, there
+    /// was no statement about the answer at all.
+    ///
+    /// The two directions do **not** say symmetric things.
+    ///
+    /// * **Low agreement is informative and actionable.** 1 of 12 means independent restarts are
+    ///   still finding new bottoms: the budget is binding, and more tries or a longer ladder will
+    ///   probably move the answer.
+    /// * **High agreement is weaker than it looks.** 12 of 12 says this landscape is easy *for this
+    ///   schedule* — a model with one broad basin concentrates immediately and so does a model
+    ///   whose ladder is too cold to leave where it started. It is evidence about the search, not a
+    ///   proof about the optimum, and nothing here upgrades it into one.
+    ///
+    /// Agreement is on the energy **and** on feasibility together: an infeasible run that happens
+    /// to sit at the same compiled energy is not the same answer, and counting it would inflate
+    /// confidence exactly where the penalty is too small.
+    pub agreement: (u32, u32),
     /// The objective's value in the modeller's own units, in the direction they wrote it.
     ///
     /// `None` when no objective was written, or when `objective` was called with both senses and
@@ -3063,6 +3130,65 @@ pub struct Solution {
 }
 
 impl Solution {
+    /// The answer a best-of search returns from a full set of tries, carrying what the whole set
+    /// cost and how many of them agreed.
+    ///
+    /// # Why this is a function rather than a loop in two places
+    ///
+    /// It was a loop in two places. `Compiled::best_of` aggregated; `ffi::best_answer` re-derived
+    /// the same winner from the kept list — deliberately, so the two "cannot disagree" — and
+    /// aggregated nothing. So the receipt was right in Rust and wrong on **every binding**: a
+    /// 1-try, a 4-try and a 12-try solve all reported 19,200 node updates through the C ABI,
+    /// understating a 12-try search twelvefold, and agreement always read `(1, 1)`.
+    ///
+    /// Selection and aggregation are one decision — which try won, and therefore what the set cost
+    /// and how much of it agreed — and splitting them is what let one half travel without the
+    /// other.
+    ///
+    /// # Panics
+    ///
+    /// If `all` is empty. A best-of over no tries has no answer to return, and inventing one would
+    /// be worse than saying so.
+    #[must_use]
+    pub fn best_of_all(all: &[Solution]) -> Solution {
+        let mut best = &all[0];
+        for cand in &all[1..] {
+            let better = match (best.feasible(), cand.feasible()) {
+                (false, true) => true,
+                (true, false) => false,
+                _ => cand.energy < best.energy,
+            };
+            if better {
+                best = cand;
+            }
+        }
+        let mut winner = best.clone();
+
+        // Every try is paid for, not just the one that wins. Carrying only the winner's ledger
+        // makes an N-restart search read as costing a single run, which is exactly how a search
+        // that is expensive comes to look cheap.
+        let mut total = crate::ledger::Ledger::default();
+        for s in all {
+            total.samples += s.cost.samples;
+            total.reads += s.cost.reads;
+            total.writes += s.cost.writes;
+        }
+        winner.cost = total;
+
+        // Energies are sums of f64 coefficients, so two runs that found the same assignment can
+        // differ in the last bits; the tolerance is relative to the magnitude for that reason, and
+        // not because near-misses should count. Feasibility is part of the match: the compiled
+        // energy folds every penalty in, so two states can price alike and mean opposite things.
+        let tol = 1e-9 * winner.energy.abs().max(1.0);
+        let feasible = winner.feasible();
+        let agreed = all
+            .iter()
+            .filter(|s| s.feasible() == feasible && (s.energy - winner.energy).abs() <= tol)
+            .count();
+        winner.agreement = (agreed as u32, all.len() as u32);
+        winner
+    }
+
     /// What this answer cost in joules on a given machine, or `None` when that machine has no
     /// published price for something the run actually did.
     ///

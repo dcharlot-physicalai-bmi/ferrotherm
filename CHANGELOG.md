@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### An annealed answer now says how much of the search agreed with it
+
+`proved_optimal` is only ever set by branch and bound, so for the method a caller actually reaches
+for there was no statement about the answer at all — the same "best found and nothing else" every
+commercial machine in this field returns. `Solution::agreement` is `(agreed, tries)`: how many
+independent tries reached this answer, out of how many were made.
+
+**The two directions are not symmetric, and the docs say so.** `(1, 12)` says restarts are still
+finding new bottoms — the budget is binding, and more tries will probably move the answer. `(12, 12)`
+says the landscape is easy *for this schedule*, which a model with one broad basin and a model whose
+ladder never left its start both produce. Evidence about the search, never a proof about the
+optimum. A single solve reports `(1, 1)`, because one try agreeing with itself is no evidence.
+Agreement is on energy **and** feasibility together: an infeasible run at the winner's compiled
+energy is a different answer, and counting it would inflate confidence exactly where the penalty is
+too small.
+
+Bound as `ft_model_agreed` / `ft_model_tries` and surfaced in Python, Julia, Zig and the header.
+
+### Fixed: the receipt was wrong on every binding, and the cause was one duplicated loop
+
+Extending the receipt found a defect in the receipt. `ft_model_solve_with` re-derived the winner
+from its kept list with a private copy of the selection rule — deliberately, so the two "cannot
+disagree" — and aggregated nothing. The selection matched, so nothing looked wrong. The totals did
+not:
+
+```text
+tries= 1 -> cost.samples=19200
+tries= 4 -> cost.samples=19200      # every binding, understating the search 4x
+tries=12 -> cost.samples=19200      # and 12x
+```
+
+`Compiled::solve_best_of` in Rust reported the truth throughout. Selection and aggregation are one
+decision — which try won, and therefore what the set cost and how much of it agreed — and splitting
+them across two functions is what let one half travel without the other. Both now call
+`Solution::best_of_all`, and `the_abi_reports_the_same_receipt_as_the_rust_api` compares the two
+surfaces at 1, 4 and 12 tries. Reverting the fix makes it say *"at 4 tries the ABI billed 28800 node
+updates and Rust billed 115200."*
+
 ### A best-of search reads the fabric constantly, and no backend charged for it
 
 `Device::run` was documented as returning "the final state" and every implementation returned the

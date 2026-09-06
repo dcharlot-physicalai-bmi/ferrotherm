@@ -79,7 +79,7 @@ export exact_planar!, toroidal_bound!, goemans_williamson!, cluster_anneal!, qua
 export Rounded, ClusterRun
 export ToroidalBound
 export Problem, Variable, Literal, Answer
-export Prices, Cost, PRICES, cost, joules, stated
+export Prices, Cost, PRICES, cost, joules, stated, agreement
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export linear!
@@ -377,6 +377,8 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_optima Cuint ModPtr Cdouble
 @cfn ft_model_select_optimum Cuint ModPtr Cuint Cdouble
 @cfn ft_model_energy Cdouble ModPtr
+@cfn ft_model_agreed Cuint ModPtr
+@cfn ft_model_tries Cuint ModPtr
 @cfn ft_model_cost_samples Culonglong ModPtr
 @cfn ft_model_cost_reads Culonglong ModPtr
 @cfn ft_model_cost_writes Culonglong ModPtr
@@ -1796,6 +1798,15 @@ struct Answer
     by::Vector{Float64}
     ancillas::Int
     caveats::Vector{String}
+    """How many independent tries reached this answer, out of how many were made.
+
+    THE TWO DIRECTIONS ARE NOT SYMMETRIC. `(1, 12)` says restarts are still finding new bottoms and
+    the budget is binding -- actionable. `(12, 12)` says the landscape is easy FOR THIS SCHEDULE,
+    which a model with one broad basin and one whose ladder never left its start both produce.
+    Evidence about the search, never a proof about the optimum; for that read `proved_optimal`.
+    A single [`solve!`](@ref) reports `(1, 1)`, because one try agreeing with itself is no evidence.
+    """
+    agreement::Tuple{Int, Int}
     """What producing this answer cost, in operations, summed across EVERY try.
 
     An energy library whose answers arrive without their cost has made the number opt-in, and an
@@ -1806,6 +1817,13 @@ end
 
 """    cost(a)  — what producing this answer cost, in operations. See [`joules`](@ref)."""
 cost(a::Answer) = a.cost
+
+"""    agreement(a)  — `(agreed, tries)`: how many independent tries reached this answer.
+
+Low agreement is the informative direction: it says the search budget is binding. High agreement
+says this landscape is easy for this schedule, not that the answer is optimal.
+"""
+agreement(a::Answer) = a.agreement
 
 """    joules(a::Answer, p::Prices = PRICES["KV260_MEASURED"])  — what it cost, in joules."""
 joules(a::Answer, p::Prices = PRICES["KV260_MEASURED"]) = joules(a.cost, p)
@@ -2443,6 +2461,7 @@ function _read_answer(p::Problem)
            Int(spins), ft_model_penalty(p.handle),
            ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
            [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)],
+           (Int(ft_model_agreed(p.handle)), Int(ft_model_tries(p.handle))),
            Cost(ft_model_cost_samples(p.handle), ft_model_cost_reads(p.handle),
                 ft_model_cost_writes(p.handle)))
 end

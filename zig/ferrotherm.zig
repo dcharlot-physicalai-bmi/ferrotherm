@@ -2105,6 +2105,19 @@ pub const Problem = struct {
         return c.ft_model_energy(self.h);
     }
 
+    /// How many of the last solve's tries reached the answer it returned, out of how many were
+    /// made.
+    ///
+    /// The trust signal an annealed answer otherwise arrives without. **The two directions are not
+    /// symmetric**: `.{ 1, 12 }` says restarts are still finding new bottoms and the budget is
+    /// binding, which is actionable; `.{ 12, 12 }` says the landscape is easy *for this schedule*,
+    /// which a model with one broad basin and one whose ladder never left its start both produce.
+    /// Evidence about the search, never a proof about the optimum -- for that, read `proved`.
+    /// A single `solve(1)` reports `.{ 1, 1 }`: one try agreeing with itself is no evidence.
+    pub fn agreement(self: *Problem) struct { agreed: u32, tries: u32 } {
+        return .{ .agreed = c.ft_model_agreed(self.h), .tries = c.ft_model_tries(self.h) };
+    }
+
     /// Node updates the last solve performed -- the machine-independent half of what it cost.
     pub fn costSamples(self: *Problem) u64 {
         return c.ft_model_cost_samples(self.h);

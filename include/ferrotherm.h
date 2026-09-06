@@ -896,6 +896,19 @@ double ft_model_energy(const ft_model *m);
  *
  * For a best-of-N search these are the TOTAL over every try, not the winner's: charging only the run
  * that won would understate the bill by a factor of N. */
+/* How many of the last solve's tries reached the answer it returned, out of how many were made.
+ *
+ * The trust signal an annealed answer otherwise arrives without: every machine in this field returns
+ * "best found" and nothing else, and ft_model_proved is only ever set by branch and bound.
+ *
+ * THE TWO DIRECTIONS ARE NOT SYMMETRIC. 1 of 12 says independent restarts are still finding new
+ * bottoms and the budget is binding -- actionable. 12 of 12 says the landscape is easy FOR THIS
+ * SCHEDULE, which a model with one broad basin and a model whose ladder never left its start both
+ * produce. Evidence about the search, never a proof about the optimum. A single anneal reports
+ * 1 of 1, because one try agreeing with itself is no evidence. */
+uint32_t ft_model_agreed(const ft_model *m);
+uint32_t ft_model_tries(const ft_model *m);
+
 uint64_t ft_model_cost_samples(const ft_model *m);
 uint64_t ft_model_cost_reads(const ft_model *m);
 uint64_t ft_model_cost_writes(const ft_model *m);

@@ -1767,6 +1767,60 @@ mod sample_tests {
         ft_free(sim);
     }
 
+    /// The C ABI must report the same receipt the Rust API does, for the same solve.
+    ///
+    /// The defect this locks out, and it shipped: `ft_model_solve_with` re-derived the winner from
+    /// its kept list with a private copy of the selection rule, and aggregated nothing. Selection
+    /// matched, so nothing looked wrong — but a 1-try, a 4-try and a 12-try solve all reported the
+    /// SAME 19,200 node updates through every binding, understating a 12-try search twelvefold,
+    /// while `Compiled::solve_best_of` in Rust reported the truth. Agreement always read `(1, 1)`.
+    ///
+    /// Two surfaces over one computation is a hypothesis about the second one, not a fact.
+    #[test]
+    fn the_abi_reports_the_same_receipt_as_the_rust_api() {
+        use crate::model::{Expr, Lit, Model, Sense};
+
+        let build = || {
+            let mut m = Model::new();
+            let a = m.categorical("a", 3);
+            let b = m.categorical("b", 3);
+            m.not_equal(a, b);
+            m.objective(Sense::Minimize, Expr::product(1.0, &[Lit::Is(a, 0)]));
+            m.compile().expect("a small one-hot model compiles")
+        };
+
+        for tries in [1u32, 4, 12] {
+            // The Rust path.
+            let c = build();
+            let rust = c.solve_best_of(u64::from(tries));
+
+            // The same solve across the ABI. `solve_with`'s zeros take the default ladder, which
+            // is the ladder `solve_best_of` uses -- so the two are the same computation.
+            let m = ft_model_new();
+            let a = ft_model_categorical(m, 3);
+            let b = ft_model_categorical(m, 3);
+            assert_eq!(ft_model_not_equal(m, a, b), 1);
+            assert_eq!(ft_model_objective_term(m, 0, 1.0, a, 0), 1);
+            // Returns the compiled spin count, not a status: 2 one-hot triples is 6.
+            assert_eq!(ft_model_compile(m), 6);
+            assert_eq!(ft_model_solve_with(m, tries, 0.0, 0.0, 0, 0), 1);
+
+            assert_eq!(
+                ft_model_cost_samples(m),
+                rust.cost.samples,
+                "at {tries} tries the ABI billed {} node updates and Rust billed {}",
+                ft_model_cost_samples(m),
+                rust.cost.samples
+            );
+            assert_eq!(ft_model_tries(m), tries, "every try must be counted at {tries}");
+            assert_eq!((ft_model_agreed(m), ft_model_tries(m)), rust.agreement);
+            // And the receipt must actually GROW with the work, which is the property the shared
+            // number 19,200 quietly violated at every try count.
+            assert!(ft_model_cost_samples(m) >= u64::from(tries) * 100);
+            ft_model_free(m);
+        }
+    }
+
     /// A machine's numbers and the sentence saying whose they are must cross the ABI together.
     ///
     /// The gap this closes: `ft_model_joules` takes floats, so a binding could only price a run by
@@ -2441,20 +2495,13 @@ pub extern "C" fn ft_model_solve_with(
     1
 }
 
-/// The answer `solve_best_with` would have returned: feasible beats infeasible, then lowest energy.
+/// The answer `solve_best_with` would have returned, with the whole set's cost and agreement.
+///
+/// This used to re-derive the winner here. The selection matched; the aggregation was absent, so a
+/// 12-try solve reported one try's ledger and `(1, 1)` agreement to every binding while the Rust
+/// path reported the truth. Both now call the same function.
 fn best_answer(all: &[crate::model::Solution]) -> crate::model::Solution {
-    let mut best = &all[0];
-    for cand in &all[1..] {
-        let better = match (best.feasible(), cand.feasible()) {
-            (false, true) => true,
-            (true, false) => false,
-            _ => cand.energy < best.energy,
-        };
-        if better {
-            best = cand;
-        }
-    }
-    best.clone()
+    crate::model::Solution::best_of_all(all)
 }
 
 /// How many answers the last solve kept — one per try.
@@ -2848,6 +2895,36 @@ pub extern "C" fn ft_model_energy(m: *const ModelHandle) -> f64 {
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.energy,
         None => f64::NAN,
+    }
+}
+
+/// How many of the last solve's tries reached the answer it returned.
+///
+/// Read it beside [`ft_model_tries`]. The two are the trust signal an annealed answer otherwise
+/// arrives without: every commercial machine in this field returns "best found" and nothing else,
+/// and [`ft_model_proved`] is only ever set by branch and bound.
+///
+/// **The two directions are not symmetric.** 1 of 12 says independent restarts are still finding
+/// new bottoms and the budget is binding — actionable. 12 of 12 says the landscape is easy *for
+/// this schedule*, which a model with one broad basin and a model whose ladder never left its
+/// start both produce. It is evidence about the search, never a proof about the optimum.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_model_agreed(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.agreement.0,
+        None => 0,
+    }
+}
+
+/// How many independent tries the last solve chose from. `1` for a single anneal.
+///
+/// One try agreeing with itself is no evidence, and this reports it as `1` of `1` rather than as a
+/// full-marks fraction.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_model_tries(m: *const ModelHandle) -> u32 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.agreement.1,
+        None => 0,
     }
 }
 

@@ -293,6 +293,8 @@ _model_proved = _sig("ft_model_proved", c_uint32, [_p])
 _model_objective = _sig("ft_model_objective", c_double, [_p])
 _model_has_objective = _sig("ft_model_has_objective", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
+_model_agreed = _sig("ft_model_agreed", c_uint32, [_p])
+_model_tries = _sig("ft_model_tries", c_uint32, [_p])
 _model_cost_samples = _sig("ft_model_cost_samples", ctypes.c_uint64, [_p])
 _model_cost_reads = _sig("ft_model_cost_reads", ctypes.c_uint64, [_p])
 _model_cost_writes = _sig("ft_model_cost_writes", ctypes.c_uint64, [_p])
@@ -2320,6 +2322,14 @@ class Answer:
     constant. Proved and feasible is a real optimality proof and needs nothing from the penalty being
     large enough. Proved and *infeasible* says the penalty is too small and no longer search fixes it.
 
+    :attr:`agreement` is ``(agreed, tries)`` — how many independent tries reached this answer, out
+    of how many were made. **The two directions are not symmetric.** ``(1, 12)`` says restarts are
+    still finding new bottoms and the budget is binding, which is actionable; ``(12, 12)`` says the
+    landscape is easy *for this schedule*, which a model with one broad basin and a model whose
+    ladder never left its start both produce. It is evidence about the search, never a proof about
+    the optimum — for that, read :attr:`proved_optimal`. A single :meth:`Problem.solve` reports
+    ``(1, 1)``, because one try agreeing with itself is no evidence.
+
     :attr:`cost` is the :class:`Cost` of producing this answer — node updates, reads and flashes,
     summed across **every** try when :meth:`Problem.solve` took more than one. ``answer.cost.joules()``
     prices it on measured silicon; pass a different entry from :data:`PRICES` to price it elsewhere.
@@ -2335,7 +2345,7 @@ class Answer:
     """
 
     __slots__ = ("values", "feasible", "energy", "objective", "proved_optimal", "spins", "penalty",
-                 "violated", "soft_cost", "ancillas", "caveats", "cost")
+                 "violated", "soft_cost", "ancillas", "caveats", "cost", "agreement")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -2374,6 +2384,8 @@ class Answer:
             out += f"\n  soft cost: {self.soft_cost:g}"
         # The receipt prints with the answer. An energy library whose answers arrive without their
         # cost has made the number opt-in, and an opt-in number is one nobody reads.
+        if self.agreement is not None and self.agreement[1] > 1:
+            out += f"\n  agreement: {self.agreement[0]} of {self.agreement[1]} tries reached it"
         if self.cost is not None and self.cost.samples:
             out += f"\n  cost: {self.cost.samples} node updates"
             j = self.cost.joules()
@@ -2921,6 +2933,7 @@ class Problem:
             for i in range(_model_violations(self._h))
         ]
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
+                      agreement=(int(_model_agreed(self._h)), int(_model_tries(self._h))),
                       cost=Cost(int(_model_cost_samples(self._h)),
                                 int(_model_cost_reads(self._h)),
                                 int(_model_cost_writes(self._h))),
