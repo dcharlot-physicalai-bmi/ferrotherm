@@ -2613,6 +2613,9 @@ impl Compiled {
             // One try, agreeing with itself, which is no evidence. `best_of` overwrites this
             // with the count that means something.
             agreement: (1, 1),
+            // Decoding a state bounds nothing. Only a method that searches can say how far from
+            // optimal its answer might be.
+            gap: None,
             // Decoding a state says nothing about whether it is optimal. Only `solve_by` with
             // `Method::Branch` can set this, and it sets it on the Solution it returns.
             proved_optimal: false,
@@ -2872,6 +2875,10 @@ impl Compiled {
                 let out = crate::branch::solve(&self.graph, &p);
                 let mut sol = self.decode(&out.state);
                 sol.proved_optimal = out.proved_optimal;
+                // The bound branch already computed, carried up in the modeller's units. The
+                // offset between compiled energy and objective cancels in the difference, so this
+                // is the same number either way -- see `Solution::gap`.
+                sol.gap = Some((out.energy - out.bound).max(0.0));
                 sol.cost = cost;
                 return sol;
             }
@@ -2990,6 +2997,100 @@ impl Compiled {
         // one place. See `Solution::best_of_all` for what splitting them cost.
         let all: Vec<Solution> = (0..tries.max(1)).map(&run).collect();
         Solution::best_of_all(&all)
+    }
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::*;
+
+    fn model(penalty: Option<f64>) -> Model {
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.not_equal(a, b);
+        m.objective(Sense::Minimize, Expr::product(1.0, &[Lit::Is(a, 0)]));
+        m.objective(Sense::Minimize, Expr::product(2.0, &[Lit::Is(b, 1)]));
+        if let Some(p) = penalty {
+            m.fixed_penalty(p);
+        }
+        m
+    }
+
+    /// THE GAP DOES NOT MOVE WHEN THE PENALTY DOES.
+    ///
+    /// The compiled energy is the objective plus soft costs plus a constant offset that is the same
+    /// for every feasible fully-decoded state, so the offset cancels in a difference. Compiling the
+    /// same model at penalty 2 and at penalty 200 moves the energies and the bounds by hundreds;
+    /// the gap must not move at all.
+    ///
+    /// This is the strongest falsifier available here and it needs no enumeration: a sign error, a
+    /// dropped constant, or a bound taken in the wrong units all survive an agreement test against
+    /// one compilation and none of them survive this.
+    #[test]
+    fn the_gap_is_invariant_under_the_penalty() {
+        let mut gaps = Vec::new();
+        let mut energies = Vec::new();
+        for p in [2.0f64, 20.0, 200.0] {
+            let c = model(Some(p)).compile().expect("compiles");
+            let s = c.solve_by(Method::Branch { max_nodes: 5_000 }, 3);
+            assert!(s.feasible(), "penalty {p}: the answer must be feasible to compare");
+            gaps.push(s.gap.expect("branch bounds"));
+            energies.push(s.energy);
+        }
+        // The energies really do move, or the test is comparing three identical compilations.
+        assert!(
+            (energies[2] - energies[0]).abs() > 1.0,
+            "the penalty is supposed to move the compiled energy: {energies:?}"
+        );
+        for g in &gaps[1..] {
+            assert!(
+                (g - gaps[0]).abs() < 1e-9,
+                "the gap moved with the penalty: {gaps:?} -- the offset did not cancel"
+            );
+        }
+    }
+
+    /// A gap of zero on a feasible answer is the same statement `proved_optimal` makes.
+    #[test]
+    fn a_closed_gap_and_a_proof_are_the_same_thing() {
+        let c = model(None).compile().expect("compiles");
+        let s = c.solve_by(Method::Branch { max_nodes: 5_000_000 }, 3);
+        assert!(s.proved_optimal, "an unbounded budget on a 6-spin model exhausts the tree");
+        assert!(s.feasible());
+        assert_eq!(
+            s.gap,
+            Some(0.0),
+            "an exhausted tree abandons nothing, so the bound is the answer and the gap is zero"
+        );
+    }
+
+    /// A truncated search reports a gap it cannot close, rather than claiming a proof.
+    #[test]
+    fn a_truncated_search_reports_how_far_off_it_might_be() {
+        let mut m = Model::new();
+        let vars: Vec<_> = (0..14).map(|i| m.categorical(&format!("v{i}"), 2)).collect();
+        for w in vars.windows(2) {
+            m.not_equal(w[0], w[1]);
+        }
+        for (i, &v) in vars.iter().enumerate() {
+            m.objective(Sense::Minimize, Expr::product(1.0 + i as f64, &[Lit::Is(v, 1)]));
+        }
+        let c = m.compile().expect("compiles");
+        let cut = c.solve_by(Method::Branch { max_nodes: 40 }, 1);
+        let gap = cut.gap.expect("branch bounds even when truncated");
+        assert!(gap >= 0.0, "a gap is a distance: {gap}");
+        assert!(!cut.proved_optimal, "40 nodes cannot exhaust this tree");
+        assert!(gap > 0.0, "a truncated search with a zero gap is claiming a proof it did not make");
+    }
+
+    /// Every other method leaves it `None` rather than reporting a gap it did not compute.
+    #[test]
+    fn a_method_that_bounds_nothing_says_so() {
+        let c = model(None).compile().expect("compiles");
+        assert_eq!(c.solve_annealed(1).gap, None);
+        assert_eq!(c.solve_by(Method::Tabu { iterations: 500 }, 1).gap, None);
+        assert_eq!(c.solve_by(Method::Breakout { iterations: 500 }, 1).gap, None);
     }
 }
 
@@ -3526,6 +3627,35 @@ pub struct Solution {
     /// to sit at the same compiled energy is not the same answer, and counting it would inflate
     /// confidence exactly where the penalty is too small.
     pub agreement: (u32, u32),
+    /// How far this answer could still be from optimal. `None` unless a method that bounds was used.
+    ///
+    /// Only [`Method::Branch`] computes a bound, and it computes one whether or not it exhausted
+    /// the tree — see [`crate::branch::Outcome::bound`]. A truncated search therefore returns "best
+    /// found, and it is within this much", where every other method in this crate and every
+    /// commercial machine in this field return "best found" and nothing.
+    ///
+    /// # It is in the objective's units, and that is not an approximation
+    ///
+    /// The compiled energy is the objective plus soft costs plus a constant offset, and the offset
+    /// is the same for every feasible fully-decoded state. So it cancels in a DIFFERENCE:
+    ///
+    /// ```text
+    ///   objective(this) - objective(best possible)  =  energy(this) - energy(best possible)
+    /// ```
+    ///
+    /// and `energy - bound` bounds both, identically. Compile the same model at penalty 2 and at
+    /// penalty 200 and the energies and bounds move by hundreds while this number does not.
+    ///
+    /// # When it is a gap on the OBJECTIVE rather than on the compiled energy
+    ///
+    /// The cancellation needs the optimum to be feasible, which needs the penalty to be large
+    /// enough. Under [`Model::certified_penalty`] it is, by proof. Under the automatic penalty it
+    /// usually is and is not guaranteed — so read this beside [`Solution::feasible`], exactly as
+    /// [`Solution::proved_optimal`] asks to be read.
+    ///
+    /// `Some(0.0)` and feasible is a proof of optimality, and is the same statement
+    /// `proved_optimal` makes.
+    pub gap: Option<f64>,
     /// The objective's value in the modeller's own units, in the direction they wrote it.
     ///
     /// `None` when no objective was written, or when `objective` was called with both senses and
