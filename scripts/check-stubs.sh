@@ -25,6 +25,12 @@ if [ ! -f "$stub" ]; then
   exit 1
 fi
 
+# BEFORE the byte comparison, because the comparison alone cannot see this failure. gen-stubs.py
+# builds from `__all__`, so a public name missing from that list is missing from BOTH files and the
+# diff agrees perfectly about a library neither of them describes. `Prices`, `Cost`, `PRICES` and
+# `from_ommx` were all public and all invisible here.
+python3 scripts/_all_covers_module.py
+
 fresh="$(mktemp)"
 trap 'rm -f "$fresh"' EXIT
 python3 scripts/gen-stubs.py --stdout > "$fresh"
@@ -43,6 +49,7 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "SELFTEST FAILED: the damage did not apply, so the comparison above was vacuous" >&2
     exit 1
   fi
+  python3 scripts/_all_covers_module.py --selftest
   echo "selftest: a renamed parameter was caught, so the comparison can fail"
   exit 0
 fi

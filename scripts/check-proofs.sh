@@ -78,6 +78,41 @@ fi
 # harness FAILED" -- a refuted theorem that never existed. "The tool could not run" and "the
 # theorem is false" call for opposite responses, so they are separated the way the certifier
 # separates "could not look" from "nothing moved".
+# ---- kani's toolchain is older than this crate's declared floor, and that is not a conflict --
+#
+# Kani 0.67 pins nightly-2025-11-21 (rustc 1.93.0-nightly). This crate declares `rust-version =
+# "1.96"` as POLICY -- a statement about which compilers we support, set deliberately in 0.42.0.
+# Cargo enforces that declaration against whatever rustc is driving it, so `cargo kani` refused to
+# build the crate at all and this gate went red across the whole 0.43.0 cut with nothing wrong in
+# any theorem.
+#
+# The declaration and the model checker are answering different questions. `rust-version` says who
+# we ship to; kani says whether `copies_for` is minimal for every input in range. Neither needs the
+# other, and the MSRV claim is checked on its own terms by scripts/check-msrv.sh, which compiles
+# the whole workspace on exactly the declared toolchain. So for the length of the kani run -- and
+# only that -- the line is lifted, then put back and CHECKED to be back.
+#
+# What this does NOT lift is the real technical floor: the crate still has to COMPILE on kani's
+# nightly. If a future edition feature raises that past what kani ships, this run fails to build
+# and says so, which is the honest signal and the one worth keeping.
+msrv_manifests=(Cargo.toml gpu/Cargo.toml cloud/Cargo.toml serve/Cargo.toml meter/Cargo.toml silicon/Cargo.toml)
+bak="$(mktemp -d)"
+restore_msrv() {
+  local m
+  for m in "${msrv_manifests[@]}"; do
+    [ -f "$bak/$(echo "$m" | tr / _)" ] && cp "$bak/$(echo "$m" | tr / _)" "$m"
+  done
+}
+# INT/TERM as well as EXIT: a Ctrl-C partway through a ten-minute kani run must not leave six
+# manifests silently missing their MSRV line, which would then pass every gate in the tree.
+trap 'restore_msrv; rm -rf "$bak"' EXIT INT TERM HUP
+for m in "${msrv_manifests[@]}"; do
+  cp "$m" "$bak/$(echo "$m" | tr / _)"
+  # The whole line, matched at its anchor, so nothing else in the manifest can be caught by it.
+  grep -v '^rust-version = ' "$m" > "$m.tmp" && mv "$m.tmp" "$m"
+done
+echo "kani runs on its own pinned nightly (older than the declared MSRV, which check-msrv.sh owns)"
+
 out="$(cargo kani 2>&1)" || {
   if printf '%s\n' "$out" | grep -q "VERIFICATION:- FAILED"; then
     printf '%s\n' "$out" | grep -E "VERIFICATION|Failed Checks" | head -20 >&2
@@ -88,6 +123,16 @@ out="$(cargo kani 2>&1)" || {
   fi
   exit 1
 }
+# Restore before the verdict, and prove the restore happened. A gate that leaves the tree damaged
+# on its way to printing "all theorems hold" has traded a real defect for a green line.
+restore_msrv
+for m in "${msrv_manifests[@]}"; do
+  cmp -s "$m" "$bak/$(echo "$m" | tr / _)" || {
+    echo "FAILED TO RESTORE $m after the kani run; the MSRV line is not back" >&2
+    exit 1
+  }
+done
+
 verified="$(printf '%s\n' "$out" | grep -oE '[0-9]+ successfully verified harnesses' | grep -oE '^[0-9]+' | head -1)"
 if [ -z "$verified" ] || [ "$verified" -lt 7 ]; then
   # A floor, not a formality: if harness discovery breaks, kani "succeeds" over an empty set and

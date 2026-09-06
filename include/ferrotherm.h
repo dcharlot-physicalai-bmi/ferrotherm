@@ -889,6 +889,58 @@ double ft_model_violation_amount(const ft_model *m, uint32_t i);
 
 double ft_model_energy(const ft_model *m);
 
+/* What the last solve COST, in device operations -- the machine-independent half of its energy.
+ *
+ * Every surface gets these, because a stack whose thesis is joules should not make the energy of an
+ * answer a privilege of the language it happens to be written in. Zero when nothing has been solved.
+ *
+ * For a best-of-N search these are the TOTAL over every try, not the winner's: charging only the run
+ * that won would understate the bill by a factor of N. */
+uint64_t ft_model_cost_samples(const ft_model *m);
+uint64_t ft_model_cost_reads(const ft_model *m);
+uint64_t ft_model_cost_writes(const ft_model *m);
+
+/* Price the last solve on a machine whose per-operation energies you supply.
+ *
+ * Returns NaN, never a number, when the run performed an operation this machine states no price for
+ * -- pass a non-finite price for an operation that happened and the answer is NaN rather than a
+ * total quietly missing its most expensive term. A zero count needs no price, so a sampling-only
+ * measurement can price a sampling-only run.
+ *
+ * The caller supplies the prices because a joule belongs to a machine and this ABI cannot know which
+ * one is meant. 7.09e-15 is Extropic's projected per-sample figure; 1.0848e-11 is what this project
+ * measured on a Kria KV260. */
+double ft_model_joules(const ft_model *m, double e_sample, double e_read, double e_write);
+
+/* ---- the machines this library states prices for -------------------------------------------
+ *
+ * ft_model_joules takes numbers, not a machine name, because a joule belongs to a machine and this
+ * ABI cannot guess which. That left every caller one step short: you could ask what a run cost, but
+ * had to supply 7.09e-15 by copying it out of the source -- and a copied number arrives without the
+ * sentence saying it is a pre-silicon SPICE estimate for a device nobody has characterised. These
+ * read the table itself, so the name, the numbers and the provenance cross together.
+ *
+ * Index them 0..ft_prices_count(). Entry 0 is UNSTATED: every price NaN, which is the honest answer
+ * for a machine nobody has measured and makes ft_model_joules return NaN rather than a zero.
+ *
+ * The two text calls follow the two-call convention used throughout this header: pass buf = NULL to
+ * learn the byte length, then call again with a buffer that size. Neither string is terminated. */
+uint32_t ft_prices_count(void);
+uint32_t ft_prices_name(uint32_t i, uint8_t *buf, uint32_t cap);
+/* WHOSE machine and who measured it. Read it before quoting the number: it is what separates
+ * Z1_SPICE (taped-out but uncharacterised silicon, projected) from KV260_MEASURED (a board on a
+ * wattmeter). The two are three orders of magnitude apart and look equally authoritative without
+ * it. */
+uint32_t ft_prices_source(uint32_t i, uint8_t *buf, uint32_t cap);
+/* NaN, not zero, for an operation this machine states no price for. */
+double ft_prices_e_sample(uint32_t i);
+double ft_prices_e_read(uint32_t i);
+double ft_prices_e_write(uint32_t i);
+/* Maximum sustainable full-graph reflash rate in Hz, NaN when unstated -- which is not "as fast as
+ * you like": a workload that reflashes faster than the device sustains prices a run that could not
+ * have happened. */
+double ft_prices_reflash_hz_cap(uint32_t i);
+
 /* The penalty weight actually used, which is raised automatically above the largest objective
  * coefficient so that a constraint cannot be outbid. */
 double ft_model_penalty(const ft_model *m);

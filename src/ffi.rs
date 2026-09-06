@@ -45,6 +45,20 @@ use crate::graph::Graph;
 use crate::ising::{lattice2d, onsager_m};
 use crate::ledger::{Ledger, Z1_SPICE};
 
+/// Copy `b` into a caller's buffer under the two-call sizing convention used throughout this ABI.
+///
+/// A null `buf` asks the length and writes nothing; otherwise the copy is clamped to the caller's
+/// own `cap` and the number of bytes actually written comes back. UTF-8 may be cut mid-character
+/// by a short buffer, which is why the length call exists.
+fn write_bytes(b: &[u8], buf: *mut u8, cap: u32) -> u32 {
+    if buf.is_null() {
+        return b.len() as u32;
+    }
+    let n = b.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf, n) };
+    n as u32
+}
+
 /// An opaque handle to one model and everything derived from it, owned across the C ABI.
 ///
 /// Callers see a pointer and nothing else; every accessor below takes one and checks it for null,
@@ -1753,6 +1767,55 @@ mod sample_tests {
         ft_free(sim);
     }
 
+    /// A machine's numbers and the sentence saying whose they are must cross the ABI together.
+    ///
+    /// The gap this closes: `ft_model_joules` takes floats, so a binding could only price a run by
+    /// pasting `7.09e-15` out of `ledger.rs` -- and the pasted number arrives without the clause
+    /// saying it is a pre-silicon estimate for uncharacterised silicon. `Z1_SPICE` and
+    /// `KV260_MEASURED` are three orders of magnitude apart and identical as bare floats.
+    #[test]
+    fn every_price_crosses_the_abi_with_its_provenance() {
+        let n = ft_prices_count();
+        assert!(n >= 3, "the catalogue lost entries: {n}");
+
+        let mut found_measured = false;
+        for i in 0..n {
+            let name = read_abi_text(|b, c| ft_prices_name(i, b, c));
+            let source = read_abi_text(|b, c| ft_prices_source(i, b, c));
+            assert!(!name.is_empty(), "entry {i} has no name");
+            // The load-bearing half. A price with no stated subject can be applied to any machine
+            // at all, which is exactly the defect `Prices::source` exists to prevent.
+            assert!(
+                source.len() > 20,
+                "entry {name} states prices with no account of whose machine they are"
+            );
+            if name == "KV260_MEASURED" {
+                found_measured = true;
+                assert!((ft_prices_e_sample(i) - 1.0848e-11).abs() < 1e-20);
+                // Reads and writes were never exercised on that board: unstated, NOT zero.
+                assert!(ft_prices_e_read(i).is_nan(), "an unmeasured price read as a number");
+                assert!(ft_prices_e_write(i).is_nan());
+                assert!(source.contains("MEASURED"));
+            }
+            if name == "UNSTATED" {
+                assert!(ft_prices_e_sample(i).is_nan());
+            }
+        }
+        assert!(found_measured, "the only measured entry fell out of the catalogue");
+
+        // Past the end is NaN and an empty name, never entry 0's numbers wearing a bad index.
+        assert_eq!(ft_prices_name(n, core::ptr::null_mut(), 0), 0);
+        assert!(ft_prices_e_sample(n).is_nan());
+    }
+
+    /// The two-call sizing protocol, once, for the tests that read text out of this ABI.
+    fn read_abi_text(mut f: impl FnMut(*mut u8, u32) -> u32) -> String {
+        let need = f(core::ptr::null_mut(), 0) as usize;
+        let mut buf = vec![0u8; need];
+        let got = f(buf.as_mut_ptr(), need as u32) as usize;
+        String::from_utf8_lossy(&buf[..got]).into_owned()
+    }
+
     /// The defect the collection path was built to close: certifying used to be free.
     #[test]
     fn certifying_now_charges_for_the_readback_it_performs() {
@@ -2786,6 +2849,141 @@ pub extern "C" fn ft_model_energy(m: *const ModelHandle) -> f64 {
         Some(s) => s.energy,
         None => f64::NAN,
     }
+}
+
+/// Node updates the solve performed, or `0` when nothing has been solved.
+///
+/// The machine-independent half of what an answer cost. Every binding gets this, because a stack
+/// whose thesis is joules should not make the energy of an answer a Rust-only privilege.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_model_cost_samples(m: *const ModelHandle) -> u64 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.cost.samples,
+        None => 0,
+    }
+}
+
+/// Node values read back to the host during the solve, or `0` when nothing has been solved.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_model_cost_reads(m: *const ModelHandle) -> u64 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.cost.reads,
+        None => 0,
+    }
+}
+
+/// Couplings, biases or clamp state written during the solve, or `0` when nothing has been solved.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_model_cost_writes(m: *const ModelHandle) -> u64 {
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.cost.writes,
+        None => 0,
+    }
+}
+
+/// Price the last solve on a machine whose per-operation energies the caller supplies.
+///
+/// Returns `NaN` rather than a number when the run performed an operation this machine states no
+/// price for -- pass a non-finite price for an operation that happened and you get `NaN`, not a
+/// total quietly missing its most expensive term. A zero count needs no price, so a sampling-only
+/// measurement can price a sampling-only run.
+///
+/// The caller supplies the prices because a joule belongs to a machine, and this ABI has no way to
+/// know which one is under discussion. `7.09e-15` is Extropic's projected per-sample figure;
+/// `1.0848e-11` is what this project measured on a Kria KV260.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_model_joules(
+    m: *const ModelHandle,
+    e_sample: f64,
+    e_read: f64,
+    e_write: f64,
+) -> f64 {
+    let prices = crate::ledger::Prices {
+        e_sample,
+        e_read,
+        e_write,
+        reflash_hz_cap: None,
+        source: "supplied across the C ABI by the caller",
+    };
+    match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
+        Some(s) => s.joules(&prices).unwrap_or(f64::NAN),
+        None => f64::NAN,
+    }
+}
+
+// -- the machines this crate states prices for ------------------------------------------------
+//
+// `ft_model_joules` takes prices rather than a machine name, because a joule belongs to a machine
+// and this ABI cannot guess which. That left every binding one step short: a caller could ask what
+// a run cost, but had to supply `7.09e-15` by pasting it out of `ledger.rs` -- and a pasted number
+// arrives stripped of the sentence saying it is a pre-silicon SPICE estimate for a device nobody
+// has characterised. These six read the table itself, so a name, its numbers and its provenance
+// cross the boundary together.
+
+/// How many machines this crate states prices for. Indices `0..count` address the rest.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_count() -> u32 {
+    crate::ledger::CATALOGUE.len() as u32
+}
+
+/// The machine's short name, e.g. `KV260_MEASURED`. Returns the byte length, or 0 for a bad index.
+///
+/// Call with a null `buf` to learn the length, then again with a buffer that size.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_name(i: u32, buf: *mut u8, cap: u32) -> u32 {
+    let Some((name, _)) = crate::ledger::CATALOGUE.get(i as usize) else {
+        return 0;
+    };
+    write_bytes(name.as_bytes(), buf, cap)
+}
+
+/// WHOSE machine, and who measured it -- the sentence that makes the numbers a claim.
+///
+/// Worth carrying across every binding: it is what separates `Z1_SPICE` (taped-out but
+/// uncharacterised silicon, projected) from `KV260_MEASURED` (a board on a wattmeter). Two figures
+/// three orders of magnitude apart look equally authoritative without it.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_source(i: u32, buf: *mut u8, cap: u32) -> u32 {
+    let Some((_, p)) = crate::ledger::CATALOGUE.get(i as usize) else {
+        return 0;
+    };
+    write_bytes(p.source.as_bytes(), buf, cap)
+}
+
+/// Joules per single-node Gibbs update, or `NaN` when this machine states none.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_e_sample(i: u32) -> f64 {
+    crate::ledger::CATALOGUE
+        .get(i as usize)
+        .map_or(f64::NAN, |(_, p)| p.e_sample)
+}
+
+/// Joules per node read out to the chip edge, or `NaN` when this machine states none.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_e_read(i: u32) -> f64 {
+    crate::ledger::CATALOGUE
+        .get(i as usize)
+        .map_or(f64::NAN, |(_, p)| p.e_read)
+}
+
+/// Joules per node flashed, or `NaN` when this machine states none.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_e_write(i: u32) -> f64 {
+    crate::ledger::CATALOGUE
+        .get(i as usize)
+        .map_or(f64::NAN, |(_, p)| p.e_write)
+}
+
+/// Maximum sustainable full-graph reflash rate in Hz, or `NaN` when unstated.
+///
+/// `NaN` is not "as fast as you like". A workload that reflashes faster than the device can sustain
+/// is not a fast workload, it is one that could not have happened, and its joules price a run that
+/// never ran.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_prices_reflash_hz_cap(i: u32) -> f64 {
+    crate::ledger::CATALOGUE
+        .get(i as usize)
+        .map_or(f64::NAN, |(_, p)| p.reflash_hz_cap.unwrap_or(f64::NAN))
 }
 
 /// The penalty actually used, after scaling against the objective.

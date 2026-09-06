@@ -58,6 +58,14 @@ class ClusterRun:
     def __init__(self, energy: float, moves: int) -> None:
         ...
 
+class Cost:
+    """What a solve actually did, in operations — the receipt that comes back with every answer."""
+    def __init__(self, samples: int, reads: int, writes: int) -> None:
+        ...
+    def joules(self, prices: 'Prices | None' = None) -> 'float | None':
+        """Price this run on ``prices``, or ``None`` when it states no price for what the run did."""
+        ...
+
 class Estimate:
     """An expectation value with an error bar that accounts for how correlated the draws were."""
     def __init__(self, value: float, stderr: float, ess: float, tau_int: float) -> None:
@@ -161,6 +169,15 @@ class PopulationRun:
     @property
     def trustworthy(self) -> bool:
         """``rho`` below a tenth of the population. A rule of thumb, not a theorem."""
+        ...
+
+class Prices:
+    """What one machine charges per operation, and **whose** machine it is."""
+    def __init__(self, name: str, e_sample: float, e_read: float, e_write: float, reflash_hz_cap: float, source: str) -> None:
+        ...
+    @property
+    def stated(self) -> bool:
+        """Whether these prices describe anything at all."""
         ...
 
 class Problem:
@@ -505,6 +522,10 @@ def dbm(visible: int, layers: Sequence[int], beta: float = 1.0, seed: int = 0) -
     """A deep Boltzmann machine's structure: ``visible`` spins, then each layer, chained."""
     ...
 
+def from_ommx(data: bytes, beta: float = 1.0, seed: int = 0) -> 'tuple[Sim, float]':
+    """Read an ``ommx.v1.Instance`` and return a simulation over it, plus the constant."""
+    ...
+
 def from_spec(spec: dict, beta: float | None = None, seed: int | None = None) -> Sim:
     """Build from the same JSON shape the HTTP API and the MCP tools accept."""
     ...
@@ -553,4 +574,5 @@ def zephyr(m: int = 15, t: int = 4, j: float = 1.0, beta: float = 1.0, seed: int
     """The **Zephyr** graph ``Z_{m,t}`` — the topology of D-Wave's *Advantage2* processors."""
     ...
 
+PRICES: Any
 __version__: Any

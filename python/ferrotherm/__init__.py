@@ -31,6 +31,9 @@ from typing import Any, Iterable, Sequence
 
 __all__ = [
     "Answer",
+    "Cost",
+    "Prices",
+    "PRICES",
     "Hubo",
     "hardware_threads",
     "Bounds",
@@ -60,6 +63,7 @@ __all__ = [
     "ring",
     "z1_grid",
     "from_spec",
+    "from_ommx",
     "rbm",
     "dbm",
     "bars_and_stripes",
@@ -289,6 +293,17 @@ _model_proved = _sig("ft_model_proved", c_uint32, [_p])
 _model_objective = _sig("ft_model_objective", c_double, [_p])
 _model_has_objective = _sig("ft_model_has_objective", c_uint32, [_p])
 _model_energy = _sig("ft_model_energy", c_double, [_p])
+_model_cost_samples = _sig("ft_model_cost_samples", ctypes.c_uint64, [_p])
+_model_cost_reads = _sig("ft_model_cost_reads", ctypes.c_uint64, [_p])
+_model_cost_writes = _sig("ft_model_cost_writes", ctypes.c_uint64, [_p])
+_model_joules = _sig("ft_model_joules", c_double, [_p, c_double, c_double, c_double])
+_prices_count = _sig("ft_prices_count", c_uint32, [])
+_prices_name = _sig("ft_prices_name", c_uint32, [c_uint32, ctypes.c_void_p, c_uint32])
+_prices_source = _sig("ft_prices_source", c_uint32, [c_uint32, ctypes.c_void_p, c_uint32])
+_prices_e_sample = _sig("ft_prices_e_sample", c_double, [c_uint32])
+_prices_e_read = _sig("ft_prices_e_read", c_double, [c_uint32])
+_prices_e_write = _sig("ft_prices_e_write", c_double, [c_uint32])
+_prices_reflash_hz_cap = _sig("ft_prices_reflash_hz_cap", c_double, [c_uint32])
 _model_penalty = _sig("ft_model_penalty", c_double, [_p])
 _model_name = _sig("ft_model_name", c_uint32, [_p, c_uint32, ctypes.c_char_p, c_uint32])
 _model_var = _sig("ft_model_var", c_uint32, [_p, c_uint32])
@@ -2167,6 +2182,120 @@ class Grid:
         return f"<Grid {self.name}{list(self.dims)}>"
 
 
+class Prices:
+    """What one machine charges per operation, and **whose** machine it is.
+
+    A joules figure is a claim about a specific piece of hardware, so the number and the sentence
+    describing it travel together here rather than the number travelling alone. :attr:`source` is
+    not documentation: it is what separates ``Z1_SPICE`` — SPICE estimates for taped-out but
+    uncharacterised silicon — from ``KV260_MEASURED``, a board this project put on a wattmeter.
+    Those two are more than three orders of magnitude apart and look equally authoritative as bare
+    floats.
+
+    Get these from :data:`PRICES` rather than building one, unless you are pricing a machine of
+    your own. A price nobody has stated reads ``nan``, never ``0.0``.
+
+    >>> import ferrotherm as ft
+    >>> ft.PRICES["KV260_MEASURED"].e_sample
+    1.0848e-11
+    >>> ft.PRICES["KV260_MEASURED"].e_read       # not exercised in that measurement
+    nan
+    """
+
+    __slots__ = ("name", "e_sample", "e_read", "e_write", "reflash_hz_cap", "source")
+
+    def __init__(self, name: str, e_sample: float, e_read: float, e_write: float,
+                 reflash_hz_cap: float, source: str) -> None:
+        self.name = name
+        self.e_sample = e_sample
+        self.e_read = e_read
+        self.e_write = e_write
+        self.reflash_hz_cap = reflash_hz_cap
+        self.source = source
+
+    @property
+    def stated(self) -> bool:
+        """Whether these prices describe anything at all.
+
+        ``False`` means pricing a run against them yields no figure — which is the point. The
+        alternative, borrowing another device's prices, produces a number indistinguishable from a
+        real one.
+        """
+        import math
+        return all(math.isfinite(x) for x in (self.e_sample, self.e_read, self.e_write))
+
+    def __repr__(self) -> str:
+        return f"<Prices {self.name} e_sample={self.e_sample:g} — {self.source}>"
+
+
+def _load_prices() -> "dict[str, Prices]":
+    """Read the library's own price table, so no number is duplicated on this side of the ABI."""
+    out = {}
+    for i in range(int(_prices_count())):
+        name = _read_text(_prices_name, c_uint32(i))
+        out[name] = Prices(name, float(_prices_e_sample(i)), float(_prices_e_read(i)),
+                           float(_prices_e_write(i)), float(_prices_reflash_hz_cap(i)),
+                           _read_text(_prices_source, c_uint32(i)))
+    return out
+
+
+PRICES: "dict[str, Prices]" = _load_prices()
+"""Every machine ferrotherm states prices for, by name — read out of the library, not restated here.
+
+``PRICES["UNSTATED"]`` is deliberately in the table: it is the honest entry for a machine nobody has
+characterised, and pricing a run against it returns ``None`` rather than a zero.
+"""
+
+
+class Cost:
+    """What a solve actually did, in operations — the receipt that comes back with every answer.
+
+    Counts, not joules, because the counts are a fact about the run and the joules are a fact about
+    a machine. :meth:`joules` puts the two together, and refuses when the machine states no price
+    for something the run performed.
+
+    >>> import ferrotherm as ft
+    >>> m = ft.Problem()                                            # doctest: +SKIP
+    >>> a = m.solve()                                               # doctest: +SKIP
+    >>> a.cost.joules(ft.PRICES["KV260_MEASURED"])                  # doctest: +SKIP
+    0.00031...
+    """
+
+    __slots__ = ("samples", "reads", "writes")
+
+    def __init__(self, samples: int, reads: int, writes: int) -> None:
+        self.samples = samples
+        self.reads = reads
+        self.writes = writes
+
+    def joules(self, prices: "Prices | None" = None) -> "float | None":
+        """Price this run on ``prices``, or ``None`` when it states no price for what the run did.
+
+        ``None`` rather than a number, and never zero. An operation whose energy nobody has
+        published does not cost nothing, and a caller who has to check this cannot accidentally
+        print a figure for a device that has none. An operation the run never performed needs no
+        price, so a sampling-only measurement can still price a sampling-only run.
+
+        Defaults to :data:`PRICES`\ ``["KV260_MEASURED"]`` — the only entry in the table that came
+        off a wattmeter rather than out of a model.
+        """
+        import math
+        if prices is None:
+            prices = PRICES["KV260_MEASURED"]
+        total = 0.0
+        for count, price in ((self.samples, prices.e_sample), (self.reads, prices.e_read),
+                             (self.writes, prices.e_write)):
+            if count == 0:
+                continue
+            if not math.isfinite(price):
+                return None
+            total += count * price
+        return total
+
+    def __repr__(self) -> str:
+        return (f"<Cost samples={self.samples} reads={self.reads} writes={self.writes}>")
+
+
 class Answer:
     """A solved problem, read by name.
 
@@ -2191,6 +2320,10 @@ class Answer:
     constant. Proved and feasible is a real optimality proof and needs nothing from the penalty being
     large enough. Proved and *infeasible* says the penalty is too small and no longer search fixes it.
 
+    :attr:`cost` is the :class:`Cost` of producing this answer — node updates, reads and flashes,
+    summed across **every** try when :meth:`Problem.solve` took more than one. ``answer.cost.joules()``
+    prices it on measured silicon; pass a different entry from :data:`PRICES` to price it elsewhere.
+
     :attr:`caveats` lists what the compiler knows is wrong with the model and cannot fix — today,
     an encoding no penalty can make exact. Empty is the normal case; a non-empty one means a value
     that reads back fine may still have come from a codeword the penalty never excluded.
@@ -2202,7 +2335,7 @@ class Answer:
     """
 
     __slots__ = ("values", "feasible", "energy", "objective", "proved_optimal", "spins", "penalty",
-                 "violated", "soft_cost", "ancillas", "caveats")
+                 "violated", "soft_cost", "ancillas", "caveats", "cost")
 
     def __init__(self, **kw: Any) -> None:
         for k in self.__slots__:
@@ -2239,6 +2372,13 @@ class Answer:
             out += f"\n  {word}: {v.detail} (by {v.by:g})"
         if self.soft_cost:
             out += f"\n  soft cost: {self.soft_cost:g}"
+        # The receipt prints with the answer. An energy library whose answers arrive without their
+        # cost has made the number opt-in, and an opt-in number is one nobody reads.
+        if self.cost is not None and self.cost.samples:
+            out += f"\n  cost: {self.cost.samples} node updates"
+            j = self.cost.joules()
+            if j is not None:
+                out += f" = {j:.3g} J on {PRICES['KV260_MEASURED'].name}"
         return out + ">"
 
 
@@ -2781,6 +2921,9 @@ class Problem:
             for i in range(_model_violations(self._h))
         ]
         return Answer(values=vals, feasible=bool(_model_feasible(self._h)),
+                      cost=Cost(int(_model_cost_samples(self._h)),
+                                int(_model_cost_reads(self._h)),
+                                int(_model_cost_writes(self._h))),
                       violated=broken, energy=float(_model_energy(self._h)),
                       objective=(float(_model_objective(self._h))
                                  if _model_has_objective(self._h) else None),

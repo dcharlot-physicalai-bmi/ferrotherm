@@ -139,6 +139,24 @@ pub const KV260_MEASURED: Prices = Prices {
              flips/ns. Reads and writes were not exercised and are unstated, not zero.",
 };
 
+/// Every machine this crate states prices for, in a stable order, each beside its name.
+///
+/// The reason this is a table and not three constants a caller looks up by hand: a joules figure
+/// belongs to a machine, and the binding surfaces had no way to *name* one. Python, Julia and Zig
+/// could ask what a run cost but had to supply the prices themselves, which in practice means
+/// pasting numbers out of this file — and a pasted number arrives without its
+/// [`Prices::source`], which is the half that says whose silicon it describes and whether anyone
+/// measured it. Enumerating the table over the ABI carries the provenance with the number.
+///
+/// [`Prices::UNSTATED`] is deliberately in here. It is the honest answer for a machine nobody has
+/// characterised, and a caller who can select it by name can demonstrate that pricing a run
+/// against it yields no figure rather than a zero.
+pub const CATALOGUE: [(&str, Prices); 3] = [
+    ("UNSTATED", Prices::UNSTATED),
+    ("Z1_SPICE", Z1_SPICE),
+    ("KV260_MEASURED", KV260_MEASURED),
+];
+
 /// Operation counts accumulated by a run.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ledger {

@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased
+
+### An answer now arrives with its own energy bill
+
+The crate's whole thesis is joules, and the one function a user actually calls said nothing about
+them. `Model::solve_with` passed `None` where the ledger goes, so `Solution` came back with no cost
+at all — energy was invisible in the wrong sense: absent rather than automatic.
+
+`Solution` now carries a `cost: Ledger`, filled on every solve path, and `Solution::joules(&Prices)`
+prices it. `best_of` sums the cost of **every** try rather than the winning one, which is the number
+the machine actually pays; reporting the winner's alone would understate an `n = 12` solve by
+roughly twelve-fold.
+
+It crosses the ABI too — `ft_model_cost_samples`, `_reads`, `_writes` and `ft_model_joules` — and is
+bound in Python, Julia, Zig and `ferrotherm.h`. In Python the receipt prints with the answer:
+
+```text
+<Answer feasible energy=-10.0000 [shift=3, crew=2]
+  cost: 38400 node updates = 4.17e-07 J on KV260_MEASURED>
+```
+
+### The machines this crate prices, reachable by name
+
+`ft_model_joules` takes floats because a joule belongs to a machine and the ABI cannot guess which.
+That left every binding one step short of usable: you could ask what a run cost, but had to supply
+`7.09e-15` by copying it out of `ledger.rs` — and a copied number arrives stripped of the sentence
+saying it is a pre-silicon SPICE estimate for silicon nobody has characterised. `Z1_SPICE` and
+`KV260_MEASURED` are three orders of magnitude apart and identical in appearance as bare floats.
+
+`ledger::CATALOGUE` is now enumerable across the ABI (`ft_prices_count`, `ft_prices_name`,
+`ft_prices_source`, and one call per price), so a name, its numbers and its provenance cross
+together. Python gets `ft.PRICES`, Julia `Ferrotherm.PRICES`, Zig `pricesNamed`. `UNSTATED` is
+deliberately in the table: pricing a run against it returns nothing rather than a zero, and a
+misspelled machine name returns nothing rather than somebody else's numbers.
+
+### Fixed: the type-stub gate reported "the stub matches" about names it could not see
+
+Adding three public Python names left `check-stubs.sh` reporting the *identical* "35 top-level names
+over 556 lines" it reported before them. `gen-stubs.py` builds the stub from `ferrotherm.__all__`,
+so a public name absent from that list is absent from **both** files the gate diffs — the comparison
+agrees perfectly about a library neither side describes.
+
+`scripts/_all_covers_module.py` now requires every public name the module defines to appear in
+`__all__`, and runs before the byte comparison. It caught `from_ommx` on its first run: a documented
+public function, exported by Julia, and appearing **zero** times in the Python stub — so every type
+checker and editor had been completing as though it did not exist. It has its own selftest, because
+a rule that cannot fail is the same evidence as no rule.
+
+### Fixed: the proofs gate went red across the whole 0.43.0 cut with every theorem intact
+
+Kani 0.67 pins `nightly-2025-11-21` (rustc 1.93.0-nightly). This crate declares `rust-version =
+"1.96"` as policy, cargo enforces that against whatever rustc drives it, and so `cargo kani` could
+not build the crate at all. The gate reported it correctly — *"could not run to a verdict — a build
+or toolchain failure, NOT a refutation"* — and that separation is why the diagnosis took minutes.
+
+`scripts/check-proofs.sh` now lifts the `rust-version` line for the length of the kani run and puts
+it back, `cmp`-checking the restore before it prints a verdict so a gate cannot leave the tree
+damaged on its way to green. The MSRV claim is unaffected: `scripts/check-msrv.sh` owns it and
+compiles the whole workspace on exactly the declared toolchain. What is **not** lifted is the real
+technical floor — the crate still has to compile on kani's nightly, and if a future edition feature
+raises that past what kani ships, this run fails and says so. All 7 harnesses verify again.
+
 ## 0.43.0
 
 ### The first joules this crate ever measured instead of modelled

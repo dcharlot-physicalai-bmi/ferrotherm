@@ -1721,6 +1721,71 @@ pub const Hubo = struct {
     }
 };
 
+/// What one machine charges per operation, and WHOSE machine it is.
+///
+/// A joules figure is a claim about a specific piece of hardware, so the numbers and the sentence
+/// describing them travel together rather than the numbers travelling alone. `source` is not
+/// documentation: it separates `Z1_SPICE` -- SPICE estimates for taped-out but uncharacterised
+/// silicon -- from `KV260_MEASURED`, a board this project put on a wattmeter.
+///
+/// A price nobody has stated reads `NaN`, never `0`. `name` and `source` borrow the caller's
+/// buffers and live exactly as long as they do.
+pub const Prices = struct {
+    name: []const u8,
+    e_sample: f64,
+    e_read: f64,
+    e_write: f64,
+    /// Maximum sustainable full-graph reflash rate in Hz, `NaN` when unstated -- which is not "as
+    /// fast as you like": a workload reflashing faster than the device sustains prices a run that
+    /// could not have happened.
+    reflash_hz_cap: f64,
+    source: []const u8,
+
+    /// Whether these prices describe anything. `false` means pricing a run yields `NaN`, which is
+    /// the point: borrowing another device's prices produces a number that looks entirely real.
+    pub fn stated(self: Prices) bool {
+        return !std.math.isNan(self.e_sample) and !std.math.isNan(self.e_read) and
+            !std.math.isNan(self.e_write);
+    }
+};
+
+/// How many machines this library states prices for. Index `prices` with `0..pricesCount()`.
+pub fn pricesCount() u32 {
+    return c.ft_prices_count();
+}
+
+/// One machine's prices, its name and its provenance, written into caller-owned buffers.
+///
+/// Entry 0 is `UNSTATED`: every price `NaN`, the honest answer for a machine nobody has
+/// characterised. Returns null for an index past the end. Buffers shorter than the text are
+/// truncated, so give `source` room -- it is a sentence, not a word.
+pub fn prices(i: u32, name_buf: []u8, source_buf: []u8) ?Prices {
+    if (i >= c.ft_prices_count()) return null;
+    const n = c.ft_prices_name(i, name_buf.ptr, @intCast(name_buf.len));
+    const sn = c.ft_prices_source(i, source_buf.ptr, @intCast(source_buf.len));
+    return Prices{
+        .name = name_buf[0..n],
+        .e_sample = c.ft_prices_e_sample(i),
+        .e_read = c.ft_prices_e_read(i),
+        .e_write = c.ft_prices_e_write(i),
+        .reflash_hz_cap = c.ft_prices_reflash_hz_cap(i),
+        .source = source_buf[0..sn],
+    };
+}
+
+/// The named machine's prices, or null if this library states none for that name.
+///
+/// Null rather than a fallback. A misspelled machine name that silently returned some other
+/// machine's numbers would produce a joules figure for hardware the caller never asked about.
+pub fn pricesNamed(want: []const u8, name_buf: []u8, source_buf: []u8) ?Prices {
+    var i: u32 = 0;
+    while (i < c.ft_prices_count()) : (i += 1) {
+        const p = prices(i, name_buf, source_buf) orelse continue;
+        if (std.mem.eql(u8, p.name, want)) return p;
+    }
+    return null;
+}
+
 pub const Problem = struct {
     /// Whether a solve has happened, so `value` can tell "never solved" from "did not decode".
     /// The C ABI cannot: it returns the same sentinel for both.
@@ -2038,6 +2103,39 @@ pub const Problem = struct {
     /// moves when the penalty does. For what the answer is WORTH, see `objective`.
     pub fn energy(self: *Problem) f64 {
         return c.ft_model_energy(self.h);
+    }
+
+    /// Node updates the last solve performed -- the machine-independent half of what it cost.
+    pub fn costSamples(self: *Problem) u64 {
+        return c.ft_model_cost_samples(self.h);
+    }
+
+    /// Node values read back to the host during the last solve.
+    pub fn costReads(self: *Problem) u64 {
+        return c.ft_model_cost_reads(self.h);
+    }
+
+    /// Couplings, biases or clamp state written during the last solve.
+    pub fn costWrites(self: *Problem) u64 {
+        return c.ft_model_cost_writes(self.h);
+    }
+
+    /// Price the last solve on a machine whose per-operation energies you supply.
+    ///
+    /// `NaN` when the run performed an operation this machine states no price for -- never a total
+    /// quietly missing its most expensive term.
+    pub fn joules(self: *Problem, e_sample: f64, e_read: f64, e_write: f64) f64 {
+        return c.ft_model_joules(self.h, e_sample, e_read, e_write);
+    }
+
+    /// Price the last solve on one of the machines this library states prices for.
+    ///
+    /// The reason to prefer this over `joules`: the numbers arrive with `Prices.source`, the
+    /// sentence saying whose silicon they describe and whether anybody measured it. `Z1_SPICE` and
+    /// `KV260_MEASURED` are three orders of magnitude apart and look equally authoritative as bare
+    /// floats.
+    pub fn joulesOn(self: *Problem, p: Prices) f64 {
+        return c.ft_model_joules(self.h, p.e_sample, p.e_read, p.e_write);
     }
 
     /// Answers the last solve kept -- one per try.
@@ -2765,6 +2863,41 @@ test "branch and bound withholds a proof when the budget runs out" {
     const r = sim.branch(200);
     try std.testing.expect(!r.proved);
     try std.testing.expect(r.nodes <= 201);
+}
+
+test "an answer arrives priced, and on a machine that names itself" {
+    // The point of the catalogue is that the number and its provenance cross the ABI together, so
+    // this checks both halves: the arithmetic, and the sentence that says whose silicon it is.
+    var name_buf: [64]u8 = undefined;
+    var src_buf: [512]u8 = undefined;
+
+    try std.testing.expect(pricesCount() >= 3);
+    const unstated = prices(0, &name_buf, &src_buf).?;
+    try std.testing.expectEqualStrings("UNSTATED", unstated.name);
+    try std.testing.expect(!unstated.stated());
+
+    // A misspelling gets null, never somebody else's numbers.
+    try std.testing.expect(pricesNamed("KV260", &name_buf, &src_buf) == null);
+
+    const kv = pricesNamed("KV260_MEASURED", &name_buf, &src_buf).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0848e-11), kv.e_sample, 1e-20);
+    // Reads and writes were never exercised on that board. Unstated, and NOT zero.
+    try std.testing.expect(std.math.isNan(kv.e_read));
+    try std.testing.expect(std.mem.indexOf(u8, kv.source, "MEASURED") != null);
+
+    var p = try Problem.init();
+    defer p.deinit();
+    const shift = try p.integer("shift", 0, 3);
+    try p.prefer(.maximize, 3.0, shift.is(3));
+    try p.solve(4);
+
+    // The receipt is not opt-in: a solve that ran did work, and the count says so.
+    try std.testing.expect(p.costSamples() > 0);
+    const j = p.joulesOn(kv);
+    try std.testing.expectApproxEqAbs(@as(f64, @floatFromInt(p.costSamples())) * kv.e_sample, j, 1e-18);
+
+    // And a machine nobody has characterised prices nothing rather than zero.
+    try std.testing.expect(std.math.isNan(p.joulesOn(unstated)));
 }
 
 test "the three closed gaps, and the caveats they carry" {

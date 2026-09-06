@@ -79,6 +79,7 @@ export exact_planar!, toroidal_bound!, goemans_williamson!, cluster_anneal!, qua
 export Rounded, ClusterRun
 export ToroidalBound
 export Problem, Variable, Literal, Answer
+export Prices, Cost, PRICES, cost, joules, stated
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export linear!
@@ -137,6 +138,9 @@ function __init__()
         try
             Libdl.dlopen(p)
             LIB[] = p
+            # The price table is read from the library, not restated here, so it can only be filled
+            # once a library is actually open.
+            _load_prices!()
             return
         catch
         end
@@ -373,6 +377,17 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_model_optima Cuint ModPtr Cdouble
 @cfn ft_model_select_optimum Cuint ModPtr Cuint Cdouble
 @cfn ft_model_energy Cdouble ModPtr
+@cfn ft_model_cost_samples Culonglong ModPtr
+@cfn ft_model_cost_reads Culonglong ModPtr
+@cfn ft_model_cost_writes Culonglong ModPtr
+@cfn ft_model_joules Cdouble ModPtr Cdouble Cdouble Cdouble
+@cfn ft_prices_count Cuint
+@cfn ft_prices_name Cuint Cuint Ptr{UInt8} Cuint
+@cfn ft_prices_source Cuint Cuint Ptr{UInt8} Cuint
+@cfn ft_prices_e_sample Cdouble Cuint
+@cfn ft_prices_e_read Cdouble Cuint
+@cfn ft_prices_e_write Cdouble Cuint
+@cfn ft_prices_reflash_hz_cap Cdouble Cuint
 @cfn ft_model_solve_by Cuint ModPtr Cuint Culonglong
 @cfn ft_model_proved Cuint ModPtr
 @cfn ft_model_objective Cdouble ModPtr
@@ -1637,6 +1652,110 @@ naming the range, not the fourth slot.
 is(v::Variable, value::Integer) = Literal(v, Int64(value))
 
 """
+    Prices
+
+What one machine charges per operation, and WHOSE machine it is.
+
+A joules figure is a claim about a specific piece of hardware, so the numbers and the sentence
+describing them travel together rather than the numbers travelling alone. `source` is not
+documentation: it is what separates `Z1_SPICE` -- SPICE estimates for taped-out but uncharacterised
+silicon -- from `KV260_MEASURED`, a board this project put on a wattmeter. The two are more than
+three orders of magnitude apart and look equally authoritative as bare floats.
+
+Read these from [`PRICES`](@ref) rather than building one, unless you are pricing a machine of your
+own. A price nobody has stated reads `NaN`, never `0.0`.
+"""
+struct Prices
+    name::String
+    e_sample::Float64
+    e_read::Float64
+    e_write::Float64
+    """Maximum sustainable full-graph reflash rate in Hz, `NaN` when unstated -- which is not "as
+    fast as you like": a workload reflashing faster than the device sustains prices a run that
+    could not have happened."""
+    reflash_hz_cap::Float64
+    source::String
+end
+
+"""    stated(p)  — whether these prices describe anything.
+
+`false` means pricing a run against them yields nothing, which is the point. The alternative,
+borrowing another device's prices, produces a number indistinguishable from a real one.
+"""
+stated(p::Prices) = isfinite(p.e_sample) && isfinite(p.e_read) && isfinite(p.e_write)
+
+function _prices_text(fn, i::Integer)
+    need = fn(Cuint(i), Ptr{UInt8}(C_NULL), Cuint(0))
+    need == 0 && return ""
+    buf = Vector{UInt8}(undef, need)
+    got = fn(Cuint(i), pointer(buf), Cuint(need))
+    String(buf[1:got])
+end
+
+"""
+    PRICES::Dict{String, Prices}
+
+Every machine ferrotherm states prices for, by name -- read out of the library at load, so no
+number is restated on this side of the ABI.
+
+`PRICES["UNSTATED"]` is deliberately in the table: it is the honest entry for a machine nobody has
+characterised, and pricing a run against it returns `nothing` rather than a zero.
+"""
+const PRICES = Dict{String, Prices}()
+
+function _load_prices!()
+    empty!(PRICES)
+    for i in 0:(ft_prices_count() - 1)
+        name = _prices_text(ft_prices_name, i)
+        PRICES[name] = Prices(name, ft_prices_e_sample(Cuint(i)), ft_prices_e_read(Cuint(i)),
+                              ft_prices_e_write(Cuint(i)), ft_prices_reflash_hz_cap(Cuint(i)),
+                              _prices_text(ft_prices_source, i))
+    end
+    PRICES
+end
+
+"""
+    Cost
+
+What a solve actually did, in operations -- the receipt that comes back with every answer.
+
+Counts, not joules, because the counts are a fact about the run while the joules are a fact about a
+machine. [`joules`](@ref) puts the two together, and refuses when the machine states no price for
+something the run performed.
+"""
+struct Cost
+    "Single-node Gibbs updates performed, summed across every try."
+    samples::UInt64
+    "Node values read out to the chip edge."
+    reads::UInt64
+    "Node couplings, biases or clamp state flashed."
+    writes::UInt64
+end
+
+"""
+    joules(c::Cost, p::Prices = PRICES["KV260_MEASURED"]) -> Union{Float64, Nothing}
+
+Price a run on one machine, or `nothing` when that machine states no price for what the run did.
+
+`nothing` rather than a number, and never zero. An operation whose energy nobody has published does
+not cost nothing, and a caller who has to check this cannot accidentally print a figure for a
+device that has none. An operation the run never performed needs no price, so a sampling-only
+measurement can still price a sampling-only run.
+
+The default is the one entry in [`PRICES`](@ref) that came off a wattmeter rather than out of a
+model.
+"""
+function joules(c::Cost, p::Prices = PRICES["KV260_MEASURED"])
+    total = 0.0
+    for (count, price) in ((c.samples, p.e_sample), (c.reads, p.e_read), (c.writes, p.e_write))
+        count == 0 && continue
+        isfinite(price) || return nothing
+        total += Float64(count) * price
+    end
+    total
+end
+
+"""
     Answer
 
 A solved problem, read by name. `answer["shift"]` gives a value.
@@ -1677,7 +1796,19 @@ struct Answer
     by::Vector{Float64}
     ancillas::Int
     caveats::Vector{String}
+    """What producing this answer cost, in operations, summed across EVERY try.
+
+    An energy library whose answers arrive without their cost has made the number opt-in, and an
+    opt-in number is one nobody reads. `joules(a.cost)` prices it on measured silicon.
+    """
+    cost::Cost
 end
+
+"""    cost(a)  — what producing this answer cost, in operations. See [`joules`](@ref)."""
+cost(a::Answer) = a.cost
+
+"""    joules(a::Answer, p::Prices = PRICES["KV260_MEASURED"])  — what it cost, in joules."""
+joules(a::Answer, p::Prices = PRICES["KV260_MEASURED"]) = joules(a.cost, p)
 
 Base.getindex(a::Answer, name::AbstractString) = a.values[String(name)]
 Base.haskey(a::Answer, name::AbstractString) = haskey(a.values, String(name))
@@ -2311,7 +2442,9 @@ function _read_answer(p::Problem)
            ft_model_energy(p.handle), obj, ft_model_proved(p.handle) == 1,
            Int(spins), ft_model_penalty(p.handle),
            ft_model_soft_cost(p.handle), given_up, by, Int(ft_model_ancillas(p.handle)),
-           [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)])
+           [_text(p, ft_model_caveat, i) for i in 0:(ft_model_caveats(p.handle) - 1)],
+           Cost(ft_model_cost_samples(p.handle), ft_model_cost_reads(p.handle),
+                ft_model_cost_writes(p.handle)))
 end
 
 """

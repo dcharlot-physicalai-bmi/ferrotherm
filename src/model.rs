@@ -2466,6 +2466,9 @@ impl Compiled {
             violated,
             energy: self.graph.energy(state),
             objective,
+            // Decoding a state performs no device operations. A caller that ran something attaches
+            // what it spent; `decode` on its own is free and says so.
+            cost: crate::ledger::Ledger::default(),
             // Decoding a state says nothing about whether it is optimal. Only `solve_by` with
             // `Method::Branch` can set this, and it sets it on the Solution it returns.
             proved_optimal: false,
@@ -2765,8 +2768,11 @@ impl Compiled {
     /// instance should be able to say so.
     #[must_use]
     pub fn solve_with(&self, sched: &Schedule, seed: u64) -> Solution {
-        let (best, _) = crate::tempering::anneal_scheduled(&self.graph, sched, seed, None);
-        self.decode(&best)
+        let mut cost = crate::ledger::Ledger::default();
+        let (best, _) = crate::tempering::anneal_scheduled(&self.graph, sched, seed, Some(&mut cost));
+        let mut sol = self.decode(&best);
+        sol.cost = cost;
+        sol
     }
 
     /// Anneal several times on a caller's ladder and keep the best feasible answer.
@@ -2797,8 +2803,15 @@ impl Compiled {
 
     fn best_of(&self, tries: u64, run: impl Fn(u64) -> Solution) -> Solution {
         let mut best: Option<Solution> = None;
+        // Every try is paid for, not just the one that wins. Carrying only the winner's ledger
+        // would make an N-restart search read as costing a single run, and the whole reason to
+        // count operations is to see that trade.
+        let mut total = crate::ledger::Ledger::default();
         for s in 0..tries.max(1) {
             let cand = run(s);
+            total.samples += cand.cost.samples;
+            total.reads += cand.cost.reads;
+            total.writes += cand.cost.writes;
             let better = match &best {
                 None => true,
                 Some(b) => match (b.feasible(), cand.feasible()) {
@@ -2811,7 +2824,76 @@ impl Compiled {
                 best = Some(cand);
             }
         }
-        best.expect("at least one try")
+        let mut winner = best.expect("at least one try");
+        winner.cost = total;
+        winner
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    use crate::ledger::{KV260_MEASURED, Prices, Z1_SPICE};
+
+    fn tiny() -> Compiled {
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.not_equal(a, b);
+        m.objective(Sense::Minimize, Expr::product(1.0, &[Lit::Is(a, 0)]));
+        m.compile().expect("a small one-hot model compiles")
+    }
+
+    /// Every answer carries what it cost, without the caller asking.
+    ///
+    /// This is the whole point of the field. Before it existed the one function a caller reaches for
+    /// passed `None` to the ledger, so a stack built on joules said nothing about them on its
+    /// default path.
+    #[test]
+    fn an_answer_arrives_with_its_own_receipt() {
+        let c = tiny();
+        let sol = c.solve_annealed(7);
+
+        // The schedule's own arithmetic says how many node updates a run performs, and the receipt
+        // has to agree with it exactly -- a count that merely looks plausible is not a count.
+        let want = Compiled::default_schedule().node_updates(c.graph.n);
+        assert_eq!(sol.cost.samples, want, "the receipt must match what the schedule prescribes");
+        assert_eq!(sol.cost.reads, 0, "an anneal that reads nothing back is charged for no reads");
+
+        // And it can be priced, in one line, against either a projection or a measurement.
+        let projected = sol.joules(&Z1_SPICE).expect("sampling alone is priced");
+        let measured = sol.joules(&KV260_MEASURED).expect("the measured price states e_sample");
+        assert!(projected > 0.0 && measured > 0.0);
+        let ratio = measured / projected;
+        assert!(
+            (1500.0..1560.0).contains(&ratio),
+            "measured silicon against projected thermodynamic hardware = {ratio:.0}x"
+        );
+
+        // A machine nobody metered does not cost zero.
+        assert_eq!(sol.joules(&Prices::UNSTATED), None);
+    }
+
+    /// A best-of-N search is charged for all N, not for the one that won.
+    ///
+    /// Carrying only the winner's ledger would make an N-restart search read as costing a single
+    /// run, which is precisely how something expensive comes to look cheap.
+    #[test]
+    fn best_of_n_is_charged_for_every_try() {
+        let c = tiny();
+        let one = c.solve_annealed(0);
+        let four = c.solve_best_of(4);
+        assert_eq!(
+            four.cost.samples,
+            4 * one.cost.samples,
+            "four tries cost four runs: {} vs {}",
+            four.cost.samples,
+            one.cost.samples
+        );
+        assert!(
+            four.joules(&KV260_MEASURED).expect("priced") > one.joules(&KV260_MEASURED).expect("priced"),
+            "and the joules follow the count"
+        );
     }
 }
 
@@ -2934,6 +3016,21 @@ pub struct Solution {
     /// A number about SPINS. Two answers to the same model can be compared with it, and nothing
     /// else can: it is not what the schedule is worth, and it moves when the penalty does.
     pub energy: f64,
+    /// What producing this answer actually cost, in device operations.
+    ///
+    /// Filled in by every `solve_*` path, without being asked for. That is the point: this crate has
+    /// a first-class energy ledger and, until this field existed, the one function a caller actually
+    /// reaches for passed `None` to it. Energy was invisible in the wrong sense -- absent rather than
+    /// automatic -- and a stack whose whole thesis is joules cannot make the default path silent
+    /// about them.
+    ///
+    /// Price it with [`Solution::joules`] against whatever machine is under discussion. The counts
+    /// here are the machine-independent half; the joules are the half that needs a device.
+    ///
+    /// **For a best-of-N search this is the TOTAL over every try, not the winner's.** Reporting the
+    /// winning run alone would understate the bill by a factor of N, which is exactly how a search
+    /// that is expensive comes to look cheap.
+    pub cost: crate::ledger::Ledger,
     /// Whether the answer is **provably** the best one, not merely the best found.
     ///
     /// Only [`Method::Branch`] can set it, and only when it exhausted the tree within its budget.
@@ -2966,6 +3063,27 @@ pub struct Solution {
 }
 
 impl Solution {
+    /// What this answer cost in joules on a given machine, or `None` when that machine has no
+    /// published price for something the run actually did.
+    ///
+    /// The counts in [`Solution::cost`] are machine-independent; a joule is not. Passing
+    /// [`crate::ledger::Z1_SPICE`] prices the run against Extropic's projected thermodynamic
+    /// hardware, and [`crate::ledger::KV260_MEASURED`] against a fabric this project actually
+    /// metered — and the two differ by roughly three orders of magnitude, which is the comparison
+    /// worth being able to make in one line.
+    ///
+    /// # Why this returns an `Option` rather than a number
+    ///
+    /// A machine nobody has metered does not cost zero. [`crate::ledger::Ledger::joules`] refuses
+    /// per operation: it prices what the run performed and declines when a price for that operation
+    /// is unstated. A search that read nothing back can be priced by a sampling-only measurement; a
+    /// search that did read is not, and gets `None` instead of a number missing its expensive term.
+    #[must_use]
+    pub fn joules(&self, prices: &crate::ledger::Prices) -> Option<f64> {
+        self.cost.joules(prices)
+    }
+
+
     /// The value of a named variable.
     ///
     /// Panics if the variable did not decode, and says which of the two things went wrong —
