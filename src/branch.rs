@@ -147,6 +147,22 @@ pub struct Outcome {
     pub energy: f64,
     /// True only if the tree was exhausted. See the module note on what this is allowed to mean.
     pub proved_optimal: bool,
+    /// A LOWER bound on the true optimum, valid whether or not the tree was exhausted.
+    ///
+    /// The search already computes `fixed_energy - free_h_abs - free_abs` at every node and used to
+    /// discard it. Every subtree the node budget forced it to abandon has an optimum at least that
+    /// large, so the minimum over abandoned subtrees — floored by the incumbent, since every
+    /// explored or pruned region has an optimum at or above it — bounds the whole search from
+    /// below.
+    ///
+    /// `bound <= true optimum <= energy` always. When the tree is exhausted there is nothing
+    /// abandoned and `bound == energy` exactly, which makes [`Outcome::proved_optimal`] a corollary
+    /// of a zero gap rather than a separate flag to be trusted on its own.
+    ///
+    /// On a truncated run the gap `energy - bound` is what a caller actually wants: "best found"
+    /// with no idea how far off it might be is the answer every commercial machine in this field
+    /// returns.
+    pub bound: f64,
     /// Nodes visited.
     pub nodes: u64,
     /// Nodes cut off by the bound. `pruned / nodes` is how much the bound was worth.
@@ -175,6 +191,7 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
             proved_optimal: true,
             nodes: 0,
             pruned: 0,
+            bound: 0.0,
             hit_limit: false,
             slack: 0.0,
             sdp_calls: 0,
@@ -217,6 +234,9 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
         slack,
         best,
         best_state: best_state.clone(),
+        // Infinity until a subtree is actually abandoned: an exhausted tree abandons none, and
+        // `min(best, INFINITY)` is then `best`, which is the proof.
+        frontier: f64::INFINITY,
         hit_limit: false,
         gauge_fixed,
         undo: Vec::with_capacity(g.nbr.len() + n),
@@ -236,6 +256,10 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
     Outcome {
         state: best_state,
         energy: best,
+        // Every explored or pruned region has an optimum at or above the incumbent, and every
+        // abandoned one at or above the frontier, so the true optimum is at least the smaller.
+        // With nothing abandoned the frontier is infinite and this is exactly `best`.
+        bound: st.frontier.min(best),
         proved_optimal: !st.hit_limit,
         nodes: st.nodes,
         pruned: st.pruned,
@@ -273,16 +297,33 @@ struct Search<'a> {
     /// judged on evidence rather than on the argument for it.
     sdp_calls: u64,
     sdp_prunes: u64,
+    /// The least lower bound over every subtree the node budget forced this search to abandon.
+    frontier: f64,
 }
 
 impl Search<'_> {
+    /// A lower bound on every completion of the current partial assignment.
+    ///
+    /// The energy already committed, minus the most the free spins could possibly subtract: each
+    /// free field can contribute at most `|h_i|` and each free-free edge at most `|w_ij|`, and both
+    /// running totals are maintained incrementally as spins are fixed. No assignment of the free
+    /// spins can go below it.
+    fn node_bound(&self, fixed_energy: f64) -> f64 {
+        fixed_energy - self.free_h_abs - self.free_abs
+    }
+
     fn descend(&mut self, depth: usize, fixed_energy: f64) {
+        // BOTH of these return an unexplored subtree to the caller, and both must be recorded or
+        // the bound is not a bound. The first is every sibling still queued when the budget ran
+        // out; the second is the node that ran it out.
         if self.hit_limit {
+            self.frontier = self.frontier.min(self.node_bound(fixed_energy));
             return;
         }
         self.nodes += 1;
         if self.nodes > self.max_nodes {
             self.hit_limit = true;
+            self.frontier = self.frontier.min(self.node_bound(fixed_energy));
             return;
         }
         if depth == self.order.len() {
@@ -297,7 +338,7 @@ impl Search<'_> {
             return;
         }
 
-        let lb = fixed_energy - self.free_h_abs - self.free_abs;
+        let lb = self.node_bound(fixed_energy);
         if lb - self.slack >= self.best {
             self.pruned += 1;
             return;
@@ -324,6 +365,17 @@ impl Search<'_> {
             let v = if b == 0 { first } else { -first };
             self.fix(i, v, depth, fixed_energy);
             if self.hit_limit {
+                // THE SIBLING THAT WAS NEVER ENTERED. Returning here skips the remaining branches
+                // without `descend` ever seeing them, so the guard at the top of this function
+                // cannot record them and the frontier would omit a subtree that might hold the
+                // optimum. Enumeration caught exactly that: a bound of -13.675 against a true
+                // minimum of -14.913.
+                //
+                // THIS node's bound covers every branch below it. The bound is non-decreasing with
+                // depth — fixing a spin can only remove freedom the bound was giving away — so an
+                // ancestor's bound is sound for all its descendants, and looser, which is the safe
+                // direction for a lower bound.
+                self.frontier = self.frontier.min(lb);
                 return;
             }
         }
@@ -476,6 +528,67 @@ mod tests {
             );
             assert_eq!(o.energy, g.energy(&o.state), "energy must match the state returned");
         }
+    }
+
+    /// The bound brackets the true optimum, exhausted or not.
+    ///
+    /// `bound <= true optimum <= energy`. The search already computed the node bound at every node
+    /// and discarded it; carrying the minimum over ABANDONED subtrees out makes a truncated run
+    /// report how far off it might be, instead of "best found" with no idea.
+    ///
+    /// Checked against exhaustive enumeration, at two node budgets: unlimited, where the bound must
+    /// equal the incumbent exactly and the search proves optimality; and a budget small enough to
+    /// force truncation, where the bracket must still contain the true minimum.
+    #[test]
+    fn the_bound_brackets_the_true_optimum_whether_or_not_the_tree_was_exhausted() {
+        let mut truncated = 0usize;
+        for seed in 0..16u64 {
+            let fields = seed % 2 == 0;
+            let g = random_graph(13, 0.4, seed, fields);
+            let min = brute_min(&g);
+
+            // Exhausted: the bracket collapses, and `proved_optimal` becomes a corollary of it.
+            let full = solve(&g, &Params::default());
+            assert!(full.proved_optimal);
+            assert_eq!(
+                full.bound, full.energy,
+                "seed {seed}: an exhausted tree abandons nothing, so the bound IS the answer"
+            );
+            assert!(
+                (full.bound - min).abs() < 1e-9,
+                "seed {seed}: bound {:.9} against enumeration {min:.9}",
+                full.bound
+            );
+
+            // Truncated: still a bracket, and a valid one.
+            let cut = solve(&g, &Params { max_nodes: 60, ..Params::default() });
+            assert!(
+                cut.bound <= min + 1e-9,
+                "seed {seed}: bound {:.9} is ABOVE the true minimum {min:.9} -- not a bound",
+                cut.bound
+            );
+            assert!(
+                cut.energy >= min - 1e-9,
+                "seed {seed}: incumbent {:.9} is below the true minimum {min:.9}",
+                cut.energy
+            );
+            if cut.hit_limit {
+                truncated += 1;
+                assert!(!cut.proved_optimal);
+                assert!(
+                    cut.bound < cut.energy,
+                    "seed {seed}: a truncated run with a bound equal to its incumbent is claiming \
+                     a proof it did not make"
+                );
+            }
+        }
+        // ANTI-VACUITY. If the small budget never actually truncated, the second half of this test
+        // asserted nothing and would pass on a bound that is only ever set by the exhausted path.
+        assert!(
+            truncated >= 8,
+            "only {truncated} of 16 runs truncated at 60 nodes; the truncated branch is barely \
+             being exercised"
+        );
     }
 
     /// The gauge shortcut halves the tree, and must not halve the answers.

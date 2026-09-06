@@ -79,6 +79,8 @@ score. Scoring it found three defects on the first run.
 | Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
 | Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped**; the page verifies itself against Onsager in your browser before reporting a rate |
 | **Fabricated CMOS annealing silicon (Hitachi)** | `ferrotherm-cloud::hitachi` — 384×384 King's graph, four-bit coefficients, over a free public API | **shipped, conventions measured** |
+| Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Exact ground-state **counting** (GenericTensorNetworks.jl) | `exact::ground_degeneracy` — the cold limit of `log Z` | **shipped, verified** against a closed form at 101 spins |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
 
 Focus: **embodied and Physical AI** — sampling-based control (MPPI needs thousands of samples per
@@ -717,6 +719,80 @@ refuted: enumerating `at most two of four` exactly gives eleven assignments and 
 minimum-energy states, because the penalty that makes a row hold also pins its slack. The real
 reason is that the count must be a statement about the model rather than about how the compiler
 chose to represent it.
+
+### How many ground states are there — counted, not estimated
+
+`samples` reports "evidence of degeneracy, not a count of it", and `oracle::Exhaustive` stops at 26
+spins. `exact::ground_degeneracy` counts, on anything narrow enough to eliminate, which is a claim
+about the graph's **shape** rather than its size.
+
+With `g₀` states at the ground energy `E₀` and a spectral gap `D`,
+
+```text
+  Z(β) = g₀ e^{-β E₀} (1 + (g₁/g₀) e^{-β D} + …)
+  exp(ln Z(β) + β E₀) → g₀        error O((g₁/g₀) e^{-β D})
+```
+
+Every excited level contributes a positive term, so the estimate is an **upper bound that tightens
+as β grows**. Two temperatures are evaluated, both are returned, and an integer is named only when
+they are distinct, positive, finite, and agree — equal temperatures agree for a reason unrelated to
+convergence, and at `(0, 0)` the estimate is `2ⁿ`, the total state count.
+
+The oracle needs no enumeration. An odd antiferromagnetic N-ring is frustrated: one bond must break,
+it can be any of the N, in either global orientation — exactly **2N** ground states.
+
+```text
+  N = 21   counted 42     enumeration would need 2^21 states, elimination needs 2^2
+  N = 51   counted 102
+  N = 101  counted 202
+```
+
+Finding it corrected an older defect. `initial_tables` emits nothing for a spin with no field and no
+edges, and elimination then skipped a variable no table mentions — right for min-sum, which owes a
+free spin zero energy, wrong for sum-product, which owes it a factor of two. `log_partition` was
+short by `ln 2` per free spin. `tensor::Network::from_ising` had the same hole for the same reason,
+so the two engines agreed on the wrong number to the last ulp; the regression test is scored against
+brute-force enumeration instead.
+
+### Contraction and elimination are the same computation
+
+Markov & Shi (2008): contracting a tensor network is polynomial in its size and exponential in its
+treewidth — which is `exact`'s `2^width` in the other field's notation. `tensor` says it out loud and
+generalises it: any rank, any index dimension, indices summed when the contracting pair holds their
+last live copies, and indices left **open** so a contraction yields a marginal instead of a scalar.
+
+An order's price is reported before it is paid, matching `Elimination::width`:
+
+```text
+  Plan { peak_entries, flops }      →  Uncontractable::TooWide { entries, max }
+```
+
+Checked against the engine the crate already had — `from_ising` + `contract` against
+`Elimination::log_partition`, and an open index against `Elimination::marginals` — on chains, rings
+and 4×4/5×5 lattices at four temperatures. The lattice rows are the load-bearing ones: every site has
+degree four, so they exercise summing an index carried by several tensors.
+
+It is real-valued and exact: it contracts probability and partition-function networks, **not
+amplitudes**, and performs no bond-dimension truncation.
+
+### The ladder knows the instance's energy scale
+
+`β` and energy enter the Boltzmann weight only as the product `βE`, so a ladder in absolute `β` is a
+claim about the units the modeller happened to write in. On `planted::frustrated_loops(8, 96, 3)`,
+worst excess over the planted optimum across five seeds:
+
+| coefficient scale | fixed ladder | `Schedule::for_instance` |
+|---|---|---|
+| 1e-3 | **52.08%** | 2.08% |
+| 1e-2 | 43.75% | 2.08% |
+| 1e0 | 2.08% | 2.08% |
+| 1e2 | 20.83% | 2.08% |
+| 1e3 | 20.83% | 2.08% |
+
+`Graph::flip_gap_max` is the instance's energy scale — `max_i 2(Σ_j |w_ij| + |h_i|)`, an exact bound
+on what one flip can change. The oracle is a theorem rather than a benchmark: scale the Hamiltonian
+by `k` and the ladder by `1/k` and, for `k` a power of two, every multiplication is exact in
+IEEE-754, so the trajectory is **bit-identical** and the energy scales by exactly `k`.
 
 ## Positions this crate takes
 
