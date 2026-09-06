@@ -18,6 +18,7 @@ use crate::rng::Pcg;
 
 /// Something that proposes a low-energy state.
 pub trait Solver {
+    /// A short name for this solver, used when results are reported side by side.
     fn name(&self) -> &str;
     /// Returns the best state found and its energy.
     fn solve(&self, g: &Graph) -> (Vec<i8>, f64);
@@ -65,7 +66,9 @@ impl Solver for Exhaustive {
 /// then restarts. Anything claiming to be a solver must beat a *tuned* version of this, which is
 /// why the restart count is a parameter rather than a hidden 1.
 pub struct SteepestDescent {
+    /// Random starts to try. A PARAMETER, because comparing against one start flatters everything.
     pub restarts: usize,
+    /// Seed for the starts, so a run is reproducible.
     pub seed: u64,
 }
 
@@ -109,7 +112,9 @@ impl Solver for SteepestDescent {
 ///
 /// If a benchmark cannot tell this apart from a real solver, the benchmark is measuring nothing.
 pub struct RandomGuess {
+    /// States to draw before returning the best.
     pub tries: usize,
+    /// Seed for those draws.
     pub seed: u64,
 }
 
@@ -135,7 +140,9 @@ impl Solver for RandomGuess {
 
 /// Simulated annealing behind the same trait, so it is compared on equal terms.
 pub struct Annealer {
+    /// The temperature schedule to follow.
     pub schedule: crate::schedule::Schedule,
+    /// Seed for the sampler's stream.
     pub seed: u64,
 }
 

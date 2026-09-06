@@ -65,30 +65,45 @@ pub const VERSION: u32 = 1;
 /// Where a group of spins came from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EncodedVar {
+    /// Index of the group's first spin; it occupies `base..base + k`.
     pub base: usize,
+    /// Spins in the group, which is the variable's arity under its encoding.
     pub k: usize,
+    /// How the group's spins map back to a value.
     pub encoding: Encoding,
 }
 
 /// A complete program.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Program {
+    /// Optional human name, carried through unchanged.
     pub name: Option<String>,
+    /// Total spins; every index elsewhere must be below this.
     pub spins: usize,
+    /// `(spin, h)` pairs. Absent spins have zero bias.
     pub bias: Vec<(usize, f64)>,
+    /// Energy terms of any arity.
     pub factors: Vec<Factor>,
+    /// A proper colouring as classes of spin indices, so a reader need not recompute one.
     pub colors: Vec<Vec<usize>>,
+    /// Which spin groups stand for higher-arity variables, and under which encoding.
     pub encodings: Vec<EncodedVar>,
+    /// The annealing schedule the program asks for.
     pub schedule: Schedule,
+    /// Names of the variables whose values the caller wants reported.
     pub observe: Vec<String>,
+    /// Optional device the program was written for.
     pub target: Option<String>,
+    /// Optional per-operation price set, so a program can carry its own energy model.
     pub price: Option<String>,
 }
 
 /// Why a program could not be read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FtpError {
+    /// 1-based line where parsing stopped. A fault without a position is not actionable.
     pub line: usize,
+    /// What was wrong, in terms of the format rather than of the parser.
     pub message: String,
 }
 

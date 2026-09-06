@@ -51,7 +51,12 @@ pub enum Domain {
     /// One of `k` unordered values.
     Categorical(usize),
     /// An integer in `lo..=hi`, treated as a categorical over its range.
-    Integer { lo: i64, hi: i64 },
+    Integer {
+        /// Inclusive lower end.
+        lo: i64,
+        /// Inclusive upper end.
+        hi: i64,
+    },
 }
 
 impl Domain {
@@ -266,7 +271,9 @@ impl Var {
 /// Whether an objective is being minimised or maximised.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Sense {
+    /// Lower objective values are better.
     Minimize,
+    /// Higher is better; the compiler negates and minimises.
     Maximize,
 }
 
@@ -299,6 +306,7 @@ pub struct Expr {
 
 impl Expr {
     #[must_use]
+    /// The empty expression, worth zero everywhere.
     pub fn zero() -> Expr {
         Expr::default()
     }
@@ -511,16 +519,31 @@ pub enum Constraint {
     ///
     /// The penalty is `(Σ lits − k)²`, which is quadratic in the spins and needs no ancillas.
     /// Cardinality is the workhorse of assignment, scheduling and selection problems.
-    Cardinality { lits: Vec<Lit>, k: usize },
+    Cardinality {
+        /// The literals counted.
+        lits: Vec<Lit>,
+        /// The count they are compared against.
+        k: usize,
+    },
     /// At most `k` of these literals are true.
     ///
     /// An inequality cannot be a squared penalty on its own — `(Σ − k)²` would punish *under* the
     /// limit as hard as over it, which is the wrong problem. So the compiler introduces a **slack
     /// variable** ranging over `0..=k` and constrains `Σ lits + slack = k`, turning the inequality
     /// into an equality it can square. The slack costs spins and is invisible in the answer.
-    AtMost { lits: Vec<Lit>, k: usize },
+    AtMost {
+        /// The literals counted.
+        lits: Vec<Lit>,
+        /// The count they are compared against.
+        k: usize,
+    },
     /// At least `k` of these literals are true. Slack as above, on the other side.
-    AtLeast { lits: Vec<Lit>, k: usize },
+    AtLeast {
+        /// The literals counted.
+        lits: Vec<Lit>,
+        /// The count they are compared against.
+        k: usize,
+    },
     /// Every one of these variables takes a DIFFERENT value.
     ///
     /// Lowered per value rather than per pair: for each value any two of them share, the
@@ -647,11 +670,26 @@ impl Default for Model {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CompileError {
     /// An expression touched a categorical variable that is not one-hot encoded.
-    NeedsOneHot { var: String, encoding: Encoding },
+    NeedsOneHot {
+        /// The variable's name, as the modeller wrote it.
+        var: String,
+        /// The encoding it actually has.
+        encoding: Encoding,
+    },
     /// An expression term had degree above two.
-    DegreeTooHigh { degree: usize },
+    DegreeTooHigh {
+        /// Degree of the offending term; only 1 and 2 are expressible as spins.
+        degree: usize,
+    },
     /// A value outside a variable's domain.
-    BadValue { var: String, value: i64, domain: Domain },
+    BadValue {
+        /// The variable's name.
+        var: String,
+        /// The value asked for.
+        value: i64,
+        /// The domain it is not in.
+        domain: Domain,
+    },
     /// A model with nothing in it.
     Empty,
     /// Two variables sharing a name.
@@ -662,7 +700,12 @@ pub enum CompileError {
     /// one-hot slot needs one spin per value. `ft_model_integer` used to accept a range spanning
     /// most of `i64`, report success, and then `ft_model_compile` aborted the caller's process with
     /// a capacity overflow -- where the documented failure is a zero return.
-    DomainTooLarge { var: String, size: u128 },
+    DomainTooLarge {
+        /// The variable's name.
+        var: String,
+        /// Values in its domain, which is more spins than can be allocated.
+        size: u128,
+    },
     /// A coefficient that is NaN or infinite.
     ///
     /// Not a pedantic check. A single NaN objective term used to compile, solve, and report
@@ -671,14 +714,24 @@ pub enum CompileError {
     /// never fires again. A model maximising `3·a` alongside one NaN term answered `a = 0` --
     /// a confident, feasible-looking, wrong answer, which is the exact failure this crate exists
     /// to refuse.
-    NotFinite { what: &'static str, value: f64 },
+    NotFinite {
+        /// Which coefficient or bound it was.
+        what: &'static str,
+        /// The offending value: NaN or an infinity.
+        value: f64,
+    },
     /// An `all_different` over more variables than there are values for them to take.
     ///
     /// The pigeonhole principle, checked rather than annealed. A model like this has no answer at
     /// all, and returning `feasible: false` after a full anneal tells a modeller their penalty was
     /// too low or their ladder too short — neither of which is true, and both of which cost an
     /// afternoon.
-    Pigeonhole { vars: usize, values: usize },
+    Pigeonhole {
+        /// Variables that must differ.
+        vars: usize,
+        /// Values available to them, which is fewer.
+        values: usize,
+    },
     /// A non-integer coefficient or right-hand side on a weighted linear **inequality**.
     ///
     /// The structural refusal, and the one that keeps the penalty argument sound. An inequality is
@@ -690,7 +743,14 @@ pub enum CompileError {
     /// Refused rather than auto-scaled. Recovering a denominator from an f64 is a guess — 0.1 is
     /// not 1/10 — and multiplying a row through by a denominator nobody wrote is how a two-decimal
     /// price list silently becomes a 100× wider slack that reads as the library being slow.
-    LinearNotInteger { row: String, what: String, value: f64 },
+    LinearNotInteger {
+        /// The row's name.
+        row: String,
+        /// Which coefficient or right-hand side.
+        what: String,
+        /// Its value, which is not a whole number.
+        value: f64,
+    },
     /// A weighted row whose coefficient is a whole number but too large for `f64` to hold every
     /// integer near it.
     ///
@@ -702,20 +762,41 @@ pub enum CompileError {
     /// Above 2^53 the doubles stop representing consecutive integers, so the slack arithmetic --
     /// gcd, floor division, the residual span -- can no longer be trusted to be exact, and an
     /// inexact slack silently admits or forbids the wrong assignments.
-    LinearHugeCoefficient { row: String, what: String, value: f64, limit: f64 },
+    LinearHugeCoefficient {
+        /// The row's name.
+        row: String,
+        /// Which coefficient or right-hand side.
+        what: String,
+        /// Its value.
+        value: f64,
+        /// The largest magnitude `f64` still represents every integer below.
+        limit: f64,
+    },
     /// A weighted linear row no assignment can satisfy, checked by arithmetic rather than annealed.
     ///
     /// The [`CompileError::Pigeonhole`] principle applied to a row: the best the left side can do
     /// is on one side of the comparison and the right-hand side is on the other. Annealing this
     /// returns `feasible: false`, which tells a modeller their penalty was too low or their ladder
     /// too short — neither of which is true, and both of which cost an afternoon.
-    LinearUnsatisfiable { row: String, best: f64 },
+    LinearUnsatisfiable {
+        /// The row's name.
+        row: String,
+        /// The closest any assignment gets, proved by arithmetic rather than searched for.
+        best: f64,
+    },
     /// A weighted linear inequality whose slack needs more than 62 spins.
     ///
     /// The slack spans `S+1` values in `⌈log₂(S+1)⌉` spins, so this is reached only by a row whose
     /// span does not fit an `i64` — a genuine overflow rather than a budget. The message shows its
     /// arithmetic, because "too large" without the number is not actionable.
-    LinearTooLarge { row: String, span: i128, spins: usize },
+    LinearTooLarge {
+        /// The row's name.
+        row: String,
+        /// Width of the slack's range.
+        span: i128,
+        /// Spins that span would need, which exceeds the 62 available.
+        spins: usize,
+    },
 }
 
 impl core::fmt::Display for CompileError {
@@ -821,6 +902,7 @@ impl core::fmt::Display for CompileError {
 
 impl Model {
     #[must_use]
+    /// An empty model: no variables, no objective, no constraints.
     pub fn new() -> Model {
         Model {
             decls: Vec::new(),
@@ -932,6 +1014,7 @@ impl Model {
     }
 
     #[must_use]
+    /// The name a variable was declared under.
     pub fn name_of(&self, v: Var) -> &str {
         &self.decls[v.0].name
     }
@@ -946,14 +1029,17 @@ impl Model {
         self
     }
     #[must_use]
+    /// The domain a variable ranges over.
     pub fn domain_of(&self, v: Var) -> Domain {
         self.decls[v.0].domain
     }
     #[must_use]
+    /// How many variables the model declares.
     pub fn len(&self) -> usize {
         self.decls.len()
     }
     #[must_use]
+    /// Whether it declares none.
     pub fn is_empty(&self) -> bool {
         self.decls.is_empty()
     }
@@ -2257,7 +2343,9 @@ pub enum Method {
 
 /// A compiled model: the program, plus the means to read an answer back.
 pub struct Compiled {
+    /// The lowered program, ready to run or to serialise.
     pub program: Program,
+    /// The spin graph the program samples over.
     pub graph: crate::graph::Graph,
     slots: Vec<Slot>,
     /// Including the compiler's own slack variables, for anyone inspecting the lowering.
@@ -2306,6 +2394,7 @@ pub struct Compiled {
 
 impl Compiled {
     #[must_use]
+    /// Spins the lowering used, the compiler's own slack included.
     pub fn spins(&self) -> usize {
         self.graph.n
     }
@@ -2605,6 +2694,10 @@ impl Compiled {
     }
 
     #[must_use]
+    /// Anneal this program and read the answer back into model variables.
+    ///
+    /// A convenience over running the sampler and unembedding by hand; the seed is the only
+    /// source of randomness, so the result is reproducible.
     pub fn solve_annealed(&self, seed: u64) -> Solution {
         self.solve_with(&Self::default_schedule(), seed)
     }
@@ -2852,6 +2945,7 @@ impl Solution {
     }
 
     #[must_use]
+    /// The value assigned to a variable, or `None` if the model has no such name.
     pub fn get(&self, name: &str) -> Option<i64> {
         self.values.get(name).copied()
     }
@@ -2887,6 +2981,7 @@ impl Solution {
         self.violated.iter().filter(|v| !v.hard).map(|v| v.cost).sum::<f64>() + 0.0
     }
 
+    /// Every `(name, value)` pair in the solution.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &i64)> {
         self.values.iter()
     }

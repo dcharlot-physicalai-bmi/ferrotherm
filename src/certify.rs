@@ -82,13 +82,17 @@ impl core::fmt::Display for Finding {
 /// What a run actually did.
 #[derive(Clone, Debug)]
 pub struct Certificate {
+    /// States the certificate was computed from.
     pub draws: usize,
+    /// The inverse temperature the caller ASKED for, against which `beta_eff` is judged.
     pub beta_requested: f64,
     /// Pseudolikelihood MLE of the inverse temperature the samples came from.
     pub beta_eff: f64,
     /// 95% interval for `beta_eff`, widened for autocorrelation.
     pub beta_ci: (f64, f64),
+    /// Integrated autocorrelation time, in draws. `1.0` means consecutive draws are independent.
     pub tau_int: f64,
+    /// Effective sample size, `draws / (2 tau_int)` -- how many independent draws these are worth.
     pub ess: f64,
     /// TV from the exact Boltzmann distribution, where enumeration was possible.
     pub tv_exact: Option<f64>,
@@ -100,6 +104,7 @@ pub struct Certificate {
 
 impl Certificate {
     #[must_use = "a certificate with findings is a certificate that failed; ignoring this is reporting a sound run that was not one"]
+    /// Whether the run is sound as far as this could tell: no findings.
     pub fn passed(&self) -> bool {
         self.findings.is_empty()
     }

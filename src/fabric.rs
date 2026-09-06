@@ -39,7 +39,9 @@ pub enum Topology {
 /// What a backend can actually do. Declared by the backend, checked by [`Fabric::check`].
 #[derive(Clone, Debug)]
 pub struct Fabric {
+    /// The backend's name, as it appears in a verdict.
     pub name: &'static str,
+    /// The connectivity it offers, which decides whether a program needs embedding.
     pub topology: Topology,
     /// Maximum spins, or `None` for "whatever fits in memory".
     pub max_spins: Option<usize>,
@@ -111,9 +113,15 @@ pub enum Precision {
     Unstated,
     /// Signed fixed-point in `bits` bits, one of them the sign, with a uniform step sized by the
     /// largest coefficient present.
-    Fixed { bits: u32 },
+    Fixed {
+        /// Total bits including the sign.
+        bits: u32,
+    },
     /// IEEE binary floating point with `mantissa` significand bits — 24 for `f32`, 53 for `f64`.
-    Float { mantissa: u32 },
+    Float {
+        /// Significand bits: 24 for `f32`, 53 for `f64`.
+        mantissa: u32,
+    },
 }
 
 impl Precision {
@@ -171,7 +179,9 @@ impl Precision {
 /// decides whether a program has to be requantised or merely scaled.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Range {
+    /// Inclusive lower end.
     pub lo: f64,
+    /// Inclusive upper end.
     pub hi: f64,
     /// Whether only whole numbers in the range are representable.
     pub integral: bool,
@@ -179,14 +189,17 @@ pub struct Range {
 
 impl Range {
     #[must_use]
+    /// A range over every real in `[lo, hi]`.
     pub const fn continuous(lo: f64, hi: f64) -> Range {
         Range { lo, hi, integral: false }
     }
     #[must_use]
+    /// A range over the whole numbers in `[lo, hi]` and nothing between them.
     pub const fn integers(lo: f64, hi: f64) -> Range {
         Range { lo, hi, integral: true }
     }
     #[must_use = "the whole question this asks is whether the constraint is satisfied"]
+    /// Whether `v` is finite, inside the range, and integral if the range demands it.
     pub fn holds(&self, v: f64) -> bool {
         v.is_finite() && v >= self.lo && v <= self.hi && (!self.integral || v.fract() == 0.0)
     }
@@ -237,11 +250,19 @@ pub enum Caveat {
     /// Whether such a placement exists is NP-hard and depends on the program's structure, not on
     /// any number a fabric declares. The real answer needs an embedder run against the machine's
     /// own working graph, which has holes, because yield is never 100%.
-    NeedsEmbedding { vars: usize, sites: Option<usize> },
+    NeedsEmbedding {
+        /// Variables the program has.
+        vars: usize,
+        /// Sites the fabric offers, or `None` when it states no limit.
+        sites: Option<usize>,
+    },
     /// The vendor does not publish something that would have to be checked.
     ///
     /// A limit nobody states cannot be checked, and `None` must not be read as "no limit".
-    LimitsUnstated { missing: &'static [&'static str] },
+    LimitsUnstated {
+        /// Which limits the backend never declared. Unknown is not unlimited.
+        missing: &'static [&'static str],
+    },
 }
 
 impl core::fmt::Display for Caveat {
@@ -301,26 +322,64 @@ impl core::fmt::Display for Verdict {
 /// Why a program cannot run on a fabric.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Unsupported {
-    TooManySpins { need: usize, limit: usize },
-    TooHighDegree { node: usize, degree: usize, limit: usize },
-    ArityTooHigh { arity: usize, limit: usize },
-    NoFieldSupport { nodes: usize },
+    TooManySpins {
+        /// Spins the program needs.
+        need: usize,
+        /// Spins the fabric has.
+        limit: usize,
+    },
+    TooHighDegree {
+        /// The first node over the limit.
+        node: usize,
+        /// Its degree.
+        degree: usize,
+        /// The fabric's maximum.
+        limit: usize,
+    },
+    ArityTooHigh {
+        /// Arity of the offending factor.
+        arity: usize,
+        /// The largest the fabric evaluates natively.
+        limit: usize,
+    },
+    NoFieldSupport {
+        /// How many nodes carry a nonzero field the fabric cannot apply.
+        nodes: usize,
+    },
     /// The program's dynamic range cannot survive the fabric's coupling precision.
-    CouplingPrecision { bits: u32, worst_relative_error: f64 },
+    CouplingPrecision {
+        /// Bits the fabric stores a coupling in.
+        bits: u32,
+        /// The largest relative error that quantisation introduces on this program.
+        worst_relative_error: f64,
+    },
     /// The fabric counts neighbours rather than weighting them, so all couplings must be equal.
-    NonUniformCouplings { distinct: usize },
+    NonUniformCouplings {
+        /// Distinct coupling values the program needs, where the fabric offers one.
+        distinct: usize,
+    },
     /// The program cannot be placed on this fabric's sites as written.
     ///
     /// For a fabric that does its own placement check — a fixed grid, a named topology — where the
     /// failure is specific and knowable. Distinct from [`Caveat::NeedsEmbedding`], which is the
     /// case where placement is a question nobody cheap can answer; this is the case where the
     /// answer is known and it is no.
-    Unplaceable { detail: String },
+    Unplaceable {
+        /// Why placement failed, in the placer's own terms.
+        detail: String,
+    },
     /// A coefficient outside what the fabric can represent.
     ///
     /// Often fixable: see [`Fabric::scale_to_fit`], because scaling every coefficient by one factor
     /// leaves the ground state exactly where it was.
-    OutOfRange { what: &'static str, value: f64, range: Range },
+    OutOfRange {
+        /// Which quantity: a coupling, a field, a temperature.
+        what: &'static str,
+        /// The value the program asks for.
+        value: f64,
+        /// The range the fabric represents.
+        range: Range,
+    },
 }
 
 impl core::fmt::Display for Unsupported {

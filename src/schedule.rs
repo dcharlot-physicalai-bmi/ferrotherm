@@ -31,8 +31,11 @@ impl Default for Penalties {
 /// One rung: run `sweeps` sweeps at this temperature and these penalty strengths.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stage {
+    /// Inverse temperature held for this stage.
     pub beta: f64,
+    /// Sweeps run before the schedule advances.
     pub sweeps: usize,
+    /// Constraint penalty weights in force during it.
     pub penalties: Penalties,
 }
 
@@ -44,6 +47,7 @@ pub struct Schedule {
 
 impl Schedule {
     #[must_use]
+    /// An empty schedule with no stages.
     pub fn new() -> Self {
         Schedule { stages: Vec::new() }
     }
@@ -95,21 +99,25 @@ impl Schedule {
         self
     }
 
+    /// Append a stage, which runs after every stage already present.
     pub fn push(&mut self, stage: Stage) {
         self.stages.push(stage);
     }
 
     #[must_use]
+    /// The stages, in the order they run.
     pub fn stages(&self) -> &[Stage] {
         &self.stages
     }
 
     #[must_use]
+    /// How many stages the schedule has.
     pub fn len(&self) -> usize {
         self.stages.len()
     }
 
     #[must_use]
+    /// Whether it has none.
     pub fn is_empty(&self) -> bool {
         self.stages.is_empty()
     }

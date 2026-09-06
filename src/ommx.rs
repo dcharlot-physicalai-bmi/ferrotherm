@@ -48,35 +48,55 @@ use crate::graph::Graph;
 /// error into the wrong message — the failure mode a hand-rolled encoder has to be paranoid about.
 pub mod schema {
     // Instance
+    /// Protobuf field number for `Instance.decision_variables`.
     pub const INSTANCE_DECISION_VARIABLES: u32 = 2;
+    /// Protobuf field number for `Instance.objective`.
     pub const INSTANCE_OBJECTIVE: u32 = 3;
     /// `repeated Constraint constraints`, which this reader REFUSES rather than skips. See
     /// [`super::ImportError::HasConstraints`].
     pub const INSTANCE_CONSTRAINTS: u32 = 4;
+    /// Protobuf field number for `Instance.sense`.
     pub const INSTANCE_SENSE: u32 = 5;
     // DecisionVariable
+    /// Protobuf field number for `DecisionVariable.id`.
     pub const DV_ID: u32 = 1;
+    /// Protobuf field number for `DecisionVariable.kind`.
     pub const DV_KIND: u32 = 2;
+    /// Protobuf field number for `DecisionVariable.bound`.
     pub const DV_BOUND: u32 = 3;
+    /// Protobuf field number for `DecisionVariable.name`.
     pub const DV_NAME: u32 = 4;
     // Bound
+    /// Protobuf field number for `Bound.lower`.
     pub const BOUND_LOWER: u32 = 1;
+    /// Protobuf field number for `Bound.upper`.
     pub const BOUND_UPPER: u32 = 2;
     // Function
+    /// Protobuf field number for `Function.quadratic`.
     pub const FUNCTION_QUADRATIC: u32 = 3;
     // Linear
+    /// Protobuf field number for `Linear.terms`.
     pub const LINEAR_TERMS: u32 = 1;
+    /// Protobuf field number for `Linear.constant`.
     pub const LINEAR_CONSTANT: u32 = 2;
     // Linear.Term
+    /// Protobuf field number for `Linear.Term.id`.
     pub const TERM_ID: u32 = 1;
+    /// Protobuf field number for `Linear.Term.coefficient`.
     pub const TERM_COEFFICIENT: u32 = 2;
     // Quadratic
+    /// Protobuf field number for `Quadratic.rows`.
     pub const QUAD_ROWS: u32 = 1;
+    /// Protobuf field number for `Quadratic.columns`.
     pub const QUAD_COLUMNS: u32 = 2;
+    /// Protobuf field number for `Quadratic.values`.
     pub const QUAD_VALUES: u32 = 3;
+    /// Protobuf field number for `Quadratic.linear`.
     pub const QUAD_LINEAR: u32 = 4;
 
+    /// `DecisionVariable.Kind.KIND_BINARY`, the only kind this reader accepts.
     pub const KIND_BINARY: u64 = 1;
+    /// `Instance.Sense.SENSE_MINIMIZE`. Maximisation is negated on import.
     pub const SENSE_MINIMIZE: u64 = 1;
 }
 
@@ -97,6 +117,7 @@ pub struct Export {
     /// exporter had already applied, and the reference test agreed with the code rather than the
     /// prose for a whole release.
     pub constant: f64,
+    /// Decision variables the instance declared, which is the spin count on import.
     pub variables: usize,
 }
 
@@ -215,9 +236,25 @@ pub enum ImportError {
     ///
     /// Ferrotherm samples spins. A continuous variable has no spin encoding at any width, and a
     /// bounded integer needs one the caller has to choose, so neither is silently guessed at.
-    UnsupportedKind { id: u64, name: String, kind: u64 },
+    UnsupportedKind {
+        /// The variable's OMMX id.
+        id: u64,
+        /// Its name, so a modeller can find it in their own source.
+        name: String,
+        /// The `Kind` enum value read, which is not `KIND_BINARY`.
+        kind: u64,
+    },
     /// A variable whose bounds are not 0/1.
-    NotBinary { id: u64, name: String, lower: f64, upper: f64 },
+    NotBinary {
+        /// The variable's OMMX id.
+        id: u64,
+        /// Its name.
+        name: String,
+        /// Declared lower bound, which must be 0.
+        lower: f64,
+        /// Declared upper bound, which must be 1.
+        upper: f64,
+    },
     /// The instance carries constraints, which this reader cannot represent.
     ///
     /// **This used to be skipped.** `import` matched three fields and had a `_ => {}` arm, so
@@ -235,7 +272,11 @@ pub enum ImportError {
     /// weight is a modelling decision with consequences the compiler reports (`crate::model`
     /// surfaces `violated`, `penalty` and `caveats` for exactly this reason). Choosing one here, out
     /// of sight, would be the same silent substitution in a different costume.
-    HasConstraints { count: usize },
+    HasConstraints {
+        /// How many constraints the instance carried. Refused rather than skipped, because
+        /// silently dropping them would solve a different problem than the one written.
+        count: usize,
+    },
     /// An objective of degree three or higher.
     ///
     /// `crate::reduce` lowers those onto pairwise hardware with ancillas, so this is a

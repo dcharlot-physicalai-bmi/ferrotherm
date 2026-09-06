@@ -15,7 +15,9 @@
 use crate::rng::Pcg;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// What one node of a heterogeneous graph is.
 pub enum Kind {
+    /// A +-1 spin: two states, index 0 = -1 and index 1 = +1.
     Spin,
     /// Categorical with the given number of states (2..=255).
     Cat(u8),
@@ -23,6 +25,7 @@ pub enum Kind {
 
 impl Kind {
     #[must_use]
+    /// How many states this node can take: 2 for a spin, `k` for a categorical.
     pub fn states(&self) -> usize {
         match self {
             Kind::Spin => 2,
@@ -31,21 +34,35 @@ impl Kind {
     }
 }
 
+/// One energy term over any number of nodes, given as a table rather than a formula.
+///
+/// Arbitrary arity subsumes biases and pairwise couplings, which is what lets one engine carry
+/// models the pairwise sampler cannot express.
 pub struct Factor {
+    /// The nodes this factor touches, in the order its table is indexed by.
     pub nodes: Vec<u32>,
     /// Energy contributions, length = product of the nodes' state counts, row-major in node order.
     pub table: Vec<f64>,
 }
 
+/// A factor graph whose nodes need not all be the same kind.
+///
+/// Block Gibbs runs over a proper colouring of the FACTOR-SHARING graph: nodes in one class share
+/// no factor, so their conditionals are independent and the class updates as one block.
 pub struct HetGraph {
+    /// What each node is, indexed by node.
     pub kinds: Vec<Kind>,
+    /// Every energy term in the model.
     pub factors: Vec<Factor>,
     /// node -> factor indices that touch it
     touching: Vec<Vec<u32>>,
+    /// Colour of each node; two nodes sharing a factor never share a colour.
     pub colors: Vec<u16>,
+    /// The colouring inverted -- `classes[c]` is every node the sampler updates together.
     pub classes: Vec<Vec<u32>>,
 }
 
+/// Accumulates nodes and factors, then colours them into a [`HetGraph`].
 pub struct HetBuilder {
     kinds: Vec<Kind>,
     factors: Vec<Factor>,
@@ -53,9 +70,11 @@ pub struct HetBuilder {
 
 impl HetBuilder {
     #[must_use]
+    /// An empty builder.
     pub fn new() -> Self {
         HetBuilder { kinds: Vec::new(), factors: Vec::new() }
     }
+    /// Add a node of this kind and return its index.
     pub fn node(&mut self, kind: Kind) -> u32 {
         self.kinds.push(kind);
         (self.kinds.len() - 1) as u32
@@ -75,6 +94,7 @@ impl HetBuilder {
         self.factor(vec![i], vec![h, -h]);
     }
     #[must_use]
+    /// Freeze into a [`HetGraph`], computing the factor-sharing colouring the sampler needs.
     pub fn build(self) -> HetGraph {
         let n = self.kinds.len();
         let mut touching: Vec<Vec<u32>> = vec![Vec::new(); n];
@@ -117,6 +137,7 @@ impl Default for HetBuilder {
 
 impl HetGraph {
     #[must_use]
+    /// Node count.
     pub fn n(&self) -> usize {
         self.kinds.len()
     }
@@ -150,16 +171,23 @@ impl HetGraph {
     }
 }
 
+/// Block-Gibbs sampler over a [`HetGraph`], one colour class at a time.
 pub struct HetSampler<'g> {
+    /// The model being sampled.
     pub g: &'g HetGraph,
+    /// Inverse temperature.
     pub beta: f64,
+    /// Current state as a STATE INDEX per node, not a spin value: `0..kind.states()`.
     pub state: Vec<u8>,
+    /// Which nodes are held fixed and skipped by every sweep.
     pub clamped: Vec<bool>,
+    /// The sampler's own stream, so a run is reproducible from its seed alone.
     pub rng: Pcg,
 }
 
 impl<'g> HetSampler<'g> {
     #[must_use]
+    /// A sampler at `beta`, started from a state drawn from `seed`.
     pub fn new(g: &'g HetGraph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x4E7);
         let state = (0..g.n())
@@ -168,6 +196,7 @@ impl<'g> HetSampler<'g> {
         HetSampler { g, beta, state, clamped: vec![false; g.n()], rng }
     }
 
+    /// Hold node `i` at state index `k` until it is unclamped; sweeps skip it.
     pub fn clamp(&mut self, i: usize, k: u8) {
         assert!((k as usize) < self.g.kinds[i].states());
         self.state[i] = k;
@@ -217,6 +246,7 @@ impl<'g> HetSampler<'g> {
         }
     }
 
+    /// Run `n` sweeps, charging each node update to `ledger` when one is given.
     pub fn sweeps(&mut self, n: usize, mut ledger: Option<&mut crate::ledger::Ledger>) {
         for _ in 0..n {
             self.sweep(ledger.as_deref_mut());

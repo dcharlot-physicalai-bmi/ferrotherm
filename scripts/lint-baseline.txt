@@ -1,3 +1,3 @@
-missing_docs 509
+missing_docs 147
 missing_errors_doc 62
-missing_panics_doc 91
+missing_panics_doc 89

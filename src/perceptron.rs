@@ -260,12 +260,19 @@ pub fn capacity_by_enumeration(sizes: &[usize], sets: u64, seed: u64) -> Option<
 /// targets here: classifying `ξ` as `σ` is classifying `σξ` as `+1`.
 #[derive(Clone, Debug)]
 pub struct Perceptron {
+    /// The patterns to classify, already gauged so every target is `+1`.
     pub patterns: Vec<Vec<i8>>,
+    /// Spins per pattern, which is the weight vector's dimension.
     pub n: usize,
 }
 
 impl Perceptron {
     #[must_use]
+    /// Build from gauged patterns.
+    ///
+    /// # Panics
+    ///
+    /// If the patterns are empty or are not all the same length.
     pub fn new(patterns: Vec<Vec<i8>>) -> Self {
         let n = patterns.first().map_or(0, std::vec::Vec::len);
         assert!(n > 0 && patterns.iter().all(|p| p.len() == n));
@@ -279,6 +286,7 @@ impl Perceptron {
     }
 
     #[must_use]
+    /// The load `alpha = P / N`: patterns per dimension, the axis capacity is stated on.
     pub fn load(&self) -> f64 {
         self.patterns.len() as f64 / self.n as f64
     }

@@ -71,16 +71,19 @@ pub struct Hubo {
 
 impl Hubo {
     #[must_use]
+    /// An empty model over `n` spins: no terms, zero energy everywhere.
     pub fn new(n: usize) -> Hubo {
         Hubo { n, terms: Vec::new(), incident: vec![Vec::new(); n] }
     }
 
     #[must_use]
+    /// How many terms the model carries.
     pub fn len(&self) -> usize {
         self.n
     }
 
     #[must_use]
+    /// Whether it carries none.
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
@@ -186,9 +189,13 @@ impl Hubo {
 /// How the anneal is run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
+    /// Hot end of the schedule, where the anneal starts.
     pub beta_min: f64,
+    /// Cold end, where it finishes.
     pub beta_max: f64,
+    /// Temperature steps between the two ends.
     pub stages: usize,
+    /// Sweeps run at each stage before the temperature moves.
     pub sweeps_per_stage: usize,
 }
 
@@ -201,10 +208,13 @@ impl Default for Params {
 /// What the anneal found.
 #[derive(Clone, Debug)]
 pub struct Outcome {
+    /// Best state seen over the whole anneal.
     pub state: Vec<i8>,
     /// Recomputed from the state by the model, not carried from the accumulator.
     pub energy: f64,
+    /// Single-spin flips proposed. The denominator of the acceptance rate.
     pub proposals: u64,
+    /// Flips accepted. A rate near 0 or 1 means the schedule is mistuned, not that the model is easy.
     pub accepted: u64,
     /// An UPPER BOUND on the ancillas a pairwise reduction would have needed, and this path did
     /// not. See [`Hubo::ancillas_avoided`]: the reduction shares one ancilla across every term

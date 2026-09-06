@@ -54,24 +54,50 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WireError {
     /// The message ended in the middle of a field.
-    Truncated { at: usize, needed: usize },
+    Truncated {
+        /// Byte offset where the message ran out.
+        at: usize,
+        /// Bytes the field still needed.
+        needed: usize,
+    },
     /// A varint ran past ten bytes, or its tenth byte carried more than one bit.
     ///
     /// Both are malformed rather than large: the wire format cannot express a value that would need
     /// them, so accepting one means accepting a number the writer never wrote.
-    VarintNotCanonical { at: usize },
+    VarintNotCanonical {
+        /// Byte offset of the varint's first byte.
+        at: usize,
+    },
     /// A length prefix that cannot be a length on this machine.
     ///
     /// Separate from `Truncated` on purpose. This is the shape that used to WRAP `usize` and sail
     /// past the bounds check into a slice panic, and naming it keeps that distinct from an honestly
     /// short message.
-    LengthOutOfRange { at: usize, len: u64 },
+    LengthOutOfRange {
+        /// Byte offset of the length prefix.
+        at: usize,
+        /// The length as written, which does not fit a `usize` here.
+        len: u64,
+    },
     /// Wire types 3 and 4: the deprecated group encoding.
-    GroupsUnsupported { at: usize, field: u32 },
+    GroupsUnsupported {
+        /// Byte offset of the key.
+        at: usize,
+        /// Field number the group was tagged with.
+        field: u32,
+    },
     /// Wire types 6 and 7, which do not exist.
-    UnknownWireType { at: usize, wire: u32 },
+    UnknownWireType {
+        /// Byte offset of the key.
+        at: usize,
+        /// The wire type read, which is 6 or 7 and therefore not a wire type.
+        wire: u32,
+    },
     /// Field number 0, which the format reserves and no writer may emit.
-    FieldNumberZero { at: usize },
+    FieldNumberZero {
+        /// Byte offset of the key.
+        at: usize,
+    },
 }
 
 impl core::fmt::Display for WireError {
@@ -138,6 +164,7 @@ impl Value<'_> {
         }
     }
     #[must_use]
+    /// The value as a `u64`, or `None` if it is not a varint.
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Value::Varint(v) => Some(*v),
@@ -145,6 +172,7 @@ impl Value<'_> {
         }
     }
     #[must_use]
+    /// The value's bytes, or `None` if it is not length-delimited.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             Value::Bytes(b) => Some(b),
@@ -156,7 +184,9 @@ impl Value<'_> {
 /// A field number and its payload.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Field<'a> {
+    /// Protobuf field number this carries.
     pub number: u32,
+    /// The decoded value, still borrowing the input buffer.
     pub value: Value<'a>,
 }
 
@@ -172,6 +202,7 @@ pub struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     #[must_use]
+    /// A reader over one encoded message. Borrows rather than copies.
     pub fn new(b: &'a [u8]) -> Self {
         Reader { b, i: 0 }
     }
@@ -317,10 +348,12 @@ pub fn packed_doubles(p: &[u8]) -> Result<Vec<f64>, WireError> {
 // stay in step: the round-trip test below is only meaningful if they are the same module's idea of
 // the format.
 
+/// Append a field key: the field number and wire type, varint-encoded together.
 pub fn put_key(buf: &mut Vec<u8>, field: u32, wire: u32) {
     put_varint(buf, ((field as u64) << 3) | wire as u64);
 }
 
+/// Append a base-128 varint, seven bits per byte, low group first.
 pub fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
     loop {
         let byte = (v & 0x7f) as u8;
@@ -333,22 +366,26 @@ pub fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
     }
 }
 
+/// Append a varint field: its key, then its value.
 pub fn put_varint_field(buf: &mut Vec<u8>, field: u32, v: u64) {
     put_key(buf, field, 0);
     put_varint(buf, v);
 }
 
+/// Append a 64-bit double field, little-endian, as the wire format specifies.
 pub fn put_double_field(buf: &mut Vec<u8>, field: u32, v: f64) {
     put_key(buf, field, 1);
     buf.extend_from_slice(&v.to_bits().to_le_bytes());
 }
 
+/// Append a length-delimited field: its key, its byte length, then the bytes.
 pub fn put_len_field(buf: &mut Vec<u8>, field: u32, body: &[u8]) {
     put_key(buf, field, 2);
     put_varint(buf, body.len() as u64);
     buf.extend_from_slice(body);
 }
 
+/// Append a UTF-8 string as a length-delimited field.
 pub fn put_str_field(buf: &mut Vec<u8>, field: u32, s: &str) {
     put_len_field(buf, field, s.as_bytes());
 }

@@ -43,7 +43,9 @@ pub fn forward_step(x: &mut [i8], gamma: f64, dt: f64, rng: &mut Pcg) {
 /// Connection-rule orbit: (a,b) adds offsets (a,b), (-b,a), (-a,-b), (b,-a). All published rules
 /// have a+b odd, so the graphs are bipartite under checkerboard parity.
 pub const G8: [(i64, i64); 2] = [(0, 1), (4, 1)];
+/// Degree-12 connection rule, Table II of the DTM paper.
 pub const G12: [(i64, i64); 3] = [(0, 1), (4, 1), (9, 10)];
+/// Degree-16 connection rule, Table II of the DTM paper.
 pub const G16: [(i64, i64); 4] = [(0, 1), (4, 1), (8, 7), (14, 9)];
 
 /// Edge list of an L x L pattern grid (open boundaries, deduplicated undirected edges).
@@ -73,10 +75,15 @@ pub fn pattern_grid(l: usize, rules: &[(i64, i64)]) -> Vec<(u32, u32)> {
 
 // ---------- a small self-contained trainable EBM (explicit edge list) ----------
 
+/// One step's energy-based model: a fixed edge list with couplings and fields on it.
 pub struct Ebm {
+    /// Sites in this step.
     pub n: usize,
+    /// Undirected edges, each listed once.
     pub edges: Vec<(u16, u16)>,
+    /// Coupling per edge, parallel to [`Ebm::edges`].
     pub j: Vec<f64>,
+    /// Field per site, length `n`.
     pub h: Vec<f64>,
     /// CSR adjacency: for node i, neighbours in `nbr[offset[i]..offset[i+1]]` with the index of
     /// the edge that connects them in `eidx`. Without this a sweep is O(N * E) and the published
@@ -93,6 +100,7 @@ pub struct Ebm {
 
 impl Ebm {
     #[must_use]
+    /// An unweighted model on this edge list: all couplings and fields zero.
     pub fn new(n: usize, edges: Vec<(u16, u16)>) -> Ebm {
         // Endpoints are u16 while `n` is usize, so an n past the u16 space means a caller narrowing
         // its own indices aliases them and builds a DIFFERENT GRAPH without error: every truncated
@@ -165,6 +173,7 @@ impl Ebm {
     }
 
     #[must_use]
+    /// Whether the edge list two-colours, which is what makes a whole side updatable at once.
     pub fn is_bipartite(&self) -> bool {
         // The BFS above already knows. This used to re-infer it as `!classes[1].is_empty()`, which
         // is a different question: a graph with NO EDGES is bipartite, every node lands in class 0,
@@ -174,6 +183,7 @@ impl Ebm {
     }
 
     #[must_use]
+    /// `E(s) = -sum J_ij s_i s_j - sum h_i s_i`.
     pub fn energy(&self, s: &[i8]) -> f64 {
         let mut e = 0.0;
         for (k, &(a, b)) in self.edges.iter().enumerate() {
@@ -263,14 +273,23 @@ impl Ebm {
 /// A T-step DTM over `n` sites per step (first `nv` visible, rest latent), binary spins,
 /// uniform forward jump rate `gamma`, step times `t_0` < .. < `t_T`.
 pub struct Dtm {
+    /// One model per step, `T + 1` of them.
     pub steps: Vec<Ebm>,
+    /// Visible sites per step; the remainder are latent.
     pub nv: usize,
+    /// Uniform forward jump rate between steps.
     pub gamma: f64,
+    /// Step times `t_0 < .. < t_T`, one more than the number of steps.
     pub times: Vec<f64>,
 }
 
 impl Dtm {
     #[must_use]
+    /// A `t_steps`-step DTM on one shared edge list, all couplings zero.
+    ///
+    /// # Panics
+    ///
+    /// If `times.len()` is not `t_steps + 1`.
     pub fn new(t_steps: usize, n: usize, nv: usize, edges: Vec<(u16, u16)>, gamma: f64, times: Vec<f64>) -> Dtm {
         assert_eq!(times.len(), t_steps + 1);
         Dtm {

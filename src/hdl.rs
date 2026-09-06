@@ -13,9 +13,11 @@
 
 use crate::graph::Graph;
 
+/// Fractional bits in the fixed-point format: Q.8, so one unit is `1/256`.
 pub const FRAC: u32 = 8; // Q.8 fixed point
 const FMAX: i32 = 2047; // clamp field to [-8.0, +8.0) in Q.8
 const FMIN: i32 = -2048;
+/// Address width of the sigmoid ROM, so it holds `2^10 = 1024` entries.
 pub const LUT_BITS: u32 = 10; // 1024-entry sigmoid ROM
 
 fn splitmix(mut z: u64) -> u64 {
@@ -34,18 +36,28 @@ fn xorshift32(mut x: u32) -> u32 {
     x
 }
 
+/// A bit-accurate emulator of the generated RTL: same fixed point, same ROM, same RNG.
+///
+/// It exists so the hardware and the software can be compared state by state rather than in
+/// distribution -- a sampler that agrees on averages can still disagree on every step.
 pub struct FixedFabric {
+    /// Nodes in the fabric.
     pub n: usize,
     /// per node: (neighbor index, quantized weight)
     pub adj: Vec<Vec<(u32, i32)>>,
+    /// Per-node bias, quantised to Q.8.
     pub bias_q: Vec<i32>,
     /// the two chromatic classes (v1 requires a bipartite graph)
     pub classes: [Vec<u32>; 2],
+    /// The sigmoid ROM the RTL indexes, `2^LUT_BITS` entries.
     pub lut: Vec<u16>,
+    /// Per-node RNG seeds, so the emulator and the RTL start from the same streams.
     pub seeds: Vec<u32>,
+    /// Initial state the RTL loads on reset (`true` = +1).
     pub init_s: Vec<bool>,
     /// current emulator state (true = +1)
     pub s: Vec<bool>,
+    /// Per-node xorshift32 state, advanced once per node per sweep.
     pub rng: Vec<u32>,
 }
 
@@ -119,6 +131,7 @@ impl FixedFabric {
     }
 
     #[must_use]
+    /// Mean spin of the current state, in `[-1, 1]`.
     pub fn magnetization(&self) -> f64 {
         let up = self.s.iter().filter(|&&b| b).count() as f64;
         (2.0 * up - self.n as f64) / self.n as f64

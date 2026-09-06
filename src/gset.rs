@@ -48,7 +48,9 @@ pub struct Instance {
     pub graph: Graph,
     /// Σ of the edge weights, needed to convert energy to a cut value.
     pub total_weight: f64,
+    /// Vertices, as the header declared them.
     pub nodes: usize,
+    /// Edges, after the body was read and checked against the header.
     pub edges: usize,
 }
 
@@ -58,17 +60,34 @@ pub enum GsetError {
     /// The header is missing or is not `n m`.
     Header(String),
     /// A body line is not `i j w`.
-    Line { line: usize, text: String },
+    Line {
+        /// 1-based line number in the file.
+        line: usize,
+        /// The line as read, so the fault is visible without reopening the file.
+        text: String,
+    },
     /// A vertex number outside `1..=n`.
     ///
     /// Named rather than clamped: the format is 1-based and an off-by-one silently shifts every
     /// edge onto the wrong vertices, which still parses and still samples.
-    Vertex { line: usize, got: i64, n: usize },
+    Vertex {
+        /// 1-based line number.
+        line: usize,
+        /// The vertex number read.
+        got: i64,
+        /// Vertices the header declared, so the valid range is `1..=n`.
+        n: usize,
+    },
     /// The header promised `m` edges and the body had a different number.
     ///
     /// A truncated download is the common cause, and it produces a *valid* smaller instance whose
     /// cut values are quietly incomparable with everyone else's.
-    Count { declared: usize, found: usize },
+    Count {
+        /// Edges the header promised.
+        declared: usize,
+        /// Edges the body actually held.
+        found: usize,
+    },
 }
 
 impl core::fmt::Display for GsetError {

@@ -25,6 +25,10 @@ pub fn graph_builds() -> u64 {
     BUILDS.with(std::cell::Cell::get)
 }
 
+/// Accumulates couplings and biases, then freezes them into a [`Graph`].
+///
+/// Duplicate pairs are SUMMED at build time and biases accumulate, so two passes over one node --
+/// a user bias plus a penalty bias, which is the ordinary case -- compose instead of overwriting.
 pub struct GraphBuilder {
     n: usize,
     edges: Vec<(u32, u32, f64)>,
@@ -33,6 +37,7 @@ pub struct GraphBuilder {
 
 impl GraphBuilder {
     #[must_use]
+    /// A builder over `n` nodes, all unbiased and uncoupled.
     pub fn new(n: usize) -> Self {
         GraphBuilder { n, edges: Vec::new(), bias: vec![0.0; n] }
     }
@@ -66,6 +71,7 @@ impl GraphBuilder {
     }
 
     #[must_use]
+    /// Freeze into CSR, summing duplicate edges and computing a proper colouring.
     pub fn build(self) -> Graph {
         BUILDS.with(|b| b.set(b.get() + 1));
         let n = self.n;
@@ -127,13 +133,24 @@ impl GraphBuilder {
 /// Finalized CSR graph with a proper vertex coloring (no adjacent nodes share a color), so all
 /// nodes of one color have conditionally independent Gibbs updates and sweep in parallel.
 pub struct Graph {
+    /// Node count.
     pub n: usize,
+    /// CSR row starts, length `n + 1`: node `i`'s neighbours are `nbr[offset[i]..offset[i+1]]`.
     pub offset: Vec<usize>,
+    /// Neighbour indices, concatenated per node. Each undirected edge appears TWICE, once from each
+    /// end, so `nbr.len()` is `2 * n_edges`.
     pub nbr: Vec<u32>,
+    /// Couplings `J_ij`, parallel to [`Graph::nbr`] -- `w[k]` is the weight of the edge `nbr[k]`.
     pub w: Vec<f64>,
+    /// Per-node bias `h_i`, length `n`.
     pub h: Vec<f64>,
+    /// A proper colouring: adjacent nodes never share a colour, so one colour class updates as a
+    /// parallel block under Gibbs.
     pub colors: Vec<u16>,
+    /// The colouring inverted -- `classes[c]` lists every node of colour `c`. Carried as well as
+    /// [`Graph::colors`] because the sampler iterates classes and never looks a colour up.
     pub classes: Vec<Vec<u32>>,
+    /// Undirected edge count, which is `nbr.len() / 2` rather than `nbr.len()`.
     pub n_edges: usize,
 }
 
@@ -167,6 +184,7 @@ impl Graph {
     }
 
     #[must_use]
+    /// The largest neighbour count over all nodes; `0` on an empty graph.
     pub fn max_degree(&self) -> usize {
         (0..self.n).map(|i| self.offset[i + 1] - self.offset[i]).max().unwrap_or(0)
     }

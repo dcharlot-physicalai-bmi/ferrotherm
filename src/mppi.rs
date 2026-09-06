@@ -65,9 +65,13 @@ use crate::rng::Pcg;
 /// A scalar linear system `x' = a x + b u` with cost `Σ q x² + r u²`.
 #[derive(Clone, Copy, Debug)]
 pub struct System {
+    /// State coefficient in `x' = a x + b u`.
     pub a: f64,
+    /// Control coefficient.
     pub b: f64,
+    /// Weight on the state's square in the cost.
     pub q: f64,
+    /// Weight on the control's square.
     pub r: f64,
 }
 
@@ -150,7 +154,9 @@ impl Lqr {
 /// `exp(-(cost - min_cost)/λ)`, and returns the weighted-mean first action.
 #[derive(Clone, Copy, Debug)]
 pub struct Mppi {
+    /// Steps each rollout looks ahead.
     pub horizon: usize,
+    /// Perturbed control sequences sampled per decision.
     pub rollouts: usize,
     /// Exploration noise on the control.
     pub sigma: f64,

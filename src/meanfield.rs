@@ -67,6 +67,7 @@ fn binary_entropy(m: f64) -> f64 {
 /// What a mean-field iteration produced.
 #[derive(Clone, Debug)]
 pub struct MeanField {
+    /// Inverse temperature the iteration ran at.
     pub beta: f64,
     /// Magnetisations at the last iterate.
     pub m: Vec<f64>,
@@ -75,11 +76,13 @@ pub struct MeanField {
     pub log_z: f64,
     /// Largest change in any `m_i` on the last iteration.
     pub residual: f64,
+    /// Iterations actually run, which is the cap when it did not converge.
     pub iterations: usize,
 }
 
 impl MeanField {
     #[must_use]
+    /// Whether the last iteration moved every magnetisation by less than `tol`.
     pub fn converged(&self, tol: f64) -> bool {
         self.residual < tol
     }
@@ -157,11 +160,13 @@ pub struct Bethe {
     pub log_z: f64,
     /// Largest message change on the last iteration.
     pub residual: f64,
+    /// Iterations actually run, which is the cap when it did not converge.
     pub iterations: usize,
 }
 
 impl Bethe {
     #[must_use]
+    /// Whether the last iteration moved every magnetisation by less than `tol`.
     pub fn converged(&self, tol: f64) -> bool {
         self.residual < tol
     }

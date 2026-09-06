@@ -9,15 +9,26 @@
 //! the compiler path there is emit-RTL+XDC and drive Vivado in batch (the aws-fpga model).
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// What kind of machine a target is, which decides who can actually get one.
+///
+/// Capacity is not the only axis that matters: a part nobody can buy and a part in a shared academic
+/// cluster fail a deployment in different ways, and both differ from one on a desk.
 pub enum Class {
+    /// A dev board of a few thousand LUTs -- an iCE40 or similar, tens of dollars.
     EdgeMicro,
+    /// A board sized for real work on a desk: tens of thousands of LUTs.
     Edge,
+    /// Rented by the hour from a cloud provider; no hardware to own.
     CloudInstance,
+    /// A card that goes in a host machine's PCIe slot.
     PcieCard,
+    /// A shared cluster with academic access terms rather than a purchase price.
     AcademicCluster,
+    /// Ex-datacentre parts on the secondary market: cheap, plentiful, and not a supply chain.
     Salvage,
 }
 
+/// How much of the bitstream toolchain is open, which decides whether this crate can drive it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OpenFlow {
     /// Complete yosys+nextpnr flow, production quality.
@@ -28,21 +39,35 @@ pub enum OpenFlow {
     VendorOnly,
 }
 
+/// One FPGA the sampler could be built on, with the numbers a capacity estimate needs.
+///
+/// Every field is transcribed from a vendor datasheet or a published price, and [`Self::provenance`]
+/// says which -- an estimate is only as good as the sheet under it.
 pub struct FpgaTarget {
+    /// Vendor and part, as the datasheet names it.
     pub name: &'static str,
+    /// Which kind of machine this is, and therefore who can get one.
     pub class: Class,
     /// LUT count (native size per provenance; LUT6 fabrics weighted 1.6x in the capacity model).
     pub luts: u32,
+    /// Whether the fabric is LUT6 rather than LUT4, which the capacity model weights 1.6x.
     pub lut6: bool,
+    /// On-chip block RAM, kilobytes.
     pub bram_kb: u32,
+    /// Hard multiply-accumulate blocks. Not on the sampler's critical path, but they bound what
+    /// else can share the die.
     pub dsp: u32,
     /// Realistic dense-design clock range, MHz.
     pub clock_mhz: (u16, u16),
     /// Power envelope, W.
     pub power_w: (f32, f32),
+    /// Street price as a string, because a range and a per-hour rate are not the same number.
     pub price: &'static str,
+    /// Whether one can actually be obtained, and on what terms.
     pub availability: &'static str,
+    /// How much of the toolchain is open, and therefore drivable from here.
     pub open_flow: OpenFlow,
+    /// Where every number above came from. An unsourced datasheet figure is a guess.
     pub provenance: &'static str,
 }
 

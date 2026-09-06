@@ -18,10 +18,15 @@ fn sigma(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
 }
 
+/// Chromatic block-Gibbs sampler: one colour class updated at a time, in parallel within a class.
 pub struct Sampler<'g> {
+    /// The graph being sampled.
     pub g: &'g Graph,
+    /// Inverse temperature.
     pub beta: f64,
+    /// Current spin state, `+1` or `-1` per node.
     pub s: Vec<i8>,
+    /// The sampler's stream, so a run is reproducible from its seed alone.
     pub rng: Pcg,
     /// How many threads the last parallel sweep actually used. See [`Sampler::threads_used`].
     threads_used: usize,
@@ -70,6 +75,7 @@ pub const MIN_CHUNK: usize = 1024;
 
 impl<'g> Sampler<'g> {
     #[must_use]
+    /// A sampler at `beta`, started from a random state drawn from `seed`.
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Self {
         let mut rng = Pcg::new(seed, 0x5EED);
         let s = (0..g.n).map(|_| rng.spin(0.5)).collect();
@@ -92,6 +98,7 @@ impl<'g> Sampler<'g> {
         self.clamped[i] = true;
     }
 
+    /// Release node `i`, so sweeps update it again.
     pub fn unclamp(&mut self, i: usize) {
         self.clamped[i] = false;
     }

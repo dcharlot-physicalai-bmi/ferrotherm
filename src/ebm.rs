@@ -43,6 +43,7 @@ use crate::rng::Pcg;
 pub struct Dataset {
     /// How many leading spins of a state are observed. The rest are latent.
     pub visible: usize,
+    /// One row per example, each a full spin assignment over the visible units.
     pub rows: Vec<Vec<i8>>,
 }
 
@@ -52,11 +53,30 @@ pub enum Error {
     /// The dataset is empty, so there is nothing to fit.
     NoData,
     /// A row is not `visible` long, so it cannot be clamped onto the model.
-    RowWidth { row: usize, len: usize, want: usize },
+    RowWidth {
+        /// Index of the offending row.
+        row: usize,
+        /// Its length.
+        len: usize,
+        /// The length every row must have.
+        want: usize,
+    },
     /// A row holds something other than `-1` or `+1`.
-    NotASpin { row: usize, at: usize, value: i8 },
+    NotASpin {
+        /// Index of the offending row.
+        row: usize,
+        /// Position within it.
+        at: usize,
+        /// The value found, which is neither `+1` nor `-1`.
+        value: i8,
+    },
     /// The model has fewer spins than the data has visible units.
-    TooSmall { spins: usize, visible: usize },
+    TooSmall {
+        /// Spins the model has.
+        spins: usize,
+        /// Visible units the data needs, which is more.
+        visible: usize,
+    },
     /// The model has more spins than [`MAX_ENUMERATED`], so its exact likelihood cannot be taken.
     ///
     /// **This used to be reported as [`Error::TooSmall`]**, whose message reads "the model has 24
@@ -65,7 +85,12 @@ pub enum Error {
     /// data therefore lost its only quality metric somewhere past six hidden units, silently,
     /// because [`train`] takes the likelihood with `.ok()` and a mislabelled error looks the same
     /// as an absent one.
-    TooLarge { spins: usize, limit: usize },
+    TooLarge {
+        /// Spins the model has.
+        spins: usize,
+        /// The largest that can be enumerated exactly.
+        limit: usize,
+    },
 }
 
 impl core::fmt::Display for Error {
@@ -179,6 +204,7 @@ pub struct Trained {
     /// Fitting to 4x4 data crosses that line at around seven hidden units, which is sooner than it
     /// looks: the ceiling counts VISIBLE PLUS HIDDEN spins, not hidden ones.
     pub log_likelihood: Option<f64>,
+    /// Epochs completed, which is the cap unless training stopped early.
     pub epochs_run: usize,
 }
 

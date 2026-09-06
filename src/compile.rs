@@ -26,26 +26,34 @@ use crate::rng::Pcg;
 /// Only edges present in the device graph exist; edges between two inputs are dropped (both ends
 /// clamped, constant energy). Free = out ++ hid, indexed out-first.
 pub struct Kernel {
+    /// Clamped input nodes.
     pub n_in: usize,
+    /// Read-out nodes; they come first in the free vector.
     pub n_out: usize,
+    /// Marginalised hidden nodes, after the outputs.
     pub n_hid: usize,
     /// free-free native edges (indices into free vector)
     pub e_ff: Vec<(u16, u16)>,
     /// input-free native edges (input index, free index)
     pub e_if: Vec<(u16, u16)>,
+    /// Couplings on the free-free edges, parallel to `e_ff`.
     pub j_ff: Vec<f64>,
+    /// Couplings on the input-free edges, parallel to `e_if`.
     pub j_if: Vec<f64>,
     /// biases of free nodes
     pub b: Vec<f64>,
+    /// Inverse temperature the kernel is evaluated at.
     pub beta: f64,
 }
 
 impl Kernel {
     #[must_use]
+    /// Free nodes: outputs plus hidden, which is what the parameters index over.
     pub fn n_free(&self) -> usize {
         self.n_out + self.n_hid
     }
     #[must_use]
+    /// Parameters the kernel carries: one per edge of either kind, plus one bias per free node.
     pub fn n_params(&self) -> usize {
         self.e_ff.len() + self.e_if.len() + self.n_free()
     }
@@ -356,6 +364,11 @@ impl Kernel {
         weight * (-(zy / z).max(1e-300).ln())
     }
 
+    /// Take one gradient step of size `lr`, in the same parameter order [`Kernel::n_params`] counts.
+    ///
+    /// # Panics
+    ///
+    /// If `grad` is not `n_params()` long.
     pub fn apply_grad(&mut self, grad: &[f64], lr: f64) {
         let mut idx = 0;
         for k in 0..self.e_ff.len() {

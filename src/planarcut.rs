@@ -133,18 +133,35 @@ pub struct Outcome {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
     /// The graph carries a field, which makes this a different problem. See the module note.
-    HasFields { node: usize, h: f64 },
+    HasFields {
+        /// The first node carrying a field.
+        node: usize,
+        /// Its bias.
+        h: f64,
+    },
     /// No planar embedding. Carries the reason, which tells a caller whether to split or give up.
     NotEmbeddable(planar::Refusal),
     /// A weight that is not an integer after scaling.
-    NotIntegral { u: usize, v: usize, w: f64 },
+    NotIntegral {
+        /// One end of the offending edge.
+        u: usize,
+        /// The other end.
+        v: usize,
+        /// Its weight after scaling, which is not a whole number.
+        w: f64,
+    },
     /// The `T`-join had no perfect matching. Cannot happen for a valid reduction, and is reported
     /// rather than unwrapped so that a bug here surfaces as a refusal instead of a wrong number.
     NoMatching,
     /// The recovered edge set did not two-colour, so it is not a cut. A self-check failing.
     NotACut,
     /// The two independent counts of the cut disagreed. The other self-check failing.
-    Disagreement { via_join: f64, via_state: f64 },
+    Disagreement {
+        /// Cut value counted from the T-join.
+        via_join: f64,
+        /// Cut value counted from the recovered partition. These must agree.
+        via_state: f64,
+    },
 }
 
 impl core::fmt::Display for Error {
@@ -218,7 +235,9 @@ pub struct SurfaceBound {
     pub energy: Option<f64>,
     /// The genus of the surface the embedding describes. 0 is the sphere.
     pub genus: usize,
+    /// Faces in the embedding, which Euler's formula relates to nodes and edges.
     pub faces: usize,
+    /// Faces of odd degree -- the T-join's terminals, and always an even count.
     pub odd_faces: usize,
 }
 

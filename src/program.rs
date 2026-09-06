@@ -27,44 +27,117 @@ fn sigma(x: f64) -> f64 {
 /// Wire state: binary spins plus continuous scalars.
 #[derive(Clone)]
 pub struct State {
+    /// Binary spins, +-1.
     pub bits: Vec<i8>,
+    /// Continuous scalars the deterministic gates read and write.
     pub reals: Vec<f64>,
 }
 
+/// One operation in a stochastic differentiable program.
+///
+/// Every gate is either deterministic or has a gradient estimator that this crate can apply, which
+/// is what makes the whole program differentiable rather than merely simulable.
 pub enum Gate {
     /// Flip `bit` with probability `sigma(params[p_theta])`.
-    PNot { bit: usize, p_theta: usize },
+    PNot {
+        /// Index into [`State::bits`].
+        bit: usize,
+        /// Index into the parameter vector holding the pre-sigmoid logit.
+        p_theta: usize,
+    },
     /// `reals[u] ~ Normal( params[p_k] * reals[err], sigma^2 )`. The policy gate.
-    CtrlGauss { u: usize, err: usize, p_k: usize, sigma: f64 },
+    CtrlGauss {
+        /// Index into [`State::reals`] written with the control.
+        u: usize,
+        /// Index into [`State::reals`] read as the error signal.
+        err: usize,
+        /// Parameter index of the gain.
+        p_k: usize,
+        /// Standard deviation of the control noise.
+        sigma: f64,
+    },
     /// Deterministic linear dynamics: `reals[x] = a * reals[x] + b * reals[u]`.
-    Lin { x: usize, u: usize, a: f64, b: f64 },
+    Lin {
+        /// State index updated in place.
+        x: usize,
+        /// Control index read.
+        u: usize,
+        /// Coefficient on the previous state.
+        a: f64,
+        /// Coefficient on the control.
+        b: f64,
+    },
     /// `reals[err] = tgt - reals[x]`.
-    Err { err: usize, x: usize, tgt: f64 },
+    Err {
+        /// State index written with the error.
+        err: usize,
+        /// State index read.
+        x: usize,
+        /// Setpoint the state is measured against.
+        tgt: f64,
+    },
     /// Stage-cost accumulator: `reals[acc] += q * reals[x]^2 + r * reals[u]^2`. Deterministic.
-    CostQuad { acc: usize, x: usize, u: usize, q: f64, r: f64 },
+    CostQuad {
+        /// State index the running cost accumulates into.
+        acc: usize,
+        /// State index penalised by `q`.
+        x: usize,
+        /// Control index penalised by `r`.
+        u: usize,
+        /// Weight on the state's square.
+        q: f64,
+        /// Weight on the control's square.
+        r: f64,
+    },
     /// `sweeps` chromatic Glauber sweeps of graph `g` over `bits[0..g.n]`, at inverse
     /// temperature `beta`, with per-node bias params[`p_h0` + i] REPLACING the graph's h.
-    GibbsK { g: usize, sweeps: usize, beta: f64, p_h0: usize },
+    GibbsK {
+        /// Index into [`Program::graphs`].
+        g: usize,
+        /// Chromatic sweeps to run.
+        sweeps: usize,
+        /// Inverse temperature.
+        beta: f64,
+        /// Parameter index of the first per-node bias; `g.n` of them are read.
+        p_h0: usize,
+    },
     /// EXACT Boltzmann resample of graph `g`'s spins (enumeration; g.n <= 20) with bias
     /// params[`p_h0` + i] replacing the graph's h, at inverse temperature `beta`. This is the
     /// Boltzmann-form gate the EBM-kernel gradient estimator applies to; its REINFORCE score is
     /// also exact (beta * (`s_i` - <`s_i`>)), so the two estimators cross-validate on the same gate.
-    BoltzExact { g: usize, beta: f64, p_h0: usize },
+    BoltzExact {
+        /// Index into [`Program::graphs`]; needs `g.n <= 20` to enumerate.
+        g: usize,
+        /// Inverse temperature.
+        beta: f64,
+        /// Parameter index of the first per-node bias.
+        p_h0: usize,
+    },
 }
 
+/// A stochastic differentiable program: a gate list over a shared state, plus its parameters.
 pub struct Program {
+    /// Gates in execution order.
     pub gates: Vec<Gate>,
+    /// Graphs the sampling gates index into.
     pub graphs: Vec<Graph>,
+    /// Length of the parameter vector every gate indexes into.
     pub n_params: usize,
 }
 
 /// Which branch to force for one parameter-shift evaluation.
 #[derive(Clone, Copy)]
 pub enum Force {
+    /// Run the program as written.
     None,
     /// Force the `PNot` at `gate_idx` to flip (true) or hold (false). The RNG draw is still
     /// consumed so downstream randomness is identical across branches.
-    PNot { gate_idx: usize, flip: bool },
+    PNot {
+        /// Which gate to force.
+        gate_idx: usize,
+        /// Force it to flip (`true`) or hold (`false`).
+        flip: bool,
+    },
 }
 
 impl Program {

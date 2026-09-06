@@ -254,6 +254,7 @@ pub struct Ais {
     pub log_z: f64,
     /// Effective sample size of the weights, `(Σw)² / Σw²`. Near 1 means one run dominates and
     /// the lower bound, while still valid, is loose.
+    /// Effective sample size of the weights: how many of the `n` runs the estimate really rests on.
     pub ess: f64,
 }
 
@@ -355,7 +356,9 @@ pub fn reverse_ais(g: &Graph, ladder: &[f64], sweeps: usize, starts: &[Vec<i8>],
 /// A two-sided high-probability bound on `ln Z`, from a forward and a reverse run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sandwich {
+    /// Lower end of the bracket.
     pub lower: f64,
+    /// Upper end of the bracket.
     pub upper: f64,
     /// Probability that BOTH bounds hold: `1 − 2δ` by a union bound.
     pub confidence: f64,
@@ -370,11 +373,13 @@ impl Sandwich {
     }
 
     #[must_use]
+    /// Whether a candidate `ln Z` lies inside the bracket.
     pub fn contains(&self, log_z: f64) -> bool {
         self.lower <= log_z && log_z <= self.upper
     }
 
     #[must_use]
+    /// `upper - lower`, the bracket's width -- the quantity a longer run has to shrink.
     pub fn width(&self) -> f64 {
         self.upper - self.lower
     }
@@ -394,12 +399,15 @@ pub struct Ti {
     pub upper: f64,
     /// The bracket with every mean widened by `z` standard errors first.
     pub lower_widened: f64,
+    /// Upper end after every mean is widened by `z` standard errors.
     pub upper_widened: f64,
+    /// Standard errors of widening applied to each rung's mean.
     pub z: f64,
 }
 
 impl Ti {
     #[must_use]
+    /// The bracket's midpoint. A point estimate with no claim of being the mean.
     pub fn midpoint(&self) -> f64 {
         0.5 * (self.lower + self.upper)
     }
@@ -490,14 +498,18 @@ fn estimate(trace: &[f64]) -> Estimate {
 /// `ln(Z_b / Z_a)` between two rungs from samples of both, by the minimum-variance estimator.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BarPair {
+    /// Inverse temperature of the first ensemble.
     pub beta_a: f64,
+    /// Inverse temperature of the second.
     pub beta_b: f64,
     /// `ln(Z_b / Z_a)`.
     pub delta: f64,
     /// Bennett's asymptotic standard error, with each side's sample count replaced by its
     /// effective size under autocorrelation.
     pub stderr: f64,
+    /// Effective sample size on the `beta_a` side.
     pub ess_a: f64,
+    /// Effective sample size on the `beta_b` side.
     pub ess_b: f64,
 }
 
@@ -593,6 +605,7 @@ pub struct ThermoRung {
 #[derive(Clone, Debug)]
 pub struct Thermo {
     pub n: usize,
+    /// Every rung of the ladder, hot end first.
     pub rungs: Vec<ThermoRung>,
     /// The TI bracket from the same samples, for comparison against the BAR curve's top rung.
     pub ti: Ti,
@@ -600,6 +613,7 @@ pub struct Thermo {
 
 impl Thermo {
     #[must_use]
+    /// The coldest rung, which carries the answer the caller asked for.
     pub fn top(&self) -> &ThermoRung {
         self.rungs.last().unwrap()
     }

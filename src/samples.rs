@@ -221,6 +221,7 @@ pub struct Plan {
 
 impl Plan {
     #[must_use]
+    /// A plan that discards `burn_in` sweeps, then keeps `draws` states one every `thin` sweeps.
     pub fn new(burn_in: usize, draws: usize, thin: usize) -> Plan {
         Plan { burn_in, draws, thin: thin.max(1) }
     }
@@ -362,11 +363,13 @@ impl SampleSet {
     }
 
     #[must_use]
+    /// How many states the set holds.
     pub fn len(&self) -> usize {
         self.states.len()
     }
 
     #[must_use]
+    /// Whether it holds none.
     pub fn is_empty(&self) -> bool {
         self.states.is_empty()
     }
@@ -378,16 +381,19 @@ impl SampleSet {
     }
 
     #[must_use]
+    /// How these states were produced, which is what decides who may read them.
     pub fn provenance(&self) -> Provenance {
         self.prov
     }
 
     #[must_use]
+    /// The states, in the order they were produced -- order is load-bearing for [`Provenance::Chain`].
     pub fn states(&self) -> &[Vec<i8>] {
         &self.states
     }
 
     #[must_use]
+    /// Energy of each state, parallel to [`SampleSet::states`].
     pub fn energies(&self) -> &[f64] {
         &self.energies
     }
