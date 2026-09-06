@@ -674,6 +674,63 @@ impl Default for Model {
     }
 }
 
+/// Why [`Model::certified_penalty`] cannot prove a penalty sufficient for this model.
+///
+/// Not a compile failure — the model still compiles at [`Model::effective_penalty`]. It means the
+/// sufficiency ARGUMENT does not reach this model, and saying so beats returning a number that
+/// looks certified and is not.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Uncertifiable {
+    /// A binary encoding whose `k` is not a power of two.
+    ///
+    /// Its invalid codewords cost exactly what valid ones cost — [`crate::encode::Slot::add_penalty`]
+    /// returns `false` for this case — so the smallest violation is free and **no penalty
+    /// certifies it, however large**. Re-declare the variable one-hot or domain-wall, or pad `k` to
+    /// a power of two. This is a fact about the encoding rather than a limit of the argument.
+    BinaryNonPowerOfTwo {
+        /// The variable, as the modeller named it.
+        var: String,
+        /// Its domain size.
+        k: usize,
+    },
+    /// The model has soft rows, and their contribution to the span is not yet computed.
+    ///
+    /// A soft row adds cost to the energy that breaking a hard row could avoid, so a sound span has
+    /// to include the largest total the soft rows can contribute — which needs a bound on each
+    /// row's violation amount. Refused rather than approximated: a span that is too small certifies
+    /// a penalty that is too small, which is the exact failure this function exists to prevent.
+    SoftConstraints {
+        /// How many soft rows the model carries.
+        rows: usize,
+    },
+    /// An objective coefficient is infinite or `NaN`, so its span is not a number.
+    NonFiniteObjective,
+}
+
+impl core::fmt::Display for Uncertifiable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Uncertifiable::BinaryNonPowerOfTwo { var, k } => write!(
+                f,
+                "'{var}' is binary-encoded over {k} values, which is not a power of two, so its \
+                 invalid codewords cost exactly what valid ones cost and NO penalty separates \
+                 them; re-declare it one-hot or domain-wall"
+            ),
+            Uncertifiable::SoftConstraints { rows } => write!(
+                f,
+                "this model has {rows} soft row(s), whose contribution to the objective's span is \
+                 not yet computed; certifying against an incomplete span would certify a penalty \
+                 that is too small"
+            ),
+            Uncertifiable::NonFiniteObjective => {
+                f.write_str("an objective coefficient is not finite, so the span is not a number")
+            }
+        }
+    }
+}
+
+impl core::error::Error for Uncertifiable {}
+
 /// Why a model could not be compiled.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CompileError {
@@ -1156,6 +1213,90 @@ impl Model {
         // state that does not decode rather than one that scores badly -- which reads as a broken
         // sampler rather than an under-weighted constraint.
         self.penalty.max(2.0 * worst)
+    }
+
+    /// A penalty **proved** sufficient: above it, no minimiser of the compiled energy breaks a hard
+    /// constraint or leaves an encoding invalid.
+    ///
+    /// [`Model::effective_penalty`] takes twice the largest pull on ONE literal set. Relaxing a
+    /// constraint frees every term touching its support, and those live in different literal sets,
+    /// so the heuristic under-counts. Measured: `Fix(a, 0)` against
+    /// `maximize a.is(1) + Σ_i a.is(1)·b_i.is(1)` gives an automatic penalty of 2 for every `n`
+    /// while the pull on `a = 1` is `1 + n`, and every one of those models compiles, solves, and
+    /// comes back infeasible — a satisfiable model whose compiled optimum is not a solution.
+    ///
+    /// # The argument
+    ///
+    /// The objective is a sum of terms `c·[lits hold]`, each contributing `c` or `0`, so its whole
+    /// range is `Σ|c|`: no change of assignment can gain more than that. Breaking a hard constraint
+    /// or an encoding costs `p · d` where `d` is the smallest violation the compiled form admits —
+    /// 1 for a hard row and for one-hot, 2 for domain-wall, since a domain-wall violation is an
+    /// extra wall and every wall costs `2p`. So `p · d > Σ|c|` makes every infeasible assignment
+    /// strictly worse than the feasible ones, by comparison against the optimum rather than by any
+    /// local-descent argument — the same shape [`crate::reduce::to_pairwise`] already relies on.
+    ///
+    /// The bound is returned with one ULP added, because the argument needs a strict inequality and
+    /// `p · d == Σ|c|` leaves a tie the sampler is free to take.
+    ///
+    /// # What this does NOT yet cover, and refuses rather than guessing
+    ///
+    /// See [`Uncertifiable`]. Soft rows add cost to the energy that breaking a hard row could
+    /// *avoid*, so a sound span has to include the largest total they can contribute — which needs
+    /// a bound on each row's violation amount that this does not yet compute. A binary encoding
+    /// whose `k` is not a power of two has invalid codewords that cost exactly what valid ones do
+    /// ([`crate::encode::Slot::add_penalty`] returns `false`), so `d = 0` and **no penalty
+    /// certifies it**; that one is not a gap in this function but a fact about the encoding.
+    ///
+    /// # Errors
+    ///
+    /// [`Uncertifiable`] when the model contains something this argument does not cover.
+    pub fn certified_penalty(&self) -> Result<f64, Uncertifiable> {
+        let soft = self.constraints.iter().filter(|(_, _, hard)| !hard).count();
+        if soft > 0 {
+            return Err(Uncertifiable::SoftConstraints { rows: soft });
+        }
+
+        // The smallest violation the compiled form admits, in units of the penalty. The MINIMUM
+        // over every channel that carries a penalty: certifying against the largest would leave the
+        // cheapest way to cheat uncertified.
+        let mut d_min: Option<f64> = None;
+        let mut note = |d: f64| {
+            d_min = Some(d_min.map_or(d, |m: f64| m.min(d)));
+        };
+        for decl in &self.decls {
+            match decl.encoding {
+                Encoding::OneHot => note(1.0),
+                Encoding::DomainWall => note(2.0),
+                Encoding::Binary => {
+                    let k = decl.domain.size();
+                    if !k.is_power_of_two() {
+                        return Err(Uncertifiable::BinaryNonPowerOfTwo {
+                            var: decl.name.clone(),
+                            k,
+                        });
+                    }
+                    // A power-of-two binary encoding has no invalid codeword, so it needs no
+                    // penalty and constrains nothing here.
+                }
+            }
+        }
+        if self.constraints.iter().any(|(_, _, hard)| *hard) {
+            note(1.0);
+        }
+
+        let Some(d) = d_min else {
+            // Nothing to enforce: no hard rows, and every encoding exact by construction. Any
+            // penalty is sufficient, so the model's own floor is.
+            return Ok(self.penalty);
+        };
+
+        let span: f64 = self.objective.terms.iter().map(|t| t.coeff.abs()).sum();
+        if !span.is_finite() {
+            return Err(Uncertifiable::NonFiniteObjective);
+        }
+        // Strictly above, and never below the model's own floor.
+        let bound = (span / d).next_up();
+        Ok(bound.max(self.penalty))
     }
 
     /// Add a constraint at the model's default penalty.
@@ -2849,6 +2990,115 @@ impl Compiled {
         // one place. See `Solution::best_of_all` for what splitting them cost.
         let all: Vec<Solution> = (0..tries.max(1)).map(&run).collect();
         Solution::best_of_all(&all)
+    }
+}
+
+#[cfg(test)]
+mod certified_penalty_tests {
+    use super::*;
+
+    /// `Fix(a, 0)` against an objective that pays for `a = 1` through terms in DIFFERENT literal
+    /// sets. `effective_penalty` groups by literal set and takes twice the largest group, so it
+    /// returns 2 for every `n` while the pull on `a = 1` is `1 + n`.
+    fn outbid(n: usize) -> Model {
+        let mut m = Model::new();
+        let a = m.categorical("a", 2);
+        let bs: Vec<_> = (0..n).map(|i| m.categorical(&format!("b{i}"), 2)).collect();
+        m.fix(a, 0);
+        m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(a, 1)]));
+        for &b in &bs {
+            m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(a, 1), Lit::Is(b, 1)]));
+        }
+        m
+    }
+
+    /// The family fails under the automatic rule and passes under the certified one.
+    ///
+    /// BOTH directions are asserted. A rule that merely delegated to `effective_penalty` would pass
+    /// the second half, and a family that was never broken in the first place would pass the first.
+    /// The assertion is on `invalid` and `violated` rather than on `feasible()`, because the two
+    /// failure shapes are different and this family produces both — `n = 2` leaves `a` undecodable,
+    /// `n = 3` decodes it and breaks the row.
+    #[test]
+    fn a_penalty_the_objective_can_outbid_is_certified_larger() {
+        for n in 2..7usize {
+            let m = outbid(n);
+            let auto = m.effective_penalty();
+            let cert = m.certified_penalty().expect("one-hot, hard rows, finite objective");
+
+            // The span is 1 + n: one term for `a.is(1)` and one per pair. d = 1 for one-hot.
+            assert!(
+                cert > (1 + n) as f64,
+                "n={n}: certified {cert} must exceed the objective's span {}",
+                1 + n
+            );
+            assert!(cert > auto, "n={n}: certified {cert} must exceed automatic {auto}");
+
+            // Under the automatic penalty the model is broken.
+            let broken = m.compile().expect("compiles").solve_best_of(24);
+            assert!(
+                !broken.invalid.is_empty() || !broken.violated.is_empty(),
+                "n={n}: this family is supposed to fail at the automatic penalty; if it stopped \
+                 failing, the second half of this test proves nothing"
+            );
+
+            // Under the certified penalty it is not.
+            let mut fixed = outbid(n);
+            fixed.fixed_penalty(cert);
+            let ok = fixed.compile().expect("compiles").solve_best_of(24);
+            assert!(
+                ok.invalid.is_empty() && ok.violated.is_empty(),
+                "n={n}: at the certified penalty {cert} the answer must decode and hold every \
+                 row; got invalid {:?}, violated {}",
+                ok.invalid,
+                ok.violated.len()
+            );
+        }
+    }
+
+    /// A model with nothing to enforce certifies its own floor rather than inventing a number.
+    #[test]
+    fn a_model_with_no_hard_rows_needs_no_certificate() {
+        let mut m = Model::new();
+        let a = m.categorical("a", 2);
+        m.objective(Sense::Maximize, Expr::product(5.0, &[Lit::Is(a, 1)]));
+        // One-hot still carries an encoding penalty, so this certifies against the span.
+        let cert = m.certified_penalty().expect("one-hot is certifiable");
+        assert!(cert > 5.0, "the span is 5, so the penalty must exceed it: {cert}");
+    }
+
+    /// An encoding no penalty can separate is refused, and the refusal names the variable.
+    ///
+    /// `Slot::add_penalty` returns `false` for a binary encoding whose `k` is not a power of two:
+    /// its invalid codewords cost exactly what valid ones cost, so the smallest violation is FREE
+    /// and no penalty certifies it however large. That is a fact about the encoding, not a limit of
+    /// the argument, and returning a large number instead would be certifying nothing.
+    #[test]
+    fn a_binary_encoding_with_free_invalid_codewords_is_refused_by_name() {
+        let mut m = Model::new();
+        let v = m.categorical_as("v", 6, Encoding::Binary);
+        m.fix(v, 0);
+        match m.certified_penalty() {
+            Err(Uncertifiable::BinaryNonPowerOfTwo { var, k }) => {
+                assert_eq!(var, "v");
+                assert_eq!(k, 6);
+            }
+            other => panic!("k=6 binary has free invalid codewords and must be refused: {other:?}"),
+        }
+    }
+
+    /// Soft rows are refused rather than certified against an incomplete span.
+    #[test]
+    fn soft_rows_are_refused_because_their_span_is_not_yet_computed() {
+        let mut m = Model::new();
+        let a = m.categorical("a", 2);
+        m.fix(a, 0);
+        m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(a, 1)]));
+        assert!(m.soften_last(3.0), "the row must actually have been softened, or this tests nothing");
+        match m.certified_penalty() {
+            Err(Uncertifiable::SoftConstraints { rows }) => assert!(rows >= 1),
+            other => panic!("a soft row must be refused in v1, got {other:?}"),
+        }
     }
 }
 
