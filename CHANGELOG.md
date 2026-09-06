@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Two of seven conformance cases were constants
+
+`conform` advertises sampling fidelity as the thing no other suite in this field reports, and says
+it "asks a machine to sample badly on purpose and fails it if the certificate comes back clean."
+Neither sampling case ever reached the machine. `Device` had no sampling path — it could be asked
+for an optimum and nothing else — so both cases built a local `gibbs::Sampler` and certified that
+instead.
+
+The consequence, measured rather than argued. A stub backend whose `run` returns a constant vector
+of all-up spins, and which cannot sample at all, was reported as:
+
+```text
+PASS rejects a bad run     caught it: draws are correlated: tau_int 44.4 ...
+PASS sampling fidelity     beta_eff 0.4978 (asked 0.5), ess 2734, tv 0.1523 against a 0.3060 floor
+```
+
+Character for character the CPU's numbers, and character for character the FPGA fabric's. Any
+device scored 5/7 for free; the two cases could not distinguish a sampler from a constant.
+
+`Device::sample` now draws a chain, with a default that **declines** rather than borrowing one —
+declining says the fidelity question cannot be *put* to this backend, where a failure would say it
+was put and answered badly. `Cpu`, `GpuDevice` and the new `hdl::RtlFabric` implement it; the stub
+now scores 3/7 with the reason printed. A backend that implements it charges each recorded draw as
+a read, because a draw is a state carried to the host.
+
+*(One defect found while writing that: charging the readback in `Cpu::sample` on top of
+`SampleSet::collect`, which already bills `read_all` per draw, double-counted it — and on Z1-class
+prices reads dominate a collection loop, so the doubled term overstated the whole bill by nearly
+2×.)*
+
+### The fabric that ran on silicon is now a backend like any other
+
+`hdl::RtlFabric` implements `Device`, so a `.ftp` can be pointed at the p-bit fabric this crate
+emits — the Q.8 fixed-point arithmetic, 1024-entry sigmoid ROM and per-node xorshift32 that was
+implemented for `xck26` and metered on a Kria KV260. `Cpu` and `GpuDevice` were both reachable
+through the trait; the one backend with a **measured** joules figure was reachable only by calling
+`FixedFabric` by hand.
+
+One program, two arithmetics, and the certificates agree:
+
+| backend | β_eff (asked 0.5) | ESS | TV to exact | noise floor |
+|---|---|---|---|---|
+| `cpu` (f64) | 0.4978 | 2734 | 0.1523 | 0.3060 |
+| `ferrotherm-pbit-rtl` (Q.8 + ROM) | 0.4931 | 2876 | 0.1553 | 0.2983 |
+
+Both under their floor, both within 1.4% of the temperature asked for. On the planted instance the
+fixed-point fabric landed **0.00% above the planted optimum** where the f64 CPU sampler landed
+2.08%. It scores 6/7, and the case it fails is an honest refusal: the frustrated 5-ring is an odd
+cycle, and a fabric that updates two colour classes in two clocks has nowhere to put a third.
+
+β costs a *write* on this backend and the ledger says so — the fabric quantises β·J into the
+netlist, so every rung of an annealing ladder is a different bitstream. The conformance run charges
+it 21,706 writes against the CPU's 855.
+
 ### An answer now arrives with its own energy bill
 
 The crate's whole thesis is joules, and the one function a user actually calls said nothing about

@@ -431,6 +431,193 @@ endmodule
     }
 }
 
+
+// -- the emitted fabric, behind the same trait as every other backend ---------------------------
+
+/// The p-bit fabric this module emits, as a [`crate::fabric::Device`].
+///
+/// The gap this closes is the one the roadmap calls *"the same `.ftp` on CPU, browser and FPGA"*.
+/// `Cpu` and the GPU backend were both reachable through [`crate::fabric::Device`]; the fabric that
+/// actually ran on silicon was reachable only by calling [`FixedFabric`] by hand. So the one
+/// backend with a measured joules figure was the one a `.ftp` could not be pointed at.
+///
+/// # What running here proves, and what it does not
+///
+/// [`FixedFabric`] is a cycle-exact emulator of the emitted Verilog, and the icarus-verilog gate in
+/// this module's tests replays its per-sweep state trace against the RTL and requires a bit-exact
+/// match. So a distribution produced here is the distribution the **netlist** produces, not an
+/// approximation of it — and that netlist is what was implemented for `xck26` and metered on a
+/// Kria KV260 at 10.85 pJ per node update.
+///
+/// It does **not** prove a board did it. This is silicon semantics without the silicon; the board
+/// arm of that claim is the measurement in [`crate::ledger::KV260_MEASURED`], and the two meet at
+/// the bit-exactness gate rather than in one process.
+///
+/// # Why β costs a write here
+///
+/// The fabric quantises `β·J` into the netlist: the weights and the sigmoid ROM are constants in
+/// the emitted Verilog, so a schedule that changes temperature is a schedule that changes the
+/// **bitstream**. Every rung after the first is charged `writes += n` for that reason, and on real
+/// hardware it is a full reconfiguration rather than a register poke. A twelve-rung ladder is
+/// twelve implementations, which is a fact about this fabric worth meeting in the ledger rather
+/// than in a synthesis queue.
+pub struct RtlFabric {
+    graph: Option<Graph>,
+    state: Vec<i8>,
+    max_spins: Option<usize>,
+    ledger: crate::ledger::Ledger,
+}
+
+impl RtlFabric {
+    /// The emulator with no board-size limit: the RTL's semantics, unconstrained by any part.
+    #[must_use]
+    pub fn new() -> RtlFabric {
+        RtlFabric { graph: None, state: Vec::new(), max_spins: None, ledger: crate::ledger::Ledger::default() }
+    }
+
+    /// The fabric as it fits on one FPGA, sized by [`crate::targets::FpgaTarget::measured_pbits`].
+    ///
+    /// Measured density, not a model: 44.3 LUTs per p-bit on `xck26`, which is about twice the
+    /// generic figure and so admits about half as many p-bits as the generic model promises.
+    #[must_use]
+    pub fn on(target: &crate::targets::FpgaTarget) -> RtlFabric {
+        RtlFabric { max_spins: Some(target.measured_pbits() as usize), ..RtlFabric::new() }
+    }
+
+    /// The declared capabilities, without building anything.
+    #[must_use]
+    pub fn describe(max_spins: Option<usize>) -> crate::fabric::Fabric {
+        use crate::fabric::{Precision, Range};
+        let mut f = crate::fabric::Fabric::unconstrained("ferrotherm-pbit-rtl", crate::ledger::KV260_MEASURED);
+        f.max_spins = max_spins;
+        f.max_arity = 2;
+        // Q.8: one unit is 1/256, and the accumulated field saturates at [-2048, 2047] in those
+        // units. Twelve bits including the sign -- the clamp is the real limit, not the width of
+        // any one constant in the netlist.
+        f.coupling_precision = Precision::Fixed { bits: 12 };
+        f.field_precision = Precision::Fixed { bits: 12 };
+        f.coupling_range = Some(Range::continuous(-8.0, 2047.0 / 256.0));
+        f.field_range = Some(Range::continuous(-8.0, 2047.0 / 256.0));
+        f
+    }
+}
+
+impl Default for RtlFabric {
+    fn default() -> Self {
+        RtlFabric::new()
+    }
+}
+
+impl crate::fabric::Device for RtlFabric {
+    fn fabric(&self) -> crate::fabric::Fabric {
+        RtlFabric::describe(self.max_spins)
+    }
+
+    fn program(&mut self, p: &crate::ftp::Program) -> Vec<crate::fabric::Unsupported> {
+        let mut bad = self.fabric().check(p);
+        if !bad.is_empty() {
+            return bad;
+        }
+        match p.to_graph() {
+            Ok(g) => {
+                // Checked rather than asserted: `FixedFabric::new` PANICS on a graph that is not
+                // two-colourable, and a backend that aborts the process is not a backend that can
+                // be offered a program. The v1 fabric updates two colour classes and has nowhere
+                // to put a third; saying so is the difference between a refusal and a crash.
+                if g.classes.len() != 2 {
+                    bad.push(crate::fabric::Unsupported::Unplaceable {
+                        detail: format!(
+                            "this fabric updates two colour classes in two clocks and the program \
+                             needs {}; colour it into two, or run it on a backend that schedules \
+                             colours dynamically",
+                            g.classes.len()
+                        ),
+                    });
+                    return bad;
+                }
+                self.state = vec![-1; g.n];
+                // A load is a write, charged. See `Device::program`.
+                self.ledger.writes += g.n as u64;
+                self.graph = Some(g);
+            }
+            Err(e) => bad.push(crate::fabric::Unsupported::Unplaceable { detail: e.to_string() }),
+        }
+        bad
+    }
+
+    fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String> {
+        let Some(g) = self.graph.as_ref() else {
+            return Err("no program loaded".into());
+        };
+        if schedule.stages().is_empty() {
+            return Err("a schedule with no stages advances nothing".into());
+        }
+        let mut carried: Option<Vec<bool>> = None;
+        for (rung, stage) in schedule.stages().iter().enumerate() {
+            // Each rung is its own quantisation of beta*J, which on hardware is its own bitstream.
+            let mut fab = FixedFabric::new(g, stage.beta, seed ^ (rung as u64).wrapping_mul(0x9E37));
+            // Carry the state across rungs so a ladder anneals rather than restarting cold at each
+            // temperature. The RNG streams deliberately do NOT carry: a reconfigured fabric comes
+            // up with the seeds baked into it, which is what the emitted Verilog does on reset.
+            if let Some(prev) = carried.take() {
+                fab.s.copy_from_slice(&prev);
+                // Every rung after the first reprograms the weights, and the ledger says so.
+                self.ledger.writes += g.n as u64;
+            }
+            for _ in 0..stage.sweeps {
+                fab.sweep();
+            }
+            self.ledger.samples += (g.n as u64) * (stage.sweeps as u64);
+            carried = Some(fab.s.clone());
+        }
+        let last = carried.expect("at least one stage ran");
+        self.state = last.iter().map(|&up| if up { 1i8 } else { -1 }).collect();
+        // Reading the fabric out to the host edge is a read per node, and charging it is the
+        // difference between a sampling story and a bill.
+        self.ledger.reads += g.n as u64;
+        Ok(self.state.clone())
+    }
+
+    fn sample(
+        &mut self,
+        beta: f64,
+        plan: &crate::samples::Plan,
+        seed: u64,
+    ) -> Result<crate::samples::SampleSet, String> {
+        let Some(g) = self.graph.as_ref() else {
+            return Err("no program loaded".into());
+        };
+        // One temperature, so one quantisation of beta*J -- which is one bitstream. This is the
+        // case the fabric is actually built for; it is the annealing ladder in `run` that costs a
+        // reimplementation per rung.
+        let mut fab = FixedFabric::new(g, beta, seed);
+        for _ in 0..plan.burn_in {
+            fab.sweep();
+        }
+        let thin = plan.thin.max(1);
+        let mut states = Vec::with_capacity(plan.draws);
+        let mut energies = Vec::with_capacity(plan.draws);
+        for _ in 0..plan.draws {
+            for _ in 0..thin {
+                fab.sweep();
+            }
+            let st: Vec<i8> = fab.s.iter().map(|&up| if up { 1i8 } else { -1 }).collect();
+            energies.push(g.energy(&st));
+            states.push(st);
+        }
+        self.ledger.samples += (g.n as u64) * (plan.sweeps() as u64);
+        // Every draw leaves the fabric. On the metered board that is the term worth 239 updates
+        // apiece, so a chain of 3,000 draws costs far more in readback than in sampling.
+        self.ledger.reads += (plan.draws as u64) * (g.n as u64);
+        Ok(crate::samples::SampleSet::from_chain(states, energies, beta, plan.burn_in, thin))
+    }
+
+    fn ledger(&self) -> crate::ledger::Ledger {
+        self.ledger
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

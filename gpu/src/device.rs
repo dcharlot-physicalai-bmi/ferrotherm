@@ -176,6 +176,46 @@ impl Device for GpuDevice {
         Ok(best)
     }
 
+    fn sample(
+        &mut self,
+        beta: f64,
+        plan: &ferrotherm::samples::Plan,
+        seed: u64,
+    ) -> Result<ferrotherm::samples::SampleSet, String> {
+        let m = self.model.as_ref().ok_or("no program loaded")?;
+        let g = self.graph.as_ref().ok_or("no program loaded")?;
+        // Same initial state as `Sampler::new(g, beta, seed)` draws, for the same reason `run`
+        // matches it: two backends handed one seed must start at one configuration, or every
+        // cross-backend comparison is measuring the starting point.
+        let mut rng = Pcg::new(seed, 0x5EED);
+        self.state = (0..g.n).map(|_| rng.spin(0.5)).collect();
+        let thin = plan.thin.max(1);
+        if plan.burn_in > 0 {
+            self.gpu.sweep_seeded(m, &mut self.state, beta, plan.burn_in as u32, seed)?;
+        }
+        let mut states = Vec::with_capacity(plan.draws);
+        let mut energies = Vec::with_capacity(plan.draws);
+        for d in 0..plan.draws {
+            // A fresh stream per draw, for the reason the stage loop in `run` already documents:
+            // one stream reused would draw the same numbers at the same nodes every time.
+            let s = seed.wrapping_add(d as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            self.gpu.sweep_seeded(m, &mut self.state, beta, thin as u32, s)?;
+            energies.push(g.energy(&self.state));
+            states.push(self.state.clone());
+        }
+        self.ledger.samples += (g.n as u64) * (plan.sweeps() as u64);
+        // Every draw is a device-to-host transfer, which on this backend is the PCIe copy and the
+        // term a sampling loop actually pays for. `run` charges none because it keeps one state.
+        self.ledger.reads += (plan.draws as u64) * (g.n as u64);
+        Ok(ferrotherm::samples::SampleSet::from_chain(
+            states,
+            energies,
+            beta,
+            plan.burn_in,
+            thin,
+        ))
+    }
+
     fn ledger(&self) -> Ledger {
         self.ledger
     }

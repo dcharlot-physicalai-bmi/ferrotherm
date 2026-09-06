@@ -180,45 +180,91 @@ pub fn run(dev: &mut dyn Device) -> Report {
     // same state passes all of it. This asks for a deliberately bad run and fails the fabric if its
     // certificate blesses it.
     {
+        // Asked of the DEVICE. This case used to build a local `gibbs::Sampler` and certify that,
+        // because `Device` had no sampling path -- so every fabric received the same verdict from
+        // the same CPU chain, and a stub returning a constant vector was credited with catching an
+        // unequilibrated one. Nothing here reached the machine under test.
         let g = crate::ising::lattice2d(24, 1.0);
-        let mut smp = crate::gibbs::Sampler::new(&g, 0.7, 4);
-        let c = smp
-            .collect(&crate::samples::Plan::new(0, 300, 1), None)
-            .certificate(&g)
-            .expect("collect returns a chain");
-        let ok = !c.passed();
+        let p = Program::from_graph(&g, &ladder());
+        let plan = crate::samples::Plan::new(0, 300, 1);
+        let (ok, detail) = match chain(dev, &p, 0.7, &plan, 4) {
+            Err(e) => (false, e),
+            Ok(set) => match set.certificate(&g) {
+                Err(e) => (false, format!("the chain could not be certified: {e}")),
+                Ok(c) => {
+                    let ok = !c.passed();
+                    (
+                        ok,
+                        if ok {
+                            format!(
+                                "caught it: {}",
+                                c.findings
+                                    .first()
+                                    .map(std::string::ToString::to_string)
+                                    .unwrap_or_default()
+                            )
+                        } else {
+                            "blessed a chain that never left its initial condition".into()
+                        },
+                    )
+                }
+            },
+        };
         cases.push(case(
             "rejects a bad run",
             "does the certificate catch an unequilibrated chain",
             ok,
-            if ok {
-                format!("caught it: {}", c.findings.first().map(std::string::ToString::to_string).unwrap_or_default())
-            } else {
-                "blessed a chain that never left its initial condition".into()
-            },
+            detail,
         ));
     }
 
     // --- 7. sampling fidelity, which nothing else in this field reports --------------------------
     {
+        // A 10-spin ring, small enough that the exact Boltzmann distribution is available, so the
+        // question "at what temperature did this fabric really sample" has a checkable answer.
+        // Asked of the device, for the same reason as the case above.
         let g = crate::ising::ring(10, 1.0, 0.3);
-        let mut smp = crate::gibbs::Sampler::new(&g, 0.5, 11);
-        let c = smp
-            .collect(&crate::samples::Plan::new(500, 3000, 8), None)
-            .certificate(&g)
-            .expect("collect returns a chain");
-        let ok = c.passed();
-        let detail = match (c.tv_exact, c.noise_floor) {
-            (Some(tv), Some(fl)) => format!(
-                "beta_eff {:.4} (asked 0.5), ess {:.0}, tv {tv:.4} against a {fl:.4} noise floor",
-                c.beta_eff, c.ess
-            ),
-            _ => format!("beta_eff {:.4}, ess {:.0}", c.beta_eff, c.ess),
+        let p = Program::from_graph(&g, &ladder());
+        let plan = crate::samples::Plan::new(500, 3000, 8);
+        let (ok, detail) = match chain(dev, &p, 0.5, &plan, 11) {
+            Err(e) => (false, e),
+            Ok(set) => match set.certificate(&g) {
+                Err(e) => (false, format!("the chain could not be certified: {e}")),
+                Ok(c) => {
+                    let detail = match (c.tv_exact, c.noise_floor) {
+                        (Some(tv), Some(fl)) => format!(
+                            "beta_eff {:.4} (asked 0.5), ess {:.0}, tv {tv:.4} against a {fl:.4} \
+                             noise floor",
+                            c.beta_eff, c.ess
+                        ),
+                        _ => format!("beta_eff {:.4}, ess {:.0}", c.beta_eff, c.ess),
+                    };
+                    (c.passed(), detail)
+                }
+            },
         };
         cases.push(case("sampling fidelity", "at what temperature did it really sample", ok, detail));
     }
 
     Report { fabric, cases }
+}
+
+/// Load a program and draw a chain from the device, or say why the fabric could not be asked.
+fn chain(
+    dev: &mut dyn Device,
+    p: &Program,
+    beta: f64,
+    plan: &crate::samples::Plan,
+    seed: u64,
+) -> Result<crate::samples::SampleSet, String> {
+    let bad = dev.program(p);
+    if !bad.is_empty() {
+        return Err(format!(
+            "refused: {}",
+            bad.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join("; ")
+        ));
+    }
+    dev.sample(beta, plan, seed)
 }
 
 fn solve(dev: &mut dyn Device, p: &Program, seed: u64) -> Result<Vec<i8>, String> {
@@ -230,6 +276,89 @@ fn solve(dev: &mut dyn Device, p: &Program, seed: u64) -> Result<Vec<i8>, String
         ));
     }
     dev.run(&ladder(), seed)
+}
+
+#[cfg(test)]
+mod cross_backend {
+    use super::*;
+    use crate::samples::Plan;
+
+    /// Two backends with different arithmetic, one program, one distribution.
+    ///
+    /// This is the roadmap's portability claim reduced to something a test can hold: the CPU
+    /// sampler works in `f64`, and `hdl::RtlFabric` works in Q.8 fixed point through a 1024-entry
+    /// sigmoid ROM with one xorshift32 per node -- the arithmetic that was implemented for `xck26`
+    /// and metered on a Kria KV260. If a `.ftp` means the same thing on both, their certificates
+    /// have to agree about the temperature they sampled at.
+    #[test]
+    fn one_program_samples_at_the_same_temperature_on_two_different_arithmetics() {
+        let g = crate::ising::ring(10, 1.0, 0.3);
+        let p = Program::from_graph(&g, &ladder());
+        let plan = Plan::new(500, 3000, 8);
+
+        let mut cpu = crate::fabric::Cpu::default();
+        let cpu_c = chain(&mut cpu, &p, 0.5, &plan, 11).unwrap().certificate(&g).unwrap();
+        let mut rtl = crate::hdl::RtlFabric::new();
+        let rtl_c = chain(&mut rtl, &p, 0.5, &plan, 11).unwrap().certificate(&g).unwrap();
+
+        // THE ANTI-VACUITY ASSERTION, and the reason this test exists in this form. Both of these
+        // cases used to be answered by a locally built `gibbs::Sampler`, so every fabric returned
+        // the same statistics character for character -- 0.4978, 2734, 0.1523 -- including a stub
+        // that returns a constant vector of all-up spins. Identical numbers from two different
+        // arithmetics is the signature of that defect, not evidence of agreement.
+        assert!(
+            (cpu_c.beta_eff - rtl_c.beta_eff).abs() > 1e-6,
+            "identical beta_eff from f64 and from Q.8 means one of them did not run: {} vs {}",
+            cpu_c.beta_eff,
+            rtl_c.beta_eff
+        );
+
+        // And having established they are two measurements, they must agree. 5% of the asked beta:
+        // the fabric quantises beta*J to 1/256 and reads its acceptance from a 1024-entry ROM, so
+        // some drift is expected -- what would not be acceptable is a fabric that samples at a
+        // temperature nobody asked for and reports the one they did.
+        for (name, c) in [("cpu", &cpu_c), ("rtl", &rtl_c)] {
+            assert!(
+                (c.beta_eff - 0.5).abs() < 0.025,
+                "{name} was asked for beta 0.5 and sampled at {}",
+                c.beta_eff
+            );
+            let (tv, floor) = (c.tv_exact.unwrap(), c.noise_floor.unwrap());
+            assert!(tv < floor, "{name} sits {tv:.4} from exact against a {floor:.4} noise floor");
+        }
+    }
+
+    /// A fabric that cannot be sampled is declined, not credited.
+    #[test]
+    fn a_backend_with_no_sampling_path_fails_the_sampling_cases_with_the_reason() {
+        struct OptimiserOnly(usize);
+        impl Device for OptimiserOnly {
+            fn fabric(&self) -> crate::fabric::Fabric {
+                crate::fabric::Fabric::unconstrained("optimiser-only", crate::ledger::Z1_SPICE)
+            }
+            fn program(&mut self, p: &Program) -> Vec<crate::fabric::Unsupported> {
+                self.0 = p.spins;
+                Vec::new()
+            }
+            fn run(&mut self, _: &Schedule, _: u64) -> Result<Vec<i8>, String> {
+                Ok(vec![1i8; self.0])
+            }
+            fn ledger(&self) -> crate::ledger::Ledger {
+                crate::ledger::Ledger::default()
+            }
+        }
+
+        let r = run(&mut OptimiserOnly(0));
+        for name in ["rejects a bad run", "sampling fidelity"] {
+            let c = r.cases.iter().find(|c| c.name == name).unwrap();
+            assert!(!c.passed, "{name} passed for a fabric that cannot sample: {}", c.detail);
+            assert!(
+                c.detail.contains("no sampling path"),
+                "{name} must say WHY it could not be asked, not merely that it failed: {}",
+                c.detail
+            );
+        }
+    }
 }
 
 #[cfg(test)]

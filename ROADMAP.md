@@ -465,8 +465,8 @@ at 9.168 W Alveo result.
 **Accept:** every number carries its noise floor and a named, *tuned* classical baseline. An
 untuned baseline is a fabricated win.
 
-**2.3 The path to silicon.** ◐ **A fabric RAN ON SILICON AND WAS METERED** — the joules half is
-done; the `.ftp`-on-three-backends half is not.
+**2.3 The path to silicon.** ◐ **A fabric RAN ON SILICON AND WAS METERED, and one `.ftp` now
+scores on three arithmetics** — what remains of this item is the browser arm and the Alchitry board.
 
 A 1,024 p-bit fabric emitted by `hdl`, implemented in Vivado 2026.1 for `xck26`, flashed to a Kria
 KV260 through `fpga_manager`, and metered on the SOM's own INA260: **0.5554 W above an idle PL at
@@ -474,8 +474,32 @@ KV260 through `fpga_manager`, and metered on the SOM's own INA260: **0.5554 W ab
 Utilisation confirms the architecture: 44.3 LUTs and **exactly 33.0 registers** per p-bit — the
 32-bit xorshift state plus one spin.
 
-*Still open here:* the same `.ftp` running on CPU, browser and FPGA with matching results, and the
-Alchitry path (that board never enumerated over USB).
+**One `.ftp`, three arithmetics, agreeing certificates.** `hdl::RtlFabric` implements
+`fabric::Device`, so the fabric that ran on silicon is now reachable the same way `Cpu` and
+`GpuDevice` are — it had been callable only by hand, which meant the one backend with a *measured*
+joules figure was the one a `.ftp` could not be pointed at. All three now score through
+`conform::run`:
+
+| backend | arithmetic | β_eff (asked 0.5) | ESS | TV to exact | floor | cases |
+|---|---|---|---|---|---|---|
+| `cpu` | f64 | 0.4978 | 2734 | 0.1523 | 0.3060 | 7/7 |
+| `gpu` | f32 (Metal) | — | — | — | — | 7/7 |
+| `ferrotherm-pbit-rtl` | Q.8 + 1024-entry ROM | 0.4931 | 2876 | 0.1553 | 0.2983 | 6/7 |
+
+Both certificates sit under their noise floor and within 1.4% of the temperature asked for, and on
+the planted instance the fixed-point fabric landed **0.00% above the planted optimum** where the f64
+CPU sampler landed 2.08%. The RTL fabric's one failure is a refusal that names its reason: the
+suite's frustrated 5-ring is an odd cycle, and a fabric updating two colour classes in two clocks
+has nowhere to put a third.
+
+The board arm of this claim is joined by the bit-exactness gate rather than by a live board in that
+run: `FixedFabric` is a cycle-exact emulator of the emitted Verilog and the icarus-verilog gate
+replays its per-sweep trace against the RTL. So the distribution above is the netlist's, and the
+netlist is what was metered on the KV260.
+
+*Still open here:* the browser arm — wasm/WebGPU behind the same `Device` trait, rather than the
+native wgpu backend standing in for it — and the Alchitry path (that board never enumerated over
+USB).
 *Why:* **no library in this field has a public path to any silicon.** Extropic's packages contain
 zero device code; every "backend" is a simulator. Closing library→bitstream→board→readback in the
 open is a first, and we already own the whole toolchain.

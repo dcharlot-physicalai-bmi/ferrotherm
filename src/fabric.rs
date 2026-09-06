@@ -1067,6 +1067,40 @@ pub trait Device {
     /// A message from the backend when the run could not be made.
     fn run(&mut self, schedule: &crate::schedule::Schedule, seed: u64) -> Result<Vec<i8>, String>;
 
+    /// Draw a chain of states at one temperature, in chain order.
+    ///
+    /// # The gap this exists to close
+    ///
+    /// Until this method existed, [`Device`] could be asked for an **optimum** and nothing else.
+    /// [`crate::conform`] advertises sampling fidelity as the thing no other suite in this field
+    /// reports — and its two sampling cases, having no way to ask the device, built a local
+    /// [`crate::gibbs::Sampler`] instead. Every fabric therefore received the same two verdicts,
+    /// character for character: a stub backend that returns a constant vector of all-up spins was
+    /// certified at `beta_eff 0.4978, ess 2734, tv 0.1523`, statistics from a CPU chain it had no
+    /// part in. Two of seven conformance cases were constants.
+    ///
+    /// # Errors
+    ///
+    /// The default declines, which is the honest answer for a fabric that exposes only a schedule
+    /// and a final state. Declining is not the same as failing: it says the fidelity question
+    /// cannot be *put* to this backend, where a failure would say it was put and answered badly.
+    ///
+    /// A backend that implements this must charge the ledger for what it does — the sweeps as
+    /// `samples`, and **each recorded draw as `reads`**, because a draw is a state carried to the
+    /// host. On Z1-class prices one read is worth 239 updates, so a collection loop that does not
+    /// charge for readback reports the larger half of its own bill as zero.
+    fn sample(
+        &mut self,
+        beta: f64,
+        plan: &crate::samples::Plan,
+        seed: u64,
+    ) -> Result<crate::samples::SampleSet, String> {
+        let _ = (beta, plan, seed);
+        Err("this backend exposes no sampling path: it can be asked for an optimum and not for a \
+             chain, so its sampling fidelity cannot be certified"
+            .into())
+    }
+
     /// Operations charged so far, for the ledger.
     fn ledger(&self) -> crate::ledger::Ledger;
 }
@@ -1119,6 +1153,21 @@ impl Device for Cpu {
         let (best, _) = crate::tempering::anneal_scheduled(g, schedule, seed, Some(&mut self.ledger));
         self.state = best.clone();
         Ok(best)
+    }
+
+    fn sample(
+        &mut self,
+        beta: f64,
+        plan: &crate::samples::Plan,
+        seed: u64,
+    ) -> Result<crate::samples::SampleSet, String> {
+        let g = self.graph.as_ref().ok_or("no program loaded")?;
+        let mut smp = crate::gibbs::Sampler::new(g, beta, seed);
+        // `collect` charges BOTH terms already -- `read_all` bills one read per node per kept
+        // draw. Adding a readback charge here as well doubled it, which is worth recording: on
+        // Z1-class prices reads dominate a collection loop, so double-counting them overstates the
+        // whole bill by very nearly a factor of two.
+        Ok(smp.collect(plan, Some(&mut self.ledger)))
     }
 
     fn ledger(&self) -> crate::ledger::Ledger {
