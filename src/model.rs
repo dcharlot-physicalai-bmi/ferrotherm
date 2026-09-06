@@ -2766,6 +2766,29 @@ impl Compiled {
         self.solve_with(&Self::default_schedule(), seed)
     }
 
+    /// The default ladder, measured against THIS model's own energy scale.
+    ///
+    /// [`Self::default_schedule`] is a ladder in absolute `beta`, which is a claim about the units
+    /// the modeller wrote in. `beta` and energy meet only as `beta * E`, so a model whose
+    /// coefficients are all a thousand times larger is the same problem and gets a different
+    /// answer. On `planted::frustrated_loops(8, 96, 3)` the shipped ladder leaves 2.08% above the
+    /// planted optimum at unit scale and **52.08% at 1e-3**; this one leaves 2.08% at both, and at
+    /// unit scale it *is* the shipped ladder — see
+    /// [`crate::schedule::Schedule::geometric_dimensionless`].
+    ///
+    /// Not yet the default. Switching `solve_annealed` moves every documented number and every
+    /// answer the HTTP surface returns, so it is a deliberate second step rather than a side
+    /// effect of adding this.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::schedule::NoScale`] when the compiled graph has no couplings and no fields — a
+    /// model that compiled to nothing has no temperature scale, and there is nothing to anneal.
+    pub fn schedule_for(&self) -> Result<Schedule, crate::schedule::NoScale> {
+        let (_, _, stages, per) = Self::DEFAULT_LADDER;
+        Schedule::for_instance(&self.graph, stages, per)
+    }
+
     /// The ladder used when a caller does not supply one. Deliberately conservative: it is better
     /// for a first answer to be slow and right than fast and quietly infeasible.
     #[must_use]

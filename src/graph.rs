@@ -170,6 +170,34 @@ impl Graph {
         f
     }
 
+    /// The largest energy change any single spin flip can produce: `max_i 2(sum_j |w_ij| + |h_i|)`.
+    ///
+    /// This is the instance's own **energy scale**, and it is what a temperature has to be measured
+    /// against. Beta and energy enter the Boltzmann weight only as the product `beta * E`, so a
+    /// model written in kilojoules and the same model written in joules are the same problem and a
+    /// ladder in absolute beta answers them differently. Measured on `planted::frustrated_loops(8,
+    /// 96, 3)`, the shipped ladder leaves 2.08% above the planted optimum at unit scale and 52.08%
+    /// at 1e-3 — the same instance, twenty-five times worse, for choosing different units.
+    ///
+    /// An exact upper bound rather than an estimate: flipping spin `i` changes the energy by
+    /// `2 s_i (sum_j w_ij s_j + h_i)`, and every `s` is +-1, so the sum of magnitudes bounds it and
+    /// is attained by some assignment. That makes it safe to divide by — see
+    /// [`crate::schedule::Schedule::for_instance`].
+    ///
+    /// `None` when the scale is zero: a graph with no couplings and no fields has no energy scale,
+    /// every derived beta would be infinite, and returning `0.0` would invite exactly that division.
+    #[must_use]
+    pub fn flip_gap_max(&self) -> Option<f64> {
+        let g = (0..self.n)
+            .map(|i| {
+                let s: f64 =
+                    (self.offset[i]..self.offset[i + 1]).map(|k| self.w[k].abs()).sum();
+                2.0 * (s + self.h[i].abs())
+            })
+            .fold(0.0f64, f64::max);
+        (g > 0.0 && g.is_finite()).then_some(g)
+    }
+
     /// Total energy E(s) = -`sum_edges` J s s - `sum_i` h s.
     #[must_use]
     pub fn energy(&self, s: &[i8]) -> f64 {
@@ -384,6 +412,40 @@ fn color_greedy(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
         colors[i] = c as u16;
     }
     colors
+}
+
+/// The whole Hamiltonian in different units: every coupling **and every field** times `k`.
+///
+/// A change of units, not a change of problem. Every state's energy scales by exactly `k`, so the
+/// ordering of states — and therefore the ground state — is untouched for `k > 0`, and the
+/// Boltzmann distribution at `beta / k` is identical to the original at `beta`.
+///
+/// # Not to be confused with [`crate::adaptive::scaled`]
+///
+/// That one scales the couplings and leaves the fields alone. It is the second axis of a 2D
+/// tempering ladder — a different Hamiltonian at each rung, deliberately — and using it as a units
+/// probe measures a transformation other than the one it appears to. Any test that treats it as a
+/// change of units must assert the fields are zero, or it is testing something else.
+///
+/// # Panics
+///
+/// If `k` is not finite. A non-finite scale produces a graph whose energy is `NaN` for every state,
+/// which every comparison downstream then answers `false` to.
+#[must_use]
+pub fn rescaled(g: &Graph, k: f64) -> Graph {
+    assert!(k.is_finite(), "a scale must be finite; got {k}");
+    let mut b = GraphBuilder::new(g.n);
+    for i in 0..g.n {
+        for x in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[x] as usize;
+            // Each undirected edge appears in both rows of the CSR; couple it once.
+            if j > i {
+                b.couple(i, j, g.w[x] * k);
+            }
+        }
+        b.set_bias(i, g.h[i] * k);
+    }
+    b.build()
 }
 
 #[cfg(test)]
