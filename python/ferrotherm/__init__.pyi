@@ -102,6 +102,9 @@ class Cost:
     def joules(self, prices: 'Prices | None' = None) -> 'float | None':
         """Price this run on ``prices``, or ``None`` when it states no price for what the run did."""
         ...
+    def priced(self) -> 'tuple[str, float] | None':
+        """The best machine in :data:`PRICES` that can price *this* run, and what it costs there."""
+        ...
 
 class Estimate:
     """An expectation value with an error bar that accounts for how correlated the draws were."""

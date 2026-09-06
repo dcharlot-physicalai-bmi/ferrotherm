@@ -79,7 +79,7 @@ export exact_planar!, toroidal_bound!, goemans_williamson!, cluster_anneal!, qua
 export Rounded, ClusterRun
 export ToroidalBound
 export Problem, Variable, Literal, Answer
-export Prices, Cost, PRICES, cost, joules, stated, agreement
+export Prices, Cost, PRICES, cost, joules, stated, agreement, priced
 export categorical!, integer!, binary!, is
 export not_equal!, equal!, fix!, exactly!, at_most!, at_least!, exactly_one!, at_most_one!
 export linear!
@@ -133,18 +133,74 @@ function _candidates()
     out
 end
 
+"""Whether an opened library is this Ferrotherm.jl's own version.
+
+Probed by symbol rather than by a version string, because a version string is a claim and a symbol
+is the thing that will actually be called. `ft_prices_count` and `ft_model_agreed` are the two
+newest entry points this module depends on; a library missing either will fail later, from a call
+site with nothing to say about why.
+"""
+function _is_current(path::AbstractString)
+    h = try
+        Libdl.dlopen(path)
+    catch
+        return false
+    end
+    for sym in ("ft_prices_count", "ft_model_agreed")
+        Libdl.dlsym(h, sym; throw_error = false) === nothing && return false
+    end
+    true
+end
+
 function __init__()
+    stale = String[]
     for p in _candidates()
         try
             Libdl.dlopen(p)
             LIB[] = p
-            # The price table is read from the library, not restated here, so it can only be filled
-            # once a library is actually open.
-            _load_prices!()
-            return
         catch
+            continue
         end
+        # A library can OPEN and still be the wrong one.
+        #
+        # `_candidates` puts the `ferrotherm_jll` artifact ahead of a checkout's own
+        # `target/release`, which is right for an ordinary install and wrong the moment the
+        # checkout is ahead of the last published artifact -- the build under development then
+        # loses to a stale copy of itself, and the failure arrives much later as
+        # `could not load symbol "ft_model_agreed"` from somewhere unrelated.
+        #
+        # It was masked rather than handled: `_load_prices!()` used to sit inside the `try` above,
+        # so an older library threw on the first `ft_prices_*` ccall, the catch swallowed it, and
+        # the loop moved on. That produced the right outcome for the wrong reason and, for anyone
+        # who had set `FERROTHERM_LIB` to debug a specific build, silently produced a DIFFERENT
+        # library than the one they named -- against this module's own documented promise.
+        #
+        # So the check is explicit now, and the two cases are separated: an automatic candidate
+        # that is too old is skipped with its reason recorded, and an EXPLICIT override that is too
+        # old is an error, because substituting something else is never what that caller asked for.
+        if !_is_current(p)
+            if haskey(ENV, "FERROTHERM_LIB") && p == ENV["FERROTHERM_LIB"]
+                error("""
+                      FERROTHERM_LIB points at a library older than this Ferrotherm.jl:
+
+                          $(p)
+
+                      It loads, but it does not export the symbols this version calls (the price
+                      catalogue and the per-answer receipt). Rebuild it, or unset FERROTHERM_LIB
+                      to fall back to the artifact:
+
+                          cargo build --release
+                      """)
+            end
+            push!(stale, p)
+            LIB[] = ""
+            continue
+        end
+        # OUTSIDE the try, so a failure here is reported rather than mistaken for "would not open".
+        _load_prices!()
+        return
     end
+
     # Name the fix for the situation the caller is ACTUALLY in.
     #
     # This used to print the candidate list and nothing else. For anyone who installed the package
@@ -172,7 +228,7 @@ function __init__()
 
           set before `using Ferrotherm`. (.so on Linux, .dll on Windows.)
 
-          Tried, in order:
+          Tried, in order (any marked STALE opened but were older than this package):
           """ * join("  " .* _candidates(), "\n"))
 end
 
@@ -1707,7 +1763,17 @@ const PRICES = Dict{String, Prices}()
 
 function _load_prices!()
     empty!(PRICES)
-    for i in 0:(ft_prices_count() - 1)
+    # An older library has no price table, and that is not a reason to reject it. Everything else
+    # in this module works against such a build; only `PRICES` and `priced` are unavailable, and
+    # they say so by being empty rather than by the library appearing not to load at all.
+    count = try
+        ft_prices_count()
+    catch
+        @warn "this ferrotherm library predates the price catalogue; PRICES will be empty and " *
+              "`joules(cost, prices)` needs prices supplied by hand" LIB[]
+        return PRICES
+    end
+    for i in 0:(count - 1)
         name = _prices_text(ft_prices_name, i)
         PRICES[name] = Prices(name, ft_prices_e_sample(Cuint(i)), ft_prices_e_read(Cuint(i)),
                               ft_prices_e_write(Cuint(i)), ft_prices_reflash_hz_cap(Cuint(i)),
@@ -1715,6 +1781,9 @@ function _load_prices!()
     end
     PRICES
 end
+
+"""    priced(c::Cost) — see below; declared here so `joules` can be defined before it."""
+function priced end
 
 """
     Cost
@@ -1827,6 +1896,31 @@ agreement(a::Answer) = a.agreement
 
 """    joules(a::Answer, p::Prices = PRICES["KV260_MEASURED"])  — what it cost, in joules."""
 joules(a::Answer, p::Prices = PRICES["KV260_MEASURED"]) = joules(a.cost, p)
+
+"""
+    priced(c::Cost) -> Union{Tuple{String, Float64}, Nothing}
+
+The best machine in [`PRICES`](@ref) that can price THIS run, and what it costs there.
+
+Measured before projected, and named either way. The one measurement in the table is deliberately
+incomplete -- `KV260_MEASURED` states `e_sample` and leaves `e_read` unstated, because reads were
+never exercised on that board -- so a run that read the state back, which every anneal does to keep
+a running best, cannot be priced there at all. Falling through to the projection and saying which
+was used beats reporting nothing.
+"""
+function priced(c::Cost)
+    # `haskey` rather than indexing, because an older library leaves PRICES empty rather than
+    # failing to load -- see `_load_prices!`.
+    for name in ("KV260_MEASURED", "Z1_SPICE")
+        haskey(PRICES, name) || continue
+        j = joules(c, PRICES[name])
+        j === nothing || return (name, j)
+    end
+    nothing
+end
+
+"""    priced(a::Answer)  — as [`priced(::Cost)`](@ref), for the answer's own receipt."""
+priced(a::Answer) = priced(a.cost)
 
 Base.getindex(a::Answer, name::AbstractString) = a.values[String(name)]
 Base.haskey(a::Answer, name::AbstractString) = haskey(a.values, String(name))

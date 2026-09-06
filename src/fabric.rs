@@ -1057,21 +1057,32 @@ impl Fabric {
     /// Never on a program built by this crate: the rewritten factors have the same variables as the
     /// ones they replace.
     pub fn requantize(&self, p: &mut Program) -> f64 {
-        // Only fixed point actually moves a coefficient onto a grid. Floating point rounds it in
-        // the last significand bits, which is not something to do here on the caller's behalf, and
-        // Exact does nothing at all.
-        let Precision::Fixed { bits } = self.coupling_precision else { return 0.0 };
-        if bits == 0 {
-            return 0.0;
-        }
+        // Only a grid actually moves a coefficient. Floating point rounds it in the last
+        // significand bits, which is not something to do here on the caller's behalf, and Exact
+        // does nothing at all.
+        //
+        // BOTH grid variants, and the second one was missed when it was added: `Precision::Grid`
+        // arrived with `check` updated and this function left matching `Fixed` alone, so the one
+        // fabric that declares `Grid` got `0.0` back — "quantisation introduced no error" — from
+        // the function whose entire job is to move coefficients onto the grid that fabric uses.
+        // A new enum variant is a question asked of every match on that enum.
         let weights: Vec<f64> = p.factors.iter().map(super::factor::Factor::weight).collect();
         let err = self.coupling_precision.worst_relative_error(&weights);
-        let max = weights.iter().map(|w| w.abs()).fold(0.0f64, f64::max);
-        if max == 0.0 || bits == 1 {
-            return err;
-        }
-        let levels = ((1u64 << (bits - 1)) - 1) as f64;
-        let step = max / levels;
+        let step = match self.coupling_precision {
+            Precision::Grid { step } if step > 0.0 => step,
+            Precision::Fixed { bits } => {
+                if bits <= 1 {
+                    return err;
+                }
+                let max = weights.iter().map(|w| w.abs()).fold(0.0f64, f64::max);
+                if max == 0.0 {
+                    return err;
+                }
+                let levels = ((1u64 << (bits - 1)) - 1) as f64;
+                max / levels
+            }
+            _ => return 0.0,
+        };
         for f in &mut p.factors {
             let vars: Vec<usize> = f.vars().collect();
             let w = (f.weight() / step).round() * step;
@@ -1230,6 +1241,46 @@ impl Device for Cpu {
 
     fn ledger(&self) -> crate::ledger::Ledger {
         self.ledger
+    }
+}
+
+#[cfg(test)]
+mod grid_requantize {
+    use super::*;
+
+    /// `requantize` must move coefficients onto the grid the fabric actually uses.
+    ///
+    /// `Precision::Grid` was added to this enum with `check`'s two matches updated and this
+    /// function's left alone, so the one fabric declaring `Grid` received `0.0` — "quantisation
+    /// introduced no error" — from the function whose whole job is the quantisation.
+    #[test]
+    fn a_grid_fabric_is_requantised_onto_its_own_step() {
+        let mut f = Fabric::unconstrained("q8", crate::ledger::Prices::UNSTATED);
+        f.coupling_precision = Precision::Grid { step: 1.0 / 256.0 };
+
+        // 0.3 is not a multiple of 1/256: 0.3 * 256 = 76.8, so it lands on 77/256.
+        let mut p = Program::from_ftp("ftp 1\nspins 2\nfactor 0.3 0 1\n").unwrap();
+        let err = f.requantize(&mut p);
+        let w = p.factors[0].weight();
+        assert_eq!(w, 77.0 / 256.0, "the weight must land ON the grid, not near it");
+        assert!(err > 0.0, "moving 0.3 to 77/256 is not free: {err}");
+
+        // And a weight already on the grid is untouched.
+        let mut q = Program::from_ftp("ftp 1\nspins 2\nfactor 0.5 0 1\n").unwrap();
+        assert_eq!(f.requantize(&mut q), 0.0);
+        assert_eq!(q.factors[0].weight(), 0.5);
+    }
+
+    /// And the fabric that declares `Grid` is the one this was found through.
+    #[test]
+    fn the_rtl_fabric_requantises_rather_than_reporting_nothing() {
+        let f = crate::hdl::RtlFabric::describe(None);
+        let mut p = Program::from_ftp("ftp 1\nspins 2\nfactor 0.001 0 1\n").unwrap();
+        let err = f.requantize(&mut p);
+        // 0.001 is below half a step, so it goes to zero and the coefficient is entirely lost --
+        // which is exactly what `check` now refuses, and what `0.0` used to hide.
+        assert_eq!(p.factors[0].weight(), 0.0);
+        assert!((err - 1.0).abs() < 1e-12, "a coefficient rounded away lost all of itself: {err}");
     }
 }
 

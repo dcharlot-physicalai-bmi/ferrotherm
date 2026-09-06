@@ -1761,6 +1761,15 @@ pub fn pricesCount() u32 {
 /// truncated, so give `source` room -- it is a sentence, not a word.
 pub fn prices(i: u32, name_buf: []u8, source_buf: []u8) ?Prices {
     if (i >= c.ft_prices_count()) return null;
+    // A TRUNCATED NAME IS NOT A NAME. `ft_prices_name` copies `min(len, cap)` bytes, so a short
+    // buffer used to yield a silently shortened `.name` — and `pricesNamed` compared that prefix
+    // with `std.mem.eql`, so asking for "KV260_" could return KV260_MEASURED's numbers. That
+    // defeats this module's own guarantee that a misspelled machine returns null rather than
+    // somebody else's joules. An identifier either fits or the caller gets nothing.
+    //
+    // `source` is a sentence, not an identifier; it may truncate, and the doc says so.
+    const need = c.ft_prices_name(i, null, 0);
+    if (need > name_buf.len) return null;
     const n = c.ft_prices_name(i, name_buf.ptr, @intCast(name_buf.len));
     const sn = c.ft_prices_source(i, source_buf.ptr, @intCast(source_buf.len));
     return Prices{
@@ -1777,6 +1786,8 @@ pub fn prices(i: u32, name_buf: []u8, source_buf: []u8) ?Prices {
 ///
 /// Null rather than a fallback. A misspelled machine name that silently returned some other
 /// machine's numbers would produce a joules figure for hardware the caller never asked about.
+/// A `name_buf` too small to hold a candidate's full name skips that candidate rather than
+/// comparing against a prefix of it — see `prices`.
 pub fn pricesNamed(want: []const u8, name_buf: []u8, source_buf: []u8) ?Prices {
     var i: u32 = 0;
     while (i < c.ft_prices_count()) : (i += 1) {
@@ -2892,6 +2903,13 @@ test "an answer arrives priced, and on a machine that names itself" {
     // A misspelling gets null, never somebody else's numbers.
     try std.testing.expect(pricesNamed("KV260", &name_buf, &src_buf) == null);
 
+    // And a buffer too small for the name gets null rather than a PREFIX of it. `ft_prices_name`
+    // copies min(len, cap), so a short buffer used to produce a truncated `.name` that
+    // `std.mem.eql` would then match against the truncation itself.
+    var tiny: [6]u8 = undefined;
+    try std.testing.expect(prices(2, &tiny, &src_buf) == null);
+    try std.testing.expect(pricesNamed("KV260_", &tiny, &src_buf) == null);
+
     const kv = pricesNamed("KV260_MEASURED", &name_buf, &src_buf).?;
     try std.testing.expectApproxEqAbs(@as(f64, 1.0848e-11), kv.e_sample, 1e-20);
     // Reads and writes were never exercised on that board. Unstated, and NOT zero.
@@ -2920,8 +2938,29 @@ test "an answer arrives priced, and on a machine that names itself" {
     try one.solve(1);
     try std.testing.expectEqual(@as(u32, 1), one.agreement().tries);
     try std.testing.expect(p.costSamples() > one.costSamples());
-    const j = p.joulesOn(kv);
-    try std.testing.expectApproxEqAbs(@as(f64, @floatFromInt(p.costSamples())) * kv.e_sample, j, 1e-18);
+    // AND THE MEASURED BOARD REFUSES TO PRICE THIS RUN, which is the point of the measurement
+    // being partial. An anneal reads the whole state after every sweep to keep a running best, and
+    // `KV260_MEASURED` states no `e_read` because reads were never exercised on that board -- so
+    // `ft_model_joules` returns NaN rather than a total quietly missing its expensive term.
+    //
+    // This asserted the opposite: `joulesOn(kv) == costSamples * e_sample`, written when
+    // `anneal_scheduled` charged no reads. When the readback charge moved into that function the
+    // Rust test was updated to assert `None` and THIS ONE WAS NOT, so the two surfaces asserted
+    // contradictory things about the same call and the zig CI job went red. A cross-surface claim
+    // has to be changed on every surface at once or it is not one claim.
+    try std.testing.expect(p.costReads() > 0);
+    try std.testing.expect(std.math.isNan(p.joulesOn(kv)));
+
+    // The projection states every price, so it can price the same run.
+    const z1 = pricesNamed("Z1_SPICE", &name_buf, &src_buf).?;
+    const j = p.joulesOn(z1);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, @floatFromInt(p.costSamples())) * z1.e_sample +
+            @as(f64, @floatFromInt(p.costReads())) * z1.e_read +
+            @as(f64, @floatFromInt(p.costWrites())) * z1.e_write,
+        j,
+        1e-18,
+    );
 
     // And a machine nobody has characterised prices nothing rather than zero.
     try std.testing.expect(std.math.isNan(p.joulesOn(unstated)));

@@ -2696,8 +2696,13 @@ pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64)
             // facts about the run that produced all of them, so they are carried across.
             if let Some(prev) = h.solution.as_ref() {
                 s.cost = prev.cost;
-                s.agreement = prev.agreement;
             }
+            // Agreement is RECOMPUTED for the answer now selected, not copied from the winner.
+            // Copying is right only while the selected optimum shares the winner's energy, which
+            // `distinct_optima` guarantees at a small `tol` and not at a large one -- it admits
+            // everything within `best + tol`. `ft_model_agreed` is documented as how many tries
+            // reached the energy of the answer the handle is on, so it has to be about THIS one.
+            s.agreement = s.agreement_among(&h.answers);
             h.solution = Some(s);
             1
         }

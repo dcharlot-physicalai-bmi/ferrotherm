@@ -2336,8 +2336,15 @@ class Cost:
     >>> import ferrotherm as ft
     >>> m = ft.Problem()                                            # doctest: +SKIP
     >>> a = m.solve()                                               # doctest: +SKIP
-    >>> a.cost.joules(ft.PRICES["KV260_MEASURED"])                  # doctest: +SKIP
-    0.00031...
+    >>> a.cost.priced()                                             # doctest: +SKIP
+    ('Z1_SPICE', 5.2196e-07)
+
+    That it names ``Z1_SPICE`` and not the measurement is the ledger working, not a shortcoming.
+    An anneal reads the whole state after every sweep to keep a running best, and
+    ``KV260_MEASURED`` states no ``e_read`` because reads were never exercised on that board — so
+    ``a.cost.joules(ft.PRICES["KV260_MEASURED"])`` is ``None`` for every answer this library
+    produces, and that is the honest answer rather than a total quietly missing its largest term.
+    :meth:`priced` falls through to the projection and says which it used.
     """
 
     __slots__ = ("samples", "reads", "writes")
@@ -2360,7 +2367,10 @@ class Cost:
         price, so a sampling-only measurement can still price a sampling-only run.
 
         Defaults to :data:`PRICES`\ ``["KV260_MEASURED"]`` — the only entry in the table that came
-        off a wattmeter rather than out of a model.
+        off a wattmeter rather than out of a model, and for that reason the one most likely to
+        return ``None``: that measurement covers sampling and leaves reads and writes unstated, so
+        it can price only a run that did neither. Use :meth:`priced` when you want a number and are
+        willing to be told which machine it is for.
         """
         import math
         if prices is None:
@@ -2374,6 +2384,28 @@ class Cost:
                 return None
             total += count * price
         return total
+
+    def priced(self) -> "tuple[str, float] | None":
+        """The best machine in :data:`PRICES` that can price *this* run, and what it costs there.
+
+        Measured before projected, and named either way. There is one measurement in the table and
+        it is deliberately incomplete: ``KV260_MEASURED`` states ``e_sample`` and leaves ``e_read``
+        unstated, because reads were never exercised on that board. So a run that read the state
+        back — which every anneal does, to keep a running best — cannot be priced there at all, and
+        :meth:`joules` correctly returns ``None``.
+
+        Reporting nothing at that point would be honest and useless. This falls through to the
+        projection instead and says which it used, so the number always arrives with its provenance
+        rather than arriving or not depending on what the run happened to do.
+        """
+        for name in ("KV260_MEASURED", "Z1_SPICE"):
+            p = PRICES.get(name)
+            if p is None:
+                continue
+            j = self.joules(p)
+            if j is not None:
+                return (name, j)
+        return None
 
     def __repr__(self) -> str:
         return (f"<Cost samples={self.samples} reads={self.reads} writes={self.writes}>")
@@ -2413,7 +2445,9 @@ class Answer:
 
     :attr:`cost` is the :class:`Cost` of producing this answer — node updates, reads and flashes,
     summed across **every** try when :meth:`Problem.solve` took more than one. ``answer.cost.joules()``
-    prices it on measured silicon; pass a different entry from :data:`PRICES` to price it elsewhere.
+    prices it, naming the machine — measured where the measurement covers what the run did, and the
+    projection otherwise. ``answer.cost.joules(p)`` prices it on one specific machine and returns
+    ``None`` when that machine states no price for something the run performed.
 
     :attr:`caveats` lists what the compiler knows is wrong with the model and cannot fix — today,
     an encoding no penalty can make exact. Empty is the normal case; a non-empty one means a value
@@ -2486,9 +2520,12 @@ class Answer:
             out += f"\n  agreement: {self.agreement[0]} of {self.agreement[1]} tries reached it"
         if self.cost is not None and self.cost.samples:
             out += f"\n  cost: {self.cost.samples} node updates"
-            j = self.cost.joules()
-            if j is not None:
-                out += f" = {j:.3g} J on {PRICES['KV260_MEASURED'].name}"
+            if self.cost.reads:
+                out += f", {self.cost.reads} reads"
+            priced = self.cost.priced()
+            if priced is not None:
+                name, j = priced
+                out += f" = {j:.3g} J on {name}"
         return out + ">"
 
 

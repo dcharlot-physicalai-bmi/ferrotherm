@@ -2954,6 +2954,44 @@ mod receipt_tests {
         assert!((1..=tries).contains(&agreed), "{agreed} of {tries} is not a count of 12 tries");
     }
 
+    /// Agreement counts an ENERGY, and a model with tied optima proves it must say so.
+    ///
+    /// The docs said "how many of them reached it", which reads as *this answer*. Build a model
+    /// whose optimum is achieved by several distinct assignments and the two readings separate:
+    /// every try ties on energy, so agreement is full, while `distinct_optima` finds more than one
+    /// way to get there and no two tries need have found the same one. Reporting that as "reached
+    /// this answer" would invert the decision the docs build on it.
+    #[test]
+    fn agreement_is_about_the_energy_and_ties_prove_it() {
+        // Two 3-valued variables that must differ, and NO objective: every feasible assignment is
+        // optimal, so there are six distinct ways to score the same energy.
+        let mut m = Model::new();
+        let a = m.categorical("a", 3);
+        let b = m.categorical("b", 3);
+        m.not_equal(a, b);
+        let c = m.compile().expect("a small one-hot model compiles");
+
+        let all = c.solve_all_with(&Compiled::default_schedule(), 12);
+        let winner = Solution::best_of_all(&all);
+        let (agreed, tries) = winner.agreement;
+        assert_eq!(tries, 12);
+
+        let optima = distinct_optima(&all, 1e-9);
+        assert!(
+            optima.len() > 1,
+            "this model is supposed to have tied optima; found {}",
+            optima.len()
+        );
+        // The load-bearing assertion: agreement counts tries at the winner's ENERGY, and here that
+        // is more than the number that found the winner's actual assignment.
+        let same_assignment = all.iter().filter(|s| s.values == winner.values).count();
+        assert!(
+            (agreed as usize) > same_assignment || optima.len() == 1,
+            "agreement {agreed} must count the energy tie, not the {same_assignment} tries that \
+             found this exact assignment"
+        );
+    }
+
     /// The counting rule itself, driven with tries whose verdicts are chosen rather than annealed.
     ///
     /// Two properties that a run over a real model cannot pin down, because it cannot be made to
@@ -3177,10 +3215,22 @@ pub struct Solution {
     /// `proved_optimal` with an INFEASIBLE answer proves something different and still useful: the
     /// penalty was too small, and no larger search will fix it. Raise the penalty.
     pub proved_optimal: bool,
-    /// How many independent tries this answer was chosen from, and how many of them reached it.
+    /// How many independent tries this answer was chosen from, and how many reached its **energy**.
     ///
     /// `(1, 1)` for a single solve, which is honest rather than flattering: one try that agrees
     /// with itself is no evidence at all.
+    ///
+    /// # It counts ENERGY, not assignment, and the difference is not pedantic
+    ///
+    /// This said "how many of them reached it", which reads as *this answer* and is false of any
+    /// model with tied optima. Agreement is a count of tries that matched the winner's energy AND
+    /// its feasibility — so a model with twelve distinct ways to score the same optimum reports
+    /// `(12, 12)` while no two tries found the same assignment.
+    ///
+    /// That is the right statistic for the question this field is for — *did the search converge
+    /// on the best value* — and the wrong one for *how many ways are there to do the job*. The
+    /// second question has its own answer: [`distinct_optima`], and `ft_model_optima` across the
+    /// ABI, which compare DECODED VALUES precisely because energies cannot distinguish them.
     ///
     /// # How to read it, and the asymmetry that matters
     ///
@@ -3259,18 +3309,31 @@ impl Solution {
         }
         winner.cost = total;
 
+        winner.agreement = Solution::agreement_among(&winner, all);
+        winner
+    }
+
+    /// How many of `all` reached this answer's energy and feasibility, out of how many there are.
+    ///
+    /// Separate from [`Solution::best_of_all`] because it is needed twice: once when a best-of
+    /// search picks a winner, and again when `ft_model_select_optimum` moves the handle to a
+    /// DIFFERENT answer. That second site used to copy the winner's count wholesale, which is only
+    /// right while the selected optimum shares the winner's energy -- true at a small tolerance
+    /// and false at a large one, since `distinct_optima` admits everything within `best + tol`.
+    /// Recomputing costs one pass and cannot be wrong.
+    #[must_use]
+    pub fn agreement_among(&self, all: &[Solution]) -> (u32, u32) {
         // Energies are sums of f64 coefficients, so two runs that found the same assignment can
         // differ in the last bits; the tolerance is relative to the magnitude for that reason, and
         // not because near-misses should count. Feasibility is part of the match: the compiled
         // energy folds every penalty in, so two states can price alike and mean opposite things.
-        let tol = 1e-9 * winner.energy.abs().max(1.0);
-        let feasible = winner.feasible();
+        let tol = 1e-9 * self.energy.abs().max(1.0);
+        let feasible = self.feasible();
         let agreed = all
             .iter()
-            .filter(|s| s.feasible() == feasible && (s.energy - winner.energy).abs() <= tol)
+            .filter(|s| s.feasible() == feasible && (s.energy - self.energy).abs() <= tol)
             .count();
-        winner.agreement = (agreed as u32, all.len() as u32);
-        winner
+        (agreed as u32, all.len() as u32)
     }
 
     /// What this answer cost in joules on a given machine, or `None` when that machine has no

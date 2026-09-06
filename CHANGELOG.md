@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### A second audit pass, and the surface my own gate battery could not see
+
+The first audit lost 16 of 29 agents to a session limit, so three dimensions — Rust correctness,
+cross-surface bindings, semantic drift — never ran. Re-run against the fixed tree, they found seven
+more, and a completeness critic found three the nine dimensions between them had not asked about.
+
+**The Zig test asserted the opposite of the Rust test, and CI went red.** Moving the readback charge
+into `anneal_scheduled` made every anneal charge reads; the Rust receipt test was updated to assert
+`joules(&KV260_MEASURED) == None`, and the Zig one was left asserting
+`joulesOn(kv) == costSamples * e_sample`. Two surfaces making contradictory claims about one call.
+Three review dimensions found it independently before CI reported it.
+
+**The process defect behind that is the more useful finding: the local gate battery ran neither
+`zig build test` nor Julia.** CI caught what the development loop structurally could not. Both are
+in it now.
+
+**`agreement` was documented as one statistic and computed as another.** "How many independent tries
+reached this answer" — computed as a count of tries matching the winner's *energy* and feasibility.
+On a model with tied optima that reports `(12, 12)` for an answer no other try found. The energy
+count is the right signal for *did the search converge on the best value*; the assignment question
+has its own answer in `distinct_optima`. The docs now say energy and point there, and a test on a
+model with six tied optima fails under either misreading. The related over-correction went too:
+`ft_model_select_optimum` was stamping the winner's agreement onto every alternative, which is only
+right while they share an energy — true at a small `tol`, false at a large one. Both sites now call
+one `Solution::agreement_among`.
+
+**`RtlFabric::run` charged the reflash with `if rung > 0`** — relative to the call, so a second run's
+first bitstream was free while the fabric held the previous run's configuration and seeds. At
+`Z1_SPICE` one write is worth 21,664 node updates, so the missing term was the largest line in the
+ledger. Charged against what the fabric holds now.
+
+**`Fabric::requantize` never learned about `Precision::Grid`.** The variant was added with `check`'s
+two matches updated and this one left on `Fixed`, so the only fabric that declares `Grid` was told
+quantisation introduced no error by the function whose job is the quantisation. A new enum variant
+is a question asked of every match on that enum.
+
+**Julia's `_load_prices!()` sat inside the dlopen `try`**, so a library that opened but lacked the
+new symbols looked like one that would not open — and for anyone who had set `FERROTHERM_LIB` to
+debug a specific build, silently produced a different one. Fixing it exposed what it was masking: a
+stale `ferrotherm_jll` artifact is ordered ahead of a checkout's own `target/release`, and the
+swallowed exception had been serving as an accidental version check. That check is now explicit and
+separated — an automatic candidate that is too old is skipped with its reason recorded, an explicit
+override that is too old is an error.
+
+**Zig's `pricesNamed` compared truncated names.** `ft_prices_name` copies `min(len, cap)`, so a short
+buffer yielded a shortened `.name` and `std.mem.eql` would then match `"KV260_"` against it —
+returning KV260_MEASURED's numbers for a name nobody asked for, against that function's own
+documented guarantee. An identifier now either fits or the caller gets null.
+
+**And the Python docstrings still promised pricing that cannot happen** — `Cost`'s showed a
+fabricated `0.00031...` from `KV260_MEASURED`, which returns `None` for every answer this library
+produces.
+
 ### An adversarial audit of this session's own work found seven defects, four of them mine from hours earlier
 
 A six-dimension multi-agent review of the 2,611-line change, each finding put to two independent
@@ -250,8 +303,15 @@ bound in Python, Julia, Zig and `ferrotherm.h`. In Python the receipt prints wit
 
 ```text
 <Answer feasible energy=-10.0000 [shift=3, crew=2]
-  cost: 38400 node updates = 4.17e-07 J on KV260_MEASURED>
+  agreement: 8 of 8 tries reached it
+  cost: 307200 node updates, 307200 reads = 5.22e-07 J on Z1_SPICE>
 ```
+
+It names `Z1_SPICE` rather than the measurement, and that is the honest answer rather than a
+fallback: an anneal reads the whole state every sweep to keep a running best, and `KV260_MEASURED`
+states no price for a read because reads were never exercised on that board. `Cost.priced()` /
+Julia's `priced()` try the measurement first and fall through to the projection, naming whichever
+they used — reporting nothing at that point would be honest and useless.
 
 ### The machines this crate prices, reachable by name
 

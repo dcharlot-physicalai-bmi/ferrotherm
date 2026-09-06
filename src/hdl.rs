@@ -465,6 +465,14 @@ pub struct RtlFabric {
     graph: Option<Graph>,
     state: Vec<i8>,
     max_spins: Option<usize>,
+    /// Whether the bitstream `program` paid for is still the one in the fabric.
+    ///
+    /// `run` charges a reflash per rung because each rung is a different implementation. It used to
+    /// decide that with `if rung > 0` — relative to the CALL, so the first rung of a *second* run
+    /// was free even though the fabric was then holding the last run's final configuration and its
+    /// seeds. One full-graph reflash is the most expensive line in the ledger (at `Z1_SPICE` a
+    /// write is worth 21,664 node updates), so the missing term was the largest one.
+    load_unused: bool,
     ledger: crate::ledger::Ledger,
 }
 
@@ -472,7 +480,13 @@ impl RtlFabric {
     /// The emulator with no board-size limit: the RTL's semantics, unconstrained by any part.
     #[must_use]
     pub fn new() -> RtlFabric {
-        RtlFabric { graph: None, state: Vec::new(), max_spins: None, ledger: crate::ledger::Ledger::default() }
+        RtlFabric {
+            graph: None,
+            state: Vec::new(),
+            max_spins: None,
+            load_unused: false,
+            ledger: crate::ledger::Ledger::default(),
+        }
     }
 
     /// The fabric as it fits on one FPGA, sized by [`crate::targets::FpgaTarget::measured_pbits`].
@@ -542,8 +556,11 @@ impl crate::fabric::Device for RtlFabric {
                     return bad;
                 }
                 self.state = vec![-1; g.n];
-                // A load is a write, charged. See `Device::program`.
+                // A load is a write, charged. See `Device::program`. That write buys the first
+                // configuration `run` needs, so `run` does not charge again for it -- but it buys
+                // exactly one, and every rung after it is another implementation.
                 self.ledger.writes += g.n as u64;
+                self.load_unused = true;
                 self.graph = Some(g);
             }
             Err(e) => bad.push(crate::fabric::Unsupported::Unplaceable { detail: e.to_string() }),
@@ -581,8 +598,13 @@ impl crate::fabric::Device for RtlFabric {
             //
             // So a multi-rung schedule on this fabric is what it is on the hardware: N independent
             // implementations, each run from reset, best answer kept.
-            if rung > 0 {
-                // A new bitstream is a full reprogram of every node, and the ledger says so.
+            // A new bitstream is a full reprogram of every node, and the ledger says so. Charged
+            // against what the FABRIC is holding, not against the position in this loop: after any
+            // rung has run, the netlist carries that rung's weights and seeds, so the next
+            // configuration -- including the first rung of the next `run` -- is a reflash.
+            if self.load_unused {
+                self.load_unused = false;
+            } else {
                 self.ledger.writes += g.n as u64;
             }
             for _ in 0..stage.sweeps {
@@ -862,6 +884,39 @@ mod declared_precision {
             ),
             _ => unreachable!(),
         }
+    }
+
+    /// A second run reflashes as much as the first, because the fabric is not holding its state.
+    ///
+    /// `run` charged the reflash with `if rung > 0`, which is relative to the CALL. On a second
+    /// run the fabric holds the previous run's final configuration and seeds, so its rung 0 needs
+    /// a new bitstream like every other rung — and was free. A full-graph reflash is the most
+    /// expensive line in this ledger.
+    #[test]
+    fn a_second_run_pays_for_its_own_first_bitstream() {
+        use crate::schedule::Schedule;
+
+        let mut src = String::from("ftp 1\nname ring\nspins 8\n");
+        for i in 0..8 {
+            src.push_str(&format!("factor 1 {i} {}\n", (i + 1) % 8));
+        }
+        let p = Program::from_ftp(&src).expect("a well-formed program");
+        let mut d = RtlFabric::new();
+        assert!(d.program(&p).is_empty());
+
+        let sched = Schedule::geometric(0.1, 4.0, 4, 5);
+        let rungs = sched.stages().len() as u64;
+
+        let after_load = Device::ledger(&d).writes;
+        d.run(&sched, 1).unwrap();
+        let first = Device::ledger(&d).writes - after_load;
+        d.run(&sched, 2).unwrap();
+        let second = Device::ledger(&d).writes - after_load - first;
+
+        // The load bought one configuration, so the first run reflashes for the OTHER rungs.
+        assert_eq!(first, (rungs - 1) * 8, "first run: {first} writes over {rungs} rungs");
+        // The second run holds nothing it can reuse, so it pays for every rung.
+        assert_eq!(second, rungs * 8, "second run: {second} writes over {rungs} rungs");
     }
 
     /// And the declaration names the grid the emitter actually uses.
