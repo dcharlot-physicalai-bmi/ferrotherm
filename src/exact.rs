@@ -14,26 +14,31 @@
 //!   it exact marginals, which is what lets a sampler be checked against truth on graphs far too
 //!   large to enumerate.
 //!
-//! The elimination order comes from the min-fill heuristic. Finding the optimal order is NP-hard,
-//! but the order only affects the width, and the width is measured rather than assumed: a bad order
-//! makes this slow or refused, **never wrong**.
+//! Finding the optimal elimination order is NP-hard, so two heuristics are built and the NARROWER
+//! is kept ([`Elimination::order_for`]): min-fill, which is greedy and local, and nested
+//! dissection, which splits by a separator. The order only affects the width, and the width is
+//! measured rather than assumed: a bad order makes this slow or refused, **never wrong**.
 //!
-//! How good is min-fill in practice? Measured against known treewidths
-//! (`examples/width_probe.rs`):
+//! Measured against known treewidths (`examples/width_probe.rs`):
 //!
-//! | graph | spins | min-fill width | true treewidth |
-//! |---|---|---|---|
-//! | chain, any length | 2000 | 1 | 1 |
-//! | 3x20 strip | 60 | 3 | 3 |
-//! | 4x20 strip | 80 | 4 | 4 |
-//! | 5x30 strip | 150 | 5 | 5 |
-//! | 6x40 strip | 240 | **8** | 6 |
-//! | 8x50 strip | 400 | **11** | 8 |
-//! | 10x10 grid | 100 | **13** | 10 |
+//! | graph | spins | min-fill alone | kept | true treewidth |
+//! |---|---|---|---|---|
+//! | chain, any length | 2000 | 1 | 1 | 1 |
+//! | 3x20 strip | 60 | 3 | 3 | 3 |
+//! | 5x30 strip | 150 | 5 | 5 | 5 |
+//! | 6x40 strip | 240 | 8 | **7** | 6 |
+//! | 8x50 strip | 400 | 11 | **9** | 8 |
+//! | 10x10 grid | 100 | 13 | **10** | 10 |
+//! | torus 10x10 | 100 | 23 | **20** | 20 |
+//! | torus 12x12 | 144 | 26 | **24** | 24 |
+//! | torus 14x14 | 196 | 34 | **28** | 28 |
 //!
-//! Optimal up to width 5, then drifting two or three above. Since cost is `2^width`, being three
-//! over is an eightfold price — worth knowing before blaming the machine, and worth revisiting if
-//! exact inference on wider graphs ever becomes load-bearing.
+//! Min-fill alone was optimal to width 5 and drifted two or three above beyond it. With dissection
+//! the grid and every torus land **on** the treewidth, and the strips within one of it.
+//!
+//! Since cost is `2^width`, that drift was not cosmetic: [`Elimination::max_width`] defaults to 24,
+//! so a 144-spin torus ordered at 26 was REFUSED for its order rather than its shape, and a 10x10
+//! torus cost 8x more than it had to.
 
 use crate::graph::Graph;
 
@@ -81,6 +86,164 @@ pub struct Exact {
     pub ground_state: Option<Vec<i8>>,
     /// `log Z` at the requested beta, if sum-product was run.
     pub log_z: Option<f64>,
+}
+
+#[cfg(test)]
+mod ordering {
+    use super::*;
+    use crate::graph::GraphBuilder;
+
+    fn strip(rows: usize, cols: usize) -> Graph {
+        let mut b = GraphBuilder::new(rows * cols);
+        let id = |r: usize, c: usize| r * cols + c;
+        for r in 0..rows {
+            for c in 0..cols {
+                if c + 1 < cols {
+                    b.couple(id(r, c), id(r, c + 1), 1.0);
+                }
+                if r + 1 < rows {
+                    b.couple(id(r, c), id(r + 1, c), 1.0);
+                }
+            }
+        }
+        b.build()
+    }
+
+    fn widths(g: &Graph) -> (usize, usize) {
+        let adj = adjacency(g);
+        (min_fill_order(g.n, &adj).1, separator_order(g.n, &adj).1)
+    }
+
+    /// Keeping the narrower of two heuristics can only narrow.
+    ///
+    /// This is the property that makes the second heuristic safe to adopt at all: a model that was
+    /// accepted stays accepted, and one that was refused may now fit. Asserted across families with
+    /// very different shapes, because a heuristic that helps grids could hurt something else and
+    /// the "keep the smaller" rule is what makes that impossible rather than unlikely.
+    #[test]
+    fn the_order_actually_used_is_never_wider_than_min_fill_alone() {
+        let cases: Vec<(String, Graph)> = vec![
+            ("3x20 strip".into(), strip(3, 20)),
+            ("5x30 strip".into(), strip(5, 30)),
+            ("8x50 strip".into(), strip(8, 50)),
+            ("10x10 grid".into(), strip(10, 10)),
+            ("torus 10".into(), crate::ising::lattice2d(10, 1.0)),
+            ("torus 14".into(), crate::ising::lattice2d(14, 1.0)),
+            ("ring 200".into(), crate::ising::ring(200, 1.0, 0.0)),
+            ("chain 500".into(), {
+                let mut b = GraphBuilder::new(500);
+                for i in 0..499 {
+                    b.couple(i, i + 1, 1.0);
+                }
+                b.build()
+            }),
+            ("frustrated loops".into(), crate::planted::frustrated_loops(8, 96, 3).graph),
+        ];
+        for (name, g) in cases {
+            let (mf, _) = widths(&g);
+            let kept = Elimination::order_for(&g).1;
+            assert!(
+                kept <= mf,
+                "{name}: the order kept is width {kept}, wider than min-fill's {mf}"
+            );
+        }
+    }
+
+    /// On a torus the dissection order hits the treewidth exactly.
+    ///
+    /// An `L x L` periodic lattice has treewidth `2L`. Min-fill drifts well above it — 23 at
+    /// L = 10, 26 at 12, 44 at 18 — and since cost is `2^width` that is 8x, and at L = 12 it is the
+    /// difference between refused and accepted at the default `max_width` of 24.
+    ///
+    /// Asserting EQUALITY rather than an improvement: "better than min-fill" would pass for an
+    /// order that is merely less bad, and the claim being made here is that this family is solved.
+    #[test]
+    fn a_torus_is_ordered_at_exactly_twice_its_side() {
+        for l in [6usize, 8, 10, 12, 14] {
+            let g = crate::ising::lattice2d(l, 1.0);
+            let (mf, sep) = widths(&g);
+            assert_eq!(
+                sep,
+                2 * l,
+                "torus {l}x{l}: dissection gave {sep}, the treewidth is {}",
+                2 * l
+            );
+            if l >= 10 {
+                assert!(mf > sep, "torus {l}: min-fill {mf} should be worse than {sep}");
+            }
+        }
+    }
+
+    /// A model refused for its ORDER, not its shape, now runs.
+    ///
+    /// The concrete payoff, stated as the thing a caller sees rather than as a width number. A
+    /// 10x10 torus has treewidth 20; min-fill orders it at 23, so a caller whose budget is 20 to 22
+    /// is refused a model that fits. The budget is set explicitly rather than using the default,
+    /// because a width-24 elimination allocates 2^24 f64 per table and this is a unit test.
+    #[test]
+    fn a_model_that_was_refused_for_its_order_now_runs() {
+        let g = crate::ising::lattice2d(10, 1.0);
+        let adj = adjacency(&g);
+        let mf = min_fill_order(g.n, &adj).1;
+        let e = Elimination { max_width: 20 };
+        assert!(
+            mf > e.max_width,
+            "this test is about a model min-fill refuses at width {}; it ordered at {mf}",
+            e.max_width
+        );
+        let out = e.log_partition(&g, 0.4).expect("the dissection order fits inside max_width");
+        assert!(out.log_z.expect("sum-product ran").is_finite());
+        assert_eq!(out.width, 20, "the torus should be ordered at exactly its treewidth");
+    }
+
+    /// The order is a permutation of every vertex, including ones BFS cannot reach.
+    ///
+    /// A separator search walks a component. A graph with an isolated spin, or with two pieces, has
+    /// vertices the walk never sees, and an order that omits them silently skips their elimination
+    /// — which is how `log Z` loses a factor per missing spin.
+    #[test]
+    fn every_vertex_is_in_the_order_even_when_the_graph_is_in_pieces() {
+        // Two disjoint chains and one isolated spin.
+        let mut b = GraphBuilder::new(25);
+        for i in 0..9 {
+            b.couple(i, i + 1, 1.0);
+        }
+        for i in 12..23 {
+            b.couple(i, i + 1, 1.0);
+        }
+        let g = b.build();
+        let adj = adjacency(&g);
+        let (order, _) = separator_order(g.n, &adj);
+        let mut seen = vec![false; g.n];
+        for &v in &order {
+            assert!(!seen[v], "vertex {v} appears twice in the order");
+            seen[v] = true;
+        }
+        assert!(seen.iter().all(|&x| x), "the order is not a permutation: {order:?}");
+
+        // And the answer is still right, checked against enumeration on a small graph in pieces:
+        // two 4-chains and two isolated spins, 12 spins in all.
+        let mut sb = GraphBuilder::new(12);
+        for i in 0..3 {
+            sb.couple(i, i + 1, 1.0);
+        }
+        for i in 5..8 {
+            sb.couple(i, i + 1, -0.7);
+        }
+        let small = sb.build();
+        let beta = 0.6;
+        let ln_z = Elimination::default().log_partition(&small, beta).unwrap().log_z.unwrap();
+        let mut acc = 0.0f64;
+        for m in 0u64..(1u64 << 12) {
+            let st: Vec<i8> = (0..12).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            acc += (-beta * small.energy(&st)).exp();
+        }
+        assert!(
+            (ln_z - acc.ln()).abs() < 1e-9,
+            "a graph in pieces: elimination {ln_z}, enumeration {}",
+            acc.ln()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -395,6 +558,163 @@ impl core::fmt::Display for TooWide {
 /// is what this crate builds most, and where it grows with the side — and smallest on dense random
 /// ones, which are the case the naive bound is worst for. A reader looking for `O(n² d²)` becoming
 /// something else will not find it here.
+/// The induced width of an arbitrary elimination order, by simulating the elimination.
+///
+/// Separate from [`min_fill_order`], which returns the width of the order it builds, because a
+/// second ordering heuristic needs to be SCORED on the same scale before either is chosen. A
+/// heuristic that reports its own number in its own way cannot be compared with another.
+pub(crate) fn induced_width(n: usize, adj: &[Vec<usize>], order: &[usize]) -> usize {
+    use std::collections::BTreeSet;
+    let mut nbr: Vec<BTreeSet<usize>> = adj.iter().map(|v| v.iter().copied().collect()).collect();
+    let mut alive = vec![true; n];
+    let mut width = 0usize;
+    for &v in order {
+        if !alive[v] {
+            continue;
+        }
+        let live: Vec<usize> = nbr[v].iter().copied().filter(|&u| alive[u] && u != v).collect();
+        width = width.max(live.len());
+        // Eliminating v makes its live neighbours a clique -- the fill edges.
+        for i in 0..live.len() {
+            for j in (i + 1)..live.len() {
+                nbr[live[i]].insert(live[j]);
+                nbr[live[j]].insert(live[i]);
+            }
+        }
+        alive[v] = false;
+    }
+    width
+}
+
+/// A nested-dissection order: split by a small separator, eliminate the pieces, then the separator.
+///
+/// # Why a second heuristic at all
+///
+/// Min-fill is greedy and local, and on grid-like graphs it drifts well above the true treewidth —
+/// measured here on the periodic `lattice2d` family, where a torus has treewidth about `2L`:
+///
+/// ```text
+///   10x10   min-fill 23      12x12   min-fill 26      18x18   min-fill 44
+/// ```
+///
+/// Since cost is `2^width`, and [`Elimination::max_width`] defaults to 24, that drift is the
+/// difference between an accepted model and a refused one: `lattice2d(12)` is 144 spins and is
+/// refused at 26.
+///
+/// # The separator, found by breadth-first level sets
+///
+/// A BFS from any vertex partitions a component into levels, and **every level is a separator** —
+/// removing it disconnects the levels before it from the levels after. So the cheapest separator a
+/// BFS offers is its smallest level, and on a grid the levels are exactly the rows or diagonals,
+/// which is what makes this find the orders nested dissection is named for without needing a
+/// geometric embedding.
+///
+/// Recursing on each side and placing the separator LAST is what bounds the width: by the time the
+/// separator is eliminated, everything it separated is gone.
+///
+/// It is a heuristic, like min-fill, and it is not always better — see
+/// [`Elimination::order_for`], which computes both and keeps the narrower. A bad order here makes
+/// nothing wrong, only slower or refused, which is the property [`min_fill_order`] already relies
+/// on.
+pub(crate) fn separator_order(n: usize, adj: &[Vec<usize>]) -> (Vec<usize>, usize) {
+    let mut order = Vec::with_capacity(n);
+    let all: Vec<usize> = (0..n).collect();
+    dissect(&all, adj, &mut order);
+    // Anything unreachable from the pieces visited -- isolated vertices, say -- still has to be in
+    // the order or the elimination silently skips it.
+    let mut seen = vec![false; n];
+    for &v in &order {
+        seen[v] = true;
+    }
+    for v in 0..n {
+        if !seen[v] {
+            order.push(v);
+        }
+    }
+    let w = induced_width(n, adj, &order);
+    (order, w)
+}
+
+/// Order one vertex subset: pieces first, separator last.
+fn dissect(sub: &[usize], adj: &[Vec<usize>], out: &mut Vec<usize>) {
+    // Below this a separator costs more than it saves: the subproblem is already narrower than the
+    // separator would be.
+    const LEAF: usize = 12;
+    if sub.len() <= LEAF {
+        out.extend_from_slice(sub);
+        return;
+    }
+    let inside: std::collections::BTreeSet<usize> = sub.iter().copied().collect();
+
+    // BFS from the subset's first vertex; every level is a separator, so take the smallest one that
+    // actually splits (levels 0 and last separate nothing).
+    let start = sub[0];
+    let mut level: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    let mut queue = std::collections::VecDeque::new();
+    level.insert(start, 0);
+    queue.push_back(start);
+    while let Some(v) = queue.pop_front() {
+        let d = level[&v];
+        for &u in &adj[v] {
+            if inside.contains(&u) && !level.contains_key(&u) {
+                level.insert(u, d + 1);
+                queue.push_back(u);
+            }
+        }
+    }
+    let depth = level.values().copied().max().unwrap_or(0);
+    let mut by_level: Vec<Vec<usize>> = vec![Vec::new(); depth + 1];
+    for (&v, &d) in &level {
+        by_level[d].push(v);
+    }
+
+    // A separator must have something on both sides, so only interior levels qualify. Ties go to
+    // the more central level, which balances the two halves and keeps the recursion shallow.
+    let mut best: Option<(usize, usize)> = None; // (size, level)
+    for d in 1..depth {
+        let size = by_level[d].len();
+        let centre = (d as isize - depth as isize / 2).unsigned_abs();
+        let key = (size, centre);
+        if best.is_none_or(|(bs, bd)| {
+            let bc = (bd as isize - depth as isize / 2).unsigned_abs();
+            key < (bs, bc)
+        }) {
+            best = Some((size, d));
+        }
+    }
+
+    let Some((_, cut)) = best else {
+        // Disconnected, or too shallow to split: BFS reached only part of the subset, or every
+        // level is an endpoint. Order what BFS reached, then the rest, rather than looping.
+        let reached: Vec<usize> = sub.iter().copied().filter(|v| level.contains_key(v)).collect();
+        let rest: Vec<usize> = sub.iter().copied().filter(|v| !level.contains_key(v)).collect();
+        if rest.is_empty() || reached.is_empty() {
+            out.extend_from_slice(sub);
+        } else {
+            dissect(&rest, adj, out);
+            out.extend_from_slice(&reached);
+        }
+        return;
+    };
+
+    let sep: std::collections::BTreeSet<usize> = by_level[cut].iter().copied().collect();
+    let before: Vec<usize> =
+        sub.iter().copied().filter(|v| level.get(v).is_some_and(|&d| d < cut)).collect();
+    let after: Vec<usize> = sub
+        .iter()
+        .copied()
+        .filter(|v| !sep.contains(v) && level.get(v).is_none_or(|&d| d > cut))
+        .collect();
+
+    if before.is_empty() || after.is_empty() {
+        out.extend_from_slice(sub);
+        return;
+    }
+    dissect(&before, adj, out);
+    dissect(&after, adj, out);
+    out.extend(by_level[cut].iter().copied());
+}
+
 pub(crate) fn min_fill_order(n: usize, adj: &[Vec<usize>]) -> (Vec<usize>, usize) {
     use std::collections::BTreeSet;
     let mut nbr: Vec<BTreeSet<usize>> = adj.iter().map(|v| v.iter().copied().collect()).collect();
@@ -668,11 +988,41 @@ impl Elimination {
     /// Induced width of the order this would use, without running anything.
     #[must_use]
     pub fn width(&self, g: &Graph) -> usize {
-        min_fill_order(g.n, &adjacency(g)).1
+        Self::order_for(g).1
+    }
+
+    /// The elimination order this will actually use, and its induced width.
+    ///
+    /// TWO HEURISTICS, THE NARROWER KEPT. Min-fill is greedy and local; nested dissection splits by
+    /// a separator and is the better fit for grid-like graphs, where min-fill drifts well above the
+    /// treewidth. Neither dominates, so both are built and scored on the same scale — by simulating
+    /// the elimination and taking the largest table it would build — and the smaller wins.
+    ///
+    /// Keeping the smaller is what makes this safe to adopt: the width can only go down, so a model
+    /// that was accepted before is still accepted, and one that was refused may now fit. Measured
+    /// on the periodic `lattice2d` family (a torus, treewidth about `2L`), where the default
+    /// `max_width` of 24 is the accept/refuse line:
+    ///
+    /// ```text
+    ///   grid    min-fill   dissection   kept
+    ///   10x10         23           20     20
+    ///   12x12         26           24     24     <- 26 was refused, 24 is not
+    ///   14x14         34           28     28
+    ///   18x18         44           36     36
+    /// ```
+    ///
+    /// Ties go to min-fill, which is the incumbent: an order change with no width change is churn
+    /// that moves which ground state comes back from a degenerate model.
+    #[must_use]
+    pub fn order_for(g: &Graph) -> (Vec<usize>, usize) {
+        let adj = adjacency(g);
+        let (mf_order, mf_width) = min_fill_order(g.n, &adj);
+        let (sep_order, sep_width) = separator_order(g.n, &adj);
+        if sep_width < mf_width { (sep_order, sep_width) } else { (mf_order, mf_width) }
     }
 
     fn run(&self, g: &Graph, beta: f64, min_sum: bool) -> Result<Exact, TooWide> {
-        let (order, width) = min_fill_order(g.n, &adjacency(g));
+        let (order, width) = Self::order_for(g);
         if width > self.max_width {
             return Err(TooWide::Width { width, max: self.max_width });
         }

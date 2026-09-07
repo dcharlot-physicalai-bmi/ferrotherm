@@ -722,6 +722,31 @@ minimum-energy states, because the penalty that makes a row hold also pins its s
 reason is that the count must be a statement about the model rather than about how the compiler
 chose to represent it.
 
+### Elimination orders, and the models that were refused for having a bad one
+
+Cost is `2^width`, so the elimination order is the whole price of exact inference. Finding the
+optimal one is NP-hard; `Elimination::order_for` builds two heuristics and keeps the narrower —
+min-fill, which is greedy and local, and nested dissection, which splits by a BFS level set (every
+level of a breadth-first search is a separator, and on a grid the levels are its rows).
+
+```text
+       graph   spins  min-fill    kept   treewidth
+  6x40 strip     240         8       7           6
+  8x50 strip     400        11       9           8
+ 10x10 grid      100        13      10          10
+ torus 10x10     100        23      20          20
+ torus 12x12     144        26      24          24
+ torus 14x14     196        34      28          28
+```
+
+The grid and every torus now land **on** the treewidth. `max_width` defaults to 24, so a 144-spin
+torus ordered at 26 was refused for its *order* rather than its shape, and a 10×10 torus cost 8×
+more than it had to.
+
+Keeping the narrower of two heuristics is what makes this safe to adopt: the width can only go down,
+so a model that was accepted stays accepted. Ties go to min-fill, the incumbent — an order change
+with no width change is churn that moves which ground state comes back from a degenerate model.
+
 ### An answer that says how far from optimal it might be
 
 Every other solver here, and every commercial machine in this field, returns "best found" and
