@@ -82,7 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
-| Cluster updates (OpenJij `Algorithm_SwendsenWang_run`) | `cluster` — Swendsen–Wang + Wolff, validity decided by **signed-graph balance** rather than by the sign of the couplings | **shipped, verified** — `z` measured, and a refusal carries the frustrated cycle as its witness |
+| Cluster updates (OpenJij `Algorithm_SwendsenWang_run`) | `cluster` — Swendsen–Wang + Wolff, validity decided by **signed-graph balance**, fields absorbed by a ghost spin | **shipped, verified** — `z` measured against the literature, and a refusal carries a frustrated cycle the caller can multiply out |
 | Exact ground-state **counting** (GenericTensorNetworks.jl) | `exact::ground_degeneracy` — the cold limit of `log Z` | **shipped, verified** against a closed form at 101 spins |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
 
@@ -914,6 +914,25 @@ proof the caller can check by multiplying its couplings.
 Scored against `certify` on a ring, a 3×3 lattice, a *disguised* 3×3 lattice and a graph carrying a
 coupling of exactly zero, for both moves; refusals checked on odd antiferromagnetic rings (where the
 witness's product is verified negative) and on `planted::frustrated_loops`.
+
+**Fields are an extra vertex, not a special case.** `with_ghost` couples every biased site to one
+added spin at `J_ig = h_i` and reads the physical state back as `ŝ_i = s_i · s_g` — exact, since
+`s_g² = 1` cancels out of both energy terms. The same balance test then decides the field case, and
+gives a sharper answer than the folklore: a cycle through the ghost has product `J_ij h_i h_j`, so
+
+| model | balance | this crate |
+|---|---|---|
+| ferromagnet, **uniform** field (either sign) | balanced | **sampled** — "Swendsen–Wang cannot handle a field" is true of the move as stated and false of the model |
+| ferromagnet, **mixed-sign** fields | unbalanced | refused, with a cycle through the ghost naming the two sites whose fields disagree |
+| antiferromagnet, uniform field | unbalanced | refused |
+
+Checked by `certify` at three field strengths and both signs, and separately by `<m>` against exact
+enumeration: 0.337 on `ring(10, 1.0, 0.4)` at `beta = 0.4`, reproduced to 0.01 by both moves. That
+second check is there because dropping the ghost on the way out sends `<m>` to zero by symmetry —
+a loud failure where a subtly wrong distribution would be a quiet one.
+
+`Frustrated::product(&g)` multiplies the couplings around the witness cycle, using `h_i` for the
+ghost's edges, so a caller can check a refusal without trusting the code that produced it.
 
 **Two defects this found in itself.** An earlier `wolff_sweep` ran single-cluster steps "until `n`
 spins have been visited", to make a Wolff sweep comparable to a Gibbs sweep. That makes the number of

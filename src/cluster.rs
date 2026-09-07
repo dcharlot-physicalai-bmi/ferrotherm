@@ -37,6 +37,23 @@
 //! `a_relabelled_ferromagnet_is_still_balanced` is that instance, and a validity test that checked
 //! for negative couplings would refuse a model this samples exactly.
 //!
+//! # Fields are an extra vertex, not a special case
+//!
+//! The moves as stated need a zero-field model, because a field breaks the up/down symmetry a
+//! probability-one-half cluster flip relies on. [`with_ghost`] supplies one by a change of
+//! variables: couple every biased site to one extra spin at `J_ig = h_i`, and read the physical
+//! configuration back as `ŝ_i = s_i · s_g`. That is exact, not approximate — `s_g² = 1` cancels out
+//! of both energy terms — and it means the balance test above decides the field case too, with no
+//! second algorithm and no second code path.
+//!
+//! It also gives a sharper answer than the folklore. A cycle through the ghost has product
+//! `J_ij h_i h_j`, so:
+//!
+//!   - a ferromagnet under a field of ONE sign is balanced, and is sampled here — "Swendsen–Wang
+//!     cannot handle a field" is true of the move as literally stated and false of the model;
+//!   - a ferromagnet under MIXED-sign fields is genuinely unbalanced, and is refused with a cycle
+//!     through the ghost naming the two sites whose fields disagree across a coupling.
+//!
 //! # The witness for a refusal is a cycle, not an edge
 //!
 //! When no gauge exists, the reason is a specific cycle, and [`Frustrated`] carries it. A single
@@ -57,6 +74,47 @@ use crate::rng::Pcg;
 pub struct Frustrated {
     /// The cycle, as vertices in order. The last is adjacent to the first.
     pub cycle: Vec<usize>,
+    /// The ghost spin's index, when the cycle runs through it.
+    ///
+    /// A cycle through the ghost is a statement about FIELDS: the ghost's incident couplings are
+    /// the `h_i`, so such a cycle says two sites' fields disagree in sign around a loop of real
+    /// couplings. The index is one past the caller's last node and is not a node of their graph,
+    /// which is why it is named here rather than left to be inferred from a number that looks like
+    /// an ordinary vertex. See [`Frustrated::product`].
+    pub ghost: Option<usize>,
+}
+
+impl Frustrated {
+    /// The product of the couplings around the cycle. Negative whenever this type exists.
+    ///
+    /// The witness made executable. A refusal that hands back a cycle is only worth more than a
+    /// complaint if the caller can check it without trusting the code that produced it, and asking
+    /// every caller to reimplement "multiply the couplings, and use `h_i` for the ghost's edges" is
+    /// how a checkable claim becomes an unchecked one.
+    ///
+    /// # Errors
+    ///
+    /// `None` if the cycle is not a cycle of `g` — consecutive vertices that are not adjacent, or a
+    /// walk that does not close. That is a bug in this module rather than a property of the model,
+    /// and returning `None` lets a test say so.
+    #[must_use]
+    pub fn product(&self, g: &Graph) -> Option<f64> {
+        let coupling = |i: usize, j: usize| -> Option<f64> {
+            match self.ghost {
+                // A ghost edge's weight IS the field of the site at the other end.
+                Some(gh) if i == gh => g.h.get(j).copied(),
+                Some(gh) if j == gh => g.h.get(i).copied(),
+                _ => (*g.offset.get(i)?..*g.offset.get(i + 1)?)
+                    .find(|&k| g.nbr[k] as usize == j)
+                    .map(|k| g.w[k]),
+            }
+        };
+        let mut prod = 1.0f64;
+        for w in self.cycle.windows(2) {
+            prod *= coupling(w[0], w[1])?;
+        }
+        Some(prod * coupling(*self.cycle.last()?, self.cycle[0])?)
+    }
 }
 
 impl core::fmt::Display for Frustrated {
@@ -115,7 +173,7 @@ pub fn gauge(g: &Graph) -> Result<Vec<i8>, Frustrated> {
                     parent[j] = i;
                     queue.push_back(j);
                 } else if sigma[j] != want {
-                    return Err(Frustrated { cycle: cycle_through(&parent, i, j) });
+                    return Err(Frustrated { cycle: cycle_through(&parent, i, j), ghost: None });
                 }
             }
         }
@@ -167,6 +225,46 @@ pub fn apply_gauge(g: &Graph, sigma: &[i8]) -> Graph {
         }
     }
     b.build()
+}
+
+/// `g` with its fields turned into couplings to one extra spin, or `g` unchanged if it has none.
+///
+/// The ghost-spin construction. Add a spin `g` and couple it to every biased site at `J_ig = h_i`,
+/// giving a zero-field model on `n + 1` spins whose energy is
+/// `E'(s) = -Σ J_ij s_i s_j - Σ h_i s_i s_g`. Read the physical configuration back as
+/// `ŝ_i = s_i · s_g` and `E(ŝ) = E'(s)` exactly, because `s_g² = 1` cancels out of both terms. So
+/// this is not an approximation of a field, it is a change of variables that removes one.
+///
+/// Returns the ghost's index, which is one past the caller's last node, or `None` when the model
+/// carried no field and none was added — a ghost coupled at zero would be an isolated spin doing
+/// nothing but perturbing the random stream.
+///
+/// # What this buys, and what it does not
+///
+/// The point is that the SAME balance test then decides validity, with no second algorithm for the
+/// field case. And it does not simply wave fields through: a cycle through the ghost has product
+/// `J_ij h_i h_j`, so a ferromagnet under a field of ONE sign is balanced and samplable — which the
+/// usual "Swendsen–Wang cannot handle a field" denies — while a ferromagnet under mixed-sign fields
+/// is genuinely unbalanced and is refused, with a cycle through the ghost naming the two sites whose
+/// fields disagree.
+#[must_use]
+pub fn with_ghost(g: &Graph) -> (Graph, Option<usize>) {
+    let ghost = g.h.iter().any(|&h| h != 0.0).then_some(g.n);
+    let mut b = crate::graph::GraphBuilder::new(g.n + usize::from(ghost.is_some()));
+    for i in 0..g.n {
+        for k in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[k] as usize;
+            if j > i {
+                b.couple(i, j, g.w[k]);
+            }
+        }
+        if let Some(gh) = ghost
+            && g.h[i] != 0.0
+        {
+            b.couple(i, gh, g.h[i]);
+        }
+    }
+    (b.build(), ghost)
 }
 
 /// Which cluster move to make.
@@ -223,13 +321,12 @@ pub struct ClusterStats {
 /// A misaligned edge never opens, so a cluster never crosses a domain wall, and at criticality the
 /// clusters *are* the correlated regions.
 ///
-/// # Fields are refused, by name
+/// # Fields, and why there is no separate code path for them
 ///
-/// A field breaks the up/down symmetry that a probability-one-half cluster flip relies on. The
-/// standard repair is a ghost spin coupled to every site at `J = h_i`, which turns the field into
-/// another edge — and then the same balance test decides validity on the augmented graph, so it is
-/// an extension of this module rather than a second algorithm. Until that exists and is scored
-/// against exact enumeration, [`Sampler::new`] refuses rather than sampling the wrong distribution.
+/// A field breaks the up/down symmetry a probability-one-half cluster flip relies on, so the moves
+/// as stated need a zero-field model. [`with_ghost`] supplies one by a change of variables rather
+/// than an approximation, and the SAME balance test then decides validity on the augmented graph.
+/// A field is therefore not a special case here; it is an extra vertex.
 pub struct Sampler<'g> {
     graph: &'g Graph,
     beta: f64,
@@ -245,6 +342,8 @@ pub struct Sampler<'g> {
     in_cluster: Vec<bool>,
     /// Wolff steps per sweep. A CONSTANT, for the reason in [`Sampler::with_wolff_steps`].
     wolff_steps: usize,
+    /// The ghost spin's index, when the model had fields. See [`with_ghost`].
+    ghost: Option<usize>,
 }
 
 impl<'g> Sampler<'g> {
@@ -252,17 +351,20 @@ impl<'g> Sampler<'g> {
     ///
     /// # Errors
     ///
-    /// [`Refusal::NotBalanced`] when no gauge makes `g` ferromagnetic — the algorithm is not valid
-    /// there, and running it anyway would sample a distribution that is not the model's.
-    /// [`Refusal::HasField`] when a site carries a field; see the type documentation.
-    pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Result<Sampler<'g>, Refusal> {
-        if let Some(i) = (0..g.n).find(|&i| g.h[i] != 0.0) {
-            return Err(Refusal::HasField { node: i, h: g.h[i] });
-        }
-        let sigma = gauge(g).map_err(Refusal::NotBalanced)?;
-        let gauged = apply_gauge(g, &sigma);
+    /// [`Frustrated`] when no gauge makes `g` ferromagnetic once its fields are absorbed into a
+    /// ghost spin — the algorithm is not valid there, and running it anyway would sample a
+    /// distribution that is not the model's. The cycle is the witness, and
+    /// [`Frustrated::product`] checks it against `g` directly.
+    pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Result<Sampler<'g>, Frustrated> {
+        let (augmented, ghost) = with_ghost(g);
+        let sigma = gauge(&augmented).map_err(|mut f| {
+            f.ghost = ghost;
+            f
+        })?;
+        let gauged = apply_gauge(&augmented, &sigma);
+        let n = augmented.n;
         let mut rng = Pcg::new(seed, 0x0C_1057);
-        let s = (0..g.n).map(|_| rng.spin(0.5)).collect();
+        let s = (0..n).map(|_| rng.spin(0.5)).collect();
         Ok(Sampler {
             graph: g,
             beta,
@@ -271,8 +373,9 @@ impl<'g> Sampler<'g> {
             s,
             rng,
             stack: Vec::new(),
-            in_cluster: vec![false; g.n],
+            in_cluster: vec![false; n],
             wolff_steps: 1,
+            ghost,
         })
     }
 
@@ -310,10 +413,22 @@ impl<'g> Sampler<'g> {
         self
     }
 
-    /// The current state, in the CALLER's sign convention.
+    /// The current state, in the CALLER's sign convention and over the CALLER's spins.
+    ///
+    /// Two changes of variable are undone here. The gauge, by multiplying through by `σ`; and the
+    /// ghost, by reading every spin relative to it — `ŝ_i = s_i · s_g` — and dropping it, so the
+    /// result has the caller's width whether or not their model had fields.
     #[must_use]
     pub fn state(&self) -> Vec<i8> {
-        self.s.iter().zip(&self.sigma).map(|(&v, &sg)| v * sg).collect()
+        let a = self.s.iter().zip(&self.sigma).map(|(&v, &sg)| v * sg);
+        match self.ghost {
+            None => a.collect(),
+            Some(gh) => {
+                let all: Vec<i8> = a.collect();
+                let g_val = all[gh];
+                all[..gh].iter().map(|&v| v * g_val).collect()
+            }
+        }
     }
 
     /// Its energy under the original graph.
@@ -494,37 +609,6 @@ impl<'g> Sampler<'g> {
         crate::samples::SampleSet::from_chain(states, energies, self.beta, plan.burn_in, thin)
     }
 }
-
-/// Why a cluster sampler declined a model.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Refusal {
-    /// No gauge makes the model ferromagnetic, with the cycle that proves it.
-    NotBalanced(Frustrated),
-    /// The model has a field, which breaks the symmetry the cluster flip relies on.
-    HasField {
-        /// The first site carrying one.
-        node: usize,
-        /// Its field.
-        h: f64,
-    },
-}
-
-impl core::fmt::Display for Refusal {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Refusal::NotBalanced(c) => write!(f, "{c}"),
-            Refusal::HasField { node, h } => write!(
-                f,
-                "site {node} carries a field of {h}, and a cluster flip of probability one half \
-                 assumes the up and down states are symmetric; the ghost-spin construction that \
-                 lifts this is not implemented, so this refuses rather than sampling a \
-                 distribution that is not the model's"
-            ),
-        }
-    }
-}
-
-impl core::error::Error for Refusal {}
 
 /// Union-find with path halving and union by size. Enough for one sweep's clusters.
 struct Uf {
@@ -882,17 +966,92 @@ mod tests {
         }
     }
 
-    /// A field is refused by name rather than sampled wrongly.
+    /// A uniform field is sampled, not refused — the ghost spin makes it an ordinary edge.
+    ///
+    /// This is the case the folklore gets wrong. "Swendsen–Wang cannot handle a field" is true of
+    /// the move as literally stated and false of the model: a cycle through the ghost has product
+    /// `J_ij h_i h_j`, so a ferromagnet under fields of one sign is balanced, and the same code that
+    /// samples the zero-field model samples this one.
+    ///
+    /// Scored against enumeration by `certify`, at two field strengths and both signs, because a
+    /// ghost applied on the way in and dropped on the way out would leave the distribution
+    /// symmetric — the field's whole effect is to break that symmetry.
     #[test]
-    fn a_field_is_refused_because_the_half_probability_flip_assumes_symmetry() {
-        let g = crate::ising::ring(8, 1.0, 0.25);
-        match Sampler::new(&g, 0.5, 1) {
-            Err(Refusal::HasField { node, h }) => {
-                assert_eq!(node, 0);
-                assert!((h - 0.25).abs() < 1e-12);
+    fn a_uniform_field_is_sampled_rather_than_refused() {
+        for h in [0.3, -0.3, 0.8] {
+            for update in [Update::SwendsenWang, Update::Wolff] {
+                let g = crate::ising::ring(10, 1.0, h);
+                let mut c = Sampler::new(&g, 0.4, 12).expect("a uniform field keeps it balanced");
+                let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
+                let cert = set.certificate(&g).expect("collect returns a chain");
+                assert!(cert.passed(), "h = {h} under {update:?}:\n{cert}");
             }
-            other => panic!("a field must be refused, got {:?}", other.map(|_| "a sampler")),
         }
+    }
+
+    /// The field actually biases the magnetisation, by the amount enumeration says.
+    ///
+    /// `certify` scores the distribution, but this is the statement a reader wants to see made
+    /// directly: a field has an effect, it has the right sign, and it has the right size. Drop the
+    /// ghost and `<m>` collapses to zero by symmetry, which is a much louder failure than a
+    /// distribution that is subtly off.
+    #[test]
+    fn the_field_biases_the_magnetisation_by_the_enumerated_amount() {
+        let g = crate::ising::ring(10, 1.0, 0.4);
+        let beta = 0.4;
+        let (mut z, mut mz) = (0.0f64, 0.0f64);
+        for mask in 0u64..(1u64 << g.n) {
+            let st: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let w = (-beta * g.energy(&st)).exp();
+            z += w;
+            mz += w * st.iter().map(|&x| f64::from(x)).sum::<f64>() / g.n as f64;
+        }
+        let exact = mz / z;
+        // The guard is on the FIXTURE, not the result: dropping the ghost sends `<m>` to zero by
+        // symmetry, so the fixture only earns its keep if the true value is far from zero compared
+        // with the 0.01 tolerance below. It is 0.337 here, a margin of about thirty.
+        assert!(exact > 0.2, "the fixture's field is too weak to distinguish: {exact}");
+
+        for update in [Update::SwendsenWang, Update::Wolff] {
+            let mut c = Sampler::new(&g, beta, 21).unwrap();
+            for _ in 0..2_000 {
+                c.sweep_with(update, None);
+            }
+            let (mut m, mut n) = (0.0f64, 0.0f64);
+            for _ in 0..40_000 {
+                c.sweep_with(update, None);
+                m += c.state().iter().map(|&x| f64::from(x)).sum::<f64>() / g.n as f64;
+                n += 1.0;
+            }
+            let got = m / n;
+            assert!(
+                (got - exact).abs() < 0.01,
+                "{update:?}: <m> {got:.4} against an enumerated {exact:.4}"
+            );
+        }
+    }
+
+    /// Mixed-sign fields are genuinely unbalanced, and the witness runs through the ghost.
+    ///
+    /// The other half of the previous test, and the one that stops the ghost from being a way to
+    /// wave every field through. A cycle `i - j - ghost - i` has product `J_ij h_j h_i`, so two
+    /// sites whose fields disagree in sign across a positive coupling cannot be gauged
+    /// ferromagnetic — and the refusal names them.
+    #[test]
+    fn mixed_sign_fields_are_refused_with_a_cycle_through_the_ghost() {
+        let mut b = crate::graph::GraphBuilder::new(6);
+        for i in 0..6 {
+            b.couple(i, (i + 1) % 6, 1.0);
+            b.set_bias(i, if i % 2 == 0 { 0.5 } else { -0.5 });
+        }
+        let g = b.build();
+        let Err(f) = Sampler::new(&g, 0.4, 1) else {
+            panic!("mixed-sign fields are not balanced and must be refused")
+        };
+        assert_eq!(f.ghost, Some(g.n), "the ghost must be named, not left to be inferred");
+        assert!(f.cycle.contains(&g.n), "the witness must run through the ghost: {:?}", f.cycle);
+        let prod = f.product(&g).expect("the witness is a cycle of g plus the ghost");
+        assert!(prod < 0.0, "the witness product must be negative, got {prod}");
     }
 
     /// A frustrated model is refused with its cycle.
@@ -900,8 +1059,12 @@ mod tests {
     fn a_spin_glass_is_refused_with_the_cycle_that_makes_it_one() {
         let g = crate::planted::frustrated_loops(6, 40, 3).graph;
         match Sampler::new(&g, 0.5, 1) {
-            Err(Refusal::NotBalanced(f)) => assert!(f.cycle.len() >= 3),
-            other => panic!("a frustrated glass must be refused, got {:?}", other.map(|_| "ok")),
+            Err(f) => {
+                assert!(f.cycle.len() >= 3);
+                assert_eq!(f.ghost, None, "a zero-field glass needs no ghost");
+                assert!(f.product(&g).expect("a cycle of g") < 0.0);
+            }
+            Ok(_) => panic!("a frustrated glass must be refused"),
         }
     }
 }
