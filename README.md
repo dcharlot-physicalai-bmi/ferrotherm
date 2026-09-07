@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
 | Multi-spin coding (Isakov et al.; the Janus line) | `multispin` — 64 replicas per `u64`, bit-sliced ripple-carry field, refuses non-uniform `|J|` by name | **shipped, verified** — every lane certified, and lane INDEPENDENCE tested separately |
 | Cluster updates (OpenJij `Algorithm_SwendsenWang_run`) | `cluster` — Swendsen–Wang + Wolff, validity decided by **signed-graph balance**, fields absorbed by a ghost spin | **shipped, verified** — `z` measured against the literature, and a refusal carries a frustrated cycle the caller can multiply out |
 | Exact ground-state **counting** (GenericTensorNetworks.jl) | `exact::ground_degeneracy` — the cold limit of `log Z` | **shipped, verified** against a closed form at 101 spins |
@@ -909,6 +910,67 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### Every temperature from one run, and two textbook recipes that do not converge
+
+Every other sampler here runs AT a temperature, so a curve — energy against temperature, a heat
+capacity, an entropy — costs one run per point. `wanglandau` estimates `g(E)`, the number of states
+at each energy, which is a property of the model and carries no temperature at all. Then
+`Z(beta) = sum_E g(E) exp(-beta E)` answers every temperature by a sum, including the cold ones where
+an ordinary chain is stuck behind a barrier.
+
+Checked against exact variable elimination at five temperatures spanning a factor of forty, from one
+run that never saw a temperature — and against enumeration level by level, as an absolute count
+rather than a shape, because anchoring to `sum_E g(E) = 2^n` turns the estimate into a number of
+states rather than a number of states times an unknown constant.
+
+**Equal-width energy bins are wrong on a spin model.** A 12-spin ring with `J = 1, h = 0.2` has 148
+distinct energies; cut that into 24 equal bins and several energy LEVELS land exactly on a bin edge.
+Those bins collect ~72,000 visits where their neighbours collect ~188,000 — a ratio of 0.39,
+permanently under any flatness threshold — and the walk cannot converge at any budget. It reached
+`ln f = 1e-3` in 1.35 million steps and made no further progress in **four hundred million**. The
+symptom is indistinguishable from slow mixing. So this bins by level: one bin per energy the model
+actually has. No empty bins, no split levels, no width to choose. A continuous spectrum is refused by
+name instead.
+
+**Halving the modification factor does not converge either.** The error SATURATES — whatever
+statistical error a stage ends with is frozen into `ln g` when `f` drops. Worst error in `ln g` on a
+4×4 lattice over four seeds:
+
+| target `ln f` | halving | `1/t` |
+|---|---|---|
+| 1e-4 | 0.2392 | 0.2392 |
+| 1e-5 | 0.2147 | **0.0881** |
+| 1e-6 | 0.2110 | **0.0292** |
+| 1e-7 | 0.2104 | **0.0049** |
+
+Three more orders of magnitude of work buys nothing under halving. Switching to `ln f = 1/t` once `f`
+falls below `1/t` (Belardinelli & Pereyra 2007) removes the saturation: 43× better at the tightest
+target, falling as `1/sqrt(t)`. The test tolerance is **0.15** precisely because `1/t` reaches 0.088
+and halving saturates at 0.215 — a number between them makes the schedule itself the thing under test.
+
+The order is a handover, not a replacement. Starting in the `1/t` regime rather than arriving at it
+gives worst errors of 7.7, 7.0, 12.1 and 34.7 across the fixtures: `1/t` refines an estimate and
+cannot build one, because early on it is enormous and writes noise that later, tinier increments
+cannot repair.
+
+**Three guards were written for a problem that did not exist.** Flatness is judged over levels found
+so far, which at the first check may be one — and a histogram over one level is trivially flat, so
+`ln f` could halve before the walk has been anywhere. A discovery phase, a histogram reset on late
+discovery, and a minimum-visit bar were each added to prevent that. Measured, all three were inert:
+
+```text
+                       discovery on / off      reset on / off
+  ring(12, 1, 0.2)      0.0536 / 0.0552        0.0590 / 0.0590
+  ring(16, 1, 0.2)      0.0978 / 0.0606        0.0746 / 0.0761
+  4x4 lattice           0.0292 / 0.0226        0.0190 / 0.0214
+  5x5 lattice           0.0193 / 0.0220        0.0209 / 0.0209
+```
+
+No direction, no fixture outside noise, complete level sets either way. All three are gone, and the
+flatness ratio alone does the job. Each removal was decided by measurement after a plausible
+mechanism argument turned out to be wrong — three times in a row, which is the honest reason this
+section exists.
 
 ### 64 replicas in one word
 

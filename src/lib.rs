@@ -136,6 +136,7 @@ pub mod ebm;
 pub mod adaptive;
 pub mod compile;
 pub mod tempering;
+pub mod wanglandau;
 pub mod wgsl;
 pub mod tla;
 pub mod linalg;

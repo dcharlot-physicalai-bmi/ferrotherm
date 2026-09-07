@@ -161,6 +161,17 @@ mutations=(
   # become the same chain -- and every one of them stays an exactly correct sample of the model, so
   # every per-replica check still passes while the sampler delivers a sixty-fourth of what it claims.
   "src/multispin.rs|let u = self.rng.next_u64();|let u = if self.rng.next_u64() & 1 == 1 { u64::MAX } else { 0 };|the_replicas_are_independent|64 replicas that are one replica"
+
+  # Wang-Landau halved its modification factor on a flat histogram, which is the original recipe and
+  # does not converge: the error SATURATES, because whatever statistical error a stage ends with is
+  # frozen into ln g when f drops. On a 4x4 lattice the worst error went 0.2392, 0.2147, 0.2110,
+  # 0.2104 as the target went 1e-4 to 1e-7 -- three orders of magnitude of work for nothing. The
+  # test tolerance sits between the two schedules on purpose, so this row is what enforces the fix.
+  "src/wanglandau.rs|if ln_f <= self.graph.n as f64 / steps.max(1) as f64 {|if false {|the_density_of_states_matches_enumeration|a modification factor that only halves"
+
+  # The classic Wang-Landau mistake, and the one the algorithm cannot notice itself: the update
+  # belongs to the state the walk is IN, and a rejected proposal leaves it in one.
+  "src/wanglandau.rs|let here = self.level_of(self.e)?;|let here = b;|the_derived_quantities_follow_from_the_same_estimate|only accepted moves recorded"
 )
 
 bad=0
