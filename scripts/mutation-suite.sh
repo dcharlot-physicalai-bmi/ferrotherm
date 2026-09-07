@@ -190,6 +190,12 @@ mutations=(
   # single-spin oracle put the simulated magnetisation at 0.987 against a true quantum 0.316, and at
   # identical work the default found the planted optimum 3 times in 30 where the plateau found 27.
   "src/sqa.rs|            trotter: Params::slices_for(beta, gamma_max),|            trotter: 4,|the_derived_slice_count_beats_the_literal_it_replaced|a Trotter slice count that ignores beta"
+
+  # `adaptive` shipped eight replicas over a span of eighty in beta. On a 14x14 planted glass that
+  # leaves three adjacent pairs at or below 0.01 -- a ladder cut in half by the module's own stated
+  # criterion -- and `adapt` does not repair it, because respacing moves interior rungs while the
+  # endpoints are held. The count needed grows as sqrt(n), which is the rule this row protects.
+  "src/adaptive.rs|    let r = (0.35 * (n as f64).sqrt() * span).ceil().min(4096.0) as usize;|    let r = (0.35 * span).ceil().min(4096.0) as usize;|the_derived_replica_count_gives_a_ladder_that_is_not_severed|a replica count blind to the model size"
 )
 
 bad=0

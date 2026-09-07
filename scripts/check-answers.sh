@@ -268,7 +268,29 @@ else skip zig "no zig on PATH"; fi
 if cargo build --release --quiet -p ferrotherm-serve 2>/dev/null; then
   attempt http
   (./target/release/ferrotherm-serve >/dev/null 2>&1 &)
-  for _ in $(seq 1 40); do curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null && break; sleep 0.25; done
+  # THE READINESS WAIT HAS TO BE ABLE TO FAIL.
+  #
+  # This loop exhausted its attempts and fell through whether or not the server had ever answered,
+  # so a slow start became a POST against nothing, a JSON decode of an empty string, and the verdict
+  # "http PRODUCED NOTHING -- its toolchain is present, so it broke" -- blaming the binding for a
+  # timeout in the harness.
+  #
+  # That is not hypothetical here. `check-semantics.sh` carried this same loop, was fixed, and the
+  # fix was not carried to its two siblings; this gate then failed exactly that way on a machine
+  # loaded by another build, and reported a working surface as broken. One fact, three scripts.
+  #
+  # 30 s rather than 10: the budget is for the worst machine this runs on, not the fastest, and a
+  # generous wait costs nothing when the server is already up.
+  ready=0
+  for _ in $(seq 1 120); do
+    if curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null; then ready=1; break; fi
+    sleep 0.25
+  done
+  if [ "$ready" != "1" ]; then
+    echo "  ferrotherm-serve did not answer /v1/health on 8479 within 30s, so the http and mcp arms" >&2
+    echo "  were never asked anything. That is a failure of this harness, not of a binding." >&2
+    exit 2
+  fi
   curl -s -X POST localhost:8479/v1/solve -d '{
       "variables":[{"name":"a","values":3},{"name":"b","values":3},{"name":"t","lo":10,"hi":13}],
       "constraints":[{"type":"not_equal","a":"a","b":"b"},

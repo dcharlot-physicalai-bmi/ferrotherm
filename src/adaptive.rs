@@ -47,6 +47,10 @@ use crate::tempering::TemperingResult;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
     /// Replicas in the ladder. Two is the minimum that can swap at all.
+    ///
+    /// The count a span needs grows as `sqrt(n)`. [`Params::default`] cannot know `n` and so ships a
+    /// constant eight, which severs the ladder on a glass much above a hundred spins; use
+    /// [`Params::for_graph`] when a model is in hand.
     pub replicas: usize,
     /// Adaptation rounds. Each one runs the ladder, measures acceptance, and redraws it.
     pub epochs: usize,
@@ -102,7 +106,25 @@ pub struct Outcome {
     pub spread: Vec<f64>,
 }
 
+impl Params {
+    /// Defaults with the replica count DERIVED from the model, by [`replicas_for`].
+    ///
+    /// [`Params::default`] cannot do this: a replica count depends on the number of spins, and a
+    /// `Default` impl has no model to read. That is why the shipped default is a constant, why the
+    /// constant is wrong above about a hundred spins, and why this exists — prefer it whenever a
+    /// graph is in hand, which is whenever [`adapt`] is about to be called.
+    #[must_use]
+    pub fn for_graph(g: &Graph) -> Params {
+        let d = Params::default();
+        Params { replicas: replicas_for(g.n, d.beta_min, d.beta_max), ..d }
+    }
+}
+
 /// Run parallel tempering, redrawing the ladder between epochs so every pair accepts alike.
+///
+/// Read [`Outcome::gaps`] before trusting the result: a ladder with too few replicas for its span
+/// comes back severed, and no amount of respacing repairs that. [`Params::for_graph`] sizes it.
+#[must_use]
 pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
     let r = p.replicas.max(2);
     let mut betas = crate::tempering::geometric_ladder(p.beta_min, p.beta_max, r);
@@ -190,6 +212,70 @@ pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::temp
     }
 
     (Outcome { best: last.best, best_e: last.best_e, betas, swap_rates: last.swap_rates, spread }, traces)
+}
+
+/// Acceptance below which an adjacent pair is a wall rather than a rung.
+///
+/// [`crate::tempering::TemperingResult::swap_rates`] states the criterion this module is judged by:
+/// healthy pairs sit roughly in `[0.2, 0.6]`, and near-zero pairs are "a gap replicas cannot cross".
+/// This is the near-zero end of it, made a number so [`Outcome::gaps`] can return one.
+pub const SEVERED: f64 = 0.05;
+
+/// Replicas a ladder needs to stay connected across `beta_min .. beta_max` on `n` spins.
+///
+/// `ceil(0.35 · sqrt(n) · ln(beta_max / beta_min))`, at least two.
+///
+/// # Where the shape and the constant come from
+///
+/// The shape is the standard parallel-tempering result rather than a fit: the acceptance of a swap
+/// between adjacent replicas is governed by `Δβ · ΔE`, and the energy fluctuation `ΔE` grows as
+/// `sqrt(n)`, so holding acceptance fixed across a fixed span in `ln β` needs a rung count
+/// proportional to `sqrt(n)`.
+///
+/// The constant was measured. `Params::default()`'s eight replicas over `[0.05, 4.0]` leave the
+/// ladder SEVERED on a spin glass — three pairs at or below 0.01 on a 14×14 planted instance, and
+/// `adapt` does not repair it, because with the endpoints held there is no respacing of eight rungs
+/// that spans a factor of eighty. The counts that do work, from `adapt` at five seeds each:
+///
+/// ```text
+///   spins   100   196   256
+///   needed   12    16    24        (default: 8, at every size)
+/// ```
+///
+/// With `0.35` the rule gives 16, 22 and 25 there, and on five sizes it was NOT fitted to — 36, 64,
+/// 144, 324 and 400 spins — it produced no severed pair and no pair under 0.2, with worst-pair
+/// acceptance from 0.50 down to 0.30 as the models grew.
+#[must_use]
+pub fn replicas_for(n: usize, beta_min: f64, beta_max: f64) -> usize {
+    let span = (beta_max / beta_min).ln();
+    if !span.is_finite() || span <= 0.0 || n == 0 {
+        return 2;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let r = (0.35 * (n as f64).sqrt() * span).ceil().min(4096.0) as usize;
+    r.max(2)
+}
+
+impl Outcome {
+    /// Adjacent pairs whose acceptance is below [`SEVERED`]: the walls in the ladder returned.
+    ///
+    /// A ladder with a gap is not a slow ladder, it is a disconnected one — replicas on the cold
+    /// side never reach the hot side, so the method degenerates into independent chains while still
+    /// returning an answer that looks like tempering. `swap_rates` has always carried the evidence;
+    /// this is the judgement, so a caller cannot get a severed ladder without being able to ask.
+    ///
+    /// Empty is the healthy answer. When it is not empty, more replicas are the fix — see
+    /// [`replicas_for`] and [`Params::for_graph`] — because the endpoints are the physics the caller
+    /// asked for and respacing alone cannot bridge a span that has too few rungs.
+    #[must_use]
+    pub fn gaps(&self) -> Vec<usize> {
+        self.swap_rates
+            .iter()
+            .enumerate()
+            .filter(|&(_, &r)| r < SEVERED)
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 /// Redraw a ladder so acceptance is spread evenly across it.
@@ -566,4 +652,82 @@ mod tests {
         // A 2D ladder over a ferromagnet at these betas should find something well below zero.
         assert!(out.best_e < -0.8 * g.n_edges as f64, "best {} on {} edges", out.best_e, g.n_edges);
     }
+    /// The shipped default ladder is severed on a glass, and the derived one is not.
+    ///
+    /// The defect this module carried, stated in its own units. `tempering::TemperingResult`
+    /// documents the criterion — healthy pairs sit roughly in `[0.2, 0.6]`, and near-zero pairs are
+    /// "a gap replicas cannot cross" — and `Params::default()`'s eight replicas over `[0.05, 4.0]`
+    /// produce those gaps on any glass much past a hundred spins.
+    ///
+    /// `adapt` does NOT repair it, which is the part worth pinning: respacing moves interior rungs
+    /// and the endpoints are held, so eight rungs spanning a factor of eighty stay severed however
+    /// they are arranged. On a 16x16 the default went from three severed pairs to four.
+    #[test]
+    fn the_derived_replica_count_gives_a_ladder_that_is_not_severed() {
+        let g = crate::planted::frustrated_loops(14, 294, 5).graph;
+
+        let shipped = adapt(&g, &Params::default(), 7);
+        assert!(
+            !shipped.gaps().is_empty(),
+            "the fixture must actually exhibit the defect, or this proves nothing: rates {:?}",
+            shipped.swap_rates
+        );
+
+        let sized = Params::for_graph(&g);
+        assert!(
+            sized.replicas > Params::default().replicas,
+            "a 196-spin glass needs more than the default {} rungs",
+            Params::default().replicas
+        );
+        let out = adapt(&g, &sized, 7);
+        assert!(
+            out.gaps().is_empty(),
+            "the derived ladder ({} rungs) is still severed at pairs {:?}: rates {:?}",
+            sized.replicas,
+            out.gaps(),
+            out.swap_rates
+        );
+    }
+
+    /// The rule has the shape the physics gives it, and never returns a ladder that cannot swap.
+    #[test]
+    fn the_replica_rule_scales_as_the_root_of_the_model() {
+        let (lo, hi) = (0.05, 4.0);
+        let (a, b) = (replicas_for(100, lo, hi), replicas_for(400, lo, hi));
+        // Four times the spins is twice the fluctuation, so twice the rungs.
+        let ratio = b as f64 / a as f64;
+        assert!(
+            (1.8..=2.2).contains(&ratio),
+            "quadrupling n should about double the rungs: {a} then {b}"
+        );
+        assert!(
+            replicas_for(400, lo, hi) > replicas_for(400, 0.5, 4.0),
+            "a wider span needs more rungs than a narrow one"
+        );
+        assert_eq!(replicas_for(0, lo, hi), 2, "never fewer than two, which could not swap");
+        // The clamp, on the path that reaches it. A tiny model over a narrow span computes ONE
+        // rung, and one rung cannot swap with anything -- the `n == 0` case above returns early
+        // and so never exercises this, which a mutation removing the clamp survived.
+        assert_eq!(replicas_for(1, 1.0, 1.1), 2, "one rung is not a ladder");
+        assert_eq!(replicas_for(100, 1.0, 1.0), 2, "nor for a span of nothing");
+        assert_eq!(replicas_for(100, 1.0, f64::NAN), 2, "nor for a span that is not a number");
+    }
+
+    /// `gaps` reads the rates it is given, and empty means healthy.
+    #[test]
+    fn gaps_names_the_pairs_that_cannot_be_crossed() {
+        let mut o = Outcome {
+            best: vec![1],
+            best_e: 0.0,
+            betas: vec![0.1, 0.2, 0.3, 0.4],
+            swap_rates: vec![0.4, 0.5, 0.35],
+            spread: vec![],
+        };
+        assert!(o.gaps().is_empty(), "healthy rates have no gaps");
+        o.swap_rates = vec![0.4, 0.01, 0.35];
+        assert_eq!(o.gaps(), vec![1]);
+        o.swap_rates = vec![0.0, 0.01, 0.04];
+        assert_eq!(o.gaps(), vec![0, 1, 2], "every pair below the bar is named");
+    }
+
 }

@@ -70,7 +70,7 @@ score. Scoring it found three defects on the first run.
 | Torx — stochastic differentiable programming (Extropic) | `program` — typed wires, stochastic gates, 3 gradient routes | **shipped, verified** |
 | Thermalizers — variational compilation (Extropic) | `compile` — exact per-factor KL fit onto device patches | **shipped, verified** |
 | p-computer optimization line (Camsari et al.) | `tempering` — annealing + parallel tempering, ladder diagnostics | **shipped, verified** |
-| 2D adaptive parallel tempering over (β, W₀) — *one MATLAB file, June 2025* | `adaptive` — respacing to equal acceptance, plus a (β, coupling-scale) grid | **shipped; mechanism verified, payoff measured absent** |
+| 2D adaptive parallel tempering over (β, W₀) — *one MATLAB file, June 2025* | `adaptive` — respacing to equal acceptance, plus a (β, coupling-scale) grid; replica count derived from the model | **shipped, verified** — the default ladder was severed on a glass and the payoff is now measured |
 | Thermodynamic linear algebra (Aifer et al. / Normal Computing) | `tla` — OU-network SPD solves + bias-free exact-transition integrator | **shipped, verified** |
 | Torx gradient estimators (Extropic) | `program` — REINFORCE + parameter-shift + **EBM-kernel** (one trajectory + one auxiliary draw) | **shipped, verified** |
 | DTM — denoising thermodynamic models (Extropic's flagship architecture) | `dtm` — forward kernels, pattern grids, contrastive chain training, ACP, TC penalty | **shipped, verified** |
@@ -911,6 +911,54 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### The adaptive ladder's default was severed, and adapting did not repair it
+
+`tempering::TemperingResult::swap_rates` states the criterion: healthy adjacent pairs sit roughly in
+`[0.2, 0.6]`, and near-zero pairs mean "the ladder has a gap replicas cannot cross". `adaptive`
+shipped eight replicas over `β ∈ [0.05, 4.0]`, and on a planted 14×14 glass that gives
+
+```text
+  0.17  0.01  0.00  0.01  0.07  0.54  0.28
+```
+
+Three pairs at or below 0.01 — a ladder cut in half, where cold replicas never reach the hot side
+and parallel tempering silently degenerates into independent chains that still return a
+tempering-shaped answer.
+
+**And `adapt` does not fix it**, which is the module's whole purpose. On a 16×16 it went from three
+severed pairs to four. The respaced ladder shows why:
+
+```text
+  0.050  0.175  0.249  0.295  0.350  0.502  0.976  4.000
+```
+
+Six of eight rungs crowded below `β = 1`, and an unbridgeable jump from 0.976 to the cold endpoint.
+The endpoints are held deliberately — they are the physics the caller asked for — so with too few
+rungs for the span there is no arrangement that connects. Respacing cannot manufacture a replica.
+
+The count a span needs grows as `sqrt(n)`: swap acceptance is governed by `Δβ · ΔE`, and the energy
+fluctuation grows as the square root of the model. `replicas_for(n, β_min, β_max)` is
+`⌈0.35 · sqrt(n) · ln(β_max/β_min)⌉` — the **shape** from that argument, the constant measured. What
+`adapt` needs, at five seeds each:
+
+| spins | 100 | 196 | 256 |
+|---|---|---|---|
+| needed | 12 | 16 | 24 |
+| shipped | 8 | 8 | 8 |
+
+On five sizes the constant was *not* fitted to — 36, 64, 144, 324 and 400 spins — the rule produced
+no severed pair and no pair below 0.2, with worst-pair acceptance falling gently from 0.50 to 0.30 as
+the models grew.
+
+`Params::for_graph(&g)` applies it. `Params::default()` still ships eight, because a `Default` impl
+has no model to read and a replica count needs `n` — the doc says so and points at `for_graph`, since
+any constant is wrong at some size and a constant wrong at a *different* size is not a fix. That is
+the structural difference from `sqa`, where the derived value depends only on fields `Params` already
+carries and so could go straight into `Default`.
+
+`Outcome::gaps()` returns the severed pairs. `swap_rates` always carried the evidence; what was
+missing was the judgement, so a caller could receive a disconnected ladder without a way to ask.
 
 ### The simulated-quantum default was running classical annealing
 

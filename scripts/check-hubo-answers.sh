@@ -248,10 +248,29 @@ print("energy=%g product=%d terms=%d arity=%d ancillas=%d"
 
   attempt http
   (./target/release/ferrotherm-serve 127.0.0.1:8487 >/dev/null 2>&1 &)
-  for _ in $(seq 1 40); do
-    curl -s -o /dev/null -X POST localhost:8487/v1/capabilities -d '{}' 2>/dev/null && break
+  # THE READINESS WAIT HAS TO BE ABLE TO FAIL.
+  #
+  # This loop exhausted its attempts and fell through whether or not the server had ever answered,
+  # so a slow start became a POST against nothing, a JSON decode of an empty string, and the verdict
+  # "http PRODUCED NOTHING -- its toolchain is present, so it broke" -- blaming the binding for a
+  # timeout in the harness.
+  #
+  # That is not hypothetical here. `check-semantics.sh` carried this same loop, was fixed, and the
+  # fix was not carried to its two siblings; this gate then failed exactly that way on a machine
+  # loaded by another build, and reported a working surface as broken. One fact, three scripts.
+  #
+  # 30 s rather than 10: the budget is for the worst machine this runs on, not the fastest, and a
+  # generous wait costs nothing when the server is already up.
+  ready=0
+  for _ in $(seq 1 120); do
+    if curl -s -o /dev/null -X POST localhost:8487/v1/capabilities -d '{}' 2>/dev/null; then ready=1; break; fi
     sleep 0.25
   done
+  if [ "$ready" != "1" ]; then
+    echo "  ferrotherm-serve did not answer /v1/capabilities on 8487 within 30s, so the http and mcp arms" >&2
+    echo "  were never asked anything. That is a failure of this harness, not of a binding." >&2
+    exit 2
+  fi
   curl -s -X POST localhost:8487/v1/hubo -d "$BODY" 2>/dev/null \
     | python3 -c "$READ" > "$out/http.txt" 2> "$out/http.err"
   pkill -f 'ferrotherm-serve 127.0.0.1:8487' 2>/dev/null
