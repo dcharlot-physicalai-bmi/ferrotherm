@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| DIMACS CNF / WCNF — the MAX-SAT benchmark corpus | `dimacs` — clauses to a `Hubo` by exact subset expansion, no penalty | **shipped, verified** — the energy IS the unsatisfied weight at every assignment |
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
 | Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
@@ -912,6 +913,40 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### The MAX-SAT corpus, without a penalty or a modelling choice
+
+`gset` brings in the max-cut benchmarks. `dimacs` brings in the other standard family, and a far
+larger one: thirty years of published SAT and MAX-SAT competition instances, every one of them an
+energy model this crate already solves.
+
+The translation is exact. A clause is violated exactly when all its literals are false, so its cost
+is the indicator of that event:
+
+```text
+  violated(C) = Π_{l ∈ C} [l is false] = Π_{l ∈ C} (1 − σ_l s_i) / 2
+```
+
+with `σ_l = ±1` for a positive or negated literal, since `l` is false exactly at `s_i = −σ_l`.
+Expanding over subsets gives a `k`-body spin polynomial, which is what `Hubo` holds — and `reduce`
+lowers it to pairwise hardware from there. No penalty, no scaling, nothing left for the caller to
+choose.
+
+**The constant is returned rather than dropped.** The expansion has an empty-subset term, `w / 2^k`
+per clause, and `Factor::new` correctly refuses a term with no variables — so `to_hubo` hands it back
+separately. Add it and the energy IS the unsatisfied weight, at *every* assignment, which is what
+makes the check a proof rather than a spot test. Drop it and every optimum is still right and every
+reported number is off by a fixed amount: an error that passes a solver test and fails only when
+someone compares against a published result.
+
+Real files carry clauses that are not clauses, and each is handled rather than rejected — a tautology
+`x ∨ ¬x` has no energy and is dropped, a repeated literal collapses because `x ∨ x` is `x`, and an
+empty clause is violated by everything and joins the constant. A clause count disagreeing with the
+header is refused, because a truncated download otherwise parses into a perfectly valid smaller
+instance whose optimum nobody can compare.
+
+Verified exhaustively against the clause list at every assignment, against brute force for the
+optimum, and end to end through `hubo::anneal`. Nine mutations, nine killed.
 
 ### Training an energy model without a sampler
 

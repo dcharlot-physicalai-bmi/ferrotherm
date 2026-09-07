@@ -111,6 +111,7 @@ pub mod host;
 pub mod bound;
 pub mod branch;
 pub mod gset;
+pub mod dimacs;
 pub mod popanneal;
 pub mod tabu;
 pub mod bls;
