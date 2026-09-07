@@ -148,6 +148,96 @@ pub fn onsager_log_z_density(beta: f64, j: f64, grid: usize) -> f64 {
     core::f64::consts::LN_2 + acc * step * step / (8.0 * core::f64::consts::PI * core::f64::consts::PI)
 }
 
+/// The arithmetic–geometric mean of `a` and `b`.
+///
+/// Converges quadratically: the number of correct digits doubles each iteration, so machine
+/// precision arrives in about five steps for any argument in range. That is what makes
+/// [`elliptic_k`] cheap enough to call inside a loop.
+#[must_use]
+pub fn agm(mut a: f64, mut b: f64) -> f64 {
+    for _ in 0..64 {
+        if (a - b).abs() <= f64::EPSILON * a.abs() {
+            break;
+        }
+        let next = 0.5 * (a + b);
+        b = (a * b).max(0.0).sqrt();
+        a = next;
+    }
+    0.5 * (a + b)
+}
+
+/// Complete elliptic integral of the first kind, `K(k) = ∫₀^{π/2} dθ / sqrt(1 − k² sin²θ)`.
+///
+/// By Gauss's AGM identity `K(k) = π / (2 · AGM(1, sqrt(1 − k²)))`, which is exact arithmetic rather
+/// than quadrature — no grid, no step size, and no accuracy that degrades where the integrand is
+/// awkward. `k = 1` is the logarithmic singularity and returns infinity, which is the value.
+///
+/// # Panics
+///
+/// If `|k| > 1`, where the integral is not real.
+#[must_use]
+pub fn elliptic_k(k: f64) -> f64 {
+    assert!(k.abs() <= 1.0, "K(k) is real only for |k| <= 1; got {k}");
+    elliptic_k_comp((1.0 - k * k).max(0.0).sqrt())
+}
+
+/// `K` as a function of the COMPLEMENTARY modulus `k' = sqrt(1 − k²)`.
+///
+/// The form to use when `k` approaches one, because `k'` is then the quantity known accurately and
+/// `k` is not. Forming `k` first and taking `sqrt(1 − k²)` loses everything to cancellation exactly
+/// where `K` is most sensitive — and can leave `k` a rounding above one, where the integral is not
+/// real. [`onsager_energy_density`] hits that at criticality, where the true `k` is exactly one.
+#[must_use]
+pub fn elliptic_k_comp(comp: f64) -> f64 {
+    if comp <= 0.0 {
+        return f64::INFINITY;
+    }
+    core::f64::consts::PI / (2.0 * agm(1.0, comp))
+}
+
+/// Internal energy per spin of the infinite square lattice, exactly (Onsager 1944).
+///
+/// ```text
+///   U/N = −J coth(2K) [ 1 + (2/π)(2 tanh²(2K) − 1) K(κ) ],   K = βJ,  κ = 2 sinh(2K) / cosh²(2K)
+/// ```
+///
+/// # Why this is worth having beside [`onsager_log_z_density`]
+///
+/// That function integrates over a `grid × grid` mesh — quadratic work, and its integrand has a
+/// logarithmic singularity at criticality, so exactly where a sampler is hardest to check the oracle
+/// is least accurate. This is a closed form evaluated through the AGM: five iterations, machine
+/// precision, and no worse behaved at `K_c` than anywhere else.
+///
+/// At criticality it is not even that. `sinh(2K_c) = 1` makes `tanh²(2K_c) = 1/2`, the bracket's
+/// second term vanishes, and `U/N = −J√2` exactly, with the elliptic integral never consulted —
+/// which is the single sharpest number available for testing a two-dimensional sampler.
+///
+/// The convention is this crate's: `E = −Σ J s_i s_j`, two bonds per site, so `U/N → −2J` as the
+/// lattice freezes and `→ 0` as it melts.
+#[must_use]
+pub fn onsager_energy_density(beta: f64, j: f64) -> f64 {
+    let k = beta * j;
+    let (s2, c2) = ((2.0 * k).sinh(), (2.0 * k).cosh());
+    if s2 == 0.0 {
+        // Infinite temperature: no correlation, so no energy.
+        return 0.0;
+    }
+    // Both written through `1 − sinh²(2K)`, which is what makes criticality representable.
+    //
+    // The modulus is `κ = 2 sinh / cosh²` and its complement works out to `|1 − sinh²| / cosh²`,
+    // exactly; the coefficient `2 tanh²(2K) − 1` is `(sinh² − 1) / cosh²`. So the elliptic
+    // integral's singularity and the coefficient's zero are THE SAME POINT, `sinh(2K) = 1`, which
+    // is `K_c`. Computing `κ` and taking `sqrt(1 − κ²)` instead puts `κ` a rounding above one there
+    // — not real — and multiplies a zero by an infinity if it does not.
+    //
+    // The limit is zero: the coefficient falls linearly while `K` grows only logarithmically.
+    let cc = c2 * c2;
+    let comp = (1.0 - s2 * s2).abs() / cc;
+    let coeff = (s2 * s2 - 1.0) / cc;
+    let term = if comp == 0.0 { 0.0 } else { coeff * elliptic_k_comp(comp) };
+    -j * (c2 / s2) * (1.0 + (2.0 / core::f64::consts::PI) * term)
+}
+
 // ---- the kernel ------------------------------------------------------------------------------
 
 /// One palindromic chromatic sweep at `beta`: every colour class forward, then every class back.
@@ -987,4 +1077,115 @@ mod tests {
         assert!(next_up(f64::INFINITY) == f64::INFINITY);
         assert!(next_down(f64::INFINITY) == f64::MAX);
     }
+    /// `K(k)` against values that are known in closed form, and against its own defining integral.
+    #[test]
+    fn the_elliptic_integral_agrees_with_what_is_known_about_it() {
+        // K(0) = pi/2 exactly.
+        assert!((elliptic_k(0.0) - core::f64::consts::FRAC_PI_2).abs() < 1e-15);
+        // K(1) is the logarithmic divergence.
+        assert!(elliptic_k(1.0).is_infinite());
+        // Elsewhere, against the integral it is defined by, by fine quadrature.
+        for &k in &[0.1f64, 0.4, 0.7, 0.9, 0.99] {
+            let n = 2_000_000;
+            let step = core::f64::consts::FRAC_PI_2 / n as f64;
+            let mut acc = 0.0;
+            for m in 0..n {
+                let th = (m as f64 + 0.5) * step;
+                acc += 1.0 / (1.0 - k * k * th.sin() * th.sin()).sqrt();
+            }
+            let quad = acc * step;
+            let got = elliptic_k(k);
+            assert!(
+                (got - quad).abs() < 1e-7 * got,
+                "K({k}): AGM {got:.10}, quadrature {quad:.10}"
+            );
+        }
+    }
+
+    /// The AGM converges quadratically, which is the reason it is used rather than a series.
+    #[test]
+    fn the_agm_is_its_own_fixed_point_and_lies_between_its_arguments() {
+        for &(a, b) in &[(1.0f64, 0.5f64), (2.0, 1.0), (1.0, 1e-6), (3.0, 3.0)] {
+            let m = agm(a, b);
+            assert!(m >= a.min(b) - 1e-12 && m <= a.max(b) + 1e-12, "agm({a},{b}) = {m}");
+            // Idempotent on equal arguments, and invariant under one step of its own iteration.
+            let stepped = agm(0.5 * (a + b), (a * b).sqrt());
+            assert!((m - stepped).abs() < 1e-14, "agm is not invariant under its own step");
+        }
+        assert!((agm(1.0, 1.0) - 1.0).abs() < 1e-15);
+    }
+
+    /// The energy density is exact at criticality, and the closed form knows it without the integral.
+    ///
+    /// `sinh(2K_c) = 1` makes `tanh²(2K_c) = 1/2`, so the bracket's second term vanishes and
+    /// `U/N = −J√2` with the elliptic integral never consulted. The sharpest single number available
+    /// for checking a two-dimensional sampler, and it costs nothing to state.
+    #[test]
+    fn the_energy_density_is_minus_root_two_at_criticality() {
+        let beta_c = 0.5 * (1.0 + 2.0f64.sqrt()).ln();
+        for &j in &[1.0f64, 2.0, 0.5] {
+            let got = onsager_energy_density(beta_c / j, j);
+            let want = -j * 2.0f64.sqrt();
+            assert!((got - want).abs() < 1e-12, "J = {j}: {got:.12} against {want:.12}");
+        }
+    }
+
+    /// The one input where the coefficient's zero and the integral's pole land on the same float.
+    ///
+    /// `comp` is `|1 − sinh²(2K)| / cosh⁴(2K)`, and at `beta_c` plus ONE ULP `sinh(2K)` rounds to
+    /// exactly 1.0, so `comp` is exactly zero, `K` is infinite, and the coefficient is exactly zero.
+    /// Without the guard that is `0 × ∞ = NaN` — from a function whose entire job is to be the exact
+    /// answer. At `beta_c` itself `sinh` lands a rounding BELOW one, so `comp` is merely tiny and the
+    /// arithmetic works by luck; a mutation removing the guard survives every other test here.
+    #[test]
+    fn the_exact_pole_is_reachable_and_is_handled() {
+        let beta_c = 0.5 * (1.0 + 2.0f64.sqrt()).ln();
+        let at_pole = beta_c.next_up();
+        assert_eq!(
+            (2.0 * at_pole).sinh(),
+            1.0,
+            "this fixture must actually land on the pole, or it tests nothing"
+        );
+
+        let got = onsager_energy_density(at_pole, 1.0);
+        assert!(got.is_finite(), "the energy density went to {got} at the critical point");
+        assert!(
+            (got + 2.0f64.sqrt()).abs() < 1e-9,
+            "and it should still be -sqrt(2): got {got}"
+        );
+    }
+
+    /// Both ends of the temperature range, where the answer is forced by counting.
+    #[test]
+    fn the_energy_density_freezes_and_melts_to_the_right_values() {
+        // Two bonds per site, so a frozen lattice sits at -2J.
+        assert!((onsager_energy_density(20.0, 1.0) + 2.0).abs() < 1e-9);
+        // And no correlation means no energy.
+        assert!(onsager_energy_density(0.0, 1.0).abs() < 1e-12);
+        assert!(onsager_energy_density(1e-9, 1.0).abs() < 1e-6);
+    }
+
+    /// It is the derivative of the free energy the other Onsager function computes.
+    ///
+    /// Two independent implementations of the same physics -- a closed form through the AGM, and a
+    /// `grid x grid` quadrature of the double integral -- related by `U = -d(ln Z/N)/dbeta`. Away
+    /// from criticality they must agree; the comparison is not run AT `K_c` because the quadrature's
+    /// integrand is logarithmically singular there, which is the whole reason the closed form is
+    /// worth having.
+    #[test]
+    fn the_energy_density_is_the_derivative_of_the_free_energy() {
+        for &beta in &[0.20f64, 0.30, 0.35, 0.55, 0.70] {
+            let h = 1e-5;
+            let d = (onsager_log_z_density(beta + h, 1.0, 2048)
+                - onsager_log_z_density(beta - h, 1.0, 2048))
+                / (2.0 * h);
+            let got = onsager_energy_density(beta, 1.0);
+            assert!(
+                (got + d).abs() < 2e-3,
+                "beta {beta}: closed form {got:.6}, -d(lnZ)/dbeta {:.6}",
+                -d
+            );
+        }
+    }
+
 }

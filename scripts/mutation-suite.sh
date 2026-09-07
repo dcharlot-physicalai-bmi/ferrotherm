@@ -212,6 +212,11 @@ mutations=(
   # derivative has two terms. Drop either and the fit still converges to something, just not to the
   # maximiser of the stated objective -- which no check on the fitted model would reveal.
   "src/ebm.rs|            dw[e] += resid[i] * f64::from(row[j]) + resid[j] * f64::from(row[i]);|            dw[e] += resid[i] * f64::from(row[j]);|the_closed_form_gradient_matches_a_finite_difference|a pseudolikelihood gradient missing half its edge term"
+
+  # Onsager's energy density has its elliptic pole and its vanishing coefficient at the SAME point,
+  # sinh(2K) = 1. At beta_c plus one ulp sinh rounds to exactly 1.0, so the naive expression is
+  # 0 * infinity and the exact oracle returns NaN. At beta_c itself it works by luck.
+  "src/free_energy.rs|    let term = if comp == 0.0 { 0.0 } else { coeff * elliptic_k_comp(comp) };|    let term = coeff * elliptic_k_comp(comp);|the_exact_pole_is_reachable_and_is_handled|an exact oracle that is NaN at criticality"
 )
 
 bad=0

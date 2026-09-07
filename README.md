@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Exact 2D Ising energy density (Onsager 1944, via AGM elliptic `K`) | `free_energy::onsager_energy_density` — closed form, machine precision, no grid | **shipped, verified** — `U/N = −J√2` exactly at criticality |
 | DIMACS CNF / WCNF — the MAX-SAT benchmark corpus | `dimacs` — clauses to a `Hubo` by exact subset expansion, no penalty | **shipped, verified** — the energy IS the unsatisfied weight at every assignment |
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
@@ -913,6 +914,38 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### An exact oracle where the old one was weakest
+
+`onsager_log_z_density` integrates a `grid × grid` mesh, and its integrand has a logarithmic
+singularity at criticality — so exactly where a two-dimensional sampler is hardest to check, the
+oracle is least accurate. The **energy** density has a closed form:
+
+```text
+  U/N = −J coth(2K) [ 1 + (2/π)(2 tanh²(2K) − 1) K(κ) ],   K = βJ,  κ = 2 sinh(2K) / cosh²(2K)
+```
+
+`K(κ)` comes from Gauss's AGM identity, `K(k) = π / (2·AGM(1, √(1−k²)))` — quadratic convergence, so
+machine precision in about five iterations, with no grid and no accuracy that degrades anywhere.
+
+At criticality it does not even need that. `sinh(2K_c) = 1` makes `tanh²(2K_c) = 1/2`, the second
+term vanishes, and **`U/N = −J√2` exactly**, the elliptic integral never consulted. That is the
+sharpest single number available for testing a 2D sampler.
+
+**The pole and the zero are the same float.** `κ = 1` exactly when `sinh(2K) = 1`, which is also
+where the coefficient `2tanh²(2K) − 1` vanishes — so the naive expression is `0 × ∞`, and forming `κ`
+directly puts it a rounding *above* one, outside the domain where `K` is real. The fix is to work
+through the complementary modulus `|1 − sinh²|/cosh²`, which has no cancellation. The limit is zero
+because the coefficient falls linearly while `K` grows only logarithmically.
+
+That edge is reachable, not theoretical: at `beta_c` plus **one ulp**, `sinh(2K)` rounds to exactly
+1.0 and the guard is the only thing between the caller and a `NaN`. At `beta_c` itself `sinh` lands a
+rounding below one and the arithmetic works by luck — which is why a mutation removing the guard
+survived every other test here until a fixture was written at the ulp that reaches it.
+
+Checked four ways: the closed form at `K_c`, both temperature limits forced by bond-counting
+(`−2J` and `0`), `K(k)` against its own defining integral by fine quadrature, and against
+`−d(lnZ/N)/dβ` from the independent grid implementation. 8 of 8 mutations killed.
 
 ### A certified lower bound that cannot round upward
 
