@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
 | Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
 | Multi-spin coding (Isakov et al.; the Janus line) | `multispin` — 64 replicas per `u64`, bit-sliced ripple-carry field, refuses non-uniform `|J|` by name | **shipped, verified** — every lane certified, and lane INDEPENDENCE tested separately |
 | Cluster updates (OpenJij `Algorithm_SwendsenWang_run`) | `cluster` — Swendsen–Wang + Wolff, validity decided by **signed-graph balance**, fields absorbed by a ghost spin | **shipped, verified** — `z` measured against the literature, and a refusal carries a frustrated cycle the caller can multiply out |
@@ -910,6 +911,53 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### A higher-order reduction with no penalty to get wrong
+
+`to_pairwise` is Rosenberg's reduction: define an ancilla, then **bribe** the model into respecting
+the definition with a penalty larger than the whole model is worth. It works, and it costs something
+that does not show up in a correctness test. The penalty enters the energy, so the reduced model's
+scale is set by the enforcement rather than by the problem — and `Schedule::for_instance` reads
+exactly that scale to choose an annealing ladder, while a fabric with four-bit coefficients has to
+quantise it.
+
+`to_pairwise_exact` needs no penalty, because its identities are exact minima rather than
+constrained definitions. For binary `x` and a **negative** coefficient,
+
+```text
+  c · x_1 ⋯ x_k  =  min_y  c · y · (x_1 + ⋯ + x_k − (k−1))        (Freedman–Drineas)
+```
+
+one auxiliary, every term quadratic. For a **positive** coefficient, Ishikawa (2011) does it with
+`⌊(k−1)/2⌋` auxiliaries. Neither has a coefficient that has to be "large enough".
+
+**The trade, measured** — a single factor of each arity, ancillas and `Graph::flip_gap_max`:
+
+| arity | ancillas (Rosenberg / free) | energy scale (Rosenberg / free) |
+|---|---|---|
+| 3 | 1 / 1 | 162 / **16** |
+| 4 | 2 / 5 | 502 / **48** |
+| 5 | 5 / 16 | 2926 / **210** |
+| 6 | 12 / 48 | 11670 / **782** |
+| 7 | 15 / 106 | 35018 / **2906** |
+
+Up to seven times the ancillas for an energy scale about twelve times tighter. On multi-term models
+the scale ratios are 24×, 9.3× and 16.9× at 1×, 3.3× and 3.5× the ancillas. Which way that trade goes
+is a property of the hardware, not of the reduction, so both are shipped and neither is a default.
+
+Past arity nine the penalty-free cost stops being a trade — 1490 ancillas against 68 at arity ten —
+and `MAX_ANCILLAS` refuses there, naming `to_pairwise` as the alternative rather than allocating.
+
+**Verified by exhaustive minimisation.** For every assignment of the original variables, the reduced
+energy minimised over every auxiliary assignment equals the original — the same oracle the Rosenberg
+path uses, plus a check that the reported offset has the right *sign*, which no state-ordering test
+can see: a reduction reporting it backwards lands the caller exactly twice the offset away.
+
+The identities are also checked directly, one monomial at a time, at every arity to eight and both
+signs. That separation matters and was found by mutation: replacing Ishikawa's `⌊(k−1)/2⌋`
+auxiliaries with a bare `1` survives every end-to-end test, because the two agree at arities three
+and four and an arity-five *factor* needs sixteen auxiliaries — past what exhaustive minimisation can
+reach. An arity-five *monomial* needs two.
 
 ### Every temperature from one run, and two textbook recipes that do not converge
 

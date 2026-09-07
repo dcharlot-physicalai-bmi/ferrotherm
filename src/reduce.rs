@@ -113,6 +113,18 @@ pub enum ReduceError {
     },
     /// The program has no factors and nothing to reduce.
     Empty,
+    /// The penalty-free reduction would need more ancillas than it will allocate.
+    ///
+    /// Its identities are per-monomial and a spin factor of arity `k` expands to `2^k` binary
+    /// monomials, so the ancilla count grows exponentially in the widest factor — 106 for a single
+    /// arity-7 term against Rosenberg's 15. Refused with the number rather than allocated, so a
+    /// caller can fall back to [`to_pairwise`] and pay in energy scale instead.
+    TooManyAncillas {
+        /// Ancillas the reduction had already allocated when it gave up.
+        needed: usize,
+        /// The cap.
+        limit: usize,
+    },
 }
 
 impl core::fmt::Display for ReduceError {
@@ -124,12 +136,35 @@ impl core::fmt::Display for ReduceError {
                  this will attempt; split the term before reducing it"
             ),
             ReduceError::Empty => write!(f, "nothing to reduce"),
+            ReduceError::TooManyAncillas { needed, limit } => write!(
+                f,
+                "a penalty-free reduction of this program needs over {needed} ancillas, past the \
+                 {limit} it will allocate; its identities are per-monomial and a factor of arity k \
+                 expands to 2^k of them. `to_pairwise` uses far fewer and pays with a penalty instead"
+            ),
         }
     }
 }
 
 /// The widest factor this will expand. 2^20 monomials from one factor is already unreasonable.
 pub const MAX_ARITY: usize = 20;
+
+/// The most ancillas [`to_pairwise_exact`] will introduce before refusing.
+///
+/// Its cost is exponential in the widest factor, so without a cap a program well inside
+/// [`MAX_ARITY`] would ask for millions of spins. The number is set where the trade stops being one
+/// — ancillas for a penalty-free reduction, against ancillas for [`to_pairwise`]:
+///
+/// ```text
+///   arity        7     8     9     10     11     12
+///   free       106   291   568   1490   2806   4097
+///   Rosenberg   15    22    37     68    131    258
+/// ```
+///
+/// Through arity nine the penalty-free path costs a manageable multiple. At ten it is 22 times
+/// Rosenberg's count and climbing, which is no longer a choice anyone should be quietly given, so
+/// that is where this refuses and names the alternative.
+pub const MAX_ANCILLAS: usize = 1024;
 
 /// Lower every factor to arity two, adding ancillas as needed.
 ///
@@ -209,6 +244,154 @@ pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
     // 3. Back to spins. x = (1 + s)/2.
     let (program, offset) = to_program(&poly, next)?;
     Ok(Reduction { program, ancillas, original_spins: p.spins, penalty, offset })
+}
+
+/// A monomial as a set, for the maps above.
+fn mono(vs: &[usize]) -> BTreeSet<usize> {
+    vs.iter().copied().collect()
+}
+
+/// Lower every factor to arity two **without a penalty**, exactly.
+///
+/// # What makes this different from [`to_pairwise`]
+///
+/// Rosenberg's reduction defines an ancilla and then BRIBES the model into respecting the
+/// definition, with a penalty larger than the whole model is worth. That works, and it costs
+/// something real: the penalty enters the energy, so the reduced model's scale is set by the
+/// enforcement rather than by the problem. `Graph::flip_gap_max` grows with it, and
+/// [`crate::schedule::Schedule::for_instance`] reads that scale to pick a ladder — so a penalty
+/// inflates the very number the annealing schedule is derived from.
+///
+/// The identities below need no penalty at all, because they are exact minima rather than
+/// constrained definitions. For a NEGATIVE coefficient and binary `x`,
+///
+/// ```text
+///     c · x_1 ⋯ x_k  =  min_y  c · y · (x_1 + ⋯ + x_k − (k−1))       (c < 0)
+/// ```
+///
+/// which is Freedman–Drineas: one auxiliary, every term quadratic. When every `x_i` is one the
+/// bracket is one and `y = 1` is best; otherwise the bracket is at most zero and `y = 0` is, so the
+/// minimum reproduces the monomial on the nose. For a POSITIVE coefficient, Ishikawa (2011) gives
+///
+/// ```text
+///     c · x_1 ⋯ x_k  =  min_y  c · Σ_j y_j ( c_kj (2j − S) − 1 )  +  c · S₂
+/// ```
+///
+/// with `S = Σ x_i`, `S₂ = Σ_{i<i'} x_i x_i'`, `⌊(k−1)/2⌋` auxiliaries, and `c_kj = 1` when `k` is
+/// odd and `j` is the last index, else 2.
+///
+/// # The trade, measured
+///
+/// Rosenberg SHARES ancillas: it substitutes one pair everywhere it occurs, so many monomials can
+/// be paid for once. These identities are per-monomial, and a spin factor of arity `k` expands to
+/// `2^k` binary monomials — so this costs more ancillas, and the gap widens fast. On a single
+/// factor of each arity, ancillas and `Graph::flip_gap_max` for each reduction:
+///
+/// ```text
+///   arity   ancillas: Rosenberg / free     scale: Rosenberg / free
+///     3            1 / 1                       162 / 16
+///     4            2 / 5                       502 / 48
+///     5            5 / 16                     2926 / 210
+///     6           12 / 48                    11670 / 782
+///     7           15 / 106                   35018 / 2906
+/// ```
+///
+/// Up to seven times the ancillas, for an energy scale roughly twelve times tighter. On models with
+/// several terms the scale ratio is 24x, 9.3x and 16.9x for three three-body terms, two four-body
+/// terms, and a mixed 3+4+5 — at 1x, 3.3x and 3.5x the ancillas.
+///
+/// Which way that trade goes depends on the hardware: ancillas cost qubits and connectivity, and
+/// the energy scale costs resolution, since a fabric with four-bit coefficients quantises a range
+/// inflated by a penalty far more coarsely than one that was never inflated.
+///
+/// # Errors
+///
+/// [`ReduceError::TooWide`] for a term of higher arity than this expands.
+///
+/// # Panics
+///
+/// Never on a program built by this crate: the ancillas are in range by construction.
+pub fn to_pairwise_exact(p: &Program) -> Result<Reduction, ReduceError> {
+    if let Some(f) = p.factors.iter().find(|f| f.arity() > MAX_ARITY) {
+        return Err(ReduceError::TooWide { arity: f.arity(), limit: MAX_ARITY });
+    }
+
+    let mut poly: Poly = BTreeMap::new();
+    for f in &p.factors {
+        let vars: Vec<usize> = f.vars().collect();
+        expand_spin_product(&mut poly, &vars, -f.weight());
+    }
+    for &(i, h) in &p.bias {
+        expand_spin_product(&mut poly, &[i], -h);
+    }
+
+    let mut next = p.spins;
+    let mut out: Poly = BTreeMap::new();
+    for (m, &c) in &poly {
+        if m.len() <= 2 {
+            add(&mut out, m.clone(), c);
+            continue;
+        }
+        if next - p.spins > MAX_ANCILLAS {
+            return Err(ReduceError::TooManyAncillas {
+                needed: next - p.spins,
+                limit: MAX_ANCILLAS,
+            });
+        }
+        let vars: Vec<usize> = m.iter().copied().collect();
+        reduce_monomial(&mut out, &vars, c, &mut next);
+    }
+
+    let ancillas = next - p.spins;
+    let (program, offset) = to_program(&out, next)?;
+    Ok(Reduction {
+        program,
+        ancillas,
+        original_spins: p.spins,
+        // Zero, and that is the headline rather than a missing value: nothing is being bribed, so
+        // there is no coefficient here to get wrong and none to inflate the energy scale.
+        penalty: 0.0,
+        offset,
+    })
+}
+
+/// One binary monomial `c · ∏ x_i` of degree three or more, rewritten with auxiliaries and no
+/// penalty. `next` is the first free variable index and is advanced past the ones taken.
+///
+/// Split out so the identities can be checked AT ANY ARITY. Through
+/// [`to_pairwise_exact`] they cannot be: a spin factor of arity `k` expands to `2^k` binary
+/// monomials each taking its own auxiliaries, so an arity-five factor needs sixteen and an
+/// exhaustive minimisation stops being possible — while one arity-five MONOMIAL needs two. A
+/// mutation replacing `⌊(k−1)/2⌋` with a bare 1 survived every end-to-end test for exactly that
+/// reason: at arities three and four the two agree, and five was out of reach.
+fn reduce_monomial(out: &mut Poly, vars: &[usize], c: f64, next: &mut usize) {
+    let k = vars.len();
+    if c < 0.0 {
+        // Freedman-Drineas: one auxiliary, no penalty.
+        let y = *next;
+        *next += 1;
+        for &v in vars {
+            add(out, mono(&[y, v]), c);
+        }
+        add(out, mono(&[y]), -c * (k as f64 - 1.0));
+    } else {
+        // Ishikawa, for the positive case Freedman-Drineas does not cover.
+        let aux = (k - 1) / 2;
+        for j in 1..=aux {
+            let y = *next;
+            *next += 1;
+            let ckj = if k % 2 == 1 && j == aux { 1.0 } else { 2.0 };
+            for &v in vars {
+                add(out, mono(&[y, v]), -c * ckj);
+            }
+            add(out, mono(&[y]), c * (2.0 * j as f64 * ckj - 1.0));
+        }
+        for a in 0..k {
+            for b in (a + 1)..k {
+                add(out, mono(&[vars[a], vars[b]]), c);
+            }
+        }
+    }
 }
 
 /// `c · ∏(2x_i − 1)` expanded into binary monomials.
@@ -331,6 +514,211 @@ mod tests {
             }
         }
         r
+    }
+
+    /// The same guarantee for the penalty-free path, and a stronger one: the offset is the only
+    /// difference, and there is no penalty coefficient anywhere in the reduction.
+    fn agrees_everywhere_exact(src: &str) -> Reduction {
+        let p = Program::from_ftp(src).unwrap();
+        let r = to_pairwise_exact(&p).unwrap();
+        assert!(
+            r.program.factors.iter().all(|f| f.arity() <= 2),
+            "the point of the pass is that nothing is wider than two"
+        );
+        assert_eq!(r.penalty, 0.0, "a penalty-free reduction must not carry one");
+
+        let n = p.spins;
+        let mut delta: Option<f64> = None;
+        for mask in 0u32..(1u32 << n) {
+            let s: Vec<i8> = (0..n).map(|i| if mask & (1 << i) != 0 { 1 } else { -1 }).collect();
+            let want = energy(&p, &s);
+            let got = minimised_over_ancillas(&r, &s);
+            let d = got - want;
+            match delta {
+                None => delta = Some(d),
+                Some(d0) => assert!(
+                    (d - d0).abs() < 1e-9,
+                    "state {s:?}: original {want}, reduced {got}, offset {d} but {d0} elsewhere — \
+                     the reduction reordered states rather than shifting them"
+                ),
+            }
+        }
+        // `offset` is documented as "add it to compare energies with the original", so the
+        // reduced energy is the original MINUS it. Asserting the sign rather than the magnitude is
+        // the point: a reduction that reported the offset backwards would still pass every
+        // state-ordering check above, and the caller would land exactly twice the offset away.
+        assert!(
+            (delta.unwrap() + r.offset).abs() < 1e-9,
+            "reduced energies sit {} from the original, but the reduction reports an offset of {}",
+            delta.unwrap(),
+            r.offset
+        );
+        r
+    }
+
+    /// Every state, every arity from three to six, both signs — with no penalty in sight.
+    ///
+    /// The identities are exact minima rather than constrained definitions, so this is not "the
+    /// penalty was big enough". Both signs are here because they use DIFFERENT identities:
+    /// Freedman-Drineas covers a negative coefficient with one auxiliary and Ishikawa covers a
+    /// positive one with `⌊(k−1)/2⌋`, and the parity of `k` changes the last coefficient in
+    /// Ishikawa's sum, so odd and even arities exercise different arithmetic.
+    #[test]
+    fn the_penalty_free_reduction_moves_no_state_at_any_arity() {
+        // Three and four, not more. The check minimises over EVERY ancilla assignment, and the
+        // ancilla count is exponential in the arity -- 16 at arity five and 48 at six, so the
+        // enumeration that makes this proof rather than evidence stops being possible. Three and
+        // four cover both branches of Ishikawa's coefficient, which depends on the parity of k.
+        for k in 3..=4usize {
+            for w in [1.0f64, -1.0, 2.5, -0.75] {
+                let vars: String =
+                    (0..k).map(|i| format!(" {i}")).collect::<Vec<_>>().join("");
+                let src = format!("ftp 1\nspins {k}\nfactor {w}{vars}\n");
+                let r = agrees_everywhere_exact(&src);
+                assert!(r.ancillas >= 1, "arity {k} weight {w} needed no ancilla at all");
+            }
+        }
+    }
+
+    /// The identity itself, at every arity up to eight, both signs, exhaustively.
+    ///
+    /// Checked on ONE monomial rather than through a whole reduction, which is what makes the wide
+    /// arities reachable: an arity-seven monomial takes three auxiliaries where an arity-seven
+    /// spin FACTOR takes 106. That distinction is not cosmetic — replacing Ishikawa's `⌊(k−1)/2⌋`
+    /// auxiliaries with a bare 1 passed every end-to-end test in this module, because the two agree
+    /// at arities three and four and five was out of enumeration's reach.
+    #[test]
+    fn the_penalty_free_identities_hold_at_every_arity() {
+        /// A binary polynomial evaluated at an assignment: a monomial contributes when all its
+        /// variables are set.
+        fn eval(poly: &Poly, x: &[bool]) -> f64 {
+            poly.iter()
+                .filter(|(m, _)| m.iter().all(|&v| x[v]))
+                .map(|(_, c)| *c)
+                .sum()
+        }
+
+        for k in 3..=8usize {
+            for c in [1.0f64, -1.0, 2.5, -0.75] {
+                let vars: Vec<usize> = (0..k).collect();
+                let mut poly: Poly = BTreeMap::new();
+                let mut next = k;
+                reduce_monomial(&mut poly, &vars, c, &mut next);
+                let aux = next - k;
+                assert!(aux >= 1, "arity {k}, c {c}: no auxiliary was introduced");
+                assert!(
+                    poly.keys().all(|m| m.len() <= 2),
+                    "arity {k}, c {c}: the reduction left a term wider than two"
+                );
+
+                for xm in 0u32..(1u32 << k) {
+                    let mut x = vec![false; next];
+                    for (i, slot) in x.iter_mut().enumerate().take(k) {
+                        *slot = xm & (1 << i) != 0;
+                    }
+                    let want = if (0..k).all(|i| x[i]) { c } else { 0.0 };
+                    let mut best = f64::INFINITY;
+                    for ym in 0u32..(1u32 << aux) {
+                        for a in 0..aux {
+                            x[k + a] = ym & (1 << a) != 0;
+                        }
+                        best = best.min(eval(&poly, &x));
+                    }
+                    assert!(
+                        (best - want).abs() < 1e-9,
+                        "arity {k}, c {c}, x {:?}: minimised to {best}, but the monomial is {want}",
+                        &x[..k]
+                    );
+                }
+            }
+        }
+    }
+
+    /// A model with several wide terms and fields, still exact.
+    #[test]
+    fn the_penalty_free_reduction_handles_a_whole_model() {
+        agrees_everywhere_exact(
+            "ftp 1\nspins 6\nfactor 1.0 0 1 2\nfactor -1.5 2 3 4\nfactor 0.5 1 3 5\n             factor 2.0 0 4\nbias 0 0.3\nbias 5 -0.7\n",
+        );
+        agrees_everywhere_exact(
+            "ftp 1\nspins 5\nfactor -2.0 0 1 2 3\nfactor 1.0 1 2 3 4\nbias 2 0.4\n",
+        );
+    }
+
+    /// A program already pairwise is returned with no ancillas and no penalty.
+    #[test]
+    fn a_pairwise_program_needs_no_penalty_free_machinery_either() {
+        let r = agrees_everywhere_exact("ftp 1\nspins 3\nfactor 1.0 0 1\nbias 2 0.5\n");
+        assert_eq!(r.ancillas, 0);
+        assert_eq!(r.penalty, 0.0);
+    }
+
+    /// A program whose penalty-free reduction would not fit is refused with the number.
+    ///
+    /// The cost is exponential in the widest factor, so a program well inside `MAX_ARITY` can still
+    /// ask for more spins than anyone wants to allocate. Arity ten is the smallest that trips the
+    /// cap: 1490 ancillas where `to_pairwise` needs 68.
+    #[test]
+    fn a_program_too_expensive_to_reduce_without_a_penalty_is_refused() {
+        let vars: String = (0..10).map(|i| format!(" {i}")).collect::<Vec<_>>().join("");
+        let src = format!("ftp 1\nspins 10\nfactor 1.0{vars}\n");
+        let p = Program::from_ftp(&src).unwrap();
+
+        match to_pairwise_exact(&p) {
+            Err(ReduceError::TooManyAncillas { needed, limit }) => {
+                assert_eq!(limit, MAX_ANCILLAS);
+                assert!(needed > MAX_ANCILLAS, "{needed} is not over the cap");
+            }
+            other => panic!("an arity-13 factor cannot be reduced penalty-free: {other:?}"),
+        }
+
+        // And the point of the refusal: the other reduction takes it.
+        let rose = to_pairwise(&p).expect("Rosenberg shares ancillas and handles this");
+        assert!(
+            rose.ancillas < MAX_ANCILLAS,
+            "the fallback should be cheap, not merely possible: {} ancillas",
+            rose.ancillas
+        );
+    }
+
+    /// What the two reductions actually cost each other: ancillas against energy scale.
+    ///
+    /// This is the trade, measured rather than asserted. Rosenberg shares ancillas across monomials
+    /// and so uses fewer; its penalty is `2 Σ|c|`, which enters the energy and inflates the model's
+    /// own scale — the number `Schedule::for_instance` reads to choose a ladder. The penalty-free
+    /// path pays in ancillas and leaves the scale alone.
+    ///
+    /// Printed as well as asserted, because the ratio is the useful part and a reader should not
+    /// have to run it to see which way the trade goes on their own model.
+    #[test]
+    fn the_penalty_free_reduction_keeps_the_energy_scale() {
+        let src = "ftp 1\nspins 6\nfactor 1.0 0 1 2\nfactor -1.5 2 3 4\nfactor 0.5 1 3 5\n";
+        let p = Program::from_ftp(src).unwrap();
+        let rose = to_pairwise(&p).unwrap();
+        let free = to_pairwise_exact(&p).unwrap();
+
+        let scale = |r: &Reduction| -> f64 {
+            r.program.to_graph().expect("pairwise by construction").flip_gap_max().unwrap_or(0.0)
+        };
+        let (s_rose, s_free) = (scale(&rose), scale(&free));
+        println!(
+            "rosenberg: {} ancillas, penalty {:.3}, scale {s_rose:.3}\n             penalty-free: {} ancillas, penalty {:.3}, scale {s_free:.3}",
+            rose.ancillas, rose.penalty, free.ancillas, free.penalty
+        );
+
+        assert!(rose.penalty > 0.0, "Rosenberg is the one that needs a penalty");
+        assert_eq!(free.penalty, 0.0);
+        assert!(
+            s_free < s_rose,
+            "the penalty-free reduction should not inflate the energy scale: {s_free} vs {s_rose}"
+        );
+        assert!(
+            free.ancillas >= rose.ancillas,
+            "and it should never cost FEWER ancillas, which is the other half of the trade: \
+             {} vs {}",
+            free.ancillas,
+            rose.ancillas
+        );
     }
 
     #[test]

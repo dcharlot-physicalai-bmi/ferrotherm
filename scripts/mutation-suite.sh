@@ -172,6 +172,18 @@ mutations=(
   # The classic Wang-Landau mistake, and the one the algorithm cannot notice itself: the update
   # belongs to the state the walk is IN, and a rejected proposal leaves it in one.
   "src/wanglandau.rs|let here = self.level_of(self.e)?;|let here = b;|the_derived_quantities_follow_from_the_same_estimate|only accepted moves recorded"
+
+  # Ishikawa's positive-monomial identity takes floor((k-1)/2) auxiliaries. A bare 1 survived every
+  # end-to-end reduction test, because the two AGREE at arities three and four and an arity-five
+  # factor needs sixteen auxiliaries -- past what an exhaustive minimisation can enumerate. The
+  # identity is now checked one monomial at a time, where arity five needs two, and that is the test
+  # this row names.
+  "src/reduce.rs|        let aux = (k - 1) / 2;|        let aux = 1;|the_penalty_free_identities_hold_at_every_arity|Ishikawa with one auxiliary at every arity"
+
+  # The penalty-free path reports the offset it applied. Reporting it with the wrong sign passes
+  # every state-ordering check -- the reduction still moves no state relative to any other -- and
+  # lands the caller exactly twice the offset away from the original energy.
+  "src/reduce.rs|        penalty: 0.0,|        penalty: 1.0,|the_penalty_free_reduction_moves_no_state_at_any_arity|a penalty-free reduction that reports a penalty"
 )
 
 bad=0
