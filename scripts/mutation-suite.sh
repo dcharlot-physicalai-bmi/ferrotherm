@@ -184,6 +184,12 @@ mutations=(
   # every state-ordering check -- the reduction still moves no state relative to any other -- and
   # lands the caller exactly twice the offset away from the original energy.
   "src/reduce.rs|        penalty: 0.0,|        penalty: 1.0,|the_penalty_free_reduction_moves_no_state_at_any_arity|a penalty-free reduction that reports a penalty"
+
+  # sqa shipped M=4 with beta=10 and gamma_max=3: a Trotter ratio of 7.5, where tanh(7.5) ~ 1 makes
+  # the slice coupling vanish and the slices decouple into independent classical replicas. Its own
+  # single-spin oracle put the simulated magnetisation at 0.987 against a true quantum 0.316, and at
+  # identical work the default found the planted optimum 3 times in 30 where the plateau found 27.
+  "src/sqa.rs|            trotter: Params::slices_for(beta, gamma_max),|            trotter: 4,|the_derived_slice_count_beats_the_literal_it_replaced|a Trotter slice count that ignores beta"
 )
 
 bad=0

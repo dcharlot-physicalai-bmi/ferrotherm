@@ -876,9 +876,15 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
         "quantum" => {
             // Path-integral Monte Carlo on the transverse-field Ising model. NOT a quantum
             // computer: the word describes what is modelled, not what runs.
-            let trotter = opt_usize(req, "trotter", 4).clamp(1, 1024);
             let beta = opt_f64(req, "beta", 10.0);
             let gmax = opt_f64(req, "gamma_max", 3.0);
+            // DERIVED from beta and gamma_max, not a literal. The Trotter error is governed by
+            // beta*Gamma/M, so a fixed default silently changes fidelity whenever a caller passes
+            // its own beta -- and the literal 4 this used to carry sat at a ratio of 7.5, three
+            // times worse in solution quality than anything on the plateau. See
+            // `ferrotherm::sqa::TROTTER_RATIO`.
+            let trotter = opt_usize(req, "trotter", ferrotherm::sqa::Params::slices_for(beta, gmax))
+                .clamp(1, 1024);
             let gmin = opt_f64(req, "gamma_min", 0.05);
             let steps = opt_usize(req, "steps", 200).clamp(1, 1_000_000);
             if !(beta > 0.0 && gmax >= gmin && gmin >= 0.0) {

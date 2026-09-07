@@ -69,12 +69,66 @@ pub struct Params {
     pub sweeps_per_step: usize,
 }
 
+/// The ratio `β Γ / M` that the Trotter discretisation is governed by, and that
+/// [`Params::slices_for`] targets.
+///
+/// Not a taste. The Suzuki–Trotter decomposition is exact only as `M → ∞`, and its error is set by
+/// this ratio — so a schedule that fixes `M` while `β` or `Γ` moves is choosing a fidelity without
+/// saying so. This module shipped `M = 4` with `β = 10` and `Γ_max = 3`, a ratio of **7.5**, and
+/// the consequence was measurable in two independent ways.
+///
+/// By the module's own single-spin oracle, at `Γ = 3` and `β = 10`: the exact quantum magnetisation
+/// is 0.316, `M = 4` gives 0.987, and the purely classical answer is 1.000. The error is larger than
+/// the quantity, and the simulation sits fifty times closer to classical than to quantum — because
+/// `tanh(7.5) ≈ 1` makes `J⊥ ≈ 0` and the slices simply decouple. The transverse field did nothing
+/// until `Γ` fell below about 0.2, near the end of the anneal.
+///
+/// And in solution quality, at IDENTICAL proposal counts, trading annealing steps for slices on four
+/// planted instances (mean excess over the planted optimum, 30 seeds each):
+///
+/// ```text
+///   ratio    M     8x8    10x10   12x12   14x14   total
+///    1.00   30    0.49    2.49    2.65    2.72     8.35
+///    1.50   20    0.62    2.67    2.35    2.18     7.81
+///    1.88   16    0.28    2.13    2.59    2.27     7.27
+///    2.00   15    0.35    2.18    2.90    2.43     7.85
+///    2.50   12    0.42    2.40    3.36    2.49     8.68
+///    7.50    4    4.51    6.93    7.50    5.65    24.59   <- what shipped
+/// ```
+///
+/// A broad plateau from about 1 to 2.5, and the shipped value three times worse than any of it. Two
+/// is a round number inside the plateau rather than the argmin of one experiment.
+pub const TROTTER_RATIO: f64 = 2.0;
+
+impl Params {
+    /// Trotter slices for a given temperature and starting field, from [`TROTTER_RATIO`].
+    ///
+    /// `M = round(β Γ_max / ratio)`, at least one. Use it whenever `beta` or `gamma_max` is changed
+    /// from the default: they and `trotter` are one choice, not three, and fixing `M` while moving
+    /// `β` silently moves the fidelity.
+    #[must_use]
+    pub fn slices_for(beta: f64, gamma_max: f64) -> usize {
+        let m = (beta * gamma_max / TROTTER_RATIO).round();
+        if m.is_finite() && m >= 1.0 {
+            // Saturating rather than wrapping: an absurd beta should give an expensive run or a
+            // refusal upstream, never a tiny one from a cast that wrapped.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let m = m.min(u32::MAX as f64) as usize;
+            m
+        } else {
+            1
+        }
+    }
+}
+
 impl Default for Params {
     fn default() -> Self {
+        let (beta, gamma_max) = (10.0, 3.0);
         Params {
-            trotter: 4,
-            beta: 10.0,
-            gamma_max: 3.0,
+            // Derived, not chosen: see `TROTTER_RATIO`.
+            trotter: Params::slices_for(beta, gamma_max),
+            beta,
+            gamma_max,
             gamma_min: 0.05,
             steps: 200,
             sweeps_per_step: 1,
@@ -356,6 +410,73 @@ mod tests {
             "with four Trotter slices the anneal won {wins} and lost {losses} of 24 against the \
              same code at one slice and equal work"
         );
+    }
+
+    /// The derived slice count beats the literal 4 it replaced, at IDENTICAL work.
+    ///
+    /// The regression test for this module's worst shipped defect. `M = 4` with `β = 10` and
+    /// `Γ_max = 3` is a Trotter ratio of 7.5, where `tanh(βΓ/M) ≈ 1` makes `J⊥ ≈ 0` and the slices
+    /// decouple into independent classical replicas — the transverse field doing nothing for most
+    /// of the anneal. See [`TROTTER_RATIO`] for the fidelity numbers; this is the cost in answers.
+    ///
+    /// Work is matched EXACTLY rather than approximately: `M × sweeps_per_step` is 60 in both arms,
+    /// so the two do the same number of proposals over the same `Γ` schedule, and the only
+    /// difference is how those proposals are divided between slices and sweeps. Comparing at equal
+    /// `steps` instead would hand the derived arm nearly four times the budget and prove nothing —
+    /// which is the trap the first three measurements behind this change fell into.
+    #[test]
+    fn the_derived_slice_count_beats_the_literal_it_replaced() {
+        let inst = crate::planted::frustrated_loops(8, 96, 3);
+        let (g, opt) = (&inst.graph, inst.ground_energy);
+        let base = Params { steps: 50, ..Params::default() };
+        let derived = Params { trotter: 15, sweeps_per_step: 4, ..base };
+        let shipped = Params { trotter: 4, sweeps_per_step: 15, ..base };
+
+        let excess = |p: &Params| -> f64 {
+            let mut sum = 0.0;
+            for seed in 0..16u64 {
+                let o = run(g, p, seed);
+                sum += (o.energy - opt) / opt.abs();
+            }
+            sum / 16.0 * 100.0
+        };
+        assert_eq!(
+            run(g, &derived, 0).proposals,
+            run(g, &shipped, 0).proposals,
+            "the arms must do identical work or this measures the budget"
+        );
+
+        let (d, s) = (excess(&derived), excess(&shipped));
+        assert!(
+            d < s * 0.5,
+            "the derived slice count should at least halve the excess over the planted optimum \
+             at equal work: derived {d:.3}% against the old literal's {s:.3}%"
+        );
+    }
+
+    /// The default is the derived value, not a number that drifted away from it.
+    ///
+    /// `beta`, `gamma_max` and `trotter` are one choice, not three. This is what stops the default
+    /// from being edited into an inconsistent triple later — which is how it got to 7.5.
+    #[test]
+    fn the_default_slice_count_is_the_one_its_own_rule_gives() {
+        let p = Params::default();
+        assert_eq!(p.trotter, Params::slices_for(p.beta, p.gamma_max));
+        let ratio = p.beta * p.gamma_max / p.trotter as f64;
+        assert!(
+            (1.0..=2.5).contains(&ratio),
+            "the default sits at a Trotter ratio of {ratio:.2}, off the measured plateau of 1 to 2.5"
+        );
+    }
+
+    /// The rule tracks its inputs: doubling beta doubles the slices.
+    #[test]
+    fn the_slice_rule_scales_with_the_parameters_it_reads() {
+        assert_eq!(Params::slices_for(10.0, 3.0), 15);
+        assert_eq!(Params::slices_for(20.0, 3.0), 30, "twice the beta is twice the slices");
+        assert_eq!(Params::slices_for(10.0, 6.0), 30, "and so is twice the field");
+        assert_eq!(Params::slices_for(0.1, 0.1), 1, "never zero slices, which is not a model");
+        assert_eq!(Params::slices_for(f64::NAN, 3.0), 1, "nor a cast of something that is not one");
     }
 
     /// `Γ` must not be annealed to zero, and the reported `J⊥` is how a reader checks that.

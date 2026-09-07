@@ -912,6 +912,55 @@ the conservative direction for an instrument whose job is to accuse, and one fix
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
 
+### The simulated-quantum default was running classical annealing
+
+`sqa` shipped `M = 4` Trotter slices with `beta = 10` and `gamma_max = 3`. The Suzuki–Trotter error
+is governed by `beta * Gamma / M`, and that triple is a ratio of **7.5** — where `tanh(7.5) ≈ 1`
+makes the slice coupling `J⊥ ≈ 0`, the slices decouple, and what runs is independent classical
+annealing on four copies of the spins.
+
+The module's own single-spin oracle says so. At `Gamma = 3`, `beta = 10`, for one spin in a
+longitudinal field:
+
+| | magnetisation |
+|---|---|
+| exact quantum, `(h/E)·tanh(βE)` | **0.316** |
+| what `M = 4` simulates | 0.987 |
+| purely classical, `tanh(βh)` | 1.000 |
+
+The error is larger than the quantity being measured, and the simulation sits fifty times closer to
+classical than to quantum. The transverse field does essentially nothing until `Gamma` falls below
+about 0.2, near the end of the anneal. The module's convergence test checks `M` = 8, 32, 128 and 512
+— it never checked the value it shipped.
+
+**And it costs answers.** Mean excess over the planted optimum on four instances, 30 seeds each, at
+*identical* proposal counts — annealing steps traded for slices, so every row does the same work:
+
+| ratio `βΓ/M` | M | 8×8 | 10×10 | 12×12 | 14×14 | total |
+|---|---|---|---|---|---|---|
+| 1.00 | 30 | 0.49 | 2.49 | 2.65 | 2.72 | 8.35 |
+| 1.50 | 20 | 0.62 | 2.67 | 2.35 | 2.18 | 7.81 |
+| 1.88 | 16 | 0.28 | 2.13 | 2.59 | 2.27 | **7.27** |
+| 2.00 | 15 | 0.35 | 2.18 | 2.90 | 2.43 | 7.85 |
+| 2.50 | 12 | 0.42 | 2.40 | 3.36 | 2.49 | 8.68 |
+| **7.50** | **4** | 4.51 | 6.93 | 7.50 | 5.65 | **24.59** ← shipped |
+
+A broad plateau from about 1 to 2.5, with the shipped value three times worse than any of it — and
+on the 8×8 the default found the planted optimum 3 times in 30 where a plateau setting found it 27.
+
+`trotter` is now derived: `M = round(beta * gamma_max / TROTTER_RATIO)` with the ratio at 2.0, a
+round number inside the plateau rather than the argmin of one experiment. `beta`, `gamma_max` and
+`trotter` are one choice, not three, and a test asserts the default is what its own rule gives — the
+drift that produced 7.5 cannot recur silently. `serve` carried the same literal `4` and now derives
+it too, so an HTTP caller passing their own `beta` gets a slice count that tracks it.
+
+**How the measurement went wrong three times first.** The comparison has to hold proposals fixed, and
+that is easy to get wrong in three different ways: comparing at equal `steps` hands the higher-`M`
+arm proportionally more work; comparing quantum against classical within a row while varying `M`
+across rows matches the wrong pair; and comparing at a budget eight times the default's answers a
+question about budget rather than about `M`. All three produced confident, wrong conclusions —
+including one that said more slices are monotonically *worse*.
+
 ### A higher-order reduction with no penalty to get wrong
 
 `to_pairwise` is Rosenberg's reduction: define an ancilla, then **bribe** the model into respecting
