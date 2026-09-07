@@ -217,6 +217,11 @@ mutations=(
   # sinh(2K) = 1. At beta_c plus one ulp sinh rounds to exactly 1.0, so the naive expression is
   # 0 * infinity and the exact oracle returns NaN. At beta_c itself it works by luck.
   "src/free_energy.rs|    let term = if comp == 0.0 { 0.0 } else { coeff * elliptic_k_comp(comp) };|    let term = coeff * elliptic_k_comp(comp);|the_exact_pole_is_reachable_and_is_handled|an exact oracle that is NaN at criticality"
+
+  # The vector LQR oracle. A Riccati iteration converges to SOMETHING however it is derived, so the
+  # load-bearing check is putting the answer back into the equation -- and the load-bearing claim is
+  # that x0^T P x0 is what the optimal policy actually spends, not a bound on it.
+  "src/mppi.rs|                next[i] = s.q[i] + atpa[i] - corr[i];|                next[i] = s.q[i] + atpa[i];|the_matrix_riccati_solution_solves_the_equation|a Riccati solution that is not one"
 )
 
 bad=0

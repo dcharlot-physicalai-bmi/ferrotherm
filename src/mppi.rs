@@ -101,6 +101,256 @@ impl System {
     }
 }
 
+// ---- vector state: the matrix Riccati oracle ---------------------------------------------------
+
+/// A linear system with vector state and vector control, row-major throughout.
+///
+/// `x' = A x + B u`, cost `xᵀQx + uᵀRu`. The scalar [`System`] is this at `n = m = 1`, and
+/// `the_matrix_oracle_agrees_with_the_scalar_one` holds the two to that.
+///
+/// Row-major `Vec<f64>` rather than a matrix type: the crate is std-only, the matrices here are the
+/// size of a robot's state rather than a lattice, and a type would be a dependency or a hundred
+/// lines that this uses in one place.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatSystem {
+    /// State dimension.
+    pub n: usize,
+    /// Control dimension.
+    pub m: usize,
+    /// `A`, `n × n`.
+    pub a: Vec<f64>,
+    /// `B`, `n × m`.
+    pub b: Vec<f64>,
+    /// `Q`, `n × n`, symmetric positive semi-definite.
+    pub q: Vec<f64>,
+    /// `R`, `m × m`, symmetric positive definite.
+    pub r: Vec<f64>,
+}
+
+/// `C = A · B` for row-major `(ra × ca)` and `(ca × cb)`.
+fn matmul(a: &[f64], b: &[f64], ra: usize, ca: usize, cb: usize) -> Vec<f64> {
+    let mut c = vec![0.0; ra * cb];
+    for i in 0..ra {
+        for k in 0..ca {
+            let aik = a[i * ca + k];
+            if aik == 0.0 {
+                continue;
+            }
+            for j in 0..cb {
+                c[i * cb + j] += aik * b[k * cb + j];
+            }
+        }
+    }
+    c
+}
+
+/// `Aᵀ` for a row-major `(r × c)`.
+fn transpose(a: &[f64], r: usize, c: usize) -> Vec<f64> {
+    let mut t = vec![0.0; r * c];
+    for i in 0..r {
+        for j in 0..c {
+            t[j * r + i] = a[i * c + j];
+        }
+    }
+    t
+}
+
+/// Solve `M X = Y` for `X`, with `M` `(k × k)` and `Y` `(k × c)`, by Gaussian elimination with
+/// partial pivoting. Returns `None` when `M` is singular to working precision.
+fn solve(m: &[f64], y: &[f64], k: usize, c: usize) -> Option<Vec<f64>> {
+    let mut a = m.to_vec();
+    let mut x = y.to_vec();
+    for col in 0..k {
+        let (mut piv, mut best) = (col, a[col * k + col].abs());
+        for r in (col + 1)..k {
+            if a[r * k + col].abs() > best {
+                best = a[r * k + col].abs();
+                piv = r;
+            }
+        }
+        if best <= 1e-300 {
+            return None;
+        }
+        if piv != col {
+            for j in 0..k {
+                a.swap(col * k + j, piv * k + j);
+            }
+            for j in 0..c {
+                x.swap(col * c + j, piv * c + j);
+            }
+        }
+        let d = a[col * k + col];
+        for r in (col + 1)..k {
+            let f = a[r * k + col] / d;
+            if f == 0.0 {
+                continue;
+            }
+            for j in col..k {
+                a[r * k + j] -= f * a[col * k + j];
+            }
+            for j in 0..c {
+                x[r * c + j] -= f * x[col * c + j];
+            }
+        }
+    }
+    for col in (0..k).rev() {
+        let d = a[col * k + col];
+        for j in 0..c {
+            let mut v = x[col * c + j];
+            for r in (col + 1)..k {
+                v -= a[col * k + r] * x[r * c + j];
+            }
+            x[col * c + j] = v / d;
+        }
+    }
+    Some(x)
+}
+
+/// The exact optimal controller for a [`MatSystem`], from the discrete algebraic Riccati equation.
+///
+/// ```text
+///   P = Q + AᵀPA − AᵀPB (R + BᵀPB)⁻¹ BᵀPA,      K = (R + BᵀPB)⁻¹ BᵀPA,      u* = −K x
+/// ```
+///
+/// The vector-state counterpart of [`Lqr`], and the reason it exists: a scalar oracle can only score
+/// a controller on a system with one state, which no robot has. `x₀ᵀPx₀` is the exact
+/// infinite-horizon cost from `x₀`, so a sampling controller's distance from optimal is a
+/// measurement rather than a comparison with whatever the last paper managed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatLqr {
+    /// Cost-to-go matrix `P`, `n × n`.
+    pub p: Vec<f64>,
+    /// Optimal gain `K`, `m × n`. The optimal action is `−K x`.
+    pub k: Vec<f64>,
+    /// Riccati iterations taken before the residual stopped moving.
+    pub iters: usize,
+}
+
+impl MatLqr {
+    /// Solve the Riccati equation by iterating it from `P = Q`.
+    ///
+    /// Monotone for a stabilisable system, and simpler than a doubling scheme at these sizes. What
+    /// makes it trustworthy is not the derivation but [`MatLqr::residual`], which puts the returned
+    /// `P` back into the equation.
+    ///
+    /// # Errors
+    ///
+    /// `None` when `R + BᵀPB` is singular to working precision, which means `R` was not positive
+    /// definite — the one modelling error this cannot absorb.
+    #[must_use]
+    pub fn solve(s: &MatSystem) -> Option<MatLqr> {
+        let (n, m) = (s.n, s.m);
+        let at = transpose(&s.a, n, n);
+        let bt = transpose(&s.b, n, m);
+        let mut p = s.q.clone();
+        let mut iters = 0;
+        for step in 0..100_000 {
+            let pa = matmul(&p, &s.a, n, n, n);
+            let atpa = matmul(&at, &pa, n, n, n);
+            let pb = matmul(&p, &s.b, n, n, m);
+            let btpb = matmul(&bt, &pb, m, n, m);
+            let mut mid = s.r.clone();
+            for i in 0..m * m {
+                mid[i] += btpb[i];
+            }
+            let btpa = matmul(&bt, &pa, m, n, n);
+            let gain = solve(&mid, &btpa, m, n)?;
+            let atpb = matmul(&at, &pb, n, n, m);
+            let corr = matmul(&atpb, &gain, n, m, n);
+
+            let mut next = vec![0.0; n * n];
+            let mut delta = 0.0f64;
+            for i in 0..n * n {
+                next[i] = s.q[i] + atpa[i] - corr[i];
+                delta = delta.max((next[i] - p[i]).abs());
+            }
+            iters = step + 1;
+            let scale = next.iter().fold(1.0f64, |a, v| a.max(v.abs()));
+            p = next;
+            if delta < 1e-14 * scale {
+                break;
+            }
+        }
+        // The gain that goes with the converged P.
+        let pa = matmul(&p, &s.a, n, n, n);
+        let pb = matmul(&p, &s.b, n, n, m);
+        let btpb = matmul(&bt, &pb, m, n, m);
+        let mut mid = s.r.clone();
+        for i in 0..m * m {
+            mid[i] += btpb[i];
+        }
+        let k = solve(&mid, &matmul(&bt, &pa, m, n, n), m, n)?;
+        Some(MatLqr { p, k, iters })
+    }
+
+    /// Largest absolute entry of `P − (Q + AᵀPA − AᵀPB(R + BᵀPB)⁻¹BᵀPA)`.
+    ///
+    /// The check that matters: an iteration that stopped early, or a derivation with a transpose in
+    /// the wrong place, converges to something and this is what says whether that something solves
+    /// the equation.
+    #[must_use]
+    pub fn residual(&self, s: &MatSystem) -> f64 {
+        let (n, m) = (s.n, s.m);
+        let at = transpose(&s.a, n, n);
+        let bt = transpose(&s.b, n, m);
+        let pa = matmul(&self.p, &s.a, n, n, n);
+        let atpa = matmul(&at, &pa, n, n, n);
+        let pb = matmul(&self.p, &s.b, n, n, m);
+        let btpb = matmul(&bt, &pb, m, n, m);
+        let mut mid = s.r.clone();
+        for i in 0..m * m {
+            mid[i] += btpb[i];
+        }
+        let Some(gain) = solve(&mid, &matmul(&bt, &pa, m, n, n), m, n) else {
+            return f64::INFINITY;
+        };
+        let corr = matmul(&matmul(&at, &pb, n, n, m), &gain, n, m, n);
+        (0..n * n)
+            .map(|i| (self.p[i] - (s.q[i] + atpa[i] - corr[i])).abs())
+            .fold(0.0f64, f64::max)
+    }
+
+    /// The optimal action in state `x`: `−K x`.
+    #[must_use]
+    pub fn action(&self, x: &[f64]) -> Vec<f64> {
+        let n = x.len();
+        let m = self.k.len() / n.max(1);
+        (0..m).map(|i| -(0..n).map(|j| self.k[i * n + j] * x[j]).sum::<f64>()).collect()
+    }
+
+    /// Exact infinite-horizon cost from `x₀`, which is `x₀ᵀ P x₀`.
+    #[must_use]
+    pub fn cost_to_go(&self, x: &[f64]) -> f64 {
+        let n = x.len();
+        (0..n).map(|i| x[i] * (0..n).map(|j| self.p[i * n + j] * x[j]).sum::<f64>()).sum()
+    }
+}
+
+impl MatSystem {
+    /// One step: `A x + B u`.
+    #[must_use]
+    pub fn step(&self, x: &[f64], u: &[f64]) -> Vec<f64> {
+        (0..self.n)
+            .map(|i| {
+                (0..self.n).map(|j| self.a[i * self.n + j] * x[j]).sum::<f64>()
+                    + (0..self.m).map(|j| self.b[i * self.m + j] * u[j]).sum::<f64>()
+            })
+            .collect()
+    }
+
+    /// Stage cost `xᵀQx + uᵀRu`.
+    #[must_use]
+    pub fn cost(&self, x: &[f64], u: &[f64]) -> f64 {
+        let xq: f64 = (0..self.n)
+            .map(|i| x[i] * (0..self.n).map(|j| self.q[i * self.n + j] * x[j]).sum::<f64>())
+            .sum();
+        let ur: f64 = (0..self.m)
+            .map(|i| u[i] * (0..self.m).map(|j| self.r[i * self.m + j] * u[j]).sum::<f64>())
+            .sum();
+        xq + ur
+    }
+}
+
 /// The exact optimal controller, from the closed-form solution of the Riccati equation.
 ///
 /// This is the oracle. It is not an approximation and not a strong baseline — it is the best any
@@ -413,4 +663,162 @@ mod tests {
         assert!(controlled < uncontrolled / 100.0,
                 "controlled {controlled} vs uncontrolled {uncontrolled}");
     }
+    /// A stable-ish random system with symmetric positive-definite weights.
+    fn rand_system(n: usize, m: usize, seed: u64) -> MatSystem {
+        let mut rng = crate::rng::Pcg::new(seed, 4);
+        let mut r0 = |lo: f64, hi: f64| lo + (hi - lo) * rng.f64();
+        let a: Vec<f64> = (0..n * n).map(|_| r0(-0.6, 0.9)).collect();
+        let b: Vec<f64> = (0..n * m).map(|_| r0(-1.0, 1.0)).collect();
+        // Q = LᵀL + I and R = MᵀM + I, so both are symmetric and positive definite by construction.
+        let spd = |k: usize, rng: &mut crate::rng::Pcg| -> Vec<f64> {
+            let l: Vec<f64> = (0..k * k).map(|_| rng.f64() - 0.5).collect();
+            let mut out = vec![0.0; k * k];
+            for i in 0..k {
+                for j in 0..k {
+                    let mut v = if i == j { 1.0 } else { 0.0 };
+                    for t in 0..k {
+                        v += l[t * k + i] * l[t * k + j];
+                    }
+                    out[i * k + j] = v;
+                }
+            }
+            out
+        };
+        let q = spd(n, &mut rng);
+        let r = spd(m, &mut rng);
+        MatSystem { n, m, a, b, q, r }
+    }
+
+    /// The returned `P` actually solves the Riccati equation it claims to.
+    ///
+    /// An iteration that stopped early, or a derivation with a transpose in the wrong place,
+    /// converges to SOMETHING; only putting the answer back into the equation says whether that
+    /// something is the answer.
+    #[test]
+    fn the_matrix_riccati_solution_solves_the_equation() {
+        for seed in 0..12u64 {
+            for (n, m) in [(2usize, 1usize), (3, 1), (3, 2), (4, 2), (5, 3)] {
+                let s = rand_system(n, m, seed);
+                let l = MatLqr::solve(&s).expect("R is positive definite by construction");
+                let res = l.residual(&s);
+                assert!(
+                    res < 1e-9,
+                    "n={n} m={m} seed={seed}: residual {res:.3e} after {} iterations",
+                    l.iters
+                );
+                // And P is symmetric, which the equation forces and a transpose error would break.
+                for i in 0..n {
+                    for j in 0..n {
+                        assert!(
+                            (l.p[i * n + j] - l.p[j * n + i]).abs() < 1e-9,
+                            "P is not symmetric at ({i},{j})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// At one dimension it is the scalar oracle, which was written independently.
+    #[test]
+    fn the_matrix_oracle_agrees_with_the_scalar_one() {
+        for &(a, b, q, r) in &[
+            (0.9f64, 0.5f64, 1.0f64, 0.1f64),
+            (1.05, 1.0, 2.0, 0.5),
+            (0.2, 0.8, 0.3, 3.0),
+        ] {
+            let scalar = Lqr::solve(&System { a, b, q, r });
+            let m = MatSystem { n: 1, m: 1, a: vec![a], b: vec![b], q: vec![q], r: vec![r] };
+            let mat = MatLqr::solve(&m).unwrap();
+            assert!((mat.p[0] - scalar.p).abs() < 1e-9, "P: {} vs {}", mat.p[0], scalar.p);
+            assert!((mat.k[0] - scalar.k).abs() < 1e-9, "K: {} vs {}", mat.k[0], scalar.k);
+        }
+    }
+
+    /// `x₀ᵀPx₀` is the cost the optimal policy actually accumulates, not a bound on it.
+    ///
+    /// The claim that makes this an oracle rather than a heuristic: roll the LQR policy forward and
+    /// the summed stage costs converge to the number `P` predicted before the rollout began.
+    #[test]
+    fn the_cost_to_go_is_what_the_optimal_policy_spends() {
+        for seed in 0..6u64 {
+            let s = rand_system(3, 2, seed);
+            let l = MatLqr::solve(&s).unwrap();
+            let x0 = vec![1.0, -0.5, 0.25];
+            let predicted = l.cost_to_go(&x0);
+
+            let mut x = x0.clone();
+            let mut spent = 0.0;
+            for _ in 0..4_000 {
+                let u = l.action(&x);
+                spent += s.cost(&x, &u);
+                x = s.step(&x, &u);
+            }
+            assert!(
+                (spent - predicted).abs() < 1e-6 * predicted.abs().max(1.0),
+                "seed {seed}: P predicted {predicted:.9}, the policy spent {spent:.9}"
+            );
+        }
+    }
+
+    /// No other linear gain beats it, which is what "optimal" has to mean.
+    #[test]
+    fn no_perturbation_of_the_optimal_gain_costs_less() {
+        let s = rand_system(3, 2, 5);
+        let l = MatLqr::solve(&s).unwrap();
+        let x0 = vec![1.0, -0.5, 0.25];
+        let roll = |k: &[f64]| -> f64 {
+            let mut x = x0.clone();
+            let mut spent = 0.0;
+            for _ in 0..3_000 {
+                let u: Vec<f64> = (0..s.m)
+                    .map(|i| -(0..s.n).map(|j| k[i * s.n + j] * x[j]).sum::<f64>())
+                    .collect();
+                spent += s.cost(&x, &u);
+                x = s.step(&x, &u);
+                if !spent.is_finite() {
+                    return f64::INFINITY;
+                }
+            }
+            spent
+        };
+        let best = roll(&l.k);
+        let mut rng = crate::rng::Pcg::new(9, 1);
+        for trial in 0..200 {
+            let perturbed: Vec<f64> =
+                l.k.iter().map(|v| v + 0.15 * (rng.f64() - 0.5)).collect();
+            let cost = roll(&perturbed);
+            assert!(
+                cost >= best - 1e-9,
+                "trial {trial}: a perturbed gain cost {cost:.9} against the optimum {best:.9}"
+            );
+        }
+    }
+
+    /// The linear solve is a solve, and reports singularity rather than returning nonsense.
+    #[test]
+    fn the_dense_solve_is_exact_on_a_known_system_and_refuses_a_singular_one() {
+        // [[2,1],[1,3]] x = [[1],[2]]  ->  x = [1/5, 3/5]
+        let x = solve(&[2.0, 1.0, 1.0, 3.0], &[1.0, 2.0], 2, 1).unwrap();
+        assert!((x[0] - 0.2).abs() < 1e-12 && (x[1] - 0.6).abs() < 1e-12, "{x:?}");
+        // A singular matrix has no solve, and saying so beats returning infinities.
+        assert!(solve(&[1.0, 2.0, 2.0, 4.0], &[1.0, 1.0], 2, 1).is_none());
+        // Pivoting: a zero leading entry must not stop it.
+        let y = solve(&[0.0, 1.0, 1.0, 0.0], &[3.0, 4.0], 2, 1).unwrap();
+        assert!((y[0] - 4.0).abs() < 1e-12 && (y[1] - 3.0).abs() < 1e-12, "{y:?}");
+    }
+
+    /// `matmul` and `transpose` on shapes that are not square, where an index slip shows.
+    #[test]
+    fn the_matrix_helpers_respect_their_shapes() {
+        // (2x3) * (3x2) = (2x2)
+        let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        assert_eq!(matmul(&a, &b, 2, 3, 2), vec![58.0, 64.0, 139.0, 154.0]);
+        assert_eq!(transpose(&a, 2, 3), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+        // Transposing twice is the identity, on a shape where it would not be if r and c were swapped.
+        let t = transpose(&a, 2, 3);
+        assert_eq!(transpose(&t, 3, 2), a.to_vec());
+    }
+
 }

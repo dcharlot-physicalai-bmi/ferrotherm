@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Vector-state LQR oracle (matrix DARE) | `mppi::MatSystem` + `MatLqr` — the exact optimum for a robot-shaped system, not a one-dimensional one | **shipped, verified** — residual, cost-to-go, and no perturbation beats it |
 | Exact 2D Ising energy density (Onsager 1944, via AGM elliptic `K`) | `free_energy::onsager_energy_density` — closed form, machine precision, no grid | **shipped, verified** — `U/N = −J√2` exactly at criticality |
 | DIMACS CNF / WCNF — the MAX-SAT benchmark corpus | `dimacs` — clauses to a `Hubo` by exact subset expansion, no penalty | **shipped, verified** — the energy IS the unsatisfied weight at every assignment |
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
@@ -914,6 +915,41 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### The control oracle, at the dimension a robot actually has
+
+`mppi` is the workload this crate says connects a thermodynamic sampler to a robot, and its whole
+claim is that a sampling controller can be scored against a provable optimum rather than against a
+rival heuristic. That oracle was **scalar** — one state, one control — which is not a system anyone
+controls.
+
+`MatSystem` and `MatLqr` are the vector form: `x' = Ax + Bu` with cost `xᵀQx + uᵀRu`, and the exact
+optimum from the discrete algebraic Riccati equation
+
+```text
+  P = Q + AᵀPA − AᵀPB (R + BᵀPB)⁻¹ BᵀPA,     K = (R + BᵀPB)⁻¹ BᵀPA,     u* = −Kx
+```
+
+solved by iterating from `P = Q`, with the small dense `matmul`, `transpose` and pivoted Gaussian
+`solve` it needs — `linalg` carried only `jacobi_eig`, and the crate is std-only.
+
+Four checks, and the last two are what make it an oracle rather than a routine:
+
+- **`residual`** substitutes the answer back into the equation. An iteration that stopped early, or a
+  derivation with a transpose in the wrong place, converges to *something*; only this says whether
+  that something solves it. Under 1e-9 across five shapes and twelve seeds, with `P` symmetric —
+  which the equation forces and a transpose error breaks.
+- **The scalar `Lqr` agrees at n = m = 1**, two independently written implementations of the same
+  equation.
+- **`x₀ᵀPx₀` is what the policy spends, not a bound on it.** Roll the optimal gain forward four
+  thousand steps and the summed stage costs converge to the number `P` named before the rollout
+  began.
+- **No perturbation of the gain costs less** — two hundred random perturbations, none cheaper. That
+  is what "optimal" has to mean, and a residual check alone does not establish it.
+
+Nine mutations, nine killed: the dropped correction term, an untransposed `A`, `R` omitted from the
+inverse, a sign flip on the gain, a missing factor of `x` in the cost-to-go, a self-transposing
+`transpose`, no pivoting, no singularity check, and back-substitution without its divide.
 
 ### An exact oracle where the old one was weakest
 
