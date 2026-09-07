@@ -196,6 +196,22 @@ mutations=(
   # criterion -- and `adapt` does not repair it, because respacing moves interior rungs while the
   # endpoints are held. The count needed grows as sqrt(n), which is the rule this row protects.
   "src/adaptive.rs|    let r = (0.35 * (n as f64).sqrt() * span).ceil().min(4096.0) as usize;|    let r = (0.35 * span).ceil().min(4096.0) as usize;|the_derived_replica_count_gives_a_ladder_that_is_not_severed|a replica count blind to the model size"
+
+  # A certified LOWER bound that rounds up is not a bound. `verify` summed the dual point with
+  # `iter().sum()`, and left-to-right addition can round upward: [1.0, 3*2^-54, 3*2^-54] sums over
+  # its true value by 1.1e-16. The points `certified` produces are on a power-of-two grid where the
+  # sum is exact, but `verify` exists for certificates it did NOT produce, and `y` is a public field.
+  "src/sdp.rs|        Ok(sum_down(&self.y))|        Ok(self.y.iter().sum())|verify_sums_the_dual_point_downward|a certified bound summed in the wrong direction"
+
+  # A clause is violated when every literal is false, and the subset expansion of that indicator has
+  # an empty-subset constant. Dropping it leaves every optimum right and every reported number off by
+  # a fixed amount -- an error that passes a solver test and only fails against a published result.
+  "src/dimacs.rs|                    offset += term;|                    offset += 0.0 * term;|the_energy_is_the_unsatisfied_weight_at_every_assignment|a MAX-SAT translation that drops its constant"
+
+  # Pseudolikelihood's gradient: an edge weight enters the field of BOTH its endpoints, so its
+  # derivative has two terms. Drop either and the fit still converges to something, just not to the
+  # maximiser of the stated objective -- which no check on the fitted model would reveal.
+  "src/ebm.rs|            dw[e] += resid[i] * f64::from(row[j]) + resid[j] * f64::from(row[i]);|            dw[e] += resid[i] * f64::from(row[j]);|the_closed_form_gradient_matches_a_finite_difference|a pseudolikelihood gradient missing half its edge term"
 )
 
 bad=0

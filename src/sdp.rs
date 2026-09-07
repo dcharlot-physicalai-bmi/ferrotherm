@@ -662,6 +662,50 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
     (b, cert)
 }
 
+/// Sum that is never ABOVE the true total, whatever the inputs.
+///
+/// # Why `iter().sum()` is not enough here
+///
+/// A certificate's value is a LOWER bound, so a sum that rounds up is a bound that is not one.
+/// Left-to-right addition can round up: `[1.0, 3·2⁻⁵⁴, 3·2⁻⁵⁴]` has true sum `1 + 1.5·2⁻⁵²` and
+/// sums in `f64` to `1 + 2·2⁻⁵²`, over by 1.1e-16.
+///
+/// The dual points [`run`] produces are on `snap_down`'s power-of-two grid, where the sum is exact
+/// and this changes nothing. But [`Certificate::verify`] exists to check certificates it did not
+/// produce — deserialised, hand-built, or from another implementation — and `y` is a public field.
+/// On that path the grid is an assumption rather than a fact, which is exactly the assumption a
+/// re-verification is supposed not to make.
+///
+/// Neumaier compensation for accuracy, then a guard subtracted to make the direction certain.
+///
+/// The guard is `2 ε |total| + n² ε² Σ|y|`, which is Kahan–Babuška's error bound: one rounding of
+/// the final addition, relative to the RESULT, plus a second-order term in the magnitude summed.
+///
+/// Scaling the whole guard by `Σ|y|` instead — `2 n ε Σ|y|` — is also sound and was the first
+/// version here. It is unusable under cancellation: on `[1e16, 1, −1e16]`, whose true sum is one,
+/// that guard is **26.6** and the function returns −25.6. Sound, and worthless. The bound below is
+/// 9e-15 on the same input, because the first-order term follows the answer rather than the
+/// arithmetic that produced it.
+///
+/// The second-order term is carried for rigour and is not observable here. It overtakes the first
+/// only when `n² ε² Σ|y| > 2 ε |total|`, which for a dual point of the usual sign structure is
+/// `n > sqrt(2/ε) ≈ 9.5e7` — a hundred million spins. So a mutation deleting it survives every test
+/// in this module, and that is recorded rather than papered over: what would catch it is an input
+/// this crate cannot represent.
+fn sum_down(v: &[f64]) -> f64 {
+    let (mut s, mut c) = (0.0f64, 0.0f64);
+    for &x in v {
+        let t = s + x;
+        c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+        s = t;
+    }
+    let total = s + c;
+    let mag: f64 = v.iter().map(|x| x.abs()).sum::<f64>().next_up();
+    let n = v.len() as f64;
+    let guard = 2.0 * f64::EPSILON * total.abs() + n * n * f64::EPSILON * f64::EPSILON * mag;
+    total - guard
+}
+
 impl Certificate {
     /// Re-check this certificate against the graph, from scratch.
     ///
@@ -685,7 +729,9 @@ impl Certificate {
         if !verify_psd(&cost, &self.y, c) {
             return Err(CertError::NotPsd);
         }
-        Ok(self.y.iter().sum())
+        // Downward, not `sum()`: see `sum_down`. A lower bound that rounds up is not a bound,
+        // and this path re-checks certificates it did not produce.
+        Ok(sum_down(&self.y))
     }
 }
 
@@ -1033,4 +1079,155 @@ mod tests {
         let dense_nz = cost.dense.iter().filter(|v| **v != 0.0).count();
         assert_eq!(counted, dense_nz, "the index missed a non-zero or invented one");
     }
+    /// The verified value is never above the true sum, on inputs where naive addition is.
+    ///
+    /// A certified LOWER bound that rounds up is not a bound. `[1.0, 3·2⁻⁵⁴, 3·2⁻⁵⁴]` is the
+    /// smallest case that shows it: the true sum is `1 + 1.5·2⁻⁵²`, left-to-right `f64` addition
+    /// gives `1 + 2·2⁻⁵²`, and the difference is 1.1e-16 in the wrong direction. Tiny, and the
+    /// wrong sign is what matters — this module's entire product is a number someone else can check.
+    #[test]
+    fn the_certified_sum_never_rounds_upward() {
+        let tricky = [1.0f64, 3.0 * 2.0f64.powi(-54), 3.0 * 2.0f64.powi(-54)];
+        // The true sum is 1 + 1.5*2^-52, which is NOT an f64 -- the ulp at magnitude one is
+        // 2^-52, and needing half of one is exactly why naive addition has to round it. So the
+        // comparison is against the largest f64 that does not exceed it, which is representable.
+        let below_truth = 1.0 + 2.0f64.powi(-52);
+        let naive: f64 = tricky.iter().sum();
+        assert!(
+            naive > below_truth,
+            "the fixture must actually round up past the true sum, or it tests nothing: {naive:e}"
+        );
+        let got = sum_down(&tricky);
+        assert!(got <= below_truth, "the certified sum {got:e} is above the true sum");
+
+        // And it stays close: the guard costs order n*eps*|y|, not something a reader would notice.
+        assert!(
+            below_truth - got < 1e-12,
+            "the guard gave up {}, which is more than rounding safety costs",
+            below_truth - got
+        );
+    }
+
+    /// Over many random vectors it never exceeds a compensated reference, and stays tight.
+    #[test]
+    fn the_certified_sum_is_below_a_compensated_reference_and_close_to_it() {
+        let mut rng = crate::rng::Pcg::new(31, 8);
+        for trial in 0..500 {
+            let n = 2 + (trial % 64);
+            let v: Vec<f64> = (0..n).map(|_| (rng.f64() - 0.5) * 100.0).collect();
+            // Neumaier without the guard, as the accuracy reference.
+            let (mut s, mut c) = (0.0f64, 0.0f64);
+            for &x in &v {
+                let t = s + x;
+                c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+                s = t;
+            }
+            let reference = s + c;
+            let got = sum_down(&v);
+            assert!(got <= reference, "trial {trial}: {got} exceeded the reference {reference}");
+            let mag: f64 = v.iter().map(|x| x.abs()).sum();
+            assert!(
+                reference - got < 1e-10 * mag.max(1.0),
+                "trial {trial}: gave up {} on a magnitude of {mag}",
+                reference - got
+            );
+        }
+    }
+
+    /// Cancellation is compensated, not lost.
+    ///
+    /// `[1e16, 1.0, -1e16]` sums to zero left-to-right — the `1.0` is entirely below the ulp of the
+    /// running total and vanishes. The true sum is one. Without the compensation term this returns
+    /// zero, which is still a valid LOWER bound and so invisible to every soundness check here, and
+    /// wrong by the whole quantity being summed.
+    #[test]
+    fn the_certified_sum_keeps_what_cancellation_would_lose() {
+        let v = [1e16f64, 1.0, -1e16];
+        let naive: f64 = v.iter().sum();
+        assert_eq!(naive, 0.0, "the fixture must actually lose the term, or it tests nothing");
+        let got = sum_down(&v);
+        assert!(
+            (got - 1.0).abs() < 1e-3,
+            "the compensated sum should recover the 1.0 that cancellation hid, got {got}"
+        );
+        assert!(got <= 1.0, "and still never round upward");
+    }
+
+    /// The guard grows with the number of terms, because the error it covers does.
+    ///
+    /// A constant guard is sound for two terms and not for a thousand: recursive summation's error
+    /// grows as `n ε Σ|x|`. A mutation replacing the guard with a constant survives every soundness
+    /// check above, since a too-small guard still points DOWNWARD — it just stops being enough.
+    #[test]
+    fn the_guard_scales_with_the_sum_it_protects() {
+        let compensated = |v: &[f64]| {
+            let (mut s, mut c) = (0.0f64, 0.0f64);
+            for &x in v {
+                let t = s + x;
+                c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+                s = t;
+            }
+            s + c
+        };
+        let short = vec![1.0f64; 4];
+        let long = vec![1.0f64; 4096];
+        let give_up = |v: &[f64]| compensated(v) - sum_down(v);
+        // The first-order term follows the total, so a larger sum carries a larger guard.
+        let big: Vec<f64> = vec![1e6f64; 4];
+        assert!(
+            give_up(&big) > give_up(&short) * 100.0,
+            "a million times the total should widen the guard: {} against {}",
+            give_up(&big),
+            give_up(&short)
+        );
+        // The second-order term cannot be separated by any input this crate can hold, and saying
+        // so is the honest version of testing it. At equal total the two guards are BIT-IDENTICAL
+        // at four thousand terms, because n² ε² Σ|y| only overtakes 2 ε |total| past n ≈ 9.5e7.
+        let same_total: Vec<f64> = vec![4.0 / 4096.0; 4096];
+        assert!(
+            (same_total.iter().sum::<f64>() - short.iter().sum::<f64>()).abs() < 1e-12,
+            "the two fixtures must have the same total for this to isolate anything"
+        );
+        assert_eq!(
+            give_up(&same_total),
+            give_up(&short),
+            "at four thousand terms the second-order term is still nine orders below the first, so \
+             these must agree exactly; if they ever differ, the crossover in `sum_down`'s docs is \
+             wrong"
+        );
+        // Term count does widen the guard once the total grows with it, which is the ordinary case.
+        assert!(give_up(&long) > give_up(&short), "{} against {}", give_up(&long), give_up(&short));
+    }
+
+    /// `verify` sums downward, not with `iter().sum()`.
+    ///
+    /// The soundness fix lives on the path that re-checks certificates this module did not produce,
+    /// so it is that path the test has to walk. A real certificate's `y` is on `snap_down`'s grid
+    /// where the two agree exactly — scaling it slightly keeps `C − Diag(y)` positive definite (a
+    /// smaller diagonal is subtracted) while taking it off the grid, which is precisely the shape a
+    /// deserialised or foreign certificate arrives in.
+    #[test]
+    fn verify_sums_the_dual_point_downward() {
+        let g = random_graph(12, 0.4, 5, true);
+        let (_, cert) = certified(&g, &Params::default(), 5);
+        let mut off_grid = cert.clone();
+        // SUBTRACT rather than scale. `C − Diag(y)` grows as `y` falls, so lowering every entry
+        // keeps it positive definite; scaling toward zero RAISES the negative entries and can break
+        // feasibility, which is what the first draft of this test did.
+        for v in &mut off_grid.y {
+            *v -= 1e-9;
+        }
+        let reported = off_grid.verify(&g).expect("a slightly smaller dual is still feasible");
+        let naive: f64 = off_grid.y.iter().sum();
+        assert!(
+            reported < naive,
+            "verify reported {reported}, which is the naive sum {naive} rather than a downward one"
+        );
+        assert!(
+            naive - reported < 1e-6,
+            "and the safety margin should be invisible next to the bound: {}",
+            naive - reported
+        );
+    }
+
 }

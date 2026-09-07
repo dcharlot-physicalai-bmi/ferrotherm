@@ -914,6 +914,31 @@ the conservative direction for an instrument whose job is to accuse, and one fix
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
 
+### A certified lower bound that cannot round upward
+
+`sdp::Certificate::verify` re-checks a certificate from scratch and returns `eᵀy`. It summed with
+`iter().sum()`, and left-to-right addition can round **up**: `[1.0, 3·2⁻⁵⁴, 3·2⁻⁵⁴]` has true sum
+`1 + 1.5·2⁻⁵²` and sums in `f64` to `1 + 2·2⁻⁵²`. Over by 1.1e-16 — trivial in size, wrong in
+direction, and a lower bound that exceeds the truth is not a bound.
+
+The dual points `certified` produces are on `snap_down`'s power-of-two grid, where the sum is exact
+and this changes nothing. But `verify` exists to check certificates it did **not** produce —
+deserialised, hand-built, or from another implementation — and `y` is a public field. On that path
+the grid is an assumption, and a re-verification that assumes what it is checking has stopped being
+one.
+
+`sum_down` uses Kahan–Babuška compensation, then subtracts `2ε|total| + n²ε²Σ|y|` so the direction is
+certain. The first draft scaled the whole guard by `Σ|y|`, which is equally sound and useless under
+cancellation: on `[1e16, 1, −1e16]`, true sum one, that guard is **26.6** and the function returns
+−25.6. The bound above gives 9e-15 on the same input, because its leading term follows the answer
+rather than the arithmetic that produced it.
+
+Four mutations killed. The fifth — deleting the second-order term — **survives, and is recorded
+rather than papered over**: it overtakes the first-order term only past `n ≈ 9.5e7`, so catching it
+would need a dual point with a hundred million entries. The test asserts the two guards are
+bit-identical at four thousand terms, which is the true statement, and says the crossover is what
+would have to move for that to change.
+
 ### The MAX-SAT corpus, without a penalty or a modelling choice
 
 `gset` brings in the max-cut benchmarks. `dimacs` brings in the other standard family, and a far
