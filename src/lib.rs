@@ -104,6 +104,7 @@ pub mod sparsify;
 pub mod ising;
 pub mod device;
 pub mod ledger;
+pub mod multispin;
 pub mod duty;
 pub mod hybrid;
 pub mod host;

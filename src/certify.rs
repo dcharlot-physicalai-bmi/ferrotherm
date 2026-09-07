@@ -161,15 +161,40 @@ impl core::fmt::Display for Certificate {
     }
 }
 
-/// Estimate the inverse temperature the samples were drawn at.
+/// Estimate the inverse temperature the samples were drawn at, and the variance of that estimate.
 ///
 /// Maximum pseudolikelihood: every site of every sample contributes one logistic observation with
-/// feature `2 f_i` and label `s_i`, and the log-likelihood in beta is concave, so Newton converges
-/// from anywhere sensible. Returns `(beta, fisher_information)`.
+/// feature `2 f_i` and label `s_i`, and the log-likelihood in beta is concave.
+///
+/// # The variance is a sandwich, and the textbook Fisher form is wrong here
+///
+/// Pseudolikelihood is a **composite** likelihood — a product of conditionals that is not the
+/// likelihood of anything. For a real likelihood the asymptotic variance is the inverse Hessian
+/// `H^-1`; for a composite one it is the Godambe sandwich `H^-1 J H^-1`, where `J` is the variance
+/// of the score. The two agree only when the terms being multiplied are independent, and here they
+/// emphatically are not: the `n` conditionals from one configuration all read the same spins, so
+/// their scores are positively correlated and `H^-1` under-states the variance.
+///
+/// This returned `H` and the caller took `sqrt(1/H)`, and the consequence was measurable. Certifying
+/// EXACT independent draws — where the sampler cannot be wrong, because there is no sampler —
+/// produced a `BetaMismatch` finding on 12% of runs for `ring(10, 1.0, 0.0)`, 18% for its
+/// antiferromagnet and 8% for a fixture at `beta = 0.6`, against the 5% a 95% interval is allowed.
+/// `beta_eff` itself was unbiased to about 0.02%, so the point estimate was never the problem: the
+/// interval was too narrow by half, and the instrument was calling correct samplers broken.
+///
+/// So `J` is estimated by clustering on the configuration — `J = sum_d (sum_i x(y - p))^2`, one term
+/// per draw — which is exactly the dependence the naive form ignores. Correlation BETWEEN draws is a
+/// separate matter and is handled by the caller's autocorrelation inflation.
+///
+/// Returns `(beta, variance_of_beta)`.
 fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
-    // Precompute (field, spin) once; the fit visits them many times.
+    // Precompute (field, spin) once; the fit visits them many times. `starts` records where each
+    // configuration's observations begin, because the sandwich needs to know which observations
+    // came from the same spins.
     let mut obs: Vec<(f64, f64)> = Vec::with_capacity(samples.len() * g.n);
+    let mut starts: Vec<usize> = Vec::with_capacity(samples.len() + 1);
     for s in samples {
+        starts.push(obs.len());
         for i in 0..g.n {
             let f = g.field(i, s);
             if f != 0.0 {
@@ -177,8 +202,9 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
             }
         }
     }
+    starts.push(obs.len());
     if obs.is_empty() {
-        return (f64::NAN, 0.0); // every field was zero: the data says nothing about beta
+        return (f64::NAN, f64::INFINITY); // every field was zero: the data says nothing about beta
     }
 
     // d(log L)/d(beta), which is strictly decreasing because the log-likelihood is concave.
@@ -197,7 +223,7 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
         // No sign change: the likelihood is maximised at the edge, which means the fields separate
         // the spins perfectly. Report the bound rather than a fabricated interior value.
         let beta = if fhi >= 0.0 { LIM } else { -LIM };
-        return (beta, 0.0);
+        return (beta, f64::INFINITY);
     }
     for _ in 0..200 {
         let mid = 0.5 * (lo + hi);
@@ -212,14 +238,37 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
     }
     let beta = 0.5 * (lo + hi);
 
-    let info: f64 = obs
+    // H: the Hessian of the pseudo-log-likelihood, the "bread" of the sandwich.
+    let h: f64 = obs
         .iter()
         .map(|&(x, _)| {
             let p = 1.0 / (1.0 + (-beta * x).exp());
             x * x * p * (1.0 - p)
         })
         .sum();
-    (beta, info)
+    if !(h > 0.0) {
+        return (beta, f64::INFINITY);
+    }
+
+    // J: the variance of the score, clustered by configuration -- the "meat". The scores sum to
+    // zero at the optimum, so this is a variance about a known mean and needs no centring.
+    let clusters = starts.len() - 1;
+    let j: f64 = starts
+        .windows(2)
+        .map(|w| {
+            obs[w[0]..w[1]]
+                .iter()
+                .map(|&(x, y)| x * (y - 1.0 / (1.0 + (-beta * x).exp())))
+                .sum::<f64>()
+                .powi(2)
+        })
+        .sum();
+
+    // With one cluster there is no spread to estimate from, and a sandwich built on a single term
+    // would report a variance of whatever that term happened to be. Fall back to the naive form and
+    // let the caller's inflation be the only widening, which is the conservative direction.
+    let var = if clusters >= 2 { j / (h * h) } else { 1.0 / h };
+    (beta, var)
 }
 
 /// Integrated autocorrelation time of a scalar trace, by Sokal's automatic windowing.
@@ -275,7 +324,7 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
         };
     }
 
-    let (beta_eff, info) = fit_beta(g, samples);
+    let (beta_eff, beta_var) = fit_beta(g, samples);
 
     // Autocorrelation of ONE observable measures how fast that observable mixes, which is not the
     // same as how fast the configuration does. An ordered lattice is the case in point: it sits in
@@ -298,9 +347,11 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     };
     let ess = if t.is_finite() && t > 0.0 { draws as f64 / (2.0 * t) } else { 1.0 };
 
-    // The Fisher interval assumes independent observations, and chain samples are not. Widening by
-    // the autocorrelation is the difference between a defensible interval and a flattering one.
-    let se = if info > 0.0 { (1.0 / info).sqrt() } else { f64::INFINITY };
+    // Two dependences, two corrections. WITHIN a configuration the pseudolikelihood's conditionals
+    // share spins, which `fit_beta`'s sandwich handles; BETWEEN configurations a chain is
+    // autocorrelated, which is this inflation. Applying only one of them was worth a factor of two
+    // in the interval's width -- see `fit_beta`.
+    let se = if beta_var.is_finite() && beta_var > 0.0 { beta_var.sqrt() } else { f64::INFINITY };
     let inflate = if t.is_finite() { (2.0 * t).sqrt().max(1.0) } else { 1.0 };
     let half = 1.96 * se * inflate;
     let beta_ci = (beta_eff - half, beta_eff + half);
@@ -419,6 +470,128 @@ mod tests {
             trace.push(g.energy(&smp.s));
         }
         (samples, trace)
+    }
+
+    /// The 95% interval covers 95% of the time, measured on draws that cannot be wrong.
+    ///
+    /// The calibration test this module did not have, and the one that would have caught a defect
+    /// it shipped with. `certify` fits `beta` by maximum *pseudo*likelihood and took its interval from
+    /// `sqrt(1/H)`, the inverse Hessian. That is the variance of a real likelihood. Pseudolikelihood
+    /// is a COMPOSITE likelihood — a product of conditionals that is not the likelihood of anything
+    /// — and its variance is the Godambe sandwich `H^-1 J H^-1`. The two agree only when the
+    /// multiplied terms are independent, and the `n` conditionals from one configuration all read
+    /// the same spins.
+    ///
+    /// The consequence was not subtle. On identical exact draws, the naive interval missed the true
+    /// `beta` on 13.8% of runs and the sandwich on 5.0%, with the naive standard error a stable
+    /// 0.76 of the right one — an interval 32% too narrow, at every draw count tried. So the
+    /// instrument reported `BetaMismatch` on correct samplers about one run in seven, and a
+    /// verification tool with that false-alarm rate is one people learn to argue with.
+    ///
+    /// The draws here are independent and exactly Boltzmann, by inverse-CDF over the enumerated
+    /// distribution. That is the point: there is no sampler in this test, so every failure is the
+    /// instrument measuring itself, and the expected count is exactly what the confidence level
+    /// says. The band is four standard deviations of `Binomial(trials, 0.05)` and is two-sided,
+    /// because an interval that never fires is as broken as one that always does.
+    #[test]
+    fn the_interval_covers_at_the_rate_it_claims() {
+        let g = crate::ising::ring(10, 1.0, 0.0);
+        let beta = 0.4;
+        let (trials, draws) = (250usize, 500usize);
+
+        let p = crate::ising::exact_boltzmann(&g, beta);
+        let mut cdf = Vec::with_capacity(p.len());
+        let mut total = 0.0;
+        for &x in &p {
+            total += x;
+            cdf.push(total);
+        }
+
+        let mut missed = 0usize;
+        for seed in 0..trials {
+            let mut rng = crate::rng::Pcg::new(seed as u64, 7);
+            let mut samples = Vec::with_capacity(draws);
+            let mut trace = Vec::with_capacity(draws);
+            for _ in 0..draws {
+                let u = rng.f64() * total;
+                let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
+                let st: Vec<i8> =
+                    (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect();
+                trace.push(g.energy(&st));
+                samples.push(st);
+            }
+            let c = certify(&g, beta, &samples, &trace);
+            if !(c.beta_ci.0 <= beta && beta <= c.beta_ci.1) {
+                missed += 1;
+            }
+        }
+
+        // Binomial(250, 0.05): mean 12.5, sd 3.45. Four sd either way.
+        let (lo, hi) = (2usize, 27usize);
+        assert!(
+            (lo..=hi).contains(&missed),
+            "the 95% interval missed on {missed} of {trials} runs of EXACT independent draws; \
+             a calibrated interval misses about {:.0}. Below {lo} the interval is too wide to \
+             detect anything; above {hi} it is too narrow and reports correct samplers as broken, \
+             which is what the naive inverse-Hessian variance did at about {:.0}",
+            0.05 * trials as f64,
+            0.138 * trials as f64
+        );
+    }
+
+    /// A more correlated chain gets a wider interval, which is what the inflation is for.
+    ///
+    /// The companion to `the_interval_covers_at_the_rate_it_claims`, and deliberately a test of the
+    /// MECHANISM rather than of coverage. Coverage cannot pin this factor, and the reason is worth
+    /// recording rather than discovering twice.
+    ///
+    /// On `ring(10, 1.0, 0.2)` at `beta = 0.6`, 500 draws, over 300 seeds:
+    ///
+    /// ```text
+    ///   thin   tau_int   with inflation   without
+    ///      1      1.51        0.0% miss    2.3% miss      (target 5.0%)
+    ///      2      0.86        0.7%         4.7%
+    ///      5      0.57        2.3%         3.0%
+    /// ```
+    ///
+    /// The inflation OVER-widens: removing it moves coverage toward the nominal rate rather than
+    /// away from it. The cause is that it scales by the autocorrelation of the energy trace as a
+    /// proxy for the autocorrelation of the estimator's SCORE, and those are different quantities —
+    /// a Newey-West estimate on the score itself asks for 1.05x where the proxy asks for 1.74x.
+    ///
+    /// The inflation is kept anyway, because over-wide is the conservative direction for an
+    /// instrument whose job is to accuse, and because one fixture is not enough evidence to swap a
+    /// known-conservative heuristic for a differently-wrong one. What is NOT kept is the pretence
+    /// that a coverage test covers it: this asserts the contract the factor actually has.
+    #[test]
+    fn a_more_correlated_chain_gets_a_wider_interval() {
+        let g = crate::ising::ring(10, 1.0, 0.2);
+        let beta = 0.6;
+        let run = |thin: usize| {
+            let mut smp = crate::gibbs::Sampler::new(&g, beta, 4);
+            smp.sweeps(400, None);
+            let (mut s, mut t) = (Vec::new(), Vec::new());
+            for _ in 0..500 {
+                smp.sweeps(thin, None);
+                let st = smp.read_all(None);
+                t.push(g.energy(&st));
+                s.push(st);
+            }
+            let c = certify(&g, beta, &s, &t);
+            (0.5 * (c.beta_ci.1 - c.beta_ci.0), c.tau_int)
+        };
+        let (wide, tau_hi) = run(1);
+        let (narrow, tau_lo) = run(20);
+        assert!(
+            tau_hi > tau_lo,
+            "the fixture must actually differ in correlation: tau {tau_hi:.2} vs {tau_lo:.2}"
+        );
+        assert!(
+            wide > 1.2 * narrow,
+            "an unthinned chain (tau {tau_hi:.2}) got a half-width of {wide:.5} against {narrow:.5} \
+             for a thinned one (tau {tau_lo:.2}); correlated draws carry less information and the \
+             interval has to say so"
+        );
     }
 
     #[test]

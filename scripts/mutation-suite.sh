@@ -143,6 +143,24 @@ mutations=(
   # the sign rule reads it as antiferromagnetic, manufacturing a frustration the model does not have
   # and refusing a perfectly samplable instance with a "frustrated" cycle of product zero.
   "src/cluster.rs|if w == 0.0 {|if false {|a_zero_coupling_constrains_nothing|a zero coupling read as antiferromagnetic"
+
+  # The interval on `beta` used the inverse Hessian, which is the variance of a REAL likelihood.
+  # Pseudolikelihood is a COMPOSITE one and needs the Godambe sandwich. Measured on exact independent
+  # draws -- no sampler, so nothing can be wrong but the instrument -- the naive form missed the true
+  # beta on 12-18% of runs against the 5% a 95% interval allows, its standard error a stable 0.76 of
+  # the right one. `certify` was accusing correct samplers about one run in seven.
+  "src/certify.rs|let var = if clusters >= 2 { j / (h * h) } else { 1.0 / h };|let var = 1.0 / h;|the_interval_covers|a pseudolikelihood interval without its sandwich"
+
+  # The autocorrelation inflation, which no test covered until a mutation said so. It cannot be
+  # pinned by a coverage test -- it OVER-widens, so removing it moves nominal coverage toward the
+  # target rather than away -- so the row is scored against the contract it actually has: a more
+  # correlated chain must get a wider interval.
+  "src/certify.rs|let half = 1.96 * se * inflate;|let half = 1.96 * se;|a_more_correlated_chain|an interval that ignores autocorrelation"
+
+  # Multi-spin coding packs 64 replicas into one word. Broadcast one coin across the lanes and all 64
+  # become the same chain -- and every one of them stays an exactly correct sample of the model, so
+  # every per-replica check still passes while the sampler delivers a sixty-fourth of what it claims.
+  "src/multispin.rs|let u = self.rng.next_u64();|let u = if self.rng.next_u64() & 1 == 1 { u64::MAX } else { 0 };|the_replicas_are_independent|64 replicas that are one replica"
 )
 
 bad=0

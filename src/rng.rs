@@ -32,6 +32,16 @@ impl Pcg {
         xorshifted.rotate_right(rot)
     }
 
+    /// 64 uniform bits, as two draws.
+    ///
+    /// The generator's state step produces 32 bits, so a full word is two of them. Used where the
+    /// bits are wanted AS bits rather than as a number -- [`crate::multispin`] treats one word as
+    /// 64 independent coin flips, one per replica.
+    #[inline]
+    pub fn next_u64(&mut self) -> u64 {
+        (u64::from(self.next_u32()) << 32) | u64::from(self.next_u32())
+    }
+
     /// Uniform in [0, 1).
     #[inline]
     pub fn f64(&mut self) -> f64 {
@@ -51,6 +61,34 @@ impl Pcg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A full word is the two 32-bit draws, in that order, and nothing else.
+    ///
+    /// `multispin` reads one word as 64 independent coin flips, so a `next_u64` that reused a draw
+    /// or dropped one would correlate the replicas that share it -- and correlated replicas each
+    /// remain individually correct, which is exactly the failure a per-replica check cannot see.
+    #[test]
+    fn a_full_word_is_two_draws_and_the_bits_are_balanced() {
+        let (mut a, mut b) = (Pcg::new(9, 3), Pcg::new(9, 3));
+        let want = (u64::from(b.next_u32()) << 32) | u64::from(b.next_u32());
+        assert_eq!(a.next_u64(), want);
+
+        let mut ones = [0u32; 64];
+        let n = 20_000;
+        for _ in 0..n {
+            let w = a.next_u64();
+            for (bit, c) in ones.iter_mut().enumerate() {
+                *c += ((w >> bit) & 1) as u32;
+            }
+        }
+        // Every bit position must be a fair coin. Four standard deviations of a Binomial(n, 1/2) is
+        // 2*sqrt(n), so this fails on a stuck or duplicated half-word rather than on bad luck.
+        let tol = 2.0 * f64::from(n).sqrt();
+        for (bit, &c) in ones.iter().enumerate() {
+            let dev = (f64::from(c) - f64::from(n) / 2.0).abs();
+            assert!(dev < tol, "bit {bit} was set {c} times of {n}, off by {dev:.0} (tol {tol:.0})");
+        }
+    }
 
     #[test]
     fn deterministic_and_uniform() {

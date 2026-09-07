@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Multi-spin coding (Isakov et al.; the Janus line) | `multispin` — 64 replicas per `u64`, bit-sliced ripple-carry field, refuses non-uniform `|J|` by name | **shipped, verified** — every lane certified, and lane INDEPENDENCE tested separately |
 | Cluster updates (OpenJij `Algorithm_SwendsenWang_run`) | `cluster` — Swendsen–Wang + Wolff, validity decided by **signed-graph balance**, fields absorbed by a ghost spin | **shipped, verified** — `z` measured against the literature, and a refusal carries a frustrated cycle the caller can multiply out |
 | Exact ground-state **counting** (GenericTensorNetworks.jl) | `exact::ground_degeneracy` — the cold limit of `log Z` | **shipped, verified** against a closed form at 101 spins |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
@@ -861,6 +862,92 @@ degree four, so they exercise summing an index carried by several tensors.
 
 It is real-valued and exact: it contracts probability and partition-function networks, **not
 amplitudes**, and performs no bond-dimension truncation.
+
+### The certificate was accusing correct samplers, and now it does not
+
+`certify` is what every sampler in this crate is scored by, so a defect in it is a defect in every
+verification claim the crate makes. It had one.
+
+It fits `beta` by maximum **pseudolikelihood** and took the interval from `sqrt(1/H)`, the inverse
+Hessian. That is the variance of a real likelihood. Pseudolikelihood is a **composite** likelihood —
+a product of conditionals that is not the likelihood of anything — and its asymptotic variance is the
+Godambe sandwich `H⁻¹ J H⁻¹`. The two agree only when the multiplied terms are independent, and the
+`n` conditionals from one configuration all read the same spins.
+
+Measured on **exact independent draws**, where there is no sampler and so no sampler can be wrong:
+
+| fixture | naive `H⁻¹` | Godambe sandwich |
+|---|---|---|
+| `ring(10, +1, 0)` | 12.0% | **4.0%** |
+| `ring(10, −1, 0)` | 18.0% | **5.0%** |
+| `ring(10, +1, .35)` | 12.5% | **6.5%** |
+| `lattice2d(3)` | 2.0% | **4.0%** |
+| `ring(10, +1, .2)`, β = 0.6 | 8.0% | **2.5%** |
+
+against the 5% a 95% interval is allowed. `beta_eff` was unbiased throughout — to about 0.02% — so the
+point estimate was never the problem. On identical data the naive standard error is a stable **0.76**
+of the right one at every draw count tried: an interval 32% too narrow, reporting `BetaMismatch` on
+correct samplers about one run in seven. A verification tool with that false-alarm rate is one people
+learn to argue with.
+
+`J` is now estimated by clustering on the configuration — one score term per draw — which is exactly
+the dependence the naive form ignores. `the_interval_covers_at_the_rate_it_claims` measures the
+calibration over 250 runs of exact draws and is two-sided, because an interval that never fires is as
+broken as one that always does.
+
+**How it surfaced, and what else it exposed.** A mutation of `multispin` that should have cost only
+performance also failed the distribution test, with a 95% interval missing the truth by four
+ten-thousandths. Chasing that showed 1.7%–13.3% false-failure rates across fixtures, and three
+unrelated algorithms — Swendsen–Wang, Wolff, multi-spin — all failing at ~7–13% on `ring(10)` while a
+3×3 lattice failed at 1.7%. That pattern indicts the instrument, not the samplers.
+
+The same investigation measured the autocorrelation inflation, which had never been tested for its
+purpose. It **over**-widens: on `ring(10, 1.0, 0.2)` at 500 draws over 300 seeds, coverage with it is
+0.0% / 0.7% / 2.3% miss at thin 1 / 2 / 5, against 2.3% / 4.7% / 3.0% without. It scales by the
+autocorrelation of the energy trace as a proxy for that of the estimator's score, and a Newey–West
+estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It is kept — over-wide is
+the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
+swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
+contract it actually has: a more correlated chain gets a wider interval.
+
+### 64 replicas in one word
+
+`gibbs` visits one site of one replica at a time, which is the wrong shape for what this crate mostly
+does with chains — a tempering ladder, a population, a disorder average. `multispin` packs 64
+replicas into one `u64` per site and updates them with bitwise operations.
+
+With every `|J_ij|` equal to one value `J`, the local field needs no multiplication:
+
+```text
+  f_i = J * sum_j sign(J_ij) s_j + h_i  =  J * (2k - deg_i) + h_i
+```
+
+`k` counts the neighbours whose signed contribution is `+1`; that contribution is `s_j XOR (J_ij < 0)`
+— one XOR — and `k` is a per-lane popcount computed by a ripple-carry adder over bit planes. The field
+then takes only `deg_i + 1` values, so acceptance is a small per-site table. Mixed magnitudes are
+refused carrying the magnitudes found, which includes `planted::frustrated_loops`: it overlaps its
+planted loops, so their couplings add to 1, 2 and 3.
+
+**The randomness is drawn from the top and stops when it stops mattering.** Bit-sliced, each lane
+needs its own uniform, naively 32 words per site — *more* RNG than the 64 scalar draws it replaces, so
+the optimisation would have been a pessimisation. A comparison is decided by its leading bits, so
+drawing from the most significant end and stopping once every lane has resolved costs **under 12 words
+per site, measured**, and is exact rather than approximate: the bits not drawn could not have changed
+any answer. `sweep` returns the count, so the claim is a measurement.
+
+**The test that matters is the one about independence.** Share one random word across the lanes and all
+64 replicas become the same chain — and every one of them is still an exactly correct sample of the
+model. Certification passes, energies match enumeration, and the sampler delivers one replica's worth
+of information while reporting sixty-four. No per-replica check can see it, so lane independence is
+tested directly, by cross-lane magnetisation correlation. A 12-mutation battery kills 12 of 12,
+including that one.
+
+The per-lane spread is also what makes the correctness test writable. Checking each of 64 lanes against
+a fixed tolerance cannot be done correctly — the spread is sampling noise, so any threshold tight enough
+to catch a biased lane is one an honest lane will cross, and the first draft failed on lane 29 at 1.9
+sigma while the mean over all 64 sat 0.00004 from the enumerated value. The tolerance is derived from
+the observed spread instead, which yields a second guard on the duplication trap for free: identical
+lanes have a spread of exactly zero.
 
 ### Critical slowing down, measured on both sides of it
 
