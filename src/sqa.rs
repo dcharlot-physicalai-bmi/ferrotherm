@@ -419,18 +419,25 @@ mod tests {
     /// decouple into independent classical replicas — the transverse field doing nothing for most
     /// of the anneal. See [`TROTTER_RATIO`] for the fidelity numbers; this is the cost in answers.
     ///
-    /// Work is matched EXACTLY rather than approximately: `M × sweeps_per_step` is 60 in both arms,
-    /// so the two do the same number of proposals over the same `Γ` schedule, and the only
-    /// difference is how those proposals are divided between slices and sweeps. Comparing at equal
-    /// `steps` instead would hand the derived arm nearly four times the budget and prove nothing —
-    /// which is the trap the first three measurements behind this change fell into.
+    /// Work is matched EXACTLY rather than approximately: both arms do `4 × M_default` proposals
+    /// per step over the same `Γ` schedule, so the only difference is how those proposals are
+    /// divided between slices and sweeps. Comparing at equal `steps` instead would hand the derived
+    /// arm proportionally more budget and prove nothing — the trap the first three measurements
+    /// behind this change fell into.
+    ///
+    /// The derived arm reads [`Params::default`] rather than naming a number, which is the
+    /// difference between proving the finding and GUARDING it. An earlier draft hardcoded both
+    /// arms; the recorded mutation suite then reverted the default to the old literal and this test
+    /// stayed green, because it was no longer looking at the default at all.
     #[test]
     fn the_derived_slice_count_beats_the_literal_it_replaced() {
         let inst = crate::planted::frustrated_loops(8, 96, 3);
         let (g, opt) = (&inst.graph, inst.ground_energy);
         let base = Params { steps: 50, ..Params::default() };
-        let derived = Params { trotter: 15, sweeps_per_step: 4, ..base };
-        let shipped = Params { trotter: 4, sweeps_per_step: 15, ..base };
+        let m = base.trotter;
+        // M * spp is 4m in both arms, whatever the default's m happens to be.
+        let derived = Params { sweeps_per_step: 4, ..base };
+        let shipped = Params { trotter: 4, sweeps_per_step: m, ..base };
 
         let excess = |p: &Params| -> f64 {
             let mut sum = 0.0;
@@ -449,8 +456,8 @@ mod tests {
         let (d, s) = (excess(&derived), excess(&shipped));
         assert!(
             d < s * 0.5,
-            "the derived slice count should at least halve the excess over the planted optimum \
-             at equal work: derived {d:.3}% against the old literal's {s:.3}%"
+            "the derived slice count ({m}) should at least halve the excess over the planted \
+             optimum at equal work: derived {d:.3}% against the old literal 4's {s:.3}%"
         );
     }
 
