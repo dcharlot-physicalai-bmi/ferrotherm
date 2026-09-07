@@ -54,7 +54,15 @@ gate() {
   fi
 }
 
-echo "preflight: everything CI runs${fast:+ (fast: slow gates skipped)}"
+# `${fast:+...}` expands whenever the variable is SET, and `fast=0` is set -- so this banner
+# announced "slow gates skipped" on every run, including the ones that ran them. A header that
+# misreports which gates ran is worse than no header: the summary below is trustworthy and the
+# line above it was not.
+if [ "$fast" = "1" ]; then
+  echo "preflight: everything CI runs (fast: kani, mutation and release builds skipped)"
+else
+  echo "preflight: everything CI runs"
+fi
 echo
 
 echo "-- the crate ------------------------------------------------------------"

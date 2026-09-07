@@ -2467,7 +2467,7 @@ OpenAPI spec), fj_guide.txt, sqbm_manual.pdf + sqbm_manual.txt (2,926 lines), ne
 nec_va20.txt, nec_va_x86.pdf + nec_va_x86.txt, kaiwu_pkg/ (unpacked 1.4.1 wheel) and
 kaiwu_community-1.0.7/ (the pure-Python modelling source).
 
-## ferrotherm 0.9.0 (rows marked 0.9.0 updated 2026-08-15; the rest surveyed at 0.8.0) — a pure-Rust, zero-dependency (std-only) thermodynamic/Ising computing stack: sparse pairwise EBMs, chromatic block-Gibbs, parallel tempering, a named-variable modelling layer, a `.ftp` program IR with a normative spec, a capability-declaring `Device`/`Fabric` abstraction over real and declared annealing hardware, sampler certificates, and a joules ledger. Workspace = core `.` + `silicon` (Xilinx 7-series bitstream/JTAG) + `serve` (HTTP + MCP) + `cloud` (Hitachi driver). ~15k lines in src/, ~2.7k silicon, ~2.4k serve. Apache-2.0, github.com/dcharlot-physicalai-bmi/ferrotherm.
+## ferrotherm 0.9.0 — **SUPERSEDED, see the correction note below** (rows marked 0.9.0 updated 2026-08-15; the rest surveyed at 0.8.0) — a pure-Rust, zero-dependency (std-only) thermodynamic/Ising computing stack: sparse pairwise EBMs, chromatic block-Gibbs, parallel tempering, a named-variable modelling layer, a `.ftp` program IR with a normative spec, a capability-declaring `Device`/`Fabric` abstraction over real and declared annealing hardware, sampler certificates, and a joules ledger. Workspace = core `.` + `silicon` (Xilinx 7-series bitstream/JTAG) + `serve` (HTTP + MCP) + `cloud` (Hitachi driver). ~15k lines in src/, ~2.7k silicon, ~2.4k serve. Apache-2.0, github.com/dcharlot-physicalai-bmi/ferrotherm.
 
 ### 1. Modelling layer (named variables, domains, constraints, objective, answers by name) — **yes**
 
@@ -2650,9 +2650,31 @@ which only the browser pages execute (`docs/ide.html`, `web/gibbs_bench.html`); 
 `impl Device` for a GPU, so `conform` cannot even score the GPU path. `hdl::FixedFabric` emits
 Verilog plus a cycle-exact Q.8 emulator, and the `silicon` crate does real 7-series
 bitstream/JTAG, but `PtV2::run` returns an error saying the sequential fabric is not assembled.
-No tabu search, no branch-and-bound, no dual/LP/SDP bound, no population annealing.
+No tabu search, no branch-and-bound, no dual/LP/SDP bound, no population annealing. **[CORRECTED 2026-09-07 — every claim in this paragraph's HARSH section is now false; see the correction note at the end of this row.]**
 
 > /Users/dcharlot/vibe-coding/bmi-concept/research/ferrotherm/src/gibbs.rs:91-150; src/tempering.rs; src/sbm.rs; src/het.rs; src/exact.rs:184-194; src/oracle.rs; src/kernel.rs:26; src/wgsl.rs:90; silicon/src/lib.rs:123-135
+
+**CORRECTION, 2026-09-07.** This row was surveyed at 0.8.0/0.9.0, when the crate was ~15k lines in
+`src/`. It is now **0.43.0, 54,821 lines across 70 modules in `src/`** (65,469 across all six
+workspace crates), and the survey's absence claims have not aged into being merely stale — they are
+false, and a document that asserts an absence which has since been filled misleads harder than one
+that is simply out of date. Each is listed with what closes it, verified by file:
+
+| surveyed as absent | now |
+|---|---|
+| "No tabu search" | `src/tabu.rs` (539 lines), plus `src/bls.rs` breakout local search (592) |
+| "no branch-and-bound" | `src/branch.rs` (799), with the bound checked against enumeration |
+| "no dual/LP/SDP bound" | `src/lp.rs` (786) and `src/sdp.rs` (1,036) |
+| "no population annealing" | `src/popanneal.rs` (620) |
+| "no GPU sampler is callable from Rust … there is no `impl Device` for a GPU, so `conform` cannot even score the GPU path" | `gpu/src/device.rs:83` — `impl Device for GpuDevice`; the module doc quotes this survey line as its reason for existing |
+| "`PtV2::run` returns an error saying the sequential fabric is not assembled" | `PtV2` no longer appears in `src/hdl.rs` |
+
+Not surveyed at all, because they did not exist: `src/planar.rs` + `src/planarcut.rs` (exact planar
+ground states via `src/matching.rs`), `src/hfs.rs`, `src/tensor.rs` (general tensor-network
+contraction over four semirings), and `src/cluster.rs` (Swendsen–Wang and Wolff, with validity
+decided by signed-graph balance). The rest of this row is retained as written because it is the
+record of what was true when it was taken; re-surveying it at 0.43.0 is a separate pass and has not
+been done. Treat every unmarked claim here as **describing 0.8.0/0.9.0, not the current crate**.
 
 ### 8. Device abstraction (one interface over multiple vendors, capability declaration) — **yes**
 

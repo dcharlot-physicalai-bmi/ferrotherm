@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Cluster updates (OpenJij `Algorithm_SwendsenWang_run`) | `cluster` — Swendsen–Wang + Wolff, validity decided by **signed-graph balance** rather than by the sign of the couplings | **shipped, verified** — `z` measured, and a refusal carries the frustrated cycle as its witness |
 | Exact ground-state **counting** (GenericTensorNetworks.jl) | `exact::ground_degeneracy` — the cold limit of `log Z` | **shipped, verified** against a closed form at 101 spins |
 | Device hardware (Z1 tapeout 2027; SPU/CN101) | `ledger::Prices` device models — priced, not owned | n/a |
 
@@ -860,6 +861,81 @@ degree four, so they exercise summing an index carried by several tensors.
 
 It is real-valued and exact: it contracts probability and partition-function networks, **not
 amplitudes**, and performs no bond-dimension truncation.
+
+### Critical slowing down, measured on both sides of it
+
+Every other sampler in this crate flips one spin at a time — `gibbs` is the kernel and `tempering`,
+`adaptive`, `popanneal` and `sqa` all schedule it. `icm` is the one alternative move, and it is
+isoenergetic and restricted to zero-field glasses. So the failure mode single-spin dynamics is worst
+at was, until now, unaddressed and unmeasured: at a critical point the correlation length diverges
+with the lattice and a single-spin sampler has to move a domain of size `L` one spin at a time.
+
+`cargo run --release --example critical_slowdown` — `tau_int` of `|m|` by Sokal windowing at
+`beta_c = ln(1+sqrt2)/2`, 40,000 draws after 4,000 burn-in sweeps:
+
+| L | Gibbs τ/sweep | Gibbs τ/visit | SW τ/sweep | SW τ/visit | Wolff τ/sweep | Wolff τ/visit |
+|---|---|---|---|---|---|---|
+| 8 | 6.48 | 415 | 2.43 | 156 | 1.48 | **61** |
+| 12 | 15.13 | 2,178 | 2.64 | 380 | 1.96 | **166** |
+| 16 | 32.39 | 8,292 | 2.93 | 749 | 2.10 | **297** |
+| 24 | 78.41 | 45,166 | 3.13 | 1,803 | 2.56 | **732** |
+| 32 | 100.85 | 103,274 | 3.73 | 3,823 | 2.87 | **1,352** |
+
+```text
+  Gibbs  z = 2.06 per sweep (literature 2.17)     SW  z = 0.29 (literature ~0.25)     Wolff  z = 0.46
+```
+
+At L = 32 an independent sample costs 103,274 spin visits under Gibbs and 1,352 under Wolff — **76×**,
+widening as `L^1.84`. `<|m|>` agrees across all three methods at every size, which is what makes the
+comparison a speedup rather than a different answer arrived at faster.
+
+Two cost columns, because a sweep is a convention and the two moves do not mean the same thing by it.
+The per-visit column comes from the ledger, and it is the one that survives contact with hardware:
+per sweep Wolff beats SW, per spin visited their exponents are the same (2.22 vs 2.29) and Wolff wins
+on the prefactor alone.
+
+### Validity is balance, not the sign of the couplings
+
+Swendsen–Wang and Wolff need a ferromagnet, and "has no negative couplings" is the wrong test for
+that. A gauge `s_i → σ_i s_i` maps `J_ij → σ_i σ_j J_ij` and leaves every energy alone, so what is
+actually required is that **some** gauge makes the model ferromagnetic — signed-graph *balance*
+(Harary): every cycle has a positive coupling product. Apply a random gauge to a 6×6 ferromagnet and
+28 of its couplings go negative; it is still the same model, and `cluster::gauge` samples it exactly.
+
+One BFS decides balance and constructs the gauge in the same traversal, so the general case costs
+nothing over the special one. A refusal carries the **frustrated cycle**, not an edge — any single
+edge can be satisfied by choosing a sign, so an edge is never the obstruction, while a cycle is a
+proof the caller can check by multiplying its couplings.
+
+```text
+  gauge(g) -> Result<Vec<i8>, Frustrated { cycle }>      apply_gauge(g, σ) -> Graph
+```
+
+Scored against `certify` on a ring, a 3×3 lattice, a *disguised* 3×3 lattice and a graph carrying a
+coupling of exactly zero, for both moves; refusals checked on odd antiferromagnetic rings (where the
+witness's product is verified negative) and on `planted::frustrated_loops`.
+
+**Two defects this found in itself.** An earlier `wolff_sweep` ran single-cluster steps "until `n`
+spins have been visited", to make a Wolff sweep comparable to a Gibbs sweep. That makes the number of
+steps a function of the cluster sizes, hence of the state: ordered configurations produce large
+clusters and end the sweep sooner, so sweeps end preferentially just after a large flip. It is
+optional stopping, every individual move is exactly correct, and on `ring(10)` at `beta = 0.4` it
+returned `<E> = -4.3262` where enumeration gives `-3.8009`. Any fixed step count reproduces the exact
+value. `certify` caught it as a sampled `beta` of 0.4492 against a requested 0.4000 — six standard
+errors — while the total-variation distance stayed under its noise floor and reported nothing.
+
+The reason TV reported nothing is the second defect, and it was in the test: the check was a
+hand-written `tv < noise_floor`. The floor is `0.5 sqrt(2^n / ess)`, which at n = 16 and 4,000 draws
+is **2.31**, and total variation between two distributions cannot exceed 1 — so the comparison passed
+for every possible sampler, including one returning a constant. Two of that test's three models were
+decorative. `certify` already knew, raising `TooFewSamples` exactly when the floor reaches 1; the test
+now asserts `cert.passed()`, so the power of the check and the result of the check are the same call.
+
+A 12-mutation battery covers the module: bond probability, both alignment tests, the SW half-coin,
+the Wolff flip-with-probability-one, seed uniformity (checked on a disconnected graph, since a fixed
+seed is still a valid kernel and only fails to be ergodic), the gauge round trip, the field
+transformation, the zero-coupling guard, and the state-dependent stopping rule above. All 12 are
+killed.
 
 ### The ladder knows the instance's energy scale
 

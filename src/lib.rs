@@ -114,6 +114,7 @@ pub mod popanneal;
 pub mod tabu;
 pub mod bls;
 pub mod icm;
+pub mod cluster;
 pub mod sqa;
 pub mod hfs;
 pub mod hubo;
