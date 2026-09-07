@@ -534,7 +534,7 @@ mod tests {
             let mut m = Multispin::new(&g, beta, 13).unwrap();
             let set = m.collect(&Plan::new(500, 6000, 2), 0);
             let cert = set.certificate(&g).expect("collect returns a chain");
-            assert!(cert.passed(), "{name}, lane 0:\n{cert}");
+            crate::certify::assert_boltzmann(&cert, beta, &format!("{name}, lane 0"));
 
             let mut m = Multispin::new(&g, beta, 13).unwrap();
             let (avg, sd) = lane_means(&mut m, &g, 500, 8_000);

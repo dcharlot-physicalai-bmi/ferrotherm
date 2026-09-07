@@ -448,6 +448,55 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     }
 }
 
+/// Assert that a certificate says its chain is a Boltzmann sample of `g` at `requested`.
+///
+/// # Why not `assert!(cert.passed())`
+///
+/// Because `passed()` demands that a **95%** interval cover the truth, and a correct sampler fails
+/// that one run in twenty by construction. A test asserting it on six certificates — three fixtures
+/// times two moves, which is what `cluster` does — fails `1 - 0.95^6 = 26%` of the time. Such a test
+/// is not flaky, which would at least be noticeable: seeds are fixed, so it is DETERMINISTIC and
+/// ARBITRARY. It encodes one lucky draw from a coin that lands wrong a quarter of the time, and any
+/// change that perturbs the random stream silently re-rolls it. Both new samplers shipped with that
+/// shape before this existed.
+///
+/// So the two halves of a certificate are judged differently, because they are different kinds of
+/// claim:
+///
+///   - `TooFewSamples`, `AboveNoiseFloor`, `NotConverged` and `Undermixed` are **strict**. They
+///     carry real margin — a distribution that is wrong fails them by a mile — so demanding they be
+///     absent costs nothing.
+///   - `BetaMismatch` is a 95% coin flip, so it is re-judged at four sigma using the certificate's
+///     OWN reported error rather than a tolerance written here. Self-calibrating: it scales with the
+///     draws, the fixture and the temperature, and no number in this function has to be maintained
+///     when any of those change.
+///
+/// Four sigma leaves about a `6e-5` false-failure rate per certificate and still catches everything
+/// worth catching — the optional-stopping defect in `cluster::Sampler` ran 12% high in `beta`, about
+/// thirteen sigma.
+#[cfg(test)]
+pub(crate) fn assert_boltzmann(cert: &Certificate, requested: f64, what: &str) {
+    for f in &cert.findings {
+        assert!(
+            matches!(f, Finding::BetaMismatch { .. }),
+            "{what}: this is not a sampling-noise finding, it is a defect:\n{cert}"
+        );
+    }
+    let half = 0.5 * (cert.beta_ci.1 - cert.beta_ci.0);
+    assert!(
+        half.is_finite() && half > 0.0,
+        "{what}: the certificate reported no usable interval:\n{cert}"
+    );
+    let sigma = (cert.beta_eff - requested).abs() / (half / 1.96);
+    assert!(
+        sigma < 4.0,
+        "{what}: sampled at beta {:.4} against a requested {requested:.4}, {sigma:.1} standard \
+         errors out. Four is the bar, because the certificate's own interval is 95% and this test \
+         must not fail one run in twenty on correct code.\n{cert}",
+        cert.beta_eff
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

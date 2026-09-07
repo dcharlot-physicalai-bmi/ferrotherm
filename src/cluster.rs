@@ -747,14 +747,17 @@ mod tests {
     /// The claim a cluster algorithm has to earn: it moves large regions at once and must still
     /// leave the same distribution invariant.
     ///
-    /// Scored by `cert.passed()` rather than by comparing `tv_exact` against `noise_floor` by hand.
-    /// That is not a stylistic preference. A hand-rolled `tv < floor` silently switches ITSELF off
-    /// on a run that is too short: the floor is `0.5 sqrt(2^n / ess)`, which at `n = 16` and 4000
-    /// draws is 2.31, and total variation between two distributions can never exceed 1 — so the
-    /// comparison passes for every sampler, including one that returns a constant. This test was
-    /// written that way and two of its three models were decorative. [`crate::certify`] already
-    /// knows: it raises `TooFewSamples` exactly when the floor reaches 1, and `passed()` reads both
-    /// findings, so the power of the test is checked by the same call that checks the result.
+    /// Scored by [`crate::certify::assert_boltzmann`] rather than by comparing `tv_exact` against
+    /// `noise_floor` by hand. That is not a stylistic preference. A hand-rolled `tv < floor`
+    /// silently switches ITSELF off on a run that is too short: the floor is `0.5 sqrt(2^n / ess)`,
+    /// which at `n = 16` and 4000 draws is 2.31, and total variation between two distributions can
+    /// never exceed 1 — so the comparison passes for every sampler, including one that returns a
+    /// constant. This test was written that way and two of its three models were decorative.
+    /// `certify` already knows, raising `TooFewSamples` exactly when the floor reaches 1.
+    ///
+    /// Nor is it scored by `cert.passed()`, which was the next draft and was also wrong: six
+    /// certificates each demanding that a 95% interval cover the truth fail 26% of the time between
+    /// them. See `assert_boltzmann` for what replaced it and why.
     ///
     /// The disguised case is here on purpose: mixed signs exercise the gauge round trip — sample in
     /// gauged coordinates, report in the caller's — and catch a gauge applied on the way in and
@@ -779,9 +782,10 @@ mod tests {
                 let mut c = Sampler::new(&g, beta, 11).expect("balanced and unbiased");
                 let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
                 let cert = set.certificate(&g).expect("collect returns a chain");
-                assert!(
-                    cert.passed(),
-                    "{name} under {update:?} is not a Boltzmann sample:\n{cert}"
+                crate::certify::assert_boltzmann(
+                    &cert,
+                    beta,
+                    &format!("{name} under {update:?}"),
                 );
             }
         }
@@ -962,7 +966,11 @@ mod tests {
             let mut c = Sampler::new(&g, 0.4, 6).expect("balanced");
             let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
             let cert = set.certificate(&g).expect("collect returns a chain");
-            assert!(cert.passed(), "{update:?} on a graph with a zero edge:\n{cert}");
+            crate::certify::assert_boltzmann(
+                &cert,
+                0.4,
+                &format!("{update:?} on a graph with a zero edge"),
+            );
         }
     }
 
@@ -984,7 +992,7 @@ mod tests {
                 let mut c = Sampler::new(&g, 0.4, 12).expect("a uniform field keeps it balanced");
                 let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
                 let cert = set.certificate(&g).expect("collect returns a chain");
-                assert!(cert.passed(), "h = {h} under {update:?}:\n{cert}");
+                crate::certify::assert_boltzmann(&cert, 0.4, &format!("h = {h} under {update:?}"));
             }
         }
     }
