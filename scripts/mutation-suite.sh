@@ -222,6 +222,12 @@ mutations=(
   # load-bearing check is putting the answer back into the equation -- and the load-bearing claim is
   # that x0^T P x0 is what the optimal policy actually spends, not a bound on it.
   "src/mppi.rs|                next[i] = s.q[i] + atpa[i] - corr[i];|                next[i] = s.q[i] + atpa[i];|the_matrix_riccati_solution_solves_the_equation|a Riccati solution that is not one"
+
+  # Slicing sums over pinned assignments, and `pin` was written for MARGINALS where its dropped
+  # constants cancel in a ratio. Summing them does not cancel: the pinned node's own field must come
+  # back as +beta*h*v, read from the graph at the time of the pin because earlier pins fold into it.
+  # Zero on a field-free model, which is why the fixtures carry a field on every node.
+  "src/exact.rs|                Some(b) => b * src.h[i] * v - core::f64::consts::LN_2,|                Some(b) => b * src.h[i] * v,|slicing_agrees_with_the_direct_computation|a sliced partition function missing its free spin"
 )
 
 bad=0

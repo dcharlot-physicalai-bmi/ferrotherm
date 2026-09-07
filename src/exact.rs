@@ -1152,6 +1152,185 @@ impl Elimination {
     }
 }
 
+/// An exact answer reached by pinning variables and solving the pieces.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sliced {
+    /// `log Z` at the requested beta, if sum-product was run.
+    pub log_z: Option<f64>,
+    /// Ground energy, if min-sum was run.
+    pub ground_energy: Option<f64>,
+    /// A state attaining it, with the pinned spins set to the slice that won.
+    pub ground_state: Option<Vec<i8>>,
+    /// The variables pinned, in the order they were chosen.
+    pub pinned: Vec<usize>,
+    /// Induced width of what was left after pinning. This is what `2^width` memory is paid on.
+    pub width: usize,
+    /// Slices solved: `2^pinned.len()`.
+    pub slices: usize,
+}
+
+/// Pin variables greedily until the rest fits under `max_width`, or give up.
+///
+/// Highest degree first, recomputing the order each time: degree is what drives width, and a vertex
+/// that has already lost neighbours to earlier pins is worth less than its original degree said.
+fn choose_pins(g: &Graph, max_width: usize, max_slices: usize) -> Option<(Vec<usize>, usize)> {
+    let (_, w0) = Elimination::order_for(g);
+    if w0 <= max_width {
+        return Some((Vec::new(), w0));
+    }
+    let mut pinned: Vec<usize> = Vec::new();
+    let mut cur: Option<Graph> = None;
+    while 1usize << pinned.len() <= max_slices {
+        let src: &Graph = cur.as_ref().unwrap_or(g);
+        // Highest degree among vertices not already pinned.
+        let pick = (0..src.n)
+            .filter(|i| !pinned.contains(i))
+            .max_by_key(|&i| src.offset[i + 1] - src.offset[i])?;
+        let next = pin(src, pick, 1.0);
+        let (_, w) = Elimination::order_for(&next);
+        pinned.push(pick);
+        cur = Some(next);
+        if w <= max_width {
+            return Some((pinned, w));
+        }
+    }
+    None
+}
+
+impl Elimination {
+    /// `log Z` for a graph too wide to eliminate directly, by pinning variables.
+    ///
+    /// # What slicing buys and what it costs
+    ///
+    /// Elimination's memory is `2^width`, so [`TooWide`] is a wall rather than a slowdown. Pinning a
+    /// variable removes it from the graph and lowers the width of what remains; solving every
+    /// assignment of the pinned set and summing recovers the exact answer. So a refusal becomes an
+    /// answer, at `2^k` times the work for `k` pins — time traded for memory, at a rate the caller
+    /// sets with `max_slices`.
+    ///
+    /// # The two corrections, which are the whole difficulty
+    ///
+    /// `pin` is written for marginals, where it is called twice and its constants cancel in the
+    /// ratio. They do not cancel here, and each is invisible in a model without fields:
+    ///
+    ///   - it zeroes the pinned node's own field, dropping `−h_i v` from every energy, so `log Z`
+    ///     needs `+ β h_i v` back — and `h_i` must be read from the graph AT THE TIME OF THE PIN,
+    ///     because an earlier pin folds its couplings into later nodes' fields;
+    ///   - it keeps the node rather than deleting it, so the pinned spin survives as a free spin
+    ///     contributing a factor of two to `Z`, which is `− ln 2` per pin.
+    ///
+    /// Min-sum needs only the first: a free spin costs no energy.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`] when no pinning within `max_slices` brings the width under the cap.
+    ///
+    /// # Panics
+    ///
+    /// Never: the slices are run with sum-product, so `log_z` is always present.
+    pub fn log_partition_sliced(
+        &self,
+        g: &Graph,
+        beta: f64,
+        max_slices: usize,
+    ) -> Result<Sliced, TooWide> {
+        let (pinned, width) = choose_pins(g, self.max_width, max_slices)
+            .ok_or(TooWide::Width { width: Elimination::order_for(g).1, max: self.max_width })?;
+        let k = pinned.len();
+        let mut terms: Vec<f64> = Vec::with_capacity(1 << k);
+        for mask in 0u64..(1u64 << k) {
+            let (graph, corr) = self.slice_of(g, &pinned, mask, Some(beta));
+            let lz = match graph {
+                Some(ref x) => self.log_partition(x, beta)?.log_z,
+                None => self.log_partition(g, beta)?.log_z,
+            }
+            .expect("sum-product was run");
+            terms.push(lz + corr);
+        }
+        let m = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let log_z = m + terms.iter().map(|t| (t - m).exp()).sum::<f64>().ln();
+        Ok(Sliced {
+            log_z: Some(log_z),
+            ground_energy: None,
+            ground_state: None,
+            pinned,
+            width,
+            slices: 1 << k,
+        })
+    }
+
+    /// The ground state of a graph too wide to eliminate directly, by pinning variables.
+    ///
+    /// See [`Elimination::log_partition_sliced`] for the trade and the corrections. Min-sum needs
+    /// only the field correction, since a free spin costs no energy — and the winning slice's pinned
+    /// values are written back into the state, which elimination cannot know.
+    ///
+    /// # Errors
+    ///
+    /// [`TooWide`] when no pinning within `max_slices` brings the width under the cap.
+    ///
+    /// # Panics
+    ///
+    /// Never: the slices are run with min-sum, so a ground state is always present, and there is
+    /// always at least one slice.
+    pub fn ground_state_sliced(&self, g: &Graph, max_slices: usize) -> Result<Sliced, TooWide> {
+        let (pinned, width) = choose_pins(g, self.max_width, max_slices)
+            .ok_or(TooWide::Width { width: Elimination::order_for(g).1, max: self.max_width })?;
+        let k = pinned.len();
+        let mut best: Option<(f64, Vec<i8>)> = None;
+        for mask in 0u64..(1u64 << k) {
+            let (graph, corr) = self.slice_of(g, &pinned, mask, None);
+            let ex = match graph {
+                Some(ref x) => self.ground_state(x)?,
+                None => self.ground_state(g)?,
+            };
+            let e = ex.ground_energy.expect("min-sum was run") + corr;
+            if best.as_ref().is_none_or(|(b, _)| e < *b) {
+                let mut st = ex.ground_state.expect("min-sum was run");
+                for (t, &i) in pinned.iter().enumerate() {
+                    st[i] = if mask >> t & 1 == 1 { 1 } else { -1 };
+                }
+                best = Some((e, st));
+            }
+        }
+        let (energy, state) = best.expect("at least one slice");
+        Ok(Sliced {
+            log_z: None,
+            ground_energy: Some(energy),
+            ground_state: Some(state),
+            pinned,
+            width,
+            slices: 1 << k,
+        })
+    }
+
+    /// The graph for one slice, and the constant the pinning dropped.
+    ///
+    /// `beta` present means sum-product, where each pin also costs `ln 2` for the free spin it
+    /// leaves behind; absent means min-sum, where it does not.
+    fn slice_of(
+        &self,
+        g: &Graph,
+        pinned: &[usize],
+        mask: u64,
+        beta: Option<f64>,
+    ) -> (Option<Graph>, f64) {
+        let mut cur: Option<Graph> = None;
+        let mut corr = 0.0;
+        for (t, &i) in pinned.iter().enumerate() {
+            let v = if mask >> t & 1 == 1 { 1.0 } else { -1.0 };
+            let src: &Graph = cur.as_ref().unwrap_or(g);
+            // Read h from the CURRENT graph: earlier pins fold into it.
+            corr += match beta {
+                Some(b) => b * src.h[i] * v - core::f64::consts::LN_2,
+                None => -src.h[i] * v,
+            };
+            cur = Some(pin(src, i, v));
+        }
+        (cur, corr)
+    }
+}
+
 /// The graph with node `i` pinned to `v`: its couplings removed and folded into its neighbours'
 /// fields, and its own field zeroed so it contributes an identical constant factor whatever `v` is.
 ///
@@ -1182,6 +1361,129 @@ fn pin(g: &Graph, i: usize, v: f64) -> Graph {
 
 #[cfg(test)]
 mod tests {
+    /// A graph with fields, wide enough that a low cap refuses it outright.
+    ///
+    /// Fields are not decoration. `pin` zeroes the pinned node's own field, so every correction
+    /// slicing has to make is multiplied by `h_i` — on a field-free model the bookkeeping could be
+    /// entirely wrong and every test would still pass.
+    fn sliceable(n: usize, seed: u64) -> Graph {
+        let mut rng = crate::rng::Pcg::new(seed, 17);
+        let mut b = crate::graph::GraphBuilder::new(n);
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if rng.f64() < 0.5 {
+                    b.couple(i, j, rng.f64() * 2.0 - 1.0);
+                }
+            }
+            b.bias(i, rng.f64() * 1.6 - 0.8);
+        }
+        b.build()
+    }
+
+    /// Slicing gives the same number the direct computation gives, when both can run.
+    ///
+    /// The whole correctness claim in one comparison. `log Z` is checked rather than the ground
+    /// energy alone because it is the quantity the two dropped constants land in: `+ β h v` for the
+    /// field `pin` zeroes, and `− ln 2` for the free spin it leaves behind. Get either wrong and
+    /// this fails by exactly that much.
+    #[test]
+    fn slicing_agrees_with_the_direct_computation_it_replaces() {
+        for seed in 0..8u64 {
+            let g = sliceable(10, seed);
+            let full = Elimination::default();
+            let want_lz = full.log_partition(&g, 0.7).unwrap().log_z.unwrap();
+            let want_e = full.ground_state(&g).unwrap().ground_energy.unwrap();
+
+            // A cap low enough that the direct route refuses, so slicing is doing the work.
+            let capped = Elimination { max_width: 3 };
+            assert!(
+                capped.log_partition(&g, 0.7).is_err(),
+                "seed {seed}: the fixture must be too wide for the cap, or nothing is sliced"
+            );
+
+            let sl = capped.log_partition_sliced(&g, 0.7, 4096).expect("slicing should reach it");
+            assert!(!sl.pinned.is_empty(), "seed {seed}: nothing was pinned");
+            assert!(sl.width <= 3, "seed {seed}: width {} still over the cap", sl.width);
+            assert_eq!(sl.slices, 1 << sl.pinned.len());
+            let got = sl.log_z.unwrap();
+            assert!(
+                (got - want_lz).abs() < 1e-9,
+                "seed {seed}: sliced log Z {got:.12} against direct {want_lz:.12}"
+            );
+
+            let sg = capped.ground_state_sliced(&g, 4096).expect("slicing should reach it");
+            let ge = sg.ground_energy.unwrap();
+            assert!(
+                (ge - want_e).abs() < 1e-9,
+                "seed {seed}: sliced ground {ge:.12} against direct {want_e:.12}"
+            );
+        }
+    }
+
+    /// The state slicing returns is a real state of the original graph, at the energy claimed.
+    ///
+    /// Elimination solves a graph with the pinned nodes stripped, so it cannot know what they were;
+    /// the winning slice's assignment has to be written back. Without that the state is a valid
+    /// answer to a different question, and its energy would not match the number beside it.
+    #[test]
+    fn the_sliced_ground_state_is_a_state_of_the_original_graph() {
+        for seed in 0..8u64 {
+            let g = sliceable(10, seed);
+            let capped = Elimination { max_width: 3 };
+            let sl = capped.ground_state_sliced(&g, 4096).unwrap();
+            let st = sl.ground_state.unwrap();
+            assert_eq!(st.len(), g.n);
+            assert!(st.iter().all(|&v| v == 1 || v == -1), "seed {seed}: not a spin state");
+            let e = g.energy(&st);
+            assert!(
+                (e - sl.ground_energy.unwrap()).abs() < 1e-9,
+                "seed {seed}: the returned state has energy {e}, the report says {}",
+                sl.ground_energy.unwrap()
+            );
+        }
+    }
+
+    /// And it is the true optimum, against brute force.
+    #[test]
+    fn slicing_finds_the_optimum_brute_force_finds() {
+        for seed in 0..6u64 {
+            let g = sliceable(12, seed);
+            let mut want = f64::INFINITY;
+            for m in 0u64..(1u64 << g.n) {
+                let st: Vec<i8> =
+                    (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                want = want.min(g.energy(&st));
+            }
+            let sl = Elimination { max_width: 3 }.ground_state_sliced(&g, 8192).unwrap();
+            let got = sl.ground_energy.unwrap();
+            assert!(
+                (got - want).abs() < 1e-9,
+                "seed {seed}: sliced {got:.12}, brute force {want:.12}"
+            );
+        }
+    }
+
+    /// A graph already narrow enough is not sliced at all.
+    #[test]
+    fn a_graph_that_fits_is_solved_without_pinning_anything() {
+        let g = crate::ising::ring(12, 1.0, 0.3);
+        let sl = Elimination::default().log_partition_sliced(&g, 0.5, 64).unwrap();
+        assert!(sl.pinned.is_empty(), "a ring needs no pinning: {:?}", sl.pinned);
+        assert_eq!(sl.slices, 1);
+        let want = Elimination::default().log_partition(&g, 0.5).unwrap().log_z.unwrap();
+        assert!((sl.log_z.unwrap() - want).abs() < 1e-12);
+    }
+
+    /// A budget too small to reach the cap is refused with the width, not answered approximately.
+    #[test]
+    fn a_slice_budget_that_cannot_reach_the_cap_is_refused() {
+        let g = sliceable(14, 3);
+        match (Elimination { max_width: 2 }).log_partition_sliced(&g, 0.5, 4) {
+            Err(TooWide::Width { max, .. }) => assert_eq!(max, 2),
+            other => panic!("four slices cannot narrow this to width two: {other:?}"),
+        }
+    }
+
 
     /// THE INCREMENTAL ORDER MUST EQUAL THE FULL-RESCAN ORDER, EXACTLY.
     ///

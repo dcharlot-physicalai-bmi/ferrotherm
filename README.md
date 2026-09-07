@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Slicing / cutset conditioning (the standard answer to bounded treewidth) | `exact::log_partition_sliced` + `ground_state_sliced` — pin variables, solve the pieces | **shipped, verified** — sliced equals direct where both run, and beats brute force where direct refuses |
 | Vector-state LQR oracle (matrix DARE) | `mppi::MatSystem` + `MatLqr` — the exact optimum for a robot-shaped system, not a one-dimensional one | **shipped, verified** — residual, cost-to-go, and no perturbation beats it |
 | Exact 2D Ising energy density (Onsager 1944, via AGM elliptic `K`) | `free_energy::onsager_energy_density` — closed form, machine precision, no grid | **shipped, verified** — `U/N = −J√2` exactly at criticality |
 | DIMACS CNF / WCNF — the MAX-SAT benchmark corpus | `dimacs` — clauses to a `Hubo` by exact subset expansion, no penalty | **shipped, verified** — the energy IS the unsatisfied weight at every assignment |
@@ -915,6 +916,39 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### Turning a width refusal into a slower answer
+
+Elimination costs `2^width` in memory, so `TooWide` is a wall rather than a slowdown: past the cap
+there is no answer at any price. Slicing changes the price. Pin a variable and it leaves the graph,
+narrowing what remains; solve every assignment of the pinned set and combine, and the exact answer
+comes back at `2^k` times the work for `k` pins. The caller sets the rate with `max_slices`, and a
+budget too small to reach the cap is refused with the width rather than answered approximately.
+
+**The difficulty is entirely in two constants, and both are invisible on a model without fields.**
+`pin` was written for marginals, where it is called twice and its dropped terms cancel in the ratio.
+Slicing calls it once per slice and sums, so nothing cancels:
+
+- it zeroes the pinned node's own field, dropping `−h_i v` from every energy, so `log Z` needs
+  `+ β h_i v` back — and `h_i` must be read from the graph **at the time of the pin**, because an
+  earlier pin folds its couplings into later nodes' fields;
+- it keeps the node rather than deleting it, so the pinned spin survives as a *free* spin worth a
+  factor of two in `Z`, which is `− ln 2` per pin.
+
+Min-sum takes only the first: a free spin costs no energy.
+
+The fixtures therefore carry a field on **every** node. On a field-free model both corrections
+multiply by zero, the bookkeeping could be entirely wrong, and every test would still pass — the same
+shape as the MAX-SAT constant. And `log Z` is checked rather than the ground energy alone, because
+`log Z` is where the constants land.
+
+The returned ground state has its pinned values **written back**. Elimination solves a graph with
+those nodes stripped and cannot know what they were, so without that step the state is a correct
+answer to a different question — and a test asserts the state's own energy equals the number reported
+beside it, which is what would catch it.
+
+Checked against the direct computation where both can run, against brute force where the cap refuses,
+and on a graph narrow enough that nothing is pinned at all. Eight mutations, eight killed.
 
 ### The control oracle, at the dimension a robot actually has
 
