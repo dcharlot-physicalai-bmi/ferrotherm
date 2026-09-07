@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Solver portfolio under one budget (what commercial solvers ship) | `portfolio` — a `Search` trait, a budget in spin proposals, four arms | **shipped, verified** — every arm's budget conversion is measured, not asserted |
 | Slicing / cutset conditioning (the standard answer to bounded treewidth) | `exact::log_partition_sliced` + `ground_state_sliced` — pin variables, solve the pieces | **shipped, verified** — sliced equals direct where both run, and beats brute force where direct refuses |
 | Vector-state LQR oracle (matrix DARE) | `mppi::MatSystem` + `MatLqr` — the exact optimum for a robot-shaped system, not a one-dimensional one | **shipped, verified** — residual, cost-to-go, and no perturbation beats it |
 | Exact 2D Ising energy density (Onsager 1944, via AGM elliptic `K`) | `free_energy::onsager_energy_density` — closed form, machine precision, no grid | **shipped, verified** — `U/N = −J√2` exactly at criticality |
@@ -916,6 +917,40 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### Asking every solver the same question
+
+The crate has many solvers and had no way to ask them one question. Each takes its own parameters,
+counts its own work, and returns its own `Outcome`, so "which is better here" could only be answered
+by hand-tuning every arm and hoping the comparison was fair.
+
+**The unit is the whole problem.** `tabu` counts iterations, `bls` counts moves, `sqa` counts Trotter
+slices times steps times sweeps, `tempering` counts replicas times rounds — comparing those is
+comparing labels. What all of them do underneath is propose a single-spin change and accept or reject
+it, which is also what the ledger prices. So `Budget` is a proposal count and each arm converts it
+into its own knobs.
+
+Those conversions are measured rather than asserted: every arm must spend **within** its budget and
+**at least a quarter of it**. An arm that overspends turns the portfolio into a measurement of who
+cheated; one that spends a hundredth is not answering the same question as the others. The budget is
+split, not handed to each arm in full — which is the mistake that makes a portfolio look free, beating
+any single arm at "the same" cost while spending `k` times as much.
+
+Every arm gets the same seed, deliberately: a portfolio whose arms are seeded differently measures
+the seeds as much as the methods.
+
+The claim is stated against the **worst** arm, not the best. Beating the best would require knowing
+which that is, and not having to know is the entire reason a portfolio exists.
+
+The tempering arm sizes its ladder with `adaptive::replicas_for` rather than a constant — today's
+severed-ladder fix paying off in a second place. A fixed rung count still returns answers, just worse
+ones, so no comparison *between* arms would catch it; it is tested as the property it is.
+
+Eight mutations, and the three that survived a first pass are the useful part. Two were real gaps —
+nothing checked that the ladder was model-sized, and the budget test bounded spending only from
+above, so reporting zero passed. The third is recorded rather than papered over: every solver here
+already recomputes its own energy, so `Found`'s recompute is defensive and no test can see it. What
+it buys is that the portfolio does not *depend* on that staying true.
 
 ### Turning a width refusal into a slower answer
 

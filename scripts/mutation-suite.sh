@@ -228,6 +228,11 @@ mutations=(
   # back as +beta*h*v, read from the graph at the time of the pin because earlier pins fold into it.
   # Zero on a field-free model, which is why the fixtures carry a field on every node.
   "src/exact.rs|                Some(b) => b * src.h[i] * v - core::f64::consts::LN_2,|                Some(b) => b * src.h[i] * v,|slicing_agrees_with_the_direct_computation|a sliced partition function missing its free spin"
+
+  # A portfolio's arms have to be asked the SAME question. Handing each the full budget rather than
+  # a share makes the portfolio look free -- it beats any single arm at "the same" cost, having spent
+  # k times as much -- and no comparison between the arms reveals it.
+  "src/portfolio.rs|    let each = budget.split(arms.len());|    let each = budget;|the_budget_is_divided_among_the_arms|a portfolio that gives every arm the whole budget"
 )
 
 bad=0

@@ -113,6 +113,7 @@ pub mod branch;
 pub mod gset;
 pub mod dimacs;
 pub mod popanneal;
+pub mod portfolio;
 pub mod tabu;
 pub mod bls;
 pub mod icm;
