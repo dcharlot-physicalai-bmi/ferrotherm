@@ -120,6 +120,29 @@ mutations=(
   # previous run's weights and seeds. One write is worth 21,664 node updates at Z1_SPICE, so the
   # missing term was the largest line in the ledger.
   "src/hdl.rs|                self.load_unused = true;|                self.load_unused = false;|a_second_run_pays|second run reflashes for free"
+
+  # A spin in no factor at all. `initial_tables` emits nothing for it and `run` skipped it, so the
+  # partition function lost the factor of two that spin contributes. `from_ising` had the identical
+  # hole, so the two engines agreed on the wrong number to the last ulp -- which is why this needs a
+  # mutation row and not a cross-check: the cross-check was there and was mutually wrong.
+  "src/exact.rs|constant -= core::f64::consts::LN_2;|constant -= 0.0;|a_spin_in_no_factor_still_doubles|a free spin's factor of two"
+
+  # ground_degeneracy extrapolates from TWO temperatures, and with both the same there is no
+  # extrapolation to do -- (0.0, 0.0) confidently reported 2^n ground states for a model that has
+  # two. The guard needs them distinct, and `>=` is the one-character version of not having it.
+  "src/exact.rs|&& cold > warm;|&& cold >= warm;|a_temperature_that_says_nothing|equal temperatures certify a non-convergence"
+
+  # A Wolff sweep of "as many steps as it takes to visit n spins" makes the step count a function of
+  # the cluster sizes, hence of the state: ordered configurations end the sweep sooner, so sweeps end
+  # preferentially just after a large flip. Optional stopping, with every individual move exactly
+  # correct. On ring(10) at beta 0.4 it returned <E> = -4.3262 against an enumerated -3.8009.
+  "src/cluster.rs|for _ in 0..self.wolff_steps {|while acc.visited < self.gauged.n as u64 {|both_moves_sample_the_distribution|a Wolff sweep whose length reads the state"
+
+  # GraphBuilder sums duplicate pairs and keeps the result, so `couple(0,2,1.0)` then
+  # `couple(0,2,-1.0)` leaves a stored edge of weight zero. Without the guard `w > 0.0` is false and
+  # the sign rule reads it as antiferromagnetic, manufacturing a frustration the model does not have
+  # and refusing a perfectly samplable instance with a "frustrated" cycle of product zero.
+  "src/cluster.rs|if w == 0.0 {|if false {|a_zero_coupling_constrains_nothing|a zero coupling read as antiferromagnetic"
 )
 
 bad=0
