@@ -1,0 +1,16 @@
+# Proper nouns clippy's `doc_markdown` lint mistakes for code identifiers.
+#
+# The lint is `deny` in Cargo.toml and stays that way: it catches real cases where a type or
+# function is named in prose without backticks, which is how documentation drifts from the API it
+# describes. But it fires on any word with an internal capital, and a surname is not an identifier —
+# backticking `McEliece` would render a person's name as code.
+#
+# `doc-valid-idents` extends clippy's own default list (which already carries GitHub, OAuth, WASM and
+# the rest) rather than replacing it: the `..` entry is what keeps the defaults. Add a name here only
+# when it is a proper noun the lint has misread, never to silence a genuine missing backtick.
+doc-valid-idents = [
+    "..",
+    # Aji & McEliece 2000, the Generalized Distributive Law: elimination is correct over any
+    # commutative semiring, which is what `tensor::Semiring` is built on.
+    "McEliece",
+]

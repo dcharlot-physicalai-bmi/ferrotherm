@@ -13,21 +13,40 @@
 //! | factor arity | pairwise only (it takes a [`crate::graph::Graph`]) | any rank |
 //! | index dimension | 2 (a spin) | any |
 //! | index multiplicity | one variable per bucket | any number of tensors may carry an index |
+//! | arithmetic | two, hardcoded (min-sum, log-sum-exp) | any commutative [`Semiring`] |
 //! | output | `log Z`, ground state, marginals | any tensor, with indices left **open** |
-//! | ordering | min-fill | greedy-cost, or the caller's own |
+//! | ordering | min-fill and nested dissection | greedy-cost, or the caller's own |
 //! | prices the order first | `Elimination::width` | [`Network::plan`] |
 //!
-//! Those columns are what separate "exact inference on a spin glass" from "contract the network
-//! somebody else's problem lowers to", and the last two rows are where the quantum-simulation
-//! literature lives: a quantum circuit is a tensor network, and contracting one is how the
-//! classical rebuttals to the Sycamore supremacy claim were computed.
+//! # One contraction, four questions
+//!
+//! The arithmetic row is the one that matters most. Aji and McEliece's Generalized Distributive Law
+//! (2000) says elimination is correct over **any** commutative semiring, so the same network
+//! contracted four ways answers four questions — not four algorithms, one algorithm and a type
+//! parameter:
+//!
+//! ```text
+//!   Network::<SumProduct>::from_ising(&g, beta)  ->  Z
+//!   Network::<Tropical>::from_ising(&g)          ->  the ground energy
+//!   Network::<MinCount>::from_ising(&g)          ->  the ground energy AND its degeneracy
+//!   Network::<Counting>                          ->  how many configurations
+//! ```
+//!
+//! [`MinCount`] is the one the crate could not do at all: `crate::samples::SampleSet` reports
+//! "evidence of degeneracy, not a count of it", and enumeration stops at 26 spins. Counting falls
+//! out of carrying a count beside the energy and adding counts on a tie — degeneracy is exactly what
+//! the tropical semiring discards when it takes a minimum.
+//!
+//! This is also where the quantum-simulation literature lives: a quantum circuit is a tensor
+//! network over `(ℂ, +, ×)`, and contracting one is how the classical rebuttals to the Sycamore
+//! supremacy claim were computed. The schedule would be the same; only the scalar differs.
 //!
 //! # What this is not
 //!
-//! It is not a quantum simulator, and this module makes no quantum claim. It is real-valued
-//! (`f64`), so it contracts probability and partition-function networks and **not amplitudes**;
-//! complex arithmetic is a separate question and pretending otherwise here would be exactly the
-//! vocabulary-as-capability this crate refuses. It is also **exact**: there is no bond-dimension
+//! It is not a quantum simulator, and this module makes no quantum claim. The semirings shipped here
+//! are real-valued and integer-valued, so it contracts probability, energy and counting networks and
+//! **not amplitudes** — a complex semiring is a small addition and the claim that would come with it
+//! is not, so it is absent rather than half-made. It is also **exact**: there is no bond-dimension
 //! truncation, so nothing here approximates and nothing here needs an error bar.
 //!
 //! # Semantics, stated once
@@ -58,16 +77,237 @@ use crate::graph::Graph;
 /// their own map.
 pub type Index = u32;
 
+/// The arithmetic a contraction is performed in.
+///
+/// # One contraction, four questions
+///
+/// Aji and McEliece's Generalized Distributive Law (2000) is the statement that variable
+/// elimination — and therefore tensor contraction — is correct over **any commutative semiring**.
+/// The elimination schedule is a combinatorial object over the graph and is blind to the scalar;
+/// only the arithmetic changes. So the same network, contracted four ways, answers four questions:
+///
+/// | semiring | `⊕` | `⊗` | what the contraction is |
+/// |---|---|---|---|
+/// | [`SumProduct`] | `+` | `×` | the partition function `Z` |
+/// | [`Tropical`] | `min` | `+` | the ground energy |
+/// | [`Counting`] | `+` | `×` over integers | how many configurations |
+/// | [`MinCount`] | min-and-tie-add | `+`, `×` | the ground energy **and its degeneracy** |
+///
+/// That is not four algorithms. It is one algorithm and a type parameter, and it is the single most
+/// load-bearing fact in the correspondence between thermodynamic and quantum computing: the two
+/// fields differ in the scalar their sum is taken over, not in the sum.
+///
+/// # What a semiring has to satisfy, and what breaks if it does not
+///
+/// `⊕` and `⊗` must both be associative and commutative, `⊗` must distribute over `⊕`, `zero` must
+/// be the identity for `⊕` and annihilate under `⊗`, and `one` must be the identity for `⊗`.
+/// Distributivity is the one that matters: it is exactly what licenses pulling a factor out of a
+/// sum, which is the whole of what elimination does. A structure missing it will contract to a
+/// number, and the number will be wrong.
+pub trait Semiring {
+    /// The scalar this arithmetic is over.
+    type Elem: Copy + PartialEq + core::fmt::Debug;
+    /// A name, for error messages and for a reader deciding what a result means.
+    const NAME: &'static str;
+    /// The identity for [`Semiring::add`], and the annihilator for [`Semiring::mul`].
+    fn zero() -> Self::Elem;
+    /// The identity for [`Semiring::mul`]. What an empty network contracts to.
+    fn one() -> Self::Elem;
+    /// `⊕` — how the results of summed-over values combine.
+    fn add(a: Self::Elem, b: Self::Elem) -> Self::Elem;
+    /// `⊗` — how factors combine.
+    fn mul(a: Self::Elem, b: Self::Elem) -> Self::Elem;
+}
+
+/// `(ℝ, +, ×)` — the contraction is the partition function `Z`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SumProduct;
+
+impl Semiring for SumProduct {
+    type Elem = f64;
+    const NAME: &'static str = "sum-product";
+    fn zero() -> f64 {
+        0.0
+    }
+    fn one() -> f64 {
+        1.0
+    }
+    fn add(a: f64, b: f64) -> f64 {
+        a + b
+    }
+    fn mul(a: f64, b: f64) -> f64 {
+        a * b
+    }
+}
+
+/// `(ℝ ∪ {∞}, min, +)` — the contraction is the ground energy.
+///
+/// The tropical semiring, and the zero-temperature limit of [`SumProduct`]: `−(1/β) ln Z → E₀` as
+/// `β → ∞`, which is Maslov dequantization. Tensors carry **energies** rather than Boltzmann
+/// weights, so `Network::<Tropical>::from_ising` takes no temperature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tropical;
+
+impl Semiring for Tropical {
+    type Elem = f64;
+    const NAME: &'static str = "tropical (min, +)";
+    fn zero() -> f64 {
+        f64::INFINITY
+    }
+    fn one() -> f64 {
+        0.0
+    }
+    fn add(a: f64, b: f64) -> f64 {
+        a.min(b)
+    }
+    fn mul(a: f64, b: f64) -> f64 {
+        a + b
+    }
+}
+
+/// `(ℕ, +, ×)` — the contraction counts configurations.
+///
+/// `u128` rather than a float, because a count is an integer and a count that has silently become
+/// approximate is worse than one that overflows loudly. It saturates rather than wrapping: a
+/// saturated count is visibly `u128::MAX` instead of a plausible small number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Counting;
+
+impl Semiring for Counting {
+    type Elem = u128;
+    const NAME: &'static str = "counting";
+    fn zero() -> u128 {
+        0
+    }
+    fn one() -> u128 {
+        1
+    }
+    fn add(a: u128, b: u128) -> u128 {
+        a.saturating_add(b)
+    }
+    fn mul(a: u128, b: u128) -> u128 {
+        a.saturating_mul(b)
+    }
+}
+
+/// The ground energy **and how many states attain it**, in one contraction.
+///
+/// An element is `(energy, count)`. `⊗` adds energies and multiplies counts — two independent
+/// sub-configurations combine into one, at the sum of their energies. `⊕` takes the lower energy,
+/// and on a **tie** keeps the energy and adds the counts, which is the whole trick: degeneracy is
+/// what the tropical semiring throws away when it takes a minimum, and carrying the count alongside
+/// is what recovers it.
+///
+/// This is the capability `crate::samples::SampleSet` says it does not have — "evidence of
+/// degeneracy, not a count of it" — obtained here without a second pass and without the
+/// two-temperature extrapolation [`crate::exact::Elimination::ground_degeneracy`] uses.
+///
+/// # The tie tolerance is the whole correctness question
+///
+/// Two energies that differ in the last bits are the same energy physically and different energies
+/// to `==`, and a comparison that gets it wrong either misses degenerate states or merges distinct
+/// ones. `TIE` is relative and is applied to the larger magnitude, so it means the same thing at
+/// every scale. Integer or `±J` couplings — the family this is normally run on — have exactly
+/// representable energies and are unaffected by it either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MinCount;
+
+impl MinCount {
+    /// Energies within this relative distance are one energy for the purpose of counting.
+    pub const TIE: f64 = 1e-9;
+}
+
+impl Semiring for MinCount {
+    type Elem = (f64, u128);
+    const NAME: &'static str = "min-count";
+    fn zero() -> (f64, u128) {
+        (f64::INFINITY, 0)
+    }
+    fn one() -> (f64, u128) {
+        (0.0, 1)
+    }
+    fn add(a: (f64, u128), b: (f64, u128)) -> (f64, u128) {
+        let (ea, ca) = a;
+        let (eb, cb) = b;
+        // `zero` is (INF, 0) and must be a true identity, so a count of zero never contributes
+        // however its energy compares.
+        if ca == 0 {
+            return b;
+        }
+        if cb == 0 {
+            return a;
+        }
+        let tol = MinCount::TIE * ea.abs().max(eb.abs()).max(1.0);
+        if (ea - eb).abs() <= tol {
+            (ea.min(eb), ca.saturating_add(cb))
+        } else if ea < eb {
+            a
+        } else {
+            b
+        }
+    }
+    fn mul(a: (f64, u128), b: (f64, u128)) -> (f64, u128) {
+        (a.0 + b.0, a.1.saturating_mul(b.1))
+    }
+}
+
 /// One tensor: a dense array over its indices, row-major with the FIRST index slowest.
 ///
 /// The layout is stated because it is load-bearing — [`Tensor::at`] and every contraction below
 /// depend on it, and a reader checking this module against another implementation needs to know
 /// which convention is in force rather than inferring it from a loop.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Tensor {
+pub struct Tensor<S: Semiring = SumProduct> {
     idx: Vec<Index>,
     dims: Vec<usize>,
-    data: Vec<f64>,
+    data: Vec<S::Elem>,
+}
+
+// Derived `Clone`/`Debug`/`PartialEq` would demand `S: Clone` and so on, but `S` is a marker with
+// no data in it -- the bound belongs on `S::Elem`, which the trait already requires. Written out so
+// a semiring can be a unit struct without deriving anything.
+impl<S: Semiring> Clone for Tensor<S> {
+    fn clone(&self) -> Self {
+        Tensor { idx: self.idx.clone(), dims: self.dims.clone(), data: self.data.clone() }
+    }
+}
+
+impl<S: Semiring> core::fmt::Debug for Tensor<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Tensor")
+            .field("semiring", &S::NAME)
+            .field("idx", &self.idx)
+            .field("dims", &self.dims)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl<S: Semiring> PartialEq for Tensor<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.idx == other.idx && self.dims == other.dims && self.data == other.data
+    }
+}
+
+impl<S: Semiring> Clone for Network<S> {
+    fn clone(&self) -> Self {
+        Network { tensors: self.tensors.clone(), open: self.open.clone() }
+    }
+}
+
+impl<S: Semiring> core::fmt::Debug for Network<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Network")
+            .field("semiring", &S::NAME)
+            .field("tensors", &self.tensors.len())
+            .field("open", &self.open)
+            .finish()
+    }
+}
+
+impl<S: Semiring> Default for Network<S> {
+    fn default() -> Self {
+        Network::new()
+    }
 }
 
 /// Why a tensor could not be built, or why two disagree.
@@ -124,7 +364,7 @@ impl core::fmt::Display for Malformed {
 
 impl core::error::Error for Malformed {}
 
-impl Tensor {
+impl<S: Semiring> Tensor<S> {
     /// A tensor over `idx` with dimensions `dims` and entries `data`, row-major, first index
     /// slowest.
     ///
@@ -132,7 +372,11 @@ impl Tensor {
     ///
     /// [`Malformed`] when the data length disagrees with the shape, an index repeats, or a
     /// dimension is zero.
-    pub fn new(idx: Vec<Index>, dims: Vec<usize>, data: Vec<f64>) -> Result<Tensor, Malformed> {
+    pub fn new(
+        idx: Vec<Index>,
+        dims: Vec<usize>,
+        data: Vec<S::Elem>,
+    ) -> Result<Tensor<S>, Malformed> {
         if idx.len() != dims.len() {
             return Err(Malformed::Size { got: idx.len(), want: dims.len() });
         }
@@ -156,7 +400,7 @@ impl Tensor {
 
     /// A rank-0 tensor holding one number. What a fully contracted network reduces to.
     #[must_use]
-    pub fn scalar(v: f64) -> Tensor {
+    pub fn scalar(v: S::Elem) -> Tensor<S> {
         Tensor { idx: Vec::new(), dims: Vec::new(), data: vec![v] }
     }
 
@@ -186,13 +430,13 @@ impl Tensor {
 
     /// The single entry of a rank-0 tensor, or `None` if it has indices left.
     #[must_use]
-    pub fn value(&self) -> Option<f64> {
+    pub fn value(&self) -> Option<S::Elem> {
         (self.idx.is_empty()).then(|| self.data[0])
     }
 
     /// The entry at `pos`, one coordinate per index in layout order.
     #[must_use]
-    pub fn at(&self, pos: &[usize]) -> Option<f64> {
+    pub fn at(&self, pos: &[usize]) -> Option<S::Elem> {
         if pos.len() != self.idx.len() {
             return None;
         }
@@ -208,13 +452,13 @@ impl Tensor {
 
     /// Raw entries in layout order, for a caller that knows the convention.
     #[must_use]
-    pub fn data(&self) -> &[f64] {
+    pub fn data(&self) -> &[S::Elem] {
         &self.data
     }
 
     /// Sum this tensor over every index not in `keep`.
     #[must_use]
-    fn marginalise(&self, keep: &BTreeSet<Index>) -> Tensor {
+    fn marginalise(&self, keep: &BTreeSet<Index>) -> Tensor<S> {
         let out_pos: Vec<usize> =
             (0..self.idx.len()).filter(|&k| keep.contains(&self.idx[k])).collect();
         if out_pos.len() == self.idx.len() {
@@ -223,7 +467,7 @@ impl Tensor {
         let out_idx: Vec<Index> = out_pos.iter().map(|&k| self.idx[k]).collect();
         let out_dims: Vec<usize> = out_pos.iter().map(|&k| self.dims[k]).collect();
         let out_len: usize = out_dims.iter().product();
-        let mut data = vec![0.0f64; out_len];
+        let mut data = vec![S::zero(); out_len];
 
         let mut pos = vec![0usize; self.idx.len()];
         for flat in 0..self.data.len() {
@@ -236,16 +480,15 @@ impl Tensor {
             for (n, &k) in out_pos.iter().enumerate() {
                 o = o * out_dims[n] + pos[k];
             }
-            data[o] += self.data[flat];
+            data[o] = S::add(data[o], self.data[flat]);
         }
         Tensor { idx: out_idx, dims: out_dims, data }
     }
 }
 
 /// A set of tensors, contracted by multiplying them and summing every index not left open.
-#[derive(Clone, Debug, Default)]
-pub struct Network {
-    tensors: Vec<Tensor>,
+pub struct Network<S: Semiring = SumProduct> {
+    tensors: Vec<Tensor<S>>,
     open: BTreeSet<Index>,
 }
 
@@ -347,15 +590,15 @@ fn extent(shape: &[(Index, usize)]) -> u128 {
     shape.iter().fold(1u128, |acc, &(_, d)| acc.saturating_mul(d as u128))
 }
 
-impl Network {
+impl<S: Semiring> Network<S> {
     /// An empty network.
     #[must_use]
-    pub fn new() -> Network {
-        Network::default()
+    pub fn new() -> Network<S> {
+        Network { tensors: Vec::new(), open: BTreeSet::new() }
     }
 
     /// Add a tensor.
-    pub fn push(&mut self, t: Tensor) -> &mut Self {
+    pub fn push(&mut self, t: Tensor<S>) -> &mut Self {
         self.tensors.push(t);
         self
     }
@@ -469,7 +712,11 @@ impl Network {
     /// removes two and pushes one, and [`Network::plan`] emits exactly `len - 1` steps for a
     /// non-empty network, so one tensor remains — but that is an invariant across two functions
     /// rather than something the types enforce, and a panic here would mean it had been broken.
-    pub fn contract_with(&self, order: Order, max_entries: u128) -> Result<Tensor, Uncontractable> {
+    pub fn contract_with(
+        &self,
+        order: Order,
+        max_entries: u128,
+    ) -> Result<Tensor<S>, Uncontractable> {
         let plan = self.plan(order)?;
         if plan.peak_entries > max_entries {
             return Err(Uncontractable::TooWide { entries: plan.peak_entries, max: max_entries });
@@ -477,7 +724,7 @@ impl Network {
         if self.tensors.is_empty() {
             // An empty network contracts to the multiplicative identity, which is what makes this
             // compose: adding one tensor to an empty network gives that tensor back.
-            return Ok(Tensor::scalar(1.0));
+            return Ok(Tensor::scalar(S::one()));
         }
 
         let mut live = self.tensors.clone();
@@ -508,84 +755,129 @@ impl Network {
     /// # Errors
     ///
     /// As [`Network::contract_with`].
-    pub fn contract(&self) -> Result<Tensor, Uncontractable> {
+    pub fn contract(&self) -> Result<Tensor<S>, Uncontractable> {
         self.contract_with(Order::default(), 1 << 26)
     }
 
-    /// The tensor network whose contraction is the partition function of `g` at `beta`.
-    ///
-    /// One index per spin, dimension 2, where 0 means −1 and 1 means +1 — the same encoding
-    /// [`crate::exact`] uses. Each edge contributes a rank-2 tensor `exp(beta * w * s_i * s_j)` and
-    /// each site with a field a rank-1 tensor `exp(beta * h_i * s_i)`.
-    ///
-    /// The sign convention follows [`crate::graph::Graph::energy`], which is
-    /// `E = -sum w s s - sum h s`, so the Boltzmann weight `exp(-beta E)` puts a PLUS sign in both
-    /// exponents here. Getting that backwards is the classic error in this construction and it
-    /// produces a perfectly plausible number, so it is checked rather than asserted — see the
-    /// agreement test against `Elimination::log_partition`.
-    ///
-    /// Any degree is fine. A spin carried by five edge tensors is summed once, after the last of
-    /// them is absorbed, which is what bucket elimination does and why no special case is needed.
-    ///
-    /// # Panics
-    ///
-    /// If a rank-1 tensor of two entries or a rank-2 tensor of four is rejected as malformed, which
-    /// would mean [`Tensor::new`]'s shape check disagrees with arithmetic. The shapes here are
-    /// literals, not caller input, so this is an assertion about this function rather than a
-    /// condition a caller can reach.
-    ///
-    /// A non-finite `beta` or coupling produces `inf` or `NaN` entries rather than a panic — the
-    /// contraction then carries them through to the result, where they are visible, instead of
-    /// failing here where the cause would be clearer but the caller has already been told the graph
-    /// is finite by whoever built it.
-    #[must_use]
-    pub fn from_ising(g: &Graph, beta: f64) -> Network {
-        let mut net = Network::new();
-        let s = [-1.0f64, 1.0];
-        for i in 0..g.n {
-            // A SPIN IN NO FACTOR IS STILL A SPIN. With no field and no edges it would appear on no
-            // tensor at all, so its index would not exist and nothing would sum over it — losing a
-            // factor of 2 from Z, silently.
-            //
-            // This is worth more than the two lines it costs. `exact.rs` had the identical hole for
-            // the identical reason (its `initial_tables` emits nothing for such a spin, and `run`
-            // then skips a variable no table mentions), so the agreement test between the two
-            // engines RATIFIED the wrong number to the last ulp instead of catching it. Two
-            // implementations are evidence only when they do not share a blind spot, and these two
-            // shared this one because both were written from the same picture of a graph as its
-            // edges.
-            if g.h[i] == 0.0 && g.offset[i] == g.offset[i + 1] {
-                net.push(
-                    Tensor::new(vec![i as Index], vec![2], vec![1.0, 1.0])
-                        .expect("a rank-1 tensor of two entries is well formed"),
-                );
+}
+
+/// A graph's factors, listed once: the site term for each spin that needs one, then each edge.
+///
+/// Returned rather than visited by callback so every semiring's constructor shares the STRUCTURE of
+/// the network and differs only in the entries. The two things a hand-rolled copy gets wrong are
+/// here instead: an undirected edge appears in both rows of the CSR and must be emitted once, and a
+/// spin with no field and no edges appears on no tensor at all unless one is made for it — which is
+/// how a partition function loses a factor of two per isolated spin, silently.
+enum IsingFactor {
+    /// A single spin's field term. Emitted for a nonzero field, and for an isolated spin so that
+    /// its index exists to be summed over.
+    Site {
+        /// The spin.
+        i: usize,
+        /// Its field, possibly zero when the spin is isolated.
+        h: f64,
+    },
+    /// One undirected coupling.
+    Edge {
+        /// The lower-numbered spin.
+        i: usize,
+        /// The higher-numbered spin.
+        j: usize,
+        /// The coupling.
+        w: f64,
+    },
+}
+
+fn ising_factors(g: &Graph) -> Vec<IsingFactor> {
+    let mut out = Vec::new();
+    for i in 0..g.n {
+        let isolated = g.offset[i] == g.offset[i + 1];
+        if g.h[i] != 0.0 || isolated {
+            out.push(IsingFactor::Site { i, h: g.h[i] });
+        }
+        for k in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[k] as usize;
+            if j > i {
+                out.push(IsingFactor::Edge { i, j, w: g.w[k] });
             }
-            if g.h[i] != 0.0 {
-                let data = vec![(beta * g.h[i] * s[0]).exp(), (beta * g.h[i] * s[1]).exp()];
-                net.push(
-                    Tensor::new(vec![i as Index], vec![2], data)
-                        .expect("a rank-1 tensor of two entries is well formed"),
-                );
+        }
+    }
+    out
+}
+
+/// Build a network from `g`'s factors, given how to score one site value and one edge pair.
+fn ising_network<S, F, E>(g: &Graph, site: F, edge: E) -> Network<S>
+where
+    S: Semiring,
+    F: Fn(f64, f64) -> S::Elem,
+    E: Fn(f64, f64, f64) -> S::Elem,
+{
+    let mut net = Network::new();
+    for f in ising_factors(g) {
+        match f {
+            IsingFactor::Site { i, h } => {
+                let d = vec![site(h, SPIN[0]), site(h, SPIN[1])];
+                net.push(Tensor::new(vec![i as Index], vec![2], d).expect("rank-1, two entries"));
             }
-            for k in g.offset[i]..g.offset[i + 1] {
-                let j = g.nbr[k] as usize;
-                if j <= i {
-                    continue; // each undirected edge once
-                }
-                let w = g.w[k];
-                let mut data = Vec::with_capacity(4);
-                for &a in &s {
-                    for &b in &s {
-                        data.push((beta * w * a * b).exp());
+            IsingFactor::Edge { i, j, w } => {
+                let mut d = Vec::with_capacity(4);
+                for &a in &SPIN {
+                    for &b in &SPIN {
+                        d.push(edge(w, a, b));
                     }
                 }
                 net.push(
-                    Tensor::new(vec![i as Index, j as Index], vec![2, 2], data)
-                        .expect("a rank-2 tensor of four entries is well formed"),
+                    Tensor::new(vec![i as Index, j as Index], vec![2, 2], d)
+                        .expect("rank-2, four entries"),
                 );
             }
         }
-        net
+    }
+    net
+}
+
+/// The two spin values, in index order: 0 is −1 and 1 is +1, as `crate::exact` encodes them.
+const SPIN: [f64; 2] = [-1.0, 1.0];
+
+impl Network<SumProduct> {
+    /// The network whose contraction is the partition function of `g` at `beta`.
+    ///
+    /// One index per spin, dimension 2. Each edge contributes `exp(beta·w·sᵢ·sⱼ)` and each site with
+    /// a field `exp(beta·hᵢ·sᵢ)`. The sign convention follows [`crate::graph::Graph::energy`],
+    /// `E = −Σ w s s − Σ h s`, so the Boltzmann weight `exp(−beta·E)` puts a PLUS in both exponents.
+    /// Getting that backwards produces a perfectly plausible number, so it is checked against
+    /// [`crate::exact::Elimination::log_partition`] rather than asserted.
+    #[must_use]
+    pub fn from_ising(g: &Graph, beta: f64) -> Network<SumProduct> {
+        ising_network(g, |h, s| (beta * h * s).exp(), |w, a, b| (beta * w * a * b).exp())
+    }
+}
+
+impl Network<Tropical> {
+    /// The network whose contraction is the **ground energy** of `g`.
+    ///
+    /// No temperature: the tropical semiring is the `beta → ∞` limit and its tensors carry energies
+    /// directly. Each edge contributes `−w·sᵢ·sⱼ` and each site `−h·sᵢ`, which is
+    /// [`crate::graph::Graph::energy`] term by term, and `⊗` being `+` is what adds them up.
+    #[must_use]
+    pub fn from_ising(g: &Graph) -> Network<Tropical> {
+        ising_network(g, |h, s| -h * s, |w, a, b| -w * a * b)
+    }
+}
+
+impl Network<MinCount> {
+    /// The network whose contraction is the ground energy **and how many states attain it**.
+    ///
+    /// The same energies [`Network::<Tropical>::from_ising`] carries, each paired with a count of
+    /// one. `⊗` adds energies and multiplies counts; `⊕` keeps the lower energy and, on a tie, adds
+    /// the counts. Degeneracy is exactly what the tropical semiring discards when it takes a
+    /// minimum, and the count carried alongside is what recovers it.
+    ///
+    /// An isolated spin contributes `(0, 1)` for each of its two states and so doubles the count: a
+    /// spin in no factor is still a spin, and its two orientations are two ground states.
+    #[must_use]
+    pub fn from_ising(g: &Graph) -> Network<MinCount> {
+        ising_network(g, |h, s| (-h * s, 1u128), |w, a, b| (-w * a * b, 1u128))
     }
 }
 
@@ -641,12 +933,12 @@ fn merge(
 }
 
 /// Contract two tensors, summing every index this pair holds the last copies of.
-fn contract_pair(
-    a: &Tensor,
-    b: &Tensor,
+fn contract_pair<S: Semiring>(
+    a: &Tensor<S>,
+    b: &Tensor<S>,
     counts: &BTreeMap<Index, usize>,
     open: &BTreeSet<Index>,
-) -> Tensor {
+) -> Tensor<S> {
     let sa: Shape = a.idx.iter().copied().zip(a.dims.iter().copied()).collect();
     let sb: Shape = b.idx.iter().copied().zip(b.dims.iter().copied()).collect();
     let (out_shape, _) = merge(&sa, &sb, counts, open);
@@ -664,7 +956,7 @@ fn contract_pair(
     }
     let sum_len: usize = summed.iter().map(|&(_, d)| d).product();
 
-    let mut data = vec![0.0f64; out_len];
+    let mut data = vec![S::zero(); out_len];
     let mut out_pos = vec![0usize; out_idx.len()];
     let mut sum_pos = vec![0usize; summed.len()];
     let mut pos_a = vec![0usize; a.idx.len()];
@@ -676,7 +968,7 @@ fn contract_pair(
             out_pos[k] = rem % out_dims[k];
             rem /= out_dims[k];
         }
-        let mut acc = 0.0f64;
+        let mut acc = S::zero();
         for s in 0..sum_len {
             let mut r = s;
             for k in (0..summed.len()).rev() {
@@ -702,7 +994,7 @@ fn contract_pair(
             }
             let va = a.at(&pos_a).expect("a coordinate built from a's own dimensions is in range");
             let vb = b.at(&pos_b).expect("a coordinate built from b's own dimensions is in range");
-            acc += va * vb;
+            acc = S::add(acc, S::mul(va, vb));
         }
         data[flat] = acc;
     }
@@ -749,7 +1041,7 @@ mod tests {
         let e = Elimination::default();
         for (name, g) in cases {
             for beta in [0.1f64, 0.5, 1.0, 2.0] {
-                let net = Network::from_ising(&g, beta);
+                let net = Network::<SumProduct>::from_ising(&g, beta);
                 let z = net
                     .contract()
                     .unwrap_or_else(|err| panic!("{name} at beta {beta}: {err}"))
@@ -769,6 +1061,128 @@ mod tests {
         }
     }
 
+    /// ONE NETWORK, FOUR ARITHMETICS, FOUR ANSWERS — each against its own oracle.
+    ///
+    /// The Generalized Distributive Law says the contraction schedule is blind to the scalar. This
+    /// is that claim made checkable: the same graph, the same indices, the same elimination, and
+    /// four different questions answered by changing a type parameter.
+    ///
+    /// Scored against brute-force enumeration rather than against `exact::Elimination`, because the
+    /// two engines have already been caught sharing a blind spot — both omitted a tensor for an
+    /// isolated spin, so they agreed on a wrong `log Z` to the last ulp. Enumeration shares nothing
+    /// with either.
+    #[test]
+    fn one_network_over_four_semirings_answers_four_questions() {
+        let cases: Vec<(&str, Graph)> = vec![
+            ("ring(9, -1, 0)", crate::ising::ring(9, -1.0, 0.0)),
+            ("ring(10, -1, 0)", crate::ising::ring(10, -1.0, 0.0)),
+            ("chain(8) + field", chain(8, 1.0, 0.25)),
+            ("torus 3x3", crate::ising::lattice2d(3, 1.0)),
+            ("a pair and two free spins", {
+                let mut b = GraphBuilder::new(4);
+                b.couple(0, 1, 1.0);
+                b.build()
+            }),
+        ];
+
+        for (name, g) in cases {
+            // Brute force: the ground energy, how many states attain it, and Z at beta.
+            let beta = 0.6;
+            let (mut e0, mut deg, mut z) = (f64::INFINITY, 0u128, 0.0f64);
+            for m in 0u64..(1u64 << g.n) {
+                let st: Vec<i8> =
+                    (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let e = g.energy(&st);
+                z += (-beta * e).exp();
+                if e < e0 - 1e-9 {
+                    e0 = e;
+                    deg = 1;
+                } else if (e - e0).abs() <= 1e-9 {
+                    deg += 1;
+                }
+            }
+
+            // sum-product -> Z
+            let got_z = Network::<SumProduct>::from_ising(&g, beta).contract().unwrap().value().unwrap();
+            assert!(
+                (got_z.ln() - z.ln()).abs() < 1e-9,
+                "{name}: sum-product log Z {} vs enumeration {}",
+                got_z.ln(),
+                z.ln()
+            );
+
+            // tropical -> the ground energy
+            let got_e0 = Network::<Tropical>::from_ising(&g).contract().unwrap().value().unwrap();
+            assert!(
+                (got_e0 - e0).abs() < 1e-9,
+                "{name}: tropical ground energy {got_e0} vs enumeration {e0}"
+            );
+
+            // min-count -> the ground energy AND its degeneracy, in one contraction
+            let (mc_e, mc_n) =
+                Network::<MinCount>::from_ising(&g).contract().unwrap().value().unwrap();
+            assert!((mc_e - e0).abs() < 1e-9, "{name}: min-count energy {mc_e} vs {e0}");
+            assert_eq!(mc_n, deg, "{name}: min-count counted {mc_n} ground states, there are {deg}");
+
+            // counting -> how many configurations there are at all, which for a network of
+            // all-ones tensors is 2^n. A control: it is the only one of the four whose answer does
+            // not depend on the couplings, so a constructor that ignored them would pass here and
+            // fail the other three.
+            let mut ones = Network::<Counting>::new();
+            for i in 0..g.n {
+                ones.push(Tensor::new(vec![i as Index], vec![2], vec![1u128, 1]).unwrap());
+            }
+            assert_eq!(ones.contract().unwrap().value(), Some(1u128 << g.n), "{name}: counting");
+        }
+    }
+
+    /// The degeneracy the min-count semiring reports agrees with the two-temperature estimate.
+    ///
+    /// `exact::ground_degeneracy` extrapolates from `log Z` at two betas; this counts directly in
+    /// one contraction. Different methods, and neither is derived from the other — so where they
+    /// both apply they must agree, and where they disagree one of them is wrong.
+    #[test]
+    fn counting_by_contraction_agrees_with_counting_by_cold_limit() {
+        for n in [9usize, 11, 13] {
+            let g = crate::ising::ring(n, -1.0, 0.0);
+            let (_, by_contraction) =
+                Network::<MinCount>::from_ising(&g).contract().unwrap().value().unwrap();
+            let by_cold_limit = crate::exact::Elimination::default()
+                .ground_degeneracy(&g, (20.0, 40.0))
+                .unwrap()
+                .count
+                .expect("a ring converges");
+            assert_eq!(
+                by_contraction, u128::from(by_cold_limit),
+                "odd AF ring {n}: contraction counted {by_contraction}, cold limit {by_cold_limit}"
+            );
+            // And the closed form both should be reproducing.
+            assert_eq!(by_contraction, 2 * n as u128);
+        }
+    }
+
+    /// The identities a semiring has to satisfy, checked rather than assumed.
+    ///
+    /// `zero` must be the identity for `⊕` and annihilate under `⊗`; `one` must be the identity for
+    /// `⊗`. Contraction relies on all three — `zero` is what an empty accumulator starts at and
+    /// `one` is what an empty network contracts to — and a semiring that gets one wrong produces a
+    /// number rather than an error.
+    #[test]
+    fn every_semiring_has_the_identities_contraction_relies_on() {
+        fn check<S: Semiring>(vals: &[S::Elem]) {
+            for &v in vals {
+                assert_eq!(S::add(S::zero(), v), v, "{}: zero is not the additive identity", S::NAME);
+                assert_eq!(S::mul(S::one(), v), v, "{}: one is not the multiplicative identity", S::NAME);
+                assert_eq!(S::mul(S::zero(), v), S::zero(), "{}: zero does not annihilate", S::NAME);
+            }
+        }
+        check::<SumProduct>(&[0.0, 1.0, 2.5, -3.25]);
+        check::<Counting>(&[0, 1, 7, 1_000_000]);
+        // Tropical `zero` is +inf and `mul` is `+`, so inf + v = inf annihilates as required.
+        check::<Tropical>(&[0.0, 1.0, -2.5, 17.0]);
+        check::<MinCount>(&[(0.0, 1), (2.5, 3), (-1.0, 8)]);
+    }
+
     /// An open index gives a marginal instead of a scalar, and it must match exact marginals.
     ///
     /// This is the capability `exact.rs` has as a dedicated method and a network has as a *mode*:
@@ -781,7 +1195,7 @@ mod tests {
         let exact = Elimination::default().marginals(&g, beta).expect("a ring is narrow");
 
         for spin in [0usize, 3, 7] {
-            let mut net = Network::from_ising(&g, beta);
+            let mut net = Network::<SumProduct>::from_ising(&g, beta);
             net.open(spin as Index);
             let t = net.contract().expect("a ring with one open leg is narrow");
             assert_eq!(t.indices(), &[spin as Index]);
@@ -801,7 +1215,7 @@ mod tests {
     #[test]
     fn a_different_order_is_a_different_price_for_the_same_number() {
         let g = crate::ising::lattice2d(4, 1.0);
-        let net = Network::from_ising(&g, 0.7);
+        let net = Network::<SumProduct>::from_ising(&g, 0.7);
 
         let greedy = net.plan(Order::GreedySize).expect("a small lattice is contractable");
         let naive = net.plan(Order::Sequential).expect("a small lattice is contractable");
@@ -824,7 +1238,7 @@ mod tests {
     #[test]
     fn the_cost_is_reported_before_it_is_incurred_and_can_be_refused() {
         let g = crate::ising::lattice2d(5, 1.0);
-        let net = Network::from_ising(&g, 0.5);
+        let net = Network::<SumProduct>::from_ising(&g, 0.5);
         let plan = net.plan(Order::default()).expect("a 5x5 lattice is contractable");
         assert!(plan.peak_entries >= 2);
         assert!(plan.flops > 0);
@@ -845,20 +1259,23 @@ mod tests {
     #[test]
     fn a_tensor_that_cannot_exist_is_refused_when_it_is_built() {
         assert_eq!(
-            Tensor::new(vec![0, 1], vec![2, 2], vec![1.0, 2.0]),
+            Tensor::<SumProduct>::new(vec![0, 1], vec![2, 2], vec![1.0, 2.0]),
             Err(Malformed::Size { got: 2, want: 4 })
         );
         assert_eq!(
-            Tensor::new(vec![0, 0], vec![2, 2], vec![1.0; 4]),
+            Tensor::<SumProduct>::new(vec![0, 0], vec![2, 2], vec![1.0; 4]),
             Err(Malformed::RepeatedIndex(0))
         );
-        assert_eq!(Tensor::new(vec![0], vec![0], vec![]), Err(Malformed::ZeroDimension(0)));
+        assert_eq!(
+            Tensor::<SumProduct>::new(vec![0], vec![0], vec![]),
+            Err(Malformed::ZeroDimension(0))
+        );
     }
 
     /// Two tensors disagreeing about a wire's width is caught before any arithmetic.
     #[test]
     fn an_index_that_is_two_widths_at_once_is_refused() {
-        let mut net = Network::new();
+        let mut net = Network::<SumProduct>::new();
         net.push(Tensor::new(vec![0], vec![2], vec![1.0, 1.0]).unwrap());
         net.push(Tensor::new(vec![0], vec![3], vec![1.0; 3]).unwrap());
         match net.plan(Order::default()) {
@@ -881,7 +1298,7 @@ mod tests {
     /// tensor carries every index at once.
     #[test]
     fn an_intermediate_too_wide_to_count_saturates_and_refuses() {
-        let mut net = Network::new();
+        let mut net = Network::<SumProduct>::new();
         for i in 0..130u32 {
             net.push(Tensor::new(vec![i], vec![2], vec![1.0, 1.0]).unwrap());
             net.open(i);
@@ -907,18 +1324,18 @@ mod tests {
     /// An empty network contracts to one, so adding a tensor to it gives that tensor back.
     #[test]
     fn the_empty_network_is_the_multiplicative_identity() {
-        assert_eq!(Network::new().contract().unwrap().value(), Some(1.0));
+        assert_eq!(Network::<SumProduct>::new().contract().unwrap().value(), Some(1.0));
     }
 
     /// A single tensor still has its indices summed, which is what "contract" means here.
     #[test]
     fn one_tensor_alone_is_summed_over_its_own_indices() {
-        let mut net = Network::new();
+        let mut net = Network::<SumProduct>::new();
         net.push(Tensor::new(vec![0, 1], vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap());
         assert_eq!(net.contract().unwrap().value(), Some(10.0));
 
         // Unless the caller leaves one open, in which case it is a partial sum.
-        let mut kept = Network::new();
+        let mut kept = Network::<SumProduct>::new();
         kept.push(Tensor::new(vec![0, 1], vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap());
         kept.open(0);
         let t = kept.contract().unwrap();
