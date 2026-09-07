@@ -195,7 +195,25 @@ fi
 if true; then
   attempt http; attempt mcp
   (./target/release/ferrotherm-serve >/dev/null 2>&1 &)
-  for _ in $(seq 1 40); do curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null && break; sleep 0.25; done
+  # THE READINESS WAIT HAS TO BE ABLE TO FAIL.
+  #
+  # This loop exhausted its attempts and fell through whether or not the server had ever answered,
+  # so a slow start became a POST against nothing, a JSON decode of an empty string, and the verdict
+  # "http PRODUCED NOTHING -- its toolchain is present, so it broke" — blaming the binding for a
+  # timeout in the harness. Seen on a loaded machine, which is what a CI runner is.
+  #
+  # 30 s rather than 10: the budget is for the worst machine this runs on, not the fastest, and the
+  # cost of a generous one is nothing when the server is already up.
+  ready=0
+  for _ in $(seq 1 120); do
+    if curl -s -o /dev/null localhost:8479/v1/health 2>/dev/null; then ready=1; break; fi
+    sleep 0.25
+  done
+  if [ "$ready" != "1" ]; then
+    echo "  ferrotherm-serve did not answer /v1/health within 30s, so the http and mcp arms" >&2
+    echo "  were never asked anything. That is a failure of this harness, not of a binding." >&2
+    exit 2
+  fi
   curl -s -X POST localhost:8479/v1/solve -d @"$out/model.json" 2>/dev/null \
     | python3 -c "import json,sys;print(json.load(sys.stdin)['ftp'],end='')" > "$out/http.ftp" 2> "$out/http.err"
   python3 - "$out" 2> "$out/mcp.err" <<'PY'

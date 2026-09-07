@@ -730,7 +730,15 @@ impl Elimination {
 
             let m = scope.len();
             let mut vals = vec![0.0f64; 1 << m];
-            let mut choice = vec![false; 1 << m];
+            // ONLY min-sum has a decision to record, and only min-sum reads one back.
+            //
+            // This allocated `2^m` bools per eliminated variable in BOTH modes and pushed every one
+            // onto `decisions`, which sum-product never touches. The tables themselves are dropped
+            // as they are consumed, so the live cost of an elimination is `max_k 2^{m_k}` — but the
+            // decision tables were retained to the end, making the real peak `sum_k 2^{m_k}`. At the
+            // default `max_width` of 24 that is 16 MB of dead allocation per variable, and
+            // `ground_degeneracy` runs sum-product twice per query.
+            let mut choice = if min_sum { vec![false; 1 << m] } else { Vec::new() };
             let mut assign = vec![0i8; g.n];
 
             for idx in 0..(1usize << m) {
@@ -755,7 +763,9 @@ impl Elimination {
                 }
             }
 
-            decisions.push((v, scope.clone(), choice));
+            if min_sum {
+                decisions.push((v, scope.clone(), choice));
+            }
             if m == 0 {
                 constant += vals[0];
             } else {
