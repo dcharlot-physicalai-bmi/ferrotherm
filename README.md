@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
 | Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
 | Multi-spin coding (Isakov et al.; the Janus line) | `multispin` — 64 replicas per `u64`, bit-sliced ripple-carry field, refuses non-uniform `|J|` by name | **shipped, verified** — every lane certified, and lane INDEPENDENCE tested separately |
@@ -911,6 +912,31 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### Training an energy model without a sampler
+
+`ebm::train` is contrastive divergence, and a negative phase needs a sampler — so its cost, its bias
+and its seed all enter the fit. `train_pseudolikelihood` replaces the intractable normaliser with a
+product of conditionals `P(s_i | rest)`, each a logistic function of the local field and computable
+exactly from the data. Objective and gradient are both closed-form, the fit is deterministic, and
+there is nothing to tune but the step.
+
+The price is stated rather than hidden: the objective is *not* the likelihood. Its case rests on
+**consistency** — the maximiser goes to the true parameters as data grows — so that is what the test
+measures, and it measures the error *shrinking* rather than clearing a threshold, because a
+threshold would be testing the fixture. Twenty times the data at least halves the mean parameter
+error, landing under 0.1. This crate already leans on the same consistency: `certify` fits an inverse
+temperature by pseudolikelihood, and its interval needed the Godambe sandwich for exactly the reason
+PL is not a likelihood.
+
+A model with hidden units is refused by name. "The rest" has to be observed, and a latent unit is
+not — so the conditional does not exist, which is a different thing from being slower or looser.
+
+**The gradient is checked against finite differences**, because a hand-derived gradient is where this
+kind of code goes quietly wrong. An edge weight enters the field of *both* its endpoints, so its
+derivative has two terms; drop either and the fit still converges to something, just not to the
+maximiser of the stated objective — and no accuracy check on the result would reveal it. That
+mutation, and seven others, are killed.
 
 ### The adaptive ladder's default was severed, and adapting did not repair it
 

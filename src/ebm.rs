@@ -52,6 +52,18 @@ pub struct Dataset {
 pub enum Error {
     /// The dataset is empty, so there is nothing to fit.
     NoData,
+    /// Pseudolikelihood was asked to fit a model with latent units.
+    ///
+    /// Its objective is a product of conditionals `P(s_i | rest)`, and "the rest" has to be
+    /// observed. A hidden unit is not, so the conditional is not computable from the data and the
+    /// method does not apply — it is not a matter of being slower or looser. Use [`train`], whose
+    /// negative phase samples the latent units instead.
+    HasLatent {
+        /// Spins in the model.
+        spins: usize,
+        /// Spins the data observes.
+        visible: usize,
+    },
     /// A row is not `visible` long, so it cannot be clamped onto the model.
     RowWidth {
         /// Index of the offending row.
@@ -96,6 +108,12 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Error::HasLatent { spins, visible } => write!(
+                f,
+                "pseudolikelihood needs every spin observed and this model has {spins} with only \
+                 {visible} in the data; its objective conditions each spin on all the others, which \
+                 a latent unit does not supply. `train` samples them instead"
+            ),
             Error::NoData => write!(f, "no data rows; there is nothing to fit"),
             Error::RowWidth { row, len, want } => {
                 write!(f, "row {row} has {len} visible entries, and the dataset declares {want}")
@@ -619,6 +637,159 @@ mod likelihood_tests {
     }
 }
 
+/// How to fit by pseudolikelihood.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlParams {
+    /// Gradient ascent steps over the whole dataset.
+    pub epochs: usize,
+    /// Step size.
+    pub lr: f64,
+    /// L2 penalty on weights and biases, per step. Zero for none.
+    pub l2: f64,
+}
+
+impl Default for PlParams {
+    fn default() -> Self {
+        PlParams { epochs: 400, lr: 0.1, l2: 0.0 }
+    }
+}
+
+/// Mean pseudo-log-likelihood per row: `(1/D) Σ_d Σ_i log P(s_i | rest)`.
+///
+/// The objective [`train_pseudolikelihood`] ascends, exposed because a training method whose
+/// objective cannot be evaluated is a method whose progress cannot be checked.
+///
+/// # Errors
+///
+/// [`Error::NoData`], [`Error::HasLatent`], and the malformed-row errors `check` raises.
+pub fn pseudo_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
+    check(g, data)?;
+    if g.n != data.visible {
+        return Err(Error::HasLatent { spins: g.n, visible: data.visible });
+    }
+    let mut total = 0.0;
+    for row in &data.rows {
+        for i in 0..g.n {
+            let f = g.field(i, row);
+            // log sigma(2 s_i f_i), written through the kernel so the convention is the crate's.
+            let p = crate::kernel::p_up(f, 1.0);
+            total += if row[i] > 0 { p.max(f64::MIN_POSITIVE).ln() } else { (1.0 - p).max(f64::MIN_POSITIVE).ln() };
+        }
+    }
+    Ok(total / data.rows.len() as f64)
+}
+
+/// The gradient of [`pseudo_log_likelihood`] with respect to every edge weight and bias.
+///
+/// Returned as `(d/dw per edge, d/dh per spin)` matching `edges` order. Exact and closed-form:
+/// with `p_i = P(s_i = +1 | rest)` and `y_i = (s_i + 1)/2`, the derivative of one conditional
+/// through its own field is `2 (y_i − p_i)`; an edge appears in the field of BOTH its endpoints,
+/// which is where the two terms come from and the easiest thing here to get half right.
+fn pl_gradient(
+    g: &Graph,
+    data: &Dataset,
+    edges: &[(usize, usize, f64)],
+) -> (Vec<f64>, Vec<f64>) {
+    let mut dw = vec![0.0; edges.len()];
+    let mut dh = vec![0.0; g.n];
+    for row in &data.rows {
+        // One pass for the per-site residuals, so each is computed once rather than per edge.
+        let resid: Vec<f64> = (0..g.n)
+            .map(|i| {
+                let p = crate::kernel::p_up(g.field(i, row), 1.0);
+                let y = f64::from(u8::from(row[i] > 0));
+                2.0 * (y - p)
+            })
+            .collect();
+        for i in 0..g.n {
+            dh[i] += resid[i];
+        }
+        for (e, &(i, j, _)) in edges.iter().enumerate() {
+            dw[e] += resid[i] * f64::from(row[j]) + resid[j] * f64::from(row[i]);
+        }
+    }
+    let d = data.rows.len() as f64;
+    for x in &mut dw {
+        *x /= d;
+    }
+    for x in &mut dh {
+        *x /= d;
+    }
+    (dw, dh)
+}
+
+/// Fit `structure`'s weights to `data` by **pseudolikelihood** — no sampling anywhere.
+///
+/// # Why this is here beside [`train`]
+///
+/// Contrastive divergence needs a negative phase, and a negative phase needs a sampler: its cost,
+/// its bias, and its seed all enter the fit. Pseudolikelihood replaces the intractable normaliser
+/// with a product of conditionals `P(s_i | rest)`, each of which is a logistic function of the
+/// local field and computable exactly from the data. So the objective and its gradient are both
+/// closed-form, the fit is deterministic, and there is no sampler to tune.
+///
+/// The price is that the objective is not the likelihood. It is *consistent* — the maximiser
+/// converges to the true parameters as data grows, which
+/// `pseudolikelihood_converges_on_the_model_that_generated_the_data` measures — but at finite data
+/// it is a different objective with a different optimum. This crate already relies on that
+/// consistency elsewhere: [`crate::certify`] fits an inverse temperature the same way.
+///
+/// The objective is concave in the parameters, being a sum of logistic log-likelihoods, so plain
+/// gradient ascent has nowhere else to go.
+///
+/// # Errors
+///
+/// [`Error::HasLatent`] when the model has spins the data does not observe — see that variant.
+/// Otherwise as [`train`].
+pub fn train_pseudolikelihood(
+    structure: &Graph,
+    data: &Dataset,
+    p: &PlParams,
+) -> Result<Trained, Error> {
+    check(structure, data)?;
+    if structure.n != data.visible {
+        return Err(Error::HasLatent { spins: structure.n, visible: data.visible });
+    }
+    let n = structure.n;
+    let mut edges: Vec<(usize, usize, f64)> = Vec::with_capacity(structure.n_edges);
+    for i in 0..n {
+        for k in structure.offset[i]..structure.offset[i + 1] {
+            let j = structure.nbr[k] as usize;
+            if j > i {
+                edges.push((i, j, structure.w[k]));
+            }
+        }
+    }
+    let mut bias: Vec<f64> = structure.h.clone();
+    let build = |edges: &[(usize, usize, f64)], bias: &[f64]| {
+        let mut gb = GraphBuilder::new(n);
+        for &(i, j, w) in edges {
+            gb.couple(i, j, w);
+        }
+        for (i, &b) in bias.iter().enumerate() {
+            if b != 0.0 {
+                gb.bias(i, b);
+            }
+        }
+        gb.build()
+    };
+
+    for _ in 0..p.epochs {
+        let g = build(&edges, &bias);
+        let (dw, dh) = pl_gradient(&g, data, &edges);
+        for (e, x) in edges.iter_mut().enumerate() {
+            x.2 += p.lr * (dw[e] - p.l2 * x.2);
+        }
+        for (i, b) in bias.iter_mut().enumerate() {
+            *b += p.lr * (dh[i] - p.l2 * *b);
+        }
+    }
+
+    let graph = build(&edges, &bias);
+    let log_likelihood = exact_log_likelihood(&graph, data).ok();
+    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,4 +980,207 @@ mod tests {
             other => panic!("an oversized model must be TooLarge, got {other:?}"),
         }
     }
+    /// A dataset drawn exactly from a known model, by inverse CDF over the enumerated distribution.
+    fn draw_from(g: &Graph, rows: usize, seed: u64) -> Dataset {
+        let p = crate::ising::exact_boltzmann(g, 1.0);
+        let mut cdf = Vec::with_capacity(p.len());
+        let mut acc = 0.0;
+        for &x in &p {
+            acc += x;
+            cdf.push(acc);
+        }
+        let mut rng = crate::rng::Pcg::new(seed, 11);
+        let rows = (0..rows)
+            .map(|_| {
+                let u = rng.f64() * acc;
+                let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
+                (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect()
+            })
+            .collect();
+        Dataset { visible: g.n, rows }
+    }
+
+    /// The closed-form gradient is the derivative of the objective it claims to be.
+    ///
+    /// The sharpest test available for a hand-derived gradient, and the one that catches the error
+    /// this derivation invites: an edge weight enters the field of BOTH its endpoints, so its
+    /// derivative has two terms. Drop either and the fit still converges to something, just not to
+    /// the maximiser of the stated objective — which no accuracy check on the result would reveal.
+    #[test]
+    fn the_closed_form_gradient_matches_a_finite_difference() {
+        let truth = {
+            let mut b = GraphBuilder::new(5);
+            b.couple(0, 1, 0.7);
+            b.couple(1, 2, -0.4);
+            b.couple(2, 3, 0.9);
+            b.couple(3, 4, -0.6);
+            b.couple(0, 4, 0.3);
+            b.bias(0, 0.25);
+            b.bias(2, -0.5);
+            b.build()
+        };
+        let data = draw_from(&truth, 400, 3);
+
+        let n = truth.n;
+        let mut edges: Vec<(usize, usize, f64)> = Vec::new();
+        for i in 0..n {
+            for k in truth.offset[i]..truth.offset[i + 1] {
+                let j = truth.nbr[k] as usize;
+                if j > i {
+                    edges.push((i, j, truth.w[k]));
+                }
+            }
+        }
+        let bias: Vec<f64> = truth.h.clone();
+        let build = |e: &[(usize, usize, f64)], b: &[f64]| {
+            let mut gb = GraphBuilder::new(n);
+            for &(i, j, w) in e {
+                gb.couple(i, j, w);
+            }
+            for (i, &x) in b.iter().enumerate() {
+                if x != 0.0 {
+                    gb.bias(i, x);
+                }
+            }
+            gb.build()
+        };
+
+        let g0 = build(&edges, &bias);
+        let (dw, dh) = pl_gradient(&g0, &data, &edges);
+        let eps = 1e-6;
+
+        for e in 0..edges.len() {
+            let mut up = edges.clone();
+            up[e].2 += eps;
+            let mut dn = edges.clone();
+            dn[e].2 -= eps;
+            let num = (pseudo_log_likelihood(&build(&up, &bias), &data).unwrap()
+                - pseudo_log_likelihood(&build(&dn, &bias), &data).unwrap())
+                / (2.0 * eps);
+            assert!(
+                (dw[e] - num).abs() < 1e-5,
+                "edge {e} ({}, {}): analytic {:.8} against a finite difference {num:.8}",
+                edges[e].0,
+                edges[e].1,
+                dw[e]
+            );
+        }
+        for i in 0..n {
+            let mut up = bias.clone();
+            up[i] += eps;
+            let mut dn = bias.clone();
+            dn[i] -= eps;
+            let num = (pseudo_log_likelihood(&build(&edges, &up), &data).unwrap()
+                - pseudo_log_likelihood(&build(&edges, &dn), &data).unwrap())
+                / (2.0 * eps);
+            assert!(
+                (dh[i] - num).abs() < 1e-5,
+                "bias {i}: analytic {:.8} against a finite difference {num:.8}",
+                dh[i]
+            );
+        }
+    }
+
+    /// The objective rises every epoch, which a concave objective under ascent must.
+    #[test]
+    fn the_pseudolikelihood_never_falls_during_training() {
+        let truth = crate::ising::ring(6, 0.8, 0.3);
+        let data = draw_from(&truth, 300, 5);
+        let blank = crate::ising::ring(6, 0.0, 0.0);
+        let p = PlParams { epochs: 1, lr: 0.05, l2: 0.0 };
+
+        let mut model = blank;
+        let mut prev = f64::NEG_INFINITY;
+        for step in 0..80 {
+            let t = train_pseudolikelihood(&model, &data, &p).unwrap();
+            let now = pseudo_log_likelihood(&t.graph, &data).unwrap();
+            assert!(
+                now >= prev - 1e-9,
+                "step {step}: the objective fell from {prev:.8} to {now:.8}"
+            );
+            prev = now;
+            model = t.graph;
+        }
+    }
+
+    /// The fit converges on the model that generated the data, and more data gets closer.
+    ///
+    /// Consistency is the property pseudolikelihood is chosen FOR — it is not the likelihood, so
+    /// the case for it rests entirely on the maximiser going to the right place as data grows.
+    /// Asserting a single error threshold would test the fixture; asserting the error SHRINKS tests
+    /// the claim.
+    #[test]
+    fn pseudolikelihood_converges_on_the_model_that_generated_the_data() {
+        let truth = {
+            let mut b = GraphBuilder::new(6);
+            for i in 0..6 {
+                b.couple(i, (i + 1) % 6, if i % 2 == 0 { 0.6 } else { -0.5 });
+            }
+            b.bias(0, 0.4);
+            b.bias(3, -0.3);
+            b.build()
+        };
+        let err = |rows: usize, seed: u64| -> f64 {
+            let data = draw_from(&truth, rows, seed);
+            let blank = {
+                let mut b = GraphBuilder::new(6);
+                for i in 0..6 {
+                    b.couple(i, (i + 1) % 6, 0.0);
+                }
+                b.build()
+            };
+            let t = train_pseudolikelihood(
+                &blank,
+                &data,
+                &PlParams { epochs: 400, lr: 0.1, l2: 0.0 },
+            )
+            .unwrap();
+            // Mean absolute parameter error, over edges and biases alike.
+            let mut sum = 0.0;
+            let mut cnt = 0.0;
+            for i in 0..truth.n {
+                for k in truth.offset[i]..truth.offset[i + 1] {
+                    let j = truth.nbr[k] as usize;
+                    if j > i {
+                        let got = (t.graph.offset[i]..t.graph.offset[i + 1])
+                            .find(|&x| t.graph.nbr[x] as usize == j)
+                            .map_or(0.0, |x| t.graph.w[x]);
+                        sum += (got - truth.w[k]).abs();
+                        cnt += 1.0;
+                    }
+                }
+                sum += (t.graph.h[i] - truth.h[i]).abs();
+                cnt += 1.0;
+            }
+            sum / cnt
+        };
+
+        let seeds = 4u64;
+        let mean = |rows: usize| (0..seeds).map(|s| err(rows, s)).sum::<f64>() / seeds as f64;
+        let (small, large) = (mean(150), mean(3_000));
+        assert!(
+            large < small * 0.5,
+            "twenty times the data should at least halve the parameter error: {small:.4} at 150 \
+             rows against {large:.4} at 3000"
+        );
+        assert!(large < 0.1, "and the fit should land near the truth: {large:.4}");
+    }
+
+    /// A model with latent units is refused by name, because the conditional does not exist.
+    #[test]
+    fn pseudolikelihood_refuses_a_model_with_hidden_units() {
+        let structure = rbm(4, 3);
+        let data = Dataset { visible: 4, rows: vec![vec![1, -1, 1, -1]; 8] };
+        match train_pseudolikelihood(&structure, &data, &PlParams::default()) {
+            Err(Error::HasLatent { spins, visible }) => {
+                assert_eq!((spins, visible), (7, 4));
+            }
+            other => panic!("hidden units make the conditional uncomputable: {other:?}"),
+        }
+        assert!(matches!(
+            pseudo_log_likelihood(&structure, &data),
+            Err(Error::HasLatent { .. })
+        ));
+    }
+
 }
