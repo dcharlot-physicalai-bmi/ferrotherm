@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### The rest of the EBM estimator family, and the ceiling that scores all six
+
+`ebm` shipped contrastive divergence, PCD and pseudolikelihood. It now ships the rest of what the
+literature offers for a discrete energy-based model — `train_mpf` (minimum probability flow;
+Sohl-Dickstein, Battaglino & DeWeese 2011, the one estimator here derived *for* an Ising model) and
+`train_ratio_matching` (Hyvärinen 2007, score matching's discrete counterpart) — and, the part that
+matters more, `train_exact`: the true maximum-likelihood gradient with **both** averages enumerated
+and latent units integrated out exactly.
+
+**The three sampler-free methods turned out to be one method wearing three hats.** Each is a sum
+over (row, site) of a loss on the *flip margin* `u = s_i f_i` — `−log σ(2u)`, `exp(−u)`, `σ(−2u)²`
+— so they share one gradient and one loop, now `FlipLoss` and `train_flip`. Pseudolikelihood was
+refactored onto that path and is numerically identical; its existing tests pin it.
+
+**Why the exact method is worth shipping when nobody can run it.** Every published comparison of
+these estimators reports that one reached −3.0 and another −3.4 without computing what was
+reachable, so "better than the baseline" is the only sayable thing and it is a statement about the
+baseline. With a ceiling, each method is a fraction of a target: through coupling strength 1.5 every
+sampler-free method lands within 0.3% of one contrastive divergence reaches exactly.
+
+**A prediction this crate made about itself, refuted by measuring it.** `FlipLoss` argued from the
+shape of the three tails that minimum probability flow should be least robust to a corrupted row and
+ratio matching most. Measured, the three sit within *one point* of each other at every corruption
+level and both data sizes, with the order reversed at 200 rows. What the table does separate is the
+two families — contrastive divergence sits about eight points above all three at 30% corruption. The
+argument is kept with its refutation beside it rather than quietly dropped.
+
+**Three passes to get the measurement honest, all recorded in the example.** A fixed 800-epoch
+budget left pseudolikelihood and ratio matching winning at the largest step in the grid in 6 of 30
+cells — their best was outside it. Raising the budget to 8000 moved minimum probability flow at the
+strongest coupling from 97.2% to **88.0%**, *worse*, because the first figure was an unconverged fit
+passing through a better-likelihood region on the way to its own optimum: early stopping had been
+flattering it, and widening the grid would never have shown that. The budget is gone. Each method
+now ascends its own objective to convergence and reports the epochs it took, and a cell that hits
+the cap is labelled a lower bound instead of read as a result.
+
+**An RBM at zero weights is a stationary point of the exact likelihood, exactly.** Every edge
+crosses the bipartition and the conditional over the hidden units is uniform, so every weight
+gradient is `0.0` whatever the data — which is the two-line reason behind the folklore about small
+random initialisation. Found by a test that failed, and asserted at `== 0.0` rather than at a
+tolerance, because the argument gives exact zeros.
+
+25 new tests and five new mutations, two of them on the latent completion that the fully-visible
+case cannot see. **The mutation suite itself gained a guard**: `|` is its field separator, and a row
+whose code contains one shifts every field after it and reports a pass over nothing — which a row
+added here did, before the guard.
+
 ### A second audit pass, and the surface my own gate battery could not see
 
 The first audit lost 16 of 29 agents to a session limit, so three dimensions — Rust correctness,
