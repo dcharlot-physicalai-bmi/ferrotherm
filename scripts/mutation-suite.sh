@@ -213,6 +213,32 @@ mutations=(
   # maximiser of the stated objective -- which no check on the fitted model would reveal.
   "src/ebm.rs|            dw[e] += resid[i] * f64::from(row[j]) + resid[j] * f64::from(row[i]);|            dw[e] += resid[i] * f64::from(row[j]);|the_closed_form_gradient_matches_a_finite_difference|a pseudolikelihood gradient missing half its edge term"
 
+  # The three sampler-free losses share one gradient and differ only in a slope. `exp(-u)` with the
+  # sign dropped is still a smooth positive function of the margin -- it is just INCREASING in it,
+  # so the fit climbs away from the data while every objective curve rises.
+  "src/ebm.rs|            FlipLoss::Flow => (-u).exp(),|            FlipLoss::Flow => u.exp(),|every_flip_loss_pushes_the_margin_up|a flip loss that rewards a small margin"
+
+  # Ratio matching's slope is 4q^2(1-q), the derivative of -q^2 through q = sigma(-2u). Written as
+  # 4q(1-q) it is the derivative of something else and still positive, still smooth, still
+  # convergent -- a gradient ascent on a function nobody stated.
+  "src/ebm.rs|                4.0 * q * q * (1.0 - q)|                4.0 * q * (1.0 - q)|every_flip_gradient_matches_a_finite_difference|a ratio-matching slope off by a factor of q"
+
+  # The exact ML gradient's negative phase is a signed sum: a state contributes +p when the two
+  # endpoints agree and -p when they differ. Dropping the sign leaves the partition function
+  # correct and every correlation equal to one, which is a gradient that still points somewhere.
+  "src/ebm.rs|            model_w[k] += if (mask >> i & 1) == (mask >> j & 1) { p } else { -p };|            model_w[k] += p;|the_exact_gradient_matches_a_finite_difference_of_the_true_likelihood|an exact negative phase that ignores the spin product"
+
+  # The positive phase averages over the states that AGREE WITH A ROW ON ITS VISIBLE PART, which is
+  # the sum a clamped sampler estimates. Dropping the latent completion leaves the fully-visible
+  # case exactly right -- it has one completion -- and silently wrong on every model with a hidden
+  # unit, which is every model anyone fits.
+  "src/ebm.rs|    let comps = 1usize << (n - data.visible);|    let comps = 1;|the_exact_gradient_matches_a_finite_difference_of_the_true_likelihood|an exact positive phase that never visits the latent states"
+
+  # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
+  # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
+  # gradient it does not have and the stationary point disappears.
+  "src/ebm.rs|                row_w[k] += if (mask >> i & 1) == (mask >> j & 1) { p } else { -p };|                row_w[k] += if (vkey >> i & 1) == (vkey >> j & 1) { p } else { -p };|an_rbm_at_zero_weights_is_a_stationary_point_of_the_exact_likelihood|hidden units pinned instead of averaged in the positive phase"
+
   # Onsager's energy density has its elliptic pole and its vanishing coefficient at the SAME point,
   # sinh(2K) = 1. At beta_c plus one ulp sinh rounds to exactly 1.0, so the naive expression is
   # 0 * infinity and the exact oracle returns NaN. At beta_c itself it works by luck.
@@ -256,6 +282,19 @@ unevaluated=0
 skipped_rows=""
 for row in "${mutations[@]}"; do
   IFS='|' read -r file old new filter label pkg <<<"$row"
+  # `|` IS THE SEPARATOR, so a mutation whose code contains one shifts every field after it: the
+  # replacement becomes half a pattern, the test filter becomes a fragment of code, and the row
+  # reports a pass over nothing. Rejoining and comparing is the whole check, and it is here because
+  # a row added for `exact_gradient` did exactly this -- `vkey | (c << data.visible)` is ordinary
+  # Rust and an unreadable table row.
+  rejoined="$file|$old|$new|$filter|$label${pkg:+|$pkg}"
+  if [ "$rejoined" != "$row" ]; then
+    echo "malformed row: a field contains the '|' separator, so the fields below are shifted." >&2
+    echo "  row:  $row" >&2
+    echo "  read: $rejoined" >&2
+    bad=$((bad + 1))
+    continue
+  fi
   out="$(scripts/mutation-check.sh "$file" "$old" "$new" "$filter" "$label" ${pkg:+"$pkg"} 2>&1)"
   echo "$out"
   ran=$((ran + 1))

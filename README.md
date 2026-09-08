@@ -74,7 +74,7 @@ score. Scoring it found three defects on the first run.
 | Thermodynamic linear algebra (Aifer et al. / Normal Computing) | `tla` — OU-network SPD solves + bias-free exact-transition integrator | **shipped, verified** |
 | Torx gradient estimators (Extropic) | `program` — REINFORCE + parameter-shift + **EBM-kernel** (one trajectory + one auxiliary draw) | **shipped, verified** |
 | DTM — denoising thermodynamic models (Extropic's flagship architecture) | `dtm` — forward kernels, pattern grids, contrastive chain training, ACP, TC penalty | **shipped, verified** |
-| **Fitting an EBM to data (the training half every EBM stack needs)** | `ebm` — contrastive divergence + **exact** likelihood by enumeration | **shipped, verified** — the fixed point is moment matching, checked against enumeration rather than against more sampling |
+| **Fitting an EBM to data (the training half every EBM stack needs)** | `ebm` — six estimators (CD-k, PCD, pseudolikelihood, minimum probability flow, ratio matching, exact ML) + **exact** likelihood by enumeration | **shipped, verified** — the fixed point is moment matching, checked against enumeration rather than against more sampling |
 | Lattice Random Walk (Normal Computing CN101 algorithm) | `lrw` — ternary-increment SDE integration, exact-moment identities | **shipped, verified** |
 | Simulated bifurcation (Toshiba bSB/dSB) | `sbm` — symplectic Ising machines vs enumerated ground states | **shipped, verified** |
 | Hosted simulator APIs (extropic.dev) | `web/gibbs_bench.html` + `ffi` (wasm C ABI) — on YOUR device | **shipped**; the page verifies itself against Onsager in your browser before reporting a rate |
@@ -90,6 +90,9 @@ score. Scoring it found three defects on the first run.
 | Exact 2D Ising energy density (Onsager 1944, via AGM elliptic `K`) | `free_energy::onsager_energy_density` — closed form, machine precision, no grid | **shipped, verified** — `U/N = −J√2` exactly at criticality |
 | DIMACS CNF / WCNF — the MAX-SAT benchmark corpus | `dimacs` — clauses to a `Hubo` by exact subset expansion, no penalty | **shipped, verified** — the energy IS the unsatisfied weight at every assignment |
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
+| Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
+| Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
+| **The exact maximum-likelihood gradient, as a CEILING to score the others by** (this review did not locate one in any EBM library) | `ebm::train_exact` — `⟨ss⟩_data − ⟨ss⟩_model` with BOTH averages enumerated, latent units integrated out exactly | **shipped, verified** — differenced against the true likelihood with and without latent units; no other method passes it |
 | Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
 | Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
 | Multi-spin coding (Isakov et al.; the Janus line) | `multispin` — 64 replicas per `u64`, bit-sliced ripple-carry field, refuses non-uniform `|J|` by name | **shipped, verified** — every lane certified, and lane INDEPENDENCE tested separately |
@@ -1175,13 +1178,46 @@ instance whose optimum nobody can compare.
 Verified exhaustively against the clause list at every assignment, against brute force for the
 optimum, and end to end through `hubo::anneal`. Nine mutations, nine killed.
 
-### Training an energy model without a sampler
+### Training an energy model without a sampler — and the ceiling that scores it
 
 `ebm::train` is contrastive divergence, and a negative phase needs a sampler — so its cost, its bias
 and its seed all enter the fit. `train_pseudolikelihood` replaces the intractable normaliser with a
 product of conditionals `P(s_i | rest)`, each a logistic function of the local field and computable
 exactly from the data. Objective and gradient are both closed-form, the fit is deterministic, and
 there is nothing to tune but the step.
+
+Two more of the family ship beside it, because a teaching library owes the reader the methods that
+were tried and not only the one that won. `train_mpf` is **minimum probability flow** (Sohl-Dickstein,
+Battaglino & DeWeese 2011), the one estimator here derived *for* an Ising model: set up a dynamics
+whose stationary distribution is the model, start it at the data, and minimise the probability that
+flows out in the first instant. `train_ratio_matching` is **ratio matching** (Hyvärinen 2007), score
+matching's discrete counterpart — a spin has no derivative to match, so the ratio between a state and
+its one-bit neighbours plays the role the score does, and the normaliser cancels in it.
+
+All three turn out to be **one method wearing three hats**. Each is a sum over (row, site) of a loss
+on the *flip margin* `u = s_i f_i`, half the energy it costs to flip a site out of the state the data
+put it in — pseudolikelihood charges `−log σ(2u)`, minimum probability flow `exp(−u)`, ratio matching
+`σ(−2u)²`. They share a gradient, a loop and a cost, and `FlipLoss` is that shared core with the
+table of what differs. Writing them apart would have been three chances to get the two-terms-per-edge
+derivative half right.
+
+**The ceiling.** Every published comparison of these methods reports that one reached
+log-likelihood −3.0 and another −3.4, and the reader cannot tell whether −3.0 is nearly everything
+the model could do or half of it, because the best achievable value is never computed.
+`train_exact` computes it: the true gradient `⟨ss⟩_data − ⟨ss⟩_model` with **both** averages taken by
+enumeration, latent units integrated out exactly under the model's own conditional. It is useless on
+a real model, and that is the point — its job is to be the number the useful methods are a fraction
+of. `examples/estimator_shootout.rs` runs all six against it; through coupling strength 1.5 every
+sampler-free method lands within 0.3% of a ceiling contrastive divergence reaches exactly.
+
+Getting that measurement honest took three passes and each failure is written into the program. A
+fixed 800-epoch budget put pseudolikelihood and ratio matching at the largest step in the grid in six
+of thirty cells — their best was outside the grid. Raising the budget to 8000 moved minimum
+probability flow at the strongest coupling from 97.2% to **88.0%**, *worse*, because the first number
+was an unconverged fit passing through a better-likelihood region on its way to its own optimum:
+early stopping had been flattering it. The budget is gone now — each method ascends its own objective
+to convergence and reports the epochs it took, and where it hits the cap the row is labelled a lower
+bound rather than read as a result.
 
 The price is stated rather than hidden: the objective is *not* the likelihood. Its case rests on
 **consistency** — the maximiser goes to the true parameters as data grows — so that is what the test

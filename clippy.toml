@@ -13,4 +13,7 @@ doc-valid-idents = [
     # Aji & McEliece 2000, the Generalized Distributive Law: elimination is correct over any
     # commutative semiring, which is what `tensor::Semiring` is built on.
     "McEliece",
+    # Sohl-Dickstein, Battaglino & DeWeese 2011, Minimum Probability Flow Learning: the estimator
+    # `ebm::train_mpf` implements, and the only one of the family derived FOR an Ising model.
+    "DeWeese",
 ]
