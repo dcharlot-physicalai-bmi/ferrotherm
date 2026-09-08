@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Propagation presolve + conflict set | `model::presolve` — sound fixpoint over the constraints, with a witness that contradicts itself in isolation | **shipped, verified** — soundness by enumeration, minimality under propagation |
 | Solver portfolio under one budget (what commercial solvers ship) | `portfolio` — a `Search` trait, a budget in spin proposals, four arms | **shipped, verified** — every arm's budget conversion is measured, not asserted |
 | Slicing / cutset conditioning (the standard answer to bounded treewidth) | `exact::log_partition_sliced` + `ground_state_sliced` — pin variables, solve the pieces | **shipped, verified** — sliced equals direct where both run, and beats brute force where direct refuses |
 | Vector-state LQR oracle (matrix DARE) | `mppi::MatSystem` + `MatLqr` — the exact optimum for a robot-shaped system, not a one-dimensional one | **shipped, verified** — residual, cost-to-go, and no perturbation beats it |
@@ -917,6 +918,36 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### Finding what a model already forces, and proving what it cannot satisfy
+
+A model often forces its own variables before anything is solved: a `Fix`, an `Equal` to something
+already fixed, an `ExactlyOne` whose other literals are all excluded. `model::presolve` is a fixpoint
+over the constraint list that finds those, shrinking what the sampler has to explore — and when two
+constraints demand different values of one variable, it returns the subset that proves it.
+
+**Sound, deliberately not complete.** Every value it reports is one that *every* satisfying
+assignment agrees on, checked by enumeration. The converse does not hold: there are forced variables
+it will not find, and finding all of them is as hard as solving the model. A presolve claiming
+completeness would be claiming to have solved the problem it is preparing. Concretely, exclusions
+propagate only on two-valued domains, where "not this" is "that" — ruling one value out of a wide
+categorical leaves a variable it does not track, and that is written down rather than discovered.
+
+**Soft constraints are not propagated.** A solution is allowed to break one, so fixing a variable
+from a soft row is as unsound as inventing a constraint — and it would be invisible in any model
+whose soft rows happen to hold at the optimum.
+
+**The conflict set is a witness, not a list.** Propagation over *only* the reported constraints must
+still contradict itself, and that test caught a real defect: the `ExactlyOne` and `Cardinality`
+closures pushed an EMPTY provenance, so a fix that followed from three other literals being false
+forgot whatever made them false. The reported set then did not stand on its own. Both closure
+directions carry their chain now, and both are tested — a fixture through one says nothing about the
+other, which is exactly how the second survived a mutation pass after the first was fixed.
+
+The claim is **minimal under propagation**: drop any constraint and the contradiction is no longer
+found. That is weaker than an irreducible infeasible subset, which needs a complete solver, and it is
+what the test checks — the property in the code and the claim in the documentation are the same
+sentence.
 
 ### Asking every solver the same question
 

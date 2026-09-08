@@ -731,6 +731,45 @@ impl core::fmt::Display for Uncertifiable {
 
 impl core::error::Error for Uncertifiable {}
 
+/// Variables propagation has pinned, each with the constraints that pinned it.
+type Fixed = std::collections::BTreeMap<Var, (i64, Vec<usize>)>;
+
+/// What propagation determined before any search ran.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Presolve {
+    /// Variables forced to a value, ascending by variable.
+    pub fixed: Vec<(Var, i64)>,
+    /// Fixpoint passes taken. One means nothing propagated past the first look.
+    pub rounds: usize,
+}
+
+/// Two constraints demand different values of one variable, so nothing satisfies them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conflict {
+    /// Indices into the model's constraint list that already cannot all hold.
+    ///
+    /// Minimal under propagation: drop any one and the contradiction is no longer found. That is
+    /// weaker than an irreducible infeasible subset — which needs a complete solver — and is the
+    /// property the tests check.
+    pub constraints: Vec<usize>,
+    /// The variable the contradiction landed on.
+    pub var: Var,
+    /// The two values demanded of it.
+    pub demanded: (i64, i64),
+}
+
+impl core::fmt::Display for Conflict {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "constraints {:?} cannot all hold: they demand both {} and {} of one variable",
+            self.constraints, self.demanded.0, self.demanded.1
+        )
+    }
+}
+
+impl core::error::Error for Conflict {}
+
 /// Why a model could not be compiled.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CompileError {
@@ -1117,6 +1156,227 @@ impl Model {
         self.decls[v.0].name = name.into();
         self
     }
+    /// Variables whose value every satisfying assignment must agree on, found without searching.
+    ///
+    /// # What propagation is for
+    ///
+    /// A model often forces some of its own variables before anything is solved: a `Fix`, an
+    /// `Equal` to something already fixed, an `ExactlyOne` whose other literals are all excluded.
+    /// Finding those first shrinks what the sampler has to explore, and finding them CHEAPLY is the
+    /// point — this is a fixpoint over the constraint list, not a search.
+    ///
+    /// # Sound, deliberately not complete
+    ///
+    /// Every variable this reports is forced: no satisfying assignment of the hard constraints
+    /// disagrees with it, and `propagation_only_fixes_what_every_solution_agrees_on` checks that by
+    /// enumeration. The converse does not hold — there are forced variables this will not find, and
+    /// finding all of them is as hard as solving the model. A presolve that claimed completeness
+    /// would be claiming to have solved the problem it is preparing.
+    ///
+    /// Exclusions propagate only on two-valued domains, where "not this" is "that". On a wider
+    /// categorical, ruling one value out leaves a variable this does not track.
+    ///
+    /// # Errors
+    ///
+    /// [`Conflict`] when two constraints demand different values of one variable, carrying a subset
+    /// of the constraints that is already unsatisfiable — see [`Conflict::constraints`].
+    pub fn presolve(&self) -> Result<Presolve, Conflict> {
+        self.propagate(&(0..self.constraints.len()).collect::<Vec<_>>()).map(|(fixed, rounds)| {
+            let mut out: Vec<(Var, i64)> = fixed.iter().map(|(v, (x, _))| (*v, *x)).collect();
+            out.sort_by_key(|(v, _)| v.0);
+            Presolve { fixed: out, rounds }
+        })
+    }
+
+    /// One fixpoint over the given constraint indices. `Err` carries the conflict.
+    fn propagate(&self, which: &[usize]) -> Result<(Fixed, usize), Conflict> {
+        use std::collections::BTreeMap;
+        let mut fixed: BTreeMap<Var, (i64, Vec<usize>)> = BTreeMap::new();
+        let mut rounds = 0usize;
+
+        // Values of a domain, when it has few enough to enumerate.
+        let values = |d: Domain| -> Vec<i64> {
+            match d {
+                Domain::Spin => vec![-1, 1],
+                Domain::Binary => vec![0, 1],
+                Domain::Categorical(k) => (0..k as i64).collect(),
+                Domain::Integer { lo, hi } => (lo..=hi).collect(),
+            }
+        };
+        // Is this literal true, false, or not yet known?
+        // The literal's state AND the constraints that determined it. Carrying the provenance is
+        // what makes a conflict set actually unsatisfiable: a closure that fired because three
+        // other literals were false depends on whatever made them false, and dropping that leaves a
+        // witness that does not stand on its own.
+        let state = |fixed: &Fixed, l: &Lit| -> Option<(bool, Vec<usize>)> {
+            match *l {
+                Lit::Spin(v) => fixed.get(&v).map(|(x, w)| {
+                    let vs = values(self.decls[v.0].domain);
+                    (*x == *vs.last().expect("a domain has values"), w.clone())
+                }),
+                Lit::Is(v, val) => fixed.get(&v).map(|(x, w)| (*x == val, w.clone())),
+            }
+        };
+        // The assignment that makes this literal `want`, if it is determined.
+        let force = |l: &Lit, want: bool| -> Option<(Var, i64)> {
+            match *l {
+                Lit::Spin(v) => {
+                    let vs = values(self.decls[v.0].domain);
+                    Some((v, if want { *vs.last()? } else { *vs.first()? }))
+                }
+                Lit::Is(v, val) => {
+                    if want {
+                        Some((v, val))
+                    } else {
+                        // "not this value" only determines a variable with one other value.
+                        let vs = values(self.decls[v.0].domain);
+                        if vs.len() == 2 {
+                            vs.iter().find(|&&x| x != val).map(|&x| (v, x))
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+        };
+
+        for _ in 0..self.decls.len().max(1) + 1 {
+            rounds += 1;
+            let before = fixed.len();
+            for &ci in which {
+                let (c, _, hard) = &self.constraints[ci];
+                if !*hard {
+                    continue;
+                }
+                let mut demands: Vec<(Var, i64, Vec<usize>)> = Vec::new();
+                let mut push = |v: Var, x: i64, mut why: Vec<usize>| {
+                    why.push(ci);
+                    why.sort_unstable();
+                    why.dedup();
+                    demands.push((v, x, why));
+                };
+                match c {
+                    Constraint::Fix(v, x) => push(*v, *x, Vec::new()),
+                    Constraint::Equal(a, b) => {
+                        if let Some((x, w)) = fixed.get(a) {
+                            push(*b, *x, w.clone());
+                        } else if let Some((x, w)) = fixed.get(b) {
+                            push(*a, *x, w.clone());
+                        }
+                    }
+                    Constraint::NotEqual(a, b) => {
+                        for (from, to) in [(a, b), (b, a)] {
+                            if let Some((x, w)) = fixed.get(from) {
+                                let vs = values(self.decls[to.0].domain);
+                                if let (2, Some(&other)) =
+                                    (vs.len(), vs.iter().find(|&&y| y != *x))
+                                {
+                                    push(*to, other, w.clone());
+                                }
+                            }
+                        }
+                    }
+                    Constraint::ExactlyOne(lits) | Constraint::AtMostOne(lits) => {
+                        let exactly = matches!(c, Constraint::ExactlyOne(_));
+                        let known: Vec<Option<(bool, Vec<usize>)>> =
+                            lits.iter().map(|l| state(&fixed, l)).collect();
+                        // One is true: every other is false, because of whatever made THAT one true.
+                        if let Some(t) = known.iter().position(|k| matches!(k, Some((true, _)))) {
+                            let why = known[t].as_ref().expect("just matched").1.clone();
+                            for (i, l) in lits.iter().enumerate() {
+                                if i != t
+                                    && known[i].is_none()
+                                    && let Some((v, x)) = force(l, false)
+                                {
+                                    push(v, x, why.clone());
+                                }
+                            }
+                        } else if exactly {
+                            // All but one are false: the survivor is true, because of everything
+                            // that made the others false.
+                            let unknown: Vec<usize> =
+                                (0..lits.len()).filter(|&i| known[i].is_none()).collect();
+                            if unknown.len() == 1
+                                && known.iter().all(|k| !matches!(k, Some((true, _))))
+                                && let Some((v, x)) = force(&lits[unknown[0]], true)
+                            {
+                                let why: Vec<usize> = known
+                                    .iter()
+                                    .flatten()
+                                    .flat_map(|(_, w)| w.iter().copied())
+                                    .collect();
+                                push(v, x, why);
+                            }
+                        }
+                    }
+                    Constraint::Cardinality { lits, k } => {
+                        if *k == 0 {
+                            for l in lits {
+                                if let Some((v, x)) = force(l, false) {
+                                    push(v, x, Vec::new());
+                                }
+                            }
+                        } else if *k == lits.len() {
+                            for l in lits {
+                                if let Some((v, x)) = force(l, true) {
+                                    push(v, x, Vec::new());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                for (v, x, why) in demands {
+                    match fixed.get(&v) {
+                        Some((y, w)) if *y != x => {
+                            let mut set = w.clone();
+                            set.extend(why);
+                            set.sort_unstable();
+                            set.dedup();
+                            return Err(Conflict {
+                                constraints: self.minimise(&set, v),
+                                var: v,
+                                demanded: (*y, x),
+                            });
+                        }
+                        Some(_) => {}
+                        None => {
+                            fixed.insert(v, (x, why));
+                        }
+                    }
+                }
+            }
+            if fixed.len() == before {
+                break;
+            }
+        }
+        Ok((fixed, rounds))
+    }
+
+    /// Shrink a conflicting subset while it still conflicts.
+    ///
+    /// Greedy: drop each constraint in turn and keep the drop if propagation still contradicts
+    /// itself. What comes back is minimal *under this propagation* — every element is load-bearing,
+    /// since removing any one of them stops the contradiction being found. That is a weaker claim
+    /// than a true irreducible infeasible subset, which would need a complete solver, and it is the
+    /// claim `the_conflict_set_is_minimal_under_propagation` actually checks.
+    fn minimise(&self, set: &[usize], _v: Var) -> Vec<usize> {
+        let mut keep: Vec<usize> = set.to_vec();
+        let mut i = 0;
+        while i < keep.len() {
+            let mut trial = keep.clone();
+            trial.remove(i);
+            // Recursion is bounded: `propagate` on a strictly smaller set, and `minimise` is only
+            // reached from a conflict, so the set shrinks every time.
+            if trial.is_empty() || self.propagate(&trial).is_ok() {
+                i += 1;
+            } else {
+                keep = trial;
+            }
+        }
+        keep
+    }
+
     #[must_use]
     /// The domain a variable ranges over.
     pub fn domain_of(&self, v: Var) -> Domain {
@@ -6012,4 +6272,211 @@ mod tests {
         assert_eq!(c.caveats.len(), 2, "{:?}", c.caveats);
         assert!(c.caveats.iter().all(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
     }
+    /// Every value propagation reports is one that every satisfying assignment agrees on.
+    ///
+    /// The soundness claim, checked by enumeration rather than argued. A presolve that fixed a
+    /// variable the model does not actually force would delete real solutions -- silently, since
+    /// what comes back is still a valid assignment of a smaller problem, just not of this one.
+    #[test]
+    fn propagation_only_fixes_what_every_solution_agrees_on() {
+        // A chain of binaries with a fix at one end, an equality, and an exactly-one.
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        let c = m.binary("c");
+        let d = m.binary("d");
+        m.fix(a, 1);
+        m.equal(a, b);
+        m.not_equal(b, c);
+        m.exactly_one(vec![c.is(1), d.is(1)]);
+        let pre = m.presolve().expect("this model is satisfiable");
+        assert!(!pre.fixed.is_empty(), "nothing propagated from a fixed chain");
+
+        // Enumerate every assignment, keep the satisfying ones, and check the agreement.
+        let doms = [2usize, 2, 2, 2];
+        let mut solutions: Vec<Vec<i64>> = Vec::new();
+        for mask in 0..16u32 {
+            let asg: Vec<i64> = (0..4).map(|i| i64::from(mask >> i & 1)).collect();
+            let _ = doms;
+            let ok = asg[0] == 1
+                && asg[0] == asg[1]
+                && asg[1] != asg[2]
+                && (asg[2] == 1) ^ (asg[3] == 1);
+            if ok {
+                solutions.push(asg);
+            }
+        }
+        assert!(!solutions.is_empty(), "the fixture must be satisfiable");
+        for (v, x) in &pre.fixed {
+            for sol in &solutions {
+                assert_eq!(
+                    sol[v.0], *x,
+                    "presolve fixed variable {} to {x}, but {sol:?} satisfies the model without it",
+                    v.0
+                );
+            }
+        }
+    }
+
+    /// A contradiction is reported, and the subset it names really is unsatisfiable.
+    #[test]
+    fn a_contradiction_is_reported_with_constraints_that_prove_it() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        m.fix(a, 1);       // 0
+        m.equal(a, b);     // 1
+        m.fix(b, 0);       // 2
+        let c = m.presolve().expect_err("a=1, a=b, b=0 cannot all hold");
+        assert!(!c.constraints.is_empty());
+        assert_eq!(c.demanded.0.min(c.demanded.1), 0);
+        assert_eq!(c.demanded.0.max(c.demanded.1), 1);
+    }
+
+    /// Every constraint in the conflict set is load-bearing: drop one and it is no longer found.
+    ///
+    /// The honest version of "irreducible". A true IIS needs a complete solver; this is minimal
+    /// UNDER PROPAGATION, and that is exactly what the test checks -- so the claim in the docs and
+    /// the property in the code are the same statement.
+    #[test]
+    fn the_conflict_set_is_minimal_under_propagation() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        let c = m.binary("c");
+        let d = m.binary("d");
+        m.fix(a, 1);          // 0  \
+        m.equal(a, b);        // 1   > the conflict
+        m.fix(b, 0);          // 2  /
+        m.not_equal(c, d);    // 3  irrelevant
+        m.equal(c, c);        // 4  irrelevant
+        let conf = m.presolve().expect_err("still contradictory");
+
+        assert!(
+            !conf.constraints.contains(&3) && !conf.constraints.contains(&4),
+            "the conflict set carries constraints that had nothing to do with it: {:?}",
+            conf.constraints
+        );
+        for &drop in &conf.constraints {
+            let kept: Vec<usize> =
+                conf.constraints.iter().copied().filter(|&x| x != drop).collect();
+            assert!(
+                m.propagate(&kept).is_ok(),
+                "constraint {drop} is not load-bearing: {kept:?} still contradicts"
+            );
+        }
+    }
+
+    /// The conflict set stands on its own: propagation over ONLY those constraints still conflicts.
+    ///
+    /// The property that makes it a witness rather than a list. It caught a real defect: the
+    /// `ExactlyOne` and `Cardinality` closures pushed an EMPTY provenance, so a fix that followed
+    /// from three other literals being false forgot whatever made them false — and the reported set
+    /// then did not contradict itself when handed back.
+    #[test]
+    fn the_conflict_set_contradicts_itself_in_isolation() {
+        // BOTH closure directions, because they carry provenance separately and a test through one
+        // says nothing about the other -- which is exactly how the second of them survived a pass.
+        //
+        // (a) all-but-one false, so the survivor is true.
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        let c = m.binary("c");
+        m.fix(a, 0);                              // 0
+        m.exactly_one(vec![a.is(1), b.is(1)]);    // 1: with a=0, b must be 1
+        m.equal(b, c);                            // 2: so c = 1
+        m.fix(c, 0);                              // 3: contradiction
+        let conf = m.presolve().expect_err("this chain contradicts");
+        assert!(
+            m.propagate(&conf.constraints).is_err(),
+            "all-but-one-false: the reported set {:?} does not contradict itself",
+            conf.constraints
+        );
+
+        // (b) one IS true, so the others are false.
+        let mut m2 = Model::new();
+        let p = m2.binary("p");
+        let q = m2.binary("q");
+        let r = m2.binary("r");
+        m2.fix(p, 1);                             // 0
+        m2.exactly_one(vec![p.is(1), q.is(1)]);   // 1: p true, so q must be 0
+        m2.equal(q, r);                           // 2: so r = 0
+        m2.fix(r, 1);                             // 3: contradiction
+        let conf2 = m2.presolve().expect_err("this chain contradicts too");
+        assert!(
+            m2.propagate(&conf2.constraints).is_err(),
+            "one-is-true: the reported set {:?} does not contradict itself",
+            conf2.constraints
+        );
+    }
+
+    /// An exactly-one closure is enough on its own to force a variable.
+    ///
+    /// Without it nothing here propagates past the first fix, so this is what says the closure runs
+    /// rather than being carried by the other rules.
+    #[test]
+    fn exactly_one_closes_its_last_open_literal() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        m.fix(a, 0);
+        m.exactly_one(vec![a.is(1), b.is(1)]);
+        let pre = m.presolve().unwrap();
+        assert!(
+            pre.fixed.iter().any(|(v, x)| *v == b && *x == 1),
+            "b should be forced true once a is false: {:?}",
+            pre.fixed
+        );
+    }
+
+    /// A soft constraint is not propagated, because a solution is allowed to break it.
+    ///
+    /// Propagating one would fix a variable the model does not force, which is the same unsoundness
+    /// as inventing a constraint — and it would be invisible in any model whose soft rows happen to
+    /// hold at the optimum.
+    #[test]
+    fn a_soft_constraint_forces_nothing() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        m.fix(a, 1);
+        m.soft(Constraint::Equal(a, b), 5.0);
+        let pre = m.presolve().unwrap();
+        assert!(
+            pre.fixed.iter().all(|(v, _)| *v != b),
+            "b was fixed from a SOFT equality, which a solution may break: {:?}",
+            pre.fixed
+        );
+        assert!(pre.fixed.iter().any(|(v, _)| *v == a), "the hard fix should still propagate");
+    }
+
+    /// A model with nothing to propagate says so rather than inventing something.
+    #[test]
+    fn a_model_with_nothing_forced_fixes_nothing() {
+        let mut m = Model::new();
+        let a = m.binary("a");
+        let b = m.binary("b");
+        m.not_equal(a, b);
+        let pre = m.presolve().unwrap();
+        assert!(pre.fixed.is_empty(), "not-equal alone forces neither: {:?}", pre.fixed);
+    }
+
+    /// Exclusion does not propagate on a wide categorical, which the docs say and this pins.
+    #[test]
+    fn a_wide_categorical_is_not_narrowed_by_a_single_exclusion() {
+        let mut m = Model::new();
+        let x = m.categorical("x", 4);
+        let y = m.binary("y");
+        m.fix(y, 1);
+        m.at_most_one(vec![y.is(1), x.is(2)]);
+        let pre = m.presolve().unwrap();
+        // y is fixed; x is only excluded from 2, which on a four-valued domain determines nothing.
+        assert!(
+            pre.fixed.iter().all(|(v, _)| *v != x),
+            "x was fixed on a single exclusion over four values: {:?}",
+            pre.fixed
+        );
+    }
+
 }

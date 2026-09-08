@@ -233,6 +233,16 @@ mutations=(
   # a share makes the portfolio look free -- it beats any single arm at "the same" cost, having spent
   # k times as much -- and no comparison between the arms reveals it.
   "src/portfolio.rs|    let each = budget.split(arms.len());|    let each = budget;|the_budget_is_divided_among_the_arms|a portfolio that gives every arm the whole budget"
+
+  # A conflict set has to contradict itself in isolation, or it is a list rather than a witness. The
+  # ExactlyOne closures pushed an EMPTY provenance, so a fix following from other literals being
+  # false forgot what made them false -- and the reported set no longer stood on its own.
+  "src/model.rs|                                    push(v, x, why.clone());|                                    push(v, x, Vec::new());|the_conflict_set_contradicts_itself_in_isolation|a conflict set that does not prove itself"
+
+  # Propagating a SOFT constraint fixes a variable a solution is allowed to disagree with, which is
+  # the same unsoundness as inventing a constraint -- and invisible in any model whose soft rows
+  # happen to hold at the optimum.
+  "src/model.rs|                if !*hard {|                if false {|a_soft_constraint_forces_nothing|a presolve that propagates soft constraints"
 )
 
 bad=0
