@@ -1,6 +1,6 @@
 [package]
 name = "ferrotherm-cloud"
-version = "0.1.32"
+version = "0.1.33"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, and it is stated that way so nobody
 # later "corrects" it downward on the grounds that older toolchains happen to work.
@@ -22,7 +22,7 @@ readme = "README.md"
 categories = ["science", "api-bindings", "simulation"]
 
 [dependencies]
-ferrotherm = { version = "0.43", path = ".." }
+ferrotherm = { version = "0.44", path = ".." }
 ureq = "2"
 
 [dev-dependencies]

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.44.0
 
 ### The rest of the EBM estimator family, and the ceiling that scores all six
 
