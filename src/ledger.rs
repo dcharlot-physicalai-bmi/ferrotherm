@@ -158,7 +158,7 @@ pub const CATALOGUE: [(&str, Prices); 3] = [
 ];
 
 /// Operation counts accumulated by a run.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Ledger {
     /// Single-node Gibbs updates performed.
     pub samples: u64,

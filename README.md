@@ -82,6 +82,7 @@ score. Scoring it found three defects on the first run.
 | Optimality **gap** in the modeller's units (D-Wave, Amplify, Jij: not found) | `Solution::gap` + `branch::Outcome::bound` | **shipped, verified** — invariant under the penalty, checked against enumeration |
 | Penalty sufficiency **proved**, not scaled (D-Wave `penaltymodel` is per-constraint) | `Model::certified_penalty` | **shipped, verified** — and refuses where no penalty suffices |
 | Tensor networks (quimb, cotengra, ITensor, GenericTensorNetworks.jl) | `tensor` — general-rank contraction, any index dimension, order priced before it runs | **shipped, verified** — contraction agrees with variable elimination on `log Z` and marginals |
+| Re-verifiable run receipt | `receipt` — the answer, its cost and its claims as text, re-checked against a digest of the model | **shipped, verified** — no single field can be edited and still pass |
 | Propagation presolve + conflict set | `model::presolve` — sound fixpoint over the constraints, with a witness that contradicts itself in isolation | **shipped, verified** — soundness by enumeration, minimality under propagation |
 | Solver portfolio under one budget (what commercial solvers ship) | `portfolio` — a `Search` trait, a budget in spin proposals, four arms | **shipped, verified** — every arm's budget conversion is measured, not asserted |
 | Slicing / cutset conditioning (the standard answer to bounded treewidth) | `exact::log_partition_sliced` + `ground_state_sliced` — pin variables, solve the pieces | **shipped, verified** — sliced equals direct where both run, and beats brute force where direct refuses |
@@ -918,6 +919,38 @@ estimate on the score itself asks for 1.05x where the proxy asks for 1.74x. It i
 the conservative direction for an instrument whose job is to accuse, and one fixture is not grounds to
 swap a known-conservative heuristic for a differently-wrong one — but it is now tested for the
 contract it actually has: a more correlated chain gets a wider interval.
+
+### A result someone else can check
+
+Every verification in this crate dies with the process that did it. `certify` returns a certificate,
+`sdp` a dual point, `exact` a width, `portfolio` what each arm spent — all values in memory. Hand
+someone the answer and they have a list of spins and your word for everything else.
+
+`receipt` writes that down: the answer, what the run cost, whatever it claimed about optimality, and
+a digest of the model it was computed against. Given the model, `verify` re-checks every claim from
+scratch.
+
+**The energy is a claim, not the answer.** `verify` recomputes it from the state and compares — the
+stored number is what the run *said*, the recomputed one is what the state is *worth*, and a receipt
+whose two disagree is the case worth catching. Trusting the stored number would make the check a
+restatement. `Receipt::of` recomputes too, so the number is established independently of whatever
+bookkeeping produced the state.
+
+**The digest eats weight bit patterns, not decimals.** Two models differing by one ulp in a single
+coupling are two models; a digest that merged them would let a receipt verify against a graph it was
+never computed on. It is FNV-1a over the CSR in its canonical order — canonical because
+`GraphBuilder::build` merges through a `BTreeMap`, a fix made so exactly this kind of digest means
+something.
+
+It is a **re-checkable record, not a proof of provenance.** Nothing stops someone writing one by
+hand; what it stops is a receipt whose parts disagree with each other or with the model. That is the
+useful property, because it catches the honest mistake — a state copied from the wrong run, an energy
+carried from a solver that drifted, a bound pasted beside the wrong answer.
+
+Nine mutations, nine killed. The last needed a second pass, and for this session's most familiar
+reason: the test for "an unknown field is refused" renamed `energy` to `enrgy`, which errors either
+way — on the *missing* `energy`. It passed whether or not unknown fields were rejected. Adding a
+field rather than substituting one is what actually tests the rule.
 
 ### Finding what a model already forces, and proving what it cannot satisfy
 

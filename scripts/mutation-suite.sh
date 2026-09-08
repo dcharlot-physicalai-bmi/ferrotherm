@@ -243,6 +243,11 @@ mutations=(
   # the same unsoundness as inventing a constraint -- and invisible in any model whose soft rows
   # happen to hold at the optimum.
   "src/model.rs|                if !*hard {|                if false {|a_soft_constraint_forces_nothing|a presolve that propagates soft constraints"
+
+  # A receipt exists to be re-checked. If `verify` reads the stored energy instead of recomputing it
+  # from the state, every test still passes and nothing is verified -- the check becomes a
+  # restatement of the claim it was meant to test.
+  "src/receipt.rs|        let actual = g.energy(&self.state);|        let actual = self.energy;|no_single_field_can_be_edited_and_still_pass|a receipt that restates rather than checks"
 )
 
 bad=0
