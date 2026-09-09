@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program -- so the lint has nothing to guard and asks for doc comments on `fn main`'s
+// scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // Trace the configuration sequence step by step, sampling the status register at each stage, so
 // the failing step names itself instead of being guessed at.
 //

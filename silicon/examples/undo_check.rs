@@ -1,3 +1,8 @@
+// `missing_docs` is denied workspace-wide and is right to be: it guards the API surface, and
+// every public item in every library here carries a doc. An EXAMPLE has no API surface -- it is
+// a program -- so the lint has nothing to guard and asks for doc comments on `fn main`'s
+// scaffolding instead. Scoped off here rather than weakened there.
+#![allow(missing_docs)]
 // Establish the REMOTE UNDO before anything is ever written to the fabric.
 //
 // IPROG restarts configuration from the board's boot flash. On a board nobody can power-cycle,
@@ -43,7 +48,7 @@ fn main() {
     if let Some(b) = boot_before {
         println!("        BOOTSTS=0x{b:08X}");
     }
-    if before.as_ref().map(|s| s.done()) != Some(true) {
+    if before.as_ref().map(ferrotherm_silicon::flash::Stat::done) != Some(true) {
         println!("\nfabric is not currently configured — nothing to restore, stopping.");
         return;
     }
@@ -63,7 +68,7 @@ fn main() {
         println!("        BOOTSTS=0x{b:08X}");
     }
 
-    let ok = after.as_ref().map(|s| s.done()) == Some(true);
+    let ok = after.as_ref().map(ferrotherm_silicon::flash::Stat::done) == Some(true);
     println!(
         "\nverdict: {}",
         if ok {

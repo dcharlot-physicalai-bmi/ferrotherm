@@ -1,7 +1,7 @@
 //! Board access over USB — pure Rust, no vendor tools, no C libraries.
 //!
 //! FT2232H MPSSE JTAG for the Alchitry Artix boards (Au V2 / Pt V2): FTDI vendor-request init,
-//! a real TAP state machine, IDCODE, and the 7-series configuration port (CFG_IN / CFG_OUT).
+//! a real TAP state machine, IDCODE, and the 7-series configuration port (`CFG_IN` / `CFG_OUT`).
 //! Ported with permission from Open Interface Engineering's openie-fpga and re-implemented
 //! independently here; the USB transport is the pure-Rust `nusb` crate.
 //!
@@ -39,20 +39,40 @@ const PIN_DIR: u8 = 0x0B; // TCK, TDI, TMS out; TDO in
 const PIN_IDLE: u8 = 0x08; // TMS high
 
 // 7-series 6-bit IR opcodes (UG470).
+/// Instruction-register width on 7-series parts, in bits (UG470 Table 6-3). Every IR shift below
+/// is this long, and a wrong width silently addresses a different instruction.
 pub const IR_LEN: u8 = 6;
+/// `IDCODE` — shift out the 32-bit device identification code. The one instruction safe to issue
+/// against an unknown part, and so the one this driver probes with first.
 pub const IR_IDCODE: u8 = 0x09;
+/// `JPROGRAM` — clear the configuration memory. This is what makes reconfiguration destructive;
+/// see [`Consequence`].
 pub const IR_JPROGRAM: u8 = 0x0B;
+/// `CFG_IN` — open the configuration write port, so the following DR shift is bitstream payload.
 pub const IR_CFG_IN: u8 = 0x05;
+/// `CFG_OUT` — open the configuration read port, so the following DR shift returns register
+/// contents. Paired with [`IR_CFG_IN`]: a read is a write of a read command, then this.
 pub const IR_CFG_OUT: u8 = 0x04;
+/// `JSTART` — release the startup sequence after a load, which is what drives DONE high.
 pub const IR_JSTART: u8 = 0x0C;
+/// `BYPASS` — all ones, as IEEE 1149.1 mandates for every compliant TAP, so it is also what an
+/// absent or mis-clocked device appears to answer with.
 pub const IR_BYPASS: u8 = 0x3F;
 
+/// A claimed FT2232H interface-A endpoint pair, in MPSSE mode.
+///
+/// Holds the USB interface and nothing else: every JTAG state is the caller's, which is what lets
+/// [`Tap`] guarantee where a sequence starts and ends.
 pub struct Ftdi {
     iface: nusb::Interface,
 }
 
 impl Ftdi {
     /// Find and claim an FT2232H whose product string contains `needle` (e.g. "Alchitry").
+    ///
+    /// # Errors
+    ///
+    /// The USB enumeration error, or text naming the needle when no matching FT2232H is attached.
     pub fn open(needle: &str) -> Result<(Ftdi, String), String> {
         let devs = nusb::list_devices().map_err(|e| format!("usb list: {e}"))?;
         for d in devs {
@@ -92,6 +112,12 @@ impl Ftdi {
         Ok(())
     }
 
+    /// Write raw MPSSE command bytes to the bulk OUT endpoint.
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's own error, as text. A short write is an error here rather than a partial
+    /// success: half an MPSSE command leaves the engine interpreting payload as opcodes.
     pub fn write(&self, data: &[u8]) -> Result<(), String> {
         for chunk in data.chunks(4096) {
             let c = pollster::block_on(self.iface.bulk_out(FTDI_EP_OUT, chunk.to_vec()));
@@ -101,6 +127,10 @@ impl Ftdi {
     }
 
     /// Read exactly `n` MPSSE payload bytes (each USB packet carries a 2-byte status header).
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text.
     pub fn read(&self, n: usize) -> Result<Vec<u8>, String> {
         let mut out = Vec::with_capacity(n);
         let mut spins = 0;
@@ -124,6 +154,7 @@ impl Ftdi {
 
 /// Reverse the bit order of a byte — the JTAG config port shifts LSB-first while configuration
 /// packets are defined MSB-first, so every payload byte is reversed on the way out and back.
+#[must_use]
 pub fn reverse_byte(mut b: u8) -> u8 {
     b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
     b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
@@ -131,12 +162,22 @@ pub fn reverse_byte(mut b: u8) -> u8 {
 }
 
 /// A JTAG TAP driver over MPSSE. Tracks nothing implicitly: every operation starts and ends in
-/// Run-Test/Idle, so sequences that must not be interrupted (CFG_IN then CFG_OUT) stay valid.
+/// Run-Test/Idle, so sequences that must not be interrupted (`CFG_IN` then `CFG_OUT`) stay valid.
 pub struct Tap {
+    /// The claimed FT2232H, exposed so a caller can issue vendor commands this driver does not
+    /// wrap without reopening the device and losing the TAP state.
     pub ftdi: Ftdi,
 }
 
 impl Tap {
+    /// Configure the MPSSE engine and bring the TAP to Run-Test/Idle.
+    ///
+    /// Sets a 10 MHz TCK (60 MHz base, divisor 2), loopback off, and the pin directions in the
+    /// module's pin map.
+    ///
+    /// # Errors
+    ///
+    /// The USB write's error, as text.
     pub fn new(ftdi: Ftdi) -> Result<Tap, String> {
         // 60 MHz base clock, loopback off, TCK = 60/((1+2)*2) = 10 MHz, pins idle.
         ftdi.write(&[
@@ -151,11 +192,19 @@ impl Tap {
     }
 
     /// Test-Logic-Reset, then Run-Test/Idle.
+    ///
+    /// # Errors
+    ///
+    /// The USB write's error, as text.
     pub fn reset(&mut self) -> Result<(), String> {
         self.ftdi.write(&[CLK_TMS, 0x05, 0xFF, CLK_TMS, 0x00, 0x00])
     }
 
     /// Shift an instruction (6 bits on 7-series), returning to Run-Test/Idle.
+    ///
+    /// # Errors
+    ///
+    /// The USB write's error, as text.
     pub fn shift_ir(&mut self, ir: u8) -> Result<(), String> {
         let last = (ir >> (IR_LEN - 1)) & 1;
         self.ftdi.write(&[
@@ -167,6 +216,15 @@ impl Tap {
 
     /// Shift `tx` (whole bytes) through DR. When `capture`, the same number of bytes is read
     /// back. Returns to Run-Test/Idle.
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text, including a short read when the device returned fewer bytes than the shift asked for.
+    /// # Panics
+    ///
+    /// If `tx` is empty: a data-register shift of zero bits is a caller error rather than a
+    /// bus condition, and continuing would emit an MPSSE command with a negative length.
+    ///
     pub fn shift_dr(&mut self, tx: &[u8], capture: bool) -> Result<Vec<u8>, String> {
         assert!(!tx.is_empty());
         let n = tx.len();
@@ -212,7 +270,7 @@ impl Tap {
             return Ok(Vec::new());
         }
         // reads: (n-1) whole bytes, one 7-bit byte, one 1-bit TMS byte
-        let want = if n > 1 { n - 1 } else { 0 } + 2;
+        let want = n.saturating_sub(1) + 2;
         let raw = self.ftdi.read(want)?;
         let mut out = Vec::with_capacity(n);
         if n > 1 {
@@ -225,13 +283,21 @@ impl Tap {
     }
 
     /// Read the 32-bit IDCODE (the DR selected after Test-Logic-Reset).
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text.
     pub fn idcode(&mut self) -> Result<u32, String> {
         self.reset()?;
         let rx = self.shift_dr(&[0; 4], true)?;
         Ok(u32::from_le_bytes([rx[0], rx[1], rx[2], rx[3]]))
     }
 
-    /// Write configuration words through CFG_IN (words are sent MSB-first, bit-reversed per byte).
+    /// Write configuration words through `CFG_IN` (words are sent MSB-first, bit-reversed per byte).
+    ///
+    /// # Errors
+    ///
+    /// The USB write's error, as text.
     pub fn cfg_in_words(&mut self, words: &[u32]) -> Result<(), String> {
         let mut payload = Vec::with_capacity(words.len() * 4);
         for w in words {
@@ -244,7 +310,11 @@ impl Tap {
         Ok(())
     }
 
-    /// Read one 32-bit word back through CFG_OUT.
+    /// Read one 32-bit word back through `CFG_OUT`.
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text.
     pub fn cfg_out_word(&mut self) -> Result<u32, String> {
         self.shift_ir(IR_CFG_OUT)?;
         let rx = self.shift_dr(&[0; 4], true)?;
@@ -257,6 +327,10 @@ impl Tap {
     }
 
     /// Read a 7-series configuration register (non-destructive; STAT = 7).
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text.
     pub fn read_config_reg(&mut self, reg: u32) -> Result<u32, String> {
         let read_cmd = 0x2800_0000 | ((reg & 0x3FFF) << 13) | 1; // type-1 read, 1 word
         self.reset()?;
@@ -275,16 +349,21 @@ impl Tap {
 /// An explicit acknowledgement that an operation will clear the design currently running on the
 /// fabric. Reconfiguration cannot be requested by accident: the caller must name the consequence.
 pub enum Consequence {
+    /// The caller has read that this wipes whatever the fabric is currently running, and means it.
     ClearsTheRunningDesign,
 }
 
 impl Tap {
-    /// Load a raw configuration payload into fabric SRAM: JPROGRAM (clear), CFG_IN (the payload),
+    /// Load a raw configuration payload into fabric SRAM: `JPROGRAM` (clear), `CFG_IN` (the payload),
     /// JSTART (release the startup sequence), then report the status register.
     ///
     /// This ERASES whatever is currently configured. On a board that boots from SPI flash the
     /// stored image is untouched, but the live fabric stays as loaded here until the next power
     /// cycle — which is why the caller must pass [`Consequence::ClearsTheRunningDesign`].
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text. A bitstream the device REJECTS is not an error here -- it returns a [`Stat`] whose error bits say so, because a rejected load and an unreachable board are different problems.
     pub fn configure(&mut self, config: &[u8], _ack: Consequence) -> Result<Stat, String> {
         self.reset()?;
         // clear configuration memory
@@ -311,6 +390,10 @@ impl Tap {
     /// the boot flash, so IPROG restores the stored design without physical access. Establishing
     /// that this works is a precondition for attempting any configuration on a board nobody can
     /// power-cycle.
+    ///
+    /// # Errors
+    ///
+    /// The USB write's error, as text.
     pub fn reboot_from_flash(&mut self) -> Result<(), String> {
         use crate::bitstream::{cmd, reg};
         self.reset()?;
@@ -337,6 +420,10 @@ impl Tap {
     /// where our bits landed — but note that comparing a readback against our OWN writes proves
     /// nothing, since both use the same addressing. It is evidence only when checked against a
     /// bitstream we did not generate.
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, as text.
     pub fn read_frames(&mut self, far: u32, n_frames: usize) -> Result<Vec<u32>, String> {
         use crate::bitstream::{cmd, reg, type1_read, type1_write, DUMMY, NOOP, SYNC};
         const WORDS: usize = 101;
@@ -371,6 +458,10 @@ impl Tap {
     /// A TMS command clocks at most 6 cycles, so long settles need many commands — but they are
     /// BUFFERED INTO ONE TRANSFER. Issuing a USB transfer per 6 clocks turns the 120,000-cycle
     /// post-JPROGRAM settle into 20,000 round trips, which stalls the configuration for minutes.
+    ///
+    /// # Errors
+    ///
+    /// The USB write's error, as text.
     pub fn run_clocks(&mut self, n: usize) -> Result<(), String> {
         let mut cmds = Vec::with_capacity((n / 6 + 1) * 3);
         let mut left = n;
@@ -384,30 +475,61 @@ impl Tap {
 }
 
 /// 7-series STAT register (UG470 Table 5-25) — the bits worth naming.
-pub struct Stat(pub u32);
+pub struct Stat(
+    /// The raw register word, as read back over `CFG_OUT`.
+    pub u32,
+);
 
 impl Stat {
+    /// Bit 0: the bitstream failed its CRC. A load that reports this did not take.
+    #[must_use]
     pub fn crc_error(&self) -> bool { self.0 & 1 != 0 }
+    /// Bit 1: decryption error. Set when an encrypted bitstream meets the wrong key.
+    #[must_use]
     pub fn dec_error(&self) -> bool { self.0 >> 1 & 1 != 0 }
+    /// Bit 2: the bitstream's IDCODE did not match the part. The usual cause of a silent
+    /// no-configuration: a bitstream built for a different device.
+    #[must_use]
     pub fn id_error(&self) -> bool { self.0 >> 2 & 1 != 0 }
+    /// Bit 3: the DONE pin. High means the device finished startup and the design is running.
+    #[must_use]
     pub fn done(&self) -> bool { self.0 >> 3 & 1 != 0 }
+    /// Bit 4: DONE has been released by the startup sequence.
+    #[must_use]
     pub fn release_done(&self) -> bool { self.0 >> 4 & 1 != 0 }
+    /// Bit 5: the `INIT_B` pin, which is low while configuration memory is being cleared.
+    #[must_use]
     pub fn init_b(&self) -> bool { self.0 >> 5 & 1 != 0 }
+    /// Bit 6: configuration memory has finished clearing and the device will accept a bitstream.
+    #[must_use]
     pub fn init_complete(&self) -> bool { self.0 >> 6 & 1 != 0 }
+    /// Bits 7-9: the sampled MODE pins, which say where the device tried to boot from.
+    ///
+    /// **This differs between a SPI boot and a JTAG load** — 0x5 against 0x6 on these boards — so an
+    /// exact-match check against a boot-time reference reports a successful JTAG load as a failure.
+    /// See [`Stat::configured`], which excludes it for that reason.
+    #[must_use]
     pub fn mode(&self) -> u8 { (self.0 >> 7 & 0x7) as u8 }
+    /// Bit 13: End Of Startup. Together with DONE this is what "the design is running" means.
+    #[must_use]
     pub fn eos(&self) -> bool { self.0 >> 13 & 1 != 0 }
+    /// Bit 16: the part is secured, so readback of configuration data is disabled.
+    #[must_use]
     pub fn part_secured(&self) -> bool { self.0 >> 16 & 1 != 0 }
     /// Whether the fabric is configured and started.
     ///
     /// EMPIRICALLY established on an XC7A100T, not taken from a bit table: a cleared device
-    /// reads 0x5000190C and a configured one 0x__1079FC, and bits 13-14 are the pair that turns
+    /// reads `0x5000190C` and a configured one `0x__1079FC`, and bits 13-14 are the pair that turns
     /// on with configuration and stays on. The top nibble differs by CONFIGURATION SOURCE
     /// (0x5 after SPI boot, 0x6 after JTAG load), so it must not be part of the test — an
     /// exact-match check against a boot-time reference reports a successful JTAG load as failure.
+    #[must_use]
     pub fn configured(&self) -> bool {
         (self.0 >> 13) & 0x3 == 0x3 && !self.crc_error()
     }
 
+    /// One line naming the bits a failed load is usually diagnosed from.
+    #[must_use]
     pub fn describe(&self) -> String {
         format!(
             "STAT=0x{:08X}  DONE={} EOS={} INIT_B={} INIT_COMPLETE={} MODE={:03b} CRC_ERR={}",
@@ -423,6 +545,7 @@ impl Stat {
 }
 
 /// Decode a 7-series IDCODE (version nibble masked) to a part name.
+#[must_use]
 pub fn xc7_part(idcode: u32) -> Option<&'static str> {
     match idcode & 0x0FFF_FFFF {
         0x0362D093 => Some("XC7A35T"),

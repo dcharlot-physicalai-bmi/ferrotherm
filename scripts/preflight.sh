@@ -76,6 +76,10 @@ gate "versions"         cargo scripts/check-versions.sh
 # on and which rot silently. Fails on a module with public API and no tests, and on mutation
 # coverage going backwards. See scripts/quality.py.
 gate "quality"          cargo scripts/quality.py
+# The same gates again with every feature ON. `silicon`'s `flash` feature did not COMPILE for as
+# long as it existed, because nothing ever built it -- and the doc-coverage gate reported 100% the
+# whole time, measuring the surface that excluded it. See scripts/check-all-features.sh.
+gate "all-features"     cargo scripts/check-all-features.sh
 
 echo
 echo "-- the bindings ---------------------------------------------------------"

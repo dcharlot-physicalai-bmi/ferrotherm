@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### A shipped crate had a feature that did not compile, and the doc gate reported 100% the whole time
+
+`ferrotherm-silicon` declares one optional feature, `flash` — 481 lines of FT2232H MPSSE JTAG that
+flashes a real FPGA. **No gate anywhere passed `--features flash` or `--all-features`.** So for as
+long as it existed:
+
+- `cargo build -p ferrotherm-silicon --features flash` failed with **23 missing-documentation
+  errors**;
+- `cargo clippy` failed with **27**, including thirteen fallible functions with no `# Errors`
+  section and a `# Panics`-free `assert!`;
+- three of the crate's own examples did not compile, for want of the `allow(missing_docs)` header
+  every example in the core crate carries;
+- `cargo test` could not build the test binary, so those tests had **never run**.
+
+The crate's doc-coverage gate reported 100%. It was measuring the default-feature surface — the one
+that excludes all of the above. A lint run without the feature flag misses everything behind it and
+reports a clean number for the part it can see.
+
+Everything is documented and lints clean now, and `scripts/check-all-features.sh` runs build,
+clippy, rustdoc and tests again with every feature on, as the `all-features` preflight gate. It
+enumerates the workspace's features so a reader can see what "all" means (one, today).
+
+Found by an adversarially-verified audit sweep, not by a gate — which is the point.
+
+
 ### A quantitative scorecard, and what it found
 
 `scripts/quality.py` measures consistency, documentation, test rigour and ease of use as counts with

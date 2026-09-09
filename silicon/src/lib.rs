@@ -93,6 +93,7 @@ pub mod device {
         /// False when the `flash` feature is off, which is the honest answer: without it this
         /// build cannot see a board even if one is plugged in.
         #[cfg(feature = "flash")]
+        #[must_use]
         pub fn attached() -> bool {
             crate::flash::Ftdi::open("Alchitry").is_ok()
         }
