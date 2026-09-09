@@ -32,6 +32,14 @@ overstated penalty is a bound above what it bounds.
 Three mutations recorded, including the one that distinguishes "sound" from "accurate": `total +
 guard` is still a compensated sum and still points the wrong way.
 
+**The first version of the regression test was blind, and the mutation suite is what said so.**
+It checked `gap >= 0`, which is the user-facing claim — but `gap` rounds the ENERGY up, and being
+conservative on the energy side *masks* unsoundness on the bound side. With `forest` restored to
+plain `+=`, the `gap >= 0` check caught the defect in **1 trial out of 4800**; the test runs 400 and
+sailed through. It now also compares `value` directly against a downward-rounded evaluation of the
+optimum, on fixtures where the relaxation is exact, which the fixed code clears by three orders of
+margin and a round-to-nearest one does not.
+
 ## 0.44.0
 
 ### The rest of the EBM estimator family, and the ceiling that scores all six

@@ -488,6 +488,23 @@ mod tests {
     use crate::rng::Pcg;
 
     /// Brute force, for instances small enough that the truth is available.
+    /// `E(s)`, never above the exact value — the mirror of `energy_up`, for tests that need to
+    /// bracket a bound from the other side.
+    fn energy_down(g: &Graph, s: &[i8]) -> f64 {
+        let mut terms = Vec::with_capacity(g.n + g.n_edges);
+        for i in 0..g.n {
+            let si = f64::from(s[i]);
+            terms.push(-g.h[i] * si);
+            for k in g.offset[i]..g.offset[i + 1] {
+                let j = g.nbr[k] as usize;
+                if j > i {
+                    terms.push(-g.w[k] * si * f64::from(s[j]));
+                }
+            }
+        }
+        sum_down(&terms)
+    }
+
     fn true_min(g: &Graph) -> f64 {
         let mut best = f64::INFINITY;
         for mask in 0u32..(1u32 << g.n) {
@@ -630,6 +647,27 @@ mod tests {
                             b.gap(&g, &gs)
                         );
                     }
+                    // AND THE BOUND ITSELF, not only the gap. `gap` rounds the energy UP, which
+                    // is what makes it conservative -- and conservative on the energy side MASKS
+                    // unsoundness on the bound side. Measured: with `forest` restored to plain
+                    // `+=`, checking `gap >= 0` catches the defect in 1 trial out of 4800, where
+                    // checking the bound directly catches it in most of them.
+                    //
+                    // On these trees the relaxation is EXACT -- one part, the decomposition is the
+                    // problem -- so a sound `value` must sit at or below the true optimum. Neither
+                    // is representable, so the comparison is against a downward-rounded evaluation
+                    // of the optimum's energy, which is below the true optimum and therefore a
+                    // stricter test than soundness requires. The fixed implementation clears it by
+                    // about 2e-12, three orders of margin, because it subtracts a guard it can
+                    // justify rather than landing wherever the arithmetic left it.
+                    assert!(
+                        bf.value <= energy_down(&g, &gs),
+                        "forest bound {:e} is not below the optimum {:e} on a {n}-node tree \
+                         (seed {seed}, fields {fields}) -- excess {:e}",
+                        bf.value,
+                        energy_down(&g, &gs),
+                        bf.value - energy_down(&g, &gs)
+                    );
                     worst_f = worst_f.min(bf.gap(&g, &gs));
                     worst_d = worst_d.min(bd.gap(&g, &gs));
                     worst_c = worst_c.min(bc.gap(&g, &gs));

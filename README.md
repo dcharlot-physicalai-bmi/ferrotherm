@@ -1145,6 +1145,12 @@ consequence is that `Bound::proves_optimal(g, s, 0.0)` finally means something: 
 second job, absorbing the accumulation over the split, which made its honest value unknowable — too
 small rejected true optima, too large made the proof not a proof.
 
+The first regression test written for this was itself blind, and the recorded mutation suite is what
+caught that. It checked `gap >= 0` — the user-facing claim — but `gap` rounds the *energy* up, and
+being conservative on the energy side masks unsoundness on the bound side. With `forest` restored to
+plain `+=`, that check fails on **1 trial in 4800**. The test now also compares `value` directly
+against a downward-rounded evaluation of the optimum on fixtures where the relaxation is exact.
+
 ### A certified lower bound that cannot round upward
 
 `sdp::Certificate::verify` re-checks a certificate from scratch and returns `eᵀy`. It summed with
