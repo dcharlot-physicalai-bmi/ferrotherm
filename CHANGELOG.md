@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### The deep-Boltzmann-machine positive phase, and it loses to sampling here
+
+`ebm::train_variational` fits latent units by solving a mean-field approximation to `p(h | v)` and
+using the means, instead of drawing one sample from it — the Salakhutdinov & Hinton 2009 recipe.
+`meanfield::naive_mean_field_clamped` is the piece that was missing: mean field with the leading
+spins **pinned**, exactly rather than by a strong field, so their entropy term is zero and the
+Gibbs–Bogoliubov value bounds `ln Σ_h exp(−βE(v,h))`.
+
+Scored against `train_exact` on `dbm(4, [3,2])`, as percent of the reachable range:
+
+```text
+  initial weight scale     0.1     0.3     0.6
+  variational            84.9%   73.5%   46.0%
+  sampled (`train`)      82.0%   86.3%   85.5%
+```
+
+It loses, for the reason the approximation predicts: mean field discards
+`⟨h_j h_k⟩ − ⟨h_j⟩⟨h_k⟩`, a deep machine has hidden-to-hidden edges a restricted one does not, and
+those correlations grow with coupling. **Checked, not assumed:** the clamped mean field converges to
+a residual below `1e-13` in at most 123 iterations at every scale, so those are fixed points and not
+budgets. Separately, an under-converged mean field beats the converged one at scale 0.6
+(`5 iters 80.5%` against `500 iters 46.0%`) — worth knowing before raising the cap, which is the
+obvious and wrong response.
+
+Two predictions of mine were refuted by measuring them. A layered model at zero weights is a saddle
+of the *exact* gradient, and I expected the variational trainer to be trapped there — it is not,
+because the persistent fantasy chains start at random states and break the symmetry through the
+negative phase. And the first draft of the fully-visible test claimed an exact positive phase makes
+a *sharper* check; it does not, because the residual is the negative phase's, which both methods
+share.
+
+
 ### `bound::forest` was returning bounds above the optimum, and the test for it was five orders too loose
 
 A lower bound is a promise about every state and `f64` addition does not keep promises. `forest`

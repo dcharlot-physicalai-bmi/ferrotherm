@@ -1127,6 +1127,175 @@ pub fn train_ratio_matching(
     train_flip(structure, data, p, FlipLoss::Ratio)
 }
 
+/// Fit `structure` by **variational** contrastive divergence — the deep-Boltzmann-machine recipe
+/// (Salakhutdinov & Hinton 2009).
+///
+/// # What changes, and it is only the positive phase
+///
+/// Fitting latent units needs `⟨s_i s_j⟩` under `p(h | v)`, the posterior over the hidden units
+/// with the visible ones clamped to a data row. [`train`] draws ONE SAMPLE from that posterior per
+/// row, which is unbiased and noisy. This solves a mean-field approximation to it instead and uses
+/// the MEANS, which is noiseless and biased — the mean-field posterior is a product distribution
+/// and the true one is not, so `⟨h_j h_k⟩` becomes `μ_j μ_k` and every correlation between hidden
+/// units is thrown away.
+///
+/// That is the trade in one sentence, and neither half of it is a matter of opinion here:
+/// [`train_exact`] computes the true gradient on models small enough to enumerate, so both can be
+/// scored against the same reference rather than against each other.
+///
+/// The negative phase is unchanged and defaults to persistent chains, which is what the original
+/// recipe uses — a variational positive phase does nothing about the model average, which is the
+/// other half of the gradient and the harder one.
+///
+/// # What it is worth here, measured
+///
+/// On `dbm(4, [3, 2])` — 9 spins, so [`train_exact`] can compute the ceiling — fitted to
+/// bars-and-stripes from a seeded start, as percent of the reachable range between the untrained
+/// model and exact maximum likelihood:
+///
+/// ```text
+///   initial weight scale     0.1     0.3     0.6
+///   variational            84.9%   73.5%   46.0%      (mean field run to convergence)
+///   sampled (`train`)      82.0%   86.3%   85.5%
+/// ```
+///
+/// **It loses, and it loses for the reason the approximation predicts.** Mean field discards
+/// `⟨h_j h_k⟩ − ⟨h_j⟩⟨h_k⟩`, and a deep machine has hidden-to-hidden edges where a restricted one
+/// does not, so exactly the correlations it throws away are the ones those edges are there to
+/// carry. They grow with coupling strength, which is the axis the table sweeps.
+///
+/// **This is not a convergence artifact, which was checked rather than assumed.** Damped at 0.5 the
+/// clamped mean field reaches a residual below `1e-13` in at most 123 iterations at every scale
+/// here, so the rows above are its fixed point and not its budget.
+///
+/// **A deliberately under-converged mean field beats the converged one at strong coupling**, which
+/// is worth knowing before tuning `positive_sweeps` up:
+///
+/// ```text
+///   scale 0.6:     5 iters 80.5%    20 iters 36.7%    100 iters 40.4%    500 iters 46.0%
+/// ```
+///
+/// Five iterations is not a better approximation to the posterior; it is a different estimator that
+/// happens to fit better here, in the same way early stopping regularises. Reported because the
+/// obvious reflex on seeing 46% is to raise the cap, and raising it is not what helps.
+///
+/// It ships because it is the standard recipe for a deep Boltzmann machine and a caller whose
+/// posterior is too expensive to sample will want it; it ships with this table because a method
+/// that is standard in the literature and worse here should say so.
+///
+/// # Why this does not share [`train`]'s loop
+///
+/// It would have to. `train`'s non-persistent negative phase REUSES the positive-phase sampler,
+/// carrying its advanced RNG state into the negative chain; there is no such sampler here, so
+/// threading a mode through would change `train`'s random stream and with it every seeded test
+/// that pins its behaviour. The parameter plumbing is shared through `Weights`; the loop is not.
+///
+/// # Errors
+///
+/// As [`train`].
+pub fn train_variational(
+    structure: &Graph,
+    data: &Dataset,
+    p: &Params,
+    seed: u64,
+) -> Result<Trained, Error> {
+    check(structure, data)?;
+    let n = structure.n;
+    let mut rng = Pcg::new(seed, 0x00EB_5F00);
+    let mut wt = Weights::of(structure);
+
+    // One fantasy chain per batch slot, carrying its own RNG state -- rebuilding a sampler from a
+    // fixed seed each update would replay one random stream forever, which is a chain that moves
+    // and always the same way. See `Params::persistent`.
+    let mut fantasy: Vec<(Vec<i8>, Pcg)> = (0..p.batch.max(1))
+        .map(|s| {
+            (
+                (0..n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect(),
+                Pcg::new(seed ^ 0x5F5F_0000 ^ s as u64, 0x9E37),
+            )
+        })
+        .collect();
+
+    let mut order: Vec<usize> = (0..data.rows.len()).collect();
+    for epoch in 0..p.epochs {
+        for i in (1..order.len()).rev() {
+            let j = (rng.f64() * (i + 1) as f64) as usize % (i + 1);
+            order.swap(i, j);
+        }
+        let g = wt.build();
+        let decay = if p.epochs > 1 {
+            1.0 - 0.9 * epoch as f64 / (p.epochs - 1) as f64
+        } else {
+            1.0
+        };
+
+        for chunk in order.chunks(p.batch.max(1)) {
+            let mut d_edge = vec![0.0f64; wt.edges.len()];
+            let mut d_bias = vec![0.0f64; n];
+
+            for (slot, &r) in chunk.iter().enumerate() {
+                let row = &data.rows[r];
+
+                // POSITIVE PHASE, solved rather than sampled. `positive_sweeps` is the iteration
+                // cap here; damping is 0.5 because an undamped mean field on a frustrated model
+                // oscillates rather than converging, and a positive phase that oscillates makes
+                // the gradient a function of where the cap fell.
+                let mf = crate::meanfield::naive_mean_field_clamped(
+                    &g,
+                    1.0,
+                    row,
+                    p.positive_sweeps.max(1),
+                    0.5,
+                );
+
+                // NEGATIVE PHASE. A concrete state is needed to advance a chain from; it is drawn
+                // from the variational posterior, while the STATISTICS above come from the means.
+                let neg: Vec<i8> = if p.persistent {
+                    let idx = slot % fantasy.len();
+                    let mut fs = Sampler::new(&g, 1.0, 0);
+                    fs.s.copy_from_slice(&fantasy[idx].0);
+                    fs.rng = fantasy[idx].1.clone();
+                    fs.sweeps(p.k.max(1), None);
+                    fantasy[idx].0.copy_from_slice(&fs.s);
+                    fantasy[idx].1 = fs.rng.clone();
+                    fs.s
+                } else {
+                    let nseed = (u64::from(rng.next_u32()) << 32) | u64::from(rng.next_u32());
+                    let mut fs = Sampler::new(&g, 1.0, nseed);
+                    for i in 0..n {
+                        fs.s[i] = if rng.f64() < (1.0 + mf.m[i]) / 2.0 { 1 } else { -1 };
+                    }
+                    for (i, &v) in row.iter().enumerate() {
+                        fs.s[i] = v;
+                    }
+                    fs.sweeps(p.k.max(1), None);
+                    fs.s
+                };
+
+                for (e, &(i, j, _)) in wt.edges.iter().enumerate() {
+                    d_edge[e] += mf.m[i] * mf.m[j]
+                        - f64::from(neg[i]) * f64::from(neg[j]);
+                }
+                for i in 0..n {
+                    d_bias[i] += mf.m[i] - f64::from(neg[i]);
+                }
+            }
+
+            let scale = p.learning_rate * decay / chunk.len() as f64;
+            for (e, w) in wt.edges.iter_mut().enumerate() {
+                w.2 += scale * d_edge[e];
+            }
+            for i in 0..n {
+                wt.bias[i] += scale * d_bias[i];
+            }
+        }
+    }
+
+    let graph = wt.build();
+    let log_likelihood = exact_log_likelihood(&graph, data).ok();
+    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+}
+
 /// The TRUE maximum-likelihood gradient, by enumeration.
 ///
 /// `⟨s_i s_j⟩_data − ⟨s_i s_j⟩_model`, with BOTH averages exact: the second over every one of the
@@ -2110,6 +2279,150 @@ mod tests {
             exact_log_likelihood(&structure, &bas).unwrap(),
             "a bipartite model started at zero cannot move on complement-symmetric data"
         );
+    }
+
+    /// THE CLAMPED MEAN FIELD MUST ACTUALLY PIN, and the pinning must be exact rather than a
+    /// strong field. A visible unit that drifts by even `1e-9` makes the positive phase an average
+    /// over states that disagree with the data, which is a different objective wearing the same
+    /// name.
+    #[test]
+    fn the_clamped_mean_field_pins_what_it_is_told() {
+        let g = {
+            let mut b = GraphBuilder::new(6);
+            for i in 0..5 {
+                b.couple(i, i + 1, if i % 2 == 0 { 0.9 } else { -0.7 });
+            }
+            b.couple(0, 5, 0.5);
+            b.bias(0, -2.0); // pulling HARD against the clamp, which must lose
+            b.bias(1, 1.5);
+            b.build()
+        };
+        let row = [1i8, 1, -1];
+        let mf = crate::meanfield::naive_mean_field_clamped(&g, 1.0, &row, 500, 0.5);
+        for (i, &v) in row.iter().enumerate() {
+            assert_eq!(mf.m[i], f64::from(v), "spin {i} was not pinned: {}", mf.m[i]);
+        }
+        // The free ones must have moved off the initial 0.01 and stayed inside [-1, 1].
+        for i in row.len()..g.n {
+            assert!(mf.m[i].abs() <= 1.0, "magnetisation {i} left the interval: {}", mf.m[i]);
+            assert!((mf.m[i] - 0.01).abs() > 1e-6, "free spin {i} never moved");
+        }
+        assert!(mf.converged(1e-12), "residual {:e}", mf.residual);
+
+        // Every spin pinned: nothing to iterate, and it must SAY it converged rather than spinning
+        // to the cap with the initial infinity still in `residual`.
+        let all = [1i8, -1, 1, 1, -1, -1];
+        let full = crate::meanfield::naive_mean_field_clamped(&g, 1.0, &all, 500, 0.5);
+        assert!(full.converged(1e-12), "a fully pinned field is converged by construction");
+        assert!(full.iterations <= 1, "and costs no iteration: {}", full.iterations);
+        for (i, &v) in all.iter().enumerate() {
+            assert_eq!(full.m[i], f64::from(v));
+        }
+    }
+
+    /// WITH NO HIDDEN UNITS THE VARIATIONAL POSITIVE PHASE IS EXACT, so this is the one case where
+    /// the approximation costs nothing and the fixed point must be moment matching.
+    ///
+    /// Clamping every spin leaves the mean field with nothing to approximate: `μ` IS the data row.
+    /// So the positive phase carries neither bias nor sampling noise, and the fit must land where
+    /// `a_fully_visible_fit_matches_the_data_correlations` lands — it fails if the means are ever
+    /// used where the data should be, or the pinning slips.
+    ///
+    /// **It is not a SHARPER check than the sampled version, and the first draft of this test said
+    /// it was.** The residual here is the NEGATIVE phase's, which both methods share, so an exact
+    /// positive phase buys nothing in tolerance: written at `0.05` against one seed it failed at
+    /// `0.058`, which is that seed and not a defect. Averaged over seeds instead, because tuning
+    /// the seed until it passes is how a fixture gets fitted to its answer.
+    #[test]
+    fn a_fully_visible_variational_fit_has_an_exact_positive_phase() {
+        let rows: Vec<Vec<i8>> = vec![
+            vec![1, 1, 1],
+            vec![1, 1, 1],
+            vec![1, 1, -1],
+            vec![-1, -1, 1],
+            vec![-1, -1, 1],
+            vec![-1, -1, -1],
+        ];
+        let data = Dataset { visible: 3, rows: rows.clone() };
+        let mut gb = GraphBuilder::new(3);
+        gb.couple(0, 1, 0.0);
+        gb.couple(0, 2, 0.0);
+        gb.couple(1, 2, 0.0);
+        let structure = gb.build();
+
+        let p = Params {
+            epochs: 4_000,
+            k: 20,
+            positive_sweeps: 20,
+            learning_rate: 0.05,
+            batch: 6,
+            persistent: false,
+        };
+        let m = rows.len() as f64;
+        let dc = |i: usize, j: usize| rows.iter().map(|r| f64::from(r[i] * r[j])).sum::<f64>() / m;
+        let dm = |i: usize| rows.iter().map(|r| f64::from(r[i])).sum::<f64>() / m;
+        // Model moments by ENUMERATION, not by more sampling: a check that compares a sampler's
+        // average against a sampler's average agrees with itself whatever it is doing.
+        let spin = |mask: usize, i: usize| if (mask >> i) & 1 == 1 { 1.0 } else { -1.0 };
+        let seeds = 5u64;
+        let fits: Vec<Vec<f64>> = (0..seeds)
+            .map(|sd| crate::ising::exact_boltzmann(&train_variational(&structure, &data, &p, sd).unwrap().graph, 1.0))
+            .collect();
+        let mc = |i: usize, j: usize| {
+            fits.iter()
+                .map(|pr| pr.iter().enumerate().map(|(k, &q)| q * spin(k, i) * spin(k, j)).sum::<f64>())
+                .sum::<f64>()
+                / f64::from(u32::try_from(seeds).unwrap())
+        };
+        let mm = |i: usize| {
+            fits.iter()
+                .map(|pr| pr.iter().enumerate().map(|(k, &q)| q * spin(k, i)).sum::<f64>())
+                .sum::<f64>()
+                / f64::from(u32::try_from(seeds).unwrap())
+        };
+        for (i, j) in [(0usize, 1usize), (0, 2), (1, 2)] {
+            assert!(
+                (mc(i, j) - dc(i, j)).abs() < 0.05,
+                "edge {i}-{j}: model {:.4} against data {:.4}",
+                mc(i, j),
+                dc(i, j)
+            );
+        }
+        for i in 0..3 {
+            assert!((mm(i) - dm(i)).abs() < 0.05, "bias {i}: model {:.4} against data {:.4}", mm(i), dm(i));
+        }
+    }
+
+    /// The deep machine the method exists for: it must raise the TRUE likelihood, measured by
+    /// enumeration rather than by the objective it ascends.
+    ///
+    /// Started away from zero weights, which is not a convenience — see
+    /// `an_rbm_at_zero_weights_is_a_stationary_point_of_the_exact_likelihood`. The saddle there is
+    /// a statement about the EXACT gradient; a sampled negative phase escapes it because the
+    /// fantasy chains start at random states, and this test does not rely on either fact.
+    #[test]
+    fn the_variational_positive_phase_trains_a_deep_machine() {
+        let structure = dbm(4, &[3, 2]);
+        let data = bars_and_stripes(2);
+        let mut wt = Weights::of(&structure);
+        for (k, x) in wt.edges.iter_mut().enumerate() {
+            x.2 = 0.1 * ((k % 7) as f64 - 3.0) / 3.0;
+        }
+        let start = wt.build();
+        let before = exact_log_likelihood(&start, &data).unwrap();
+
+        let p = Params {
+            epochs: 400,
+            k: 10,
+            positive_sweeps: 100,
+            learning_rate: 0.05,
+            batch: 6,
+            persistent: true,
+        };
+        let t = train_variational(&start, &data, &p, 7).unwrap();
+        let after = t.log_likelihood.expect("nine spins is inside the enumeration limit");
+        assert!(after > before + 0.3, "the variational fit should learn: {before:.4} to {after:.4}");
+        assert_eq!(t.graph.n_edges, structure.n_edges, "only weights move, never the edge set");
     }
 
     /// Enumeration is refused past the size it is affordable at, rather than attempted.

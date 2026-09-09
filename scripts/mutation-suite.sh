@@ -250,6 +250,16 @@ mutations=(
   # unit, which is every model anyone fits.
   "src/ebm.rs|    let comps = 1usize << (n - data.visible);|    let comps = 1;|the_exact_gradient_matches_a_finite_difference_of_the_true_likelihood|an exact positive phase that never visits the latent states"
 
+  # The variational positive phase is the MEANS of a clamped mean field. Using the sampled state
+  # instead turns `train_variational` back into `train` with extra steps -- it still fits, still
+  # raises the likelihood, and is no longer the method it is named for.
+  "src/ebm.rs|                    d_edge[e] += mf.m[i] * mf.m[j]|                    d_edge[e] += 0.0 * mf.m[i] * mf.m[j]|a_fully_visible_variational_fit_has_an_exact_positive_phase|a variational positive phase that carries no data"
+
+  # The clamp must PIN. Letting a clamped spin iterate makes the positive phase an average over
+  # states that disagree with the data -- a different objective under the same name, and one that
+  # still converges to something.
+  "src/meanfield.rs|        for i in fixed..g.n {|        for i in 0..g.n {|the_clamped_mean_field_pins_what_it_is_told|a clamp that does not clamp"
+
   # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
   # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
   # gradient it does not have and the stationary point disappears.

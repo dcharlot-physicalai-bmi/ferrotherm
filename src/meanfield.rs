@@ -117,6 +117,73 @@ pub fn naive_mean_field(g: &Graph, beta: f64, iters: usize, damping: f64) -> Mea
     MeanField { beta, m, log_z, residual, iterations: it }
 }
 
+/// Naive mean field with the leading `clamped.len()` spins **pinned** to the values given.
+///
+/// # What this is for
+///
+/// The positive phase of a deep Boltzmann machine (Salakhutdinov & Hinton 2009). Fitting a model
+/// with latent units needs `⟨s_i s_j⟩` under `p(h | v)` for each data row, and the two ways to get
+/// it are to SAMPLE the hidden units with the visible ones clamped — what [`crate::ebm::train`]
+/// does — or to solve a variational approximation to that posterior, which is this. The sampled
+/// version is unbiased with variance; this is biased with none, because the mean-field posterior is
+/// a product distribution and the true one is not.
+///
+/// Which is better is not a matter of opinion here: [`crate::ebm::train_exact`] computes the true
+/// gradient on models small enough to enumerate, so both can be scored against it rather than
+/// against each other.
+///
+/// # The pinning is exact, not a strong field
+///
+/// A clamped spin has `m_i = ±1` and stays there — it is never updated, and its entropy term is
+/// zero, so [`gibbs_bogoliubov`] evaluated at the result is a lower bound on `ln Σ_h exp(−βE(v,h))`
+/// rather than on the full `ln Z`. That quantity is the numerator of `p(v)`, which is what a
+/// variational likelihood bound is built from. Pinning by adding a large field instead would be an
+/// approximation with a magnitude to tune and a wrong entropy.
+///
+/// Spins `0..clamped.len()` are the pinned ones, matching the convention that a
+/// [`crate::ebm::Dataset`]'s visible units are the leading spins. `clamped` longer than the graph
+/// is truncated to it rather than panicking, since a caller passing a whole data row to a smaller
+/// model has a size error worth surfacing elsewhere as one.
+#[must_use]
+pub fn naive_mean_field_clamped(
+    g: &Graph,
+    beta: f64,
+    clamped: &[i8],
+    iters: usize,
+    damping: f64,
+) -> MeanField {
+    let fixed = clamped.len().min(g.n);
+    let mut m = vec![0.01; g.n];
+    for i in 0..fixed {
+        m[i] = f64::from(clamped[i].signum());
+    }
+    let mut residual = f64::INFINITY;
+    let mut it = 0;
+    while it < iters && residual > 1e-13 {
+        residual = 0.0;
+        for i in fixed..g.n {
+            let mut field = g.h[i];
+            for e in g.offset[i]..g.offset[i + 1] {
+                field += g.w[e] * m[g.nbr[e] as usize];
+            }
+            let new = (beta * field).tanh();
+            let next = damping * m[i] + (1.0 - damping) * new;
+            residual = residual.max((next - m[i]).abs());
+            m[i] = next;
+        }
+        it += 1;
+        // Every spin pinned: there is nothing to iterate and the answer is the assignment itself.
+        // Without this the loop spins to `iters` with `residual` stuck at its initial infinity and
+        // reports a non-convergence that is not one.
+        if fixed >= g.n {
+            residual = 0.0;
+            break;
+        }
+    }
+    let log_z = gibbs_bogoliubov(g, beta, &m);
+    MeanField { beta, m, log_z, residual, iterations: it }
+}
+
 /// TAP: naive mean field with the Onsager reaction term, returning the second-order Plefka free
 /// energy `ln Z_TAP = ln Z_MF(m) + (β²/2) Σ_{i<j} J_ij² (1 − m_i²)(1 − m_j²)`. Not a bound.
 #[must_use]

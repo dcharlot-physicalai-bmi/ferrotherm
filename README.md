@@ -93,6 +93,7 @@ score. Scoring it found three defects on the first run.
 | Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
 | Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
 | **Directed rounding for every claimed bound** (this review did not locate one in a thermodynamic-computing stack) | `round::sum_down` / `sum_up` / `accumulation_guard` — one pass, Kahan–Babuška guard, no interval type | **shipped, verified** — and it found `bound::forest` returning a bound ABOVE the optimum on a third of random trees |
+| Variational positive phase — the deep-Boltzmann-machine recipe (Salakhutdinov & Hinton 2009) | `ebm::train_variational` + `meanfield::naive_mean_field_clamped` — mean field over the hidden units with the visible ones pinned | **shipped, verified** — and scored against the exact ceiling, where it **loses** to the sampled posterior, for the reason the approximation predicts |
 | **The exact maximum-likelihood gradient, as a CEILING to score the others by** (this review did not locate one in any EBM library) | `ebm::train_exact` — `⟨ss⟩_data − ⟨ss⟩_model` with BOTH averages enumerated, latent units integrated out exactly | **shipped, verified** — differenced against the true likelihood with and without latent units; no other method passes it |
 | Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
 | Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
@@ -1119,6 +1120,37 @@ survived every other test here until a fixture was written at the ulp that reach
 Checked four ways: the closed form at `K_c`, both temperature limits forced by bond-counting
 (`−2J` and `0`), `K(k)` against its own defining integral by fine quadrature, and against
 `−d(lnZ/N)/dβ` from the independent grid implementation. 8 of 8 mutations killed.
+
+### Solving the posterior instead of sampling it, and what that costs
+
+Fitting latent units needs `⟨s_i s_j⟩` under `p(h | v)`. `ebm::train` draws one sample from that
+posterior per row — unbiased, noisy. `train_variational` solves a mean-field approximation to it and
+uses the means — noiseless, biased — which is the deep-Boltzmann-machine recipe. The pinning is
+exact rather than a strong field: `meanfield::naive_mean_field_clamped` holds the visible spins at
+`±1` and never updates them, so their entropy term is zero and the Gibbs–Bogoliubov value is a bound
+on `ln Σ_h exp(−βE(v,h))` — the numerator of `p(v)`.
+
+**It loses here, and `train_exact` is what makes that sayable.** On `dbm(4, [3,2])` fitted to
+bars-and-stripes, as percent of the reachable range between untrained and exact maximum likelihood:
+
+```text
+  initial weight scale     0.1     0.3     0.6
+  variational            84.9%   73.5%   46.0%
+  sampled (`train`)      82.0%   86.3%   85.5%
+```
+
+The mechanism is the one the approximation predicts. Mean field discards
+`⟨h_j h_k⟩ − ⟨h_j⟩⟨h_k⟩`, and a *deep* machine has hidden-to-hidden edges where a restricted one
+does not — so exactly the correlations it throws away are the ones those edges exist to carry, and
+they grow with coupling strength. **Not a convergence artifact**, which was checked rather than
+assumed: damped at 0.5 the clamped mean field reaches a residual below `1e-13` in at most 123
+iterations at every scale in that table.
+
+One result worth having before you tune it: at scale 0.6 a deliberately *under-converged* mean field
+beats the converged one — `5 iters 80.5%`, `20 iters 36.7%`, `500 iters 46.0%`. Five iterations is
+not a better approximation to the posterior; it is a different estimator that happens to fit better,
+the way early stopping regularises. The reflex on seeing 46% is to raise the cap, and raising it is
+not what helps.
 
 ### A bound is a promise about every state, and `+` does not keep promises
 
