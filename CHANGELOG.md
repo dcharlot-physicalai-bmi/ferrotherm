@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Twelve samplers, and not one let the energy choose where to look
+
+Every single-flip sampler in this crate picked its next site in order or uniformly. `informed`
+weights the proposal by how much the move would change the target — Zanella's locally-balanced
+proposals (JASA 2020) and Grathwohl et al.'s *Oops I Took A Gradient* (ICML 2021).
+
+For an Ising model the informed proposal is **exact and costs nothing extra**: those papers
+approximate the energy change with a gradient because their state spaces are too large to score
+every neighbour, and a single-flip neighbourhood on a spin model is not. `ΔE_k = 2 s_k f_k`, and the
+local field is already computed. One step is `O(deg)` — the same per-flip cost as one site of a
+Gibbs sweep — so the comparison is flips against flips.
+
+256-spin frustrated ring with chords, four seeds, equal flips, `tau_int` of the energy in flips:
+
+```text
+   beta        gibbs         sqrt       barker   metropolis   sqrt acc
+    0.2          134          131          137          144      0.998
+    1.0         1246          406          378          414      0.966
+    2.0        27638         1598          671         5135      0.856
+    4.0        95593        56463        24627        40391      0.927
+```
+
+**41× faster per flip at `beta = 2`**, and no faster at `beta = 0.2` — the stated prediction, since a
+flat landscape makes every weight equal.
+
+**The balancing function matters more than the literature suggests, and in the other direction.**
+Zanella recommends `√x`; `Barker` beats it 2.4-fold at `beta = 2`, and the spread across the three is
+eightfold — wider than the gap between the worst informed chain and Gibbs a rung up.
+
+The load-bearing check is correctness, not speed: certified against exact enumeration at all three
+balancing functions. "Accept everything" is a recorded mutation precisely because it mixes *faster*,
+so any speed-only measurement would reward it.
+
+
 ### The parallel sampler was 85% barrier, and the constant guarding it was calibrated against that
 
 `Sampler::sweeps_par` waited on a `std::sync::Barrier` at every colour-class boundary. A std barrier

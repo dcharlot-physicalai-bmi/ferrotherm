@@ -92,6 +92,7 @@ score. Scoring it found three defects on the first run.
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
 | Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
+| **Locally-informed proposals** (Zanella JASA 2020; Grathwohl et al. ICML 2021) — this review did not locate one in a thermodynamic-computing stack | `informed::Informed` — proposal weighted by the exact `ΔE`, three balancing functions | **shipped, verified** — samples the certified Boltzmann distribution, and **41× lower `tau_int` per flip** at `beta = 2` |
 | A barrier that does not park, and the constant it invalidated | `barrier::SpinBarrier` — spin briefly, then yield; never a syscall | **shipped, verified** — the parallel sampler's worst cell went **1.00x → 3.52x** and its best **5.80x → 11.98x** |
 | **Directed rounding for every claimed bound** (this review did not locate one in a thermodynamic-computing stack) | `round::sum_down` / `sum_up` / `accumulation_guard` — one pass, Kahan–Babuška guard, no interval type | **shipped, verified** — and it found `bound::forest` returning a bound ABOVE the optimum on a third of random trees |
 | Variational positive phase — the deep-Boltzmann-machine recipe (Salakhutdinov & Hinton 2009) | `ebm::train_variational` + `meanfield::naive_mean_field_clamped` — mean field over the hidden units with the visible ones pinned | **shipped, verified** — and scored against the exact ceiling, where it **loses** to the sampled posterior, for the reason the approximation predicts |
@@ -1152,6 +1153,52 @@ beats the converged one — `5 iters 80.5%`, `20 iters 36.7%`, `500 iters 46.0%`
 not a better approximation to the posterior; it is a different estimator that happens to fit better,
 the way early stopping regularises. The reflex on seeing 46% is to raise the cap, and raising it is
 not what helps.
+
+### Twelve samplers, and not one let the energy choose where to look
+
+`gibbs`, `icm`, `tabu`, `bls`, `sqa`, `popanneal`, `cluster`, `tempering`, `multispin`, `hfs`, `sbm`,
+`adaptive` — every single-flip sampler in this crate picked its next site in order or uniformly at
+random. That is the default the discrete-sampling literature moved away from: Zanella's
+locally-balanced proposals (JASA 2020) and Grathwohl et al.'s *Oops I Took A Gradient*
+(ICML 2021) both weight the proposal by how much a move would change the target.
+
+**For an Ising model the informed proposal is exact and free.** Those papers approximate `ΔE` with a
+gradient because their state spaces are too big to score every neighbour; a single-flip neighbourhood
+on a spin model is not. Flipping site `k` changes the energy by exactly `ΔE_k = 2 s_k f_k`, and `f_k`
+is the local field every sampler here already computes — so there is no Taylor expansion to justify.
+
+Propose `k` with probability `∝ g(π(flip k)/π(s))` for any **balancing function** `g(x) = x·g(1/x)`.
+That condition is what makes the energy cancel out of the Metropolis–Hastings ratio, leaving
+`α = min(1, Z_i/Z_j)` — only the two normalisers, for every `g`.
+
+Measured on a 256-spin frustrated ring with chords, four seeds, both arms given the same number of
+spin flips. Integrated autocorrelation time of the energy **in flips**, so lower is better:
+
+```text
+   beta        gibbs         sqrt       barker   metropolis   sqrt acc
+    0.2          134          131          137          144      0.998
+    1.0         1246          406          378          414      0.966
+    2.0        27638         1598          671         5135      0.856
+    4.0        95593        56463        24627        40391      0.927
+```
+
+**Forty-one times faster per flip at `beta = 2`**, and *not faster at all* at `beta = 0.2` — which is
+the prediction, not a disappointment: a flat landscape makes every weight equal and this becomes
+Gibbs with extra arithmetic.
+
+Two things worth taking from the table. **The balancing function matters more than the literature
+suggests, and in the other direction**: Zanella recommends `√x` as the most concentrated choice, and
+`Barker` beats it 2.4-fold at `beta = 2`. The spread across the three is eightfold there — larger
+than the gap between the worst informed chain and Gibbs one rung up, so choosing without measuring
+forfeits most of the speedup. And **the acceptance rate reads backwards here**: `α = Z_i/Z_j`, so a
+high rate means the proposal landscape barely moved, which is exactly the regime where the method
+has nothing to offer.
+
+The load-bearing check is not the speed. A proposal weighted by energy is precisely the change that
+improves mixing and silently shifts the target — a chain that goes downhill more eagerly than it
+climbs back still converges, to the wrong thing. It is certified against exact enumeration at all
+three balancing functions, and "accept everything" is a recorded mutation because it mixes *faster*
+and a speed measurement would reward it.
 
 ### The parallel sampler was 85% barrier, and the floor guarding it was calibrated against that
 

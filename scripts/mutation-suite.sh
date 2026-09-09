@@ -270,6 +270,19 @@ mutations=(
   # the physics test still passes, and the numbers are silently different from every prior run.
   "src/gibbs.rs|                                        ^ (ci as u64) << 32,|                                        ^ (ci as u64) << 33,|parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape|a parallel RNG stream derived differently"
 
+  # `g(x) = x g(1/x)` is the whole reason the energy cancels out of the acceptance. Break it and the
+  # chain still runs, still converges, and converges to the wrong distribution -- which only a check
+  # against enumeration can see.
+  "src/informed.rs|            Balance::Sqrt => 0.5 * log_r,|            Balance::Sqrt => log_r,|informed|a balancing function that is not balanced"
+
+  # Accepting everything is a valid-looking sampler with no Metropolis correction at all. It mixes
+  # FASTER, which is the trap: a speed measurement would reward it.
+  "src/informed.rs|            if after <= before || self.rng.f64() < before / after {|            if true {|informed|an informed chain that accepts everything"
+
+  # The proposal is normalised by a total maintained incrementally. Flip the sign of the field
+  # repair and the weights describe a state the sampler is not in.
+  "src/informed.rs|            self.fields[j] += self.g.w[e] * 2.0 * sk;|            self.fields[j] -= self.g.w[e] * 2.0 * sk;|informed|an incremental field update with the wrong sign"
+
   # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
   # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
   # gradient it does not have and the stationary point disappears.
