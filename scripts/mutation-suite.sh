@@ -39,11 +39,11 @@ fi
 # Keep `old` long enough to be unambiguous and short enough to survive unrelated edits nearby.
 mutations=(
   # The defect that forced 0.12.0. Put the invented upper bound back and the new test must catch it.
-  "src/lp.rs|[name, \">=\", _] => err(|[name, \">=\", lo] => return Ok((num(lo)?, name.to_string(), num(lo)? + 1)), #[allow(unreachable_patterns)] [name, \">=\", _] => err(|lp::|an unbounded LP bound"
+  "src/lp.rs|[name, \">=\", _] => err(|[name, \">=\", lo] => return Ok((num(lo)?, name.to_string(), num(lo)? + 1)), #[allow(unreachable_patterns)] [name, \">=\", _] => err(|a_bound_with_no_upper_end_is_refused_rather_than_invented|an unbounded LP bound"
 
   # Determinism. HashMap iteration order decides CSR neighbour order, which decides the order every
   # local field is summed in, which changes the last bits of the energy. Five runs, five programs.
-  "src/graph.rs|BTreeMap<(u32, u32), f64> = std::collections::BTreeMap::new()|HashMap<(u32, u32), f64> = std::collections::HashMap::new()|graph::|CSR order via HashMap"
+  "src/graph.rs|BTreeMap<(u32, u32), f64> = std::collections::BTreeMap::new()|HashMap<(u32, u32), f64> = std::collections::HashMap::new()|a_graph_builds_bit_identically_every_time|CSR order via HashMap"
 
   # A NaN objective coefficient compiled, solved, and reported feasible while silently disabling
   # every other preference -- comparisons against NaN are all false, so the sampler stopped
@@ -57,13 +57,13 @@ mutations=(
   "src/fabric.rs|while n >= 1.0 && tried < 1_000_000 {|while n >= 1.0 && tried < 1_000_000 && top <= 1e6 {|wide_integral|scale_to_fit ceiling refusal"
 
   # `Sum for f64` folds from -0.0, so a model with no soft violations reported \"-0\".
-  "src/model.rs|.sum::<f64>() + 0.0|.sum::<f64>()|soft|soft cost negative zero"
+  "src/model.rs|.sum::<f64>() + 0.0|.sum::<f64>()|a_soft_constraint_is_a_price_not_a_rule|soft cost negative zero"
 
   # A `Device::run` that accepts a seed and swallows it reports reproducibility it does not have:
   # the caller varies the seed, gets one answer every time, and reads a deaf sampler as a confident
   # one. `conform`'s determinism case CANNOT catch this -- an ignored seed is perfectly
   # reproducible -- so the tests that can are the ones named here.
-  "gpu/src/lib.rs|let offset = (seed as u32).wrapping_mul(0x9E37_79B9);|let offset = 0u32; let _ = seed;|seed|Device::run swallows its seed|ferrotherm-gpu"
+  "gpu/src/lib.rs|let offset = (seed as u32).wrapping_mul(0x9E37_79B9);|let offset = 0u32; let _ = seed;|the_seed_selects_a_stream_rather_than_being_swallowed|Device::run swallows its seed|ferrotherm-gpu"
 
   # A BUSY MACHINE HAS NO IDLE. `Meter::idle` guarded the DELTA against the baseline's noise and
   # never checked the baseline was idle, so a complete energy table was published here from a
@@ -71,20 +71,20 @@ mutations=(
   # the baseline, which overstates the idle share, which is the direction that flattered the very
   # argument being made. Leave the guard in place but make it always permit, and the test that
   # exercises the DECISION (rather than whatever this machine happens to be doing) must go red.
-  "meter/src/lib.rs|Some(l) if l > QUIET_LOAD => Err(format!(|Some(l) if false && l > QUIET_LOAD => Err(format!(|quiet|idle baseline on a busy machine|ferrotherm-meter"
+  "meter/src/lib.rs|Some(l) if l > QUIET_LOAD => Err(format!(|Some(l) if false && l > QUIET_LOAD => Err(format!(|the_quiet_threshold_refuses_a_loaded_machine_and_names_the_reason|idle baseline on a busy machine|ferrotherm-meter"
 
   # SOUNDNESS of the optimality bound. Drop one edge from the forest partition and `E = sum of the
   # parts` stops holding, so the "bound" describes a different problem -- still a number, still
   # plausible, and free to sit ABOVE the true minimum, which reports a NEGATIVE gap and makes every
   # conclusion drawn from it backwards. Checked against brute force on 200 random instances.
-  "src/bound.rs|                forest.push((i, j, w));|                if !(i == 0 && j == 1) { forest.push((i, j, w)); }|bound|optimality bound drops an edge"
+  "src/bound.rs|                forest.push((i, j, w));|                if !(i == 0 && j == 1) { forest.push((i, j, w)); }|the_partition_covers_every_edge_exactly_once|optimality bound drops an edge"
 
   # Subgradient ascent is not monotone -- 145 of 200 random instances peak before the last round --
   # so the bound must be the best round seen, not the final one. `if true` takes the last. This
   # mutation SURVIVED the whole suite on its first outing, because `forest(g, r)` already maximises
   # over rounds 0..r and no test could see inside that; `Bound::best_round` exists to make the
   # difference observable from outside.
-  "src/bound.rs|        if total > best {|        if true {|bound|optimality bound takes the last round"
+  "src/bound.rs|        if total > best {|        if true {|the_bound_is_the_best_round_not_the_last_one|optimality bound takes the last round"
 
   # ---- the 0.44.0 receipt, whose defects all shipped once ----------------------------------------
 
@@ -95,7 +95,7 @@ mutations=(
   # no `e_read` precisely so a run that read cannot be priced against it, and the model API
   # returned a measured-silicon figure anyway. Set the charge to zero and the receipt test must go
   # red on BOTH the count and the refusal.
-  "src/tempering.rs|                l.reads += g.n as u64;|                l.reads += 0;|receipt_tests|the readback goes uncharged"
+  "src/tempering.rs|                l.reads += g.n as u64;|                l.reads += 0;|a_best_of_run_is_charged_for_the_states_it_reads_to_find_the_best|the readback goes uncharged"
 
   # A BEST-OF SEARCH PAYS FOR EVERY TRY. `best_of_all` sums the ledgers of all N; carrying only the
   # winner's makes an N-restart search read as one run. This shipped across the whole C ABI -- 1, 4
@@ -107,7 +107,7 @@ mutations=(
   # this crate (step = max|w| / levels); `FixedFabric` uses an absolute Q.8 grid. Under the wrong
   # declaration `check` computed ~0 relative error for a program whose weights were all 0.001 and
   # accepted it, and the fabric quantised every coupling to zero and sampled an empty graph.
-  "src/hdl.rs|        f.coupling_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };|        f.coupling_precision = Precision::Fixed { bits: 12 };|declared_precision|fabric mis-declares its grid"
+  "src/hdl.rs|        f.coupling_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };|        f.coupling_precision = Precision::Fixed { bits: 12 };|the_declared_step_is_the_one_the_emitter_quantises_on|fabric mis-declares its grid"
 
   # LOOKING AT THE ALTERNATIVES MUST NOT CHANGE THE RECEIPT. `ft_model_select_optimum` assigns a
   # Solution out of `h.answers`, which holds one per TRY. Without the recompute a 12-try solve
@@ -273,30 +273,30 @@ mutations=(
   # `g(x) = x g(1/x)` is the whole reason the energy cancels out of the acceptance. Break it and the
   # chain still runs, still converges, and converges to the wrong distribution -- which only a check
   # against enumeration can see.
-  "src/informed.rs|            Balance::Sqrt => 0.5 * log_r,|            Balance::Sqrt => log_r,|informed|a balancing function that is not balanced"
+  "src/informed.rs|            Balance::Sqrt => 0.5 * log_r,|            Balance::Sqrt => log_r,|every_balancing_function_is_balanced|a balancing function that is not balanced"
 
   # Accepting everything is a valid-looking sampler with no Metropolis correction at all. It mixes
   # FASTER, which is the trap: a speed measurement would reward it.
-  "src/informed.rs|        let alpha = (before / after).min(1.0);|        let alpha = 1.0;|informed|an informed chain that accepts everything"
+  "src/informed.rs|        let alpha = (before / after).min(1.0);|        let alpha = 1.0;|the_informed_chain_samples_the_boltzmann_distribution|an informed chain that accepts everything"
 
   # The proposal is normalised by a total maintained incrementally. Flip the sign of the field
   # repair and the weights describe a state the sampler is not in.
-  "src/informed.rs|            self.fields[j] += self.g.w[e] * 2.0 * sk;|            self.fields[j] -= self.g.w[e] * 2.0 * sk;|informed|an incremental field update with the wrong sign"
+  "src/informed.rs|            self.fields[j] += self.g.w[e] * 2.0 * sk;|            self.fields[j] -= self.g.w[e] * 2.0 * sk;|the_incremental_total_agrees_with_a_recomputation|an incremental field update with the wrong sign"
 
   # The shift centres the weights. Bounded over the whole MODEL instead of centred on the weights
   # actually present, a single pinned variable -- which is what clamping is -- underflows every
   # other site to zero and the chain stops dead. It shipped that way; `factor_by_sampling` scored
   # 0 of 45 against plain Gibbs's 36 before this line changed.
-  "src/informed.rs|        self.shift = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);|        self.shift = logs.iter().copied().fold(f64::INFINITY, f64::min);|informed|a shift centred on the smallest weight instead of the largest"
+  "src/informed.rs|        self.shift = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);|        self.shift = logs.iter().copied().fold(f64::INFINITY, f64::min);|a_pinned_variable_does_not_stall_the_rest_of_the_model|a shift centred on the smallest weight instead of the largest"
 
   # The gate penalty is a SIGNED expansion of the indicator over subsets. Drop the signs and it is
   # still a polynomial, still has a ground state, and encodes a different relation entirely.
-  "src/invertible.rs|                            if a >> i & 1 == 0 {|                            if false {|invertible|an indicator expansion with the signs dropped"
+  "src/invertible.rs|                            if a >> i & 1 == 0 {|                            if false {|the_penalty_counts_violated_gates_exactly|an indicator expansion with the signs dropped"
 
   # An array multiplier's final carry is one line and one bit. Dropping it gives a circuit that is
   # a perfectly good Ising model computing the wrong product for exactly the operand pairs that
   # overflow -- which is why the test enumerates every pair rather than sampling some.
-  "src/invertible.rs|            next.push(ci);|            let _ = ci;|invertible|a multiplier that drops its final carry"
+  "src/invertible.rs|            next.push(ci);|            let _ = ci;|a_multiplier_computes_products_exhaustively|a multiplier that drops its final carry"
 
   # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
   # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
@@ -344,6 +344,45 @@ bad=0
 ran=0
 unevaluated=0
 skipped_rows=""
+# EVERY FILTER MUST NAME EXACTLY ONE TEST, and until an audit asked, fourteen did not: two rows
+# filtered on `bound`, which matches 54 of the 906 lib tests. A broad filter still goes red, so the
+# suite still reports "caught" -- but it is then evidence that SOMETHING noticed, not that the test
+# the row names did. Two of the fourteen named a test that could not have caught the mutation at
+# all. This resolves each filter against the real test list before any mutation is applied.
+check_filters() {
+  local list_root list_pkg row file old new filter label pkg n
+  list_root=$(cargo test --release --lib -- --list 2>/dev/null | sed -n 's/: test$//p')
+  local bad=0
+  for row in "${mutations[@]}"; do
+    IFS='|' read -r file old new filter label pkg <<<"$row"
+    if [ -n "${pkg:-}" ]; then
+      list_pkg=$(cargo test --release -p "$pkg" -- --list 2>/dev/null | sed -n 's/: test$//p')
+    else
+      list_pkg="$list_root"
+    fi
+    n=$(printf '%s\n' "$list_pkg" | grep -cF -- "$filter" || true)
+    if [ "$n" -ne 1 ]; then
+      echo "filter '$filter' names $n tests, not 1 -- '$label'" >&2
+      bad=$((bad + 1))
+    fi
+  done
+  if [ "$bad" -gt 0 ]; then
+    echo "$bad row(s) do not name exactly one test. A row is evidence about the test it names." >&2
+    exit 2
+  fi
+}
+check_filters
+
+# THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
+# suite that still says "all mutations caught" over a smaller set -- which reads exactly like
+# success. Nothing anywhere asserted how many rows there should be until an audit asked.
+expected_rows=55
+if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
+  echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
+  echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
+  exit 2
+fi
+
 for row in "${mutations[@]}"; do
   IFS='|' read -r file old new filter label pkg <<<"$row"
   # `|` IS THE SEPARATOR, so a mutation whose code contains one shifts every field after it: the
