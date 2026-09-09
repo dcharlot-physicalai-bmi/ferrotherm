@@ -418,7 +418,7 @@ const ModPtr = Ptr{Cvoid}
 @cfn ft_ommx_error Cuint Ptr{UInt8} Cuint
 @cfn ft_ebm_rbm SimPtr Cuint Cuint Cdouble Culonglong
 @cfn ft_ebm_dbm SimPtr Cuint Ptr{Cuint} Cuint Cdouble Culonglong
-@cfn ft_ebm_train Cuint SimPtr Cuint Ptr{Int8} Cuint Cuint Cuint Cuint Cdouble Cuint Culonglong
+@cfn ft_ebm_train Cuint SimPtr Cuint Ptr{Int8} Cuint Cuint Cuint Cuint Cuint Cdouble Cuint Culonglong
 @cfn ft_ebm_log_likelihood Cdouble SimPtr Cuint Ptr{Int8} Cuint
 @cfn ft_ebm_bars_and_stripes Cuint Cuint Ptr{Int8} Cuint
 @cfn ft_ebm_error Cuint Ptr{UInt8} Cuint
@@ -2720,15 +2720,18 @@ same spins and a fine start for sampling the fit.
 
 Zero means the documented default for every knob. The learning rate **decays to a tenth** across
 training — without that the fit has a noise floor and never reaches its own fixed point.
+
+`method` picks the estimator: 0 CD-k, 1 PCD, 2 pseudolikelihood, 3 minimum probability flow, 4 ratio matching, 5 variational, 6 exact maximum likelihood. One of the seven reached
+this ABI before, with PCD pinned off in the Rust body.
 """
-function fit!(sim::Simulation, rows; epochs::Integer = 0, k::Integer = 0,
+function fit!(sim::Simulation, rows; method::Integer = 0, epochs::Integer = 0, k::Integer = 0,
               positive_sweeps::Integer = 0, learning_rate::Real = 0.0, batch::Integer = 0,
               seed::Integer = 0)
     flat, width, n = _flat_rows(rows)
     _live(sim)
-    ok = ft_ebm_train(sim.handle, Cuint(width), pointer(flat), Cuint(n), Cuint(epochs), Cuint(k),
-                      Cuint(positive_sweeps), Cdouble(learning_rate), Cuint(batch),
-                      Culonglong(seed))
+    ok = ft_ebm_train(sim.handle, Cuint(width), pointer(flat), Cuint(n), Cuint(method),
+                      Cuint(epochs), Cuint(k), Cuint(positive_sweeps), Cdouble(learning_rate),
+                      Cuint(batch), Culonglong(seed))
     ok == 0 && error(_ebm_why("that dataset could not be fitted"))
     sim
 end

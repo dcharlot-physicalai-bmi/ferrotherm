@@ -344,7 +344,7 @@ _ebm_dbm = _sig("ft_ebm_dbm", _p,
                 [c_uint32, POINTER(c_uint32), c_uint32, c_double, c_uint64])
 _ebm_train = _sig("ft_ebm_train", c_uint32,
                   [_p, c_uint32, POINTER(c_int8), c_uint32, c_uint32, c_uint32, c_uint32,
-                   c_double, c_uint32, c_uint64])
+                   c_uint32, c_double, c_uint32, c_uint64])
 _ebm_log_likelihood = _sig("ft_ebm_log_likelihood", c_double,
                            [_p, c_uint32, POINTER(c_int8), c_uint32])
 _ebm_bars_and_stripes = _sig("ft_ebm_bars_and_stripes", c_uint32, [c_uint32, POINTER(c_int8), c_uint32])
@@ -1441,6 +1441,11 @@ is how a dropped GPU dispatch turns into a believable energy.
     # -- lifetime --
 
     def collect(self, draws: int = 512, thin: int = 1, burn_in: int = 0) -> "SampleSet":
+        # THE KEYWORD ORDER HERE IS NOT THE C ORDER, deliberately. `ft_collect` and Rust's
+        # `samples::Plan::new` both take (burn_in, draws, thin) — chronological. Python leads with
+        # the argument that has no sensible default. The mapping below is correct and a keyword call
+        # is unambiguous; what to watch is HAND-PORTING a positional call between the two surfaces,
+        # since all three are integers and a swap would be silent.
         """Draw states and keep them.
 
         Every solver here returns one state, which is an optimiser's answer. This is a sampler:
@@ -1608,10 +1613,17 @@ is how a dropped GPU dispatch turns into a believable energy.
 
     # ---- fitting a model to data ---------------------------------------------------------------
 
-    def fit(self, rows: Sequence[Sequence[int]], visible: int = 0, epochs: int = 0,
-            k: int = 0, positive_sweeps: int = 0, learning_rate: float = 0.0,
+    def fit(self, rows: Sequence[Sequence[int]], visible: int = 0, method: int = 0,
+            epochs: int = 0, k: int = 0, positive_sweeps: int = 0, learning_rate: float = 0.0,
             batch: int = 0, seed: int = 0) -> "Sim":
-        """Fit this model's weights to ``rows`` by contrastive divergence. Returns ``self``.
+        """Fit this model's weights to ``rows``. Returns ``self``.
+
+        ``method`` picks the estimator: 0 CD-k, 1 PCD, 2 pseudolikelihood, 3 minimum probability
+        flow, 4 ratio matching, 5 variational positive phase, 6 exact maximum likelihood. One of the
+        seven reached this ABI before, with PCD pinned off in the Rust body, so every non-Rust
+        surface could run CD and nothing else. Methods 0, 1 and 5 read ``k``, ``positive_sweeps``,
+        ``batch`` and ``seed``; 2, 3, 4 and 6 are deterministic and read only ``epochs`` and
+        ``learning_rate``.
 
         Every other method here takes the model as given and samples, optimises or bounds it. This
         one **produces** one, and it is why a thermodynamic stack is a paradigm rather than a
@@ -1641,8 +1653,8 @@ is how a dropped GPU dispatch turns into a believable energy.
         """
         self._live()
         flat, width, n = _flatten_rows(rows, visible)
-        ok = _ebm_train(self._h, width, flat, n, int(epochs), int(k), int(positive_sweeps),
-                        float(learning_rate), int(batch), int(seed))
+        ok = _ebm_train(self._h, width, flat, n, int(method), int(epochs), int(k),
+                        int(positive_sweeps), float(learning_rate), int(batch), int(seed))
         if not ok:
             raise ValueError(_ebm_why() or "that dataset could not be fitted")
         return self

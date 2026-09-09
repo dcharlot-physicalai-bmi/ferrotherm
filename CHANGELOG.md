@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### One of seven EBM trainers reached the C ABI, and `persistent` was pinned false in the body
+
+`ft_ebm_train` took no method selector and set `persistent: false` internally, so **every non-Rust
+surface could run contrastive divergence and nothing else** — not even the PCD that Rust exposes as
+a flag on the same struct, let alone pseudolikelihood, minimum probability flow, ratio matching, the
+variational positive phase or exact maximum likelihood.
+
+The parity gate could not see it. It proves every `pub extern "C" fn` is declared on every surface,
+which says nothing about whether the symbol reaches what it wraps.
+
+`ft_ebm_train` now takes `method` (0 CD-k, 1 PCD, 2 pseudolikelihood, 3 minimum probability flow,
+4 ratio matching, 5 variational, 6 exact), threaded through the C header, Python, Julia and Zig. An
+unknown method is refused by name rather than falling through to CD, and the three flip losses
+refuse a latent model across the ABI the same way they do in Rust.
+
+`every_ebm_trainer_reaches_the_abi_and_they_differ` fits with each of the seven and requires at
+least five distinct results — seven methods that all quietly returned CD's answer would pass a
+weaker check.
+
+Also: `zig/build.zig.zon` said `0.11.1` where every other manifest said `0.44.0`.
+
+**And one audit finding did not survive checking.** It reported a "silent wrong answer across the
+language boundary" between `Plan::new(burn_in, draws, thin)` and Python's
+`collect(draws, thin, burn_in)`. Python maps correctly onto the C order; the difference is only in
+the keyword order it exposes, which is internally consistent. It is a hand-porting trap, not a
+defect, and both sides now say so rather than being changed.
+
+
 ### A shipped crate had a feature that did not compile, and the doc gate reported 100% the whole time
 
 `ferrotherm-silicon` declares one optional feature, `flash` — 481 lines of FT2232H MPSSE JTAG that

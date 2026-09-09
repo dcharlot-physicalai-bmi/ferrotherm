@@ -1115,9 +1115,21 @@ ft_sim *ft_ebm_dbm(uint32_t visible, const uint32_t *layers, uint32_t n_layers,
  *
  * Zero means "the documented default" for epochs, k, positive_sweeps, batch and learning_rate. The
  * rate DECAYS to a tenth across training; without that decay the fit has a noise floor and never
- * reaches its own fixed point. */
+ * reaches its own fixed point. *
+ * `method` selects the estimator, and this ABI had no way to say before:
+ *   0 contrastive divergence CD-k (the previous behaviour, and the default)
+ *   1 persistent CD (PCD, Tieleman 2008)
+ *   2 pseudolikelihood (Besag 1975)
+ *   3 minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011)
+ *   4 ratio matching (Hyvarinen 2007)
+ *   5 variational positive phase (Salakhutdinov & Hinton 2009)
+ *   6 exact maximum likelihood, by enumeration
+ *
+ * One of seven trainers reached this ABI before, with `persistent` pinned false in the body.
+ * Methods 0, 1 and 5 read k, positive_sweeps, batch and seed; 2, 3, 4 and 6 are deterministic and
+ * read only epochs and learning_rate. */
 uint32_t ft_ebm_train(ft_sim *sim, uint32_t visible, const int8_t *rows, uint32_t n_rows,
-                      uint32_t epochs, uint32_t k, uint32_t positive_sweeps,
+                      uint32_t method, uint32_t epochs, uint32_t k, uint32_t positive_sweeps,
                       double learning_rate, uint32_t batch, uint64_t seed);
 
 /* Mean log-likelihood per row under the current model, EXACT, by enumeration. NaN with the reason

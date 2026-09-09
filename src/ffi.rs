@@ -6364,6 +6364,29 @@ pub extern "C" fn ft_ebm_dbm(
 /// `epochs`, `k`, `positive_sweeps` and `batch` clamp up from 0 to the documented defaults of
 /// [`crate::ebm::Params`]. The learning rate DECAYS to a tenth of `learning_rate` across training;
 /// without that decay the fit has a noise floor and never reaches its own fixed point.
+///
+/// # `method` selects the estimator, and this ABI used to have no way to say
+///
+/// ```text
+///   0  contrastive divergence, CD-k          (the previous behaviour, and the default)
+///   1  persistent CD (PCD, Tieleman 2008)
+///   2  pseudolikelihood (Besag 1975)
+///   3  minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011)
+///   4  ratio matching (Hyvarinen 2007)
+///   5  variational positive phase (Salakhutdinov & Hinton 2009)
+///   6  exact maximum likelihood, by enumeration
+/// ```
+///
+/// **One of seven trainers reached this ABI before, and `persistent` was pinned to `false` in the
+/// body** — so every non-Rust surface could run CD and nothing else, including the PCD that the
+/// Rust `Params` exposes as a flag. That is a capability the C surface silently did not have; an
+/// audit of cross-surface parity found it because the parity gate checks that SYMBOLS exist, not
+/// that they reach what they wrap.
+///
+/// Which parameters each method reads differs, and unread ones are ignored rather than refused:
+/// methods 0, 1 and 5 read `k`, `positive_sweeps`, `batch` and `seed`; methods 2, 3, 4 and 6 are
+/// deterministic and read only `epochs` and `learning_rate`. Method 6 refuses a model above
+/// [`crate::ebm::MAX_ENUMERATED`] spins rather than taking a very long time.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn ft_ebm_train(
@@ -6371,6 +6394,7 @@ pub extern "C" fn ft_ebm_train(
     visible: u32,
     rows: *const i8,
     n_rows: u32,
+    method: u32,
     epochs: u32,
     k: u32,
     positive_sweeps: u32,
@@ -6395,9 +6419,29 @@ pub extern "C" fn ft_ebm_train(
         },
         learning_rate: if learning_rate == 0.0 { d.learning_rate } else { learning_rate },
         batch: if batch == 0 { d.batch } else { batch as usize },
-            persistent: false,
+        persistent: method == 1,
     };
-    match crate::ebm::train(&s.graph, &data, &p, seed) {
+    let fp = crate::ebm::FitParams {
+        epochs: p.epochs,
+        lr: p.learning_rate,
+        l2: 0.0,
+    };
+    let fitted = match method {
+        0 | 1 => crate::ebm::train(&s.graph, &data, &p, seed),
+        2 => crate::ebm::train_pseudolikelihood(&s.graph, &data, &fp),
+        3 => crate::ebm::train_mpf(&s.graph, &data, &fp),
+        4 => crate::ebm::train_ratio_matching(&s.graph, &data, &fp),
+        5 => crate::ebm::train_variational(&s.graph, &data, &p, seed),
+        6 => crate::ebm::train_exact(&s.graph, &data, &fp),
+        other => {
+            set_ebm_error(&format!(
+                "method {other} is not one of 0 (CD), 1 (PCD), 2 (pseudolikelihood), 3 (minimum \
+                 probability flow), 4 (ratio matching), 5 (variational), 6 (exact)"
+            ));
+            return 0;
+        }
+    };
+    match fitted {
         Ok(t) => {
             *s.graph = t.graph;
             // Everything derived from the OLD weights is now false. Dropping it is not tidiness.
@@ -6502,6 +6546,92 @@ fn read_dataset(visible: u32, rows: *const i8, n_rows: u32) -> Option<crate::ebm
 
 #[cfg(test)]
 mod ebm_ffi_tests {
+
+    /// EVERY TRAINER MUST REACH THE ABI, and for as long as this function existed exactly one did.
+    ///
+    /// `persistent` was pinned to `false` in the body, so PCD — a flag the Rust `Params` exposes —
+    /// was unreachable from C, Python, Julia, Zig and wasm alike. The other five trainers had no
+    /// entry point at all. The parity gate could not see it: it proves every symbol is DECLARED on
+    /// every surface, which says nothing about whether the symbol reaches what it wraps.
+    ///
+    /// Each method is checked to move the model, so a `method` the body silently ignored would show
+    /// up as a fit identical to CD's rather than passing quietly.
+    #[test]
+    fn every_ebm_trainer_reaches_the_abi_and_they_differ() {
+        let rows: Vec<i8> = crate::ebm::bars_and_stripes(2).rows.concat();
+        let n_rows = u32::try_from(rows.len() / 4).unwrap();
+        let read_err = || {
+            let n = ft_ebm_error(core::ptr::null_mut(), 0) as usize;
+            let mut b = vec![0u8; n];
+            let got = ft_ebm_error(b.as_mut_ptr(), n as u32) as usize;
+            String::from_utf8_lossy(&b[..got]).to_string()
+        };
+        // FULLY VISIBLE, because three of the seven cannot be anything else: pseudolikelihood,
+        // minimum probability flow and ratio matching all condition a spin on every other, which a
+        // latent unit does not supply. Their refusal on a latent model is checked below rather than
+        // being an obstacle here.
+        //
+        // Off zero weights: a model at zero can be a stationary point of the exact gradient, and
+        // method 6 would then not move at all.
+        let seeded = || {
+            let mut b = crate::graph::GraphBuilder::new(4);
+            let mut k = 0usize;
+            for i in 0..4 {
+                for j in (i + 1)..4 {
+                    b.couple(i, j, 0.15 * ((k % 7) as f64 - 3.0) / 3.0);
+                    k += 1;
+                }
+            }
+            b.build()
+        };
+        let mut fits = Vec::new();
+        for method in 0..7u32 {
+            let sim = Sim::new(seeded(), 1.0, 7);
+            assert!(!sim.is_null());
+            let before = ft_ebm_log_likelihood(sim, 4, rows.as_ptr(), n_rows);
+            let ok = ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, method, 200, 5, 5, 0.05, 6, 3);
+            assert_eq!(ok, 1, "method {method} failed: {}", read_err());
+            let after = ft_ebm_log_likelihood(sim, 4, rows.as_ptr(), n_rows);
+            assert!(
+                after.is_finite() && after > before,
+                "method {method} did not improve the likelihood: {before} -> {after}"
+            );
+            fits.push(after);
+            ft_free(sim);
+        }
+        // Seven methods that all returned CD's answer would pass every check above.
+        let mut distinct = fits.clone();
+        distinct.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        distinct.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+        assert!(
+            distinct.len() >= 5,
+            "the methods must actually differ, got {} distinct results from 7: {fits:?}",
+            distinct.len()
+        );
+
+        // The three flip losses refuse a LATENT model by name, across the ABI. That refusal is a
+        // property of the objective, not of the binding, and a surface that swallowed it would let
+        // a caller fit a deep model with a method that cannot see its hidden units.
+        for method in [2u32, 3, 4] {
+            let sim = ft_ebm_rbm(4, 3, 1.0, 7);
+            assert_eq!(
+                ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, method, 100, 5, 5, 0.05, 6, 3),
+                0,
+                "method {method} must refuse a latent model"
+            );
+            let why = read_err();
+            assert!(why.contains("observed"), "method {method} refusal is unhelpful: {why}");
+            ft_free(sim);
+        }
+
+        // And an unknown method is refused BY NAME rather than falling through to CD.
+        let sim = Sim::new(seeded(), 1.0, 7);
+        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 99, 10, 5, 5, 0.05, 6, 3), 0);
+        let why = read_err();
+        assert!(why.contains("99") && why.contains("ratio matching"), "unhelpful refusal: {why}");
+        ft_free(sim);
+    }
+
     use super::*;
 
     /// The whole ABI family, end to end, and the invalidation that makes it safe to compose.
@@ -6528,7 +6658,7 @@ mod ebm_ffi_tests {
         assert!(ft_tabu(sim, 2000, 0, 0).is_finite());
         assert!(unsafe { sim.as_ref() }.unwrap().tb.is_some());
 
-        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 600, 10, 5, 0.05, 6, 3), 1);
+        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 0, 600, 10, 5, 0.05, 6, 3), 1);
         let after = ft_ebm_log_likelihood(sim, 4, rows.as_ptr(), n_rows);
         assert!(after > before + 0.05, "training must help: {before:.4} -> {after:.4}");
         assert!(after < 0.0, "a log-likelihood is negative: {after}");
@@ -6608,12 +6738,12 @@ mod ebm_ffi_tests {
 
         let sim = ft_ebm_rbm(4, 2, 1.0, 1);
         let rows = [1i8, -1, 1, -1];
-        assert_eq!(ft_ebm_train(sim, 4, core::ptr::null(), 1, 10, 1, 1, 0.05, 1, 1), 0);
+        assert_eq!(ft_ebm_train(sim, 4, core::ptr::null(), 1, 0, 10, 1, 1, 0.05, 1, 1), 0);
         assert!(read().contains("no data rows"));
-        assert_eq!(ft_ebm_train(core::ptr::null_mut(), 4, rows.as_ptr(), 1, 10, 1, 1, 0.05, 1, 1), 0);
+        assert_eq!(ft_ebm_train(core::ptr::null_mut(), 4, rows.as_ptr(), 1, 0, 10, 1, 1, 0.05, 1, 1), 0);
         assert!(read().contains("simulation"));
         // A successful call clears it.
-        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), 1, 10, 1, 1, 0.05, 1, 1), 1);
+        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), 1, 0, 10, 1, 1, 0.05, 1, 1), 1);
         assert_eq!(read(), "");
         ft_free(sim);
 

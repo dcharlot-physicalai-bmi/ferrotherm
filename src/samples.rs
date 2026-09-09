@@ -251,6 +251,10 @@ pub struct Plan {
 impl Plan {
     #[must_use]
     /// A plan that discards `burn_in` sweeps, then keeps `draws` states one every `thin` sweeps.
+    /// Chronological order: burn in, then draw, then thin. `ft_collect` on the C ABI takes the
+    /// same three in the same order; **Python's `Sim.collect` leads with `draws`** because that is
+    /// the argument with no sensible default there. All three are integers, so a hand-ported
+    /// positional call between the two would swap silently — the keyword form does not.
     pub fn new(burn_in: usize, draws: usize, thin: usize) -> Plan {
         Plan { burn_in, draws, thin: thin.max(1) }
     }

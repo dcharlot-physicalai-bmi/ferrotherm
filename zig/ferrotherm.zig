@@ -353,7 +353,7 @@ pub const Sim = struct {
     /// has a noise floor and never reaches its own fixed point.
     pub fn fit(self: Sim, visible: u32, rows: []const i8, p: FitParams) Error!void {
         const n_rows: u32 = @intCast(rows.len / visible);
-        const ok = c.ft_ebm_train(self.h, visible, rows.ptr, n_rows, p.epochs, p.k,
+        const ok = c.ft_ebm_train(self.h, visible, rows.ptr, n_rows, p.method, p.epochs, p.k,
             p.positive_sweeps, p.learning_rate, p.batch, p.seed);
         if (ok == 0) return Error.Unfittable;
     }
@@ -1273,6 +1273,14 @@ pub fn ommxError(buf: []u8) []const u8 {
 
 /// How a fit is run. Zero means the documented default, so `.{}` is a working fit.
 pub const FitParams = struct {
+    /// Which estimator: 0 CD-k, 1 PCD, 2 pseudolikelihood, 3 minimum probability flow,
+    /// 4 ratio matching, 5 variational positive phase, 6 exact maximum likelihood.
+    ///
+    /// One of the seven reached this ABI before, with PCD pinned off in the Rust body -- so every
+    /// non-Rust surface could run CD and nothing else. Methods 0, 1 and 5 read `k`,
+    /// `positive_sweeps`, `batch` and `seed`; 2, 3, 4 and 6 are deterministic and read only
+    /// `epochs` and `learning_rate`.
+    method: u32 = 0,
     epochs: u32 = 0,
     k: u32 = 0,
     positive_sweeps: u32 = 0,

@@ -438,8 +438,8 @@ class Sim:
     def excess(self) -> float | None:
         """How far the current state sits above a planted instance's known optimum, as a fraction."""
         ...
-    def fit(self, rows: Sequence[Sequence[int]], visible: int = 0, epochs: int = 0, k: int = 0, positive_sweeps: int = 0, learning_rate: float = 0.0, batch: int = 0, seed: int = 0) -> 'Sim':
-        """Fit this model's weights to ``rows`` by contrastive divergence. Returns ``self``."""
+    def fit(self, rows: Sequence[Sequence[int]], visible: int = 0, method: int = 0, epochs: int = 0, k: int = 0, positive_sweeps: int = 0, learning_rate: float = 0.0, batch: int = 0, seed: int = 0) -> 'Sim':
+        """Fit this model's weights to ``rows``. Returns ``self``."""
         ...
     def gap(self, **kw: Any) -> float:
         """How far this simulation's current state is from optimal, at worst."""
