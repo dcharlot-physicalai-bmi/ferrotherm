@@ -260,6 +260,16 @@ mutations=(
   # still converges to something.
   "src/meanfield.rs|        for i in fixed..g.n {|        for i in 0..g.n {|the_clamped_mean_field_pins_what_it_is_told|a clamp that does not clamp"
 
+  # The barrier is what makes the parallel sweep SAFE, not just fast: within a colour class no two
+  # nodes are adjacent, but class c+1 reads what class c wrote. A barrier that lets one thread run
+  # ahead still produces plausible spins, and only a check on the VALUES catches it.
+  "src/barrier.rs|            if spun < self.spin {|            if spun < self.spin { return; } else if false {|nothing_crosses_a_crossing|a barrier that returns before everyone arrives"
+
+  # The stream derivation is what the bit-identity guarantee rests on. Shifting the class index by
+  # one bit still gives every (sweep, class, chunk) a distinct stream -- the sampler still samples,
+  # the physics test still passes, and the numbers are silently different from every prior run.
+  "src/gibbs.rs|                                        ^ (ci as u64) << 32,|                                        ^ (ci as u64) << 33,|parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape|a parallel RNG stream derived differently"
+
   # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
   # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
   # gradient it does not have and the stationary point disappears.

@@ -77,6 +77,7 @@
 
 pub mod rng;
 pub mod round;
+pub mod barrier;
 pub mod ftp;
 pub mod graph;
 pub mod categorical;

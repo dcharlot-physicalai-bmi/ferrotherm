@@ -92,6 +92,7 @@ score. Scoring it found three defects on the first run.
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
 | Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
+| A barrier that does not park, and the constant it invalidated | `barrier::SpinBarrier` — spin briefly, then yield; never a syscall | **shipped, verified** — the parallel sampler's worst cell went **1.00x → 3.52x** and its best **5.80x → 11.98x** |
 | **Directed rounding for every claimed bound** (this review did not locate one in a thermodynamic-computing stack) | `round::sum_down` / `sum_up` / `accumulation_guard` — one pass, Kahan–Babuška guard, no interval type | **shipped, verified** — and it found `bound::forest` returning a bound ABOVE the optimum on a third of random trees |
 | Variational positive phase — the deep-Boltzmann-machine recipe (Salakhutdinov & Hinton 2009) | `ebm::train_variational` + `meanfield::naive_mean_field_clamped` — mean field over the hidden units with the visible ones pinned | **shipped, verified** — and scored against the exact ceiling, where it **loses** to the sampled posterior, for the reason the approximation predicts |
 | **The exact maximum-likelihood gradient, as a CEILING to score the others by** (this review did not locate one in any EBM library) | `ebm::train_exact` — `⟨ss⟩_data − ⟨ss⟩_model` with BOTH averages enumerated, latent units integrated out exactly | **shipped, verified** — differenced against the true likelihood with and without latent units; no other method passes it |
@@ -1151,6 +1152,62 @@ beats the converged one — `5 iters 80.5%`, `20 iters 36.7%`, `500 iters 46.0%`
 not a better approximation to the posterior; it is a different estimator that happens to fit better,
 the way early stopping regularises. The reflex on seeing 46% is to raise the cap, and raising it is
 not what helps.
+
+### The parallel sampler was 85% barrier, and the floor guarding it was calibrated against that
+
+`Sampler::sweeps_par` already spawned its threads once for the whole batch — an earlier fix for a
+path that had been *thirty-three times slower* than serial. What was left was a
+`std::sync::Barrier` at every colour-class boundary, and a std barrier is a mutex and a condvar, so
+a thread that arrives early **parks**: a syscall, plus a wakeup for every waiter. Measured in situ,
+a chunk of work plus one barrier against the identical loop with the wait removed:
+
+```text
+  threads   chunk    no barrier   std::Barrier   spin-then-yield
+        8   6.6us          3.6us        24.1us            4.0us
+        8  52.6us         28.4us        65.4us           29.4us
+       18  52.6us         29.2us       120.1us           33.5us
+```
+
+At eight threads with a chunk the old floor admitted, the barrier was **85% of the loop**. That is
+why the parallel path used to scale *worse* at eight threads than at four.
+
+`barrier::SpinBarrier` spins briefly and then yields, and never parks. The counter only grows — a
+thread takes a ticket and waits for the count to reach the next multiple of *n* — so there is no
+reset window for a fast thread to lap, which is the race a hand-rolled barrier gets wrong first.
+
+**The spin budget is small, and that is measured rather than reasoned.** The obvious reading of
+"spin instead of park" is that more spinning is better; the first version used 20,000 iterations on
+exactly that logic. Spinning threads take CPU from threads still *working*, so once workers reach
+cores a long budget makes things worse — at 18 threads, 36.3 µs at 200 spins against 51.6 µs at
+20,000. A budget of **zero** already captures most of the win, so what this really buys is *not
+parking*; the spin is a small extra that catches skew below a scheduler tick.
+
+**And then the floor had to move by sixteen times.** `MIN_CHUNK` existed so a thread's share of work
+would outweigh the barrier it waits at — a cost that had just gone away. Recalibrated on the worst
+cell, which is the property that matters:
+
+```text
+  MIN_CHUNK      32     64    128    192   1024
+  worst cell   2.67x  3.55x  1.94x  1.00x  1.00x
+```
+
+At 1024 the two smallest graphs took the serial path and the three-colour graph never threaded at
+all. **A stale constant is not a safe one** — this one was guarding against a cost that no longer
+existed, and the only guarantee it still provided was "no threading".
+
+```text
+   spins   per class  spawn/sweep   hoisted   + spin barrier   threads now
+   1,024         512        0.03x     1.00x            3.52x            8
+   4,096       2,048        0.13x     1.95x            7.68x           18
+  16,384       8,192        0.50x     5.80x           11.98x           18
+  32,761         359           --     1.00x            4.71x            5
+```
+
+Both changes are pure scheduling, and the guarantee that says so was **documented and did not
+exist**: `sweeps_par` cited `parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape` as
+pinning bit-identity against a hand-rolled reference of the original shape. No such test was in the
+crate. It is now, and it is what licenses replacing the barrier without re-deriving whether the
+numbers moved.
 
 ### A bound is a promise about every state, and `+` does not keep promises
 

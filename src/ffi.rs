@@ -5961,12 +5961,24 @@ mod parallel_sweep_tests {
     #[test]
     fn the_thread_count_is_part_of_the_run_and_the_abi_says_which_ran() {
         // A different thread count is a different sample path -- WHEN THE THREADS ACTUALLY RUN. The
-        // graph has to clear the MIN_CHUNK floor for that to be true, which a 16x16 lattice (128
-        // per class) does not: below the floor `sweep_par` IS the serial path, and asking for four
-        // threads there gives the same answer as asking for one because it is the same code. That
-        // is the whole point of the floor and it is worth pinning both halves of.
-        let small_a = lattice(16, 0.5, 0xABC);
-        let small_b = lattice(16, 0.5, 0xABC);
+        // graph has to clear the MIN_CHUNK floor for that to be true: below the floor `sweep_par`
+        // IS the serial path, and asking for four threads there gives the same answer as asking for
+        // one because it is the same code. Both halves are worth pinning.
+        //
+        // THE SIDE LENGTHS ARE DERIVED FROM `MIN_CHUNK`, not written down. This test named 16 and
+        // 96, which were correct while the floor was 1024 and silently wrong the moment it moved to
+        // 64 -- a fixture that encodes a constant's VALUE rather than its MEANING goes stale
+        // without saying so, and this one failed loudly only because the numbers happened to cross.
+        let below = {
+            // One colour class is L^2/2; below the floor needs that under MIN_CHUNK.
+            let mut l = 4u32;
+            while (u64::from(l) * u64::from(l)) / 2 >= crate::gibbs::MIN_CHUNK as u64 {
+                l /= 2;
+            }
+            l
+        };
+        let small_a = lattice(below, 0.5, 0xABC);
+        let small_b = lattice(below, 0.5, 0xABC);
         ft_sweep_par(small_a, 40, 1);
         ft_sweep_par(small_b, 40, 4);
         let n = ft_len(small_a) as usize;
@@ -5979,8 +5991,16 @@ mod parallel_sweep_tests {
         ft_free(small_b);
 
         // Above the floor they diverge, and the reproducibility note on ft_sweep_par depends on it.
-        let a = lattice(96, 0.5, 0xABC);
-        let b = lattice(96, 0.5, 0xABC);
+        // Sized so one class clears the floor four times over, whatever the floor is.
+        let above = {
+            let mut l = 8u32;
+            while (u64::from(l) * u64::from(l)) / 2 < 4 * crate::gibbs::MIN_CHUNK as u64 {
+                l *= 2;
+            }
+            l
+        };
+        let a = lattice(above, 0.5, 0xABC);
+        let b = lattice(above, 0.5, 0xABC);
         ft_sweep_par(a, 40, 1);
         ft_sweep_par(b, 40, 4);
         let n = ft_len(a) as usize;
@@ -5988,7 +6008,7 @@ mod parallel_sweep_tests {
         let sb = unsafe { core::slice::from_raw_parts(ft_spins(b), n) }.to_vec();
         assert_ne!(sa, sb, "one thread and four are different paths once four actually run");
         assert_eq!(ft_threads_used(a), 1);
-        assert_eq!(ft_threads_used(b), 4, "4608 per class clears the floor four times over");
+        assert_eq!(ft_threads_used(b), 4, "a class clearing the floor four times over runs four");
         ft_free(a);
         ft_free(b);
     }
@@ -6011,12 +6031,16 @@ mod parallel_sweep_tests {
         assert!(used <= 3, "5 nodes over 2 colour classes cannot occupy 4 threads: {used}");
         ft_free(s);
 
-        // A class big enough to fill them reports the full count. "Big enough" is now a floor of
-        // MIN_CHUNK = 1024 nodes per thread, not one node per thread: a ring of 400 gives classes
-        // of 200, which four threads would slice into fifties -- and a fifty-node slice finishes
+        // A class big enough to fill them reports the full count. "Big enough" is a floor of
+        // MIN_CHUNK nodes per thread, not one node per thread: a slice smaller than that finishes
         // faster than the barrier it then waits at, which is how asking for threads used to make a
         // caller up to thirty-three times SLOWER. Below the floor the answer is one, and one is the
         // truth: the serial path is what ran.
+        //
+        // Every ring below is a MULTIPLE OF `MIN_CHUNK` rather than a literal. The literals here
+        // were 400/8192/4096/65536, chosen when the floor was 1024, and they encoded its value
+        // instead of its meaning -- so lowering the floor to 64 turned "below the floor" into a
+        // three-thread run and the assertion into a lie about what it was testing.
         let ring = |n: u32, threads: u32| {
             let b = ft_builder_new(n);
             for i in 0..n {
@@ -6028,10 +6052,12 @@ mod parallel_sweep_tests {
             ft_free(s);
             used
         };
-        assert_eq!(ring(400, 4), 1, "50 nodes a thread is below the floor, so it runs serially");
-        assert_eq!(ring(8192, 4), 4, "1024 a thread is exactly the floor, so all four run");
-        assert_eq!(ring(4096, 4), 2, "512 a thread is under it; two threads at 1024 each is not");
-        assert_eq!(ring(65536, 4), 4, "and the floor never asks for MORE than was requested");
+        // A ring of n two-colours into classes of n/2, so `threads = min(asked, (n/2) / MIN_CHUNK)`.
+        let mc = u32::try_from(crate::gibbs::MIN_CHUNK).expect("the floor fits a u32");
+        assert_eq!(ring(2 * mc, 4), 1, "one chunk's worth in a class runs serially");
+        assert_eq!(ring(8 * mc, 4), 4, "exactly the floor per thread, so all four run");
+        assert_eq!(ring(4 * mc, 4), 2, "half the floor per thread; two at the floor each is not");
+        assert_eq!(ring(64 * mc, 4), 4, "and the floor never asks for MORE than was requested");
     }
 
     #[test]

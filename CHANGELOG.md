@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### The parallel sampler was 85% barrier, and the constant guarding it was calibrated against that
+
+`Sampler::sweeps_par` waited on a `std::sync::Barrier` at every colour-class boundary. A std barrier
+is a mutex and a condvar, so an early arrival **parks** — a syscall plus a wakeup per waiter — and
+measured in situ against the same loop with the wait removed, that was **85% of the loop** at eight
+threads with a chunk the floor admitted. It is why the parallel path scaled worse at eight threads
+than at four.
+
+New `barrier::SpinBarrier`: spins briefly, then yields, never parks. The counter only grows, so
+there is no reset window for a fast thread to lap — the race a hand-rolled barrier gets wrong first
+is absent by construction rather than by an ordering argument.
+
+**The spin budget is small, and measured.** More spinning is not better: spinners take CPU from
+threads still working, so once workers reach cores a long budget hurts (18 threads: 36.3 µs at 200
+spins against 51.6 µs at 20,000). A budget of zero already captures most of the win — what this
+buys is *not parking*.
+
+**Then `MIN_CHUNK` had to move 1024 → 64.** It existed so a thread's share would outweigh the
+barrier it waits at, and that cost had just gone away. On the worst cell — the property the module
+states — `32: 2.67x, 64: 3.55x, 128: 1.94x, 192: 1.00x, 1024: 1.00x`. At the old value the two
+smallest graphs took the serial path and the three-colour graph never threaded. A stale constant is
+not a safe one; this one's only remaining effect was "no threading".
+
+```text
+   spins   per class   hoisted   + spin barrier + new floor
+   1,024         512     1.00x                        3.52x
+   4,096       2,048     1.95x                        7.68x
+  16,384       8,192     5.80x                       11.98x
+  32,761         359     1.00x                        4.71x
+```
+
+**Three fixtures encoded a constant's VALUE instead of its MEANING, and lowering the floor found
+them.** Two FFI tests asserted things like "50 nodes a thread is below the floor" — true at 1024,
+false at 64 — and now derive their sizes from `MIN_CHUNK` itself. The third was in `ferrotherm-meter`:
+a workload sized as a fixed 2,000 sweeps, with a comment reading "at roughly 60M node updates a
+second this is about two seconds of work". The machine now does about 200M, so the window fell to
+0.662 s, produced 7 power readings against a floor of 8, and the meter's own guard correctly refused
+to call that an estimate. It sizes itself from a timed probe now.
+
+**And that meter test was carrying a WRONG assertion behind a silent skip.** It asserted
+`led.joules(&p) == None`, which was right under the old all-or-nothing pricing rule and became wrong
+the day `Ledger::joules` changed to charging per operation — the change whose own documentation says
+"under the old rule that measurement could price NOTHING, including the very workload it was taken
+from". A serial sweep performs samples and nothing else, so a sample-only price table prices it
+exactly. The test contradicted the behaviour it exists to check and survived because it returns
+early on any machine with a load average above 2. The meter tests now honour `FERROTHERM_REQUIRE_ALL`,
+the lever `check-semantics`, `check-answers` and the mutation suite already had, so a skip can be
+made fatal on demand.
+
+**The guarantee that licenses all of this was documented and did not exist.** `sweeps_par` cited
+`parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape` as pinning bit-identity against
+a hand-rolled reference of the original spawn-per-class shape. No such test was in the crate, for as
+long as the claim was made. It exists now, and it is what says replacing the barrier was a
+scheduling change and not a numerical one.
+
+
 ### The deep-Boltzmann-machine positive phase, and it loses to sampling here
 
 `ebm::train_variational` fits latent units by solving a mean-field approximation to `p(h | v)` and

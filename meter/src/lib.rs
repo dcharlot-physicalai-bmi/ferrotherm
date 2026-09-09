@@ -609,6 +609,22 @@ mod tests {
     /// a test-ordering dependency to say something this simple.
     static MACHINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Report a skip, and refuse to skip when the caller has said every check must run.
+    ///
+    /// **A SKIPPING TEST PASSES**, which is indistinguishable from a passing one unless it is
+    /// asked. Every other gate in this repository already has this lever —
+    /// `check-semantics`, `check-answers` and the mutation suite all honour
+    /// `FERROTHERM_REQUIRE_ALL` — and the meter tests did not, which is how
+    /// `a_real_workload_measures_above_idle_and_derives_a_price` carried a WRONG assertion for as
+    /// long as it did: on any machine with a load average above 2 it returned before reaching it,
+    /// printed a line nobody reads, and reported ok.
+    fn skipped(reason: &str) {
+        if std::env::var_os("FERROTHERM_REQUIRE_ALL").is_some() {
+            panic!("FERROTHERM_REQUIRE_ALL is set and this check did not run: {reason}");
+        }
+        eprintln!("{reason}; skipping");
+    }
+
     macro_rules! meter_or_skip {
         () => {{
             // Held for the body of the test, so no other test perturbs the readings.
@@ -616,7 +632,7 @@ mod tests {
             match Meter::detect() {
                 Some(m) => (m, own),
                 None => {
-                    eprintln!("no power backend on this machine; skipping");
+                    skipped("no power backend on this machine");
                     return;
                 }
             }
@@ -708,6 +724,28 @@ mod tests {
     fn a_real_workload_measures_above_idle_and_derives_a_price() {
         use ferrotherm::{gibbs::Sampler, ising::lattice2d, ledger::Ledger};
         let (mut m, _own) = meter_or_skip!();
+        let g = lattice2d(256, 1.0);
+
+        // SIZE THE WORKLOAD FROM THIS MACHINE, not from a number written down about another one.
+        //
+        // This test used to run a fixed 2,000 sweeps, with a comment reading "at roughly 60M node
+        // updates a second this is about two seconds of work". The machine now does about 200M, so
+        // the window fell to 0.662 s and produced 7 readings against a floor of 8 — and the meter's
+        // own guard refused, correctly, to call that an estimate. The fixture encoded an assumption
+        // about the hardware and went stale when the hardware did not.
+        //
+        // Timed BEFORE the idle baseline on purpose: this warms the machine, and the baseline that
+        // follows then measures a settled one rather than a cooling one.
+        let probe = 200usize;
+        let t0 = std::time::Instant::now();
+        {
+            let mut s = Sampler::new(&g, 0.7, 1);
+            s.sweeps(probe, None);
+        }
+        let per_sweep = t0.elapsed().as_secs_f64() / probe as f64;
+        // Two seconds of work, which is comfortably above the 0.8 s the readings guard demands and
+        // leaves room for the machine to be faster on the real run than on the probe.
+        let sweeps = ((2.0 / per_sweep).ceil() as usize).clamp(probe, 200_000);
         // The same treatment the `measure` call below already had, applied to the line that
         // panicked instead: a contaminated BASELINE is as much "your laptop was compiling" as a
         // contaminated run, and this `.unwrap()` is what went red while a concurrent clippy build
@@ -715,16 +753,12 @@ mod tests {
         let idle = match m.idle(Duration::from_millis(1200)) {
             Ok(i) => i,
             Err(e) => {
-                eprintln!("machine was not quiet enough to take a baseline; skipping: {e}");
+                skipped(&format!("machine was not quiet enough to take a baseline: {e}"));
                 return;
             }
         };
         assert!(idle.watts > 0.0, "a running machine draws power");
 
-        // Big enough to be measurable, and sized from what the guard demands rather than guessed:
-        // the first attempt ran for 59 ms and collected 2 readings, which the refusal caught. At
-        // roughly 60M node updates a second this is about two seconds of work.
-        let g = lattice2d(256, 1.0);
         let mut led = Ledger::default();
         // A machine that is busy with something else cannot be measured, and the library says so
         // rather than returning a number. Treat that like "no backend": skip, do not fail. This
@@ -732,11 +766,11 @@ mod tests {
         // turns red for "your laptop was compiling" is a suite people learn to ignore.
         let run = match m.measure(idle, || {
             let mut s = Sampler::new(&g, 0.7, 1);
-            s.sweeps(2_000, Some(&mut led));
+            s.sweeps(sweeps, Some(&mut led));
         }) {
             Ok(r) => r,
             Err(e) if e.contains("still busy") || e.contains("inside the noise") => {
-                eprintln!("machine was not quiet enough to measure; skipping: {e}");
+                skipped(&format!("machine was not quiet enough to measure: {e}"));
                 return;
             }
             Err(e) => panic!("{e}"),
@@ -759,11 +793,36 @@ mod tests {
             p.e_read.is_nan() && p.e_write.is_nan(),
             "reads and writes were not measured here, and zero would claim they are free"
         );
-        // And therefore NOT stated as a whole table, so `joules` refuses to total a run with it.
-        // That is the correct outcome rather than a shortfall: one measurement fixes one of three
-        // costs, and a table that answered anyway would be inventing the other two.
+        // NOT stated as a whole table: one measurement fixes one of three costs.
         assert!(!p.is_stated(), "one measured term does not make a complete price table");
-        assert_eq!(led.joules(&p), None);
+
+        // AND YET IT PRICES THIS RUN EXACTLY, which is the whole point of `Ledger::joules` charging
+        // PER OPERATION rather than all-or-nothing. A serial sweep performs samples and nothing
+        // else, so the two unstated costs are multiplied by zero and the answer is real.
+        //
+        // This assertion used to read `assert_eq!(led.joules(&p), None)`. That was correct under the
+        // OLD all-or-nothing rule and became wrong the day `joules` changed — the change whose own
+        // documentation says "under the old rule that measurement could price NOTHING, including
+        // the very workload it was taken from". The test contradicted the behaviour it exists to
+        // check, and survived because it returns early on any machine with a load average above 2:
+        // it reached this line perhaps once in a preflight run. See `skipped`.
+        assert_eq!(led.reads, 0, "a serial sweep reads nothing out");
+        assert_eq!(led.writes, 0, "and flashes nothing");
+        let total = led.joules(&p).expect("a sample-only ledger is priceable by a sample-only table");
+        assert!(
+            (total - led.samples as f64 * p.e_sample).abs() < 1e-9 * total.abs().max(1.0),
+            "the total is the sampling cost and nothing else: {total} against {} samples at {}",
+            led.samples,
+            p.e_sample
+        );
+        // And the refusal still refuses where it should: an operation the run DID perform, with no
+        // price for it, yields None rather than a number.
+        let with_reads = Ledger { reads: 1, ..led };
+        assert_eq!(
+            with_reads.joules(&p),
+            None,
+            "one unpriced read must sink the total, or the refusal means nothing"
+        );
     }
 
     #[test]

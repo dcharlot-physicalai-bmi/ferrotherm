@@ -57,8 +57,24 @@ pub struct Sampler<'g> {
 /// that they are in that regime. Refusing to spread work that thin is the fix; it does not depend
 /// on which machine is running.
 ///
-/// The NUMBER is a heuristic. 1024 was chosen from throughput ratios on one developer laptop, and a
-/// different fabric — more cores, a different memory system, a GPU-hosted queue, a many-core server
+/// **The number was recalibrated when the barrier changed, and it moved by sixteen times.** 1024
+/// was chosen against a [`std::sync::Barrier`], which parks — at eight threads that cost roughly
+/// three times what a 1024-node chunk cost, so the floor had to be high enough for the work to pay
+/// for the wait. [`crate::barrier::SpinBarrier`] does not park, and the crossover moved with it.
+/// Measured the same way as before, the worst cell of `examples/par_scaling` (the property that
+/// matters — a speedup that is sometimes a slowdown is a coin toss):
+///
+/// ```text
+///   MIN_CHUNK      32     64    128    192   1024
+///   worst cell   2.67x  3.55x  1.94x  1.00x  1.00x
+/// ```
+///
+/// At 1024 the two smallest graphs in that table took the serial path and the three-colour graph
+/// never threaded at all. A stale constant is not a safe one: this one was guarding against a cost
+/// that no longer existed, and the guard it provided was "no threading".
+///
+/// The NUMBER is still a heuristic. It was chosen from throughput ratios on one developer laptop,
+/// and a different fabric — more cores, a different memory system, a GPU-hosted queue, a many-core server
 /// — will have a different crossover. It is deliberately set where the parallel path is never a
 /// loss rather than where it is fastest, because the property worth guaranteeing is "asking for
 /// threads cannot hurt you", and that one survives being wrong about the exact crossover in a way
@@ -71,7 +87,7 @@ pub struct Sampler<'g> {
 /// Public because a caller who wants the parallel path to engage needs to know what it is waiting
 /// for: `threads_used` reporting 1 otherwise looks like a bug, and the answer is that the SMALLEST
 /// colour class did not have this many nodes per thread.
-pub const MIN_CHUNK: usize = 1024;
+pub const MIN_CHUNK: usize = 64;
 
 impl<'g> Sampler<'g> {
     #[must_use]
@@ -195,16 +211,30 @@ impl<'g> Sampler<'g> {
     /// parallel to serial throughput — above 1.0 the parallel path is winning):
     ///
     /// ```text
-    ///    spins   per class   was     is    threads that now run
-    ///    1,024         512  0.03x  1.00x   1  (below the floor: the serial path)
-    ///    4,096       2,048  0.13x  1.24x   2
-    ///    9,216       4,608     --  2.58x   4
-    ///   16,384       8,192  0.50x  1.85x   8
+    ///    spins   per class  spawn/sweep   hoisted   + spin barrier   threads now
+    ///    1,024         512        0.03x     1.00x            3.52x            8
+    ///    4,096       2,048        0.13x     1.95x            7.68x           18
+    ///    9,216       4,608           --     3.76x           10.78x           18
+    ///   16,384       8,192        0.50x     5.80x           11.98x           18
+    ///   32,761         359           --     1.00x            4.71x            5
     /// ```
     ///
     /// Below about 32,000 spins a caller who asked for eighteen threads was handed something up to
     /// **thirty-three times slower** than not asking. That is not a tuning parameter, it is a trap,
     /// and it was reachable from the C ABI as `ft_sweep_par`.
+    ///
+    /// # The second column was not the end of it
+    ///
+    /// Hoisting the spawn left a [`std::sync::Barrier`] at every class boundary, and that parks. At
+    /// eight threads with a chunk the old floor admitted, parking was **85% of the loop** — which
+    /// is why the middle column scales WORSE at eight threads (1.85x, since revised to 5.80x on a
+    /// warmer machine) than the shape of the work says it should. [`crate::barrier::SpinBarrier`]
+    /// replaced it, and then [`MIN_CHUNK`] had to be recalibrated by a factor of sixteen because
+    /// the floor existed to make the work outweigh a wait that no longer costs what it did.
+    ///
+    /// Both changes are pure scheduling:
+    /// `parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape` holds the numbers fixed
+    /// against a hand-rolled reference of the original shape.
     ///
     /// **The property is the worst cell, not the best one.** A speedup that is sometimes a slowdown
     /// is a coin toss a caller cannot call. `examples/par_scaling` reports the worst and best cells
@@ -215,7 +245,9 @@ impl<'g> Sampler<'g> {
     /// **Bit-identical results.** Thread `ti` takes chunk `ti` of every class exactly as before, and
     /// each (sweep, class, chunk) derives the same counter-based stream from the same seed, so this
     /// is a scheduling change and not a numerical one. `parallel_sweeps_are_bit_identical_to_the_old_
-    /// spawn_per_sweep_shape` pins that against a hand-rolled reference implementing the old shape.
+    /// spawn_per_sweep_shape` pins that against a hand-rolled reference implementing the old
+    /// shape. That test was NAMED HERE BEFORE IT EXISTED, for as long as the guarantee was
+    /// made; it exists now, and it is what says replacing the barrier was a scheduling change.
     ///
     /// The barrier is what makes it safe: within a colour class no two nodes are adjacent, so the
     /// chunks may run concurrently — but class `c+1` reads what class `c` wrote, so every thread
@@ -253,12 +285,18 @@ impl<'g> Sampler<'g> {
         // about any other fabric (2D glass, 18 threads, arms interleaved so a load spike hits both
         // alike -- the first attempt did not interleave and chose 256, which is a loss):
         //
-        //   min chunk | n=1024   2304   4096   9216  16384
-        //   ----------|-------------------------------------
-        //           1 |   0.09   0.21   0.37   0.70   1.17
-        //         256 |   0.48   0.61   0.66   0.71   1.17
-        //  -->   1024 |   1.02   0.98   1.27   2.06   2.68
-        //        4096 |   1.00   0.99   1.02   0.98   1.42
+        //   min chunk | n=1024   2304   4096   9216  16384  32761
+        //   ----------|--------------------------------------------
+        //          32 |   2.44   4.37   6.82  10.35  11.47   7.67
+        //  -->     64 |   3.36   5.04   8.42  10.63  10.57   4.71
+        //         128 |   3.36   5.59   7.51  10.69  11.91   1.94
+        //         192 |   1.88   5.00   6.84  10.32  11.72   1.00
+        //        1024 |   1.01   1.00   1.95   3.76   5.80   1.00
+        //
+        // Chosen on the WORST cell, which is the 32,761-spin three-colour graph: 64 keeps it at
+        // 4.71x where 128 drops it to 1.94x and the old 1024 to 1.00x. The previous table was
+        // measured against a barrier that parked and is superseded rather than deleted -- it was
+        // right about the fabric it ran on, and what changed was the fabric.
         //
         let smallest = self.g.classes.iter().map(std::vec::Vec::len).min().unwrap_or(0);
         let threads = threads.min((smallest / MIN_CHUNK).max(1));
@@ -290,7 +328,11 @@ impl<'g> Sampler<'g> {
 
         let sp = self.s.as_mut_ptr() as usize;
         let clamped = &self.clamped;
-        let barrier = std::sync::Barrier::new(workers);
+        // NOT `std::sync::Barrier`. That one parks, and this barrier is crossed at every colour
+        // class of every sweep with a few microseconds of work in between -- at eight threads and a
+        // chunk the size `MIN_CHUNK` admits, parking was 85% of the loop, which is why this path
+        // scaled WORSE at eight threads than at four. See `crate::barrier`.
+        let barrier = crate::barrier::SpinBarrier::new(workers);
 
         std::thread::scope(|scope| {
             for ti in 0..workers {
@@ -457,6 +499,105 @@ mod tests {
     }
 
     /// Clamped nodes must never change and must steer the conditional distribution.
+    /// THE TEST THIS MODULE'S DOCS NAMED AND DID NOT HAVE.
+    ///
+    /// `sweeps_par` promises its results are bit-identical to the old spawn-per-class-per-sweep
+    /// shape: thread `ti` takes chunk `ti` of every class, and each (sweep, class, chunk) derives
+    /// the same counter-based stream from the same seed, so hoisting the spawn out of the loop is a
+    /// SCHEDULING change and not a numerical one. The docs cited
+    /// `parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape` as pinning it. No such
+    /// test existed — the guarantee was written down and unchecked for as long as it was made.
+    ///
+    /// It matters more than it looks. The claim is what lets the barrier be replaced, the chunking
+    /// be re-tuned, or the classes be re-ordered without anyone re-deriving whether the numbers
+    /// moved; swapping `std::sync::Barrier` for [`crate::barrier::SpinBarrier`] is exactly such a
+    /// change, and this is what says it was one.
+    ///
+    /// The reference below reimplements the OLD shape: a join at every colour class, no shared
+    /// barrier, threads created and destroyed per class. If the two disagree in a single spin, one
+    /// of them is deriving a different stream.
+    #[test]
+    fn parallel_sweeps_are_bit_identical_to_the_old_spawn_per_sweep_shape() {
+        // Big enough that the MIN_CHUNK floor admits real threads, or this compares the serial
+        // path against itself and passes for a reason that has nothing to do with the claim.
+        let g = crate::ising::lattice2d(128, 1.0);
+        let threads = 4usize;
+        let sweeps = 12usize;
+
+        let smallest = g.classes.iter().map(std::vec::Vec::len).min().unwrap_or(0);
+        assert!(
+            threads.min((smallest / MIN_CHUNK).max(1)) > 1,
+            "the fixture must actually thread, or this test compares the serial path to itself"
+        );
+
+        let mut fast = Sampler::new(&g, 0.44, 12_345);
+        fast.sweeps_par(sweeps, threads, None);
+
+        // --- the old shape, by hand -------------------------------------------------------------
+        let mut slow = Sampler::new(&g, 0.44, 12_345);
+        let base = slow.par_seed;
+        let beta = slow.beta;
+        // A shared reference, so the `move` closures below copy the REFERENCE rather than trying
+        // to take the graph's vectors by value -- which is what `self.g` already is in the real
+        // implementation, and the one place a hand-rolled reference diverges from it by accident.
+        let gr: &Graph = &g;
+        let layout: Vec<(usize, usize)> = g
+            .classes
+            .iter()
+            .map(|c| {
+                let chunk = c.len().div_ceil(threads);
+                let parts = if chunk == 0 { 0 } else { c.len().div_ceil(chunk) };
+                (chunk, parts)
+            })
+            .collect();
+        for sweep in 0..sweeps {
+            let sweep_idx = sweep as u64;
+            for (ci, class) in gr.classes.iter().enumerate() {
+                let (chunk, parts) = layout[ci];
+                let sp = slow.s.as_mut_ptr() as usize;
+                let clamped = &slow.clamped;
+                // A scope PER CLASS, joined before the next one -- the shape that spawned 72,000
+                // threads and the shape the guarantee is stated against.
+                std::thread::scope(|scope| {
+                    for ti in 0..parts {
+                        scope.spawn(move || {
+                            let s_ptr = sp as *mut i8;
+                            let lo = ti * chunk;
+                            let hi = (lo + chunk).min(class.len());
+                            let mut rng = Pcg::new(
+                                base ^ sweep_idx.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                                    ^ (ci as u64) << 32,
+                                0xC0DE ^ ti as u64,
+                            );
+                            for &iu in &class[lo..hi] {
+                                let i = iu as usize;
+                                if clamped[i] {
+                                    continue;
+                                }
+                                let mut f = gr.h[i];
+                                for k in gr.offset[i]..gr.offset[i + 1] {
+                                    f += gr.w[k] * unsafe { *s_ptr.add(gr.nbr[k] as usize) } as f64;
+                                }
+                                let p_up = crate::kernel::p_up(f, beta);
+                                unsafe {
+                                    *s_ptr.add(i) = rng.spin(p_up);
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+        }
+
+        assert_eq!(fast.s, slow.s, "the hoisted-spawn shape moved the numbers");
+        assert_eq!(fast.threads_used(), threads, "and it must have actually threaded");
+        // Not vacuous: a different seed must give a different answer, or `assert_eq` above would
+        // pass for two samplers that both did nothing.
+        let mut other = Sampler::new(&g, 0.44, 999);
+        other.sweeps_par(sweeps, threads, None);
+        assert_ne!(other.s, fast.s, "two seeds landing on the same state makes this test vacuous");
+    }
+
     #[test]
     fn clamping_conditions() {
         let mut gb = GraphBuilder::new(2);

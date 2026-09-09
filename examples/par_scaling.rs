@@ -11,10 +11,17 @@
 // and the shipped measurement of it was 0.03x serial at 1,024 spins -- reachable from the C ABI as
 // `ft_sweep_par`, where nothing told a caller that the knob they were turning ran backwards.
 //
-// Two changes. The threads are spawned ONCE for the whole batch, with a `std::sync::Barrier` at
-// every colour-class boundary; and a FLOOR caps the thread count so no thread is handed fewer than
-// MIN_CHUNK nodes, because below that a thread's share finishes faster than the barrier it waits
-// at. Below the floor the parallel entry points are literally the serial code, so they cannot lose.
+// Three changes now. The threads are spawned ONCE for the whole batch; the barrier at every
+// colour-class boundary SPINS BRIEFLY AND YIELDS instead of parking; and a FLOOR caps the thread
+// count so no thread is handed fewer than MIN_CHUNK nodes. Below the floor the parallel entry
+// points are literally the serial code, so they cannot lose.
+//
+// THE THIRD CHANGE FORCED THE FOURTH, which is the part worth reading. `std::sync::Barrier` is a
+// mutex and a condvar, so an early arrival parks -- a syscall, plus a wakeup for every waiter. At
+// eight threads that cost about three times what a 1024-node chunk cost, so MIN_CHUNK had to be
+// large enough for the work to outweigh the wait. With `barrier::SpinBarrier` the wait is cheap and
+// the crossover moved by SIXTEEN TIMES: 1024 -> 64. A constant calibrated against a cost that has
+// since gone away does not become harmless, it becomes a guard whose only effect is "no threading".
 //
 // WHY THE ARMS ARE INTERLEAVED, and it is the reason to trust this table at all. The first
 // calibration of the floor ran every serial repetition and then every parallel one. The machine got
