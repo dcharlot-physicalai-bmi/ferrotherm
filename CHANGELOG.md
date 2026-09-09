@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### `bound::forest` was returning bounds above the optimum, and the test for it was five orders too loose
+
+A lower bound is a promise about every state and `f64` addition does not keep promises. `forest`
+accumulated its parts with `+=`; on random trees — where the decomposition *is* the problem, so the
+bound is exact and the gap must be zero — **1688 of 4800 trials returned a NEGATIVE gap**, worst
+`−7.8e-14`. `Bound::gap`'s documentation had said a negative gap means the bound is wrong since the
+day it was written, and nothing checked it: the module's own tightness test asserts the bound is
+within `1e-9` of the optimum, which cannot see a `1e-14` defect.
+
+New `round` module: `sum_down`, `sum_up`, `accumulation_guard`. Deliberately **not** an interval
+type — every use here is a sum whose direction is known in advance, so the narrow tool is the honest
+one. `sdp`'s private `sum_down` moved into it rather than being duplicated.
+
+**Fixing half of it made things worse, and that is the useful part.** Soundness is a property of a
+PAIR: the bound must round down and the energy it is subtracted from must round up. `decoupled`
+walks its terms in exactly `Graph::energy`'s order, so its two roundings had been cancelling — it had
+produced no negative gap in 312,000 state evaluations. Making the bound sound on its own broke the
+cancellation and turned 0 negative gaps into 78. Both sides are directed now.
+
+The consequence for callers: **`proves_optimal(g, s, 0.0)` now means something.** `tol` used to carry
+a second job — absorbing the floating-point accumulation over the split — which made its honest value
+unknowable, since too small rejected true optima and too large made the proof not a proof. It is
+slack you choose now, and nothing else.
+
+`odd_cycle` had the same defect in the other direction: its penalty *raises* the floor, so an
+overstated penalty is a bound above what it bounds.
+
+Three mutations recorded, including the one that distinguishes "sound" from "accurate": `total +
+guard` is still a compensated sum and still points the wrong way.
+
 ## 0.44.0
 
 ### The rest of the EBM estimator family, and the ceiling that scores all six

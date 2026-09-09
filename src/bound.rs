@@ -79,13 +79,17 @@
 //! right distribution; this asks whether one state is the lowest, and the two questions share
 //! nothing but the word "certificate".
 
+use crate::round::{accumulation_guard, sum_down, sum_up};
 use crate::exact::Elimination;
 use crate::graph::{Graph, GraphBuilder};
 
 /// A lower bound on `min_s E(s)`, and how it was obtained.
 #[derive(Clone, Debug)]
 pub struct Bound {
-    /// The bound itself. **No state has energy below this.**
+    /// The bound itself. **No state has energy below this** — including after rounding, which is
+    /// a promise this field made for two releases without keeping it. Every method here now
+    /// accumulates through [`crate::round`], so the value is below the exact relaxation rather
+    /// than near it.
     pub value: f64,
     /// How many independently-minimised parts the energy was split into.
     pub parts: usize,
@@ -109,18 +113,52 @@ impl Bound {
     /// Never negative for a sound bound, and a negative result means the bound is wrong rather than
     /// the state remarkable — which is why [`forest`] takes the maximum over rounds of quantities
     /// each individually valid, rather than trusting the last one.
+    ///
+    /// That sentence was true and unchecked for two releases while `forest` returned negative gaps
+    /// on a third of random trees. `no_bound_is_ever_above_a_state_it_bounds` checks it now.
     #[must_use]
     pub fn gap(&self, g: &Graph, s: &[i8]) -> f64 {
-        g.energy(s) - self.value
+        // BOTH SIDES OR NEITHER. The gap must be an OVER-estimate of the true gap for
+        // `proves_optimal` to be a proof, which needs the energy rounded UP and the bound rounded
+        // DOWN. Fixing only the bound is worse than fixing neither, and that is measured rather
+        // than argued: `decoupled` accumulates in exactly `Graph::energy`'s order, so its two
+        // roundings cancelled and the gap came out exactly zero on every one of 4800 random trees.
+        // Making the bound sound on its own broke that cancellation and produced 78 NEGATIVE gaps
+        // where there had been none.
+        sum_up(&[energy_up(g, s), -self.value])
     }
 
     /// Whether `s` is **proven** optimal: nothing can be lower, so nothing is.
     ///
-    /// `tol` absorbs floating-point accumulation over the split; it is not slack in the argument.
+    /// **`tol` is slack you choose, and `0.0` is now a legitimate choice.** It used to have a
+    /// second job — absorbing the floating-point accumulation over the split — which made the
+    /// honest value of `tol` unknowable: too small and a true optimum was rejected, too large and
+    /// the proof was not one. Both sides of the comparison are directed now ([`gap`](Self::gap)),
+    /// so the arithmetic is accounted for inside the numbers rather than inside the caller's
+    /// tolerance.
     #[must_use = "false does not mean the state is suboptimal, only that this bound does not prove it optimal"]
     pub fn proves_optimal(&self, g: &Graph, s: &[i8], tol: f64) -> bool {
         self.gap(g, s) <= tol
     }
+}
+
+/// `E(s)`, never below the exact value.
+///
+/// Each term is exact — a spin is `±1`, so `h·s` and `w·s·s` are sign flips — and only the
+/// summation rounds, which is why one directed sum is enough and no interval type is needed.
+fn energy_up(g: &Graph, s: &[i8]) -> f64 {
+    let mut terms = Vec::with_capacity(g.n + g.n_edges);
+    for i in 0..g.n {
+        let si = f64::from(s[i]);
+        terms.push(-g.h[i] * si);
+        for k in g.offset[i]..g.offset[i + 1] {
+            let j = g.nbr[k] as usize;
+            if j > i {
+                terms.push(-g.w[k] * si * f64::from(s[j]));
+            }
+        }
+    }
+    sum_up(&terms)
 }
 
 /// The bound you get by giving up on every interaction at once.
@@ -133,17 +171,26 @@ impl Bound {
 /// floor every other method here must beat to have earned its cost.
 #[must_use]
 pub fn decoupled(g: &Graph) -> Bound {
-    let mut v = 0.0;
+    // COLLECTED, NOT ACCUMULATED. `v -= x` rounds to nearest, and a lower bound that rounds up is
+    // not a lower bound. See [`crate::round`] for the defect this class of `+=` produced in
+    // [`forest`], which is the same arithmetic on a different sum.
+    //
+    // Nothing was measured wrong here, and the reason is worth writing down rather than relying
+    // on: this loop visits the terms in exactly the order `Graph::energy` does, so for the state
+    // that achieves the bound the two accumulate bit-identically and the gap is exactly zero. That
+    // is an argument about one state. `value` promises something about EVERY state, and a
+    // different state gives the same magnitudes different signs and so a different rounding.
+    let mut terms = Vec::with_capacity(g.n + g.n_edges);
     for i in 0..g.n {
-        v -= g.h[i].abs();
+        terms.push(-g.h[i].abs());
         for k in g.offset[i]..g.offset[i + 1] {
             if g.nbr[k] as usize > i {
-                v -= g.w[k].abs();
+                terms.push(-g.w[k].abs());
             }
         }
     }
     Bound {
-        value: v,
+        value: sum_down(&terms),
         parts: 1,
         method: "decoupled: every term at its own minimum",
         rounds: 0,
@@ -183,8 +230,14 @@ pub fn forest(g: &Graph, rounds: usize) -> Bound {
     let mut best = f64::NEG_INFINITY;
     let mut best_round = 0usize;
     let mut used = 0usize;
+    // Reused across rounds so the soundness guard costs no allocation per round.
+    let mut part_energies: Vec<f64> = Vec::with_capacity(k);
+    let mut guards: Vec<f64> = Vec::with_capacity(k);
+    let mut mags: Vec<f64> = Vec::with_capacity(g.n + g.n_edges);
+
     for r in 0..=rounds {
-        let mut total = 0.0;
+        part_energies.clear();
+        guards.clear();
         let mut states: Vec<Vec<i8>> = Vec::with_capacity(k);
         for (p, edges) in parts.iter().enumerate() {
             let mut gb = GraphBuilder::new(g.n);
@@ -200,12 +253,27 @@ pub fn forest(g: &Graph, rounds: usize) -> Bound {
             // result SOUND rather than absent. Never unwrap a bound into a panic.
             match elim.ground_state(&part) {
                 Ok(ex) => {
-                    total += ex.ground_energy.unwrap_or(f64::NEG_INFINITY);
+                    part_energies.push(ex.ground_energy.unwrap_or(f64::NEG_INFINITY));
+                    // `ground_energy` is a float this function did not compute, and its rounding is
+                    // the whole defect: summing these with `+=` reported a NEGATIVE gap on 1688 of
+                    // 4800 random trees, where the bound is exact and the gap must be zero.
+                    //
+                    // The guard covers both halves of what elimination can get wrong -- the
+                    // additions inside it, and an argmin chosen between two states whose computed
+                    // energies differ by less than that error. One addition per field and two per
+                    // coupling is a generous count, which is the direction to be generous in.
+                    mags.clear();
+                    mags.extend(share[p].iter().map(|x| x.abs()));
+                    mags.extend(edges.iter().map(|&(_, _, w)| w.abs()));
+                    guards.push(accumulation_guard(g.n + 2 * edges.len(), sum_up(&mags)));
                     states.push(ex.ground_state.unwrap_or_else(|| vec![1; g.n]));
                 }
                 Err(_) => return decoupled(g),
             }
         }
+        // Downward for the parts, upward for the guard subtracted from them: both directions point
+        // the same way, which is away from claiming more than was proved.
+        let total = sum_down(&part_energies) - sum_up(&guards);
         if total > best {
             best = total;
             best_round = r;
@@ -273,7 +341,9 @@ pub fn odd_cycle(g: &Graph, max_len: usize) -> Bound {
     }
     let key = |a: usize, b: usize| if a < b { (a, b) } else { (b, a) };
     let mut claimed = vec![false; ew.len()];
-    let mut penalty = 0.0;
+    // `base.value` leads the slice: the sum of the floor and every penalty must round down
+    // together, not floor-then-add.
+    let mut penalties: Vec<f64> = vec![base.value];
     let mut cycles = 0usize;
 
     // For each still-free edge, look for the shortest cycle closing it through free edges only.
@@ -352,12 +422,14 @@ pub fn odd_cycle(g: &Graph, max_len: usize) -> Bound {
             for e in edges {
                 claimed[e] = true;
             }
-            penalty += 2.0 * min_abs;
+            // Collected, not accumulated: this RAISES the floor, so an overstated penalty is a
+            // bound above what it bounds. `2.0 * min_abs` is exact; the sum of them is not.
+            penalties.push(2.0 * min_abs);
             cycles += 1;
         }
     }
     Bound {
-        value: base.value + penalty,
+        value: sum_down(&penalties),
         parts: cycles,
         method: "decoupled floor plus 2*min|J| per edge-disjoint frustrated cycle",
         rounds: 0,
@@ -500,6 +572,94 @@ mod tests {
             truncated.value,
             b.value
         );
+    }
+
+    /// A BOUND THAT IS ABOVE WHAT IT BOUNDS IS NOT A BOUND, and the magnitude is not the point.
+    ///
+    /// `a_forest_is_solved_exactly_so_the_gap_closes` asserts the forest bound is within `1e-9` of
+    /// the optimum, which is five orders of magnitude too loose to see the defect this test exists
+    /// for: `forest` accumulated its parts with `+=`, and on random trees — where the bound is
+    /// exact and the gap must be zero — **1688 of 4800 trials reported a NEGATIVE gap**, worst
+    /// `−7.8e-14`. Every one of those passed the `1e-9` check.
+    ///
+    /// So this asserts the SIGN. A negative gap means the bound is wrong rather than the state
+    /// remarkable, which [`Bound::gap`]'s own documentation had said since it was written with
+    /// nothing able to check it.
+    ///
+    /// Both directions are exercised on purpose. Fixing only the bound made this WORSE for
+    /// `decoupled` — 0 negative gaps became 78 — because its accumulation order matches
+    /// `Graph::energy`'s exactly, so the two roundings had been cancelling. Soundness here is a
+    /// property of the PAIR: bound down, energy up.
+    #[test]
+    fn no_bound_is_ever_above_a_state_it_bounds() {
+        let mut rng = Pcg::new(7, 0x5EED);
+        let mut probe = Vec::new();
+        let (mut worst_f, mut worst_d, mut worst_c) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut trials = 0usize;
+
+        for fields in [false, true] {
+            for n in [8usize, 16, 32, 64, 128] {
+                for seed in 0..40u64 {
+                    // A random tree: unfrustrated in its couplings, so `forest` puts it in ONE part
+                    // and the bound is EXACT. That is what makes the sign readable — on a loose
+                    // bound a rounding error hides under the looseness.
+                    let mut gb = GraphBuilder::new(n);
+                    let mut r = Pcg::new(seed, 0xB0 + u64::from(fields));
+                    for i in 1..n {
+                        let par = (r.f64() * i as f64) as usize;
+                        // Off the binary grid, so no sum here is exact by construction.
+                        gb.couple(par.min(i - 1), i, (r.f64() - 0.5) * 0.2 + 0.1);
+                    }
+                    if fields {
+                        for i in 0..n {
+                            gb.bias(i, (r.f64() - 0.5) * 0.2 + 0.05);
+                        }
+                    }
+                    let g = gb.build();
+                    let Ok(ex) = Elimination::default().ground_state(&g) else { continue };
+                    let Some(gs) = ex.ground_state else { continue };
+                    trials += 1;
+
+                    let (bf, bd, bc) = (forest(&g, 0), decoupled(&g), odd_cycle(&g, 5));
+                    for b in [&bf, &bd, &bc] {
+                        assert!(
+                            b.gap(&g, &gs) >= 0.0,
+                            "{}: gap {:e} at the ground state of a {n}-node tree (seed {seed}, \
+                             fields {fields}) -- the bound is above the optimum",
+                            b.method,
+                            b.gap(&g, &gs)
+                        );
+                    }
+                    worst_f = worst_f.min(bf.gap(&g, &gs));
+                    worst_d = worst_d.min(bd.gap(&g, &gs));
+                    worst_c = worst_c.min(bc.gap(&g, &gs));
+
+                    // And against arbitrary states, because `value` promises something about every
+                    // state and not only about the one that achieves it.
+                    probe.clear();
+                    probe.resize(n, 1i8);
+                    for _ in 0..32 {
+                        for x in &mut probe {
+                            *x = if rng.f64() < 0.5 { -1 } else { 1 };
+                        }
+                        for b in [&bf, &bd, &bc] {
+                            assert!(
+                                b.gap(&g, &probe) >= 0.0,
+                                "{}: a random state fell BELOW the bound by {:e}",
+                                b.method,
+                                b.gap(&g, &probe)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(trials > 300, "the sweep must actually run: {trials} trials");
+        // The bound stays tight while it is sound: the guard costs ulps, not accuracy. A tolerance
+        // here would let a future guard grow without limit and still pass.
+        for (what, w) in [("forest", worst_f), ("decoupled", worst_d), ("odd_cycle", worst_c)] {
+            assert!(w < 1e-9, "{what}: soundness cost {w:e}, which is no longer a rounding guard");
+        }
     }
 
     #[test]

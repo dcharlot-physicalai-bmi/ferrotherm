@@ -203,6 +203,22 @@ mutations=(
   # sum is exact, but `verify` exists for certificates it did NOT produce, and `y` is a public field.
   "src/sdp.rs|        Ok(sum_down(&self.y))|        Ok(self.y.iter().sum())|verify_sums_the_dual_point_downward|a certified bound summed in the wrong direction"
 
+  # The defect this module was written for. `forest` summed its parts with `+=`, and on random
+  # trees -- where the bound is EXACT and the gap must be zero -- 1688 of 4800 trials reported a
+  # negative gap. Every one of them passed the existing `within 1e-9 of the optimum` check, which
+  # is five orders of magnitude too loose to see it.
+  "src/bound.rs|        let total = sum_down(&part_energies) - sum_up(&guards);|        let total = part_energies.iter().sum::<f64>();|no_bound_is_ever_above_a_state_it_bounds|a lower bound accumulated with plain addition"
+
+  # Soundness here is a property of the PAIR: the bound must round down AND the energy up. Fixing
+  # only the bound is worse than fixing neither -- `decoupled` accumulates in exactly
+  # `Graph::energy`'s order, so its two roundings had been cancelling, and 0 negative gaps became
+  # 78 the moment the bound alone became sound.
+  "src/bound.rs|        sum_up(&[energy_up(g, s), -self.value])|        g.energy(s) - self.value|no_bound_is_ever_above_a_state_it_bounds|a gap measured from an energy that rounds either way"
+
+  # The direction itself. `total + guard` is still a compensated sum, still accurate, and points
+  # the wrong way -- which no accuracy check can distinguish from the right way.
+  "src/round.rs|    total - guard|    total + guard|a_sum_that_plain_addition_rounds_upward_is_bracketed|a downward sum that rounds upward"
+
   # A clause is violated when every literal is false, and the subset expansion of that indicator has
   # an empty-subset constant. Dropping it leaves every optimum right and every reported number off by
   # a fixed amount -- an error that passes a solver test and only fails against a published result.

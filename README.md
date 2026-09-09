@@ -92,6 +92,7 @@ score. Scoring it found three defects on the first run.
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
 | Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
+| **Directed rounding for every claimed bound** (this review did not locate one in a thermodynamic-computing stack) | `round::sum_down` / `sum_up` / `accumulation_guard` — one pass, Kahan–Babuška guard, no interval type | **shipped, verified** — and it found `bound::forest` returning a bound ABOVE the optimum on a third of random trees |
 | **The exact maximum-likelihood gradient, as a CEILING to score the others by** (this review did not locate one in any EBM library) | `ebm::train_exact` — `⟨ss⟩_data − ⟨ss⟩_model` with BOTH averages enumerated, latent units integrated out exactly | **shipped, verified** — differenced against the true likelihood with and without latent units; no other method passes it |
 | Penalty-free higher-order reduction (Freedman–Drineas; Ishikawa 2011) | `reduce::to_pairwise_exact` — exact minima, no penalty coefficient anywhere | **shipped, verified** — the identities checked exhaustively at every arity to eight, both signs |
 | Density of states / flat-histogram sampling (Wang–Landau; Belardinelli–Pereyra 1/t) | `wanglandau` — one bin per energy LEVEL, `1/t` schedule, exact-enumeration oracle | **shipped, verified** — one run reproduces the whole `log Z(beta)` curve against exact elimination |
@@ -1118,6 +1119,31 @@ survived every other test here until a fixture was written at the ulp that reach
 Checked four ways: the closed form at `K_c`, both temperature limits forced by bond-counting
 (`−2J` and `0`), `K(k)` against its own defining integral by fine quadrature, and against
 `−d(lnZ/N)/dβ` from the independent grid implementation. 8 of 8 mutations killed.
+
+### A bound is a promise about every state, and `+` does not keep promises
+
+`round::sum_down` and `sum_up` bracket the exact sum of a slice; `accumulation_guard` covers the case
+where the terms are not available and only the operation count and magnitude are. That is the whole
+module — deliberately not an interval type, because every use of it here is a **sum whose direction
+is known in advance**, and a narrow tool that is exact about its guarantee beats a general one that
+tempts a caller into believing a chain of interval operations is tight.
+
+It exists because the general version of this defect was already shipped and measured. `bound::forest`
+accumulated its parts with `+=`. On random trees — where the decomposition *is* the problem, so the
+bound is exact and the gap must be zero — **1688 of 4800 trials returned a NEGATIVE gap**, worst
+`−7.8e-14`. A negative gap means the bound is above what it bounds, which is not a bound.
+`Bound::gap`'s own documentation had said exactly that since it was written, and nothing was
+checking it: the module's tightness test asserts the forest bound is within `1e-9` of the optimum,
+five orders of magnitude too loose to see it.
+
+**The instructive part is that fixing half of it made things worse.** Soundness here is a property of
+a *pair* — the bound must round down and the energy it is subtracted from must round up. `decoupled`
+walks its terms in exactly `Graph::energy`'s order, so its two roundings had been cancelling and it
+had never produced a negative gap in 312,000 state evaluations. Making the bound sound on its own
+broke that cancellation and turned 0 negative gaps into 78. Both sides are directed now, and the
+consequence is that `Bound::proves_optimal(g, s, 0.0)` finally means something: `tol` used to carry a
+second job, absorbing the accumulation over the split, which made its honest value unknowable — too
+small rejected true optima, too large made the proof not a proof.
 
 ### A certified lower bound that cannot round upward
 

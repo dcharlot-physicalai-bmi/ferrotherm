@@ -71,6 +71,9 @@
 use crate::bound::Bound;
 use crate::graph::Graph;
 use crate::rng::Pcg;
+// The direction-certain sum lives in `round` now: `bound` needs the same guarantee, and two
+// copies of a correctness argument is one copy too many.
+use crate::round::sum_down;
 
 /// A dual point, and the bound it certifies.
 ///
@@ -660,50 +663,6 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
         best_round: p.sweeps,
     };
     (b, cert)
-}
-
-/// Sum that is never ABOVE the true total, whatever the inputs.
-///
-/// # Why `iter().sum()` is not enough here
-///
-/// A certificate's value is a LOWER bound, so a sum that rounds up is a bound that is not one.
-/// Left-to-right addition can round up: `[1.0, 3·2⁻⁵⁴, 3·2⁻⁵⁴]` has true sum `1 + 1.5·2⁻⁵²` and
-/// sums in `f64` to `1 + 2·2⁻⁵²`, over by 1.1e-16.
-///
-/// The dual points [`run`] produces are on `snap_down`'s power-of-two grid, where the sum is exact
-/// and this changes nothing. But [`Certificate::verify`] exists to check certificates it did not
-/// produce — deserialised, hand-built, or from another implementation — and `y` is a public field.
-/// On that path the grid is an assumption rather than a fact, which is exactly the assumption a
-/// re-verification is supposed not to make.
-///
-/// Neumaier compensation for accuracy, then a guard subtracted to make the direction certain.
-///
-/// The guard is `2 ε |total| + n² ε² Σ|y|`, which is Kahan–Babuška's error bound: one rounding of
-/// the final addition, relative to the RESULT, plus a second-order term in the magnitude summed.
-///
-/// Scaling the whole guard by `Σ|y|` instead — `2 n ε Σ|y|` — is also sound and was the first
-/// version here. It is unusable under cancellation: on `[1e16, 1, −1e16]`, whose true sum is one,
-/// that guard is **26.6** and the function returns −25.6. Sound, and worthless. The bound below is
-/// 9e-15 on the same input, because the first-order term follows the answer rather than the
-/// arithmetic that produced it.
-///
-/// The second-order term is carried for rigour and is not observable here. It overtakes the first
-/// only when `n² ε² Σ|y| > 2 ε |total|`, which for a dual point of the usual sign structure is
-/// `n > sqrt(2/ε) ≈ 9.5e7` — a hundred million spins. So a mutation deleting it survives every test
-/// in this module, and that is recorded rather than papered over: what would catch it is an input
-/// this crate cannot represent.
-fn sum_down(v: &[f64]) -> f64 {
-    let (mut s, mut c) = (0.0f64, 0.0f64);
-    for &x in v {
-        let t = s + x;
-        c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
-        s = t;
-    }
-    let total = s + c;
-    let mag: f64 = v.iter().map(|x| x.abs()).sum::<f64>().next_up();
-    let n = v.len() as f64;
-    let guard = 2.0 * f64::EPSILON * total.abs() + n * n * f64::EPSILON * f64::EPSILON * mag;
-    total - guard
 }
 
 impl Certificate {
