@@ -78,7 +78,12 @@ if [[ "$main_has_tag" -eq 1 ]]; then
     echo "  does not have these versions yet. check-versions.sh will correctly report the crates"
     echo "  still uploading as '<- ahead' and that job will go red. It is a race, not a defect:"
     echo "  when this script reports all six live, re-run the failed job."
-    echo "  Next time: push the tag, run this, and push main LAST (see RELEASING.md)."
+    echo
+    echo "  THIS IS EXPECTED AND YOU DID NOT CAUSE IT. This message used to end with 'next time,"
+    echo "  push main LAST', which is advice nobody can follow: the release workflow is triggered"
+    echo "  BY THE TAG, and it commits the JLL manifest and runs 'git push origin HEAD:main'"
+    echo "  itself (.github/workflows/python-release.yml). Main moves a few minutes after the tag"
+    echo "  push, and a six-crate publish takes longer than that. The tag push IS the main push."
     echo
 fi
 

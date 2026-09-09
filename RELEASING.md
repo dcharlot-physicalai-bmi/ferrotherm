@@ -27,8 +27,22 @@ and `git push origin v0.40.0` went out together, CI on main started at 10:39:32,
 with nothing wrong but the order — the 0.13.0 incident, a second time, from a document that had
 described only half of the sequence.
 
-So the order is three steps, not two: **push the tag, publish, then push main.** The tag push
-triggers the release workflow, which does not check the registry; main is what CI reads.
+So the order was written as three steps: **push the tag, publish, then push main.**
+
+**And that is still not achievable, because the tag push IS the main push.** The release workflow
+(`.github/workflows/python-release.yml`, named `release`) is triggered by the tag, and after it
+attaches the tarballs it commits the JLL manifest and runs `git push origin HEAD:main` itself. Main
+therefore moves a few minutes after the tag goes out, and a six-crate publish takes longer than
+that. At 0.44.0 the operator held main back deliberately, exactly as this document said to, and
+`cut-release.sh` still reported `origin/main already has v0.44.0's commit` — because the workflow had
+pushed it.
+
+**So the real order is: push the tag, publish, then push whatever main does not already have.** The
+window where CI sees crates ahead of the registry is structural, not an operator error, and it
+closes when the publish finishes. If a CI job went red in that window, re-run it once
+`check-versions.sh` says all six are live. Note that the workflow's own push does NOT itself start a
+CI run — a `GITHUB_TOKEN` push does not trigger further workflows — so in practice the red job only
+appears if a human pushes main during the upload.
 
 **Core first.** crates.io resolves dependencies at publish time, so the core must be **live** before
 anything that pins it can go out. The index takes a few seconds to catch up.
@@ -64,7 +78,8 @@ scripts/cut-release.sh X.Y.Z       # publishes all six from a worktree of the ta
 
 scripts/check-versions.sh          # and now it should say all six are live
 
-git push origin main               # LAST, so CI never sees a half-published release
+git push origin main               # what is left: the release workflow has already pushed the
+                                   # manifest commit and, with it, the release commit
 ```
 
 By hand, if `cut-release.sh` is unavailable, the publish order is the dependency order:
@@ -123,3 +138,9 @@ surface that *works* is worse than one that breaks.
 - **Julia**: `scripts/build-julia-artifacts.jl`, and the JLL manifest must point at the **published**
   release URLs. It once pointed at an expiring CI artifact, so `ferrotherm_jll` was never installable
   by anyone; the release job now attaches the tarballs and verifies the URLs it wrote.
+
+  **The release job also COMMITS that manifest and pushes it**, so there is nothing to do here by
+  hand. `scripts/rebuild-julia-manifest.jl` exists for the case where that commit was lost — which is
+  what happened at v0.18.0 — and `check-versions.sh` is what tells you it was. Running it when the
+  workflow already succeeded produces a byte-identical duplicate commit that then has to be rebased
+  away; that happened at 0.44.0, from reading this section as a step rather than as a repair.
