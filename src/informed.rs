@@ -163,10 +163,9 @@ impl<'g> Informed<'g> {
     #[must_use]
     pub fn from_state(g: &'g Graph, beta: f64, s: Vec<i8>, rng: Pcg) -> Informed<'g> {
         assert_eq!(s.len(), g.n, "the state must have one spin per node");
-        // Every weight is at most `exp(shift)` before shifting, so subtracting it leaves them all
-        // at or below 1 and the total at or below n. The shift is a CONSTANT, so it divides out of
-        // `Z_i/Z_j` exactly and changes no probability.
-        let shift = g.flip_gap_max().map_or(0.0, |gap| beta.abs() * gap * 0.5);
+        // The shift is chosen at every refresh from the LARGEST log-weight actually present, not
+        // from a worst-case bound over the model. See `refresh`.
+        let shift = 0.0;
         let mut it = Informed {
             g,
             beta,
@@ -192,18 +191,46 @@ impl<'g> Informed<'g> {
         self
     }
 
-    /// Recompute every field, weight and the total from the state, exactly.
+    /// Recompute every field, weight and the total from the state, exactly, and re-centre the
+    /// shift on the largest log-weight present.
+    ///
+    /// # Why the shift is not a bound over the model
+    ///
+    /// It was `β · flip_gap_max / 2` — an upper bound on any log-weight, so every weight was at
+    /// most 1. That is correct and useless on a model with a wide dynamic range in its fields,
+    /// which is exactly what CLAMPING produces: pinning a variable with a bias far larger than the
+    /// rest of the model raises the bound for every site, so every unpinned weight underflows to
+    /// zero and the sampler stalls with `total == 0`.
+    ///
+    /// It was not a hypothetical. `examples/factor_by_sampling` clamps a multiplier's product bits
+    /// with a pin about 500x the other coefficients, and this sampler scored **0 of 45** against
+    /// plain Gibbs's 36 — not slower, stalled — until the shift was centred here instead.
+    ///
+    /// Centring on the observed maximum keeps the largest weight at exactly 1 whatever the scale.
+    /// The shift changes only at a refresh, and both halves of an accept/reject comparison are
+    /// computed between refreshes, so `Z_i/Z_j` is taken at one shift and is exact. The proposal
+    /// `w_k / Z` is shift-invariant outright.
     fn refresh(&mut self) {
         self.fields = (0..self.g.n).map(|i| self.g.field(i, &self.s)).collect();
-        self.w = (0..self.g.n).map(|k| self.weight(k)).collect();
+        let logs: Vec<f64> = (0..self.g.n).map(|k| self.log_weight(k)).collect();
+        self.shift = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        if !self.shift.is_finite() {
+            self.shift = 0.0;
+        }
+        self.w = logs.iter().map(|l| (l - self.shift).exp()).collect();
         self.total = crate::round::sum_up(&self.w).max(0.0);
     }
 
-    /// `g(r_k)` for flipping site `k`, shifted.
-    fn weight(&self, k: usize) -> f64 {
+    /// `ln g(r_k)` for flipping site `k`, before the shift.
+    fn log_weight(&self, k: usize) -> f64 {
         // ΔE_k = 2 s_k f_k, so ln r_k = −β ΔE_k = −2 β s_k f_k.
         let log_r = -2.0 * self.beta * f64::from(self.s[k]) * self.fields[k];
-        (self.balance.log_g(log_r) - self.shift).exp()
+        self.balance.log_g(log_r)
+    }
+
+    /// `g(r_k)` for flipping site `k`, at the current shift.
+    fn weight(&self, k: usize) -> f64 {
+        (self.log_weight(k) - self.shift).exp()
     }
 
     /// One informed flip, accepted or rejected. Returns whether the state moved.
@@ -220,10 +247,13 @@ impl<'g> Informed<'g> {
             self.refresh();
         }
         if !(self.total > 0.0) || !self.total.is_finite() {
-            // Every neighbour is astronomically unfavourable, so the proposal is undefined rather
-            // than uniform. Standing still is the honest move: reporting a flip here would be
-            // sampling from a distribution nobody asked for.
-            return false;
+            // The shift has drifted away from the weights it is meant to centre — the state moved
+            // far since the last refresh. Re-centre and try once; only a genuinely degenerate model
+            // reaches the second check, and standing still is the honest move there.
+            self.refresh();
+            if !(self.total > 0.0) || !self.total.is_finite() {
+                return false;
+            }
         }
         let target = self.rng.f64() * self.total;
         let mut acc = 0.0;
@@ -240,7 +270,13 @@ impl<'g> Informed<'g> {
         self.flip(k);
         let after = self.total;
         // α = min(1, Z_i / Z_j), for every balancing function. See the module docs.
-        if after <= before || self.rng.f64() < before / after {
+        //
+        // On its own line so it can be mutated without the mutation suite's `|` separator: written
+        // as `after <= before || rng < before/after` it was a row that silently shifted every field
+        // after it. `after == 0` gives `inf.min(1) == 1`, which is the right answer — a proposal
+        // landscape that collapsed is one to move into.
+        let alpha = (before / after).min(1.0);
+        if self.rng.f64() < alpha {
             self.accepted += 1;
             true
         } else {
@@ -384,6 +420,43 @@ mod tests {
         assert!(worst < 1e-9, "incremental state drifted from a recomputation by {worst:e}");
         // And the refresh must actually be reachable within a run, or the guard is decoration.
         assert!(it.taken() < REFRESH, "the loop must stop short of the refresh to test the drift");
+    }
+
+    /// A WIDE DYNAMIC RANGE IN THE FIELDS MUST NOT STALL THE SAMPLER, which is the defect this
+    /// module shipped with and a benchmark of its own never found.
+    ///
+    /// Clamping a variable means pinning it with a bias far larger than the rest of the model.
+    /// With the shift taken as a bound over the whole model — `β · flip_gap_max / 2` — that pin
+    /// raised the bound for EVERY site, so every unpinned weight underflowed to zero, `total`
+    /// became zero, and `step` returned false forever. The chain did not slow down; it stopped.
+    ///
+    /// `examples/factor_by_sampling` is where it surfaced: clamping a multiplier's product bits
+    /// scored **0 of 45** factorisations against plain Gibbs's 36. After centring the shift on the
+    /// observed maximum instead, 44 of 45. A mixing benchmark on a well-scaled model cannot see
+    /// this, because every model in it is well-scaled.
+    #[test]
+    fn a_pinned_variable_does_not_stall_the_rest_of_the_model() {
+        let mut b = GraphBuilder::new(10);
+        for i in 0..9 {
+            b.couple(i, i + 1, 0.6);
+        }
+        // A pin three orders of magnitude above every other coefficient, as clamping produces.
+        b.bias(0, 5_000.0);
+        b.bias(9, -5_000.0);
+        let g = b.build();
+
+        let mut it = Informed::new(&g, 3.0, 5);
+        it.steps(20_000);
+        assert!(it.acceptance() > 0.0, "the chain stalled: no proposal was ever accepted");
+        // The pinned sites must hold, and the free ones must actually have moved.
+        assert_eq!(it.s[0], 1, "the +5000 pin must hold");
+        assert_eq!(it.s[9], -1, "and the -5000 pin must hold");
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..500 {
+            it.steps(g.n);
+            seen.insert(it.s[4..7].to_vec());
+        }
+        assert!(seen.len() > 1, "the unpinned interior never moved: {} distinct states", seen.len());
     }
 
     /// A model with no couplings and no fields has no energy scale, and the shift divides by it.

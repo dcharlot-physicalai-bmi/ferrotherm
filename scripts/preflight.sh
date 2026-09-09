@@ -72,6 +72,10 @@ gate "rustdoc"          cargo env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace 
 gate "examples-build"   cargo cargo build --workspace --examples --quiet
 gate "msrv"             cargo scripts/check-msrv.sh
 gate "versions"         cargo scripts/check-versions.sh
+# Not "is it correct" but "is it consistent, documented and usable" -- properties no test can fail
+# on and which rot silently. Fails on a module with public API and no tests, and on mutation
+# coverage going backwards. See scripts/quality.py.
+gate "quality"          cargo scripts/quality.py
 
 echo
 echo "-- the bindings ---------------------------------------------------------"

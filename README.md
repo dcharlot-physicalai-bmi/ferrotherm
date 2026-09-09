@@ -92,6 +92,7 @@ score. Scoring it found three defects on the first run.
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
 | Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
+| **Invertible logic — a multiplier that runs backwards is a factorizer** (Camsari, Faria, Sutton & Datta, PRX 2017); the canonical p-bit application | `invertible::Circuit` / `multiplier` — gates DERIVED from truth tables, lowered by our own penalty-free reduction | **shipped, verified** — clamping a product gives exactly its factor pairs, by full enumeration of the circuit including ancillas |
 | **Locally-informed proposals** (Zanella JASA 2020; Grathwohl et al. ICML 2021) — this review did not locate one in a thermodynamic-computing stack | `informed::Informed` — proposal weighted by the exact `ΔE`, three balancing functions | **shipped, verified** — samples the certified Boltzmann distribution, and **41× lower `tau_int` per flip** at `beta = 2` |
 | A barrier that does not park, and the constant it invalidated | `barrier::SpinBarrier` — spin briefly, then yield; never a syscall | **shipped, verified** — the parallel sampler's worst cell went **1.00x → 3.52x** and its best **5.80x → 11.98x** |
 | **Directed rounding for every claimed bound** (this review did not locate one in a thermodynamic-computing stack) | `round::sum_down` / `sum_up` / `accumulation_guard` — one pass, Kahan–Babuška guard, no interval type | **shipped, verified** — and it found `bound::forest` returning a bound ABOVE the optimum on a third of random trees |
@@ -1153,6 +1154,94 @@ beats the converged one — `5 iters 80.5%`, `20 iters 36.7%`, `500 iters 46.0%`
 not a better approximation to the posterior; it is a different estimator that happens to fit better,
 the way early stopping regularises. The reflex on seeing 46% is to raise the cap, and raising it is
 not what helps.
+
+### Twenty-one gates said "is it correct" and none said "is it usable"
+
+`scripts/quality.py` is a scorecard: consistency, documentation, test rigour and ease of use, as
+counts with stated definitions rather than a single number that would hide which part moved. It runs
+in preflight as the `quality` gate.
+
+```text
+  ferrotherm quality scorecard -- 80 modules, 646 public fns
+
+  CONSISTENCY
+    public fns returning Result             121
+    public fns returning Option              70
+    #[must_use] annotations                 444
+    public fns with 5+ parameters            61
+    public fns taking a seed                 73
+    modules without a //! module doc          0
+
+  DOCUMENTATION
+    doc lines / code lines                 0.53   (10017 / 18955)
+    ```text doc blocks (NOT compiled)        72
+    compiled doc examples                    38
+
+  TEST RIGOUR
+    #[test] functions                       906
+    modules with a recorded mutation         29 of 80
+    public modules with NO mutation          47
+```
+
+**The headline is the last line.** The mutation suite this crate leans on — the thing that caught
+three defects this session that nothing else did — covers **29 of 80 modules**. Forty-seven public
+modules have no recorded mutation at all. That was invisible until something counted it.
+
+Two more worth acting on. **72 of the 110 doc code blocks are ```text, so rustdoc never compiles
+them** — a documented example that cannot go stale loudly is one that goes stale quietly. And the
+median example is 91 code lines with only 12 of 50 under fifty, which is a real ease-of-use signal
+for a reader trying to find the smallest thing that works.
+
+**Why a ratchet rather than a red light.** Failing on all 47 unmutated modules would make the gate
+permanently red, which is how a gate gets ignored; writing 47 exemption sentences would fill the
+table with "not done yet", which is not a reason and would corrupt the one mechanism that does work.
+So a module with public API and no *tests* must carry a written reason, and mutation coverage is
+pinned at its current count and may only fall. A new module without a row fails immediately; the
+existing debt is printed on every run.
+
+Measured with Python reading the files directly, not by shelling out: this machine's `grep` is an
+embedded ugrep that silently skips gitignored files, and a metric that quietly measures a subset is
+worse than none.
+
+### A multiplier that runs backwards is a factorizer
+
+A deterministic gate maps inputs to outputs. The same gate written as an Ising model whose ground
+states are its truth table has no direction at all: clamp the inputs and the ground states give the
+output; clamp the **output** and they give every input consistent with it. Camsari, Faria, Sutton &
+Datta (PRX 7, 031014, 2017) called this invertible logic, and it is the canonical application of a
+probabilistic-bit machine — the one thing every p-bit review names and this crate did not have.
+
+**Gates are derived from truth tables, not transcribed.** The literature gives `J` and `h` per gate
+as tables, which are easy to copy wrongly and impossible to check by reading. Here a gate is
+declared by its truth table and the penalty is built as
+`P(s) = Σ over unsatisfying assignments of Π_i (1 + a_i s_i)/2` — zero on the truth table, at least
+one off it — then lowered by `reduce::to_pairwise_exact`, so there is no penalty coefficient to
+tune. Every gate's ground-state set is checked against its truth table by enumeration.
+
+The carry chain is the part worth doubting, so `a_multiplier_computes_products_exhaustively`
+enumerates every operand pair rather than reading the code: an off-by-one in the ripple gives a
+circuit that is still a valid Ising model with a perfectly good ground state, for the wrong
+function. And at two bits the **whole circuit, ancillas included, is enumerated** — clamping the
+product to each value yields exactly its factor pairs and nothing else.
+
+**Why the circuit route rather than one dense polynomial.** Writing multiplication as a single
+polynomial and reducing it gives an all-to-all graph needing wide coefficients. The circuit gives a
+sparse one:
+
+```text
+  3x3 multiplier:  27 vars, 15 gates ->  84 spins, 246 couplings, 7.1% density, 6 distinct |J|
+  4x4 multiplier:  48 vars, 28 gates -> 176 spins, 548 couplings, 3.6% density, 6 distinct |J|
+```
+
+Six distinct coupling magnitudes, largest 1.5 — which is the shape fabricated annealing silicon
+accepts. `silicon` here targets a machine with four-bit coefficients.
+
+**It found a real bug in the sampler shipped one commit earlier.** Clamping pins the product bits
+with a bias ~500× everything else, and `informed` centred its numerical shift on a bound over the
+whole model — so every unpinned weight underflowed and the chain *stalled*, scoring 0 of 45
+factorisations against plain Gibbs's 36. Not slower: stopped. With the shift centred on the weights
+actually present, 44 of 45 — now ahead of Gibbs. No mixing benchmark could have found this, because
+every model in one is well-scaled. That is the argument for keeping applications in the crate.
 
 ### Twelve samplers, and not one let the energy choose where to look
 

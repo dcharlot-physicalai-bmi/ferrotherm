@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### A quantitative scorecard, and what it found
+
+`scripts/quality.py` measures consistency, documentation, test rigour and ease of use as counts with
+stated definitions, and runs in preflight as the `quality` gate. Twenty-one gates asked "is it
+correct"; none asked "is it consistent, documented, usable" — properties no test can fail on, and
+the ones that rot silently.
+
+**The mutation suite covers 29 of 80 modules.** Forty-seven public modules have no recorded mutation
+at all. That suite caught three defects this session that nothing else did, and nobody had counted
+what it actually reaches. Also: **72 of 110 doc code blocks are ```text, so rustdoc never compiles
+them**, and the median example is 91 code lines with only 12 of 50 under fifty.
+
+Mutation coverage is a RATCHET, not a red light: failing on 47 would make the gate permanently red,
+and writing 47 exemption sentences would fill the table with "not done yet" — not a reason, and it
+would corrupt the one mechanism that works. A module with public API and no *tests* must carry a
+written reason; the unmutated count is pinned and may only fall.
+
+Measured by reading files in Python rather than shelling out, because this machine's `grep` is a
+ugrep shim that silently skips gitignored files.
+
+
+### A multiplier that runs backwards is a factorizer
+
+`invertible` writes logic gates as Ising models whose ground states are their truth tables, so the
+circuit has no preferred direction: clamp the inputs and you get the output, clamp the **output** and
+you get every input consistent with it. Camsari, Faria, Sutton & Datta (PRX 2017). It is the
+canonical p-bit application and the crate had no trace of it.
+
+**Gates are derived, not transcribed.** Published `J`/`h` tables are easy to copy wrongly and
+impossible to check by reading. A gate is declared by its truth table; the penalty is the sum of
+indicators over unsatisfying assignments, lowered by `reduce::to_pairwise_exact` so no penalty
+coefficient needs tuning. Ground states are checked against the truth table by enumeration, and
+`the_penalty_counts_violated_gates_exactly` pins the whole expansion as an identity — energy plus
+offset equals the number of violated gates, at every state.
+
+At two bits the **entire circuit including ancillas** is enumerated: clamping the product yields
+exactly its factor pairs and nothing else. The carry chain is checked by enumerating every operand
+pair, because an off-by-one there gives a valid Ising model computing the wrong function.
+
+```text
+  3x3 multiplier:  27 vars, 15 gates ->  84 spins, 246 couplings, 7.1% density, 6 distinct |J|
+  4x4 multiplier:  48 vars, 28 gates -> 176 spins, 548 couplings, 3.6% density, 6 distinct |J|
+```
+
+Six distinct coupling magnitudes — the shape fabricated annealing silicon accepts, against the dense
+wide-coefficient graph a single-polynomial formulation gives.
+
+**It found a stalling bug in `informed`, shipped one commit earlier.** Clamping pins variables with a
+bias ~500x the rest of the model, and the numerical shift was a bound over the whole model — so every
+unpinned weight underflowed to zero and the chain stopped dead, scoring **0 of 45** factorisations
+against Gibbs's 36. Centred on the weights actually present instead: **44 of 45**, now ahead of
+Gibbs. A mixing benchmark cannot find this, because every model in one is well-scaled.
+
+Also: two mutation rows written this session were malformed and the format's own guard is what said
+so — one contained `||` (two field separators) and one spanned lines, which `read` truncates. The
+acceptance test in `informed` was refactored onto its own line so it can be mutated without a pipe.
+
+
 ### Twelve samplers, and not one let the energy choose where to look
 
 Every single-flip sampler in this crate picked its next site in order or uniformly. `informed`

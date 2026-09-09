@@ -102,6 +102,7 @@ pub mod kernel;
 pub mod schedule;
 pub mod gibbs;
 pub mod informed;
+pub mod invertible;
 pub mod samples;
 pub mod sparsify;
 pub mod ising;

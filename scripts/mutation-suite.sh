@@ -277,11 +277,26 @@ mutations=(
 
   # Accepting everything is a valid-looking sampler with no Metropolis correction at all. It mixes
   # FASTER, which is the trap: a speed measurement would reward it.
-  "src/informed.rs|            if after <= before || self.rng.f64() < before / after {|            if true {|informed|an informed chain that accepts everything"
+  "src/informed.rs|        let alpha = (before / after).min(1.0);|        let alpha = 1.0;|informed|an informed chain that accepts everything"
 
   # The proposal is normalised by a total maintained incrementally. Flip the sign of the field
   # repair and the weights describe a state the sampler is not in.
   "src/informed.rs|            self.fields[j] += self.g.w[e] * 2.0 * sk;|            self.fields[j] -= self.g.w[e] * 2.0 * sk;|informed|an incremental field update with the wrong sign"
+
+  # The shift centres the weights. Bounded over the whole MODEL instead of centred on the weights
+  # actually present, a single pinned variable -- which is what clamping is -- underflows every
+  # other site to zero and the chain stops dead. It shipped that way; `factor_by_sampling` scored
+  # 0 of 45 against plain Gibbs's 36 before this line changed.
+  "src/informed.rs|        self.shift = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);|        self.shift = logs.iter().copied().fold(f64::INFINITY, f64::min);|informed|a shift centred on the smallest weight instead of the largest"
+
+  # The gate penalty is a SIGNED expansion of the indicator over subsets. Drop the signs and it is
+  # still a polynomial, still has a ground state, and encodes a different relation entirely.
+  "src/invertible.rs|                            if a >> i & 1 == 0 {|                            if false {|invertible|an indicator expansion with the signs dropped"
+
+  # An array multiplier's final carry is one line and one bit. Dropping it gives a circuit that is
+  # a perfectly good Ising model computing the wrong product for exactly the operand pairs that
+  # overflow -- which is why the test enumerates every pair rather than sampling some.
+  "src/invertible.rs|            next.push(ci);|            let _ = ci;|invertible|a multiplier that drops its final carry"
 
   # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
   # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
