@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Exact independent draws past the enumeration cap
+
+`exact::Elimination::draws` builds a forward-filter / backward-sample sampler (Hamze & de Freitas,
+UAI 2004; the backward pass is standard bucket-elimination sampling, Dechter 1999): run the
+sum-product elimination forward keeping each variable's conditional, then draw in **reverse**
+elimination order, where every conditional scope is already assigned. The draws are independent and
+exactly Boltzmann — no burn-in, no autocorrelation, `tau_int = 1` by construction.
+
+**The point is the referee, not the sampler.** Truth in this crate meant `samples::enumerate`
+(refuses past ~26 spins) or `Elimination::marginals` (single-site only, `2n` eliminations). A joint
+exact draw is what a total-variation check against truth needs, and there was no way to get one
+above `2^n`.
+
+Verified below the cap — certified Boltzmann against enumeration, `ln Z` matching `log_partition`,
+drawn marginals matching eliminated ones — and above it: on a **1,024-spin ring**, `ln Z` matches
+the transfer-matrix closed form and the drawn magnetisation matches its `dF/dh`.
+
+The cost is `Σ_k 2^{m_k}`, not `max_k 2^{m_k}`: an elimination drops each table as it goes, a
+sampler must keep every one. `MAX_DRAW_STATE` refuses before the allocation and says why.
+
+From the audit's 71 confirmed gaps, this was the one rated highest leverage.
+
+
 ### One of seven EBM trainers reached the C ABI, and `persistent` was pinned false in the body
 
 `ft_ebm_train` took no method selector and set `persistent: false` internally, so **every non-Rust

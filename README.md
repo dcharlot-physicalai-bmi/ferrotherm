@@ -92,6 +92,7 @@ score. Scoring it found three defects on the first run.
 | Pseudolikelihood training (Besag 1975; the standard sampling-free fit) | `ebm::train_pseudolikelihood` — closed-form objective and gradient, no sampler | **shipped, verified** — gradient checked against finite differences, consistency measured |
 | Minimum probability flow (Sohl-Dickstein, Battaglino & DeWeese 2011; derived FOR the Ising model) | `ebm::train_mpf` — outflow from the data in the first instant, closed form, no sampler | **shipped, verified** — gradient against finite differences, consistency measured, scored against the exact ceiling |
 | Ratio matching (Hyvärinen 2007; score matching's discrete counterpart) | `ebm::train_ratio_matching` — one-bit-flip probability ratios, normaliser-free | **shipped, verified** — same, and the one non-convex objective of the three, which is said rather than glossed |
+| **Exact independent draws at bounded treewidth** — forward-filter / backward-sample (Hamze & de Freitas UAI 2004; Dechter 1999) | `exact::Elimination::draws` — one elimination, then draw in reverse order | **shipped, verified** — certified Boltzmann against enumeration, and `ln Z` checked against the transfer-matrix closed form on a **1,024-spin** ring |
 | **Invertible logic — a multiplier that runs backwards is a factorizer** (Camsari, Faria, Sutton & Datta, PRX 2017); the canonical p-bit application | `invertible::Circuit` / `multiplier` — gates DERIVED from truth tables, lowered by our own penalty-free reduction | **shipped, verified** — clamping a product gives exactly its factor pairs, by full enumeration of the circuit including ancillas |
 | **Locally-informed proposals** (Zanella JASA 2020; Grathwohl et al. ICML 2021) — this review did not locate one in a thermodynamic-computing stack | `informed::Informed` — proposal weighted by the exact `ΔE`, three balancing functions | **shipped, verified** — samples the certified Boltzmann distribution, and **41× lower `tau_int` per flip** at `beta = 2` |
 | A barrier that does not park, and the constant it invalidated | `barrier::SpinBarrier` — spin briefly, then yield; never a syscall | **shipped, verified** — the parallel sampler's worst cell went **1.00x → 3.52x** and its best **5.80x → 11.98x** |
@@ -1202,6 +1203,37 @@ existing debt is printed on every run.
 Measured with Python reading the files directly, not by shelling out: this machine's `grep` is an
 embedded ugrep that silently skips gitignored files, and a metric that quietly measures a subset is
 worse than none.
+
+### The crate's notion of truth was capped at 2^n, and now is not
+
+Every sampler here produces a *chain*: correlated draws whose distance from Boltzmann is a question
+you answer with `certify`. `exact::Elimination::draws` produces **independent draws that are exactly
+Boltzmann** — no burn-in, no autocorrelation, `tau_int = 1` by construction. Run the sum-product
+elimination forward keeping each variable's conditional, then draw in **reverse** elimination order,
+where every variable's conditional scope is already assigned.
+
+**It matters more as a referee than as a sampler.** Truth in this crate meant `samples::enumerate`,
+which walks every state and refuses past about 26 spins, or `Elimination::marginals`, which scales
+further but gives only *single-site* marginals and costs `2n` eliminations. A total-variation or
+pair-correlation check against truth needs a joint exact draw, and there was no way to get one above
+the enumeration cap.
+
+Verified where it can be: certified Boltzmann against exhaustive enumeration on 12 spins, `ln Z`
+agreeing with `log_partition` across seeds and temperatures, and drawn marginals matching the
+eliminated ones. Then past it — on a **1,024-spin ring**, where `2^1024` states cannot be
+enumerated, `ln Z` matches the transfer-matrix closed form and the drawn magnetisation matches the
+`dF/dh` that closed form implies.
+
+**The cost is the sum, not the maximum.** An elimination's live cost is `max_k 2^{m_k}` because each
+table is consumed and dropped; a sampler must *keep* every conditional, so it pays `Σ_k 2^{m_k}` —
+at the default `max_width` of 24, 134 MB per variable. `MAX_DRAW_STATE` refuses before the
+allocation rather than after it, and says why.
+
+Three mutations, each a sampler that still produces plausible states from the wrong distribution:
+walking the order forwards (conditioning on spins not yet drawn), flipping the sign of the
+conditional log-odds, and skipping a spin that appears in no factor — `log_partition` owes that one
+only `ln 2`, so the obvious reading is that a sampler owes it nothing, and then it returns whatever
+the state vector was initialised to.
 
 ### A multiplier that runs backwards is a factorizer
 

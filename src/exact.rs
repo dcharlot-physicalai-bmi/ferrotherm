@@ -1361,6 +1361,178 @@ fn pin(g: &Graph, i: usize, v: f64) -> Graph {
 
 #[cfg(test)]
 mod tests {
+
+    /// THE ONLY CLAIM THAT MATTERS: the draws are Boltzmann, exactly.
+    ///
+    /// Checked through the crate's own certificate against exhaustive enumeration, not against a
+    /// longer run of itself. A backward sampler that conditioned on the wrong scope, or walked the
+    /// order forwards, would still produce plausible states with a plausible energy histogram.
+    #[test]
+    fn backward_sampling_draws_the_boltzmann_distribution() {
+        let mut b = GraphBuilder::new(12);
+        for i in 0..12 {
+            b.couple(i, (i + 1) % 12, if i % 3 == 0 { -0.8 } else { 0.6 });
+        }
+        b.bias(0, 0.5);
+        b.bias(6, -0.4);
+        let g = b.build();
+        let beta = 0.9;
+        let d = Elimination::default().draws(&g, beta).unwrap();
+        let mut rng = crate::rng::Pcg::new(7, 0xD4);
+        let mut samples = Vec::with_capacity(8_000);
+        let mut trace = Vec::with_capacity(8_000);
+        for _ in 0..8_000 {
+            let s = d.draw(&mut rng);
+            trace.push(g.energy(&s));
+            samples.push(s);
+        }
+        let cert = crate::certify::certify(&g, beta, &samples, &trace);
+        crate::certify::assert_boltzmann(&cert, beta, "exact backward sampling");
+        // Independent by construction: a chain of these has no autocorrelation to integrate.
+        assert!(
+            cert.tau_int < 1.5,
+            "independent draws must have tau_int near 1, got {}",
+            cert.tau_int
+        );
+    }
+
+    /// `ln Z` from the sampler's own forward pass must equal what `log_partition` returns — it is
+    /// the same elimination, and a sampler whose normaliser disagreed would be conditioning on a
+    /// different model than the one it reports.
+    #[test]
+    fn the_sampler_reports_the_same_log_z_as_the_elimination() {
+        let el = Elimination::default();
+        for seed in 0..6u64 {
+            let g = random_sparse(14, 0.25, seed);
+            for beta in [0.3f64, 1.0, 2.0] {
+                let want = el.log_partition(&g, beta).unwrap().log_z.unwrap();
+                let got = el.draws(&g, beta).unwrap().log_z();
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "seed {seed} beta {beta}: sampler {got} against elimination {want}"
+                );
+            }
+        }
+    }
+
+    /// PAST THE ENUMERATION CAP, which is the point of having this at all.
+    ///
+    /// A 1,024-spin ring cannot be enumerated — `2^1024` — and `samples::enumerate` refuses above
+    /// about 26. Its free energy has a closed form (transfer matrix), so the sampler's `ln Z` is
+    /// checkable at a size where the crate's previous notion of truth does not exist. The draws are
+    /// then checked to have the magnetisation that free energy implies.
+    #[test]
+    fn an_exact_sampler_runs_far_past_what_can_be_enumerated() {
+        let (n, j, h, beta) = (1_024usize, 0.7f64, 0.3f64, 0.8f64);
+        let mut b = GraphBuilder::new(n);
+        for i in 0..n {
+            b.couple(i, (i + 1) % n, j);
+            b.bias(i, h);
+        }
+        let g = b.build();
+        let d = Elimination::default().draws(&g, beta).unwrap();
+        let want = crate::free_energy::ring_log_z(n, j, h, beta);
+        assert!(
+            (d.log_z() - want).abs() < 1e-6 * want.abs().max(1.0),
+            "ln Z {} against the transfer-matrix closed form {want}",
+            d.log_z()
+        );
+
+        // dF/dh gives the magnetisation; a central difference on the closed form is the oracle.
+        let eps = 1e-4;
+        let m_exact = (crate::free_energy::ring_log_z(n, j, h + eps, beta)
+            - crate::free_energy::ring_log_z(n, j, h - eps, beta))
+            / (2.0 * eps * beta * n as f64);
+        let mut rng = crate::rng::Pcg::new(11, 0xD5);
+        let draws = 400;
+        let m_drawn: f64 = (0..draws)
+            .map(|_| {
+                let s = d.draw(&mut rng);
+                s.iter().map(|&x| f64::from(x)).sum::<f64>() / n as f64
+            })
+            .sum::<f64>()
+            / f64::from(draws);
+        assert!(
+            (m_drawn - m_exact).abs() < 0.02,
+            "magnetisation {m_drawn:.4} against the closed form {m_exact:.4}"
+        );
+    }
+
+    /// Single-site marginals from the draws must match the ones the elimination computes by pinning
+    /// — the same distribution read two entirely different ways.
+    #[test]
+    fn the_drawn_marginals_match_the_eliminated_ones() {
+        let g = random_sparse(12, 0.3, 4);
+        let beta = 0.7;
+        let el = Elimination::default();
+        let want = el.marginals(&g, beta).unwrap();
+        let d = el.draws(&g, beta).unwrap();
+        let mut rng = crate::rng::Pcg::new(3, 0xD6);
+        let draws = 20_000;
+        let mut up = vec![0.0f64; g.n];
+        for _ in 0..draws {
+            let s = d.draw(&mut rng);
+            for i in 0..g.n {
+                if s[i] > 0 {
+                    up[i] += 1.0;
+                }
+            }
+        }
+        for i in 0..g.n {
+            let got = up[i] / f64::from(draws);
+            // Three sigma of a binomial at this many draws is about 0.011.
+            assert!(
+                (got - want[i]).abs() < 0.02,
+                "spin {i}: drawn {got:.4} against eliminated {:.4}",
+                want[i]
+            );
+        }
+    }
+
+    /// A free spin appears in no table, and must still be DRAWN rather than left at whatever the
+    /// state vector held. `log_partition` only owes it `ln 2`.
+    #[test]
+    fn a_spin_in_no_factor_is_still_drawn() {
+        let mut b = GraphBuilder::new(5);
+        b.couple(0, 1, 1.0);
+        // spins 2, 3, 4 have no field and no edge: free, and uniform.
+        let g = b.build();
+        let d = Elimination::default().draws(&g, 1.0).unwrap();
+        let mut rng = crate::rng::Pcg::new(9, 0xD7);
+        let mut seen = [0u32; 5];
+        let draws = 4_000;
+        for _ in 0..draws {
+            let s = d.draw(&mut rng);
+            for i in 0..5 {
+                if s[i] > 0 {
+                    seen[i] += 1;
+                }
+            }
+        }
+        for i in 2..5 {
+            let p = f64::from(seen[i]) / f64::from(draws);
+            assert!((p - 0.5).abs() < 0.05, "free spin {i} is not uniform: {p:.3}");
+        }
+        assert!(
+            (d.log_z() - (crate::free_energy::exact_log_z(&g, 1.0))).abs() < 1e-9,
+            "and its ln 2 must be in ln Z"
+        );
+    }
+
+    /// Both refusals arrive by name, and the state budget is checked BEFORE the allocation.
+    #[test]
+    fn a_model_too_wide_or_too_large_is_refused_by_name() {
+        let narrow = Elimination { max_width: 2 };
+        let g = crate::ising::lattice2d(8, 1.0);
+        match narrow.draws(&g, 1.0) {
+            Err(DrawError::Wide(TooWide::Width { max, .. })) => assert_eq!(max, 2),
+            other => panic!("a wide model must be refused by name: {other:?}"),
+        }
+        // The state budget binds before the width does on anything dense enough to reach it.
+        let msg = DrawError::TooMuchState { bytes: 1 << 30, limit: MAX_DRAW_STATE }.to_string();
+        assert!(msg.contains("SUM"), "the refusal must say why a sampler costs more: {msg}");
+    }
+
     /// A graph with fields, wide enough that a low cap refuses it outright.
     ///
     /// Fields are not decoration. `pin` zeroes the pinned node's own field, so every correction
@@ -1852,5 +2024,219 @@ mod closed_form {
                 );
             }
         }
+    }
+}
+
+// ---- exact independent draws by backward sampling ------------------------------------------------
+
+/// One eliminated variable's conditional, kept so the backward pass can draw it.
+struct Step {
+    v: usize,
+    /// Variables the conditional depends on — all eliminated AFTER `v`, so all already drawn when
+    /// the backward pass reaches this step.
+    scope: Vec<usize>,
+    /// `ln P(v = +1 | scope) − ln P(v = −1 | scope)`, one entry per assignment of `scope`.
+    logit: Vec<f64>,
+}
+
+/// Why an exact sampler could not be built.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DrawError {
+    /// The elimination itself is too wide — see [`TooWide`].
+    Wide(TooWide),
+    /// The conditionals would not fit in the state budget.
+    ///
+    /// A backward sampler must KEEP every eliminated variable's conditional, where
+    /// [`Elimination::log_partition`] consumes each table and drops it. The live cost of an
+    /// elimination is `max_k 2^{m_k}`; the cost of a sampler is `Σ_k 2^{m_k}`, which at the default
+    /// `max_width` of 24 is 134 MB **per variable**. Refused rather than attempted.
+    TooMuchState {
+        /// What the conditionals would need.
+        bytes: usize,
+        /// The budget.
+        limit: usize,
+    },
+}
+
+impl core::fmt::Display for DrawError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DrawError::Wide(w) => write!(f, "{w}"),
+            DrawError::TooMuchState { bytes, limit } => write!(
+                f,
+                "the conditionals need {bytes} bytes against a {limit}-byte budget. A backward \
+                 sampler keeps every eliminated variable's conditional where `log_partition` drops \
+                 each one, so its cost is the SUM of the tables rather than the largest. Lower \
+                 `max_width`, or use a narrower model"
+            ),
+        }
+    }
+}
+
+/// How much conditional state [`Elimination::draws`] will keep, in bytes.
+///
+/// Generous for a forest (a scope of one is two floats) and binding well before the width limit on
+/// a dense model, which is the intent: the refusal should arrive before the allocation does.
+pub const MAX_DRAW_STATE: usize = 512 << 20;
+
+/// An exact independent-draw sampler for a model of bounded treewidth.
+///
+/// # What this is, and why it is not another sampler
+///
+/// Every other sampler in this crate produces a CHAIN: correlated draws whose distance from the
+/// Boltzmann distribution is a question you answer with [`crate::certify`]. This produces
+/// INDEPENDENT draws that are exactly Boltzmann, with no burn-in, no autocorrelation and nothing to
+/// certify — `tau_int` is 1 by construction. It is the forward-filter/backward-sample construction
+/// (Hamze & de Freitas, UAI 2004; the backward pass is standard bucket-elimination sampling,
+/// Dechter 1999): run the sum-product elimination forward keeping each variable's conditional, then
+/// draw in REVERSE elimination order, where every variable's conditional scope is already assigned.
+///
+/// # Why it matters more as a referee than as a sampler
+///
+/// This crate's notion of truth was capped at `2^n`. [`crate::samples::enumerate`] walks every
+/// state and refuses past about 26 spins; [`Elimination::marginals`] scales further but gives only
+/// SINGLE-SITE marginals, and at the cost of `2n` eliminations. A joint exact draw is what a
+/// total-variation or pair-correlation check against truth actually needs, and this supplies it at
+/// any size whose treewidth fits — a 4,096-spin chain, a wide tree, a thin lattice strip.
+///
+/// # Cost
+///
+/// One elimination, plus `Σ_k 2^{m_k}` floats of retained conditionals — the SUM over eliminated
+/// variables, where `log_partition` pays only the largest. [`MAX_DRAW_STATE`] refuses before the
+/// allocation. Each draw afterwards is `O(Σ_k m_k)` and needs no further elimination, so the pass
+/// is amortised over every draw taken.
+pub struct Draws {
+    n: usize,
+    /// In elimination order; the backward pass walks it in reverse.
+    steps: Vec<Step>,
+    log_z: f64,
+}
+
+impl core::fmt::Debug for Draws {
+    /// The shape, not the tables: printing `Σ_k 2^{m_k}` floats is not a diagnostic.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let widest = self.steps.iter().map(|s| s.scope.len()).max().unwrap_or(0);
+        let entries: usize = self.steps.iter().map(|s| s.logit.len()).sum();
+        f.debug_struct("Draws")
+            .field("spins", &self.n)
+            .field("widest_scope", &widest)
+            .field("conditional_entries", &entries)
+            .field("log_z", &self.log_z)
+            .finish()
+    }
+}
+
+impl Draws {
+    /// `ln Z`, from the same forward pass — free, and the same value [`Elimination::log_partition`]
+    /// returns.
+    #[must_use]
+    pub fn log_z(&self) -> f64 {
+        self.log_z
+    }
+
+    /// Spins in the model.
+    #[must_use]
+    pub fn n(&self) -> usize {
+        self.n
+    }
+
+    /// One exact, independent draw from the Boltzmann distribution.
+    pub fn draw(&self, rng: &mut crate::rng::Pcg) -> Vec<i8> {
+        let mut s = vec![1i8; self.n];
+        // REVERSE elimination order. A variable's conditional depends only on variables eliminated
+        // after it, so walking backwards means every scope is already assigned — that is the whole
+        // construction, and taking the order forwards would condition on spins not yet drawn.
+        for step in self.steps.iter().rev() {
+            let mut idx = 0usize;
+            for (k, &u) in step.scope.iter().enumerate() {
+                if s[u] > 0 {
+                    idx |= 1 << k;
+                }
+            }
+            let p = 1.0 / (1.0 + (-step.logit[idx]).exp());
+            s[step.v] = if rng.f64() < p { 1 } else { -1 };
+        }
+        s
+    }
+}
+
+impl Elimination {
+    /// Build an exact independent-draw sampler. See [`Draws`].
+    ///
+    /// # Errors
+    ///
+    /// [`DrawError::Wide`] when the elimination is wider than `max_width`, and
+    /// [`DrawError::TooMuchState`] when the retained conditionals would exceed [`MAX_DRAW_STATE`].
+    pub fn draws(&self, g: &Graph, beta: f64) -> Result<Draws, DrawError> {
+        let (order, width) = Self::order_for(g);
+        if width > self.max_width {
+            return Err(DrawError::Wide(TooWide::Width { width, max: self.max_width }));
+        }
+
+        let mut tables = initial_tables(g, beta);
+        let mut steps: Vec<Step> = Vec::with_capacity(order.len());
+        let mut constant = 0.0f64;
+        let mut state_bytes = 0usize;
+
+        for &v in &order {
+            let (mine, rest): (Vec<Table>, Vec<Table>) =
+                tables.into_iter().partition(|t| t.vars.contains(&v));
+            tables = rest;
+            if mine.is_empty() {
+                // A spin no table mentions is uniform, and it still has to be DRAWN. `log_partition`
+                // only owes it `ln 2`; a sampler that skipped it would return whatever the state
+                // vector was initialised to, which is not a draw.
+                constant -= core::f64::consts::LN_2;
+                steps.push(Step { v, scope: Vec::new(), logit: vec![0.0] });
+                continue;
+            }
+
+            let mut scope: Vec<usize> = Vec::new();
+            for t in &mine {
+                for &u in &t.vars {
+                    if u != v && !scope.contains(&u) {
+                        scope.push(u);
+                    }
+                }
+            }
+            scope.sort_unstable();
+
+            let m = scope.len();
+            state_bytes = state_bytes.saturating_add((1usize << m) * core::mem::size_of::<f64>());
+            if state_bytes > MAX_DRAW_STATE {
+                return Err(DrawError::TooMuchState { bytes: state_bytes, limit: MAX_DRAW_STATE });
+            }
+            let mut vals = vec![0.0f64; 1 << m];
+            let mut logit = vec![0.0f64; 1 << m];
+            let mut assign = vec![0i8; g.n];
+
+            for idx in 0..(1usize << m) {
+                for (k, &u) in scope.iter().enumerate() {
+                    assign[u] = if idx >> k & 1 == 1 { 1 } else { -1 };
+                }
+                let mut branch = [0.0f64; 2];
+                for (sv, bi) in [(0usize, -1i8), (1usize, 1i8)] {
+                    assign[v] = bi;
+                    branch[sv] = mine.iter().map(|t| t.value_at(&assign)).sum();
+                }
+                // Tables hold ENERGIES, so the weight of a branch is exp(−branch).
+                // ln P(+1) − ln P(−1) = −branch[1] + branch[0].
+                logit[idx] = branch[0] - branch[1];
+                let (a, b) = (-branch[0], -branch[1]);
+                let hi = a.max(b);
+                vals[idx] = -(hi + ((a - hi).exp() + (b - hi).exp()).ln());
+            }
+
+            if m == 0 {
+                constant += vals[0];
+            } else {
+                tables.push(Table { vars: scope.clone(), vals });
+            }
+            steps.push(Step { v, scope, logit });
+        }
+        for t in &tables {
+            constant += t.vals[0];
+        }
+        Ok(Draws { n: g.n, steps, log_z: -constant })
     }
 }

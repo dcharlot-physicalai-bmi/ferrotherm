@@ -298,6 +298,21 @@ mutations=(
   # overflow -- which is why the test enumerates every pair rather than sampling some.
   "src/invertible.rs|            next.push(ci);|            let _ = ci;|a_multiplier_computes_products_exhaustively|a multiplier that drops its final carry"
 
+  # Backward sampling is backward for a reason: a variable's conditional scope holds only variables
+  # eliminated AFTER it, so walking the order forwards conditions on spins that have not been drawn.
+  # The chain still produces states, still with a plausible energy histogram, from another
+  # distribution entirely.
+  "src/exact.rs|        for step in self.steps.iter().rev() {|        for step in self.steps.iter() {|backward_sampling_draws_the_boltzmann_distribution|a backward pass walked forwards"
+
+  # The tables hold ENERGIES, so ln P(+1) - ln P(-1) is branch[0] - branch[1]. Flipped, every spin
+  # is drawn from its own mirror image -- a perfectly normalised distribution, and the wrong one.
+  "src/exact.rs|                logit[idx] = branch[0] - branch[1];|                logit[idx] = branch[1] - branch[0];|backward_sampling_draws_the_boltzmann_distribution|conditional log-odds with the sign flipped"
+
+  # A spin in no factor is uniform and still has to be DRAWN. `log_partition` only owes it ln 2, so
+  # the obvious reading of its `continue` is that a sampler owes it nothing -- and then it reports
+  # whatever the state vector was initialised to.
+  "src/exact.rs|                steps.push(Step { v, scope: Vec::new(), logit: vec![0.0] });|                let _ = v;|a_spin_in_no_factor_is_still_drawn|a free spin never drawn"
+
   # The same line as seen by the saddle-point claim: with the hidden bits read off a visible-only
   # key they are pinned at -1 rather than averaged to zero, so an RBM at zero weights acquires a
   # gradient it does not have and the stationary point disappears.
@@ -376,7 +391,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=55
+expected_rows=58
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
