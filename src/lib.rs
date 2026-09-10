@@ -78,6 +78,16 @@
 pub mod rng;
 pub mod round;
 pub mod tts;
+pub mod multiflip;
+pub mod stein;
+pub mod structured;
+pub mod bayes;
+pub mod rld;
+pub mod dimod;
+pub mod working;
+pub mod relink;
+pub mod tempered_cd;
+pub mod length;
 pub mod cftp;
 pub mod kmc;
 pub mod perturb;
