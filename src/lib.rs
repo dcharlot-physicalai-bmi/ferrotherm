@@ -178,6 +178,19 @@ pub mod dtm;
 pub mod targets;
 pub mod hdl;
 pub mod ffi;
+pub mod cim;
+pub mod oim;
+pub mod survey;
+pub mod region;
+pub mod ep;
+pub mod cuts;
+pub mod sos;
+pub mod nested;
+pub mod umbrella;
+pub mod sse;
+pub mod vmc;
+pub mod gauge;
+pub mod diffuse;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///

@@ -486,6 +486,97 @@ mutations=(
   # returns LESS than one run, so a solver that already clears the target in a single run is billed
   # 0.67 t. That is the direction that flatters, and it is worst where the solver is doing best.
   "src/tts.rs|        return Some(1.0);|        return Some((1.0 - s).ln() / (1.0 - p).ln());|runs_needed_matches_the_closed_form_and_clamps_where_it_must|TTS reports a fraction of a run"
+
+  # ---------------------------------------------------------------------------------------------
+  # Thirteen rows for the thirteen algorithms of wave 3, each produced by the agent that wrote the
+  # module, applied, SEEN RED, and restored before it was recorded. Three of them are evidence
+  # about the TESTS rather than the code, and those three are the reason the row is written at the
+  # same time as the module rather than a wave later: `sse`, where the first mutation survived
+  # because the acceptance rule it broke was unreachable from any test; `vmc`, where the assertion
+  # the physics guarantees stayed silent and a pointwise identity caught it; and `survey`, where
+  # both solver-level tests pass with a wrong survey equation because the fallback rescues them.
+  # ---------------------------------------------------------------------------------------------
+
+  # The coupling term is the only thing that tells the oscillator network which way DOWN is. With
+  # its sign flipped the machine is a perfectly good Ising MAXIMISER: it still settles, still
+  # binarises, still reports a state and an energy. The row also records what the module doc now
+  # says out loud -- the single-instance asymmetric test does NOT separate the real CAC law from
+  # the plausible simplification that drops the multiplicative e_i. Only the twenty-instance family
+  # test does, and only because both counts are frozen: "corrected beats plain" would have passed.
+  "src/cim.rs|let dx = (pump - 1.0 - xi_now * xi_now) * xi_now + self.xi * e[i] * drive[i];|let dx = (pump - 1.0 - xi_now * xi_now) * xi_now - self.xi * e[i] * drive[i];|two_spin_ferromagnet_and_frustrated_triangle_match_exhaustive_enumeration|coupling term sign flipped, so the machine maximises the Ising energy instead of minimising it"
+
+  # sin(2 phi) is what makes this an ISING machine; sin(phi) injection-locks at the fundamental and
+  # leaves an XY machine that never binarises. The closed form tan(phi(t)) = tan(phi_0) exp(-2 K_s t)
+  # is what sees it, and the same test checks that halving dt halves the error, so a wrong factor
+  # inside the sine cannot converge prettily to the wrong number.
+  "src/oim.rs|            let d = -(self.k * c + k_s * (2.0 * phi[i]).sin());|            let d = -(self.k * c + k_s * phi[i].sin());|shil_relaxation_matches_the_closed_form_tan_decay|SHIL term loses its sub-harmonic factor of two, injection-locking at the fundamental instead"
+
+  # Pi(u) and Pi(s) swapped: a variable counted as forced TOWARD satisfying the clause instead of
+  # away from it. Only 2 of the module's 11 tests go red under it, and the row exists to record
+  # which 2: BOTH decimation tests pass with a wrong survey equation, because the local-search
+  # fallback rescues the solver and the surveys stay non-trivial either way. The solver-level tests
+  # are not what keeps the physics honest here; the tree enumeration and the closed form are.
+  "src/survey.rs|        let forced_away = (1.0 - disagree) * agree;|        let forced_away = (1.0 - agree) * disagree;|survey_propagation_is_the_backbone_by_exhaustive_enumeration_on_trees|Pi(u) and Pi(s) swapped: a variable counted as forced TOWARD satisfying the clause instead of away from it"
+
+  # The Moebius recursion c_R = 1 - sum over ANCESTORS is what makes each variable counted exactly
+  # once. Adding instead of subtracting still yields integer counting numbers and a region graph
+  # that runs -- and an approximation that is no longer a free energy.
+  "src/region.rs|                c -= counting[a];|                c += counting[a];|region::tests::counting_numbers_count_every_variable_and_coupling_exactly_once|Moebius recursion adds ancestor counting numbers instead of subtracting them"
+
+  # The cavity is the site's own contribution DIVIDED OUT, which in natural parameters is a
+  # subtraction. Adding instead still gives a well-formed Gaussian and still converges; it is just
+  # tilted by two copies of the site instead of none.
+  "src/ep.rs|    (1.0 / sigma - lam, mean / sigma - gam)|    (1.0 / sigma - lam, mean / sigma + gam)|ep_is_exact_on_an_uncoupled_model_oracle_tanh_closed_form|cavity field added instead of divided out (sign of the natural-parameter subtraction)"
+
+  # The Lagrangian charges a violated triangle AGAINST the bound. Adding the penalty instead leaves
+  # a number that rises with every cut and reads like a tightening bound while ceasing to be one.
+  # Note what the same agent measured and turned into a second test: stopping as soon as separation
+  # finds nothing -- the textbook rule -- made the bound WORSE the more cuts it was offered
+  # (C_11 gap 6.6e-3 with 64 rows, 1.6e-1 with 256), because separation reads an approximately
+  # optimal primal average and goes quiet while the dual is still climbing.
+  "src/cuts.rs|self.outer.push(-rhs * l);|self.outer.push(rhs * l);|k4_is_loose_in_the_box_and_exact_after_triangles_against_enumeration|Lagrangian penalty added instead of subtracted: sign slip on lambda_t * b_t"
+
+  # The sum-of-squares residual is what the certificate is CHARGED, and adding it instead turns a
+  # lower bound into a number above the optimum. The enumeration test is the one that sees it,
+  # which is the same shape as the unsound `bound::forest` this crate shipped once already.
+  "src/sos.rs|parts.push(-miss);|parts.push(miss);|sos::tests::the_bound_never_exceeds_the_true_minimum_by_enumeration|the sum-of-squares residual added to the bound instead of charged against it"
+
+  # `better_than` decides which live point is the WORST and therefore gets deleted. Reversed, the
+  # run peels UP the spectrum instead of down: the prior volume still shrinks as exp(-i/N), the
+  # shrinkage statistics still check out, and ln Z is computed over the wrong end of the ladder.
+  "src/nested.rs|        return a.0 < b.0;|        return a.0 > b.0;|nested::tests::log_z_matches_exhaustive_enumeration_within_its_own_stated_uncertainty|better_than picks the lowest-energy point as worst, so the run peels UP the spectrum instead of down"
+
+  # WHAM's denominator carries +beta f_w -- the free-energy offset that stitches the windows
+  # together. With the sign reversed every window's offset is applied backwards, and the stitched
+  # profile is still smooth, still normalised, and not the free energy of anything.
+  "src/umbrella.rs|            term[w] = ln_n[w] + beta * f[w] - beta * bias[w][b];|            term[w] = ln_n[w] - beta * f[w] - beta * bias[w][b];|wham_recovers_the_enumerated_profile_from_exact_histograms|WHAM denominator uses minus beta f_w instead of plus, so every window offset is applied backwards"
+
+  # THE FIRST ATTEMPT AT THIS MUTATION SURVIVED, and that is why the row is here. The removal
+  # acceptance min(1, (L-n+1)/(beta W_max)) clamped to 1 at every point the suite sampled, so the
+  # expression was live in the source and DEAD IN THE TESTS -- a whole acceptance rule no test
+  # could reach. The binding regime is cold and nearly classical (n > 14, diagonal-dominated), so
+  # (beta, Gamma) = (3.0, 0.2) was added to the four-site ring sweep. With that one point present
+  # the mutation dies at 13.1 sigma.
+  "src/sse.rs|let acc = (l - self.n + 1) as f64 / (self.beta * self.w_max);|let acc = (l - self.n + 1) as f64 / self.w_max;|sse::tests::energy_and_magnetisations_match_exact_diagonalisation_of_a_four_site_ring|beta dropped from the operator-removal acceptance in the diagonal update"
+
+  # AND THE BOUND TEST DID NOT CATCH IT. The variational energy is guaranteed to be an upper bound
+  # on E_0, so that assertion looks like the one with teeth -- but flipping the transverse sign
+  # makes the reported energy too HIGH, which stays a valid-looking upper bound at every step. What
+  # caught it, at 15.09 against 1e-13, was the zero-variance identity: a POINTWISE check with no
+  # averaging. The module doc had claimed a sign error "comes out too low and reads as success";
+  # that sentence was measured and rewritten.
+  "src/vmc.rs|e -= self.gamma * psi.log_ratio_with(s, theta, i).exp();|e += self.gamma * psi.log_ratio_with(s, theta, i).exp();|vmc::tests::the_local_energy_is_flat_at_the_closed_form_product_ground_state|sign of the transverse-field term in the local energy"
+
+  # A gauge multiplies each coupling by g_i g_j. Using one end only leaves a transform that still
+  # runs, still inverts on the fields, and no longer preserves the energy spectrum. The named test
+  # enumerates all 2^14 states and asserts EXACT f64 equality state by state, because the whole
+  # point of a gauge is that it changes nothing.
+  "src/gauge.rs|let sign = f64::from(self.signs[i]) * f64::from(self.signs[j]);|let sign = f64::from(self.signs[i]);|the_spectrum_is_invariant_under_a_gauge_over_every_state_exactly|gauge the coupling from one end only, dropping g_j"
+
+  # `q_step(t, j, xt)` is the probability of landing on xt from j; transposing it reads the D3PM
+  # posterior off the wrong direction of the chain. It still normalises, still integrates to a
+  # distribution, and only brute-force Bayes from the dense kernel products can tell.
+  "src/diffuse.rs|            let num = self.q_step(t, j, xt) * self.q_bar(t - 1, x0, j);|            let num = self.q_step(t, xt, j) * self.q_bar(t - 1, x0, j);|posterior_matches_brute_force_bayes_from_dense_kernel_products|D3PM posterior reads the step matrix transposed"
 )
 
 bad=0
@@ -524,7 +615,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=82
+expected_rows=95
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
