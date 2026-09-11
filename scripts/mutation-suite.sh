@@ -353,6 +353,139 @@ mutations=(
   # from the state, every test still passes and nothing is verified -- the check becomes a
   # restatement of the claim it was meant to test.
   "src/receipt.rs|        let actual = g.energy(&self.state);|        let actual = self.energy;|no_single_field_can_be_edited_and_still_pass|a receipt that restates rather than checks"
+
+  # ---------------------------------------------------------------------------------------------
+  # Twenty-four rows for the twenty-four modules added in the two algorithm waves. Each was
+  # applied, SEEN RED against the test it names, and restored before it was written down. They
+  # exist because 300 tests arrived at once, and this crate has already learned that a test which
+  # has never been shown to fail is a claim, not a measurement.
+  # ---------------------------------------------------------------------------------------------
+
+  # The one place the algorithm asks whether the two sandwiching chains actually MET. A
+  # one-character index typo makes the question always true, so `draw` breaks out of its doubling
+  # loop on the first attempt and the perfect sampler degrades into an ordinary forward chain from
+  # a fixed start with a burn-in of one sweep -- silently, for every seed.
+  "src/cftp.rs|(chains[0] == chains[1]).then(|(chains[0] == chains[0]).then(|every_start_lands_on_the_coalesced_state|a coalescence check that always holds"
+
+  # Gillespie's waiting time is the only place the chain stops being an estimator and becomes a
+  # CLOCK. Advancing by 1/R instead of -ln(u)/R is the dwell's own mean, so occupancy stays
+  # unbiased and eight of nine kmc tests still pass -- including the Boltzmann oracle. The row is
+  # therefore also evidence about WHICH line of the named test bites: its mean assertion passes
+  # exactly under the mutation, and only the CDF check sees it.
+  "src/kmc.rs|        let dwell = -u.ln() / total;|        let _ = u; let dwell = 1.0 / total;|the_waiting_time_is_exponential_in_the_total_rate|a deterministic clock instead of an Exp(R) draw"
+
+  # Hazan & Jaakkola's all-dimensions bound splits gamma_i(s_i) into a_i + b_i s_i so the draw is
+  # one MAP solve with shifted fields. Dropping the constant a_i is the textbook error: the fields
+  # still shift, the maximiser is still found, and the bound is no longer one.
+  "src/perturb.rs|            consts[i] = 0.5 * (gp + gm);|            consts[i] = 0.0;|the_all_dimensions_bound_is_exactly_log_z_when_nothing_is_coupled|an all-dimensions perturbation without its constant"
+
+  # The edge appearance probability rho_e is what makes TRW an UPPER bound. Drop it and the entropy
+  # subtracts the full mutual information -- that is the Bethe free energy, which sits on EITHER
+  # side of ln Z. The module's header warns about exactly this accident.
+  "src/trw.rs|entropy -= cover.rho[e] * (entropy_of(&bi) + entropy_of(&bj) - entropy_of(&b));|entropy -= entropy_of(&bi) + entropy_of(&bj) - entropy_of(&b);|bounds_exact_log_z_from_above|TRW entropy without the edge appearance weight"
+
+  # This line is the whole of g(E) T(E->E') = g(E') T(E'->E) in logs, and each raw count must be
+  # divided by ITS OWN source level's attempt total. Transposing the two totals is an a/b typo in a
+  # symmetric-looking expression that still returns a full, finite density of states.
+  "src/tmmc.rs|                let d = (cab / visits[a]).ln() - (cba / visits[b]).ln();|                let d = (cab / visits[b]).ln() - (cba / visits[a]).ln();|the_solver_is_exact_on_the_enumerated_matrix|row totals taken from the wrong level in the detailed-balance solve"
+
+  # Grassberger 1988's G(n) = psi(n) + (-1)^n / (n+1). Writing (-1)^(n+1) is the transcription
+  # error people actually make: the correction keeps its SIZE and points the wrong way. Of 1212 lib
+  # tests, one notices.
+  "src/entropy.rs|        let sign = if c % 2 == 0 { 1.0 } else { -1.0 };|        let sign = if c % 2 == 0 { -1.0 } else { 1.0 };|the_grassberger_correction_moves_toward_its_own_exact_target|Grassberger oscillating term sign"
+
+  # The noise-to-data ratio enters NCE twice. One appearance is inside the log-odds and is easy to
+  # test; the other is the MIXTURE WEIGHT, because the population objective averages the noise term
+  # over nu*D draws. Dropping it is what you get by writing the objective from the picture instead
+  # of the expectation.
+  "src/nce.rs|        acc += data_probability[mask] * log_sigmoid(delta) - ratio * ln_pn.exp() * softplus(delta);|        acc += data_probability[mask] * log_sigmoid(delta) - ln_pn.exp() * softplus(delta);|the_truth_maximises_the_population_objective|a population objective whose noise class is not weighted by the ratio"
+
+  # `e ^ 1` is the paired-arc trick that turns an out-arc into the arc pointing back in, and
+  # `reach_backward` is the sink-side half of the strong-persistency reading. Without it the walk
+  # still terminates and still returns a set -- one that no longer means "every minimiser agrees".
+  "src/roofdual.rs|                let back = e ^ 1;|                let back = e;|the_pinned_set_is_what_every_minimiser_of_the_relaxation_agrees_on|persistency reads the wrong arc"
+
+  # Wishart planting projects out the planted direction, and t has squared norm n, not 1. Forgetting
+  # the 1/n leaves a projection that still produces a symmetric instance with a plausible spectrum
+  # and a ground energy that no longer matches the closed form it was built to have.
+  "src/planted.rs|            *x -= dot * t[i] as f64 / n as f64;|            *x -= dot * t[i] as f64;|the_closed_form_ground_energy_is_right|Wishart planting: the projection forgets that t has squared norm n"
+
+  # The negative log-likelihood of a word is -sum_i L_i s_i / 2, so h_i = L_i / 2. This is the only
+  # place that half appears, and "the field is the LLR" reads correctly to anyone who has not done
+  # the derivation.
+  "src/ldpc.rs|            bias[i] += l / 2.0;|            bias[i] += l;|the_energy_is_the_penalty_plus_the_channel_at_every_state|the channel field loses its half"
+
+  # `est ^ xm` scores the estimate against the TRUE image; `est ^ ym` scores it against the NOISY
+  # one. Two live loop variables one character apart, and with the wrong one the Nishimori claim is
+  # decided against the observation -- which is the thing the condition is about.
+  "src/restore.rs|                let wrong = (est ^ xm).count_ones();|                let wrong = (est ^ ym).count_ones();|nishimori_minimises_the_exact_expected_error|the joint scores the restoration against the observation, not the truth"
+
+  # The module exists for one formula: torque grows like sqrt(<J^2> d). Dropping the root leaves a
+  # rule LINEAR in degree -- the exact alternative its first paragraph argues against -- which
+  # compiles, returns a positive strength, and is indistinguishable from correct on a 2-regular
+  # model.
+  "src/torque.rs|    prefactor * rms_coupling(logical) * mean_degree(logical).sqrt()|    prefactor * rms_coupling(logical) * mean_degree(logical)|on_spiked_cliques_the_rms_rule_beats_the_max_rule|chain strength linear in degree, not its root"
+
+  # N_k in the mixture denominator is what makes MBAR a JOINT solve rather than chained pairs: a
+  # sample is credited in proportion to how many draws each state actually contributed, and the
+  # exactness proof turns on the same N_k appearing there. Uniform weights leave a plausible number.
+  "src/mbar.rs|            acc += (ln_n[j] + f[j] - u[j][n] - mx).exp();|            acc += ((out.len() as f64 / k as f64).ln() + f[j] - u[j][n] - mx).exp();|exact_empirical_distributions_are_solved_exactly|an MBAR mixture weighted uniformly instead of by sample count"
+
+  # The module's own documented ergodicity trap, put back. With a FIXED length every proposal flips
+  # a number of spins of one parity, so at even lengths up-spin parity is conserved and half the
+  # state space is unreachable. The kernel stays exactly reversible -- invariance, the MH-definition
+  # check and the bookkeeping check all stay green. INVARIANCE DOES NOT IMPLY IRREDUCIBILITY.
+  "src/multiflip.rs|        let len = 1 + (self.rng.next_u32() as usize) % self.length;|        let len = self.length;|the_path_chain_samples_the_boltzmann_distribution|a fixed path length instead of a uniform draw from 1..=length"
+
+  # The discrete Stein operator is applied in BOTH arguments; `sy[i] * (k - k_x)` is the y-side
+  # application, and one character makes it the operator applied twice in x. The kernel stays
+  # finite, stays plausible, and stops being a Stein kernel.
+  "src/stein.rs|        acc += sx[i] * sy[i] * k - sx[i] * (k - k_y) - sy[i] * (k - k_x)|        acc += sx[i] * sy[i] * k - sx[i] * (k - k_y) - sx[i] * (k - k_x)|the_stein_kernel_is_symmetric|the Stein operator applied twice in x and never in y"
+
+  # Every intra-part coupling is already inside its part's exact ln Z_p -- that IS the module's
+  # claim, the tractable subgraph solved exactly. Counting it again in the mean-field term charges
+  # it twice, and the result is not a looser bound, it is not a bound.
+  "src/structured.rs|                if j > i && of[j] != of[i] {|                if j > i && of[j] == of[i] {|the_bound_is_below_log_z_at_arbitrary_fields|intra couplings counted twice, so the bound sits above ln Z"
+
+  # This coefficient IS the moral edge: the co-parent coupling a conversion that forgot to moralise
+  # would never emit. Flipping its sign is the E = -w s s versus +w s s slip, and it leaves a graph
+  # with the right STRUCTURE and the wrong explaining-away.
+  "src/bayes.rs|                        0.25 * (g[0] - g[1] - g[2] + g[3]),|                        -0.25 * (g[0] - g[1] - g[2] + g[3]),|deleting_the_moral_edge_changes_the_marginal|a moral edge that couples the wrong way"
+
+  # RESYNC_SLACK gates when to spend an exact recompute; SOLVED_TOL decides whether the recomputed
+  # answer is a hit. Reusing the gate constant one line down is the most natural wrong version of
+  # this function -- same comparison, same variable, a thousand times looser.
+  "src/rld.rs|                    if e <= self.target + SOLVED_TOL {|                    if e <= self.target + RESYNC_SLACK {|every_reported_hit_is_a_state_that_is_actually_at_the_optimum|a hit answered from the resync slack"
+
+  # The SPIN->BINARY substitution contributes offset -= sum_i h_i. The INVERSE direction, sixteen
+  # lines below in the same match, legitimately writes `offset += *h`, so the mutant is a
+  # copy-paste between branches -- and an offset error ranks every state identically.
+  "src/dimod.rs|                    offset -= *h;|                    offset += *h;|the_offset_is_invisible_to_the_ranking_and_fatal_to_the_value|vartype constant with the wrong sign"
+
+  # `coupler_live` is deliberately NOT read off the working graph -- it is the one place the defect
+  # map is consulted directly, and the logical-edge check, chain connectivity and "what would this
+  # run program" all rest on it. Consulting only the datasheet returns the machine in the brochure.
+  "src/working.rs|        self.ideal_couplers.contains(&key(a, b)) && !self.defects.coupler_dead(a, b)|        self.ideal_couplers.contains(&key(a, b))|the_audit_names_the_defect_that_breaks_a_placement|coupler_live consults the datasheet only"
+
+  # `pick` is the POSITION inside the shrinking candidate list; `i` is the spin. `flips` is the only
+  # record of which spins were flipped and in what order, and it is what makes "the best state
+  # between these two" a claim anyone can replay.
+  "src/relink.rs|        flips.push(i);|        flips.push(pick);|a_path_is_its_start_plus_exactly_the_flips_taken|a flip order recorded by position instead of spin"
+
+  # The replica exchange must be accepted with exp((beta_j - beta_i)(E_j - E_i)). Flipping the
+  # energy difference still produces swaps and still reports plausible swap rates, and the cold
+  # chain is then stationary for nothing -- which is the only thing the negative phase reads.
+  "src/tempered_cd.rs|            let arg = (self.betas[i + 1] - self.betas[i]) * (e_j - e_i);|            let arg = (self.betas[i + 1] - self.betas[i]) * (e_i - e_j);|the_cold_end_of_a_swapped_ladder_is_a_sample_from_the_model|replica swap criterion sign"
+
+  # The Fisher information IS Var(E), so the line element is sqrt(Var(E)). Dropping the root gives
+  # the thermodynamic DIVERGENCE, which Crooks 2007 defines on the same page as the length, under a
+  # different name -- a positive, finite, integrable, wrong ladder.
+  "src/length.rs|    variance(dos, beta).sqrt()|    variance(dos, beta)|the_equal_length_ladder_is_the_inverse_gudermannian_on_free_spins|thermodynamic length without its square root"
+
+  # The clamp is why `runs_needed` is a function and not an expression. For p >= s the closed form
+  # returns LESS than one run, so a solver that already clears the target in a single run is billed
+  # 0.67 t. That is the direction that flatters, and it is worst where the solver is doing best.
+  "src/tts.rs|        return Some(1.0);|        return Some((1.0 - s).ln() / (1.0 - p).ln());|runs_needed_matches_the_closed_form_and_clamps_where_it_must|TTS reports a fraction of a run"
 )
 
 bad=0
@@ -391,7 +524,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=58
+expected_rows=82
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
