@@ -41,6 +41,18 @@ if ! git diff --quiet -- "$file"; then
   exit 2
 fi
 
+# RESTORE ON ANY EXIT, NOT JUST THE HAPPY ONE. `git checkout -- "$file"` used to live only after
+# the test run, so a kill between applying the mutation and reaching it left the MUTATED FILE in
+# the working tree -- and a mutated file looks exactly like ordinary uncommitted work. It happened:
+# a suite run was killed when its session ended, and `src/model.rs` sat there carrying
+# `if false {` in place of `if !*hard {` until the next `git status` was read carefully. The next
+# `git add -A` would have committed a deliberate defect with a green suite behind it.
+#
+# The trap fires on ordinary exit as well as INT, TERM and HUP, so the restore happens even if the
+# test run is interrupted. It is idempotent: restoring an already-restored file is a no-op.
+restore() { git checkout -- "$file" 2>/dev/null || true; }
+trap restore EXIT INT TERM HUP
+
 python3 - "$file" "$old" "$new" <<'PY' || { printf '  %-38s MUTATION DID NOT APPLY\n' "$label"; exit 0; }
 import sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -66,7 +78,9 @@ if [[ -n "$pkg" ]]; then
 else
   out="$(cargo test --release --lib "$filter" -- --nocapture 2>&1)"
 fi
-git checkout -- "$file"
+# Restore here as well as in the trap: the verdict below is printed with the tree already clean, so
+# anyone reading the output alongside `git status` sees what the next command would see.
+restore
 
 if ! grep -q "^test result:" <<<"$out"; then
   printf '  %-38s DID NOT BUILD (inconclusive)\n' "$label"
