@@ -48,7 +48,14 @@ mutations=(
   # A NaN objective coefficient compiled, solved, and reported feasible while silently disabling
   # every other preference -- comparisons against NaN are all false, so the sampler stopped
   # improving. Remove the guard and the refusal test must notice.
-  "src/model.rs|self.objective.check_finite(\"objective coefficient\")?;|let _ = self.objective.check_finite(\"objective coefficient\");|not_finite|NaN objective coefficient"
+  # The filter here was the bare substring `not_finite` until wave 3 added
+  # `cuts::tests::a_graph_too_large_or_not_finite_is_refused_by_name`, at which point it named TWO
+  # tests and this row quietly stopped being evidence about the one it names -- a mutation in
+  # `model` would still have gone red, and the suite would still have printed "caught". Nothing in
+  # `cuts` has anything to do with `model`: A SUBSTRING FILTER IS A CLAIM ABOUT THE WHOLE TEST
+  # LIST, so any module added anywhere can hollow out any row. `check_filters` caught it before a
+  # single mutation ran, which is the second time that gate has paid for itself.
+  "src/model.rs|self.objective.check_finite(\"objective coefficient\")?;|let _ = self.objective.check_finite(\"objective coefficient\");|a_coefficient_that_is_not_finite_is_refused|NaN objective coefficient"
 
   # scale_to_fit bounded the ANSWER instead of the work: above a 1e6 candidate ceiling it refused
   # without trying the largest candidate, which is usually the answer.
