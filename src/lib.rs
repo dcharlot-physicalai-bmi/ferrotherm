@@ -191,6 +191,19 @@ pub mod sse;
 pub mod vmc;
 pub mod gauge;
 pub mod diffuse;
+pub mod potts;
+pub mod fss;
+pub mod pfaffian;
+pub mod npising;
+pub mod qaoa;
+pub mod hmc;
+pub mod mps;
+pub mod relax;
+pub mod lns;
+pub mod partition;
+pub mod memcomp;
+pub mod analog;
+pub mod corpora;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///

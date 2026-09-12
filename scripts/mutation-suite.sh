@@ -584,6 +584,84 @@ mutations=(
   # posterior off the wrong direction of the chain. It still normalises, still integrates to a
   # distribution, and only brute-force Bayes from the dense kernel products can tell.
   "src/diffuse.rs|            let num = self.q_step(t, j, xt) * self.q_bar(t - 1, x0, j);|            let num = self.q_step(t, xt, j) * self.q_bar(t - 1, x0, j);|posterior_matches_brute_force_bayes_from_dense_kernel_products|D3PM posterior reads the step matrix transposed"
+
+  # ---------------------------------------------------------------------------------------------
+  # Thirteen rows for wave 4, each produced by the agent that wrote the module and SEEN RED before
+  # it was recorded. Read the qaoa and hmc rows for what they say about tests: a check that is
+  # provably blind to the defect it was written for, and a fixture that is a fixed point of the
+  # dynamics under test.
+  # ---------------------------------------------------------------------------------------------
+
+  # The objective SENSE. Three of these four corpora write character-for-character the same body
+  # line and mean three different things by it; dropping the sign flip on a maximise instance
+  # yields a Graph whose ground state is the worst cut. Round-trip and cross-format enumeration see it.
+  "src/corpora.rs|gb.couple(i, j, -w);|gb.couple(i, j, w);|corpora::tests::oracle_the_crossing_edge_sum_matches_every_max_cut_instance|drop the max-cut coupling negation in MaxCut::instance, so minimising the energy minimises the cut"
+
+  # The repair must be EXACT on the freed block; a greedy repair still improves, still terminates,
+  # and is not LNS. Measured alongside: Shaw's related removal is most of the method, not a
+  # refinement -- 34/36 planted instances against 9/36 for random removal at the same budget.
+  "src/lns.rs|    -f64::from(v) * field|    f64::from(v) * field|lns::tests::grasp_construction_at_alpha_zero_is_exact_on_a_decoupled_model|GRASP's greedy function loses the crate's E = -J s s - h s sign: the construction picks the WORST value for every variable"
+
+  # The long-term memory factor. Pinning it shut still solves 3 of 6 instances at n = 50 and 1 of
+  # 10 at n = 100 where the full flow solves 10/10 -- so a small-instance suite would pass an
+  # implementation that dropped it outright. The row's test is written at the size where it shows.
+  "src/memcomp.rs|let g = 0.5 * q * other;|let g = 0.5 * other;|memcomp::tests::a_sign_consistent_flow_lowers_every_residual_at_every_step_exactly|drop the literal polarity q from the gradient term G_mn (the sign a careful transcription loses)"
+
+  # The straight-through estimator's backward pass. Recorded alongside: the same agent measured that
+  # `program::reinforce_grad` returns the gradient SHRUNK by (1 - 1/episodes), because its
+  # batch-mean baseline correlates with each episode's own score -- 21.4 standard errors from
+  # exact at B = 8. Not fixed here; see relax::tests::program_reinforce_is_the_exact_gradient_shrunk.
+  "src/relax.rs|                - eta * df_cond[i] * drelaxed(zt[i], lambda) * dzt[i];|                - eta * df_cond[i] * drelaxed(zt[i], lambda);|relax::tests::rebar_converges_to_the_closed_form_gradient_and_gumbel_softmax_does_not|REBAR drops dz_tilde/dtheta: the conditional relaxation's own dependence on theta through sigma(theta)"
+
+  # (sum a_i s_i)^2 expands over ORDERED pairs; this crate counts each edge once, so J_ij must be
+  # -2 a_i a_j, not -a_i a_j. The wrong factor ranks every state identically and picks the same
+  # ground state, so no solver notices -- only the absolute energy is off, by exactly half.
+  "src/partition.rs|b.couple(i, j, -2.0 * self.a[i] as f64 * self.a[j] as f64);|b.couple(i, j, -1.0 * self.a[i] as f64 * self.a[j] as f64);|partition::tests::ising_energy_equals_the_squared_discrepancy_on_every_state|the coupling written exactly as the specification states it (J_ij = -a_i a_j), which halves the energy and leaves every ranking identical"
+
+  # A reduction's penalty inequality is its whole correctness argument. Note the measured spec
+  # error: Lucas's TSP condition A > B max(W) is not tight -- the exact critical penalty on a
+  # 4-city instance is 4.5 against a stated 6.0, and the minimum violation of an infeasible state
+  # is 2, never 1, so A > B T*/2 is provable.
+  "src/npising.rs|b.bias(v, -(self.lin[v] / 2.0 + incident[v]));|b.bias(v, -(self.lin[v] / 2.0));|npising::tests::the_ising_energy_is_the_lucas_hamiltonian_at_every_state|drop the incident-coupling quarter from the spin bias in the x=(1+s)/2 substitution"
+
+  # Doubling the cost exponent leaves every layer exactly unitary -- it is still the exponential of
+  # a Hermitian operator -- so the unitarity test the spec called the sharp one is BLIND to it, and
+  # so is the published-sequence test, because gamma' = 2 gamma is a reparametrisation of the same
+  # family. Eight of nine tests stay green. Only the p = 1 closed form sees it.
+  "src/qaoa.rs|let (s, c) = (gamma * diag[z]).sin_cos();|let (s, c) = (2.0 * gamma * diag[z]).sin_cos();|qaoa::tests::p1_ring_matches_the_wang_rieffel_closed_form_and_the_triangle_refutes_it|a stray factor of two in the cost exponent: e^{-i gamma C} becomes e^{-i 2 gamma C}"
+
+  # Kac-Ward's turning angles enter through half-angles in the phase factor. Halving them is the
+  # one-character error the derivation invites, and 7 of 14 tests see it -- the outer-face test,
+  # the one that looks most likely to catch a phase error, is one of the 7 that does not.
+  "src/pfaffian.rs|let turn = 0.5 * (wedge - PI);|let turn = wedge - PI;|pfaffian::tests::log_z_matches_exact_elimination_on_planar_graphs|drop the half-angle in the Kac-Ward phase exp(i alpha / 2)"
+
+  # The leapfrog momentum half-step. Note the resonance the same agent hit: at eps = 1, a = 1, L = 3
+  # the leapfrog map is a rotation through pi/3, three steps are half a period, and from q = 0 the
+  # chain NEVER LEAVES -- variance 0.00000, dH exactly 0, acceptance exactly 1, identically in the
+  # corrected and uncorrected arms. A fixture that is a fixed point measures nothing.
+  "src/hmc.rs|let half = 0.5 * eps;|let half = eps;|hmc::tests::the_leapfrog_map_conserves_the_closed_form_shadow_hamiltonian|leapfrog's half-kick becomes a full kick (the halves dropped from both momentum updates)"
+
+  # The Lyapunov descent needs a symmetric T with zero diagonal; the update reads T_ij with the
+  # indices swapped. Measured alongside: forward Euler preserves descent only up to dt ~ 0.8, with
+  # a sharp boundary (worst rise 1.4e-15 at 0.8, 2.2e-1 at 1.0).
+  "src/analog.rs|(term(v) + term(1.0 - v)) / (2.0 * gain)|(term(v) + term(1.0 - v)) / gain|analog::tests::the_integral_term_matches_independent_quadrature|drop the factor of two in the closed form for the integral of g-inverse"
+
+  # A port from cluster.rs carries the binary Fortuin-Kasteleyn factor of two into the q-state bond
+  # probability. The sampler still runs, still binarises nothing, still converges -- to the wrong
+  # temperature. Enumeration over all q^n states is what sees it.
+  "src/potts.rs|if d <= 0.0 { 0.0 } else { 1.0 - (-self.beta * d).exp() }|if d <= 0.0 { 0.0 } else { 1.0 - (-2.0 * self.beta * d).exp() }|potts::tests::cluster_updates_reproduce_exhaustive_enumeration_oracle_enumerate|cluster bond probability carries the binary factor of two (the exact mistake a port from cluster.rs would make)"
+
+  # Two-site DMRG's truncation keeps the largest singular values. Keeping the smallest still yields
+  # a normalised MPS, a monotone-looking energy trace, and a number. The same agent measured that
+  # the energy trace lies about convergence by exactly the size of its own error (3.8e-6 wrong,
+  # 3.5e-6 spread), so the trace settling is not evidence of anything.
+  "src/mps.rs|put(2, s, s, 1, -self.j * z_of(s));|put(2, s, s, 1, self.j * z_of(s));|mps::tests::the_mpo_reproduces_the_dense_hamiltonian_entry_for_entry|MPO ZZ bond term sign flipped: the -J Z half of the two-site term becomes +J Z, i.e. the crate's E = -J s s convention silently inverted for the coupling only"
+
+  # The collapse's x-axis is (T - T_c) L^{1/nu}. Note what the same agent measured and the spec got
+  # wrong: at any size this crate can compute EXACTLY (L <= 7) a free fit returns nu = 0.78 and
+  # beta = 0.09 against Onsager's 1 and 1/8, and it is NOT an optimiser failure -- the residual at
+  # the wrong exponents is seventy times better than at the right ones on the same objective.
+  "src/fss.rs|Some(1.0 - m4 / (3.0 * m2 * m2))|Some(1.0 - m4 / (2.0 * m2 * m2))|fss::tests::the_binder_cumulant_of_free_spins_is_exactly_two_over_three_n|the Binder normalisation constant: 3 -> 2 in U_4 = 1 - m4/(3 m2^2)"
 )
 
 bad=0
@@ -622,7 +700,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=95
+expected_rows=108
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
