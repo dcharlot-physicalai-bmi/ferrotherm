@@ -70,6 +70,16 @@ pub enum Finding {
         /// Draws taken, which is too few to estimate anything here.
         draws: usize,
     },
+    /// Sokal's window closed on a fast mode while a slower one was still correlated: a windowless
+    /// batch-means estimate came out more than twice as large. The larger value is the one the
+    /// certificate's `tau_int` and `ess` carry, and even that is a lower bound on the truth --
+    /// see [`tau_int`] for the measurement behind this.
+    TauTruncated {
+        /// What Sokal's automatic window returned, in draws.
+        sokal: f64,
+        /// What batch means over twenty batches returned, in draws.
+        batch: f64,
+    },
 }
 
 impl core::fmt::Display for Finding {
@@ -104,6 +114,13 @@ impl core::fmt::Display for Finding {
                      good sampler from pure noise. Draw more, or certify a smaller model"
                 )
             }
+            Finding::TauTruncated { sokal, batch } => write!(
+                f,
+                "the autocorrelation window closed early: Sokal's tau_int {sokal:.1} against a \
+                 batch-means {batch:.1}, so a slow mode is being missed; the larger value is used \
+                 and is itself a lower bound. Run much longer, or compute tau exactly on a model \
+                 small enough to enumerate"
+            ),
         }
     }
 }
@@ -316,6 +333,36 @@ pub fn tau_int(trace: &[f64]) -> f64 {
     tau.max(0.5)
 }
 
+/// Integrated autocorrelation time by batch means: no window, no autocorrelation function.
+///
+/// Split the trace into `batches` consecutive batches of length `b`. For a stationary sequence
+/// `Var(batch mean) ~ Var(x) * 2 tau / b`, so `tau = b * Var(batch means) / (2 Var(x))`. This is
+/// unbiased only when `b` is much longer than the slowest mode, so on a short trace it reads LOW
+/// like Sokal's window does -- but for a different reason and by a different amount, which is
+/// what makes it a cross-check: where the two disagree by more than batch means' own noise (about
+/// `sqrt(2 / batches)` relative), a slow mode is present that the window closed on. Twenty batches
+/// is `+-32%`, which is why [`certify`] flags a factor of two and not less.
+///
+/// `NaN` under sixteen draws per batch; `+inf` for a constant trace.
+#[must_use]
+pub fn tau_int_batch(trace: &[f64], batches: usize) -> f64 {
+    let n = trace.len();
+    let b = n / batches.max(2);
+    if b < 16 {
+        return f64::NAN;
+    }
+    let mean = trace.iter().sum::<f64>() / n as f64;
+    let var = trace.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    if var <= 0.0 {
+        return f64::INFINITY;
+    }
+    let k = batches.max(2);
+    let means: Vec<f64> =
+        (0..k).map(|i| trace[i * b..(i + 1) * b].iter().sum::<f64>() / b as f64).collect();
+    let vb = means.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / (k as f64 - 1.0);
+    (b as f64 * vb / (2.0 * var)).max(0.5)
+}
+
 /// Certify a set of samples against the model and temperature they claim to come from.
 ///
 /// `trace` is a scalar observable, one value per sample, used for the autocorrelation estimate;
@@ -358,6 +405,25 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
             (true, true) => f64::NAN,
         }
     };
+    // THE WINDOW CAN CLOSE ON A FAST MODE AND MISS A SLOW ONE -- measured against the exact
+    // operator at a twentieth of the truth, unchanged by trace length (see `tau_int`). Batch means
+    // read low on a short trace for a different reason and by a different amount, so where they
+    // come out more than twice Sokal's value a slow mode is present, the larger value is carried,
+    // and the certificate says so. Where they agree, nothing here has detected a slow mode -- which
+    // is not the same as there being none.
+    let t_sokal = t;
+    let t_batch = {
+        let a = tau_int_batch(trace, 20);
+        let b = tau_int_batch(&mag, 20);
+        match (a.is_nan(), b.is_nan()) {
+            (false, false) => a.max(b),
+            (true, false) => b,
+            (false, true) => a,
+            (true, true) => f64::NAN,
+        }
+    };
+    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 2.0 * t_sokal;
+    let t = if truncated { t_batch } else { t };
     let ess = if t.is_finite() && t > 0.0 { draws as f64 / (2.0 * t) } else { 1.0 };
 
     // Two dependences, two corrections. WITHIN a configuration the pseudolikelihood's conditionals
@@ -386,6 +452,9 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     // line let exactly that through.
     if !t.is_finite() || ess < 50.0 || t > draws as f64 / 50.0 {
         findings.push(Finding::Undermixed { tau_int: t, ess, draws });
+    }
+    if truncated {
+        findings.push(Finding::TauTruncated { sokal: t_sokal, batch: t_batch });
     }
 
     // A Geweke-style check. beta_eff cannot do this job: pseudolikelihood is a LOCAL statistic, and
@@ -926,5 +995,127 @@ mod tests {
             let got = tau_int(&trace);
             assert!((got - want).abs() / want < 0.25, "p={p}: got {got}, want {want}");
         }
+    }
+
+    /// CLOSED FORM, TWO MODES: the sum of two independent AR(1) processes with variance fractions
+    /// `a_f + a_s = 1` has `rho(k) = a_f p_f^k + a_s p_s^k` exactly, so
+    /// `tau = 1/2 + a_f p_f/(1-p_f) + a_s p_s/(1-p_s)` with no simulation in it. A 90% fast mode
+    /// at `p_f = 0.3` plus a 10% slow mode at `p_s = 0.997` is the shape the exact operator found
+    /// on a frustrated grid, and it is exactly the shape that closes Sokal's window early: `tau(W)`
+    /// is about 1.8 when `W = 9 >= 5 tau(W)`, and the slow mode -- 33 of the 34 -- is never summed.
+    ///
+    /// Asserted in both directions on the SAME two-million-draw trace: Sokal must land far below
+    /// the truth (the defect, pinned, so a change to the window that quietly fixes one fixture
+    /// and breaks the certificate's cross-check is visible), and batch means over twenty batches
+    /// of six thousand slow-mode times must land near it. And the single-mode control: on the
+    /// fast process alone both estimators agree with `(1+p)/(2(1-p))`, so the disagreement is
+    /// the slow mode and not the estimator pair.
+    #[test]
+    fn a_small_slow_mode_closes_sokal_early_and_batch_means_see_it() {
+        let (a_f, p_f, a_s, p_s) = (0.9f64, 0.3f64, 0.1f64, 0.997f64);
+        let exact = 0.5 + a_f * p_f / (1.0 - p_f) + a_s * p_s / (1.0 - p_s);
+        assert!((exact - 34.13).abs() < 0.05, "closed form {exact}");
+        let n = 2_000_000usize;
+        let mut rng = Pcg::new(77, 5);
+        let mut gauss = || {
+            (-2.0 * rng.f64().max(1e-12).ln()).sqrt() * (core::f64::consts::TAU * rng.f64()).cos()
+        };
+        let (mut xf, mut xs) = (0.0f64, 0.0f64);
+        let mut trace = Vec::with_capacity(n);
+        let mut fast_only = Vec::with_capacity(n);
+        // The first 20,000 draws are discarded so the slow mode is stationary; n are kept.
+        for _ in 0..(n + 20_000) {
+            xf = p_f * xf + (1.0 - p_f * p_f).sqrt() * gauss();
+            xs = p_s * xs + (1.0 - p_s * p_s).sqrt() * gauss();
+            trace.push(a_f.sqrt() * xf + a_s.sqrt() * xs);
+            fast_only.push(xf);
+        }
+        let trace = &trace[20_000..];
+        let fast_only = &fast_only[20_000..];
+
+        let sokal = tau_int(trace);
+        let batch = tau_int_batch(trace, 20);
+        assert!(
+            sokal < 0.3 * exact,
+            "Sokal must resolvably truncate the slow mode here: {sokal:.2} against exact {exact:.2}"
+        );
+        assert!(
+            batch > 0.4 * exact && batch < 1.8 * exact,
+            "batch means over 20 batches of {} draws should sit near {exact:.1}: {batch:.1}",
+            trace.len() / 20
+        );
+        assert!(batch > 2.0 * sokal, "the certificate's cross-check must fire on this trace");
+
+        // The control: one mode, both estimators agree with the closed form.
+        let want_f = (1.0 + p_f) / (2.0 * (1.0 - p_f));
+        let (s1, b1) = (tau_int(fast_only), tau_int_batch(fast_only, 20));
+        assert!((s1 - want_f).abs() / want_f < 0.1, "single mode, Sokal {s1} vs {want_f}");
+        assert!((b1 - want_f).abs() / want_f < 0.4, "single mode, batch {b1} vs {want_f}");
+    }
+
+    /// THE CERTIFICATE CARRIES THE LARGER tau AND SAYS WHY, on a real chain: a 3x3 frustrated grid
+    /// at a temperature where `autocorr::tau_int_exact` puts the sweep's tau in the tens and
+    /// Sokal's window closes in single digits. The certificate must report `TauTruncated`, its
+    /// `tau_int` must be the batch-means value, and its `ess` must be the smaller number -- the
+    /// conservative direction. Hot, the same model must NOT trigger it: one mode, both estimators
+    /// agree, no finding. Both halves, so a cross-check that fired on everything would fail here.
+    #[test]
+    fn the_certificate_reports_a_truncated_window_and_carries_the_larger_tau() {
+        use crate::autocorr::{tau_int_exact, Kernel};
+        use crate::gibbs::Sampler;
+        let mut b = crate::graph::GraphBuilder::new(9);
+        let mut rng = Pcg::new(11, 0x6A);
+        for y in 0..3 {
+            for x in 0..3 {
+                let i = y * 3 + x;
+                if x + 1 < 3 {
+                    b.couple(i, i + 1, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+                }
+                if y + 1 < 3 {
+                    b.couple(i, i + 3, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+                }
+            }
+        }
+        for i in 0..9 {
+            b.bias(i, (rng.f64() - 0.5) * 0.4);
+        }
+        let g = b.build();
+        let run = |beta: f64, draws: usize| -> Certificate {
+            let mut s = Sampler::new(&g, beta, 21);
+            s.sweeps(2_000, None);
+            let mut samples = Vec::with_capacity(draws);
+            let mut trace = Vec::with_capacity(draws);
+            for _ in 0..draws {
+                s.sweep(None);
+                samples.push(s.s.clone());
+                trace.push(g.energy(&s.s));
+            }
+            certify(&g, beta, &samples, &trace)
+        };
+        // Cold: the exact operator says the sweep is slow; the window says it is fast.
+        let exact = tau_int_exact(&g, 1.6, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 200_000)
+            .unwrap()
+            .tau_int;
+        let c = run(1.6, (300.0 * exact) as usize);
+        let fired = c.findings.iter().find_map(|f| match f {
+            Finding::TauTruncated { sokal, batch } => Some((*sokal, *batch)),
+            _ => None,
+        });
+        let (sokal, batch) = fired.expect("the cold chain must trigger TauTruncated");
+        assert!(batch > 2.0 * sokal);
+        assert!(
+            (c.tau_int - batch).abs() < 1e-12 || c.tau_int >= batch,
+            "the certificate must carry at least the batch-means tau: {} vs {batch}",
+            c.tau_int
+        );
+        assert!(c.ess <= c.draws as f64 / (2.0 * batch) + 1e-9, "ess must be the conservative one");
+        assert!(sokal < 0.5 * exact, "and Sokal must sit far below the exact {exact:.2}: {sokal:.2}");
+        // Hot: one mode, no finding.
+        let h = run(0.4, 20_000);
+        assert!(
+            !h.findings.iter().any(|f| matches!(f, Finding::TauTruncated { .. })),
+            "a single-mode chain must not trigger the cross-check: {:?}",
+            h.findings
+        );
     }
 }

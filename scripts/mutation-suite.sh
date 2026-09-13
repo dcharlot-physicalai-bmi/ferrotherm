@@ -699,6 +699,14 @@ mutations=(
   # class by class in the test, by different code, tells them apart.
   "src/autocorr.rs|            for class in g.classes.iter().rev() {|            for class in g.classes.iter() {|autocorr::tests::the_matrix_free_sweep_matches_a_dense_operator_built_class_by_class|the sweep operator composed in the wrong class order"
 
+
+  # THE CROSS-CHECK MUST BE ABLE TO FIRE. A threshold of 200x is a check that is wired, compiles,
+  # and never speaks: every certificate keeps Sokal's tau and the ESS it inflates. The cold 3x3
+  # chain, whose exact tau the oracle puts in the tens against a single-digit window, is what
+  # requires the finding to appear -- and the hot half of the same test is what stops the fix from
+  # being "always fire".
+  "src/certify.rs|    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 2.0 * t_sokal;|    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 200.0 * t_sokal;|certify::tests::the_certificate_reports_a_truncated_window_and_carries_the_larger_tau|a truncation cross-check whose threshold nothing real can reach"
+
 )
 
 bad=0
@@ -737,7 +745,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=114
+expected_rows=115
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
