@@ -308,6 +308,17 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 /// estimate over batches much longer than the suspected slow mode is the check.
 #[must_use]
 pub fn tau_int(trace: &[f64]) -> f64 {
+    tau_int_by(trace, trace.len() >= FFT_FROM)
+}
+
+/// Above this many draws [`tau_int`] takes every lag at once from [`crate::fft::autocovariance`],
+/// `O(L log L)`, instead of the direct sum, which is `O(L)` per lag and on a long trace costs the
+/// window's width times the length (a `1e7`-draw trace with a window of `1e4` lags is `1e11`
+/// operations). The two are the same estimator to `1e-12`; the threshold is a clock, not a value.
+pub const FFT_FROM: usize = 4096;
+
+/// Sokal's window over the autocorrelation, computed lag by lag or all at once.
+fn tau_int_by(trace: &[f64], fft: bool) -> f64 {
     let n = trace.len();
     if n < 16 {
         return f64::NAN;
@@ -318,13 +329,19 @@ pub fn tau_int(trace: &[f64]) -> f64 {
         return f64::INFINITY; // a constant trace never decorrelates
     }
     let max_lag = (n / 4).max(1);
+    let cov = if fft { Some(crate::fft::autocovariance(trace, max_lag)) } else { None };
     let mut tau = 0.5;
     for k in 1..=max_lag {
-        let mut c = 0.0;
-        for t in 0..(n - k) {
-            c += (trace[t] - mean) * (trace[t + k] - mean);
-        }
-        c /= (n - k) as f64 * var;
+        let c = match &cov {
+            Some(cov) => cov[k] / var,
+            None => {
+                let mut c = 0.0;
+                for t in 0..(n - k) {
+                    c += (trace[t] - mean) * (trace[t + k] - mean);
+                }
+                c / ((n - k) as f64 * var)
+            }
+        };
         tau += c;
         if (k as f64) >= 5.0 * tau.max(0.5) {
             break;
@@ -1117,5 +1134,24 @@ mod tests {
             "a single-mode chain must not trigger the cross-check: {:?}",
             h.findings
         );
+    }
+
+    /// The transform path and the direct sum are one estimator: on an AR(1) trace above
+    /// `FFT_FROM` and on one below it they agree to `1e-10` relative, so the threshold changes
+    /// the clock and nothing else.
+    #[test]
+    fn the_fft_path_and_the_direct_sum_agree() {
+        let mut rng = crate::rng::Pcg::new(11, 5);
+        for n in [600usize, 6000] {
+            let mut x = Vec::with_capacity(n);
+            let mut v = 0.0f64;
+            for _ in 0..n {
+                v = 0.95 * v + (rng.f64() - 0.5);
+                x.push(v);
+            }
+            let (a, b) = (tau_int_by(&x, true), tau_int_by(&x, false));
+            assert!((a - b).abs() < 1e-10 * b, "n {n}: fft {a} vs direct {b}");
+            assert!(a > 5.0, "an AR(1) at 0.95 has tau near 20, not {a}");
+        }
     }
 }
