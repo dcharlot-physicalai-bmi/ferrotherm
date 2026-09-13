@@ -1379,6 +1379,23 @@ impl HamiltonianCycle {
 /// `tsp_penalty_threshold_measured_by_enumeration_is_the_largest_edge_weight`; a caller who wants a
 /// smaller penalty passes it to [`Tsp::with_weights`] and reads
 /// [`Tsp::guarantees_feasible`] for what is then still promised.
+///
+/// # The critical penalty over an ensemble, and what a penalty above it costs -- measured exactly
+///
+/// `examples/penalty_exact.rs` (2026-09-13), 300 random four-city instances with integer weights
+/// in `1..=9`, every one of the `2^16` states enumerated: the exact critical penalty sits between
+/// **0.22 and 1.00 times `max(W)`**, median 0.72. Lucas's `B max(W)` was sufficient on all 300,
+/// and `A_crit` never exceeded `B T* / 2`, which is the bound the minimum violation of two
+/// proves. So the stated condition is never wrong here and is typically 40% above tight.
+///
+/// The folk rule that the smallest feasible penalty gives the best ground-state probability is
+/// **false at equilibrium, and provably so**: raising `A` lifts every infeasible state's energy
+/// and moves nothing else, so the Boltzmann mass on the optimal tours can only rise with `A`. At
+/// `beta = 1` it averages 0.35 just above `A_crit`, 0.84 at `max(W)`, and 0.90 at this module's
+/// provable threshold, which was the best of the three on 270 of 300 instances and tied on the
+/// rest. Whatever a small penalty buys, it buys in MIXING -- a smoother landscape for a sampler
+/// that has not equilibrated -- and that is a statement about sweeps, not about mass; the example
+/// says which one it measured.
 pub struct Tsp {
     n: usize,
     w: Vec<f64>,
