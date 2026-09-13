@@ -707,6 +707,14 @@ mutations=(
   # being "always fire".
   "src/certify.rs|    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 2.0 * t_sokal;|    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 200.0 * t_sokal;|certify::tests::the_certificate_reports_a_truncated_window_and_carries_the_larger_tau|a truncation cross-check whose threshold nothing real can reach"
 
+
+  # A SWEEP ON FUNCTIONS RUNS THE SITES BACKWARDS. P = P_0 P_1 ... P_{n-1} on distributions, so
+  # (P v) applies the last site first; forward order builds the sweep for the reversed site order,
+  # which is still a stochastic operator with pi invariant and is not the kernel Dtm::sample runs.
+  # Only the adjoint identity against apply_distribution -- written forward, as mass moves --
+  # tells the two apart.
+  "src/autocorr.rs|            for i in (0..n).rev() {|            for i in 0..n {|autocorr::tests::pushing_mass_forward_is_the_adjoint_of_pulling_functions_back|the sequential sweep applied to functions in forward site order"
+
 )
 
 bad=0
@@ -745,7 +753,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=115
+expected_rows=116
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

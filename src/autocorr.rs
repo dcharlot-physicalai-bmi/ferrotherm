@@ -55,6 +55,10 @@ pub enum Kernel {
     /// One chromatic sweep of [`crate::gibbs::Sampler`]: each colour class in turn, every site of
     /// the class resampled from its heat-bath conditional given the others.
     ChromaticGibbs,
+    /// One sequential sweep in site order `0..n`, each site resampled from its heat-bath
+    /// conditional given the current state of all the others -- what [`crate::dtm::Ebm::gibbs`]
+    /// runs, and what a plain single-site Gibbs sampler is.
+    SequentialGibbs,
     /// One step of [`crate::informed::Informed`]: propose site `k` with probability
     /// `g(r_k) / Z(x)`, accept with `min(1, Z(x) / Z(y))`.
     Informed(Balance),
@@ -194,6 +198,23 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             }
             cur
         }
+        Kernel::SequentialGibbs => {
+            // P = P_0 P_1 ... P_{n-1} on distributions, so on functions the LAST site's update is
+            // applied first: (P v) = P_0 (P_1 (... (P_{n-1} v))). Each P_i is rank two per state --
+            // the heat-bath conditional at site i given the current others.
+            let mut cur = v.to_vec();
+            for i in (0..n).rev() {
+                let bit = 1usize << i;
+                let mut next = vec![0.0f64; m];
+                for x in 0..m {
+                    let s = spins(x, n);
+                    let p = p_up(g.field(i, &s), beta);
+                    next[x] = p * cur[x | bit] + (1.0 - p) * cur[x & !bit];
+                }
+                cur = next;
+            }
+            cur
+        }
         Kernel::Informed(balance) => {
             // Z(x) for every state first, since the acceptance needs Z at the neighbour too.
             let weights = |x: usize| -> Vec<f64> {
@@ -225,6 +246,116 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             next
         }
     }
+}
+
+/// Push a DISTRIBUTION one step: `mu <- mu P`, matrix-free -- the adjoint of [`apply`].
+///
+/// Where [`apply`] answers "what is the expected value of `v` one step from here", this answers
+/// "where is the chain one step after being distributed as `mu`". It is what an exact
+/// convergence curve needs: start at the distribution a sampler actually starts from (uniform, a
+/// data point, a clamped context), push it `k` steps, and read the total variation to `pi`
+/// exactly. For the chromatic and sequential sweeps the site updates are applied in FORWARD
+/// order, since distributions multiply on the left.
+///
+/// # Panics
+///
+/// If `mu` does not have `2^n` entries.
+#[must_use]
+pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> Vec<f64> {
+    let n = g.n;
+    let m = 1usize << n;
+    assert_eq!(mu.len(), m, "a distribution over states has 2^n entries");
+    match kernel {
+        Kernel::SequentialGibbs => {
+            let mut cur = mu.to_vec();
+            for i in 0..n {
+                let bit = 1usize << i;
+                let mut next = vec![0.0f64; m];
+                for x in 0..m {
+                    let s = spins(x, n);
+                    let p = p_up(g.field(i, &s), beta);
+                    // Mass from both values of site i lands on x with x_i's own probability.
+                    let pooled = cur[x | bit] + cur[x & !bit];
+                    next[x] = if x & bit != 0 { p * pooled } else { (1.0 - p) * pooled };
+                }
+                cur = next;
+            }
+            cur
+        }
+        Kernel::ChromaticGibbs => {
+            let mut cur = mu.to_vec();
+            for class in &g.classes {
+                let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
+                let k = sites.len();
+                let mut next = vec![0.0f64; m];
+                for x in 0..m {
+                    let s = spins(x, n);
+                    // The class sites' conditionals depend only on the OTHER sites, so they are
+                    // the same for every state that differs from x only on the class.
+                    let mut w = 1.0;
+                    for &i in &sites {
+                        let p = p_up(g.field(i, &s), beta);
+                        w *= if x & (1usize << i) != 0 { p } else { 1.0 - p };
+                    }
+                    let mut base = x;
+                    for &i in &sites {
+                        base &= !(1usize << i);
+                    }
+                    let mut pooled = 0.0;
+                    for a in 0..(1usize << k) {
+                        let mut y = base;
+                        for (j, &i) in sites.iter().enumerate() {
+                            if (a >> j) & 1 == 1 {
+                                y |= 1usize << i;
+                            }
+                        }
+                        pooled += cur[y];
+                    }
+                    next[x] = w * pooled;
+                }
+                cur = next;
+            }
+            cur
+        }
+        Kernel::Informed(balance) => {
+            let weights = |x: usize| -> Vec<f64> {
+                let s = spins(x, n);
+                (0..n)
+                    .map(|k| {
+                        let log_r = -2.0 * beta * f64::from(s[k]) * g.field(k, &s);
+                        log_g(balance, log_r).exp()
+                    })
+                    .collect()
+            };
+            let w: Vec<Vec<f64>> = (0..m).map(weights).collect();
+            let z: Vec<f64> = w.iter().map(|wx| wx.iter().sum()).collect();
+            let mut next = vec![0.0f64; m];
+            for x in 0..m {
+                // Mass arriving from each neighbour y_k, plus what stays.
+                let mut stay = 1.0;
+                let mut acc = 0.0;
+                for k in 0..n {
+                    let y = x ^ (1usize << k);
+                    if z[x] > 0.0 {
+                        let alpha = if z[y] > 0.0 { (z[x] / z[y]).min(1.0) } else { 1.0 };
+                        stay -= w[x][k] / z[x] * alpha;
+                    }
+                    if z[y] > 0.0 {
+                        let alpha = if z[x] > 0.0 { (z[y] / z[x]).min(1.0) } else { 1.0 };
+                        acc += mu[y] * w[y][k] / z[y] * alpha;
+                    }
+                }
+                next[x] = acc + stay.max(0.0) * mu[x];
+            }
+            next
+        }
+    }
+}
+
+/// Total variation distance between two distributions over the same states.
+#[must_use]
+pub fn total_variation(p: &[f64], q: &[f64]) -> f64 {
+    0.5 * p.iter().zip(q).map(|(a, b)| (a - b).abs()).sum::<f64>()
 }
 
 /// The exact integrated autocorrelation time of `observable` under `kernel` at `beta`.
@@ -443,5 +574,82 @@ mod tests {
             "the truncation must be RESOLVED for this test to record it: Sokal {est_cold:.2} vs exact {:.2} on {len} sweeps",
             cold.tau_int
         );
+    }
+
+    /// `apply_distribution` IS THE ADJOINT OF `apply`: `<mu P, v> = <mu, P v>` for every `mu`
+    /// and `v`, for every kernel. Two independently written routines -- one pushes functions
+    /// backward, the other pushes mass forward -- and this identity is the only thing that ties
+    /// them together, so a sign, an index, or a class order wrong in either shows up here. Then
+    /// the distribution form of stationarity, `pi P = pi`, which is the property an exact
+    /// convergence curve needs to end at zero.
+    #[test]
+    fn pushing_mass_forward_is_the_adjoint_of_pulling_functions_back() {
+        let g = grid_glass(3, 3, 8);
+        let beta = 0.9;
+        let m = 1usize << g.n;
+        let pi = boltzmann(&g, beta).unwrap();
+        let mut rng = Pcg::new(5, 3);
+        for kernel in [
+            Kernel::ChromaticGibbs,
+            Kernel::SequentialGibbs,
+            Kernel::Informed(Balance::Barker),
+            Kernel::Informed(Balance::Sqrt),
+        ] {
+            for _ in 0..4 {
+                let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
+                let z: f64 = mu.iter().sum();
+                for p in &mut mu {
+                    *p /= z;
+                }
+                let v: Vec<f64> = (0..m).map(|_| rng.f64() - 0.5).collect();
+                let lhs: f64 = apply_distribution(&g, beta, kernel, &mu).iter().zip(&v).map(|(a, b)| a * b).sum();
+                let rhs: f64 = mu.iter().zip(apply(&g, beta, kernel, &v)).map(|(a, b)| a * b).sum();
+                assert!((lhs - rhs).abs() < 1e-12, "{kernel:?}: <mu P, v> = {lhs} vs <mu, P v> = {rhs}");
+                // Mass is conserved.
+                let total: f64 = apply_distribution(&g, beta, kernel, &mu).iter().sum();
+                assert!((total - 1.0).abs() < 1e-12, "{kernel:?}: mass {total}");
+            }
+            let pushed = apply_distribution(&g, beta, kernel, &pi);
+            assert!(
+                total_variation(&pushed, &pi) < 1e-12,
+                "{kernel:?}: pi is not stationary in distribution form, TV {:e}",
+                total_variation(&pushed, &pi)
+            );
+        }
+    }
+
+    /// The sequential sweep is a different kernel from the chromatic one -- same stationary law,
+    /// different order, different tau -- and on a single site the two coincide exactly.
+    #[test]
+    fn the_sequential_and_chromatic_sweeps_are_different_kernels_with_the_same_law() {
+        let g = grid_glass(3, 3, 8);
+        let beta = 1.2;
+        let a = tau_int_exact(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 100_000).unwrap();
+        let b = tau_int_exact(&g, beta, Kernel::SequentialGibbs, |s| g.energy(s), 1e-12, 100_000).unwrap();
+        assert!(
+            (a.tau_int - b.tau_int).abs() > 1e-6,
+            "two different orders should not give bit-identical taus: {} vs {}",
+            a.tau_int,
+            b.tau_int
+        );
+        // An exact convergence curve from the uniform start must end at zero for both.
+        let m = 1usize << g.n;
+        let pi = boltzmann(&g, beta).unwrap();
+        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs] {
+            let mut mu = vec![1.0 / m as f64; m];
+            let mut tv = Vec::new();
+            for _ in 0..400 {
+                mu = apply_distribution(&g, beta, kernel, &mu);
+                tv.push(total_variation(&mu, &pi));
+            }
+            assert!(tv[0] > tv[399], "{kernel:?}: the distance must fall");
+            assert!(tv[399] < 1e-6, "{kernel:?}: TV after 400 sweeps {:e}", tv[399]);
+            assert!(tv.windows(2).all(|w| w[1] <= w[0] + 1e-12), "{kernel:?}: TV must not rise");
+        }
+        let mut b1 = GraphBuilder::new(1);
+        b1.bias(0, 0.4);
+        let g1 = b1.build();
+        let s = tau_int_exact(&g1, 2.0, Kernel::SequentialGibbs, |s| f64::from(s[0]), 1e-15, 10).unwrap();
+        assert_eq!(s.tau_int, 0.5);
     }
 }
