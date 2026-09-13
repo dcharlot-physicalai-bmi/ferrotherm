@@ -107,6 +107,13 @@ pub enum Kernel {
     /// conditional given the current state of all the others -- what [`crate::dtm::Ebm::gibbs`]
     /// runs, and what a plain single-site Gibbs sampler is.
     SequentialGibbs,
+    /// One fully SYNCHRONOUS sweep: every site resampled at once from its heat-bath conditional
+    /// given the PREVIOUS state -- Little's (1974) dynamics, what a p-bit array does when all its
+    /// nodes update on the same clock edge with no colouring. Its stationary law is not the
+    /// Boltzmann distribution even on a bipartite graph: for symmetric couplings it is Peretto's
+    /// closed form `pi(x) ∝ exp(beta h·x) prod_i 2 cosh(beta f_i(x))`, which [`peretto`] computes
+    /// and the invariance test checks.
+    Synchronous,
     /// One two-phase sweep of the shipped p-bit fabric, [`crate::hdl::FixedFabric`]: the same
     /// colour classes as [`Kernel::ChromaticGibbs`], but every site's flip probability is what the
     /// RTL computes -- couplings and fields rounded to Q.8, the field clamped to `[-8, 8)`, the
@@ -198,6 +205,43 @@ pub struct Autocorrelation {
 #[must_use]
 pub fn spins(x: usize, n: usize) -> Vec<i8> {
     (0..n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect()
+}
+
+/// Peretto's closed form for the stationary law of [`Kernel::Synchronous`] with symmetric
+/// couplings: `pi(x) ∝ exp(beta h·x) prod_i 2 cosh(beta f_i(x))`, `f_i` the local field at `x`
+/// with the bias included (Peretto 1984, for Little's 1974 dynamics). It is stationary because
+/// `pi(x) P(x, y) = exp(beta [h·x + h·y + y·J·x])` is symmetric in `x` and `y` when `J` is, so
+/// the synchronous chain is reversible with respect to it -- and it is not the Boltzmann law,
+/// whose weight is `exp(beta [h·x + x·J·x / 2])`.
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManySpins`] above [`MAX_SPINS`].
+pub fn peretto(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
+    if g.n > MAX_SPINS {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+    }
+    let n = g.n;
+    let m = 1usize << n;
+    let mut lp = vec![0.0f64; m];
+    for (x, l) in lp.iter_mut().enumerate() {
+        let s = spins(x, n);
+        let hx: f64 = (0..n).map(|i| g.h[i] * f64::from(s[i])).sum();
+        let mut acc = beta * hx;
+        for i in 0..n {
+            // ln 2 cosh(a) = |a| + ln(1 + exp(-2 |a|)), overflow-free.
+            let a = (beta * g.field(i, &s)).abs();
+            acc += a + (-2.0 * a).exp().ln_1p();
+        }
+        *l = acc;
+    }
+    let max = lp.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut pi: Vec<f64> = lp.iter().map(|l| (l - max).exp()).collect();
+    let z: f64 = pi.iter().sum();
+    for p in &mut pi {
+        *p /= z;
+    }
+    Ok(pi)
 }
 
 /// The Boltzmann distribution over all `2^n` states, from the graph's own energy.
@@ -364,6 +408,28 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             }
             cur
         }
+        Kernel::Synchronous => {
+            // (P v)(x) = E[v(y)] under the product law y_i ~ Bernoulli(q_i(x)), every q_i from the
+            // PREVIOUS state x. Per x, contract v one site at a time under that product, from the
+            // top bit down, so the block that remains keeps its bit layout.
+            let mut out = vec![0.0f64; m];
+            let mut w = vec![0.0f64; m];
+            for x in 0..m {
+                let s = spins(x, n);
+                w.copy_from_slice(v);
+                let mut len = m;
+                for i in (0..n).rev() {
+                    let q = p_up(g.field(i, &s), beta);
+                    let half = len / 2;
+                    for y in 0..half {
+                        w[y] = (1.0 - q) * w[y] + q * w[y | half];
+                    }
+                    len = half;
+                }
+                out[x] = w[0];
+            }
+            out
+        }
         Kernel::Informed(balance) => {
             // Z(x) for every state first, since the acceptance needs Z at the neighbour too.
             let weights = |x: usize| -> Vec<f64> {
@@ -466,6 +532,34 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                 cur = next;
             }
             cur
+        }
+        Kernel::Synchronous => {
+            // (mu P)(y) = sum_x mu(x) prod_i q_i^x(y_i): each source state lays its product law
+            // over every target, built by doubling one site at a time (bit i set gets q_i).
+            let mut out = vec![0.0f64; m];
+            let mut prod = vec![0.0f64; m];
+            for x in 0..m {
+                let mass = mu[x];
+                if mass == 0.0 {
+                    continue;
+                }
+                let s = spins(x, n);
+                prod[0] = 1.0;
+                let mut len = 1usize;
+                for i in 0..n {
+                    let q_prev = p_up(g.field(i, &s), beta);
+                    for y in 0..len {
+                        let w = prod[y];
+                        prod[y] = w * (1.0 - q_prev);
+                        prod[y | len] = w * q_prev;
+                    }
+                    len <<= 1;
+                }
+                for (o, pr) in out.iter_mut().zip(&prod) {
+                    *o += mass * pr;
+                }
+            }
+            out
         }
         Kernel::Informed(balance) => {
             let weights = |x: usize| -> Vec<f64> {
@@ -694,6 +788,7 @@ pub fn tau_int_fundamental(
     }
     let pi = match kernel {
         Kernel::FixedFabric | Kernel::Quantised { .. } => stationary_solved(g, beta, kernel)?,
+        Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
     let n = g.n;
@@ -750,6 +845,7 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
     }
     let pi = match kernel {
         Kernel::FixedFabric | Kernel::Quantised { .. } => stationary_solved(g, beta, kernel)?,
+        Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
     let m = 1usize << g.n;
@@ -793,6 +889,7 @@ pub fn tau_int_exact(
     // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
     let pi = match kernel {
         Kernel::FixedFabric | Kernel::Quantised { .. } => stationary(g, beta, kernel, 1e-14, 500_000)?.0,
+        Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
     let n = g.n;
@@ -1014,6 +1111,7 @@ mod tests {
             Kernel::FixedFabric,
             Kernel::Informed(Balance::Barker),
             Kernel::Informed(Balance::Sqrt),
+            Kernel::Synchronous,
         ] {
             for _ in 0..4 {
                 let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
@@ -1029,14 +1127,20 @@ mod tests {
                 let total: f64 = apply_distribution(&g, beta, kernel, &mu).iter().sum();
                 assert!((total - 1.0).abs() < 1e-12, "{kernel:?}: mass {total}");
             }
-            // The Boltzmann distribution is stationary for the exact kernels and NOT for the
-            // fabric's arithmetic -- that gap is the fabric's own test below, not a failure here.
-            if kernel != Kernel::FixedFabric {
-                let pushed = apply_distribution(&g, beta, kernel, &pi);
+            // The Boltzmann distribution is stationary for the exact kernels, Peretto's law for
+            // the synchronous sweep, and neither for the fabric's arithmetic -- that gap is the
+            // fabric's own test below, not a failure here.
+            let law = match kernel {
+                Kernel::FixedFabric => None,
+                Kernel::Synchronous => Some(peretto(&g, beta).unwrap()),
+                _ => Some(pi.clone()),
+            };
+            if let Some(law) = law {
+                let pushed = apply_distribution(&g, beta, kernel, &law);
                 assert!(
-                    total_variation(&pushed, &pi) < 1e-12,
-                    "{kernel:?}: pi is not stationary in distribution form, TV {:e}",
-                    total_variation(&pushed, &pi)
+                    total_variation(&pushed, &law) < 1e-12,
+                    "{kernel:?}: its law is not stationary in distribution form, TV {:e}",
+                    total_variation(&pushed, &law)
                 );
             }
         }
@@ -1301,5 +1405,31 @@ mod tests {
         }
         assert!(worst_full < 1e-9, "full precision vs the exact heat bath: {worst_full:.3e}");
         assert!(worst_wide < 1e-7, "32 vs 24 comparator bits: {worst_wide:.3e}");
+    }
+
+    /// Peretto's closed form is invariant under the synchronous kernel to floating point, differs
+    /// from the Boltzmann law resolvably even on this bipartite grid, and collapses to the
+    /// Boltzmann law when the sites are free (then `f_i = h_i` and the cosh factors are constant).
+    /// The direct solve must find the same law without being told the closed form.
+    #[test]
+    fn the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann() {
+        let g = grid_glass(3, 3, 5);
+        let beta = 1.2;
+        let pi = peretto(&g, beta).unwrap();
+        let pushed = apply_distribution(&g, beta, Kernel::Synchronous, &pi);
+        let drift = total_variation(&pushed, &pi);
+        assert!(drift < 1e-13, "Peretto's law must be invariant under the synchronous sweep: {drift:.3e}");
+        let b = boltzmann(&g, beta).unwrap();
+        assert!(total_variation(&pi, &b) > 1e-2, "the synchronous law must not be Boltzmann here");
+        let solved = stationary_solved(&g, beta, Kernel::Synchronous).unwrap();
+        let gap = total_variation(&solved, &pi);
+        assert!(gap < 1e-10, "direct solve vs closed form: {gap:.3e}");
+        let mut free = GraphBuilder::new(4);
+        for i in 0..4 {
+            free.bias(i, 0.15 * (i as f64 + 1.0));
+        }
+        let free = free.build();
+        let gap = total_variation(&peretto(&free, beta).unwrap(), &boltzmann(&free, beta).unwrap());
+        assert!(gap < 1e-14, "free sites: Peretto must be Boltzmann: {gap:.3e}");
     }
 }

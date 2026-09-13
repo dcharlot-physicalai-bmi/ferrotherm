@@ -752,6 +752,8 @@ mutations=(
   "src/autocorr.rs|            a[x * m + y] = delta - p + pi[y];|            a[x * m + y] = delta - p;|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental matrix without its rank-one term, which is singular"
   "src/autocorr.rs|    Ok(trace - 1.0)|    Ok(trace)|autocorr::tests::kemenys_constant_has_its_closed_forms_on_memoryless_kernels|a Kemeny constant that counts the stationary mode"
   "src/autocorr.rs|            let levels = 2f64.powi(prob_bits as i32);|            let levels = f64::from(1u32 << (prob_bits % 32));|autocorr::tests::the_quantised_kernel_at_full_precision_is_the_exact_kernel|a comparator width computed in 32-bit integers, which wraps at 32 bits"
+  "src/autocorr.rs|                    let q_prev = p_up(g.field(i, &s), beta);|                    let q_prev = p_up(g.field(i, &s), 1.0);|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a synchronous sweep that samples at unit temperature"
+  "src/autocorr.rs|        let mut acc = beta * hx;|        let mut acc = 0.0 * hx;|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a Peretto law without its field term"
 
 )
 
@@ -791,7 +793,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=124
+expected_rows=126
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
