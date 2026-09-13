@@ -130,7 +130,17 @@ pub enum Kernel {
     /// `Phi` the normal CDF. `xi` is the self-spin inertia the paper adds to let all p-bits update
     /// simultaneously; `eta` sets the noise, and with it how certain a spin can ever be: `tanh`
     /// saturates at 1, so no field makes `P` exceed `Phi((1 + xi) / eta)`. The paper reports
-    /// speed-ups and does not analyse the stationary law; [`stationary_solved`] gives it exactly.
+    /// speed-ups and does not analyse the stationary law; [`stationary_solved`] gives it exactly,
+    /// and `examples/pimi_exact.rs` does at `beta = 1`. On the 4x3 grid one cell is Boltzmann-like:
+    /// `eta = 0.4, xi = 0.5` is within TV `8e-4` of the Boltzmann law at `beta_eff = 2.13`, twice
+    /// the nominal, but relaxes `1.2e5x` slower per full update than the chromatic sweep (`2.2e9x`
+    /// at `xi = 1`). On `K_{6,6}` with Gaussian couplings no cell of `eta` in `{0.2, 0.4, 0.8}` by
+    /// `xi` in `{0, 0.1, 0.25, 0.5, 1}` comes within TV `5e-3` of any Boltzmann law, and the
+    /// nearest (`eta = 0.2, xi = 0.5`) sits at `beta_eff = 13.8`, a near-frozen law, `2e9x` slower.
+    /// At `eta = 0.2` and `xi >= 0.5` on the grid the chain is singular to floating point --
+    /// frozen -- and has no invariant law to report. The inertia buys simultaneity at the price of
+    /// a large, fixture-dependent temperature shift and a relaxation time orders of magnitude
+    /// longer; whatever the 35x is, it is not sampling at equal flips.
     Pimi {
         /// Self-spin inertia coefficient.
         xi: f64,
