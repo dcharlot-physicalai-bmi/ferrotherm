@@ -11,7 +11,14 @@
 //! time at every trace length tried, up to 332,000 sweeps, with a 2% spread**. That is not a
 //! short-trace bias. The chain's autocorrelation is a large fast mode plus a small slow one, so
 //! `tau(W)` is still tiny when the window closes at lag 9, and the slow mode — most of the truth —
-//! is never summed. No trace length repairs a window that has already closed.
+//! is never summed. No trace length repairs a window that has already closed. That seventeen-fold
+//! under-report is specific to the `beta = 1` spectrum: with the oracle moved to the fundamental
+//! matrix and the estimators to the FFT (2026-09-13, `tau_exactness` v3), at `beta = 1.5`
+//! (`tau = 13,270`) Sokal reads `0.67` to `0.77` of the truth and at `beta = 2` (`tau = 1.6e6`)
+//! `0.70` at thirty `tau`, while batch means over twenty batches climb from `0.21` at thirty `tau`
+//! to `0.91` at a thousand at `beta = 1.5` and reach `0.99` at ten thousand `tau` at `beta = 1`,
+//! where Sokal still reads `0.06`. The batch-means cross-check in [`crate::certify`] exists for
+//! exactly that spectrum.
 //!
 //! # What this computes
 //!

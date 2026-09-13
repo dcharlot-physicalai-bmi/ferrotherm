@@ -31,10 +31,11 @@
 //
 // run: cargo run --release --example tau_exactness
 
+use ferrotherm::autocorr::{tau_int_fundamental, Kernel};
 use ferrotherm::certify::tau_int;
+use ferrotherm::fft::autocovariance;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
-use ferrotherm::kernel::p_up;
 use ferrotherm::rng::Pcg;
 
 /// A w x h open grid with random +-1 couplings and small random fields: frustrated, bipartite,
@@ -60,93 +61,14 @@ fn grid_glass(w: usize, h: usize, seed: u64) -> Graph {
     b.build()
 }
 
-/// State `x` as spins: bit `i` set means `s_i = +1`.
-fn spins(x: usize, n: usize) -> Vec<i8> {
-    (0..n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect()
+/// Exact `tau_int` of the energy under the chromatic Gibbs sweep, by the fundamental matrix:
+/// one dense solve, no lags, no truncation, at any temperature (`autocorr::tau_int_fundamental`).
+/// The first version of this example carried its own lag-summing operator; at `beta = 2` that sum
+/// needs some `5e7` lags of a 4,096-state operator and never returned.
+fn tau_exact(g: &Graph, beta: f64) -> f64 {
+    tau_int_fundamental(g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).expect("12 spins, energy varies").tau_int
 }
 
-/// The exact one-sweep operator applied to a function over states: `v <- P v`.
-///
-/// `P = P_{c_last} ... P_{c_1}` in class order. `(P_c v)(x) = sum_y P_c(x -> y) v(y)` where `y`
-/// differs from `x` only on the sites of class `c`, and `P_c(x -> y) = prod_{i in c} p_i(y_i | x)`
-/// with `p_i` the heat-bath probability from the field at `x` -- the sites of a class are
-/// pairwise non-adjacent, so their fields do not see each other and the class update factorises.
-/// Applying `P v` means applying the classes in REVERSE order to `v` (operators compose right to
-/// left), which is what the loop below does.
-fn apply_sweep(g: &Graph, beta: f64, v: &[f64]) -> Vec<f64> {
-    let n = g.n;
-    let m = 1usize << n;
-    let mut cur = v.to_vec();
-    for class in g.classes.iter().rev() {
-        let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
-        let k = sites.len();
-        let mut next = vec![0.0f64; m];
-        for x in 0..m {
-            let s = spins(x, n);
-            // p_up for each class site given x's OTHER sites (its own class does not enter).
-            let p: Vec<f64> = sites.iter().map(|&i| p_up(g.field(i, &s), beta)).collect();
-            // Base state with every class site cleared, then every assignment of the class.
-            let mut base = x;
-            for &i in &sites {
-                base &= !(1usize << i);
-            }
-            let mut acc = 0.0;
-            for a in 0..(1usize << k) {
-                let mut y = base;
-                let mut w = 1.0;
-                for (j, &i) in sites.iter().enumerate() {
-                    if (a >> j) & 1 == 1 {
-                        y |= 1usize << i;
-                        w *= p[j];
-                    } else {
-                        w *= 1.0 - p[j];
-                    }
-                }
-                acc += w * cur[y];
-            }
-            next[x] = acc;
-        }
-        cur = next;
-    }
-    cur
-}
-
-/// Exact `tau_int` of the energy under the chromatic Gibbs sweep, and the exact energy variance.
-fn tau_exact(g: &Graph, beta: f64) -> (f64, usize) {
-    let n = g.n;
-    let m = 1usize << n;
-    let energy: Vec<f64> = (0..m).map(|x| g.energy(&spins(x, n))).collect();
-    // pi from the crate's own energy, normalised here: the oracle is the linear algebra, not
-    // another sampler.
-    let emin = energy.iter().copied().fold(f64::INFINITY, f64::min);
-    let mut pi: Vec<f64> = energy.iter().map(|e| (-beta * (e - emin)).exp()).collect();
-    let z: f64 = pi.iter().sum();
-    for p in &mut pi {
-        *p /= z;
-    }
-    let mean: f64 = pi.iter().zip(&energy).map(|(p, e)| p * e).sum();
-    let e: Vec<f64> = energy.iter().map(|x| x - mean).collect();
-    let c0: f64 = pi.iter().zip(&e).map(|(p, x)| p * x * x).sum();
-    let mut v = e.clone();
-    let mut tau = 0.5;
-    let mut k = 0usize;
-    loop {
-        v = apply_sweep(g, beta, &v);
-        k += 1;
-        let ck: f64 = pi.iter().zip(&e).zip(&v).map(|((p, x), y)| p * x * y).sum();
-        let rho = ck / c0;
-        tau += rho;
-        if rho.abs() < 1e-13 || k >= 200_000 {
-            break;
-        }
-    }
-    (tau, k)
-}
-
-/// THE CANDIDATE REPLACEMENT, measured here against the oracle before it is allowed near
-/// `certify.rs`. Sokal's window closes at the first lag `W >= 5 tau(W)`; on a chain whose
-/// autocorrelation is a large fast mode plus a SMALL slow one, `tau(W)` is still small when the
-/// window closes, so it closes early and the slow mode -- most of the true tau -- is never summed.
 /// This keeps summing past Sokal's window for as long as the empirical autocorrelation is still
 /// resolvably positive: above twice its own noise, `sqrt((1 + 2 tau(k)) / L)` (Bartlett's large-lag
 /// standard error for a stationary sequence), and above a floor of 0.01. A single-mode chain is
@@ -162,14 +84,13 @@ fn tau_extended(trace: &[f64]) -> f64 {
         return f64::INFINITY;
     }
     let max_lag = (n / 4).max(1);
+    // Every lag at once: this sum runs far past Sokal's window on a long trace, where lag by lag
+    // is O(L) each and the run of 2026-09-13 never finished.
+    let cov = autocovariance(trace, max_lag);
     let mut tau = 0.5f64;
     let mut closed = false;
     for k in 1..=max_lag {
-        let mut c = 0.0;
-        for t in 0..(n - k) {
-            c += (trace[t] - mean) * (trace[t + k] - mean);
-        }
-        let rho = c / ((n - k) as f64 * var);
+        let rho = cov[k] / var;
         if !closed && (k as f64) >= 5.0 * tau.max(0.5) {
             closed = true;
         }
@@ -245,25 +166,32 @@ fn main() {
         "  model    {w}x{h} open grid, {n} spins, random +-1 couplings, fields in [-0.2, 0.2]; {} colour classes",
         g.classes.len()
     );
-    println!("  oracle   C(k) = <pi, e * P^k e> on all 2^{n} states, tau = 1/2 + sum rho(k) to 1e-13");
+    println!("  oracle   autocorr::tau_int_fundamental on all 2^{n} states: one dense solve per temperature, no lags");
     println!("  chain    gibbs::Sampler, the same sweep, traces of L sweeps after a burn-in of 20 tau, 16 reps\n");
     println!("  estimators   S = certify::tau_int (Sokal, window at 5 tau); X = the same sum extended past the");
     println!("               window while rho stays above twice its noise; B = batch means, 20 batches.");
     println!("               Each cell is estimate / exact, mean over 16 reps, with sd/mean in brackets.\n");
     let mults = [30.0f64, 100.0, 1_000.0, 10_000.0];
+    // The longest trace this run will draw, per rep: 2^26 sweeps (a 2^27-point transform, 2 GB).
+    // Cells past it print '-' rather than being quietly skipped.
+    let cap = 1usize << 26;
+    println!("  cap      traces above {cap} sweeps are not drawn and print '-'\n");
     println!(
-        "  {:>5} {:>10} {:>6}   {}",
+        "  {:>5} {:>12}   {}",
         "beta",
         "tau exact",
-        "lags",
         mults.iter().map(|m| format!("{:>26}", format!("L = {m:.0} tau: S / X / B"))).collect::<Vec<_>>().join("  ")
     );
     let mut worst: Vec<(f64, &str, f64)> = Vec::new(); // (mult, estimator, worst |ratio - 1|)
-    for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
-        let (te, lags) = tau_exact(&g, beta);
+    for &beta in &[0.5f64, 1.0, 1.5, 2.0] {
+        let te = tau_exact(&g, beta);
         let mut cells = Vec::new();
         for &mlt in &mults {
             let len = ((mlt * te).ceil() as usize).max(64);
+            if len > cap {
+                cells.push(format!("{:>8} {:>8} {:>8}", "-", "-", "-"));
+                continue;
+            }
             let burn = ((20.0 * te).ceil() as usize).max(16);
             let e = tau_sampled(&g, beta, len, burn, 16);
             let f = |(m, sd): (f64, f64)| format!("{:.2}({:.0}%)", m / te, 100.0 * sd / m.max(1e-300));
@@ -272,7 +200,7 @@ fn main() {
                 worst.push((mlt, name, (m / te - 1.0).abs()));
             }
         }
-        println!("  {beta:>5.2} {te:>10.2} {lags:>6}   {}", cells.join("  "));
+        println!("  {beta:>5.2} {te:>12.2}   {}", cells.join("  "));
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
     println!("  A cell below 1 UNDERSTATES the true autocorrelation time at that trace length, so every ESS");
