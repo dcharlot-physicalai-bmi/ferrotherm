@@ -40,6 +40,19 @@
 //! relaxation time: a mixing measure of the kernel alone, where `tau_int` is of one observable
 //! under one law and can fall when the law moves mass out of a slow valley.
 //!
+//! # What the fabric's law is
+//!
+//! `examples/nearest_boltzmann.rs` projects the fabric's exact law onto the Boltzmann family by
+//! maximum likelihood — Newton on the exact Fisher matrix, so the fit is THE nearest pair
+//! `(J', h')` — on the 4x3 grid at five temperatures. The law is within TV `5e-5` of some Boltzmann
+//! distribution at every temperature, so a calibrated load could in principle remove almost all
+//! of the departure; but the pair is not nearby when cold — the largest parameter shift is
+//! `0.003` at `beta = 0.5`, `0.59` at `beta = 2` and `2.3` at `beta = 3`, against loaded couplings
+//! of `±beta` — and the residual that no pair removes is `0.02%`, `1.9%`, `36%`, `5.6%` and `0.5%`
+//! of the loaded KL at `beta = 0.5, 1, 1.5, 2, 3`: non-monotone, largest where the ROM's stride
+//! and the comparator's floor are both in play. The single effective temperature that
+//! `examples/fabric_exact.rs` reports is the one-parameter version of the same projection.
+//!
 //! # What it is for
 //!
 //! Two things. It is the reference every autocorrelation ESTIMATOR in this crate is scored
