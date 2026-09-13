@@ -756,6 +756,10 @@ mutations=(
   "src/autocorr.rs|        let mut acc = beta * hx;|        let mut acc = 0.0 * hx;|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a Peretto law without its field term"
   "src/autocorr.rs|            let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;|            let z = (beta * g.field(i, s)).tanh() / eta;|autocorr::tests::the_pimi_kernel_has_its_single_site_closed_form_and_its_inertia_matters|a PIMI rule without its inertia term"
   "src/autocorr.rs|            let s_j = if stale { x_j } else { y_j };|            let s_j = if stale { y_j } else { x_j };|autocorr::tests::the_stale_read_kernel_is_bracketed_by_its_two_closed_forms|a stale read that returns the fresh value"
+  # Rows 129-130 (2026-09-13): the FFT. Its oracle is an independently written O(N^2) DFT and the
+  # direct lag-by-lag sum; each row breaks the one property the route rests on.
+  "src/fft.rs|        let ang = if inverse { TAU / len as f64 } else { -TAU / len as f64 };|        let ang = if inverse { TAU / len as f64 } else { TAU / len as f64 };|fft::tests::the_transform_matches_the_direct_dft_and_inverts|a forward transform with the inverse's twiddle sign"
+  "src/fft.rs|    let m = (2 * n).next_power_of_two();|    let m = n.next_power_of_two();|fft::tests::the_autocovariance_matches_the_direct_sum_lag_by_lag_and_sokal_agrees|an autocovariance without zero padding, so the lags wrap"
 
 )
 
@@ -795,7 +799,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=128
+expected_rows=130
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
