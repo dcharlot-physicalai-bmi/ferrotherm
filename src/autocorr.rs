@@ -99,7 +99,7 @@ use std::fmt;
 pub const MAX_SPINS: usize = 16;
 
 /// Which sampler's one-step kernel to build.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kernel {
     /// One chromatic sweep of [`crate::gibbs::Sampler`]: each colour class in turn, every site of
     /// the class resampled from its heat-bath conditional given the others.
@@ -115,6 +115,19 @@ pub enum Kernel {
     /// closed form `pi(x) ∝ exp(beta h·x) prod_i 2 cosh(beta f_i(x))`, which [`peretto`] computes
     /// and the invariance test checks.
     Synchronous,
+    /// The PIMI rule of Zhu, Singh et al. (arXiv:2604.17109, 2026), fully synchronous:
+    /// `s_i(t+1) = sign[tanh(beta f_i(x)) + xi s_i(t) + eta N(0, 1)]`, every site at once from the
+    /// previous state `x`, so `P(s_i = +1 | x) = Phi((tanh(beta f_i(x)) + xi x_i) / eta)` with
+    /// `Phi` the normal CDF. `xi` is the self-spin inertia the paper adds to let all p-bits update
+    /// simultaneously; `eta` sets the noise, and with it how certain a spin can ever be: `tanh`
+    /// saturates at 1, so no field makes `P` exceed `Phi((1 + xi) / eta)`. The paper reports
+    /// speed-ups and does not analyse the stationary law; [`stationary_solved`] gives it exactly.
+    Pimi {
+        /// Self-spin inertia coefficient.
+        xi: f64,
+        /// Standard deviation of the injected Gaussian noise.
+        eta: f64,
+    },
     /// One two-phase sweep of the shipped p-bit fabric, [`crate::hdl::FixedFabric`]: the same
     /// colour classes as [`Kernel::ChromaticGibbs`], but every site's flip probability is what the
     /// RTL computes -- couplings and fields rounded to Q.8, the field clamped to `[-8, 8)`, the
@@ -321,6 +334,10 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             let entry = (p_up(arg, beta) * (levels - 1.0)).round().min(levels - 1.0);
             entry / levels
         }
+        Kernel::Pimi { xi, eta } => {
+            let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;
+            0.5 * (1.0 + crate::hopfield::erf(z / std::f64::consts::SQRT_2))
+        }
         _ => p_up(g.field(i, s), beta),
     }
 }
@@ -409,7 +426,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             }
             cur
         }
-        Kernel::Synchronous => {
+        Kernel::Synchronous | Kernel::Pimi { .. } => {
             // (P v)(x) = E[v(y)] under the product law y_i ~ Bernoulli(q_i(x)), every q_i from the
             // PREVIOUS state x. Per x, contract v one site at a time under that product, from the
             // top bit down, so the block that remains keeps its bit layout.
@@ -420,7 +437,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
                 w.copy_from_slice(v);
                 let mut len = m;
                 for i in (0..n).rev() {
-                    let q = p_up(g.field(i, &s), beta);
+                    let q = p_site(g, beta, kernel, i, &s);
                     let half = len / 2;
                     for y in 0..half {
                         w[y] = (1.0 - q) * w[y] + q * w[y | half];
@@ -534,7 +551,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::Synchronous => {
+        Kernel::Synchronous | Kernel::Pimi { .. } => {
             // (mu P)(y) = sum_x mu(x) prod_i q_i^x(y_i): each source state lays its product law
             // over every target, built by doubling one site at a time (bit i set gets q_i).
             let mut out = vec![0.0f64; m];
@@ -548,7 +565,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                 prod[0] = 1.0;
                 let mut len = 1usize;
                 for i in 0..n {
-                    let q_prev = p_up(g.field(i, &s), beta);
+                    let q_prev = p_site(g, beta, kernel, i, &s);
                     for y in 0..len {
                         let w = prod[y];
                         prod[y] = w * (1.0 - q_prev);
@@ -788,7 +805,7 @@ pub fn tau_int_fundamental(
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } => stationary_solved(g, beta, kernel)?,
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } => stationary_solved(g, beta, kernel)?,
         Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
@@ -845,7 +862,7 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } => stationary_solved(g, beta, kernel)?,
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } => stationary_solved(g, beta, kernel)?,
         Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
@@ -889,7 +906,9 @@ pub fn tau_int_exact(
     // For the exact Gibbs and informed kernels that is the Boltzmann distribution; for the
     // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } => stationary(g, beta, kernel, 1e-14, 500_000)?.0,
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } => {
+            stationary(g, beta, kernel, 1e-14, 500_000)?.0
+        }
         Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
@@ -1113,6 +1132,7 @@ mod tests {
             Kernel::Informed(Balance::Barker),
             Kernel::Informed(Balance::Sqrt),
             Kernel::Synchronous,
+            Kernel::Pimi { xi: 0.3, eta: 0.7 },
         ] {
             for _ in 0..4 {
                 let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
@@ -1134,6 +1154,7 @@ mod tests {
             let law = match kernel {
                 Kernel::FixedFabric => None,
                 Kernel::Synchronous => Some(peretto(&g, beta).unwrap()),
+                Kernel::Pimi { .. } => Some(stationary_solved(&g, beta, kernel).unwrap()),
                 _ => Some(pi.clone()),
             };
             if let Some(law) = law {
@@ -1432,5 +1453,29 @@ mod tests {
         let free = free.build();
         let gap = total_variation(&peretto(&free, beta).unwrap(), &boltzmann(&free, beta).unwrap());
         assert!(gap < 1e-14, "free sites: Peretto must be Boltzmann: {gap:.3e}");
+    }
+
+    /// One site under the PIMI rule is a two-state chain with `q_+ = Phi((tanh(beta h) + xi) / eta)`
+    /// from `+1` and `q_- = Phi((tanh(beta h) - xi) / eta)` from `-1`, whose stationary probability
+    /// of `+1` is `q_- / (1 - q_+ + q_-)` in closed form. The direct solve must reproduce it with
+    /// and without inertia, and the two must differ, or the inertia term is not in the kernel.
+    #[test]
+    fn the_pimi_kernel_has_its_single_site_closed_form_and_its_inertia_matters() {
+        let mut b = GraphBuilder::new(1);
+        b.bias(0, 0.4);
+        let g = b.build();
+        let (beta, eta) = (1.0, 0.5);
+        let phi = |z: f64| 0.5 * (1.0 + crate::hopfield::erf(z / std::f64::consts::SQRT_2));
+        let closed = |xi: f64| {
+            let t = (beta * 0.4f64).tanh();
+            let (q_plus, q_minus) = (phi((t + xi) / eta), phi((t - xi) / eta));
+            q_minus / (1.0 - q_plus + q_minus)
+        };
+        for xi in [0.0, 0.6] {
+            let law = stationary_solved(&g, beta, Kernel::Pimi { xi, eta }).unwrap();
+            let want = closed(xi);
+            assert!((law[1] - want).abs() < 1e-12, "xi {xi}: solved {} vs closed form {want}", law[1]);
+        }
+        assert!((closed(0.6) - closed(0.0)).abs() > 1e-2, "inertia must move the single-site law");
     }
 }
