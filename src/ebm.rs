@@ -64,6 +64,40 @@
 //! CEILING for a structure on a dataset, and every other method becomes a fraction of a reachable
 //! target rather than a row in a league table against the others.
 //! `examples/estimator_shootout.rs` runs all six against it.
+//!
+//! # Training through a device
+//!
+//! Every method above assumes the sampler's stationary law is the model's Boltzmann distribution.
+//! A device's is not: the fabric rounds couplings to a quantum, reads its sigmoid from a ROM and
+//! compares against a 16-bit uniform, and its invariant law lies outside the Boltzmann family
+//! ([`crate::autocorr::Kernel::Quantised`] is that law, exactly, on small models). The usual claim
+//! is that training THROUGH the device absorbs its imperfections. `examples/device_train_exact.rs`
+//! measures the claim as a population quantity on an 8-spin ring — the device's law exact, no
+//! sampling anywhere — along three paths: load the true couplings; run the Boltzmann learning rule
+//! with the device as its negative phase, which is what every on-device loop does; and search the
+//! device's own parameter lattice for the best loadable couplings.
+//!
+//! ```text
+//!   precision {frac, ROM, prob}   KL loaded   rule beats loading   rule worst    best loadable beats loading
+//!   {12, 12, 16}                  1.3e-6      2 of 8                9.8x worse   3 of 4
+//!   {8, 10, 16}  shipped          8.2e-5      2 of 8               22.4x worse   4 of 4  (to 0.16x)
+//!   {6, 10, 16}                   1.5e-4      4 of 8                5.8x worse   3 of 4
+//!   {4, 8, 16}                    1.1e-3      4 of 8               11.6x worse   3 of 4
+//!   {4, 6, 8}                     1.1e-2      1 of 8               14.2x worse   3 of 4
+//! ```
+//!
+//! (Four targets by two step schedules per row.) The learning rule beat loading the truth in 13
+//! of 40 runs and made the device up to 22x worse; the best loadable couplings beat loading in 16
+//! of 20 and are never worse. The reason is exact, not empirical. The rule's fixed point is where
+//! the DEVICE's moments match the data's, which maximises the likelihood only inside the
+//! Boltzmann family, and the device is outside it. Worse, the device's law is piecewise constant
+//! in the loaded parameters — every coupling is rounded before it touches a field — so its
+//! moments cannot match anything exactly, the rule ends chattering between lattice cells, and
+//! which cell the decaying step leaves it in is the schedule's choice, not the data's. Any scheme
+//! that differentiates through the device's law is differentiating a staircase: the gradient is
+//! zero almost everywhere, and the first version of that example recovered exactly 0.0% that way.
+//! A global effective temperature, by contrast, costs nothing: it is the reparametrisation
+//! `J' = J / beta_dev`, latents included, and needs no experiment.
 
 use crate::gibbs::Sampler;
 use crate::graph::{Graph, GraphBuilder};
