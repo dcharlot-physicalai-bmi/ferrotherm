@@ -82,6 +82,41 @@
 //! The `beta = 4` row is the least reliable of the five and is reported with that caveat: at
 //! `tau_int` around 24,000 flips a 4,000-draw trace holds only about ten independent points, which
 //! is thin for Sokal windowing. The ordering there is worth less than the ordering at `beta = 2`.
+//!
+//! # And what it was worth in WORK, which is the number that matters
+//!
+//! `examples/informed_scaling.rs`, the same fixture at `beta = 2`, Barker against Gibbs, four
+//! seeds, every row's budget doubled until BOTH chains hold at least 25 effective samples (the
+//! table above did not do that: its `beta = 2` row held about 18 on the Gibbs side, and the
+//! informed `tau` at `n = 256` moved from 2,254 to 674 flips when the budget was doubled, so a
+//! `tau` without its ESS beside it is not a number):
+//!
+//! ```text
+//!      n   flips/spin   tau G (flips)  tau B (flips)  per flip   work, scan   work, tree   ESS G  ESS B
+//!     64        4000            974            413      2.4x        0.12x        0.86x     131    310
+//!    128        4000           8569           1888      4.5x        0.12x         1.5x      30    136
+//!    256        8000          18922            674     28.1x        0.38x         8.5x      54   1519
+//!    512        8000          36458           2593     14.1x        0.10x         3.9x      56    790
+//!   1024       32000         495165           6720     73.7x        0.25x        19.1x      33   2438
+//!   2048       32000         871728          10777     80.9x        0.14x        19.5x      38   3041
+//! ```
+//!
+//! "Per flip" is the ratio the table above reports. "Work" prices each arm's flips at what they
+//! cost: `deg + 1` field terms for Gibbs; `deg + 1` reweighs plus the choice for the informed
+//! chain — `n` weight reads under the linear scan this module shipped with, `log2 n` under the
+//! tree it has now.
+//!
+//! **Three things this says.** (1) Under the scan, the informed chain never beat Gibbs in work at
+//! any size — 0 of 6 — so every per-flip advantage this module advertised was a work LOSS of 3x
+//! to 10x. (2) Under the tree it wins at 5 of 6, from 0.86x at `n = 64` to 19.5x at `n = 2048`.
+//! (3) The per-flip advantage GROWS with `n`, roughly linearly: `tau` in flips for Gibbs rises
+//! about as `n^2` (its `tau` in SWEEPS grows with `n`), while the informed chain's rises about as
+//! `n` (its `tau` in sweeps is nearly flat). On this fixture the informed chain needs a roughly
+//! fixed number of well-chosen flips per independent sample whatever the size, and Gibbs must
+//! sweep everything. That is also exactly why the scan was so expensive: each of those few flips
+//! read `n` weights. The literature's "order of magnitude" (Zanella 2020, Grathwohl 2021) is a
+//! small-`n` statement here, in the direction of understatement — and it was never true of the
+//! implementation that shipped, in any direction.
 
 use crate::graph::Graph;
 use crate::rng::Pcg;

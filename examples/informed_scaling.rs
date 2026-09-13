@@ -84,54 +84,90 @@ fn informed_tau(g: &Graph, beta: f64, flips: usize, seed: u64) -> (f64, f64) {
     (tau_int(&trace) * g.n as f64, it.acceptance())
 }
 
+/// An effective sample size below this cannot support a ratio: `tau_int`'s relative error is about
+/// `1/sqrt(ESS)`, so 25 is +-20%. The FIRST run of this example printed a "roughly size-independent"
+/// verdict from rows whose Gibbs chain held 9 to 14 effective samples, and the verdict was an
+/// artefact of the budget: every row is now escalated until both arms clear this floor, or the
+/// cap says how far it got and the row is printed as unresolved.
+const MIN_ESS: f64 = 25.0;
+
 fn main() {
     let beta = 2.0;
     let seeds = 4u64;
-    let flips_per_spin = 4_000usize;
+    let start_flips_per_spin = 4_000usize;
+    let cap_flips_per_spin = 128_000usize;
     println!("THE INFORMED PROPOSAL'S ADVANTAGE AGAINST n, AND AGAINST WHAT A FLIP COSTS\n");
     println!("  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}");
-    println!("  budget    {flips_per_spin} flips per spin per chain, {seeds} seeds per size, tau_int in FLIPS\n");
+    println!("  budget    from {start_flips_per_spin} flips per spin per chain, doubled until both arms hold ESS >= {MIN_ESS:.0}");
+    println!("            (cap {cap_flips_per_spin}), {seeds} seeds per size, tau_int in FLIPS\n");
     println!(
-        "  {:>5} {:>5}   {:>9} {:>9} {:>7}   {:>10} {:>10} {:>10}   {:>8} {:>8}  {:>6}",
-        "n", "deg", "tau G", "tau B", "G/B", "work G", "work B:scan", "work B:tree", "adv:scan", "adv:tree", "acc"
+        "  {:>5} {:>5} {:>7}   {:>9} {:>9} {:>7}   {:>10} {:>10} {:>10}   {:>8} {:>8}  {:>6}  {:>5} {:>5}",
+        "n", "deg", "f/spin", "tau G", "tau B", "G/B", "work G", "work B:scan", "work B:tree", "adv:scan", "adv:tree", "acc", "ESS G", "ESS B"
     );
-    let mut per_flip: Vec<(usize, f64)> = Vec::new();
+    let mut resolved: Vec<(usize, f64, f64, f64)> = Vec::new();
+    let mut unresolved: Vec<(usize, f64, f64)> = Vec::new();
     for &n in &[64usize, 128, 256, 512, 1024, 2048] {
-        let flips = flips_per_spin * n;
-        let (mut tg, mut tb, mut acc, mut deg) = (0.0, 0.0, 0.0, 0.0);
-        for seed in 0..seeds {
-            let g = frustrated(n, seed);
-            deg += mean_degree(&g);
-            tg += gibbs_tau(&g, beta, flips, seed);
-            let (t, a) = informed_tau(&g, beta, flips, seed);
-            tb += t;
-            acc += a;
-        }
-        let s = seeds as f64;
-        let (tg, tb, acc, deg) = (tg / s, tb / s, acc / s, deg / s);
+        let mut flips_per_spin = start_flips_per_spin;
+        let (tg, tb, acc, deg, ess_g, ess_b) = loop {
+            let flips = flips_per_spin * n;
+            let draws = flips / n;
+            let (mut tg, mut tb, mut acc, mut deg) = (0.0, 0.0, 0.0, 0.0);
+            for seed in 0..seeds {
+                let g = frustrated(n, seed);
+                deg += mean_degree(&g);
+                tg += gibbs_tau(&g, beta, flips, seed);
+                let (t, a) = informed_tau(&g, beta, flips, seed);
+                tb += t;
+                acc += a;
+            }
+            let s = seeds as f64;
+            let (tg, tb, acc, deg) = (tg / s, tb / s, acc / s, deg / s);
+            // tau is in flips and the trace holds one draw per n flips, so ESS = draws / (2 tau/n).
+            let ess_g = draws as f64 / (2.0 * tg / n as f64);
+            let ess_b = draws as f64 / (2.0 * tb / n as f64);
+            if (ess_g >= MIN_ESS && ess_b >= MIN_ESS) || flips_per_spin >= cap_flips_per_spin {
+                break (tg, tb, acc, deg, ess_g, ess_b);
+            }
+            flips_per_spin = (flips_per_spin * 2).min(cap_flips_per_spin);
+        };
         // Work per flip under each model. Gibbs: the field, deg+1 terms. Informed: deg+1 reweighs
         // plus the choice -- n reads for the scan, log2(n) for the tree.
         let per_g = deg + 1.0;
         let per_b_scan = deg + 1.0 + n as f64;
         let per_b_tree = deg + 1.0 + (n as f64).log2();
         let (wg, wbs, wbt) = (tg * per_g, tb * per_b_scan, tb * per_b_tree);
+        let ok = ess_g >= MIN_ESS && ess_b >= MIN_ESS;
         println!(
-            "  {n:>5} {deg:>5.2}   {tg:>9.0} {tb:>9.0} {:>7.2}   {wg:>10.3e} {wbs:>10.3e} {wbt:>10.3e}   {:>8.2} {:>8.2}  {acc:>6.3}",
+            "  {n:>5} {deg:>5.2} {flips_per_spin:>7}   {tg:>9.0} {tb:>9.0} {:>7.2}   {wg:>10.3e} {wbs:>10.3e} {wbt:>10.3e}   {:>8.2} {:>8.2}  {acc:>6.3}  {ess_g:>5.0} {ess_b:>5.0}{}",
             tg / tb,
             wg / wbs,
-            wg / wbt
+            wg / wbt,
+            if ok { "" } else { "  UNRESOLVED" }
         );
-        per_flip.push((n, tg / tb));
+        if ok {
+            resolved.push((n, tg / tb, wg / wbs, wg / wbt));
+        } else {
+            unresolved.push((n, ess_g, ess_b));
+        }
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
     println!("  G/B is the per-flip advantage `informed_mixing` reports for one size. adv:scan is what");
     println!("  that advantage was worth as WORK before 2026-09-13, when choosing a site scanned every");
     println!("  weight; adv:tree is what it is worth now. A value below 1 means the informed chain costs");
     println!("  MORE work per independent sample than Gibbs, whatever its flips say.");
-    if let (Some(first), Some(last)) = (per_flip.first(), per_flip.last()) {
+    let scan_wins = resolved.iter().filter(|r| r.2 > 1.0).count();
+    let tree_wins = resolved.iter().filter(|r| r.3 > 1.0).count();
+    println!(
+        "\n  Over the {} resolved sizes: under the SCAN model the informed chain beat Gibbs in work at {} of them;\n  under the TREE model at {} of them.",
+        resolved.len(),
+        scan_wins,
+        tree_wins
+    );
+    if let (Some(first), Some(last)) = (resolved.first(), resolved.last()) {
         let trend = last.1 / first.1;
+        let peak = resolved.iter().map(|r| r.1).fold(0.0f64, f64::max);
         println!(
-            "\n  Per-flip advantage from n = {} to n = {}: {:.2}x -> {:.2}x, a factor of {trend:.2} across a {}x\n  range in n. {}",
+            "  Per-flip advantage over the resolved sizes, n = {} to n = {}: {:.2}x -> {:.2}x (peak {peak:.2}x), a factor of\n  {trend:.2} across a {}x range in n. {}",
             first.0,
             last.0,
             first.1,
@@ -146,8 +182,12 @@ fn main() {
             }
         );
     }
-    println!("\n  tau_int's relative error is about 1/sqrt(ESS); at the largest n each chain holds");
-    println!("  {flips_per_spin} draws, so a tau above ~200 draws (= 200 n flips) is not resolved and the");
-    println!("  row should be read as a bound. Four seeds are averaged; the spread between them is the");
-    println!("  reproducibility of every ratio above, and no ratio is tighter than it.");
+    for (n, eg, eb) in &unresolved {
+        println!(
+            "  n = {n}: UNRESOLVED at the cap -- Gibbs ESS {eg:.0}, informed ESS {eb:.0}; its ratios are printed and not counted."
+        );
+    }
+    println!("\n  tau_int's relative error is about 1/sqrt(ESS), which is why the ESS columns are there and why");
+    println!("  a row is escalated until both clear {MIN_ESS:.0}. Four seeds are averaged; the spread between");
+    println!("  them is the reproducibility of every ratio above, and no ratio is tighter than it.");
 }
