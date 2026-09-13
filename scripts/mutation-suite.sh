@@ -741,6 +741,12 @@ mutations=(
   # of Quantised {8, 10, 16} with the fabric kernel is what sees it, and it is the anchor that ties
   # every other point of the precision sweep to the hardware that was metered.
   "src/autocorr.rs|                offset >> (frac_bits + 4 - lut_bits)|                offset >> (frac_bits + 3 - lut_bits)|autocorr::tests::the_quantised_kernel_reduces_to_the_fabric_and_improves_with_bits|a quantised kernel whose ROM address is off by one bit of stride"
+  # Rows 120-122 (2026-09-13): the DIRECT oracle. The lag sum and the mass-pushing iteration are
+  # both mixing-time computations and were cut off by their budgets at beta 1.5 on 12 spins; the
+  # dense solves replace them. Each row breaks one identity the solve rests on.
+  "src/autocorr.rs|    let tau = total / c0 - 0.5;|    let tau = total / c0;|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental-matrix tau that forgets the half"
+  "src/autocorr.rs|        a[(m - 1) * m + c] = 1.0;|        a[(m - 1) * m + c] = 0.0;|autocorr::tests::the_direct_solve_reproduces_boltzmann_for_gibbs_and_the_iterated_law_for_the_fabric|a stationary solve without its normalisation"
+  "src/autocorr.rs|            a[x * m + y] = delta - p + pi[y];|            a[x * m + y] = delta - p - pi[y];|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental matrix built with the wrong sign on pi"
 
 )
 
@@ -780,7 +786,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=119
+expected_rows=122
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

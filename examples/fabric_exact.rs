@@ -26,7 +26,7 @@
 //
 // run: cargo run --release --example fabric_exact
 
-use ferrotherm::autocorr::{boltzmann, stationary, tau_int_exact, total_variation, Kernel};
+use ferrotherm::autocorr::{boltzmann, stationary_solved, tau_int_fundamental, total_variation, Kernel};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -85,7 +85,7 @@ fn main() {
     println!("  model    {w}x{h} open grid, random +-1 couplings, fields in [-0.2, 0.2]; {} colour classes", g.classes.len());
     println!("  fabric   Q.{} weights, {}-entry ROM, 16-bit comparator, ideal uniforms (hdl::FixedFabric's arithmetic)",
              ferrotherm::hdl::FRAC, 1usize << ferrotherm::hdl::LUT_BITS);
-    println!("  oracle   autocorr::stationary by pushing mass through the exact kernel; tau_int_exact on each law\n");
+    println!("  oracle   autocorr::stationary_solved and tau_int_fundamental: one direct solve per law, no iteration, no lag budget\n");
     println!(
         "  {:>5}   {:>10} {:>9} {:>10}   {:>10} {:>10} {:>7}",
         "beta", "TV(fab,B)", "beta_eff", "TV at eff", "tau fabric", "tau f64", "ratio"
@@ -93,17 +93,12 @@ fn main() {
     let mut worst_tv = 0.0f64;
     let mut worst_ratio = 1.0f64;
     for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
-        let (fab, steps) = stationary(&g, beta, Kernel::FixedFabric, 1e-13, 500_000).expect("small");
-        assert!(steps < 500_000, "the fabric law must converge at beta {beta}");
+        let fab = stationary_solved(&g, beta, Kernel::FixedFabric).expect("small");
         let pi = boltzmann(&g, beta).expect("small");
         let tv = total_variation(&fab, &pi);
         let (b_eff, tv_eff) = nearest_beta(&g, &fab, 0.25 * beta, 2.0 * beta);
-        let t_fab = tau_int_exact(&g, beta, Kernel::FixedFabric, |s| g.energy(s), 1e-12, 500_000)
-            .expect("small")
-            .tau_int;
-        let t_f64 = tau_int_exact(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 500_000)
-            .expect("small")
-            .tau_int;
+        let t_fab = tau_int_fundamental(&g, beta, Kernel::FixedFabric, |s| g.energy(s)).expect("small").tau_int;
+        let t_f64 = tau_int_fundamental(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).expect("small").tau_int;
         println!(
             "  {beta:>5.2}   {tv:>10.3e} {b_eff:>9.4} {tv_eff:>10.3e}   {t_fab:>10.2} {t_f64:>10.2} {:>7.3}",
             t_fab / t_f64
@@ -122,9 +117,7 @@ fn main() {
     for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
         let pi = boltzmann(&g, beta).expect("small");
         let gap = |k: Kernel| -> f64 {
-            let (law, steps) = stationary(&g, beta, k, 1e-13, 500_000).expect("small");
-            assert!(steps < 500_000, "the quantised law must converge at beta {beta}");
-            total_variation(&law, &pi)
+            total_variation(&stationary_solved(&g, beta, k).expect("small"), &pi)
         };
         let frac: Vec<f64> = [4u32, 6, 8, 12]
             .iter()

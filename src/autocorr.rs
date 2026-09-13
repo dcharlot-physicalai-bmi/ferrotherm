@@ -27,6 +27,17 @@
 //! No sampling, no windowing, no trace. [`tau_int_exact`] does that for the kernels this crate
 //! runs, applying `P` matrix-free so the `2^n x 2^n` operator is never stored.
 //!
+//! # When the sum does not converge
+//!
+//! At low temperature the lag sum is a mixing-time computation in disguise: the lags it needs grow
+//! with the `tau` it is computing, and the same is true of [`stationary`], which pushes mass
+//! forward until it stops moving. Both are cut off by a budget before they arrive
+//! (`examples/fabric_exact.rs` hit its cap at `beta = 1.5` on 12 spins). [`stationary_solved`]
+//! and [`tau_int_fundamental`] replace the iterations with one dense linear solve each — the
+//! stationary law as the null vector of `I − P`, and `Σ_k C(k)` through the fundamental matrix
+//! `(I − P + 1 πᵀ)⁻¹` of Kemeny and Snell — at a cost that does not depend on the temperature,
+//! up to [`MAX_DENSE_SPINS`].
+//!
 //! # What it is for
 //!
 //! Two things. It is the reference every autocorrelation ESTIMATOR in this crate is scored
@@ -99,6 +110,16 @@ pub enum AutocorrError {
     },
     /// The observable is constant under `pi`, so its autocorrelation is undefined.
     NoVariance,
+    /// More spins than [`MAX_DENSE_SPINS`], the cap on the direct solves.
+    TooManyForDense {
+        /// Spins in the model.
+        n: usize,
+        /// The cap.
+        max: usize,
+    },
+    /// The linear system was singular to floating point: the kernel has no unique invariant
+    /// law, which is what more than one closed class of states produces.
+    Reducible,
 }
 
 impl fmt::Display for AutocorrError {
@@ -109,6 +130,12 @@ impl fmt::Display for AutocorrError {
             }
             AutocorrError::NoVariance => {
                 write!(f, "the observable does not vary under the Boltzmann distribution")
+            }
+            AutocorrError::TooManyForDense { n, max } => {
+                write!(f, "{n} spins is more than the {max} a dense operator is solved over")
+            }
+            AutocorrError::Reducible => {
+                write!(f, "the kernel has no unique invariant law: its linear system is singular")
             }
         }
     }
@@ -121,7 +148,8 @@ impl std::error::Error for AutocorrError {}
 pub struct Autocorrelation {
     /// `1/2 + sum_{k >= 1} rho(k)`, in kernel steps (sweeps for Gibbs, single steps for informed).
     pub tau_int: f64,
-    /// Lags summed before the tail fell below `tol`.
+    /// Lags summed before the tail fell below `tol`; `0` from [`tau_int_fundamental`], which
+    /// sums nothing lag by lag and so truncates nothing.
     pub lags: usize,
     /// The first autocorrelations `rho(1..)`, as many as were summed, capped at 64 entries.
     pub rho: Vec<f64>,
@@ -467,6 +495,174 @@ pub fn stationary(
 #[must_use]
 pub fn total_variation(p: &[f64], q: &[f64]) -> f64 {
     0.5 * p.iter().zip(q).map(|(a, b)| (a - b).abs()).sum::<f64>()
+}
+
+/// The most spins the direct solves ([`stationary_solved`], [`tau_int_fundamental`]) build a dense
+/// operator over. At `2^12` states the matrix is 134 MB and the elimination a few seconds; each
+/// further spin is 4x the memory and 8x the time, and at [`MAX_SPINS`] it would be 34 GB.
+pub const MAX_DENSE_SPINS: usize = 12;
+
+/// Solve `a x = b` in place by Gaussian elimination with partial pivoting. `a` is `m x m`
+/// row-major and is destroyed; the solution replaces `b`. `false` when a pivot falls below
+/// `1e-14` -- singular to floating point, which for the systems built here means a kernel with
+/// more than one closed class.
+fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64]) -> bool {
+    for k in 0..m {
+        let mut piv = k;
+        let mut best = a[k * m + k].abs();
+        for r in k + 1..m {
+            let v = a[r * m + k].abs();
+            if v > best {
+                best = v;
+                piv = r;
+            }
+        }
+        if best < 1e-14 {
+            return false;
+        }
+        if piv != k {
+            let (lo, hi) = a.split_at_mut(piv * m);
+            lo[k * m..(k + 1) * m].swap_with_slice(&mut hi[..m]);
+            b.swap(k, piv);
+        }
+        let (top, rest) = a.split_at_mut((k + 1) * m);
+        let row_k = &top[k * m..(k + 1) * m];
+        let pk = row_k[k];
+        let bk = b[k];
+        for (ri, row) in rest.chunks_exact_mut(m).enumerate() {
+            let f = row[k] / pk;
+            if f == 0.0 {
+                continue;
+            }
+            row[k] = 0.0;
+            for (rc, &kc) in row[k + 1..].iter_mut().zip(&row_k[k + 1..]) {
+                *rc -= f * kc;
+            }
+            b[k + 1 + ri] -= f * bk;
+        }
+    }
+    for k in (0..m).rev() {
+        let s: f64 = a[k * m + k + 1..(k + 1) * m].iter().zip(&b[k + 1..]).map(|(x, y)| x * y).sum();
+        b[k] = (b[k] - s) / a[k * m + k];
+    }
+    true
+}
+
+/// Row `x` of the dense kernel is the law one step from state `x`: `P` applied to the point mass
+/// there. Visits every row in turn so a caller can lay it into whichever matrix it is building.
+fn kernel_rows(g: &Graph, beta: f64, kernel: Kernel, mut visit: impl FnMut(usize, &[f64])) {
+    let m = 1usize << g.n;
+    let mut point = vec![0.0f64; m];
+    for x in 0..m {
+        point[x] = 1.0;
+        let row = apply_distribution(g, beta, kernel, &point);
+        point[x] = 0.0;
+        visit(x, &row);
+    }
+}
+
+/// The kernel's stationary distribution by a DIRECT solve: `pi (I - P) = 0` with `sum pi = 1`, as
+/// one linear system over the `2^n` states, eliminated with partial pivoting. Where [`stationary`]
+/// pushes mass forward until it stops moving -- and at low temperature does not within any step
+/// budget, because the relaxation time IS the mixing time -- this costs the same at every
+/// temperature and is exact to the conditioning of the chain. The price is the dense matrix:
+/// [`MAX_DENSE_SPINS`].
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManyForDense`] above [`MAX_DENSE_SPINS`]; [`AutocorrError::Reducible`] when
+/// the system is singular, which is what a kernel with more than one closed class produces -- a
+/// fabric whose flip probability rounds to exactly zero can be one.
+pub fn stationary_solved(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
+    if g.n > MAX_DENSE_SPINS {
+        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+    }
+    let m = 1usize << g.n;
+    // A = (I - P)^T with its last row replaced by the normalisation; b = e_last.
+    let mut a = vec![0.0f64; m * m];
+    kernel_rows(g, beta, kernel, |x, row| {
+        for (y, &p) in row.iter().enumerate() {
+            let delta = if x == y { 1.0 } else { 0.0 };
+            a[y * m + x] = delta - p;
+        }
+    });
+    for c in 0..m {
+        a[(m - 1) * m + c] = 1.0;
+    }
+    let mut b = vec![0.0f64; m];
+    b[m - 1] = 1.0;
+    if !lu_solve(&mut a, m, &mut b) {
+        return Err(AutocorrError::Reducible);
+    }
+    // Elimination can leave a state of vanishing mass a hair below zero; a law is not.
+    let total: f64 = b.iter().map(|v| v.max(0.0)).sum();
+    Ok(b.iter().map(|v| v.max(0.0) / total).collect())
+}
+
+/// The exact integrated autocorrelation time by the FUNDAMENTAL MATRIX `Z = (I - P + 1 pi^T)^-1`
+/// (Kemeny and Snell 1960): with `e = f - <f>_pi`, `sum_{k >= 0} C(k) = <pi, e * (Z e)>`, so
+///
+/// ```text
+///   tau_int = <pi, e * (Z e)> / C(0) - 1/2,
+/// ```
+///
+/// one linear solve in place of the lag-by-lag sum of [`tau_int_exact`], which at low temperature
+/// needs a number of lags proportional to the `tau` it is computing and is cut off by `max_lags`
+/// before it gets there. This has no lags to truncate -- `lags` is reported as `0` -- and costs the
+/// same at every temperature. It needs no reversibility: the identity is the geometric series of
+/// `P - 1 pi^T`, which converges for any ergodic chain. For the Gibbs and informed kernels `pi` is
+/// the Boltzmann distribution; for the fabric's arithmetic it is [`stationary_solved`], since the
+/// sum must be taken under the kernel's OWN invariant law. The first 64 autocorrelations are
+/// filled in by applying `P`, for the record.
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManyForDense`] above [`MAX_DENSE_SPINS`]; [`AutocorrError::NoVariance`] for
+/// a constant observable; [`AutocorrError::Reducible`] for a kernel without a unique invariant law.
+pub fn tau_int_fundamental(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    observable: impl Fn(&[i8]) -> f64,
+) -> Result<Autocorrelation, AutocorrError> {
+    if g.n > MAX_DENSE_SPINS {
+        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+    }
+    let pi = match kernel {
+        Kernel::FixedFabric | Kernel::Quantised { .. } => stationary_solved(g, beta, kernel)?,
+        _ => boltzmann(g, beta)?,
+    };
+    let n = g.n;
+    let m = 1usize << n;
+    let f: Vec<f64> = (0..m).map(|x| observable(&spins(x, n))).collect();
+    let mean: f64 = pi.iter().zip(&f).map(|(p, v)| p * v).sum();
+    let e: Vec<f64> = f.iter().map(|v| v - mean).collect();
+    let c0: f64 = pi.iter().zip(&e).map(|(p, x)| p * x * x).sum();
+    if !(c0 > 0.0) {
+        return Err(AutocorrError::NoVariance);
+    }
+    // (I - P + 1 pi^T) z = e.
+    let mut a = vec![0.0f64; m * m];
+    kernel_rows(g, beta, kernel, |x, row| {
+        for (y, &p) in row.iter().enumerate() {
+            let delta = if x == y { 1.0 } else { 0.0 };
+            a[x * m + y] = delta - p + pi[y];
+        }
+    });
+    let mut z = e.clone();
+    if !lu_solve(&mut a, m, &mut z) {
+        return Err(AutocorrError::Reducible);
+    }
+    let total: f64 = pi.iter().zip(&e).zip(&z).map(|((p, x), y)| p * x * y).sum();
+    let tau = total / c0 - 0.5;
+    let mut v = e.clone();
+    let mut rho = Vec::with_capacity(64);
+    for _ in 0..64 {
+        v = apply(g, beta, kernel, &v);
+        let ck: f64 = pi.iter().zip(&e).zip(&v).map(|((p, x), y)| p * x * y).sum();
+        rho.push(ck / c0);
+    }
+    Ok(Autocorrelation { tau_int: tau, lags: 0, rho, variance: c0 })
 }
 
 /// The exact integrated autocorrelation time of `observable` under `kernel` at `beta`.
@@ -882,5 +1078,71 @@ mod tests {
         let g1 = b1.build();
         let s = tau_int_exact(&g1, 2.0, Kernel::SequentialGibbs, |s| f64::from(s[0]), 1e-15, 10).unwrap();
         assert_eq!(s.tau_int, 0.5);
+    }
+
+    /// The direct solve is the law the iteration finds, at a temperature where the iteration still
+    /// converges: Boltzmann to floating point for the Gibbs kernel, the fabric's own law for the
+    /// fabric -- and that law is not Boltzmann.
+    #[test]
+    fn the_direct_solve_reproduces_boltzmann_for_gibbs_and_the_iterated_law_for_the_fabric() {
+        let g = grid_glass(3, 3, 5);
+        let beta = 1.5;
+        let pi = boltzmann(&g, beta).unwrap();
+        let solved = stationary_solved(&g, beta, Kernel::ChromaticGibbs).unwrap();
+        let gap = total_variation(&solved, &pi);
+        assert!(gap < 1e-12, "direct solve vs Boltzmann: {gap}");
+        let solved = stationary_solved(&g, beta, Kernel::FixedFabric).unwrap();
+        // A stationary law is one the kernel leaves where it is: the test that needs no reference.
+        let pushed = apply_distribution(&g, beta, Kernel::FixedFabric, &solved);
+        let drift = total_variation(&pushed, &solved);
+        assert!(drift < 1e-11, "the solved fabric law must be invariant under the fabric kernel: {drift}");
+        // The iteration halts when a step moves less than `tol`, which leaves it about
+        // `tol x relaxation time` short of the fixed point -- 1.2e-10 here -- so it is the LESS
+        // accurate of the two and the agreement is held to its floor, not the solve's.
+        let (iterated, steps) = stationary(&g, beta, Kernel::FixedFabric, 1e-14, 500_000).unwrap();
+        assert!(steps < 500_000, "the iteration must converge for this test to have a reference");
+        let gap = total_variation(&solved, &iterated);
+        assert!(gap < 1e-9, "direct solve vs iterated fabric law: {gap}");
+        assert!(total_variation(&solved, &pi) > 1e-7, "the fabric's law must not be Boltzmann");
+    }
+
+    /// The fundamental-matrix tau is the lag sum where the lag sum converges -- on the chromatic,
+    /// sequential and fabric kernels, none of which is reversible as a sweep -- and is finite and
+    /// larger where the lag sum is cut off by its budget. And the one closed form: a single site
+    /// resampled every sweep has `rho(k) = 0` for all `k >= 1`, so `tau_int = 1/2` exactly.
+    #[test]
+    fn the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags() {
+        let g = grid_glass(3, 2, 9);
+        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs, Kernel::FixedFabric] {
+            let summed = tau_int_exact(&g, 1.0, kernel, |s| g.energy(s), 1e-15, 1_000_000).unwrap();
+            assert!(summed.lags < 1_000_000);
+            let solved = tau_int_fundamental(&g, 1.0, kernel, |s| g.energy(s)).unwrap();
+            let rel = (solved.tau_int - summed.tau_int).abs() / summed.tau_int;
+            assert!(
+                rel < 1e-9,
+                "{kernel:?}: fundamental {} vs summed {} over {} lags",
+                solved.tau_int,
+                summed.tau_int,
+                summed.lags
+            );
+            assert_eq!(solved.lags, 0);
+            assert!((solved.rho[0] - summed.rho[0]).abs() < 1e-12);
+        }
+        let mut b = GraphBuilder::new(1);
+        b.bias(0, 0.3);
+        let one = b.build();
+        let single = tau_int_fundamental(&one, 1.0, Kernel::ChromaticGibbs, |s| f64::from(s[0])).unwrap();
+        assert!((single.tau_int - 0.5).abs() < 1e-12, "single site: {}", single.tau_int);
+        // Cold: the lag sum stops at its budget and under-reports; the solve does not.
+        let g = grid_glass(3, 3, 5);
+        let cut = tau_int_exact(&g, 4.0, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 100).unwrap();
+        assert_eq!(cut.lags, 100, "the cold chain must exhaust the lag budget for this half to test anything");
+        let solved = tau_int_fundamental(&g, 4.0, Kernel::ChromaticGibbs, |s| g.energy(s)).unwrap();
+        assert!(
+            solved.tau_int.is_finite() && solved.tau_int > cut.tau_int,
+            "solved {} must exceed the cut sum {}",
+            solved.tau_int,
+            cut.tau_int
+        );
     }
 }
