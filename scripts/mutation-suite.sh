@@ -692,6 +692,13 @@ mutations=(
   # none of them; the enumeration TV test is what sees it.
   "src/multiflip.rs|    let mut stride = 1usize << (usize::BITS - 1 - n.leading_zeros());|    let mut stride = 1usize;|multiflip::tests::the_path_chain_samples_the_boltzmann_distribution|a path whose every flip is drawn from the first two sites"
 
+
+  # P = P_last ... P_first, so applying P to a FUNCTION over states runs the classes in reverse.
+  # Forward order builds the transpose composition: still a stochastic operator, still leaves pi
+  # invariant (each factor does), and is the wrong kernel. Only the dense operator assembled
+  # class by class in the test, by different code, tells them apart.
+  "src/autocorr.rs|            for class in g.classes.iter().rev() {|            for class in g.classes.iter() {|autocorr::tests::the_matrix_free_sweep_matches_a_dense_operator_built_class_by_class|the sweep operator composed in the wrong class order"
+
 )
 
 bad=0
@@ -730,7 +737,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=113
+expected_rows=114
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

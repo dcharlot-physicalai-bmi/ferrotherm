@@ -204,6 +204,7 @@ pub mod partition;
 pub mod memcomp;
 pub mod analog;
 pub mod corpora;
+pub mod autocorr;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///

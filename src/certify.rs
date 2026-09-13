@@ -276,6 +276,19 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 /// `tau_int = 1/2 + sum_k rho(k)`, truncated at the smallest window `W` satisfying `W >= 5 tau`.
 /// Truncation is not optional: the tail of an empirical autocorrelation is noise, and summing all
 /// of it produces a number that grows with the length of the run rather than describing it.
+///
+/// # This is a LOWER bound on a chain with a slow mode of small amplitude, and no trace length fixes it
+///
+/// Measured against [`crate::autocorr::tau_int_exact`] on a 12-spin frustrated grid at `beta = 1`
+/// (2026-09-13, `examples/tau_exactness.rs`): the exact value is 33.2 sweeps and this returns
+/// **0.04 to 0.06 of it at every trace length from 30 to 10,000 tau**, with a 2% spread at the
+/// longest. The chain's autocorrelation there is a large fast mode plus a small slow one; `tau(W)`
+/// is still about 1.8 when the window closes at lag 9, and the slow mode — most of the truth — is
+/// never summed. On a hot, single-mode chain the same estimator lands within its noise of the
+/// exact value. So an effective sample size from this is an UPPER bound wherever a slow mode
+/// cannot be excluded, and a joules-per-independent-sample built on it a lower bound. On a model
+/// small enough to enumerate, use the exact operator instead; on one that is not, a batch-means
+/// estimate over batches much longer than the suspected slow mode is the check.
 #[must_use]
 pub fn tau_int(trace: &[f64]) -> f64 {
     let n = trace.len();
