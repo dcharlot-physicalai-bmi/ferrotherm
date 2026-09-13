@@ -1128,31 +1128,37 @@ mod tests {
             }
             s + c
         };
-        let short = vec![1.0f64; 4];
-        let long = vec![1.0f64; 4096];
+        // EVERY FIXTURE HERE MUST ROUND. Since 2026-09-13 `sum_down` charges NO guard when no
+        // addition rounded (integer and dyadic inputs add exactly), so the integer fixtures this
+        // test used until then -- [1.0; 4], [1e6; 4], [2^-10; 4096] -- all carry a guard of exactly
+        // zero, and "0 > 0 * 100" says nothing about scaling. A third does not add exactly: 1/3 + 1/3
+        // is exact (a doubling), and the next addition drops the low bit.
+        let third = 1.0f64 / 3.0;
+        let short = vec![third; 4];
+        let long = vec![third; 4096];
         let give_up = |v: &[f64]| compensated(v) - sum_down(v);
+        assert!(give_up(&short) > 0.0, "the fixture must actually round, or this measures nothing");
         // The first-order term follows the total, so a larger sum carries a larger guard.
-        let big: Vec<f64> = vec![1e6f64; 4];
+        let big: Vec<f64> = vec![1e6 * third; 4];
         assert!(
             give_up(&big) > give_up(&short) * 100.0,
             "a million times the total should widen the guard: {} against {}",
             give_up(&big),
             give_up(&short)
         );
-        // The second-order term cannot be separated by any input this crate can hold, and saying
-        // so is the honest version of testing it. At equal total the two guards are BIT-IDENTICAL
-        // at four thousand terms, because n² ε² Σ|y| only overtakes 2 ε |total| past n ≈ 9.5e7.
-        let same_total: Vec<f64> = vec![4.0 / 4096.0; 4096];
+        // The second-order term is invisible at any size this crate holds: n² ε² Σ|y| against
+        // 2 ε |total| is about 2e-9 relative at four thousand terms, so two fixtures with the same
+        // total must carry guards that agree to far better than that -- and if they ever stop
+        // agreeing to 1e-6, the crossover in `sum_down`'s docs is wrong.
+        let same_total: Vec<f64> = vec![(4.0 * third) / 4096.0; 4096];
         assert!(
-            (same_total.iter().sum::<f64>() - short.iter().sum::<f64>()).abs() < 1e-12,
+            (same_total.iter().sum::<f64>() - short.iter().sum::<f64>()).abs() < 1e-9,
             "the two fixtures must have the same total for this to isolate anything"
         );
-        assert_eq!(
-            give_up(&same_total),
-            give_up(&short),
-            "at four thousand terms the second-order term is still nine orders below the first, so \
-             these must agree exactly; if they ever differ, the crossover in `sum_down`'s docs is \
-             wrong"
+        let (a, b) = (give_up(&same_total), give_up(&short));
+        assert!(
+            (a - b).abs() <= 1e-6 * b,
+            "at four thousand terms the second-order term should still be invisible: {a} vs {b}"
         );
         // Term count does widen the guard once the total grows with it, which is the ordinary case.
         assert!(give_up(&long) > give_up(&short), "{} against {}", give_up(&long), give_up(&short));

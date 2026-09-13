@@ -1432,7 +1432,7 @@ mod tests {
         let n = g.n as f64;
         let run = |t: f64, seed: u64| -> f64 {
             let mut s = Sampler::new(&g, 1.0 / t, seed).unwrap();
-            let set = s.collect(&Plan::new(500, 20_000, 2), Update::SwendsenWang);
+            let set = s.collect(&Plan::new(500, 20_000, 2), Update::SwendsenWang, None);
             let ms: Vec<f64> = set
                 .states()
                 .iter()

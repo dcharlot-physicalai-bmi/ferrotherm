@@ -1338,21 +1338,24 @@ mod tests {
     /// epsilon.
     #[test]
     fn energy_upper_bounds_the_exact_energy_rather_than_the_naive_sum() {
-        // Integer couplings: exact on both sides, so the direction is strict.
-        let (mut strict, mut runs) = (0, 0);
+        // Integer couplings: exact on both sides, so the bound must be the energy ITSELF. When this
+        // test was written `round::sum_up` charged its guard unconditionally and the integer bound
+        // sat strictly above the exact energy on some states, which was pinned here as "strict >
+        // 0". Since 2026-09-13 the guard is zero when no addition rounded, and integer energies
+        // never round, so the honest assertion is equality -- and it is `==`, so a guard that
+        // becomes unconditional again fails this line rather than passing a looser one.
+        let mut runs = 0;
         for seed in 1..=4u64 {
             let g = glass2d(5, seed);
             let mut r = Pcg::new(seed, 2);
             for _ in 0..50 {
                 let s: Vec<i8> = (0..g.n).map(|_| r.spin(0.5)).collect();
                 let (e, up) = (g.energy(&s), energy_upper(&g, &s));
-                assert!(up >= e, "integer energies are exact, so {up} must not sit below {e}");
-                strict += usize::from(up > e);
+                assert_eq!(up, e, "integer energies are exact, so the upper bound must equal {e}");
                 runs += 1;
             }
         }
         assert_eq!(runs, 200);
-        assert!(strict > 0, "the guard is positive, so some bound must be strictly above");
 
         // Continuous couplings: bounded by the crate's own guard on the naive accumulation.
         let mut looser = 0;

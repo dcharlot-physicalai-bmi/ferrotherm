@@ -158,6 +158,26 @@ pub const CATALOGUE: [(&str, Prices); 3] = [
 ];
 
 /// Operation counts accumulated by a run.
+///
+/// # These three fields are physical events, not work counters
+///
+/// Each field counts one kind of device operation, priced by the matching field of [`Prices`],
+/// and a sampler may charge a field ONLY for that event. This is stated as a rule because it was
+/// broken: until 2026-09-13 `cluster.rs` charged `reads` for every BOND it examined and `writes`
+/// for every spin its cluster FLIPPED, while `gibbs.rs` charged `reads` for every node READ OUT
+/// and `writes` never -- so one field, priced at 1.692 pJ, named two different things in two
+/// samplers and a joules figure compared across them was not a comparison. Found by an agent
+/// writing a third sampler, who had to pick one convention and noticed there were two.
+///
+/// - `samples`: one node's state updated by the device. What a sweep does.
+/// - `reads`: one node's value leaving the chip. What `collect` does per kept draw, and nothing
+///   a sweep does internally -- neighbour lookups, bond tests, cluster growth -- is a read.
+/// - `writes`: one node's couplings, bias or clamp reprogrammed. A spin flipping is not a write;
+///   a temperature change on a bitstream fabric is one per node.
+///
+/// Work a move does that is none of these -- a bond tested, a cluster grown -- is measured in that
+/// sampler's own stats and is UNPRICED, because no device model here states a price for it, and a
+/// ledger field is not the place to keep an unpriced count.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Ledger {
     /// Single-node Gibbs updates performed.

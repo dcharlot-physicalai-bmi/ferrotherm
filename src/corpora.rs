@@ -1990,15 +1990,16 @@ Maximize        ! sense
         );
         assert!(inst.offset_err < 1e-9, "and the bracket must stay useful: {}", inst.offset_err);
 
-        // MEASURED, and it is not what a first reading of `round` suggests: the guard is a bound
-        // on what the arithmetic COULD have lost, not a detection of what it did lose, so an
-        // exactly-representable sum still carries one. Six integer half-weights summing to exactly
-        // 6.5 come back with `offset_err` = 2.66e-15, not zero. The bracket is still correct and
-        // still contains the exact value; what it is not is tight to the last bit, and a test
-        // asserting `offset_err == 0.0` here fails.
+        // MEASURED TWICE, with opposite answers. When this test was written, `round`'s guard was a
+        // bound on what the arithmetic COULD have lost rather than a detection of what it did
+        // lose, so six integer half-weights summing to exactly 6.5 came back with `offset_err` =
+        // 2.66e-15 -- sound, and looser than the arithmetic, and this test pinned that. Since
+        // 2026-09-13 the guard is zero when no addition rounded (each step's error term is the
+        // exact rounding error, and every one of them is exactly 0.0 here), so the same six
+        // half-weights now come back with `offset_err` exactly 0.0. That is the tight answer, and
+        // it is asserted with `==` so a guard that quietly becomes unconditional again fails here.
         let exact = read_biqmac(RUDY_TEXT).unwrap().instance();
-        assert!(exact.offset_err > 0.0, "the guard is unconditional");
-        assert!(exact.offset_err < 1e-14, "but it is ~2 eps |total|: {}", exact.offset_err);
+        assert_eq!(exact.offset_err, 0.0, "nothing rounded, so the bracket must have no width");
         assert!(
             exact.offset - exact.offset_err <= 6.5 && 6.5 <= exact.offset + exact.offset_err,
             "W = 13, so the exact offset is 13/2 and must be inside [{}, {}]",

@@ -668,6 +668,18 @@ mutations=(
   # invisible at the N >= 4000 every caller used. Found by a second REINFORCE written independently
   # in relax.rs on the same distribution; the row names the test that measured it.
   "src/program.rs|                if episodes > 1 { (total - losses[e]) / (episodes - 1) as f64 } else { 0.0 };|                total / episodes as f64;|relax::tests::program_reinforce_is_the_exact_gradient_and_the_batch_mean_shrink_is_gone|a REINFORCE baseline that includes the episode it is subtracted from"
+
+  # "EXACT" MEANS THE ERROR TERM IS EXACTLY ZERO, not small. Each step's error term is the exact
+  # rounding error of that step, so a tolerance here is a decision to charge no guard on sums that
+  # DID round -- the unsound direction. The fixture whose additions round by 2^-54 is what sees it.
+  "src/round.rs|        exact &= e == 0.0;|        exact &= e.abs() <= f64::EPSILON;|round::tests::a_sum_that_plain_addition_rounds_upward_is_bracketed|a rounding error under one epsilon counted as no rounding"
+
+  # A READ IS ONE NODE LEAVING THE CHIP, so a kept state costs n of them. Billing one per state
+  # is the natural slip when the thing being counted is "draws", and it makes a cluster chain
+  # n times cheaper to read out than a Gibbs chain reading the same states. The cross-module test
+  # asserts the two bill the SAME reads for the same draws, and this is the row that proves it.
+  "src/cluster.rs|                l.reads += self.graph.n as u64;|                l.reads += 1;|cluster::tests::a_cluster_chain_and_a_gibbs_chain_bill_the_same_reads_for_the_same_draws|a cluster chain that bills one read per state instead of one per node"
+
 )
 
 bad=0
@@ -706,7 +718,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=109
+expected_rows=111
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

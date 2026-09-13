@@ -466,12 +466,23 @@ impl<'g> Sampler<'g> {
         if let Some(l) = ledger {
             // Charged for what it touched, not for the sweep count. A cluster update's win is in
             // mixing per sweep, and the ledger exists to stop a method being flattered by the unit
-            // it reports in: `visited` is spins actually read and `bonds_tested` is bonds actually
-            // examined, so a move that does less work is billed less and one that does more cannot
-            // hide it.
+            // it reports in: `visited` is spins actually updated, so a move that does less work is
+            // billed less and one that does more cannot hide it.
+            //
+            // ONLY `samples`. Until 2026-09-13 this also charged `reads += bonds_tested` and
+            // `writes += flipped`, using the ledger's three fields as three operation counters for
+            // a cluster move. They are not counters: `ledger::Prices` defines a READ as one node
+            // value read out to the chip edge (1.692 pJ, 239 updates' worth on a Z1) and a WRITE as
+            // one node's couplings flashed (21,664 updates' worth). A bond test is neither, and a
+            // spin flipped by the move is neither. `gibbs.rs` charged reads per node READ OUT and
+            // this file charged them per bond EXAMINED, so a joules figure compared across the two
+            // samplers priced two different physical events under one name -- found by the wave-4
+            // `potts` agent, which had to pick a convention and noticed there were two. Reads are
+            // charged where the state is read out, through `collect`, the same as every other
+            // sampler. The bonds and flips are still MEASURED and returned in `stats`; they carry
+            // no price because no device model here states one, and inventing one would be the
+            // defect `Prices::UNSTATED` exists to prevent.
             l.samples += stats.visited;
-            l.reads += stats.bonds_tested;
-            l.writes += stats.flipped;
         }
         stats
     }
@@ -585,24 +596,37 @@ impl<'g> Sampler<'g> {
         }
     }
 
-    /// Draw a chain, so [`crate::certify::certify`] applies to it unchanged.
+    /// Draw a chain, so [`crate::certify::certify`] applies to it unchanged, charging `ledger`
+    /// for every update AND for every state read out.
+    ///
+    /// Until 2026-09-13 this took no ledger: every sweep ran uncharged and every kept state was
+    /// read with no read charged, so a cluster chain priced at zero joules while its sweeps
+    /// separately billed bond tests as reads. Invariant 8 of AGENTS.md is that reading a state
+    /// costs the device -- one read is 239 updates on a Z1 -- and the only way a sampler keeps it
+    /// is by charging reads where it reads. This now does exactly what
+    /// [`crate::gibbs::Sampler::collect`] does: `n` reads per kept draw, none for the burn-in or
+    /// the thinning sweeps nobody looked at.
     #[must_use]
     pub fn collect(
         &mut self,
         plan: &crate::samples::Plan,
         update: Update,
+        mut ledger: Option<&mut crate::ledger::Ledger>,
     ) -> crate::samples::SampleSet {
         for _ in 0..plan.burn_in {
-            self.sweep_with(update, None);
+            self.sweep_with(update, ledger.as_deref_mut());
         }
         let thin = plan.thin.max(1);
         let mut states = Vec::with_capacity(plan.draws);
         let mut energies = Vec::with_capacity(plan.draws);
         for _ in 0..plan.draws {
             for _ in 0..thin {
-                self.sweep_with(update, None);
+                self.sweep_with(update, ledger.as_deref_mut());
             }
             let st = self.state();
+            if let Some(l) = ledger.as_deref_mut() {
+                l.reads += self.graph.n as u64;
+            }
             energies.push(self.graph.energy(&st));
             states.push(st);
         }
@@ -780,7 +804,7 @@ mod tests {
             for update in [Update::SwendsenWang, Update::Wolff] {
                 let beta = 0.4;
                 let mut c = Sampler::new(&g, beta, 11).expect("balanced and unbiased");
-                let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
+                let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update, None);
                 let cert = set.certificate(&g).expect("collect returns a chain");
                 crate::certify::assert_boltzmann(
                     &cert,
@@ -829,14 +853,22 @@ mod tests {
         assert!(biggest < g.n / 4, "at beta 0.01 clusters should be tiny; got {biggest}");
     }
 
-    /// The ledger reports what the sweep touched, and the stats and the bill are the same number.
+    /// The ledger is billed the spins the sweep updated, and NOTHING for the bonds it examined or
+    /// the spins it flipped: those are measured in the stats and carry no device price.
     ///
     /// The bill is not derived from the sweep count, because a sweep is a convention and the two
-    /// moves do not mean the same thing by it. `visited` and `bonds_tested` are measurements, so a
-    /// comparison built on them cannot be rigged by redefining a sweep — which is the failure this
-    /// module already made once, in the other direction. See [`Sampler::with_wolff_steps`].
+    /// moves do not mean the same thing by it. `visited` is a measurement, so a comparison built on
+    /// it cannot be rigged by redefining a sweep — which is the failure this module already made
+    /// once, in the other direction. See [`Sampler::with_wolff_steps`].
+    ///
+    /// Until 2026-09-13 this asserted `(samples, reads, writes) == (visited, bonds, flipped)`, and
+    /// passed — a test that pinned the wrong semantics as carefully as it would have pinned the
+    /// right ones. `reads` is a node read out to the chip edge and `writes` a node reprogrammed;
+    /// a bond test and a flip are neither, and `gibbs.rs` never charged them. The reads and writes
+    /// this fixture used to bill are now zero, and the bonds and flips are still measured -- the
+    /// second and third assertions are what keep "unpriced" from decaying into "uncounted".
     #[test]
-    fn the_ledger_is_billed_exactly_what_the_stats_report() {
+    fn the_ledger_is_billed_the_updates_and_not_the_bonds_or_the_flips() {
         let g = crate::ising::lattice2d(6, 1.0);
         for update in [Update::SwendsenWang, Update::Wolff] {
             let mut c = Sampler::new(&g, 0.44, 2).unwrap();
@@ -848,9 +880,34 @@ mod tests {
                 bonds += st.bonds_tested;
                 flipped += st.flipped;
             }
-            assert_eq!((l.samples, l.reads, l.writes), (visited, bonds, flipped), "{update:?}");
-            assert!(bonds > 0, "{update:?}: bonds were tested and not counted");
+            assert_eq!((l.samples, l.reads, l.writes), (visited, 0, 0), "{update:?}");
+            assert!(bonds > 0, "{update:?}: bonds were tested and not measured");
+            assert!(flipped > 0, "{update:?}: at beta 0.44 something must have flipped");
         }
+    }
+
+    /// THE SAME READOUT COSTS THE SAME READS WHOEVER PRODUCED THE STATE. A Gibbs chain and a
+    /// cluster chain that keep the same number of draws on the same graph must bill the same
+    /// `reads`, because a read is a node value leaving the chip and the chip does not care which
+    /// move put it there. Before 2026-09-13 this fixture billed the cluster chain ZERO reads (its
+    /// `collect` took no ledger) while its sweeps billed every bond test as one -- so the two
+    /// samplers' joules were not comparable and nothing said so.
+    ///
+    /// The updates are NOT asserted equal: Swendsen–Wang visits every spin per sweep and Gibbs
+    /// does too, but that is a coincidence of the fixture, not the invariant. The reads are.
+    #[test]
+    fn a_cluster_chain_and_a_gibbs_chain_bill_the_same_reads_for_the_same_draws() {
+        let g = crate::ising::lattice2d(6, 1.0);
+        let plan = crate::samples::Plan::new(20, 30, 2);
+        let mut lg = crate::ledger::Ledger::default();
+        let mut lc = crate::ledger::Ledger::default();
+        let gs = crate::gibbs::Sampler::new(&g, 0.44, 5).collect(&plan, Some(&mut lg));
+        let cs = Sampler::new(&g, 0.44, 5).unwrap().collect(&plan, Update::SwendsenWang, Some(&mut lc));
+        assert_eq!(gs.states().len(), cs.states().len(), "the fixture must keep equal draws");
+        assert_eq!(lc.reads, lg.reads, "cluster reads {} vs Gibbs reads {}", lc.reads, lg.reads);
+        assert_eq!(lc.reads, 30 * g.n as u64, "one read per node per kept state, no more");
+        assert_eq!(lc.writes, 0, "a cluster chain reprograms nothing");
+        assert!(lc.samples > 0, "and its updates are still charged");
     }
 
     /// A Swendsen–Wang sweep visits every spin; a Wolff sweep takes exactly the steps it was given.
@@ -964,7 +1021,7 @@ mod tests {
 
         for update in [Update::SwendsenWang, Update::Wolff] {
             let mut c = Sampler::new(&g, 0.4, 6).expect("balanced");
-            let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
+            let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update, None);
             let cert = set.certificate(&g).expect("collect returns a chain");
             crate::certify::assert_boltzmann(
                 &cert,
@@ -990,7 +1047,7 @@ mod tests {
             for update in [Update::SwendsenWang, Update::Wolff] {
                 let g = crate::ising::ring(10, 1.0, h);
                 let mut c = Sampler::new(&g, 0.4, 12).expect("a uniform field keeps it balanced");
-                let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update);
+                let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update, None);
                 let cert = set.certificate(&g).expect("collect returns a chain");
                 crate::certify::assert_boltzmann(&cert, 0.4, &format!("h = {h} under {update:?}"));
             }
