@@ -52,7 +52,7 @@
 // run: cargo run --release -p ferrotherm-meter --example fabric_vs_cpu
 //      (build first, let the machine settle, then run the binary directly -- see the refusal text)
 
-use ferrotherm::certify::tau_int;
+use ferrotherm::certify::{tau_int, tau_int_batch};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::hdl::FixedFabric;
@@ -94,8 +94,14 @@ struct Arm {
     flips: f64,
     /// Joules charged to this arm: metered above idle for the CPU arms, priced for the fabric.
     joules: f64,
-    /// Integrated autocorrelation time in COLD-REPLICA SWEEPS, the one unit every arm shares.
+    /// Integrated autocorrelation time in COLD-REPLICA SWEEPS, the one unit every arm shares:
+    /// the LARGER of Sokal's window and batch means, as `certify()` carries it.
     tau: f64,
+    /// Sokal's automatic window, same unit. Where `tau_batch` is more than twice this, the window
+    /// closed on a fast mode and the row's tau is a lower bound.
+    tau_sokal: f64,
+    /// Batch means over twenty batches, same unit.
+    tau_batch: f64,
     draws: usize,
     /// How the joules were obtained, printed beside every figure derived from them.
     basis: &'static str,
@@ -146,11 +152,14 @@ fn fabric_arm(g: &Graph, beta: f64, seed: u64) -> Arm {
             f.sweep();
             trace.push(g.energy(&spins(&f)));
         }
+        let (ts, tb) = (tau_int(&trace), tau_int_batch(&trace, 20));
         let arm = Arm {
             label: "fabric (emulated, priced)",
             flips: (n * (burn + sweeps)) as f64,
             joules: (n * (burn + sweeps)) as f64 * KV260_MEASURED.e_sample,
-            tau: tau_int(&trace),
+            tau: if tb.is_finite() { ts.max(tb) } else { ts },
+            tau_sokal: ts,
+            tau_batch: tb,
             draws: trace.len(),
             basis: "KV260_MEASURED.e_sample x flips",
         };
@@ -198,11 +207,14 @@ fn cpu_arms(
             }
         })
         .unwrap_or_else(|e| refuse(&e));
+    let (ts, tb) = (tau_int(&trace_g) * rungs as f64, tau_int_batch(&trace_g, 20) * rungs as f64);
     let gibbs = Arm {
         label: "CPU Gibbs f64 (metered)",
         flips: (n * sweeps_g) as f64,
         joules: run_g.joules_above_idle,
-        tau: tau_int(&trace_g) * rungs as f64,
+        tau: if tb.is_finite() { ts.max(tb) } else { ts },
+        tau_sokal: ts,
+        tau_batch: tb,
         draws: trace_g.len(),
         basis: "wattmeter, above idle",
     };
@@ -216,11 +228,14 @@ fn cpu_arms(
         .unwrap_or_else(|e| refuse(&e));
     let (_res, tr) = out.expect("the closure ran");
     let cold = tr.energies.last().expect("a ladder has rungs");
+    let (ts, tb) = (tau_int(cold), tau_int_batch(cold, 20));
     let pt = Arm {
         label: "CPU parallel tempering (metered)",
         flips: (n * rounds * rungs) as f64,
         joules: run_p.joules_above_idle,
-        tau: tau_int(cold),
+        tau: if tb.is_finite() { ts.max(tb) } else { ts },
+        tau_sokal: ts,
+        tau_batch: tb,
         draws: cold.len(),
         basis: "wattmeter, above idle",
     };
@@ -386,6 +401,14 @@ fn main() {
             idle.sigma * (pt.flips / n as f64 / 1e6).max(1.0),
             tie.map_or(String::new(), |t| format!(" Per-flip price at which the fabric would TIE PT per independent sample: {t:.3e} J/flip ({:.1e}x the measured price).", t / KV260_MEASURED.e_sample))
         ));
+        // The window cross-check, per arm: Sokal against batch means, and whether the row's tau
+        // came from the batch side because the window closed early. A truncated arm's tau -- and
+        // every J/ind built on it -- is a lower bound on the cost, not a value.
+        let window = |a: &Arm| -> String {
+            let flag = if a.tau_batch.is_finite() && a.tau_batch > 2.0 * a.tau_sokal { " TRUNCATED" } else { "" };
+            format!("{} Sokal {:.1} / batch {:.1}{flag}", a.label, a.tau_sokal, a.tau_batch)
+        };
+        evidence.push(format!("    windows: {}; {}; {}", window(&f), window(&gibbs), window(&pt)));
     }
 
     println!("\n  WHAT THE TABLE SAYS.\n");
