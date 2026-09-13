@@ -728,6 +728,13 @@ mutations=(
   # have been read as a shifted set of fields.)
   "src/dtm.rs|        let within_budget = count <= MAX_NLL_TRAJECTORIES;|        let within_budget = count < 4096;|dtm::tests::exact_nll_runs_inside_its_budget|an exact_nll budget so small it refuses what it can do"
 
+
+  # THE KERNEL IS THE RTL'S ARITHMETIC OR IT IS NOTHING. Reading the ROM at half the stride is a
+  # kernel that still runs, still converges to a law, and is not the fabric's: the cycle-exact
+  # emulator's own histogram is what says so, which is the only witness that ties the operator
+  # to the hardware rather than to a description of it.
+  "src/autocorr.rs|            let addr = (fc + 2048) >> 2;|            let addr = (fc + 2048) >> 3;|autocorr::tests::fabric_kernel_matches_the_emulator_in_distribution_and_is_not_boltzmann|a fabric kernel reading the sigmoid ROM at the wrong stride"
+
 )
 
 bad=0
@@ -766,7 +773,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=117
+expected_rows=118
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
