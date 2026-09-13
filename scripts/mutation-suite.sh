@@ -755,6 +755,7 @@ mutations=(
   "src/autocorr.rs|                    let q_prev = p_site(g, beta, kernel, i, &s);|                    let q_prev = p_site(g, 1.0, kernel, i, &s);|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a synchronous sweep that samples at unit temperature"
   "src/autocorr.rs|        let mut acc = beta * hx;|        let mut acc = 0.0 * hx;|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a Peretto law without its field term"
   "src/autocorr.rs|            let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;|            let z = (beta * g.field(i, s)).tanh() / eta;|autocorr::tests::the_pimi_kernel_has_its_single_site_closed_form_and_its_inertia_matters|a PIMI rule without its inertia term"
+  "src/autocorr.rs|            let s_j = if stale { x_j } else { y_j };|            let s_j = if stale { y_j } else { x_j };|autocorr::tests::the_stale_read_kernel_is_bracketed_by_its_two_closed_forms|a stale read that returns the fresh value"
 
 )
 
@@ -794,7 +795,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=127
+expected_rows=128
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

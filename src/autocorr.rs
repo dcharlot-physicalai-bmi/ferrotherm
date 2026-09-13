@@ -137,6 +137,17 @@ pub enum Kernel {
         /// Standard deviation of the injected Gaussian noise.
         eta: f64,
     },
+    /// One sequential sweep in site order in which every read of an ALREADY-UPDATED neighbour
+    /// returns the pre-sweep value with probability `p`, independently per read: the
+    /// synchronous-collision model of a fabric whose cells update in a fixed order but whose
+    /// neighbour registers lag one update behind with probability `p`. `p = 0` is
+    /// [`Kernel::SequentialGibbs`] and `p = 1` is [`Kernel::Synchronous`] (every read stale is
+    /// every site from the previous state), so the Boltzmann and Peretto laws bracket it and the
+    /// test holds both ends to their closed forms.
+    Stale {
+        /// Probability that a read of an already-updated neighbour returns its pre-sweep value.
+        p: f64,
+    },
     /// One two-phase sweep of the shipped p-bit fabric, [`crate::hdl::FixedFabric`]: the same
     /// colour classes as [`Kernel::ChromaticGibbs`], but every site's flip probability is what the
     /// RTL computes -- couplings and fields rounded to Q.8, the field clamped to `[-8, 8)`, the
@@ -360,6 +371,39 @@ fn log_g(balance: Balance, log_r: f64) -> f64 {
     }
 }
 
+/// The heat-bath probability of `+1` at site `i` under [`Kernel::Stale`]: the pre-sweep state
+/// `x` supplies every not-yet-updated neighbour, and each already-updated neighbour `j < i` is
+/// read from `y` (fresh) or from `x` (stale, probability `p`), independently, so the conditional
+/// is the mixture over the `2^d` stale patterns of the `d` already-updated neighbours.
+fn stale_q(g: &Graph, beta: f64, p: f64, i: usize, x: &[i8], y: &[i8]) -> f64 {
+    let mut base = g.h[i];
+    let mut prev: Vec<(f64, i8, i8)> = Vec::new();
+    for k in g.offset[i]..g.offset[i + 1] {
+        let j = g.nbr[k] as usize;
+        if j < i {
+            prev.push((g.w[k], x[j], y[j]));
+        } else {
+            base += g.w[k] * f64::from(x[j]);
+        }
+    }
+    let d = prev.len();
+    let mut q = 0.0;
+    for mask in 0..(1usize << d) {
+        let mut field = base;
+        let mut weight = 1.0;
+        for (k, &(w, x_j, y_j)) in prev.iter().enumerate() {
+            let stale = (mask >> k) & 1 == 1;
+            let s_j = if stale { x_j } else { y_j };
+            field += w * f64::from(s_j);
+            weight *= if stale { p } else { 1.0 - p };
+        }
+        if weight > 0.0 {
+            q += weight * p_up(field, beta);
+        }
+    }
+    q
+}
+
 /// Apply the kernel once: `v <- P v`, matrix-free.
 ///
 /// For the chromatic sweep `P = P_{c_last} ... P_{c_1}`, so the classes are applied to `v` in
@@ -449,6 +493,29 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
                     let q = p_site(g, beta, kernel, i, &s);
                     let half = len / 2;
                     for y in 0..half {
+                        w[y] = (1.0 - q) * w[y] + q * w[y | half];
+                    }
+                    len = half;
+                }
+                out[x] = w[0];
+            }
+            out
+        }
+        Kernel::Stale { p } => {
+            // (P v)(x) = sum_y prod_i q_i(x, y_{<i}) v(y): per source x, fold v from the top bit
+            // down; when site i is folded, the bits below it are still indices, so q_i may depend
+            // on them -- which is exactly the already-updated neighbours it reads.
+            let mut out = vec![0.0f64; m];
+            let mut w = vec![0.0f64; m];
+            for x in 0..m {
+                let sx = spins(x, n);
+                w.copy_from_slice(v);
+                let mut len = m;
+                for i in (0..n).rev() {
+                    let half = len / 2;
+                    for y in 0..half {
+                        let sy = spins(y, n);
+                        let q = stale_q(g, beta, p, i, &sx, &sy);
                         w[y] = (1.0 - q) * w[y] + q * w[y | half];
                     }
                     len = half;
@@ -579,6 +646,36 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                         let w = prod[y];
                         prod[y] = w * (1.0 - q_prev);
                         prod[y | len] = w * q_prev;
+                    }
+                    len <<= 1;
+                }
+                for (o, pr) in out.iter_mut().zip(&prod) {
+                    *o += mass * pr;
+                }
+            }
+            out
+        }
+        Kernel::Stale { p } => {
+            // (mu P)(y) = sum_x mu(x) prod_i q_i(x, y_{<i}): each source lays its law over the
+            // targets one site at a time, the conditional at site i reading the target bits
+            // already placed below it.
+            let mut out = vec![0.0f64; m];
+            let mut prod = vec![0.0f64; m];
+            for x in 0..m {
+                let mass = mu[x];
+                if mass == 0.0 {
+                    continue;
+                }
+                let sx = spins(x, n);
+                prod[0] = 1.0;
+                let mut len = 1usize;
+                for i in 0..n {
+                    for y in 0..len {
+                        let sy = spins(y, n);
+                        let q = stale_q(g, beta, p, i, &sx, &sy);
+                        let wgt = prod[y];
+                        prod[y] = wgt * (1.0 - q);
+                        prod[y | len] = wgt * q;
                     }
                     len <<= 1;
                 }
@@ -814,7 +911,9 @@ pub fn tau_int_fundamental(
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } => stationary_solved(g, beta, kernel)?,
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } => {
+            stationary_solved(g, beta, kernel)?
+        }
         Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
@@ -871,7 +970,9 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } => stationary_solved(g, beta, kernel)?,
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } => {
+            stationary_solved(g, beta, kernel)?
+        }
         Kernel::Synchronous => peretto(g, beta)?,
         _ => boltzmann(g, beta)?,
     };
@@ -915,7 +1016,7 @@ pub fn tau_int_exact(
     // For the exact Gibbs and informed kernels that is the Boltzmann distribution; for the
     // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } => {
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } => {
             stationary(g, beta, kernel, 1e-14, 500_000)?.0
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -1142,6 +1243,7 @@ mod tests {
             Kernel::Informed(Balance::Sqrt),
             Kernel::Synchronous,
             Kernel::Pimi { xi: 0.3, eta: 0.7 },
+            Kernel::Stale { p: 0.3 },
         ] {
             for _ in 0..4 {
                 let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
@@ -1163,7 +1265,7 @@ mod tests {
             let law = match kernel {
                 Kernel::FixedFabric => None,
                 Kernel::Synchronous => Some(peretto(&g, beta).unwrap()),
-                Kernel::Pimi { .. } => Some(stationary_solved(&g, beta, kernel).unwrap()),
+                Kernel::Pimi { .. } | Kernel::Stale { .. } => Some(stationary_solved(&g, beta, kernel).unwrap()),
                 _ => Some(pi.clone()),
             };
             if let Some(law) = law {
@@ -1486,5 +1588,36 @@ mod tests {
             assert!((law[1] - want).abs() < 1e-12, "xi {xi}: solved {} vs closed form {want}", law[1]);
         }
         assert!((closed(0.6) - closed(0.0)).abs() > 1e-2, "inertia must move the single-site law");
+    }
+
+    /// The stale-read kernel is bracketed by two closed forms: at `p = 0` it is the sequential
+    /// sweep, operator for operator, and at `p = 1` the synchronous one -- checked on random
+    /// distributions to floating point, not just on the invariant laws. In between it is neither:
+    /// at `p = 0.3` its law is resolvably away from both Boltzmann and Peretto.
+    #[test]
+    fn the_stale_read_kernel_is_bracketed_by_its_two_closed_forms() {
+        let g = grid_glass(3, 3, 6);
+        let beta = 1.1;
+        let m = 1usize << g.n;
+        let mut rng = Pcg::new(9, 4);
+        for _ in 0..3 {
+            let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
+            let z: f64 = mu.iter().sum();
+            for q in &mut mu {
+                *q /= z;
+            }
+            let fresh = apply_distribution(&g, beta, Kernel::Stale { p: 0.0 }, &mu);
+            let seq = apply_distribution(&g, beta, Kernel::SequentialGibbs, &mu);
+            assert!(total_variation(&fresh, &seq) < 1e-13, "p = 0 must be the sequential sweep");
+            let stale = apply_distribution(&g, beta, Kernel::Stale { p: 1.0 }, &mu);
+            let sync = apply_distribution(&g, beta, Kernel::Synchronous, &mu);
+            assert!(total_variation(&stale, &sync) < 1e-13, "p = 1 must be the synchronous sweep");
+        }
+        let law = stationary_solved(&g, beta, Kernel::Stale { p: 0.3 }).unwrap();
+        let b = boltzmann(&g, beta).unwrap();
+        let pe = peretto(&g, beta).unwrap();
+        assert!(total_variation(&law, &b) > 1e-3, "p = 0.3 must not be Boltzmann");
+        assert!(total_variation(&law, &pe) > 1e-3, "p = 0.3 must not be Peretto");
+        assert!(total_variation(&law, &b) < total_variation(&pe, &b), "p = 0.3 must sit nearer Boltzmann than p = 1");
     }
 }
