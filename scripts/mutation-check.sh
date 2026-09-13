@@ -73,10 +73,46 @@ PY
 # mutant sit behind `dev_or_skip!`. Those are different facts and the suite could not tell them
 # apart, so it called an absent GPU a blind test. Without `--nocapture` cargo swallows the skip
 # message and the distinction is simply unavailable.
+# A WATCHDOG, BECAUSE A MUTATION CAN TURN A REFUSAL INTO A HANG. The first row written for
+# `dtm::exact_nll`'s budget removed the budget; with it gone the should-panic test called into a
+# 3.5e13-step enumeration and waited for a refusal that would never come. `cargo test` has no
+# timeout, so the suite sat for half an hour at 100% CPU showing nothing, and killing cargo left
+# the test binary running as an orphan. The run is now bounded: `MUT_TIMEOUT` seconds (default
+# 900), after which cargo, its children, and any test binary of THIS tree are stopped and the row
+# is reported as TIMED OUT -- inconclusive, not caught, and not blind. The trap above still
+# restores the file whatever happens here.
+timeout_s="${MUT_TIMEOUT:-900}"
+tmp_out="$(mktemp)"
 if [[ -n "$pkg" ]]; then
-  out="$(cargo test --release --lib -p "$pkg" "$filter" -- --nocapture 2>&1)"
+  cargo test --release --lib -p "$pkg" "$filter" -- --nocapture > "$tmp_out" 2>&1 &
 else
-  out="$(cargo test --release --lib "$filter" -- --nocapture 2>&1)"
+  cargo test --release --lib "$filter" -- --nocapture > "$tmp_out" 2>&1 &
+fi
+cargo_pid=$!
+timed_out=0
+waited=0
+while kill -0 "$cargo_pid" 2>/dev/null; do
+  if [[ "$waited" -ge "$timeout_s" ]]; then
+    timed_out=1
+    pkill -TERM -P "$cargo_pid" 2>/dev/null || true
+    kill -TERM "$cargo_pid" 2>/dev/null || true
+    sleep 2
+    # The test binary is cargo's grandchild and survives cargo's death; it lives under this
+    # tree's target directory, which is the only thing this matches.
+    pkill -KILL -f "$here/target/release/deps/" 2>/dev/null || true
+    kill -KILL "$cargo_pid" 2>/dev/null || true
+    break
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+wait "$cargo_pid" 2>/dev/null || true
+out="$(cat "$tmp_out")"
+rm -f "$tmp_out"
+if [[ "$timed_out" -eq 1 ]]; then
+  restore
+  printf '  %-38s TIMED OUT after %ss (inconclusive: the mutation may have turned a refusal into a hang)\n' "$label" "$timeout_s"
+  exit 0
 fi
 # Restore here as well as in the trap: the verdict below is printed with the tree already clean, so
 # anyone reading the output alongside `git status` sees what the next command would see.

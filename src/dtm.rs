@@ -497,12 +497,13 @@ impl Dtm {
         let mut nll = 0.0;
         // enumerate trajectories (x^0..x^T), each visible mask
         let masks = 1usize << nv;
-        let trajectories = masks.checked_pow(t_steps as u32 + 1);
+        // An overflowing count is "more than any budget", so it reads as usize::MAX and is refused.
+        let count = masks.checked_pow(t_steps as u32 + 1).unwrap_or(usize::MAX);
+        let within_budget = count <= MAX_NLL_TRAJECTORIES;
         assert!(
-            trajectories.is_some_and(|c| c <= MAX_NLL_TRAJECTORIES),
-            "exact_nll enumerates (2^nv)^(T+1) = {} trajectories at nv = {nv}, T = {t_steps}, \
-             above the {MAX_NLL_TRAJECTORIES} it will attempt; use exact_log_cond on sampled pairs",
-            trajectories.map_or("more than usize".to_string(), |c| c.to_string())
+            within_budget,
+            "exact_nll enumerates (2^nv)^(T+1) = {count} trajectories at nv = {nv}, T = {t_steps}, \
+             above the {MAX_NLL_TRAJECTORIES} it will attempt; use exact_log_cond on sampled pairs"
         );
         let to_x = |m: usize| -> Vec<i8> {
             (0..nv).map(|b| if m >> b & 1 == 1 { 1 } else { -1 }).collect()

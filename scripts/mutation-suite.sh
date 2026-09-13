@@ -716,11 +716,17 @@ mutations=(
   "src/autocorr.rs|            for i in (0..n).rev() {|            for i in 0..n {|autocorr::tests::pushing_mass_forward_is_the_adjoint_of_pulling_functions_back|the sequential sweep applied to functions in forward site order"
 
 
-  # THE BUDGET IS THE REFUSAL. Checking only that the count fits in a usize lets nv = 9, T = 4
-  # through -- 3.5e13 trajectories, which is what hung a caller for the whole of an afternoon.
-  # The should-panic test is the row's witness: with the budget gone the call proceeds and the
-  # test, which expects the refusal, never gets one.
-  "src/dtm.rs|            trajectories.is_some_and(|c| c <= MAX_NLL_TRAJECTORIES),|            trajectories.is_some(),|dtm::tests::exact_nll_refuses_a_trajectory_count_it_cannot_enumerate|an exact_nll that refuses nothing it can count"
+  # THE BUDGET MUST NOT REFUSE WHAT IT CAN DO. A budget a thousand times too small refuses the
+  # 4,096-trajectory case the in-budget test runs, and that test panics at once. The OTHER
+  # direction -- dropping the budget so nv = 9, T = 4 proceeds -- is a mutation this suite cannot
+  # witness: the should-panic test then waits for a 3.5e13-step enumeration that never returns.
+  # That row was written first, and it HUNG the suite for half an hour before it was understood;
+  # a mutation that turns a refusal into a hang is invisible to `cargo test`, which is why the
+  # check now carries a watchdog and why this row is the one that can be observed.
+  # (The comparison sits on its own line, without a closure, because a row cannot carry the
+  # suite's `|` separator -- the first version of this row did, inside `|c| c <= ...`, and would
+  # have been read as a shifted set of fields.)
+  "src/dtm.rs|        let within_budget = count <= MAX_NLL_TRAJECTORIES;|        let within_budget = count < 4096;|dtm::tests::exact_nll_runs_inside_its_budget|an exact_nll budget so small it refuses what it can do"
 
 )
 

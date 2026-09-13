@@ -59,6 +59,14 @@ pub enum Kernel {
     /// conditional given the current state of all the others -- what [`crate::dtm::Ebm::gibbs`]
     /// runs, and what a plain single-site Gibbs sampler is.
     SequentialGibbs,
+    /// One two-phase sweep of the shipped p-bit fabric, [`crate::hdl::FixedFabric`]: the same
+    /// colour classes as [`Kernel::ChromaticGibbs`], but every site's flip probability is what the
+    /// RTL computes -- couplings and fields rounded to Q.8, the field clamped to `[-8, 8)`, the
+    /// sigmoid read from the 1,024-entry ROM at 16-bit resolution -- and the per-node random
+    /// number taken as an IDEAL 16-bit uniform. That isolates the arithmetic: the stationary law
+    /// of this kernel is what the fabric samples if its RNG were perfect, and its distance from
+    /// the Boltzmann distribution is the price of the precision alone.
+    FixedFabric,
     /// One step of [`crate::informed::Informed`]: propose site `k` with probability
     /// `g(r_k) / Z(x)`, accept with `min(1, Z(x) / Z(y))`.
     Informed(Balance),
@@ -132,6 +140,34 @@ pub fn boltzmann(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
     Ok(pi)
 }
 
+/// The probability site `i` comes up `+1` when resampled, under the kernel's arithmetic.
+///
+/// Exact heat bath for the Gibbs kernels. For [`Kernel::FixedFabric`] it reproduces
+/// [`crate::hdl::FixedFabric`] step by step: couplings and fields rounded to Q.8 (`FRAC` bits),
+/// the integer field clamped to `[-2048, 2047]`, the ROM address `(field + 2048) >> 2`, the ROM
+/// entry `p_up` at the address's centre in 16 bits, and the comparison against a 16-bit uniform,
+/// so the probability is `entry / 65536` exactly. Kept beside the emulator's constants rather
+/// than importing its private ones; `fabric_kernel_matches_the_emulator_in_distribution` is what
+/// keeps the two from drifting apart.
+fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
+    match kernel {
+        Kernel::FixedFabric => {
+            let scale = f64::from(1u32 << crate::hdl::FRAC);
+            let mut field = (g.h[i] * scale).round() as i32;
+            for k in g.offset[i]..g.offset[i + 1] {
+                let w = (g.w[k] * scale).round() as i32;
+                field += if s[g.nbr[k] as usize] > 0 { w } else { -w };
+            }
+            let fc = field.clamp(-2048, 2047);
+            let addr = (fc + 2048) >> 2;
+            let arg = ((f64::from(addr) + 0.5) * 4.0 - 2048.0) / scale;
+            let p16 = (p_up(arg, beta) * 65535.0).round().min(65535.0);
+            p16 / 65536.0
+        }
+        _ => p_up(g.field(i, s), beta),
+    }
+}
+
 fn log_g(balance: Balance, log_r: f64) -> f64 {
     let softplus = |x: f64| if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() };
     match balance {
@@ -162,7 +198,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
     let m = 1usize << n;
     assert_eq!(v.len(), m, "a function over states has 2^n entries");
     match kernel {
-        Kernel::ChromaticGibbs => {
+        Kernel::ChromaticGibbs | Kernel::FixedFabric => {
             let mut cur = v.to_vec();
             for class in g.classes.iter().rev() {
                 let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
@@ -172,7 +208,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
                 for x in 0..m {
                     let s = spins(x, n);
                     for (j, &i) in sites.iter().enumerate() {
-                        p[j] = p_up(g.field(i, &s), beta);
+                        p[j] = p_site(g, beta, kernel, i, &s);
                     }
                     let mut base = x;
                     for &i in &sites {
@@ -282,7 +318,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::ChromaticGibbs => {
+        Kernel::ChromaticGibbs | Kernel::FixedFabric => {
             let mut cur = mu.to_vec();
             for class in &g.classes {
                 let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
@@ -294,7 +330,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                     // the same for every state that differs from x only on the class.
                     let mut w = 1.0;
                     for &i in &sites {
-                        let p = p_up(g.field(i, &s), beta);
+                        let p = p_site(g, beta, kernel, i, &s);
                         w *= if x & (1usize << i) != 0 { p } else { 1.0 - p };
                     }
                     let mut base = x;
@@ -352,6 +388,42 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
     }
 }
 
+/// The kernel's stationary distribution, by pushing the uniform distribution forward until it
+/// stops moving: `tol` in total variation between successive steps, or `max_steps`.
+///
+/// For the Gibbs kernels this is the Boltzmann distribution to floating point, and the call is a
+/// long way round to [`boltzmann`]. For [`Kernel::FixedFabric`] it is NOT: the fabric's arithmetic
+/// has its own stationary law, and this is the only way to get it. Returns the distribution and
+/// the number of steps taken, so a caller can see whether it converged or was stopped.
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManySpins`] above [`MAX_SPINS`].
+pub fn stationary(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    tol: f64,
+    max_steps: usize,
+) -> Result<(Vec<f64>, usize), AutocorrError> {
+    if g.n > MAX_SPINS {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+    }
+    let m = 1usize << g.n;
+    let mut mu = vec![1.0 / m as f64; m];
+    let mut steps = 0;
+    while steps < max_steps {
+        let next = apply_distribution(g, beta, kernel, &mu);
+        steps += 1;
+        let moved = total_variation(&next, &mu);
+        mu = next;
+        if moved < tol {
+            break;
+        }
+    }
+    Ok((mu, steps))
+}
+
 /// Total variation distance between two distributions over the same states.
 #[must_use]
 pub fn total_variation(p: &[f64], q: &[f64]) -> f64 {
@@ -375,7 +447,13 @@ pub fn tau_int_exact(
     tol: f64,
     max_lags: usize,
 ) -> Result<Autocorrelation, AutocorrError> {
-    let pi = boltzmann(g, beta)?;
+    // The autocorrelation is STATIONARY: it must be taken under the kernel's own invariant law.
+    // For the exact Gibbs and informed kernels that is the Boltzmann distribution; for the
+    // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
+    let pi = match kernel {
+        Kernel::FixedFabric => stationary(g, beta, kernel, 1e-14, 500_000)?.0,
+        _ => boltzmann(g, beta)?,
+    };
     let n = g.n;
     let m = 1usize << n;
     let f: Vec<f64> = (0..m).map(|x| observable(&spins(x, n))).collect();
@@ -592,6 +670,7 @@ mod tests {
         for kernel in [
             Kernel::ChromaticGibbs,
             Kernel::SequentialGibbs,
+            Kernel::FixedFabric,
             Kernel::Informed(Balance::Barker),
             Kernel::Informed(Balance::Sqrt),
         ] {
@@ -609,12 +688,68 @@ mod tests {
                 let total: f64 = apply_distribution(&g, beta, kernel, &mu).iter().sum();
                 assert!((total - 1.0).abs() < 1e-12, "{kernel:?}: mass {total}");
             }
-            let pushed = apply_distribution(&g, beta, kernel, &pi);
-            assert!(
-                total_variation(&pushed, &pi) < 1e-12,
-                "{kernel:?}: pi is not stationary in distribution form, TV {:e}",
-                total_variation(&pushed, &pi)
-            );
+            // The Boltzmann distribution is stationary for the exact kernels and NOT for the
+            // fabric's arithmetic -- that gap is the fabric's own test below, not a failure here.
+            if kernel != Kernel::FixedFabric {
+                let pushed = apply_distribution(&g, beta, kernel, &pi);
+                assert!(
+                    total_variation(&pushed, &pi) < 1e-12,
+                    "{kernel:?}: pi is not stationary in distribution form, TV {:e}",
+                    total_variation(&pushed, &pi)
+                );
+            }
+        }
+    }
+
+    /// THE FABRIC'S KERNEL IS THE FABRIC'S, NOT A MODEL OF IT: run the cycle-exact emulator on a
+    /// six-spin frustrated ring for a long time and its state histogram must match the exact
+    /// stationary distribution of `Kernel::FixedFabric` within sampling noise -- and that
+    /// distribution must differ from the Boltzmann distribution by a resolvable amount, or the
+    /// kernel is not modelling the quantisation at all. The emulator draws its uniforms from
+    /// xorshift32 and the kernel assumes ideal uniforms, so the agreement also bounds what that
+    /// RNG costs on this fixture.
+    #[test]
+    fn fabric_kernel_matches_the_emulator_in_distribution_and_is_not_boltzmann() {
+        use crate::hdl::FixedFabric;
+        let n = 6;
+        let mut rng = Pcg::new(3, 0xFA);
+        let mut b = GraphBuilder::new(n);
+        for i in 0..n {
+            b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+            b.bias(i, (rng.f64() - 0.5) * 0.6);
+        }
+        let g = b.build();
+        assert_eq!(g.classes.len(), 2, "the fabric needs a bipartite graph");
+        let beta = 1.3;
+        let (fab, steps) = stationary(&g, beta, Kernel::FixedFabric, 1e-13, 100_000).unwrap();
+        assert!(steps < 100_000, "the fabric law must converge");
+        let pi = boltzmann(&g, beta).unwrap();
+        let gap = total_variation(&fab, &pi);
+        assert!(gap > 1e-6, "Q.8 and a 1,024-entry ROM must be visible: TV {gap:e}");
+        assert!(gap < 0.05, "and small: TV {gap}");
+
+        // The emulator, histogrammed over 300,000 sweeps after a burn-in.
+        let mut f = FixedFabric::new(&g, beta, 77);
+        for _ in 0..1_000 {
+            f.sweep();
+        }
+        let sweeps = 300_000usize;
+        let mut counts = vec![0u32; 1 << n];
+        for _ in 0..sweeps {
+            f.sweep();
+            let x = f.s.iter().enumerate().fold(0usize, |a, (i, &b)| a | (usize::from(b) << i));
+            counts[x] += 1;
+        }
+        let hist: Vec<f64> = counts.iter().map(|&c| f64::from(c) / sweeps as f64).collect();
+        let to_fab = total_variation(&hist, &fab);
+        // Noise on a 64-cell histogram from an autocorrelated chain: about sqrt(64 * 2 tau / N)
+        // in TV, tau a few sweeps here; 0.02 is an order above that.
+        assert!(to_fab < 0.02, "emulator histogram is {to_fab} from the kernel's stationary law");
+        // And the kernel's law is the BETTER description of the emulator than Boltzmann is, when
+        // the gap is above the histogram's own noise.
+        let to_pi = total_variation(&hist, &pi);
+        if gap > 3.0 * to_fab {
+            assert!(to_fab < to_pi, "the emulator should sit nearer its own law ({to_fab}) than Boltzmann ({to_pi})");
         }
     }
 
