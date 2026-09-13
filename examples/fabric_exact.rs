@@ -111,6 +111,41 @@ fn main() {
         worst_tv = worst_tv.max(tv);
         worst_ratio = worst_ratio.max((t_fab / t_f64).max(t_f64 / t_fab));
     }
+    // THE PRECISION SWEEP: the knob the RTL does not have, turned exactly. One knob at a time,
+    // the other two held fine enough not to be the limit.
+    println!("\n  PRECISION SWEEP -- exact TV from Boltzmann, one knob at a time (Quantised kernel)\n");
+    println!(
+        "  {:>5}   {:>8} {:>8} {:>8} {:>8}   {:>8} {:>8} {:>8} {:>8}   {:>8} {:>8} {:>8}",
+        "beta", "frac4", "frac6", "frac8", "frac12", "rom6", "rom8", "rom10", "rom12", "prob4", "prob8", "prob16"
+    );
+    println!("  {:>5}   {:>35}   {:>35}   {:>26}", "", "(ROM 10 bits, prob 16)", "(field 12 bits, prob 16)", "(field 12, ROM 12)");
+    for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
+        let pi = boltzmann(&g, beta).expect("small");
+        let gap = |k: Kernel| -> f64 {
+            let (law, steps) = stationary(&g, beta, k, 1e-13, 500_000).expect("small");
+            assert!(steps < 500_000, "the quantised law must converge at beta {beta}");
+            total_variation(&law, &pi)
+        };
+        let frac: Vec<f64> = [4u32, 6, 8, 12]
+            .iter()
+            .map(|&f| gap(Kernel::Quantised { frac_bits: f, lut_bits: 10, prob_bits: 16 }))
+            .collect();
+        let rom: Vec<f64> = [6u32, 8, 10, 12]
+            .iter()
+            .map(|&l| gap(Kernel::Quantised { frac_bits: 12, lut_bits: l, prob_bits: 16 }))
+            .collect();
+        let prob: Vec<f64> = [4u32, 8, 16]
+            .iter()
+            .map(|&p| gap(Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: p }))
+            .collect();
+        println!(
+            "  {beta:>5.2}   {:>8.1e} {:>8.1e} {:>8.1e} {:>8.1e}   {:>8.1e} {:>8.1e} {:>8.1e} {:>8.1e}   {:>8.1e} {:>8.1e} {:>8.1e}",
+            frac[0], frac[1], frac[2], frac[3], rom[0], rom[1], rom[2], rom[3], prob[0], prob[1], prob[2]
+        );
+    }
+    println!("\n  Read each block left to right: the distance a bit buys, exactly, at each temperature. Where a");
+    println!("  block stops falling, that knob has stopped being the limit and one of the other two is.");
+
     println!("\n  WHAT THE TABLE SAYS.\n");
     println!("  TV(fab,B) is the exact distance between what the fabric's arithmetic samples and the Boltzmann");
     println!("  distribution it was programmed for; beta_eff is the temperature whose Boltzmann law it is nearest");

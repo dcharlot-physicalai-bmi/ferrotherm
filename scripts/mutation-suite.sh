@@ -735,6 +735,13 @@ mutations=(
   # to the hardware rather than to a description of it.
   "src/autocorr.rs|            let addr = (fc + 2048) >> 2;|            let addr = (fc + 2048) >> 3;|autocorr::tests::fabric_kernel_matches_the_emulator_in_distribution_and_is_not_boltzmann|a fabric kernel reading the sigmoid ROM at the wrong stride"
 
+
+  # THE SHIPPED PRECISION MUST BE ONE POINT OF THE KNOB, EXACTLY. One bit off in the address
+  # shift is a kernel that runs and converges and is not FixedFabric's; the bit-for-bit equality
+  # of Quantised {8, 10, 16} with the fabric kernel is what sees it, and it is the anchor that ties
+  # every other point of the precision sweep to the hardware that was metered.
+  "src/autocorr.rs|                offset >> (frac_bits + 4 - lut_bits)|                offset >> (frac_bits + 3 - lut_bits)|autocorr::tests::the_quantised_kernel_reduces_to_the_fabric_and_improves_with_bits|a quantised kernel whose ROM address is off by one bit of stride"
+
 )
 
 bad=0
@@ -773,7 +780,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=118
+expected_rows=119
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

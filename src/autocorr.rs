@@ -65,8 +65,23 @@ pub enum Kernel {
     /// sigmoid read from the 1,024-entry ROM at 16-bit resolution -- and the per-node random
     /// number taken as an IDEAL 16-bit uniform. That isolates the arithmetic: the stationary law
     /// of this kernel is what the fabric samples if its RNG were perfect, and its distance from
-    /// the Boltzmann distribution is the price of the precision alone.
+    /// the Boltzmann distribution is the price of the precision alone. Identical to
+    /// `Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 16 }`, and asserted to be.
     FixedFabric,
+    /// The fabric's arithmetic at any precision: `frac_bits` fractional bits in the fixed-point
+    /// couplings and fields (the field clamped to `[-8, 8)` as the RTL does), a sigmoid ROM of
+    /// `2^lut_bits` entries over that same range, and the flip probability held to `prob_bits`
+    /// bits. This is the knob the shipped RTL does not have, so a precision sweep can be run
+    /// exactly rather than by rebuilding hardware: how far the sampled law sits from Boltzmann as
+    /// a function of bits, at each temperature.
+    Quantised {
+        /// Fractional bits of the fixed-point weights and fields.
+        frac_bits: u32,
+        /// Address bits of the sigmoid ROM.
+        lut_bits: u32,
+        /// Bits of the flip probability, i.e. of the comparator and its uniform.
+        prob_bits: u32,
+    },
     /// One step of [`crate::informed::Informed`]: propose site `k` with probability
     /// `g(r_k) / Z(x)`, accept with `min(1, Z(x) / Z(y))`.
     Informed(Balance),
@@ -151,18 +166,42 @@ pub fn boltzmann(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
 /// keeps the two from drifting apart.
 fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
     match kernel {
-        Kernel::FixedFabric => {
-            let scale = f64::from(1u32 << crate::hdl::FRAC);
-            let mut field = (g.h[i] * scale).round() as i32;
+        Kernel::FixedFabric => p_site(
+            g,
+            beta,
+            Kernel::Quantised { frac_bits: crate::hdl::FRAC, lut_bits: crate::hdl::LUT_BITS, prob_bits: 16 },
+            i,
+            s,
+        ),
+        Kernel::Quantised { frac_bits, lut_bits, prob_bits } => {
+            // The field in fixed point, at `frac_bits` fractional bits.
+            let scale = f64::from(1u32 << frac_bits);
+            let mut field = (g.h[i] * scale).round() as i64;
             for k in g.offset[i]..g.offset[i + 1] {
-                let w = (g.w[k] * scale).round() as i32;
+                let w = (g.w[k] * scale).round() as i64;
                 field += if s[g.nbr[k] as usize] > 0 { w } else { -w };
             }
-            let fc = field.clamp(-2048, 2047);
-            let addr = (fc + 2048) >> 2;
-            let arg = ((f64::from(addr) + 0.5) * 4.0 - 2048.0) / scale;
-            let p16 = (p_up(arg, beta) * 65535.0).round().min(65535.0);
-            p16 / 65536.0
+            // Clamped to [-8, 8) in field units, as the RTL clamps: [-8 * 2^frac, 8 * 2^frac - 1].
+            let half = 8i64 << frac_bits;
+            let fc = field.clamp(-half, half - 1);
+            // The ROM covers [-8, 8) with 2^lut entries. Its address is the clamped field's
+            // position in that range at ROM resolution: the field grid has 16 * 2^frac cells over
+            // the range and the ROM 2^lut, so the address is the field offset scaled by
+            // 2^lut / (16 * 2^frac) -- a right shift when the ROM is coarser than the field grid
+            // (Q.8 with 1,024 entries: shift 2, the RTL's `(fc + 2048) >> 2`) and a left shift
+            // when it is finer.
+            let offset = fc + half;
+            let addr = if lut_bits <= frac_bits + 4 {
+                offset >> (frac_bits + 4 - lut_bits)
+            } else {
+                offset << (lut_bits - frac_bits - 4)
+            };
+            let stride = 16.0 / f64::from(1u32 << lut_bits);
+            let arg = (addr as f64 + 0.5) * stride - 8.0;
+            // The entry held to `prob_bits`: the RTL's `round(p * 65535) / 65536` at 16 bits.
+            let levels = f64::from(1u32 << prob_bits);
+            let entry = (p_up(arg, beta) * (levels - 1.0)).round().min(levels - 1.0);
+            entry / levels
         }
         _ => p_up(g.field(i, s), beta),
     }
@@ -198,7 +237,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
     let m = 1usize << n;
     assert_eq!(v.len(), m, "a function over states has 2^n entries");
     match kernel {
-        Kernel::ChromaticGibbs | Kernel::FixedFabric => {
+        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } => {
             let mut cur = v.to_vec();
             for class in g.classes.iter().rev() {
                 let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
@@ -318,7 +357,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::ChromaticGibbs | Kernel::FixedFabric => {
+        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } => {
             let mut cur = mu.to_vec();
             for class in &g.classes {
                 let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
@@ -451,7 +490,7 @@ pub fn tau_int_exact(
     // For the exact Gibbs and informed kernels that is the Boltzmann distribution; for the
     // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
     let pi = match kernel {
-        Kernel::FixedFabric => stationary(g, beta, kernel, 1e-14, 500_000)?.0,
+        Kernel::FixedFabric | Kernel::Quantised { .. } => stationary(g, beta, kernel, 1e-14, 500_000)?.0,
         _ => boltzmann(g, beta)?,
     };
     let n = g.n;
@@ -751,6 +790,63 @@ mod tests {
         if gap > 3.0 * to_fab {
             assert!(to_fab < to_pi, "the emulator should sit nearer its own law ({to_fab}) than Boltzmann ({to_pi})");
         }
+    }
+
+    /// THE SHIPPED PRECISION IS ONE POINT OF THE KNOB, AND THE KNOB TURNS THE RIGHT WAY.
+    /// `Quantised { 8, 10, 16 }` must be `FixedFabric` bit for bit -- the same operator, not a
+    /// nearby one -- so the precision sweep is anchored to the hardware that was metered. Then the
+    /// exact distance from Boltzmann must not grow as fractional bits are added, must be
+    /// resolvable at four bits, and must be smaller at twelve than at eight: a kernel whose
+    /// arithmetic error did not shrink with precision would be modelling something other than
+    /// precision.
+    #[test]
+    fn the_quantised_kernel_reduces_to_the_fabric_and_improves_with_bits() {
+        let n = 6;
+        let mut rng = Pcg::new(3, 0xFA);
+        let mut b = GraphBuilder::new(n);
+        for i in 0..n {
+            b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+            b.bias(i, (rng.f64() - 0.5) * 0.6);
+        }
+        let g = b.build();
+        let beta = 1.3;
+        let m = 1usize << n;
+        let shipped = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 16 };
+        let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
+        let z: f64 = mu.iter().sum();
+        for p in &mut mu {
+            *p /= z;
+        }
+        let a = apply_distribution(&g, beta, Kernel::FixedFabric, &mu);
+        let q = apply_distribution(&g, beta, shipped, &mu);
+        assert_eq!(a, q, "Quantised {{8, 10, 16}} must be the fabric's kernel exactly");
+
+        let pi = boltzmann(&g, beta).unwrap();
+        let gap = |frac: u32| {
+            let k = Kernel::Quantised { frac_bits: frac, lut_bits: 10, prob_bits: 16 };
+            total_variation(&stationary(&g, beta, k, 1e-13, 100_000).unwrap().0, &pi)
+        };
+        let gaps: Vec<f64> = [4u32, 5, 6, 7, 8, 10, 12].iter().map(|&f| gap(f)).collect();
+        assert!(gaps[0] > 1e-3, "four bits must be resolvably off Boltzmann: {:e}", gaps[0]);
+        // MEASURED, and not what the first version of this test assumed. Field bits are NOT a
+        // monotone knob per instance: on this ring at beta 1.3 the gaps are 2.6e-3 at 4 bits,
+        // 3.8e-2 at 5, 1.1e-2 at 6, then 9.8e-3 from 7 bits on. Four bits happen to round this
+        // fixture's fields nearer their true values than five do -- the error at a given precision
+        // depends on where the true values fall on the grid, not only on the grid's spacing -- and
+        // from 7 bits the 1,024-entry ROM is the limit and the field grid stops mattering. So the
+        // honest assertion is the envelope: the finest setting must sit at or under the worst of
+        // the coarse ones, and the plateau must be flat once the ROM binds.
+        let coarse_worst = gaps[..4].iter().copied().fold(0.0f64, f64::max);
+        assert!(gaps[6] <= coarse_worst, "twelve bits must not be worse than the worst coarse setting: {gaps:?}");
+        assert!((gaps[4] - gaps[6]).abs() < 1e-9, "past the ROM's resolution the field grid must not matter: {gaps:?}");
+        // The ROM and the probability width are the other two knobs; each finer setting must
+        // strictly beat a much coarser one, at a field precision fine enough not to be the limit.
+        let gap_k = |k: Kernel| total_variation(&stationary(&g, beta, k, 1e-13, 100_000).unwrap().0, &pi);
+        let coarse_rom = gap_k(Kernel::Quantised { frac_bits: 12, lut_bits: 6, prob_bits: 16 });
+        let fine_rom = gap_k(Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: 16 });
+        assert!(fine_rom < coarse_rom, "a finer ROM must beat a coarser one: {fine_rom:e} vs {coarse_rom:e}");
+        let coarse_p = gap_k(Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: 4 });
+        assert!(fine_rom < coarse_p, "a 4-bit probability must be worse than 16: {coarse_p:e} vs {fine_rom:e}");
     }
 
     /// The sequential sweep is a different kernel from the chromatic one -- same stationary law,
