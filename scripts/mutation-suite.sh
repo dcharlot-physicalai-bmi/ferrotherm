@@ -763,6 +763,7 @@ mutations=(
   "src/certify.rs|            Some(cov) => cov[k] / var,|            Some(cov) => cov[k],|certify::tests::the_fft_path_and_the_direct_sum_agree|a transform-path autocorrelation left unnormalised"
   "src/autocorr.rs|        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, spread, i)),|        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, 0.0 * spread, i)),|autocorr::tests::a_site_temperature_spread_reduces_to_the_sweep_at_zero_and_to_a_product_on_free_sites|a site temperature spread that is never applied"
   "src/autocorr.rs|            sigma += fwd * (fwd / bwd).ln();|            sigma += fwd * fwd.ln();|autocorr::tests::entropy_production_is_zero_for_reversible_kernels_and_positive_for_a_correct_fixed_order_sweep|an entropy production that never looks at the reverse transition"
+  "src/autocorr.rs|    let refined = apply_distribution(g, beta, kernel, &clamped);|    let refined = clamped.clone();|autocorr::tests::the_solved_law_has_no_zero_entries_on_a_cold_grid_and_the_sweep_produces_finite_entropy|a solved law whose small entries are the solve's noise, clamped"
 
 )
 
@@ -802,7 +803,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=133
+expected_rows=134
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

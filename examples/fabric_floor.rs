@@ -8,10 +8,12 @@
 // tau ratio that way was wrong. The suspect is the 16-bit comparator. A flip probability is
 // round(p * 65535) / 65536, so the probability of the UNLIKELY state is quantised to multiples of
 // 2^-16 = 1.53e-5: rounded to exactly 0 below 7.6e-6 when the unlikely state is +1, and never
-// below 1.53e-5 when it is -1, because the entry cannot exceed 65535. At beta 3 a flip against a
-// field of 4.2 has exact probability 3.4e-6; the fabric makes it 0 on one side and 1.53e-5 -- 4.5x
-// too likely -- on the other, and an escape from a metastable valley that needs several such
-// flips compounds the factor. If that is the mechanism, the K ratio must return to 1 as the
+// below 1.53e-5 when it is -1, because the entry cannot exceed 65535. The unlikely state's
+// probability is sigma(-2 beta f), the heat bath's factor of two included, so the zero arrives once
+// 2 beta f > 11.8: at beta 2 every field above 2.95 forbids its flip, and at beta 3 a flip against a
+// field of 4.2 (exact 1e-11) is 0 on one side and 1.53e-5 -- a million times too likely -- on the
+// other; an escape from a metastable valley that needs several such flips compounds the factor.
+// If that is the mechanism, the K ratio must return to 1 as the
 // comparator gains bits with the field and ROM bits held at the shipped 8 and 10 -- and it must
 // not as the field or ROM bits grow with the comparator held at 16.
 //

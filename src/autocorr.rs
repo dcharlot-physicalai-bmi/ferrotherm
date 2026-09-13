@@ -71,11 +71,15 @@
 //! `0.026` at 16, `0.315` at 20 and `0.946` at 24; at `beta = 2` it is `0.221, 0.930, 0.978,
 //! 0.987`; and 12 field bits with a 4,096-entry ROM at 16 comparator bits leave it at `0.939`. The
 //! comparator is the whole effect. Its floor is `2^-16 = 1.53e-5`: `round(p * 65535) / 65536`
-//! rounds the probability of the unlikely state to 0 below `7.6e-6` when that state is `+1`, and
-//! never below `1.53e-5` when it is `-1`, because the entry cannot exceed 65535. At `beta = 3` a
-//! flip against a field of 4.2 has exact probability `3.4e-6`; the fabric makes it impossible on
-//! one side and 4.5x too likely on the other, and an escape from a metastable valley that needs
-//! several such flips compounds the factor. The same floor caps the law: in the precision sweep
+//! rounds the probability of the unlikely state — `sigma(-2 beta f)`, with the heat bath's factor
+//! of two — to 0 below `7.6e-6`, that is once `2 beta f > 11.8`, when that state is `+1`, and never
+//! below `1.53e-5` when it is `-1`, because the entry cannot exceed 65535. At `beta = 2` every
+//! field above `2.95` already forbids its flip: on the 4x3 grid 6.2 million of the 16.8 million
+//! transitions are one-way and 848 states unreachable, so the fabric's entropy production there
+//! is infinite; and at `beta = 3` a flip against a field of 4.2, exact probability `1e-11`, is
+//! impossible on one side and `1.53e-5` — a million times too likely — on the other. An escape
+//! from a metastable valley that needs several such flips compounds the factor. The same floor
+//! caps the law: in the precision sweep
 //! at `beta >= 2`, raising the field or ROM bits past the shipped values does not move TV below
 //! `7e-3` while the comparator holds 16 bits (the coarser settings that do better there do so by
 //! where this fixture's values fall on their grid), and 24 comparator bits alone take it to
@@ -930,9 +934,17 @@ pub fn stationary_solved(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64
     if !lu_solve(&mut a, m, &mut b, 1) {
         return Err(AutocorrError::Reducible);
     }
-    // Elimination can leave a state of vanishing mass a hair below zero; a law is not.
-    let total: f64 = b.iter().map(|v| v.max(0.0)).sum();
-    Ok(b.iter().map(|v| v.max(0.0) / total).collect())
+    // Elimination is accurate to an ABSOLUTE 1e-16 or so, which on a cold chain is larger than the
+    // mass of many states: those come back as noise of either sign, and clamping the negatives to
+    // zero left states with positive inflow at exactly zero mass -- an entropy production of
+    // +inf for stale reads at beta 2 that was the clamp, not the kernel (2026-09-13).
+    // One push of the clamped law through the kernel rebuilds every small entry as a sum of
+    // positive terms, accurate in RELATIVE terms, and leaves the large ones where the solve put
+    // them.
+    let clamped: Vec<f64> = b.iter().map(|v| v.max(0.0)).collect();
+    let refined = apply_distribution(g, beta, kernel, &clamped);
+    let total: f64 = refined.iter().sum();
+    Ok(refined.iter().map(|v| v / total).collect())
 }
 
 /// The exact integrated autocorrelation time by the FUNDAMENTAL MATRIX `Z = (I - P + 1 pi^T)^-1`
@@ -1799,5 +1811,33 @@ mod tests {
         let law = own_law(&g, beta, Kernel::ChromaticGibbs).unwrap();
         let pushed = apply_distribution(&g, beta, Kernel::ChromaticGibbs, &law);
         assert!(total_variation(&pushed, &law) < 1e-13, "and still be invariant");
+    }
+
+    /// On a cold grid the smallest stationary masses are far below the solve's absolute accuracy,
+    /// and a law with a zero where inflow is positive is not a law: every entry of the solved law
+    /// must be positive, and the correct sweep's entropy production finite -- the fabric's +inf at
+    /// `beta = 2` was this defect for stale reads; for the fabric it is real, its comparator forbidding
+    /// flips once `2 beta f > 11.8`.
+    #[test]
+    fn the_solved_law_has_no_zero_entries_on_a_cold_grid_and_the_sweep_produces_finite_entropy() {
+        let g = grid_glass(3, 3, 5);
+        let beta = 3.0;
+        let law = stationary_solved(&g, beta, Kernel::ChromaticGibbs).unwrap();
+        let smallest = law.iter().copied().fold(f64::INFINITY, f64::min);
+        assert!(smallest > 0.0, "a state with positive inflow has positive mass, not {smallest:e}");
+        // The solve's absolute accuracy is the machine epsilon times the chain's conditioning,
+        // and at beta 3 this grid's relaxation time is in the millions of sweeps, so the law is
+        // Boltzmann to 1e-7 or so here, not to the 1e-12 of the warm tests.
+        let b = boltzmann(&g, beta).unwrap();
+        let gap = total_variation(&law, &b);
+        assert!(gap < 1e-6, "cold solve vs Boltzmann: {gap:e}");
+        let sigma = entropy_production(&g, beta, Kernel::ChromaticGibbs).unwrap();
+        assert!(sigma.is_finite(), "the exact sweep has no forbidden flip at any beta; Sigma = {sigma}");
+        // Stale reads mix heat-bath probabilities, all in (0, 1), so every transition has a
+        // reverse and the +inf this reported at beta 2 was the clamp. (The fabric's +inf there is
+        // real: its comparator forbids a flip once 2 beta f > 11.8, which a field of 2.95 reaches
+        // at beta 2.)
+        let sigma = entropy_production(&g, 2.0, Kernel::Stale { p: 0.1 }).unwrap();
+        assert!(sigma.is_finite(), "stale reads at beta 2 have no forbidden flip; Sigma = {sigma}");
     }
 }
