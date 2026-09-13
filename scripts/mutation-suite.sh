@@ -761,6 +761,7 @@ mutations=(
   "src/fft.rs|        let ang = if inverse { TAU / len as f64 } else { -TAU / len as f64 };|        let ang = if inverse { TAU / len as f64 } else { TAU / len as f64 };|fft::tests::the_transform_matches_the_direct_dft_and_inverts|a forward transform with the inverse's twiddle sign"
   "src/fft.rs|    let m = (2 * n).next_power_of_two();|    let m = n.next_power_of_two();|fft::tests::the_autocovariance_matches_the_direct_sum_lag_by_lag_and_sokal_agrees|an autocovariance without zero padding, so the lags wrap"
   "src/certify.rs|            Some(cov) => cov[k] / var,|            Some(cov) => cov[k],|certify::tests::the_fft_path_and_the_direct_sum_agree|a transform-path autocorrelation left unnormalised"
+  "src/autocorr.rs|        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, spread, i)),|        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, 0.0 * spread, i)),|autocorr::tests::a_site_temperature_spread_reduces_to_the_sweep_at_zero_and_to_a_product_on_free_sites|a site temperature spread that is never applied"
 
 )
 
@@ -800,7 +801,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=131
+expected_rows=132
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

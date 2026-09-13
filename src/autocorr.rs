@@ -169,6 +169,19 @@ pub enum Kernel {
         /// Probability that a read of an already-updated neighbour returns its pre-sweep value.
         p: f64,
     },
+    /// The chromatic sweep with every p-bit at its OWN temperature: site `i` samples its heat-bath
+    /// conditional at `beta * exp(spread * z_i)`, `z_i` a standard normal drawn from `seed` -- the
+    /// gain (MTJ 'alpha') spread of a fabric whose sigmoid slopes differ cell to cell. The sweep
+    /// has no common invariant law: each site's update is reversible only for its own
+    /// temperature, and a Boltzmann law with couplings `beta_i J_ij` would have to be symmetric in
+    /// `i` and `j`, so the stationary law is not the Boltzmann distribution of any pair.
+    /// [`stationary_solved`] gives it; `examples/spread_exact.rs` measures how far, and from what.
+    SiteSpread {
+        /// Seed of the per-site factors.
+        seed: u64,
+        /// Standard deviation of `ln(beta_i / beta)`.
+        spread: f64,
+    },
     /// One two-phase sweep of the shipped p-bit fabric, [`crate::hdl::FixedFabric`]: the same
     /// colour classes as [`Kernel::ChromaticGibbs`], but every site's flip probability is what the
     /// RTL computes -- couplings and fields rounded to Q.8, the field clamped to `[-8, 8)`, the
@@ -321,6 +334,18 @@ pub fn boltzmann(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
 
 /// The probability site `i` comes up `+1` when resampled, under the kernel's arithmetic.
 ///
+/// The per-site temperature factor of [`Kernel::SiteSpread`]: `exp(spread * z_i)` with `z_i` a
+/// standard normal from `seed` and the site index, by Box-Muller on a private stream, so the same
+/// `(seed, spread)` names the same fabric in every call.
+#[must_use]
+pub fn site_factor(seed: u64, spread: f64, i: usize) -> f64 {
+    let mut r = crate::rng::Pcg::new(seed.wrapping_add(1_000 * i as u64 + 1), 0x5B);
+    let u1 = r.f64().max(1e-300);
+    let u2 = r.f64();
+    let z = (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos();
+    (spread * z).exp()
+}
+
 /// Exact heat bath for the Gibbs kernels. For [`Kernel::FixedFabric`] it reproduces
 /// [`crate::hdl::FixedFabric`] step by step: couplings and fields rounded to Q.8 (`FRAC` bits),
 /// the integer field clamped to `[-2048, 2047]`, the ROM address `(field + 2048) >> 2`, the ROM
@@ -375,6 +400,7 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             let entry = (p_up(arg, beta) * (levels - 1.0)).round().min(levels - 1.0);
             entry / levels
         }
+        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, spread, i)),
         Kernel::Pimi { xi, eta } => {
             let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;
             0.5 * (1.0 + crate::hopfield::erf(z / std::f64::consts::SQRT_2))
@@ -447,7 +473,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
     let m = 1usize << n;
     assert_eq!(v.len(), m, "a function over states has 2^n entries");
     match kernel {
-        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } => {
+        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
             let mut cur = v.to_vec();
             for class in g.classes.iter().rev() {
                 let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
@@ -613,7 +639,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } => {
+        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
             let mut cur = mu.to_vec();
             for class in &g.classes {
                 let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
@@ -932,7 +958,7 @@ pub fn tau_int_fundamental(
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } => {
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
             stationary_solved(g, beta, kernel)?
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -991,7 +1017,7 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } => {
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
             stationary_solved(g, beta, kernel)?
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -1037,7 +1063,7 @@ pub fn tau_int_exact(
     // For the exact Gibbs and informed kernels that is the Boltzmann distribution; for the
     // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } => {
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
             stationary(g, beta, kernel, 1e-14, 500_000)?.0
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -1265,6 +1291,7 @@ mod tests {
             Kernel::Synchronous,
             Kernel::Pimi { xi: 0.3, eta: 0.7 },
             Kernel::Stale { p: 0.3 },
+            Kernel::SiteSpread { seed: 2, spread: 0.3 },
         ] {
             for _ in 0..4 {
                 let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
@@ -1286,7 +1313,7 @@ mod tests {
             let law = match kernel {
                 Kernel::FixedFabric => None,
                 Kernel::Synchronous => Some(peretto(&g, beta).unwrap()),
-                Kernel::Pimi { .. } | Kernel::Stale { .. } => Some(stationary_solved(&g, beta, kernel).unwrap()),
+                Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => Some(stationary_solved(&g, beta, kernel).unwrap()),
                 _ => Some(pi.clone()),
             };
             if let Some(law) = law {
@@ -1640,5 +1667,44 @@ mod tests {
         assert!(total_variation(&law, &b) > 1e-3, "p = 0.3 must not be Boltzmann");
         assert!(total_variation(&law, &pe) > 1e-3, "p = 0.3 must not be Peretto");
         assert!(total_variation(&law, &b) < total_variation(&pe, &b), "p = 0.3 must sit nearer Boltzmann than p = 1");
+    }
+
+    /// Zero spread is the chromatic sweep operator for operator; free sites at their own
+    /// temperatures have the product of their own marginals `sigma(2 beta_i h_i)` as law, exactly;
+    /// and a coupled grid with spread is resolvably not Boltzmann at the nominal temperature.
+    #[test]
+    fn a_site_temperature_spread_reduces_to_the_sweep_at_zero_and_to_a_product_on_free_sites() {
+        let g = grid_glass(3, 3, 6);
+        let beta = 1.1;
+        let m = 1usize << g.n;
+        let mut rng = Pcg::new(4, 4);
+        let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
+        let z: f64 = mu.iter().sum();
+        for q in &mut mu {
+            *q /= z;
+        }
+        let none = apply_distribution(&g, beta, Kernel::SiteSpread { seed: 7, spread: 0.0 }, &mu);
+        let sweep = apply_distribution(&g, beta, Kernel::ChromaticGibbs, &mu);
+        assert!(total_variation(&none, &sweep) < 1e-13, "zero spread must be the chromatic sweep");
+        let spread = Kernel::SiteSpread { seed: 7, spread: 0.3 };
+        let law = stationary_solved(&g, beta, spread).unwrap();
+        let b = boltzmann(&g, beta).unwrap();
+        assert!(total_variation(&law, &b) > 1e-3, "a spread of 0.3 must move the law off Boltzmann");
+        let mut fb = GraphBuilder::new(4);
+        for i in 0..4 {
+            fb.bias(i, 0.2 * (i as f64 + 1.0));
+        }
+        let free = fb.build();
+        let law = stationary_solved(&free, beta, spread).unwrap();
+        for (x, &lx) in law.iter().enumerate() {
+            let s = spins(x, 4);
+            let want: f64 = (0..4)
+                .map(|i| {
+                    let p = p_up(free.h[i], beta * site_factor(7, 0.3, i));
+                    if s[i] > 0 { p } else { 1.0 - p }
+                })
+                .product();
+            assert!((lx - want).abs() < 1e-12, "state {x}: solved {lx} vs product {want}");
+        }
     }
 }
