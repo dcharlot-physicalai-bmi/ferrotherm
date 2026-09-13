@@ -746,7 +746,10 @@ mutations=(
   # dense solves replace them. Each row breaks one identity the solve rests on.
   "src/autocorr.rs|    let tau = total / c0 - 0.5;|    let tau = total / c0;|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental-matrix tau that forgets the half"
   "src/autocorr.rs|        a[(m - 1) * m + c] = 1.0;|        a[(m - 1) * m + c] = 0.0;|autocorr::tests::the_direct_solve_reproduces_boltzmann_for_gibbs_and_the_iterated_law_for_the_fabric|a stationary solve without its normalisation"
-  "src/autocorr.rs|            a[x * m + y] = delta - p + pi[y];|            a[x * m + y] = delta - p - pi[y];|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental matrix built with the wrong sign on pi"
+  # The sign of the rank-one term is NOT a mutation: pi^T z = 0 for the solution, so I - P + c pi 1^T
+  # has the same solution for every c != 0 and a test cannot see the sign. Tried, STILL GREEN,
+  # and correctly so -- an equivalent mutant. Dropping the term is the defect: I - P is singular.
+  "src/autocorr.rs|            a[x * m + y] = delta - p + pi[y];|            a[x * m + y] = delta - p;|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental matrix without its rank-one term, which is singular"
 
 )
 
