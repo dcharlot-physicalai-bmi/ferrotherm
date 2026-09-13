@@ -99,6 +99,25 @@ pub struct Fabric {
 ///
 /// This started as a bare `Option<u32>` bit count, which could describe Hitachi's four-bit integers
 /// and could not describe Toshiba's float32 at all.
+///
+/// # What the two models cost, measured
+///
+/// `examples/requant_exact.rs` requantises a 12-spin grid exactly as [`Fabric::requantize`] does and
+/// compares the Boltzmann law of the loaded Hamiltonian with the one asked for, on all `2^12`
+/// states, across dynamic ranges `max|J| / min|J|` of 1 to 64 and two absolute scales. Under
+/// [`Precision::Fixed`] the loss is set by the BITS and not by the dynamic range: the slope of
+/// `log TV` against `log R` is `0.00` to `0.07` at every bit count and temperature, and TV at
+/// `beta = 1` is `0.14` to `0.16` at 3 bits, `0.05` to `0.08` at 4, `0.011` to `0.017` at 6 and
+/// `3e-3` to `4e-3` at 8 whatever `R` is — a coupling a sixty-fourth the size of the largest is
+/// rounded away and the law barely notices, because it was small. Under [`Precision::Grid`] the
+/// loss follows `min|J| / step` (slope `-0.2` to `-0.4`), and the matched pair at an eighth of the
+/// scale differs by up to ten times: at `R = 1` and `beta = 0.5` a step of a quarter gives TV
+/// `0.047` at scale 1 and `0.45` at scale an eighth, where every coefficient rounds to zero and
+/// the law is uniform. The dynamic-range premise is what an absolute grid shows, through
+/// `min|J| = scale / R`; a normalising fabric does not show it. On the sampling-fidelity knee:
+/// four normalising bits hold KL under `1.5e-3` nats per spin at `beta = 1` and three bits under
+/// `7e-3`, both below the `0.01` that the four-bit fabrics claim; at `beta = 2` three bits exceed it
+/// and four do not.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Precision {
     /// Every `f64` arrives intact. A simulator, not a machine.
