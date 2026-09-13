@@ -36,7 +36,9 @@
 //! and [`tau_int_fundamental`] replace the iterations with one dense linear solve each — the
 //! stationary law as the null vector of `I − P`, and `Σ_k C(k)` through the fundamental matrix
 //! `(I − P + 1 πᵀ)⁻¹` of Kemeny and Snell — at a cost that does not depend on the temperature,
-//! up to [`MAX_DENSE_SPINS`].
+//! up to [`MAX_DENSE_SPINS`]. The same matrix gives [`kemeny_constant`], the sum of every mode's
+//! relaxation time: a mixing measure of the kernel alone, where `tau_int` is of one observable
+//! under one law and can fall when the law moves mass out of a slow valley.
 //!
 //! # What it is for
 //!
@@ -502,19 +504,19 @@ pub fn total_variation(p: &[f64], q: &[f64]) -> f64 {
 /// further spin is 4x the memory and 8x the time, and at [`MAX_SPINS`] it would be 34 GB.
 pub const MAX_DENSE_SPINS: usize = 12;
 
-/// Solve `a x = b` in place by Gaussian elimination with partial pivoting. `a` is `m x m`
-/// row-major and is destroyed; the solution replaces `b`. `false` when a pivot falls below
-/// `1e-14` -- singular to floating point, which for the systems built here means a kernel with
-/// more than one closed class.
-fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64]) -> bool {
+/// Solve `a x = b` in place by Gaussian elimination with partial pivoting, for `r` right-hand
+/// sides at once: `a` is `m x m` row-major and is destroyed, `b` is `m x r` row-major and is
+/// replaced by the solution. `false` when a pivot falls below `1e-14` -- singular to floating
+/// point, which for the systems built here means a kernel with more than one closed class.
+fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64], r: usize) -> bool {
     for k in 0..m {
         let mut piv = k;
         let mut best = a[k * m + k].abs();
-        for r in k + 1..m {
-            let v = a[r * m + k].abs();
+        for row in k + 1..m {
+            let v = a[row * m + k].abs();
             if v > best {
                 best = v;
-                piv = r;
+                piv = row;
             }
         }
         if best < 1e-14 {
@@ -523,13 +525,15 @@ fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64]) -> bool {
         if piv != k {
             let (lo, hi) = a.split_at_mut(piv * m);
             lo[k * m..(k + 1) * m].swap_with_slice(&mut hi[..m]);
-            b.swap(k, piv);
+            let (blo, bhi) = b.split_at_mut(piv * r);
+            blo[k * r..(k + 1) * r].swap_with_slice(&mut bhi[..r]);
         }
         let (top, rest) = a.split_at_mut((k + 1) * m);
         let row_k = &top[k * m..(k + 1) * m];
         let pk = row_k[k];
-        let bk = b[k];
-        for (ri, row) in rest.chunks_exact_mut(m).enumerate() {
+        let (btop, brest) = b.split_at_mut((k + 1) * r);
+        let b_k = &btop[k * r..(k + 1) * r];
+        for (row, brow) in rest.chunks_exact_mut(m).zip(brest.chunks_exact_mut(r)) {
             let f = row[k] / pk;
             if f == 0.0 {
                 continue;
@@ -538,12 +542,27 @@ fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64]) -> bool {
             for (rc, &kc) in row[k + 1..].iter_mut().zip(&row_k[k + 1..]) {
                 *rc -= f * kc;
             }
-            b[k + 1 + ri] -= f * bk;
+            for (bc, &kc) in brow.iter_mut().zip(b_k) {
+                *bc -= f * kc;
+            }
         }
     }
     for k in (0..m).rev() {
-        let s: f64 = a[k * m + k + 1..(k + 1) * m].iter().zip(&b[k + 1..]).map(|(x, y)| x * y).sum();
-        b[k] = (b[k] - s) / a[k * m + k];
+        let (above, below) = b.split_at_mut((k + 1) * r);
+        let bk = &mut above[k * r..(k + 1) * r];
+        for (c, brow) in below.chunks_exact(r).enumerate() {
+            let akc = a[k * m + k + 1 + c];
+            if akc == 0.0 {
+                continue;
+            }
+            for (x, &y) in bk.iter_mut().zip(brow) {
+                *x -= akc * y;
+            }
+        }
+        let akk = a[k * m + k];
+        for x in bk.iter_mut() {
+            *x /= akk;
+        }
     }
     true
 }
@@ -591,7 +610,7 @@ pub fn stationary_solved(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64
     }
     let mut b = vec![0.0f64; m];
     b[m - 1] = 1.0;
-    if !lu_solve(&mut a, m, &mut b) {
+    if !lu_solve(&mut a, m, &mut b, 1) {
         return Err(AutocorrError::Reducible);
     }
     // Elimination can leave a state of vanishing mass a hair below zero; a law is not.
@@ -650,7 +669,7 @@ pub fn tau_int_fundamental(
         }
     });
     let mut z = e.clone();
-    if !lu_solve(&mut a, m, &mut z) {
+    if !lu_solve(&mut a, m, &mut z, 1) {
         return Err(AutocorrError::Reducible);
     }
     let total: f64 = pi.iter().zip(&e).zip(&z).map(|((p, x), y)| p * x * y).sum();
@@ -663,6 +682,48 @@ pub fn tau_int_fundamental(
         rho.push(ck / c0);
     }
     Ok(Autocorrelation { tau_int: tau, lags: 0, rho, variance: c0 })
+}
+
+/// Kemeny's constant of the kernel: `K = sum_{i >= 2} 1 / (1 - lambda_i)` over the non-unit
+/// eigenvalues of `P`, equal to `trace(Z) - 1` for the fundamental matrix `Z = (I - P + 1 pi^T)^-1`
+/// and to the expected number of steps to reach a `pi`-random target from any start (Kemeny and
+/// Snell 1960; the start-independence is Kemeny's theorem). It is the sum of the relaxation times
+/// of EVERY mode, so it is a mixing measure that belongs to the kernel alone. `tau_int` is not:
+/// it weights each mode by the share of one observable's variance that mode carries, so a law
+/// that moves mass OUT of a slow valley lowers `tau_int` without touching the crossing rate, and
+/// two kernels with different invariant laws can differ in `tau_int` by a factor that says nothing
+/// about how fast either relaxes. `K` cannot fall that way. Costs a full inverse -- `2^n`
+/// right-hand sides, about four times [`tau_int_fundamental`].
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManyForDense`] above [`MAX_DENSE_SPINS`]; [`AutocorrError::Reducible`] for
+/// a kernel without a unique invariant law.
+pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, AutocorrError> {
+    if g.n > MAX_DENSE_SPINS {
+        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+    }
+    let pi = match kernel {
+        Kernel::FixedFabric | Kernel::Quantised { .. } => stationary_solved(g, beta, kernel)?,
+        _ => boltzmann(g, beta)?,
+    };
+    let m = 1usize << g.n;
+    let mut a = vec![0.0f64; m * m];
+    kernel_rows(g, beta, kernel, |x, row| {
+        for (y, &p) in row.iter().enumerate() {
+            let delta = if x == y { 1.0 } else { 0.0 };
+            a[x * m + y] = delta - p + pi[y];
+        }
+    });
+    let mut z = vec![0.0f64; m * m];
+    for i in 0..m {
+        z[i * m + i] = 1.0;
+    }
+    if !lu_solve(&mut a, m, &mut z, m) {
+        return Err(AutocorrError::Reducible);
+    }
+    let trace: f64 = (0..m).map(|i| z[i * m + i]).sum();
+    Ok(trace - 1.0)
 }
 
 /// The exact integrated autocorrelation time of `observable` under `kernel` at `beta`.
@@ -1144,5 +1205,30 @@ mod tests {
             solved.tau_int,
             cut.tau_int
         );
+    }
+
+    /// Two closed forms. A single site resampled every sweep has `P = 1 pi^T`: one non-unit
+    /// eigenvalue, at 0, so `K = 1`. Three UNCOUPLED sites under either sweep are the same thing on
+    /// eight states -- `P` is rank one, seven eigenvalues at 0 -- so `K = 7`. And coupling makes a
+    /// kernel slower: on the chromatic sweep every non-unit eigenvalue is real and in `[0, 1)` (a
+    /// product of two projections in `L^2(pi)`), so every term is at least 1 and `K > m - 1`.
+    #[test]
+    fn kemenys_constant_has_its_closed_forms_on_memoryless_kernels() {
+        let mut b = GraphBuilder::new(1);
+        b.bias(0, 0.3);
+        let k = kemeny_constant(&b.build(), 1.0, Kernel::ChromaticGibbs).unwrap();
+        assert!((k - 1.0).abs() < 1e-12, "single site: {k}");
+        let mut b = GraphBuilder::new(3);
+        for i in 0..3 {
+            b.bias(i, 0.1 * (i as f64 + 1.0));
+        }
+        let free = b.build();
+        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs] {
+            let k = kemeny_constant(&free, 1.0, kernel).unwrap();
+            assert!((k - 7.0).abs() < 1e-11, "{kernel:?} on three free sites: {k}");
+        }
+        let g = grid_glass(2, 2, 3);
+        let k = kemeny_constant(&g, 1.0, Kernel::ChromaticGibbs).unwrap();
+        assert!(k > 15.0, "a coupled 2x2 grid must be slower than memoryless: K = {k}");
     }
 }

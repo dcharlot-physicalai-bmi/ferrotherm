@@ -26,7 +26,7 @@
 //
 // run: cargo run --release --example fabric_exact
 
-use ferrotherm::autocorr::{boltzmann, stationary_solved, tau_int_fundamental, total_variation, Kernel};
+use ferrotherm::autocorr::{boltzmann, kemeny_constant, stationary_solved, tau_int_fundamental, total_variation, Kernel};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -87,11 +87,12 @@ fn main() {
              ferrotherm::hdl::FRAC, 1usize << ferrotherm::hdl::LUT_BITS);
     println!("  oracle   autocorr::stationary_solved and tau_int_fundamental: one direct solve per law, no iteration, no lag budget\n");
     println!(
-        "  {:>5}   {:>10} {:>9} {:>10}   {:>10} {:>10} {:>7}",
-        "beta", "TV(fab,B)", "beta_eff", "TV at eff", "tau fabric", "tau f64", "ratio"
+        "  {:>5}   {:>10} {:>9} {:>10}   {:>12} {:>12} {:>7}   {:>12} {:>12} {:>7}",
+        "beta", "TV(fab,B)", "beta_eff", "TV at eff", "tau fabric", "tau f64", "ratio", "K fabric", "K f64", "ratio"
     );
     let mut worst_tv = 0.0f64;
     let mut worst_ratio = 1.0f64;
+    let mut worst_k = 1.0f64;
     for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
         let fab = stationary_solved(&g, beta, Kernel::FixedFabric).expect("small");
         let pi = boltzmann(&g, beta).expect("small");
@@ -99,12 +100,16 @@ fn main() {
         let (b_eff, tv_eff) = nearest_beta(&g, &fab, 0.25 * beta, 2.0 * beta);
         let t_fab = tau_int_fundamental(&g, beta, Kernel::FixedFabric, |s| g.energy(s)).expect("small").tau_int;
         let t_f64 = tau_int_fundamental(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).expect("small").tau_int;
+        let k_fab = kemeny_constant(&g, beta, Kernel::FixedFabric).expect("small");
+        let k_f64 = kemeny_constant(&g, beta, Kernel::ChromaticGibbs).expect("small");
         println!(
-            "  {beta:>5.2}   {tv:>10.3e} {b_eff:>9.4} {tv_eff:>10.3e}   {t_fab:>10.2} {t_f64:>10.2} {:>7.3}",
-            t_fab / t_f64
+            "  {beta:>5.2}   {tv:>10.3e} {b_eff:>9.4} {tv_eff:>10.3e}   {t_fab:>12.4e} {t_f64:>12.4e} {:>7.3}   {k_fab:>12.4e} {k_f64:>12.4e} {:>7.3}",
+            t_fab / t_f64,
+            k_fab / k_f64
         );
         worst_tv = worst_tv.max(tv);
         worst_ratio = worst_ratio.max((t_fab / t_f64).max(t_f64 / t_fab));
+        worst_k = worst_k.max((k_fab / k_f64).max(k_f64 / k_fab));
     }
     // THE PRECISION SWEEP: the knob the RTL does not have, turned exactly. One knob at a time,
     // the other two held fine enough not to be the limit.
@@ -145,6 +150,10 @@ fn main() {
     println!("  to, and TV at eff what remains after that shift -- the part no temperature correction removes.");
     println!("  tau fabric / tau f64 is how far the emulator's mixing time sits from the exact kernel's; a ratio");
     println!("  near 1 is what lets `fabric_vs_cpu` use the emulator's tau in the fabric's price per independent");
-    println!("  sample.");
-    println!("\n  Worst TV over the five temperatures: {worst_tv:.3e}; worst tau ratio either way: {worst_ratio:.3}.");
+    println!("  sample. K is Kemeny's constant, the sum of every mode's relaxation time, a property of the kernel");
+    println!("  alone: tau_int weights each mode by the share of the ENERGY's variance it carries, so a law that");
+    println!("  moves mass out of a slow valley lowers tau without touching any crossing rate. K cannot fall that");
+    println!("  way, so where the two ratios disagree, the tau ratio is about the two laws and the K ratio about");
+    println!("  the two kernels.");
+    println!("\n  Worst TV over the five temperatures: {worst_tv:.3e}; worst tau ratio either way: {worst_ratio:.3}; worst K ratio either way: {worst_k:.3}.");
 }
