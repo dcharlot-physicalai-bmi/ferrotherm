@@ -113,7 +113,16 @@ pub enum Kernel {
     /// nodes update on the same clock edge with no colouring. Its stationary law is not the
     /// Boltzmann distribution even on a bipartite graph: for symmetric couplings it is Peretto's
     /// closed form `pi(x) ∝ exp(beta h·x) prod_i 2 cosh(beta f_i(x))`, which [`peretto`] computes
-    /// and the invariance test checks.
+    /// and the invariance test checks. `examples/synchronous_exact.rs` measures how far: on the 4x3
+    /// grid the same-tick law is TV `0.61, 0.43, 0.33, 0.24, 0.12` from Boltzmann at
+    /// `beta = 0.5, 1, 1.5, 2, 3`, a factor of 100 to 300 above the shipped fabric's arithmetic
+    /// error, and no single temperature repairs it (TV at the nearest `beta` is `0.55, 0.42, 0.33,
+    /// 0.24, 0.12`); on a 12-ring with three chords, so with odd cycles, it is `0.64, 0.93, 0.99,
+    /// 0.999, 1.000` -- disjoint from Boltzmann when cold. Per site update it relaxes 1.0 to 3.0x
+    /// slower than the chromatic sweep on the grid. On a bipartite graph the two sublattices never
+    /// see each other at the same tick (`x_A(t + 1)` depends on `x_B(t)`), so the same-tick joint
+    /// carries no cross-sublattice correlation at all; reading `A` at `t` and `B` at `t + 1` IS the
+    /// chromatic sweep, which is why the fabric colours.
     Synchronous,
     /// The PIMI rule of Zhu, Singh et al. (arXiv:2604.17109, 2026), fully synchronous:
     /// `s_i(t+1) = sign[tanh(beta f_i(x)) + xi s_i(t) + eta N(0, 1)]`, every site at once from the
