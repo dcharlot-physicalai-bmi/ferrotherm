@@ -53,6 +53,28 @@
 //! and the comparator's floor are both in play. The single effective temperature that
 //! `examples/fabric_exact.rs` reports is the one-parameter version of the same projection.
 //!
+//! # How fast the fabric relaxes, and why
+//!
+//! `examples/fabric_exact.rs` on the same grid, both kernels exact: at `beta = 0.5, 1, 1.5, 2` the
+//! fabric's Kemeny constant is `1.000, 0.999, 0.972, 0.930` of the exact kernel's, and at
+//! `beta = 3` it is `0.026` — the fabric's slowest mode is 39x FASTER than the exact chain's, and
+//! `tau_int` of the energy agrees (`0.024`), so this is the kernel, not the weighting of an
+//! observable. `examples/fabric_floor.rs` finds the cause by turning one knob. With the field at
+//! Q.8 and the ROM at 1,024 entries, the ratio at `beta = 3` is `0.001` with a 12-bit comparator,
+//! `0.026` at 16, `0.315` at 20 and `0.946` at 24; at `beta = 2` it is `0.221, 0.930, 0.978,
+//! 0.987`; and 12 field bits with a 4,096-entry ROM at 16 comparator bits leave it at `0.939`. The
+//! comparator is the whole effect. Its floor is `2^-16 = 1.53e-5`: `round(p * 65535) / 65536`
+//! rounds the probability of the unlikely state to 0 below `7.6e-6` when that state is `+1`, and
+//! never below `1.53e-5` when it is `-1`, because the entry cannot exceed 65535. At `beta = 3` a
+//! flip against a field of 4.2 has exact probability `3.4e-6`; the fabric makes it impossible on
+//! one side and 4.5x too likely on the other, and an escape from a metastable valley that needs
+//! several such flips compounds the factor. The same floor caps the law: in the precision sweep
+//! at `beta >= 2`, raising the field or ROM bits past the shipped values does not move TV below
+//! `7e-3` while the comparator holds 16 bits (the coarser settings that do better there do so by
+//! where this fixture's values fall on their grid), and 24 comparator bits alone take it to
+//! `1.2e-3`. The engineering change that moves every cold-fabric number in this crate is a wider
+//! comparator.
+//!
 //! # What it is for
 //!
 //! Two things. It is the reference every autocorrelation ESTIMATOR in this crate is scored
@@ -217,8 +239,16 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             s,
         ),
         Kernel::Quantised { frac_bits, lut_bits, prob_bits } => {
+            // The widths are powers of two in f64, not integer shifts: `1u32 << 32` wraps to 1 in
+            // release and turned a 32-bit comparator into one with a single level, every site
+            // certain to be -1 (found by `examples/fabric_floor.rs`, 2026-09-13). The guard is the
+            // range the i64 field arithmetic below can hold.
+            assert!(
+                frac_bits <= 40 && lut_bits <= 40 && prob_bits <= 52,
+                "Quantised kernel bits out of range: frac {frac_bits}, lut {lut_bits}, prob {prob_bits} (at most 40, 40 and 52)"
+            );
             // The field in fixed point, at `frac_bits` fractional bits.
-            let scale = f64::from(1u32 << frac_bits);
+            let scale = 2f64.powi(frac_bits as i32);
             let mut field = (g.h[i] * scale).round() as i64;
             for k in g.offset[i]..g.offset[i + 1] {
                 let w = (g.w[k] * scale).round() as i64;
@@ -239,10 +269,10 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             } else {
                 offset << (lut_bits - frac_bits - 4)
             };
-            let stride = 16.0 / f64::from(1u32 << lut_bits);
+            let stride = 16.0 / 2f64.powi(lut_bits as i32);
             let arg = (addr as f64 + 0.5) * stride - 8.0;
             // The entry held to `prob_bits`: the RTL's `round(p * 65535) / 65536` at 16 bits.
-            let levels = f64::from(1u32 << prob_bits);
+            let levels = 2f64.powi(prob_bits as i32);
             let entry = (p_up(arg, beta) * (levels - 1.0)).round().min(levels - 1.0);
             entry / levels
         }
@@ -273,7 +303,8 @@ fn log_g(balance: Balance, log_r: f64) -> f64 {
 ///
 /// # Panics
 ///
-/// If `v` does not have `2^n` entries.
+/// If `v` does not have `2^n` entries, or for a [`Kernel::Quantised`] with more than 40 field or
+/// ROM bits or 52 comparator bits, which its fixed-point arithmetic cannot hold.
 #[must_use]
 pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
     let n = g.n;
@@ -377,7 +408,8 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
 ///
 /// # Panics
 ///
-/// If `mu` does not have `2^n` entries.
+/// If `mu` does not have `2^n` entries, or for a [`Kernel::Quantised`] with more than 40 field or
+/// ROM bits or 52 comparator bits, which its fixed-point arithmetic cannot hold.
 #[must_use]
 pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> Vec<f64> {
     let n = g.n;
@@ -1243,5 +1275,31 @@ mod tests {
         let g = grid_glass(2, 2, 3);
         let k = kemeny_constant(&g, 1.0, Kernel::ChromaticGibbs).unwrap();
         assert!(k > 15.0, "a coupled 2x2 grid must be slower than memoryless: K = {k}");
+    }
+
+    /// With 40 field bits, a 2^40-entry ROM and a 52-bit comparator the quantised arithmetic is the
+    /// exact heat bath to better than 1e-9 -- and 32 comparator bits must sit within 2^-24 of 24
+    /// bits, which is where a width computed as `1u32 << bits` wrapped to a comparator with ONE
+    /// level and made every site certain to be -1 (`examples/fabric_floor.rs`, 2026-09-13).
+    #[test]
+    fn the_quantised_kernel_at_full_precision_is_the_exact_kernel() {
+        let g = grid_glass(3, 2, 4);
+        let beta = 1.5;
+        let m = 1usize << g.n;
+        let full = Kernel::Quantised { frac_bits: 40, lut_bits: 40, prob_bits: 52 };
+        let p24 = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 24 };
+        let p32 = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 32 };
+        let mut worst_full = 0.0f64;
+        let mut worst_wide = 0.0f64;
+        for x in 0..m {
+            let s = spins(x, g.n);
+            for i in 0..g.n {
+                let exact = p_up(g.field(i, &s), beta);
+                worst_full = worst_full.max((p_site(&g, beta, full, i, &s) - exact).abs());
+                worst_wide = worst_wide.max((p_site(&g, beta, p32, i, &s) - p_site(&g, beta, p24, i, &s)).abs());
+            }
+        }
+        assert!(worst_full < 1e-9, "full precision vs the exact heat bath: {worst_full:.3e}");
+        assert!(worst_wide < 1e-7, "32 vs 24 comparator bits: {worst_wide:.3e}");
     }
 }
