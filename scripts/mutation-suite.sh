@@ -680,6 +680,18 @@ mutations=(
   # asserts the two bill the SAME reads for the same draws, and this is the row that proves it.
   "src/cluster.rs|                l.reads += self.graph.n as u64;|                l.reads += 1;|cluster::tests::a_cluster_chain_and_a_gibbs_chain_bill_the_same_reads_for_the_same_draws|a cluster chain that bills one read per state instead of one per node"
 
+
+  # THE DESCENT MUST START AT THE HIGHEST POWER OF TWO BELOW n. Starting at one, it can only ever
+  # test index 1, so every target past the first site's mass lands on site 0 or 1 -- a sampler that
+  # still runs, still accepts and rejects, and proposes from two sites. The midpoint identity
+  # against the linear scan is the test that sees it, deterministically.
+  "src/informed.rs|        let mut stride = 1usize << (usize::BITS - 1 - n.leading_zeros());|        let mut stride = 1usize;|informed::tests::the_fenwick_selection_agrees_with_the_linear_scan_at_every_target|a Fenwick descent that starts at stride one and never looks past the second site"
+
+  # The same descent, restated in this module. A path built from sites 0 and 1 only is a chain
+  # that leaves the Boltzmann distribution invariant on the states it can reach and reaches almost
+  # none of them; the enumeration TV test is what sees it.
+  "src/multiflip.rs|    let mut stride = 1usize << (usize::BITS - 1 - n.leading_zeros());|    let mut stride = 1usize;|multiflip::tests::the_path_chain_samples_the_boltzmann_distribution|a path whose every flip is drawn from the first two sites"
+
 )
 
 bad=0
@@ -718,7 +730,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=111
+expected_rows=113
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

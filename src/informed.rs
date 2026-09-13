@@ -38,9 +38,19 @@
 //!
 //! # Cost
 //!
-//! One step is `O(deg)`, the same per-flip cost as one site of a Gibbs sweep: flipping `k` moves
-//! the field at its neighbours and nowhere else, so only `k` and its neighbours need reweighing.
-//! The comparison against Gibbs is therefore flips against flips.
+//! One step is `O(deg + log n)`: flipping `k` moves the field at its neighbours and nowhere else,
+//! so only `k` and its neighbours are reweighed, and the site is drawn from a Fenwick tree over the
+//! weights in `O(log n)`. The comparison against Gibbs is therefore flips against flips, up to the
+//! logarithm.
+//!
+//! **Until 2026-09-13 this paragraph said `O(deg)` and the code was `O(n)`.** The site was drawn
+//! by a linear scan of all `n` weights, and every rejected proposal recomputed the total over all
+//! `n` as well — so on the 256-spin fixture below, where a reweigh touches about 3.5 sites, every
+//! "flip" did some seventy times the work the paragraph charged it, which is more than the 41x
+//! the table reports at `beta = 2`. The table itself is unchanged by the fix: `tau_int` in flips is
+//! a property of the chain's law, and the law did not move. What changed is that a flip now costs
+//! what this says it costs. `examples/informed_scaling.rs` measures how the per-flip advantage
+//! moves with `n`, which is the number that decides whether it survives either cost model.
 //!
 //! # What it is worth here, measured
 //!
@@ -129,6 +139,9 @@ pub struct Informed<'g> {
     fields: Vec<f64>,
     /// `g(r_k)` for every site, shifted so nothing overflows. Only ratios of sums are ever used.
     w: Vec<f64>,
+    /// Fenwick tree of prefix sums over `w`, 1-indexed, so a site is drawn in `O(log n)`.
+    /// Rebuilt at every refresh; updated in place wherever `w` is.
+    tree: Vec<f64>,
     /// `Σ_k w_k`, maintained incrementally and refreshed exactly every [`REFRESH`] steps.
     total: f64,
     /// A constant subtracted from every `ln g`, so `Sqrt` cannot overflow. It cancels in `Z_i/Z_j`.
@@ -174,6 +187,7 @@ impl<'g> Informed<'g> {
             balance: Balance::Sqrt,
             fields: Vec::new(),
             w: Vec::new(),
+            tree: Vec::new(),
             total: 0.0,
             shift,
             steps: 0,
@@ -218,6 +232,7 @@ impl<'g> Informed<'g> {
             self.shift = 0.0;
         }
         self.w = logs.iter().map(|l| (l - self.shift).exp()).collect();
+        self.tree = Self::fenwick_build(&self.w);
         self.total = crate::round::sum_up(&self.w).max(0.0);
     }
 
@@ -239,8 +254,11 @@ impl<'g> Informed<'g> {
     ///
     /// A rejected move has to put back the spin, the neighbours' fields, the weights and the total.
     /// Flipping twice restores the first three exactly — every update is `+= w·2s` and its own
-    /// inverse — but the total is a running sum and would keep the rounding from both passes, so a
-    /// rejection refreshes it. That is the cheapest place to be exact rather than nearly so.
+    /// inverse — but the total is a running sum and would keep the rounding from both passes. It
+    /// used to be recomputed from all `n` weights on every rejection, which made a rejection
+    /// `O(n)`; it is now re-read from the Fenwick tree in `O(log n)`, whose own rounding is bounded
+    /// by the same periodic [`REFRESH`] that bounds the running total's, and
+    /// `the_incremental_total_agrees_with_a_recomputation` is what says both stay inside it.
     pub fn step(&mut self) -> bool {
         self.steps += 1;
         if self.steps.is_multiple_of(REFRESH) {
@@ -255,16 +273,9 @@ impl<'g> Informed<'g> {
                 return false;
             }
         }
+        // O(log n), where it was a scan of every weight. See the module docs on cost.
         let target = self.rng.f64() * self.total;
-        let mut acc = 0.0;
-        let mut k = self.g.n - 1;
-        for (i, &wi) in self.w.iter().enumerate() {
-            acc += wi;
-            if acc >= target {
-                k = i;
-                break;
-            }
-        }
+        let k = self.select(target);
 
         let before = self.total;
         self.flip(k);
@@ -281,12 +292,12 @@ impl<'g> Informed<'g> {
             true
         } else {
             self.flip(k);
-            self.total = crate::round::sum_up(&self.w).max(0.0);
+            self.total = self.fenwick_total().max(0.0);
             false
         }
     }
 
-    /// Flip site `k` and repair the fields, weights and total it touched.
+    /// Flip site `k` and repair the fields, weights, tree and total it touched.
     fn flip(&mut self, k: usize) {
         self.s[k] = -self.s[k];
         let sk = f64::from(self.s[k]);
@@ -295,12 +306,77 @@ impl<'g> Informed<'g> {
             let j = self.g.nbr[e] as usize;
             self.fields[j] += self.g.w[e] * 2.0 * sk;
             let fresh = self.weight(j);
-            self.total += fresh - self.w[j];
+            let delta = fresh - self.w[j];
+            self.total += delta;
+            self.fenwick_add(j, delta);
             self.w[j] = fresh;
         }
         let fresh = self.weight(k);
-        self.total += fresh - self.w[k];
+        let delta = fresh - self.w[k];
+        self.total += delta;
+        self.fenwick_add(k, delta);
         self.w[k] = fresh;
+    }
+
+    /// The Fenwick (binary indexed) tree of prefix sums over `w`: 1-indexed, `O(n)` to build.
+    fn fenwick_build(w: &[f64]) -> Vec<f64> {
+        let n = w.len();
+        let mut t = vec![0.0f64; n + 1];
+        for i in 1..=n {
+            t[i] += w[i - 1];
+            let j = i + (i & i.wrapping_neg());
+            if j <= n {
+                let v = t[i];
+                t[j] += v;
+            }
+        }
+        t
+    }
+
+    /// Add `delta` to site `i` (0-indexed) everywhere it appears in the tree, `O(log n)`.
+    fn fenwick_add(&mut self, i: usize, delta: f64) {
+        let n = self.tree.len() - 1;
+        let mut j = i + 1;
+        while j <= n {
+            self.tree[j] += delta;
+            j += j & j.wrapping_neg();
+        }
+    }
+
+    /// `Σ_k w_k` as the tree holds it, `O(log n)`.
+    fn fenwick_total(&self) -> f64 {
+        let mut i = self.tree.len() - 1;
+        let mut s = 0.0;
+        while i > 0 {
+            s += self.tree[i];
+            i -= i & i.wrapping_neg();
+        }
+        s
+    }
+
+    /// The first site at which the running sum of weights reaches `target`, `O(log n)`.
+    ///
+    /// The same site the linear scan chose: the smallest index whose prefix sum is at least the
+    /// target, clamped to the last site for a target that rounding carried past every prefix. The
+    /// descent takes each power-of-two stride whose prefix stays strictly BELOW what remains of
+    /// the target, so it lands on the count of sites the scan would have passed over.
+    fn select(&self, target: f64) -> usize {
+        let n = self.tree.len() - 1;
+        if n == 0 {
+            return 0;
+        }
+        let mut pos = 0usize;
+        let mut rem = target;
+        let mut stride = 1usize << (usize::BITS - 1 - n.leading_zeros());
+        while stride > 0 {
+            let next = pos + stride;
+            if next <= n && self.tree[next] < rem {
+                pos = next;
+                rem -= self.tree[next];
+            }
+            stride >>= 1;
+        }
+        pos.min(n - 1)
     }
 
     /// Run `n` steps.
@@ -416,10 +492,75 @@ mod tests {
             }
             let fresh: f64 = crate::round::sum_up(&it.w);
             worst = worst.max((it.total - fresh).abs() / fresh.max(1.0));
+            // The tree is a second running sum with its own rounding path; it is held to the same
+            // bound, since the site is drawn from it and the acceptance from `total`.
+            worst = worst.max((it.fenwick_total() - fresh).abs() / fresh.max(1.0));
         }
         assert!(worst < 1e-9, "incremental state drifted from a recomputation by {worst:e}");
         // And the refresh must actually be reachable within a run, or the guard is decoration.
         assert!(it.taken() < REFRESH, "the loop must stop short of the refresh to test the drift");
+    }
+
+    /// THE TREE DRAWS THE SAME SITE THE SCAN DID, and the scan is the definition: the smallest
+    /// index whose running sum reaches the target. The oracle here is that scan, re-implemented
+    /// in the test over the sampler's own weights, and every target on a fine grid across the
+    /// total must agree exactly -- an off-by-one in the descent, a wrong stride, or a tree that
+    /// stopped tracking `w` after flips all show up as a disagreement at some target.
+    ///
+    /// Checked after a run, not on a fresh sampler, so the tree being compared is one that has
+    /// been through thousands of incremental updates rather than a fresh build.
+    #[test]
+    fn the_fenwick_selection_agrees_with_the_linear_scan_at_every_target() {
+        let g = frustrated(37);
+        let mut it = Informed::new(&g, 1.3, 11).with_balance(Balance::Barker);
+        it.steps(2_000);
+        let scan = |w: &[f64], target: f64| -> usize {
+            let mut acc = 0.0;
+            for (i, &wi) in w.iter().enumerate() {
+                acc += wi;
+                if acc >= target {
+                    return i;
+                }
+            }
+            w.len() - 1
+        };
+        // Targets that sit strictly inside a site's mass, so scan and tree see the same site
+        // regardless of their different rounding paths: the midpoint of every site's interval.
+        let mut prefix = 0.0;
+        let mut disagreements = 0;
+        for (k, &wk) in it.w.iter().enumerate() {
+            if wk > 0.0 {
+                let mid = prefix + 0.5 * wk;
+                let want = scan(&it.w, mid);
+                let got = it.select(mid);
+                if want != got {
+                    disagreements += 1;
+                }
+                assert_eq!(got, k, "the midpoint of site {k}'s mass must select site {k}");
+            }
+            prefix += wk;
+        }
+        assert_eq!(disagreements, 0, "tree and scan disagreed on {disagreements} midpoints");
+        // Past every prefix the scan clamps to the last site; so must the tree.
+        assert_eq!(it.select(prefix * 2.0), g.n - 1);
+        // And the distribution the tree induces IS w/total: many uniform targets, counted per site,
+        // against the weights -- a chi-square with a generous bound, since the identity above is
+        // the sharp check and this one exists to catch a descent that agrees at midpoints only.
+        let draws = 200_000usize;
+        let mut counts = vec![0u32; g.n];
+        let mut rng = Pcg::new(99, 7);
+        let total = it.fenwick_total();
+        for _ in 0..draws {
+            counts[it.select(rng.f64() * total)] += 1;
+        }
+        let mut chi2 = 0.0;
+        for (k, &c) in counts.iter().enumerate() {
+            let expect = draws as f64 * it.w[k] / total;
+            if expect > 5.0 {
+                chi2 += (f64::from(c) - expect).powi(2) / expect;
+            }
+        }
+        assert!(chi2 < 3.0 * g.n as f64, "selection is not proportional to the weights: chi2 {chi2:.1}");
     }
 
     /// A WIDE DYNAMIC RANGE IN THE FIELDS MUST NOT STALL THE SAMPLER, which is the defect this

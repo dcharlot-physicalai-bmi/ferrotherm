@@ -9,10 +9,16 @@
 //
 // THE CONTROL THAT MAKES IT A MEASUREMENT. A locally-informed step flips ONE spin; a Gibbs sweep
 // updates n. Comparing steps to sweeps would report the ratio n and nothing else. Both are
-// therefore counted in FLIPS, and the per-flip cost is the same order: flipping k moves the field
-// at its neighbours and nowhere else, so an informed step is O(deg), which is what one site of a
-// Gibbs sweep costs. `updates/sample` is tau_int times the flips per draw, which is the work one
-// independent draw actually costs -- the same unit `mixing_expressivity` prices in.
+// therefore counted in FLIPS, and the per-flip cost is the same order UP TO A LOGARITHM: flipping
+// k moves the field at its neighbours and nowhere else, so an informed step reweighs O(deg) sites
+// and draws the next site from a Fenwick tree in O(log n).
+//
+// THAT WAS NOT TRUE WHEN THIS TABLE WAS FIRST PRINTED. Until 2026-09-13 the site was drawn by a
+// linear scan of all n weights, so every "flip" in the informed columns did O(n) work while this
+// comment charged it O(deg) -- on this 256-spin fixture, some seventy reweighs' worth. The
+// tau_int-in-flips numbers were and are correct as a statement about the chain's law; the claim
+// that flips were the same order of work was not. `informed_scaling` measures how the per-flip
+// advantage moves with n, which is what decides whether it survives either cost model.
 //
 // WHERE IT SHOULD HELP AND WHERE IT SHOULD NOT. An informed proposal has something to say only when
 // the weights are UNEQUAL. On a flat or high-temperature landscape every flip is about as good as

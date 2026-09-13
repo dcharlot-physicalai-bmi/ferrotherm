@@ -54,6 +54,14 @@
 //! `beta = 1.5` against single-flip [`crate::informed::Informed`]'s **37,663**, and the two are
 //! within 1.2x at `beta = 0.5` where there is no barrier.
 //!
+//! **A flip of a path is `O(deg + log n)` work since 2026-09-13, and was `O(n)` before.** Each
+//! flip drew its site by a linear scan of every weight, and every rejected path recomputed the
+//! total over every weight, so "flips against flips" charged a path flip the same as a Gibbs flip
+//! while it did `n / deg` times the work. The site is now drawn from a Fenwick tree. The numbers
+//! above are `tau_int` in flips, a property of the chain's law, and did not move; what they cost
+//! did. [`Langevin`] proposes every coordinate at once and is `O(n)` per step by construction —
+//! that one is honest as stated.
+//!
 //! On the 256-spin spin glass of `examples/informed_mixing.rs` it buys **nothing**: 4,128 flips
 //! against 3,527 at `beta = 2`. A glass's slow modes are extended, and a path of eight flips is not
 //! their shape. Colder than that neither number is measurable — `tau_int` for adjacent path lengths
@@ -80,6 +88,66 @@ fn log_g(balance: Balance, log_r: f64) -> f64 {
         Balance::Metropolis => log_r.min(0.0),
         Balance::Barker => -softplus(-log_r),
     }
+}
+
+/// The Fenwick (binary indexed) tree of prefix sums over `w`: 1-indexed, `O(n)` to build.
+///
+/// Restated rather than shared with [`crate::informed`] for the same reason `log_g` is: that
+/// module's tree is private and this one is not permitted to widen it.
+fn fenwick_build(w: &[f64]) -> Vec<f64> {
+    let n = w.len();
+    let mut t = vec![0.0f64; n + 1];
+    for i in 1..=n {
+        t[i] += w[i - 1];
+        let j = i + (i & i.wrapping_neg());
+        if j <= n {
+            let v = t[i];
+            t[j] += v;
+        }
+    }
+    t
+}
+
+/// Add `delta` to site `i` (0-indexed) everywhere it appears in the tree, `O(log n)`.
+fn fenwick_add(tree: &mut [f64], i: usize, delta: f64) {
+    let n = tree.len() - 1;
+    let mut j = i + 1;
+    while j <= n {
+        tree[j] += delta;
+        j += j & j.wrapping_neg();
+    }
+}
+
+/// `Σ_k w_k` as the tree holds it, `O(log n)`.
+fn fenwick_total(tree: &[f64]) -> f64 {
+    let mut i = tree.len() - 1;
+    let mut s = 0.0;
+    while i > 0 {
+        s += tree[i];
+        i -= i & i.wrapping_neg();
+    }
+    s
+}
+
+/// The first site at which the running sum of weights reaches `target`, `O(log n)`: the smallest
+/// index whose prefix sum is at least the target, clamped to the last site.
+fn fenwick_select(tree: &[f64], target: f64) -> usize {
+    let n = tree.len() - 1;
+    if n == 0 {
+        return 0;
+    }
+    let mut pos = 0usize;
+    let mut rem = target;
+    let mut stride = 1usize << (usize::BITS - 1 - n.leading_zeros());
+    while stride > 0 {
+        let next = pos + stride;
+        if next <= n && tree[next] < rem {
+            pos = next;
+            rem -= tree[next];
+        }
+        stride >>= 1;
+    }
+    pos.min(n - 1)
 }
 
 /// Single flips between exact recomputations of the weight total, for [`Path`].
@@ -113,6 +181,9 @@ pub struct Path<'g> {
     fields: Vec<f64>,
     /// `g(r_k)` for every site, at the current shift.
     w: Vec<f64>,
+    /// Fenwick tree of prefix sums over `w`, 1-indexed, so each flip of a path draws its site in
+    /// `O(log n)`. Rebuilt at every refresh; updated in place wherever `w` is.
+    tree: Vec<f64>,
     /// `Σ_k w_k`.
     total: f64,
     /// A constant subtracted from every `ln g`, re-centred at each refresh on the largest observed
@@ -154,6 +225,7 @@ impl<'g> Path<'g> {
             backtrack: false,
             fields: Vec::new(),
             w: Vec::new(),
+            tree: Vec::new(),
             total: 0.0,
             shift: 0.0,
             last: Vec::new(),
@@ -216,6 +288,7 @@ impl<'g> Path<'g> {
             self.shift = 0.0;
         }
         self.w = logs.iter().map(|l| (l - self.shift).exp()).collect();
+        self.tree = fenwick_build(&self.w);
         self.total = crate::round::sum_up(&self.w).max(0.0);
         self.since = 0;
     }
@@ -231,7 +304,7 @@ impl<'g> Path<'g> {
         (self.log_weight(k) - self.shift).exp()
     }
 
-    /// Flip site `k` and repair the fields, weights and total it touched.
+    /// Flip site `k` and repair the fields, weights, tree and total it touched.
     fn flip(&mut self, k: usize) {
         self.s[k] = -self.s[k];
         let sk = f64::from(self.s[k]);
@@ -239,11 +312,15 @@ impl<'g> Path<'g> {
             let j = self.g.nbr[e] as usize;
             self.fields[j] += self.g.w[e] * 2.0 * sk;
             let fresh = self.weight(j);
-            self.total += fresh - self.w[j];
+            let delta = fresh - self.w[j];
+            self.total += delta;
+            fenwick_add(&mut self.tree, j, delta);
             self.w[j] = fresh;
         }
         let fresh = self.weight(k);
-        self.total += fresh - self.w[k];
+        let delta = fresh - self.w[k];
+        self.total += delta;
+        fenwick_add(&mut self.tree, k, delta);
         self.w[k] = fresh;
     }
 
@@ -262,26 +339,34 @@ impl<'g> Path<'g> {
         self.w.iter().enumerate().filter(|(i, _)| *i != k).map(|(_, v)| v).sum()
     }
 
-    /// Draw a site with probability `w_k / norm`, skipping `excl`.
+    /// Draw a site with probability `w_k / norm`, skipping `excl`, in `O(log n)`.
+    ///
+    /// The excluded site is taken out of the tree for the duration of the draw and put back after,
+    /// two `O(log n)` updates whose rounding cancels only approximately -- which is the same
+    /// bounded drift every other incremental quantity here carries to the next refresh. Until
+    /// 2026-09-13 this was a linear scan of every weight, so each flip of a path did `O(n)` work
+    /// while the module counted it as one flip.
     fn draw(&mut self, norm: f64, excl: Option<usize>) -> Option<usize> {
         let target = self.rng.f64() * norm;
-        let mut acc = 0.0;
-        let mut fallback = None;
-        for (i, &wi) in self.w.iter().enumerate() {
-            if Some(i) == excl {
-                continue;
-            }
-            acc += wi;
-            if acc >= target {
-                return Some(i);
-            }
-            if wi > 0.0 {
-                fallback = Some(i);
+        let removed = excl.map(|k| {
+            let wk = self.w[k];
+            fenwick_add(&mut self.tree, k, -wk);
+            (k, wk)
+        });
+        let mut k = fenwick_select(&self.tree, target);
+        if let Some((e, we)) = removed {
+            fenwick_add(&mut self.tree, e, we);
+            // Rounding at the boundary can hand back the excluded site itself; the scan would have
+            // continued to the next site with weight, and so does this.
+            if k == e {
+                k = (e + 1..self.g.n).chain(0..e).find(|&i| self.w[i] > 0.0)?;
             }
         }
-        // Rounding can leave the running sum a hair under a target drawn against `norm`. The last
-        // site with any weight is the one the scan was about to reach.
-        fallback
+        (self.w[k] > 0.0).then_some(k).or_else(|| {
+            // A target rounding carried past every prefix lands on the last site; if that site
+            // carries no weight, the last one that does is what the scan was about to reach.
+            (0..self.g.n).rev().find(|&i| self.w[i] > 0.0 && Some(i) != excl)
+        })
     }
 
     /// Put the state back where the most recent walk started.
@@ -291,8 +376,9 @@ impl<'g> Path<'g> {
             self.flip(k);
         }
         // The total came back along a different arithmetic path than it left by, so it carries the
-        // rounding of both. Recomputing it is the cheapest place to be exact rather than nearly so.
-        self.total = crate::round::sum_up(&self.w).max(0.0);
+        // rounding of both. It used to be recomputed over every weight here, `O(n)` per rejected
+        // path; it is now re-read from the tree, whose drift the periodic refresh bounds.
+        self.total = fenwick_total(&self.tree).max(0.0);
     }
 
     /// Walk a path, leaving the state at its end.
