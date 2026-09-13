@@ -72,8 +72,9 @@
 //! at `beta >= 2`, raising the field or ROM bits past the shipped values does not move TV below
 //! `7e-3` while the comparator holds 16 bits (the coarser settings that do better there do so by
 //! where this fixture's values fall on their grid), and 24 comparator bits alone take it to
-//! `1.2e-3`. The engineering change that moves every cold-fabric number in this crate is a wider
-//! comparator.
+//! `1.2e-3`, which 32 bits do not improve (`1.2e-3` at `beta = 2`; `8.4e-4` and a ratio of `0.976`
+//! at `beta = 3`): past 24 bits the field and ROM are the floor. The engineering change that moves
+//! every cold-fabric number in this crate is a wider comparator, and 24 bits is where it stops paying.
 //!
 //! # What it is for
 //!
