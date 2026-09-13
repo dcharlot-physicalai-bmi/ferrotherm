@@ -153,7 +153,18 @@ pub enum Kernel {
     /// neighbour registers lag one update behind with probability `p`. `p = 0` is
     /// [`Kernel::SequentialGibbs`] and `p = 1` is [`Kernel::Synchronous`] (every read stale is
     /// every site from the previous state), so the Boltzmann and Peretto laws bracket it and the
-    /// test holds both ends to their closed forms.
+    /// test holds both ends to their closed forms. `examples/stale_exact.rs` measures the middle,
+    /// exactly. On the 4x3 grid (degree 4) the equilibrium error is linear in `p` to `p = 0.3`:
+    /// `TV = 0.39 p, 0.105 p, 0.048 p` at `beta = 0.5, 1, 2`. What it IS changes with temperature:
+    /// at `beta = 0.5` and `1` it is a change of law -- the nearest single temperature removes
+    /// only a fifth of it, and the shift is `-0.16 p` and `+0.11 p` of `beta` -- while at
+    /// `beta = 2` it is almost purely a temperature shift, `+0.21 p` of `beta`, of which the
+    /// nearest temperature removes 94%. On `K_{6,6}` (degree 6) the same pattern with a larger
+    /// cold shift, `+2.4 p` of `beta` at `beta = 2`, and the sweep relaxes 3.3x slower at
+    /// `p = 0.3`. So a fabric that reads 1% of its neighbours stale pays TV `3.9e-3` at
+    /// `beta = 0.5` on the grid, twice its whole arithmetic error, and no effective-temperature
+    /// certificate can see it there; at `beta = 2` the same 1% is a `0.2%` (grid) to `2.4%`
+    /// (`K_{6,6}`) temperature error, which the certificate does see and a calibration removes.
     Stale {
         /// Probability that a read of an already-updated neighbour returns its pre-sweep value.
         p: f64,
