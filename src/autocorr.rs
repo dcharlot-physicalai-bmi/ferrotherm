@@ -1049,6 +1049,68 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
     Ok(trace - 1.0)
 }
 
+/// The kernel's own stationary law: Boltzmann for the exact Gibbs and informed kernels, Peretto's
+/// closed form for the synchronous sweep, and a direct solve for everything whose law has no
+/// closed form (the fabric's arithmetic, PIMI, stale reads, a site temperature spread).
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManySpins`] above [`MAX_SPINS`]; [`AutocorrError::TooManyForDense`] above
+/// [`MAX_DENSE_SPINS`] for a kernel that needs the solve; [`AutocorrError::Reducible`] for one
+/// without a unique invariant law.
+pub fn own_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
+    match kernel {
+        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
+            stationary_solved(g, beta, kernel)
+        }
+        Kernel::Synchronous => peretto(g, beta),
+        _ => boltzmann(g, beta),
+    }
+}
+
+/// The steady-state entropy production rate of the kernel with respect to its OWN stationary law,
+/// in nats per step:
+///
+/// ```text
+///   Sigma = sum_{x, y} pi(x) P(x, y) ln [ pi(x) P(x, y) / (pi(y) P(y, x)) ],
+/// ```
+///
+/// zero exactly when the chain is reversible with respect to `pi` and `+inf` when some transition
+/// has no reverse. This is the population quantity every trajectory estimator of entropy
+/// production converges to, and it measures NON-REVERSIBILITY, not correctness: a fixed-order
+/// sweep of exact heat-bath updates is invariant but not reversible and produces entropy while
+/// sampling the right law, and the synchronous sweep is reversible with respect to Peretto's law
+/// and produces none while sampling the wrong one (`examples/entropy_production_exact.rs`).
+///
+/// # Errors
+///
+/// As [`own_law`], and [`AutocorrError::TooManyForDense`] above [`MAX_DENSE_SPINS`] for every
+/// kernel, since the dense operator is built.
+pub fn entropy_production(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, AutocorrError> {
+    if g.n > MAX_DENSE_SPINS {
+        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+    }
+    let pi = own_law(g, beta, kernel)?;
+    let m = 1usize << g.n;
+    let mut p = vec![0.0f64; m * m];
+    kernel_rows(g, beta, kernel, |x, row| p[x * m..(x + 1) * m].copy_from_slice(row));
+    let mut sigma = 0.0;
+    for x in 0..m {
+        for y in 0..m {
+            let fwd = pi[x] * p[x * m + y];
+            if fwd <= 0.0 {
+                continue;
+            }
+            let bwd = pi[y] * p[y * m + x];
+            if bwd <= 0.0 {
+                return Ok(f64::INFINITY);
+            }
+            sigma += fwd * (fwd / bwd).ln();
+        }
+    }
+    Ok(sigma.max(0.0))
+}
+
 /// The exact integrated autocorrelation time of `observable` under `kernel` at `beta`.
 ///
 /// `tol` is the tail cut: lags are summed until `|rho(k)| < tol`, or until `max_lags`. Both are
@@ -1713,5 +1775,29 @@ mod tests {
                 .product();
             assert!((lx - want).abs() < 1e-12, "state {x}: solved {lx} vs product {want}");
         }
+    }
+
+    /// Three closed forms and one inequality. The synchronous sweep is reversible with respect to
+    /// Peretto's law, so its entropy production is zero while its law is wrong; a single site and
+    /// two free sites under the sequential sweep are rank-one kernels, reversible, zero; and the
+    /// fixed-order chromatic sweep on a coupled grid is invariant but not reversible, so it
+    /// produces entropy while sampling the right law.
+    #[test]
+    fn entropy_production_is_zero_for_reversible_kernels_and_positive_for_a_correct_fixed_order_sweep() {
+        let g = grid_glass(3, 3, 6);
+        let beta = 1.1;
+        let sync = entropy_production(&g, beta, Kernel::Synchronous).unwrap();
+        assert!(sync.abs() < 1e-12, "synchronous (reversible w.r.t. Peretto): {sync:.3e}");
+        let mut b = GraphBuilder::new(2);
+        b.bias(0, 0.3);
+        b.bias(1, -0.5);
+        let free = b.build();
+        let seq = entropy_production(&free, beta, Kernel::SequentialGibbs).unwrap();
+        assert!(seq.abs() < 1e-12, "two free sites, sequential: {seq:.3e}");
+        let chrom = entropy_production(&g, beta, Kernel::ChromaticGibbs).unwrap();
+        assert!(chrom.is_finite() && chrom > 1e-6, "a fixed-order sweep of exact updates must produce entropy: {chrom:.3e}");
+        let law = own_law(&g, beta, Kernel::ChromaticGibbs).unwrap();
+        let pushed = apply_distribution(&g, beta, Kernel::ChromaticGibbs, &law);
+        assert!(total_variation(&pushed, &law) < 1e-13, "and still be invariant");
     }
 }
