@@ -239,7 +239,21 @@ impl Program {
         st
     }
 
-    /// REINFORCE gradient of `E[L]` with a batch-mean baseline. Returns (grad, `mean_loss`).
+    /// REINFORCE gradient of `E[L]` with a leave-one-out baseline. Returns (grad, `mean_loss`).
+    ///
+    /// The baseline for episode `e` is the mean of the OTHER `episodes - 1` losses. Until
+    /// 2026-09-12 it was the mean of the whole batch, episode `e` included, and that is not a
+    /// baseline: it is correlated with episode `e`'s own score, `E[mean * score_e] =
+    /// (1/N) E[L_e score_e]`, so the estimator returned `(1 - 1/N)` times the gradient. Measured
+    /// at `N = 8` over 25,000 batches, every coordinate sat within 1.9 standard errors of
+    /// `(1 - 1/8) * exact` and up to 21.4 standard errors from `exact` -- 12.5% low at `N = 8`,
+    /// 0.2% at `N = 512`. Nothing noticed because every caller used `N >= 4000` and a learning
+    /// rate, and a gradient that is 0.02% short converges to the same place. The estimator
+    /// `relax::rebar_grad`, written independently on the same distribution, did not shrink, and
+    /// the comparison between them is what found it.
+    ///
+    /// With one episode there is no other loss to average and the baseline is zero, which is
+    /// plain REINFORCE -- still unbiased, just louder.
     pub fn reinforce_grad<F: Fn(&State) -> f64>(
         &self,
         init: &State,
@@ -257,10 +271,16 @@ impl Program {
             losses.push(loss(&st));
             scores.push(sc);
         }
-        let mean = losses.iter().sum::<f64>() / episodes as f64;
+        let total: f64 = losses.iter().sum();
+        let mean = total / episodes as f64;
         let mut grad = vec![0.0; self.n_params];
         for e in 0..episodes {
-            let adv = losses[e] - mean;
+            // LEAVE ONE OUT. Each episode has its own stream (`Pcg::new(seed, e)`), so the mean of
+            // the other losses is independent of this episode's score and subtracts nothing in
+            // expectation. The whole-batch mean is not independent of it -- see the doc above.
+            let baseline =
+                if episodes > 1 { (total - losses[e]) / (episodes - 1) as f64 } else { 0.0 };
+            let adv = losses[e] - baseline;
             for j in 0..self.n_params {
                 grad[j] += adv * scores[e][j];
             }

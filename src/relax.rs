@@ -1110,7 +1110,7 @@ mod tests {
     ///
     /// | estimator | variance | biased |
     /// |---|---|---|
-    /// | `program::reinforce_grad` (batch-mean baseline) | 5.41 | at O(1/B) — see the next test |
+    /// | `program::reinforce_grad` (leave-one-out baseline) | 5.41 | no — see the next test for the batch-mean one it replaced |
     /// | `rebar_grad`, eta = 1, lambda = 0.5 | 3.16 | no |
     /// | `gumbel_softmax_grad`, tau = 1 | 0.25 | **yes** |
     ///
@@ -1220,19 +1220,21 @@ mod tests {
         );
     }
 
-    /// [`crate::program::Program::reinforce_grad`] returns the exact gradient SHRUNK BY
-    /// `1 - 1/episodes`, and this module's estimator does not.
+    /// [`crate::program::Program::reinforce_grad`] returns the EXACT gradient, and this test is
+    /// the one that found it not to.
     ///
-    /// Its baseline is the mean of the SAME batch it is subtracted from, so the baseline is
-    /// correlated with each episode's own score: `E[mean * score_e] = (1/N) E[L_e score_e]`, which
-    /// leaves `(1 - 1/N) * grad`. A leave-one-out baseline would not do this.
+    /// Until 2026-09-12 its baseline was the mean of the SAME batch it was subtracted from, so the
+    /// baseline was correlated with each episode's own score: `E[mean * score_e] =
+    /// (1/N) E[L_e score_e]`, which leaves `(1 - 1/N) * grad`. MEASURED then at B = 8 over 25 000
+    /// batches: every coordinate within 1.9 standard errors of `(1 - 1/8) * exact` and as far as
+    /// **21.4 standard errors** from `exact` -- 12.5% at B = 8, 0.2% at B = 512. The fix is the
+    /// leave-one-out baseline this doc originally said "would not do this".
     ///
-    /// MEASURED at B = 8 over 25 000 batches: every coordinate is within 1.9 standard errors of
-    /// `(1 - 1/8) * exact` and as far as **21.4 standard errors** from `exact`. It is 12.5% at
-    /// B = 8, 0.2% at B = 512, and it is why the comparison above is a variance comparison rather
-    /// than a mean one. Recorded here rather than fixed: `program` is not this module.
+    /// The test now asserts BOTH directions: the mean sits on `exact`, AND the old shrunk value
+    /// is resolvably rejected -- so an estimator that quietly reverted to the batch mean would
+    /// fail here, and so would one whose variance grew until nothing could be resolved.
     #[test]
-    fn program_reinforce_is_the_exact_gradient_shrunk_by_one_over_the_batch() {
+    fn program_reinforce_is_the_exact_gradient_and_the_batch_mean_shrink_is_gone() {
         let n = 8;
         let g = glass(n, 7);
         let f = Multilinear::new(&g);
@@ -1251,20 +1253,22 @@ mod tests {
         }
         let var = acc.variance();
         let shrink = 1.0 - 1.0 / b as f64;
-        let mut worst_raw = 0.0f64;
+        let mut worst_shrunk = 0.0f64;
         for i in 0..n {
             let se = (var[i] / reps as f64).sqrt();
-            let d_shrunk = (acc.mean[i] - exact[i] * shrink).abs() / se;
+            let d_exact = (acc.mean[i] - exact[i]).abs() / se;
             assert!(
-                d_shrunk < 4.0,
-                "site {i}: {:.5} is {d_shrunk:.2} standard errors from (1-1/B) * exact",
-                acc.mean[i]
+                d_exact < 4.0,
+                "site {i}: {:.5} is {d_exact:.2} standard errors from exact {:.5}",
+                acc.mean[i],
+                exact[i]
             );
-            worst_raw = worst_raw.max((acc.mean[i] - exact[i]).abs() / se);
+            worst_shrunk = worst_shrunk.max((acc.mean[i] - exact[i] * shrink).abs() / se);
         }
         assert!(
-            worst_raw > 5.0,
-            "the shrinkage must be RESOLVED, or this test records nothing: worst {worst_raw:.2}"
+            worst_shrunk > 5.0,
+            "the old (1-1/B) shrink must be RESOLVABLY rejected, or this test could pass on the \
+             batch-mean estimator it replaced: worst {worst_shrunk:.2} standard errors"
         );
 
         // The same total sample count, this module's estimator, and no shrinkage.

@@ -662,6 +662,12 @@ mutations=(
   # beta = 0.09 against Onsager's 1 and 1/8, and it is NOT an optimiser failure -- the residual at
   # the wrong exponents is seventy times better than at the right ones on the same objective.
   "src/fss.rs|Some(1.0 - m4 / (3.0 * m2 * m2))|Some(1.0 - m4 / (2.0 * m2 * m2))|fss::tests::the_binder_cumulant_of_free_spins_is_exactly_two_over_three_n|the Binder normalisation constant: 3 -> 2 in U_4 = 1 - m4/(3 m2^2)"
+
+  # THE BASELINE MUST LEAVE THE EPISODE OUT. The whole-batch mean is correlated with each episode's
+  # own score and returns (1 - 1/N) times the gradient -- 21.4 standard errors from exact at N = 8,
+  # invisible at the N >= 4000 every caller used. Found by a second REINFORCE written independently
+  # in relax.rs on the same distribution; the row names the test that measured it.
+  "src/program.rs|                if episodes > 1 { (total - losses[e]) / (episodes - 1) as f64 } else { 0.0 };|                total / episodes as f64;|relax::tests::program_reinforce_is_the_exact_gradient_and_the_batch_mean_shrink_is_gone|a REINFORCE baseline that includes the episode it is subtracted from"
 )
 
 bad=0
@@ -700,7 +706,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=108
+expected_rows=109
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
