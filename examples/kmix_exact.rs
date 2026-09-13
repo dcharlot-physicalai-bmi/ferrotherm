@@ -154,6 +154,56 @@ fn main() {
                 dtm.train_step(t, &pairs, k_sweeps, lr, 0.0, &mut rng);
             }
         }
+        // IS THE MODEL TRAINED? A chain whose couplings barely moved has conditionals that are
+        // nearly products and mix in a sweep, and a K_mix verdict on it says nothing about the
+        // paper's model. So: the exact per-step conditional negative log-likelihood of held-out
+        // forward pairs, -ln P_theta(x^t | x^{t+1}) through `Dtm::exact_log_cond`, summed over the
+        // steps, for the trained chain against the same chain untrained (all couplings zero);
+        // and the coupling magnitudes. (`Dtm::exact_nll` would be the one number, but it
+        // enumerates every (T+1)-tuple of visible states -- (2^9)^5 here -- and does not say so.)
+        let mut hrng = Pcg::new(4242, 1);
+        let untrained = Dtm::new(t_steps, n, n, grid_edges(w, h), gamma, times.clone());
+        let (mut nll_t, mut nll_u) = (0.0f64, 0.0f64);
+        let held = 256usize;
+        for _ in 0..held {
+            let mut x = data.draw(&mut hrng);
+            for t in 0..t_steps {
+                let x_t = x.clone();
+                forward_step(&mut x, gamma, times[t + 1] - times[t], &mut hrng);
+                nll_t -= dtm.exact_log_cond(t, &x_t, &x);
+                nll_u -= untrained.exact_log_cond(t, &x_t, &x);
+            }
+        }
+        let (nll_t, nll_u) = (nll_t / held as f64, nll_u / held as f64);
+        // The data's own entropy per sample, the floor for x^0 alone; printed for scale.
+        let entropy: f64 = {
+            let mut prev = 0.0;
+            let mut hsum = 0.0;
+            for &c in &data.cdf {
+                let p = c - prev;
+                prev = c;
+                if p > 0.0 {
+                    hsum -= p * p.ln();
+                }
+            }
+            hsum
+        };
+        let mut jmax = 0.0f64;
+        let mut jmean = 0.0f64;
+        let mut jcount = 0usize;
+        for ebm in &dtm.steps {
+            for &j in &ebm.j {
+                jmax = jmax.max(j.abs());
+                jmean += j.abs();
+                jcount += 1;
+            }
+        }
+        println!(
+            "  {w}x{h} trained: conditional NLL summed over {t_steps} steps, 256 held-out pairs: {nll_t:.3} nats \
+             (untrained {nll_u:.3}; data entropy {entropy:.3} nats/sample for scale); |J| mean {:.3} max {jmax:.3} \
+             over {jcount} couplings",
+            jmean / jcount as f64
+        );
         // Score every step over several clamp contexts drawn from the forward process.
         let mut worst_k1 = 0usize;
         for t in 0..t_steps {

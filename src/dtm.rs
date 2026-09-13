@@ -8,6 +8,21 @@
 //! trusted, including the one thing the paper's own text gets wrong: the printed sign of the
 //! forward-coupling energy (their Eq. D1). The keep-probability test below pins the correct
 //! NEGATIVE sign under the P proportional to e^{-E} convention; the printed sign fails it.
+//!
+//! # `K_mix = 250`, measured exactly where it can be
+//!
+//! The paper samples each denoising step with `K_mix = 250` Gibbs sweeps from a uniform start,
+//! and its 10,000x energy figure multiplies that constant straight through. `examples/kmix_exact.rs`
+//! (2026-09-13) trains a four-step chain on a frustrated 3x3 and 4x3 grid and builds every step's
+//! conditional as an exact kernel on all `2^n` states ([`crate::autocorr`]), then pushes the
+//! uniform start through it: the sweeps until the step's distribution is within 1% total
+//! variation of its equilibrium are **at most 6 on both grids, every step, every clamp context**
+//! (0.1%: at most 10), with the conditional's exact `tau_int` between 0.56 and 0.95 sweeps. The
+//! chain was trained -- conditional NLL over held-out forward pairs 11.35 nats against 14.08
+//! untrained on the 3x3, couplings up to 0.83 -- and the numbers did not move between `n = 9` and
+//! `n = 12`. So at these sizes the constant is at least forty times what the 1% criterion needs,
+//! and flat in `n`; what it needs at 4,900 sites with latents is not a question enumeration can
+//! answer, and the example says so rather than extrapolating.
 
 use crate::rng::Pcg;
 
@@ -47,6 +62,12 @@ pub const G8: [(i64, i64); 2] = [(0, 1), (4, 1)];
 pub const G12: [(i64, i64); 3] = [(0, 1), (4, 1), (9, 10)];
 /// Degree-16 connection rule, Table II of the DTM paper.
 pub const G16: [(i64, i64); 4] = [(0, 1), (4, 1), (8, 7), (14, 9)];
+
+/// The most visible-state trajectories [`Dtm::exact_nll`] will enumerate: `2^24`, some 16.8
+/// million, each costing one latent sum per step. `(2^nv)^(T+1)` above this is refused with the
+/// count in the message rather than attempted, because at `nv = 9, T = 4` the attempt is
+/// `3.5e13` and does not return.
+pub const MAX_NLL_TRAJECTORIES: usize = 1 << 24;
 
 /// Edge list of an L x L pattern grid (open boundaries, deduplicated undirected edges).
 #[must_use]
@@ -457,6 +478,18 @@ impl Dtm {
 
     /// Exact theta-dependent loss: NLL(theta) = -`E_Q`[ `sum_t` ln `P_theta(x^t` | x^{t+1}) ] where Q
     /// is the exact forward chain from a uniform mixture over `data` patterns.
+    ///
+    /// # Cost, and the refusal
+    ///
+    /// This enumerates every trajectory `(x^0, ..., x^T)` of visible states: `(2^nv)^(T+1)` of
+    /// them, each costing a latent sum. At `nv = 9, T = 4` that is `3.5e13`, and until
+    /// 2026-09-13 nothing said so -- a caller at that size got no error and no answer, only a
+    /// process that never returned. The budget below is [`MAX_NLL_TRAJECTORIES`]; above it this
+    /// panics with the count rather than run.
+    ///
+    /// # Panics
+    ///
+    /// If `(2^nv)^(T+1)` exceeds [`MAX_NLL_TRAJECTORIES`], or overflows `usize`.
     #[must_use]
     pub fn exact_nll(&self, data: &[Vec<i8>]) -> f64 {
         let nv = self.nv;
@@ -464,6 +497,13 @@ impl Dtm {
         let mut nll = 0.0;
         // enumerate trajectories (x^0..x^T), each visible mask
         let masks = 1usize << nv;
+        let trajectories = masks.checked_pow(t_steps as u32 + 1);
+        assert!(
+            trajectories.is_some_and(|c| c <= MAX_NLL_TRAJECTORIES),
+            "exact_nll enumerates (2^nv)^(T+1) = {} trajectories at nv = {nv}, T = {t_steps}, \
+             above the {MAX_NLL_TRAJECTORIES} it will attempt; use exact_log_cond on sampled pairs",
+            trajectories.map_or("more than usize".to_string(), |c| c.to_string())
+        );
         let to_x = |m: usize| -> Vec<i8> {
             (0..nv).map(|b| if m >> b & 1 == 1 { 1 } else { -1 }).collect()
         };
@@ -568,6 +608,28 @@ pub fn autocorr(series: &[f64], k: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// THE ENUMERATION REFUSES A SIZE IT CANNOT FINISH. `exact_nll` walks every `(2^nv)^(T+1)`
+    /// trajectory; at `nv = 9, T = 4` that is 3.5e13 and until 2026-09-13 the call simply never
+    /// returned -- found by an example that used it as a training check. The refusal names the
+    /// count. And the budget must not refuse what it can do: `nv = 4, T = 2` is 4,096 trajectories
+    /// and runs.
+    #[test]
+    #[should_panic(expected = "trajectories")]
+    fn exact_nll_refuses_a_trajectory_count_it_cannot_enumerate() {
+        let edges: Vec<(u16, u16)> = (0..8u16).map(|i| (i, i + 1)).collect();
+        let dtm = super::Dtm::new(4, 9, 9, edges, 1.0, vec![0.0, 0.2, 0.4, 0.8, 1.6]);
+        let _ = dtm.exact_nll(&[vec![1i8; 9]]);
+    }
+
+    #[test]
+    fn exact_nll_runs_inside_its_budget() {
+        let edges: Vec<(u16, u16)> = (0..3u16).map(|i| (i, i + 1)).collect();
+        let dtm = super::Dtm::new(2, 4, 4, edges, 1.0, vec![0.0, 0.3, 0.9]);
+        let nll = dtm.exact_nll(&[vec![1i8; 4], vec![-1i8; 4]]);
+        assert!(nll.is_finite() && nll > 0.0, "{nll}");
+        assert!(16usize.pow(3) <= super::MAX_NLL_TRAJECTORIES);
+    }
+
     use super::*;
 
     #[test]

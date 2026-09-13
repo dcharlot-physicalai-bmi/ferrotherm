@@ -715,6 +715,13 @@ mutations=(
   # tells the two apart.
   "src/autocorr.rs|            for i in (0..n).rev() {|            for i in 0..n {|autocorr::tests::pushing_mass_forward_is_the_adjoint_of_pulling_functions_back|the sequential sweep applied to functions in forward site order"
 
+
+  # THE BUDGET IS THE REFUSAL. Checking only that the count fits in a usize lets nv = 9, T = 4
+  # through -- 3.5e13 trajectories, which is what hung a caller for the whole of an afternoon.
+  # The should-panic test is the row's witness: with the budget gone the call proceeds and the
+  # test, which expects the refusal, never gets one.
+  "src/dtm.rs|            trajectories.is_some_and(|c| c <= MAX_NLL_TRAJECTORIES),|            trajectories.is_some(),|dtm::tests::exact_nll_refuses_a_trajectory_count_it_cannot_enumerate|an exact_nll that refuses nothing it can count"
+
 )
 
 bad=0
@@ -753,7 +760,7 @@ check_filters
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=116
+expected_rows=117
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
