@@ -24,6 +24,18 @@
 //! splits one budget across arms and returns the best answer found, which is never worse than the
 //! worst arm and is usually close to whichever arm happened to suit the instance. It is the standard
 //! practical answer to "which solver", and it is what commercial solvers ship.
+//!
+//! # The ranking depends on whether readout is charged — measured
+//!
+//! Published Ising-machine rankings price the updates and exclude readout. On a Z1-class device
+//! model ([`crate::ledger::Z1_SPICE`]) one node read costs 239 updates, so a solver that reaches
+//! R99 in many short runs pays `n` reads per run for a cost the ranking cannot see.
+//! `examples/energy_to_solution.rs` (2026-09-13), six planted 8x8 frustrated-loop glasses, R99 by
+//! [`crate::tts::tts`] minimised over run length, the four arms here: read-free, `sqa` was cheapest
+//! on all six. Charging one read of every node at the end of each run changed the winner on one
+//! (tempering, which needed a single run) and multiplied tabu's and breakout's energy by 3x to 5x
+//! (they needed 22 to 71 runs) against 1.1x to 1.5x for the annealers — the margins moved on every
+//! instance. A read every sweep is a uniform factor on every arm and cannot reorder them.
 
 use crate::graph::Graph;
 
