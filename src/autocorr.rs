@@ -187,6 +187,16 @@ pub enum Kernel {
     /// temperature, and a Boltzmann law with couplings `beta_i J_ij` would have to be symmetric in
     /// `i` and `j`, so the stationary law is not the Boltzmann distribution of any pair.
     /// [`stationary_solved`] gives it; `examples/spread_exact.rs` measures how far, and from what.
+    /// On the 4x3 grid at `beta = 1` the non-Boltzmann residual -- the KL no pair of couplings and
+    /// fields reproduces -- is `0.09` to `0.10` times `spread^2` up to a spread of `0.1`, rising to
+    /// `0.15 spread^2` at `0.4`; it is a fifth of the loss at the loaded couplings throughout, so a
+    /// calibrated pair removes four fifths, moving couplings by about `1.7 spread` per unit `beta`,
+    /// while the nearest single temperature moves under 1%. At `beta = 2` the residual is
+    /// `3e-4 spread^2` and under half a percent of the loss: when cold the spread is almost purely a
+    /// Boltzmann distortion, mostly a global temperature error (`beta_eff` from `1.95` to `1.42` for
+    /// spreads `0.02` to `0.4`), and the sweep relaxes up to twice as slowly. The mean-temperature
+    /// guess `J' = J (beta_i + beta_j) / 2`, `h' = beta_i h` removes only `36%` at `beta = 1` and
+    /// `24%` at `beta = 2` of the loss at spread `0.2`, against the fitted pair's `78%` and `99.9%`.
     SiteSpread {
         /// Seed of the per-site factors.
         seed: u64,
