@@ -777,6 +777,24 @@ mutations=(
   "src/restart.rs|        steps += 1.0 - p;|        steps += 1.0;|restart::tests::a_memoryless_solver_gains_nothing_from_any_cutoff|an expected work that bills every attempt its full cutoff"
   "src/restart.rs|            return 1u64 << (k - 1);|            return 1u64 << k;|restart::tests::lubys_sequence_is_the_published_one_and_its_blocks_sum_as_they_must|a Luby sequence whose block ends are twice too long"
 
+  # The free-fermion oracle. Pfeuty's single-particle energy is checked against a dense
+  # Hamiltonian on 4, 6 and 8 spins; drop its cosine cross term and the spectrum is flat, which
+  # the ordered and disordered cases both see. The momenta belong to the even-parity sector
+  # (antiperiodic); the periodic ones give a finite-size coefficient of +1.047 instead of -pi/6,
+  # and only the Casimir test notices, because both decoupled limits are blind to the sector.
+  "src/freefermion.rs|2.0 * j * gamma * k.cos()).sqrt()|0.0 * j * gamma * k.cos()).sqrt()|freefermion::tests::pfeutys_closed_form_is_the_exact_ground_state_of_the_dense_hamiltonian|a single-particle energy without its cosine cross term"
+  "src/freefermion.rs|PI * (2.0 * m as f64 + 1.0) / n as f64|PI * (2.0 * m as f64) / n as f64|freefermion::tests::the_critical_chains_finite_size_correction_is_the_casimir_term_of_c_one_half|momenta from the wrong parity sector"
+  # Katsura's trace is four products; the odd sector's sinh product enters with a MINUS, which is
+  # the parity projection (1 - P)/2. Add it instead and Z at J = 0 is (2cosh)^N + (2sinh)^N, not
+  # (2cosh)^N; the whole-spectrum Jacobi test sees it in every phase.
+  "src/freefermion.rs|    let mut odd_sign = -1.0;|    let mut odd_sign = 1.0;|freefermion::tests::katsuras_finite_temperature_solution_is_the_whole_dense_spectrum|a periodic sector whose parity projection adds instead of subtracts"
+
+  # The annealer's access cost. The initialisation overhead is half the fixed cost; forget it and
+  # a one-read submission is a third cheaper than the published model says. The reads that amortise
+  # the fixed cost are a ceiling; a floor under-counts by one, which the pinned 208 sees.
+  "src/access.rs|        qpu.programming_us + self.overhead_us|        qpu.programming_us|access::tests::one_read_costs_a_third_of_a_kilojoule_before_it_anneals|an access time that forgets the initialisation overhead"
+  "src/access.rs|            .ceil()|            .floor()|access::tests::reads_amortise_the_fixed_cost_as_the_closed_form_says|an amortisation count rounded the wrong way"
+
 )
 
 bad=0
@@ -848,7 +866,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=142
+expected_rows=147
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
