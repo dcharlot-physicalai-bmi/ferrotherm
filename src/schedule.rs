@@ -187,6 +187,20 @@ impl Schedule {
     /// Ramp a penalty geometrically from `start` to `end` across the existing stages.
     ///
     /// Applied after the temperature ladder, so the two are specified independently.
+    ///
+    /// # Measured, once it was applied
+    ///
+    /// `examples/penalty_ramp.rs` (2026-09-13): eight one-hot categoricals over eight values under
+    /// `all_different`, a random objective, the optimum enumerated, six schedules of the same 4,800
+    /// sweeps with the same 200 seeds on each of 20 instances. Probability of a feasible optimum:
+    /// penalty held at the certified value `0.060`; ramped `0.25 -> 1`, `0.104` (16 instances
+    /// better, 3 tied, 1 worse); `0.5 -> 1`, `0.093`; `0.25 -> 2`, `0.087`; held at HALF the
+    /// certified value, `0.103` (19 better, 1 worse) and still feasible on every one of 4,000
+    /// answers; held at twice it, `0.037`. So the ramp does what the premise says -- 1.7x over the
+    /// certified constant, with non-overlapping intervals -- and so does simply halving the penalty:
+    /// the certified value is over-provisioned by at least two here, and the gain is from the level
+    /// the sampler spends most of its sweeps at, not from the path. What the ramp adds is that it
+    /// ends at full strength without betting on how far the certificate can be undercut.
     #[must_use]
     pub fn ramp_domain_wall(mut self, start: f64, end: f64) -> Self {
         for (i, s) in ramp(start, end, self.stages.len()).into_iter().enumerate() {
