@@ -193,6 +193,28 @@ pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
 ///
 /// A non-finite or non-positive penalty falls back to the default.
 ///
+/// # What the default costs, measured
+///
+/// Twelve variables, `t` random three-body `+-1` terms, twenty instances, the optimum enumerated,
+/// `P*` by bisection on an exact elimination of the reduced graph, and every arm annealed at the
+/// same number of single-spin flips on the same ladder (2026-09-13):
+///
+/// ```text
+///   t    ancillas   P*     default   P*/default    P(GS): native   at P*   1.5 P*   2 P*   default   default, ladder scaled
+///   12      8.0    11.8     491       0.024               0.995    0.60    0.52     0.43    0.13      0.27
+///   18     10.5    13.4     700       0.019               0.984    0.27    0.21     0.16    0.03      0.07
+///   24     12.4    15.0     885       0.017               0.979    0.17    0.15     0.09    0.013     0.03
+/// ```
+///
+/// The default is forty to sixty times the exact threshold. The cost the reduction was measured to
+/// carry is two costs: the penalty's, a factor of five to thirteen in ground-state probability
+/// between the default and `P*` on the objective's ladder (two to six with the ladder scaled to the
+/// penalty instead, since a rigid landscape has no single fair ladder), and the ancilla
+/// dimension's, a further factor of 1.6 to 5.7 between `P*` and the native anneal that no penalty
+/// removes. Above `P*` the probability falls monotonically: the smallest penalty that holds is the
+/// best one, and at `P*` itself a quarter to a third of returned states carry a broken ancilla that
+/// ties the optimum, which is what the threshold means.
+///
 /// # Errors
 ///
 /// As [`to_pairwise`].
