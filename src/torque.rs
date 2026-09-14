@@ -77,6 +77,18 @@ pub fn mean_degree(logical: &Graph) -> f64 {
 /// what `examples/chain_strength.rs` and the sampled sweep should be read against. `F*` is a
 /// property of the embedding as much as of the instance; chains of 9 to 11 sites carried the
 /// regular graphs here.
+///
+/// And where a fixed annealing budget wants its chains (`examples/chain_dynamic_exact.rs`, the
+/// same instances, 800 sweeps, 100 seeds per cell): the ground-state probability of the resolved
+/// answer peaks at `1.2 F*` -- `0.994` on the cliques and `0.943` on the regular graphs under
+/// majority resolution, against `0.955` and `0.892` at `F*` itself and `0.56` to `0.73` at half
+/// of it, where 20 to 30% of chains are broken -- and falls again past `2 F*` as the chains start
+/// to swamp the search. Per instance, the smallest strength attaining the instance's best
+/// probability sits below `F*` on 38 of 73 clique and 23 of 55 regular instances under majority or
+/// weighted resolution (the resolver doing part of the optimisation), and never below `F*` when a
+/// broken sample is discarded. So Fang and Warburton's `r ~ 1` holds in the mean, at `1.0` to
+/// `1.2`, and Gilbert and Rodriguez's `r < 1` holds on half the instances -- but only because a
+/// vote repairs the chain the threshold says is broken.
 #[must_use]
 pub fn strength(logical: &Graph) -> f64 {
     strength_with(logical, UTC_PREFACTOR)
