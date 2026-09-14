@@ -535,7 +535,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             // applied first: (P v) = P_0 (P_1 (... (P_{n-1} v))). Each P_i is rank two per state --
             // the heat-bath conditional at site i given the current others.
             let mut cur = v.to_vec();
-            for i in (0..n).rev() {
+            for i in (0..g.n).rev() {
                 let bit = 1usize << i;
                 let mut next = vec![0.0f64; m];
                 for x in 0..m {
@@ -1057,7 +1057,8 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
     kernel_rows(g, beta, kernel, |x, row| {
         for (y, &p) in row.iter().enumerate() {
             let delta = if x == y { 1.0 } else { 0.0 };
-            a[x * m + y] = delta - p + pi[y];
+            let rank_one = pi[y];
+            a[x * m + y] = delta - p + rank_one;
         }
     });
     let mut z = vec![0.0f64; m * m];

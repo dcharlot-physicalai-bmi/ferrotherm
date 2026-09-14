@@ -2186,7 +2186,7 @@ impl Elimination {
                 // A spin no table mentions is uniform, and it still has to be DRAWN. `log_partition`
                 // only owes it `ln 2`; a sampler that skipped it would return whatever the state
                 // vector was initialised to, which is not a draw.
-                constant -= core::f64::consts::LN_2;
+                constant -= std::f64::consts::LN_2;
                 steps.push(Step { v, scope: Vec::new(), logit: vec![0.0] });
                 continue;
             }

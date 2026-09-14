@@ -713,7 +713,7 @@ mutations=(
   # which is still a stochastic operator with pi invariant and is not the kernel Dtm::sample runs.
   # Only the adjoint identity against apply_distribution -- written forward, as mass moves --
   # tells the two apart.
-  "src/autocorr.rs|            for i in (0..n).rev() {|            for i in 0..n {|autocorr::tests::pushing_mass_forward_is_the_adjoint_of_pulling_functions_back|the sequential sweep applied to functions in forward site order"
+  "src/autocorr.rs|            for i in (0..g.n).rev() {|            for i in 0..g.n {|autocorr::tests::pushing_mass_forward_is_the_adjoint_of_pulling_functions_back|the sequential sweep applied to functions in forward site order"
 
 
   # THE BUDGET MUST NOT REFUSE WHAT IT CAN DO. A budget a thousand times too small refuses the

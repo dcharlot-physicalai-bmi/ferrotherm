@@ -1761,7 +1761,7 @@ impl Model {
         // amount of annealing discovers that in a way a modeller can act on.
         for (c, _, hard) in &self.constraints {
             if let Constraint::AllDifferent(vars) = c {
-                if !*hard {
+                if !(*hard) {
                     continue; // a soft all-different is a preference; it is allowed to be impossible
                 }
                 let mut distinct: Vec<i64> = Vec::new();
