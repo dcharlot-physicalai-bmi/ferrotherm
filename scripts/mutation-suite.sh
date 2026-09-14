@@ -837,6 +837,17 @@ mutations=(
   "src/decomp.rs|                ut[t * rows + i] = factor[i * r + t];|                ut[t * rows + i] = factor[i * r + t] * 0.5;|decomp::tests::the_hosvd_reconstructs_and_its_core_is_all_orthogonal|a Tucker core contracted with half a factor"
   "src/decomp.rs|    let l = (k + oversample).min(rows).min(cols);|    let l = k.min(rows).min(cols);|decomp::tests::the_randomized_svd_matches_the_full_one_on_a_decaying_spectrum|a range finder with no oversampling"
 
+  # Sourlas codes. The Nishimori temperature is half the log-likelihood ratio; double it and the
+  # identity that is zero only on the Nishimori line is no longer zero. The channel average weights
+  # a pattern by p^flips (1-p)^rest; swap the two and the same identity fails. The expected error
+  # counts a marginal of the wrong sign; count the right sign instead and the Nishimori minimum
+  # is a maximum. The Ising posterior
+  # carries the received coupling itself; negate it and the Gibbs kernel decodes the wrong model.
+  "src/sourlas.rs|0.5 * ((1.0 - p) / p).ln()|((1.0 - p) / p).ln()|sourlas::tests::nishimoris_identity_holds_exactly_on_the_nishimori_line|a Nishimori temperature twice too hot"
+  "src/sourlas.rs|let prob = p.powi(count as i32) * (1.0 - p).powi((m - count as usize) as i32);|let prob = (1.0 - p).powi(count as i32) * p.powi((m - count as usize) as i32);|sourlas::tests::nishimoris_identity_holds_exactly_on_the_nishimori_line|a channel that weights flips as keeps"
+  "src/sourlas.rs|        } else if agree < 0.0 {|        } else if agree > 0.0 {|sourlas::tests::the_nishimori_temperature_minimises_the_expected_bit_error|a decoder that reads the marginal's sign backwards"
+  "src/sourlas.rs|2 => b.couple(s[0], s[1], f64::from(j)),|2 => b.couple(s[0], s[1], -f64::from(j)),|sourlas::tests::a_gibbs_kernel_decodes_as_the_posterior_and_the_fabric_agrees_on_a_noisy_channel|an Ising posterior with its couplings negated"
+
 )
 
 bad=0
@@ -908,7 +919,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=160
+expected_rows=164
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
