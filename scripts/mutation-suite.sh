@@ -795,6 +795,22 @@ mutations=(
   "src/access.rs|        qpu.programming_us + self.overhead_us|        qpu.programming_us|access::tests::one_read_costs_a_third_of_a_kilojoule_before_it_anneals|an access time that forgets the initialisation overhead"
   "src/access.rs|            .ceil()|            .floor()|access::tests::reads_amortise_the_fixed_cost_as_the_closed_form_says|an amortisation count rounded the wrong way"
 
+  # The p-dit. The Gumbel ROM is -ln(-ln u); drop the outer sign and the unit's exact law is no
+  # longer the softmax, which the ten-bit total-variation bound sees. The exact law's bound for a
+  # rival state is score - field_b; add instead of subtract and the law is wrong for any
+  # asymmetric fields. The encoded row's valid mass is a sum over decodable states; zero it and the
+  # comparison test's "some mass is valid" assertion goes. The lowering's constant carries
+  # -J c_i c_j per edge and state; flip it and the valid-codeword energies no longer match. The
+  # emulator's ROM address is the top rom_bits of a draw; one bit wider indexes past the ROM. The
+  # RTL chains its q draws; feed every draw the same seed word and the icarus gate sees the trace
+  # diverge from the emulator.
+  "src/pdit.rs|            let g = -(-u.ln()).ln();|            let g = (-u.ln()).ln();|pdit::tests::the_rom_units_exact_law_is_the_softmax_until_the_gumbel_range_ends|a Gumbel ROM with its outer sign dropped"
+  "src/pdit.rs|                let bound = score - fields_q[b];|                let bound = score + fields_q[b];|pdit::tests::the_rom_units_exact_law_is_the_softmax_until_the_gumbel_range_ends|a rival's bound with the wrong sign"
+  "src/pdit.rs|            valid_mass += pi[x];|            valid_mass += 0.0;|pdit::tests::a_native_p_trit_reaches_stationarity_in_fewer_draws_than_its_encodings|an encoded row that reports no valid mass"
+  "src/pdit.rs|            constant -= w * ci * cj;|            constant += w * ci * cj;|pdit::tests::the_lowerings_agree_with_the_potts_energy_on_every_valid_codeword|a lowering constant with its sign flipped"
+  "src/pdit.rs|        let shift = 32 - self.rom_bits;|        let shift = 31 - self.rom_bits;|pdit::tests::the_fixed_point_p_trit_fabric_samples_the_potts_law|a ROM address one bit too wide"
+  "src/pdit.rs|                    format!(\"d{i}_{}\", a - 1)|                    format!(\"rng[{i}]\")|pdit::tests::the_p_trit_rtl_matches_the_emulator_bit_exact|an RTL whose q draws are all the first draw"
+
 )
 
 bad=0
@@ -866,7 +882,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=147
+expected_rows=153
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
