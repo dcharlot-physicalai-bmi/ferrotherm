@@ -1092,7 +1092,24 @@ pub fn own_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, Autocor
 /// production converges to, and it measures NON-REVERSIBILITY, not correctness: a fixed-order
 /// sweep of exact heat-bath updates is invariant but not reversible and produces entropy while
 /// sampling the right law, and the synchronous sweep is reversible with respect to Peretto's law
-/// and produces none while sampling the wrong one (`examples/entropy_production_exact.rs`).
+/// and produces none while sampling the wrong one. `examples/entropy_production_exact.rs` on the
+/// 4x3 grid, nats per full update beside each law's TV from the Boltzmann distribution it was
+/// meant to sample:
+///
+/// ```text
+///                          beta 0.5            beta 1              beta 2
+///   chromatic (correct)    1.11     0          0.132    0          5.4e-4   0
+///   sequential (correct)   0.89     0          0.110    0          5.0e-4   0
+///   1.01 beta              1.10     1.0e-2     0.125    5.4e-3     4.9e-4   2.3e-3
+///   shipped fabric         1.11     2.1e-3     0.133    1.2e-3     inf      7.7e-3
+///   stale reads p 0.1      0.73     3.9e-2     0.077    1.0e-2     2.7e-4   4.7e-3
+///   site spread 0.2        1.33     0.13       0.151    5.7e-2     5.1e-4   7.1e-2
+///   synchronous            0        0.61       0        0.43       0        0.24
+///   PIMI 0.5 / 0.4         2.9e-4   0.77       4.8e-4   0.24       9.0e-4   2.9e-2
+/// ```
+///
+/// The two columns do not rank alike at any temperature. The fabric's `inf` at `beta = 2` is its
+/// comparator forbidding flips once `2 beta f > 11.8`.
 ///
 /// # Errors
 ///
