@@ -839,7 +839,7 @@ pub const MAX_DENSE_SPINS: usize = 12;
 /// sides at once: `a` is `m x m` row-major and is destroyed, `b` is `m x r` row-major and is
 /// replaced by the solution. `false` when a pivot falls below `1e-14` -- singular to floating
 /// point, which for the systems built here means a kernel with more than one closed class.
-fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64], r: usize) -> bool {
+pub(crate) fn lu_solve(a: &mut [f64], m: usize, b: &mut [f64], r: usize) -> bool {
     for k in 0..m {
         let mut piv = k;
         let mut best = a[k * m + k].abs();

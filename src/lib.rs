@@ -211,6 +211,7 @@ pub mod landauer;
 pub mod restart;
 pub mod freefermion;
 pub mod access;
+pub mod pdit;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///
