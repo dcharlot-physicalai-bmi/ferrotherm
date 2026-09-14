@@ -208,6 +208,7 @@ pub mod autocorr;
 pub mod fft;
 pub mod rhat;
 pub mod landauer;
+pub mod restart;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///
