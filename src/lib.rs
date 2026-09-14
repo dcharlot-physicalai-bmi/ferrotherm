@@ -213,6 +213,7 @@ pub mod freefermion;
 pub mod access;
 pub mod pdit;
 pub mod decomp;
+pub mod sourlas;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///
