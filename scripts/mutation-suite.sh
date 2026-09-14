@@ -811,6 +811,11 @@ mutations=(
   "src/pdit.rs|        let shift = 32 - self.rom_bits;|        let shift = 31 - self.rom_bits;|pdit::tests::the_fixed_point_p_trit_fabric_samples_the_potts_law|a ROM address one bit too wide"
   "src/pdit.rs|                    format!(\"d{i}_{}\", a - 1)|                    format!(\"rng[{i}]\")|pdit::tests::the_p_trit_rtl_matches_the_emulator_bit_exact|an RTL whose q draws are all the first draw"
 
+  # The p-bit emitter wrote a negative bias as 32'sd-154, which is not Verilog; the gate never
+  # saw it because every lattice it ran on was unbiased. Now it carries biases of both signs, and
+  # an emitter that drops the negated literal's sign puts the wrong field in the netlist.
+  "src/hdl.rs|                format!(\"-32'sd{}\", -bias)|                format!(\"32'sd{}\", -bias)|hdl::tests::verilog_matches_emulator_bit_exact|a negative bias emitted with its sign dropped"
+
 )
 
 bad=0
@@ -882,7 +887,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=153
+expected_rows=154
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
