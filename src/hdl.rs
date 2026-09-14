@@ -71,7 +71,11 @@ impl FixedFabric {
     /// a third.
     #[must_use]
     pub fn new(g: &Graph, beta: f64, seed: u64) -> FixedFabric {
-        assert_eq!(g.classes.len(), 2, "v1 fabric requires a bipartite (2-colorable) graph");
+        assert_eq!(
+            g.classes.len(),
+            2,
+            "v1 fabric requires a bipartite (2-colorable) graph"
+        );
         let scale = (1u32 << FRAC) as f64;
         let mut adj = vec![Vec::new(); g.n];
         for i in 0..g.n {
@@ -93,10 +97,16 @@ impl FixedFabric {
         let seeds: Vec<u32> = (0..g.n)
             .map(|i| {
                 let s = splitmix(seed ^ (i as u64).wrapping_mul(0xD6E8FEB86659FD93)) as u32;
-                if s == 0 { 1 } else { s }
+                if s == 0 {
+                    1
+                } else {
+                    s
+                }
             })
             .collect();
-        let init_s: Vec<bool> = (0..g.n).map(|i| splitmix(seed ^ 0xA5A5 ^ i as u64) & 1 == 1).collect();
+        let init_s: Vec<bool> = (0..g.n)
+            .map(|i| splitmix(seed ^ 0xA5A5 ^ i as u64) & 1 == 1)
+            .collect();
         FixedFabric {
             n: g.n,
             adj,
@@ -170,7 +180,14 @@ impl FixedFabric {
         );
         v.push_str(&format!("  reg [31:0] rng [0:{}];\n", n - 1));
         for i in 0..n {
-            let mut terms = vec![format!("32'sd{}", self.bias_q[i])];
+            // A negative literal is `-32'sd154`, never `32'sd-154`: the second is not Verilog, and
+            // every gate here ran on unbiased lattices for long enough that nobody had emitted one.
+            let bias = self.bias_q[i];
+            let mut terms = vec![if bias < 0 {
+                format!("-32'sd{}", -bias)
+            } else {
+                format!("32'sd{bias}")
+            }];
             for &(j, w) in &self.adj[i] {
                 let wa = w.abs();
                 if w >= 0 {
@@ -179,25 +196,35 @@ impl FixedFabric {
                     terms.push(format!("(state[{j}] ? -32'sd{wa} : 32'sd{wa})"));
                 }
             }
-            v.push_str(&format!("  wire signed [31:0] f{i} = {};\n", terms.join(" + ")));
+            v.push_str(&format!(
+                "  wire signed [31:0] f{i} = {};\n",
+                terms.join(" + ")
+            ));
             v.push_str(&format!(
                 "  wire signed [31:0] fc{i} = f{i} > 32'sd{FMAX} ? 32'sd{FMAX} : (f{i} < -32'sd2048 ? -32'sd2048 : f{i});\n"
             ));
-            v.push_str(&format!("  wire [9:0] ad{i} = (fc{i} + 32'sd2048) >>> 2;\n"));
+            v.push_str(&format!(
+                "  wire [9:0] ad{i} = (fc{i} + 32'sd2048) >>> 2;\n"
+            ));
             v.push_str(&format!("  wire [31:0] nr{i} = xs32(rng[{i}]);\n"));
             v.push_str(&format!("  wire up{i} = nr{i}[31:16] < fsig(ad{i});\n"));
         }
         v.push_str("\n  always @(posedge clk) begin\n    if (rst) begin\n      phase <= 1'b0;\n");
         for i in 0..n {
             v.push_str(&format!("      rng[{i}] <= 32'd{};\n", self.seeds[i]));
-            v.push_str(&format!("      state[{i}] <= 1'b{};\n", self.init_s[i] as u8));
+            v.push_str(&format!(
+                "      state[{i}] <= 1'b{};\n",
+                self.init_s[i] as u8
+            ));
         }
         v.push_str("    end else if (en) begin\n      phase <= ~phase;\n");
         for (ci, class) in self.classes.iter().enumerate() {
             v.push_str(&format!("      if (phase == 1'b{ci}) begin\n"));
             for &iu in class {
                 let i = iu as usize;
-                v.push_str(&format!("        state[{i}] <= up{i}; rng[{i}] <= nr{i};\n"));
+                v.push_str(&format!(
+                    "        state[{i}] <= up{i}; rng[{i}] <= nr{i};\n"
+                ));
             }
             v.push_str("      end\n");
         }
@@ -388,16 +415,20 @@ module {module} (
             } else {
                 format!("{{{}'d0, state[{hi}:{lo}]}}", 32 - (hi - lo + 1))
             };
-            v.push_str(&format!("          8'h{:02X}: rdata_r <= {expr};\n", 0x20 + 4 * k));
+            v.push_str(&format!(
+                "          8'h{:02X}: rdata_r <= {expr};\n",
+                0x20 + 4 * k
+            ));
         }
         v.push_str(
-"          default: rdata_r <= 32'hDEADBEEF;
+            "          default: rdata_r <= 32'hDEADBEEF;
         endcase
       end else if (rvalid_r && s_axi_rready) rvalid_r <= 1'b0;
     end
   end
 endmodule
-");
+",
+        );
         v
     }
 
@@ -430,7 +461,6 @@ endmodule
         (tb, expected)
     }
 }
-
 
 // -- the emitted fabric, behind the same trait as every other backend ---------------------------
 
@@ -495,14 +525,20 @@ impl RtlFabric {
     /// generic figure and so admits about half as many p-bits as the generic model promises.
     #[must_use]
     pub fn on(target: &crate::targets::FpgaTarget) -> RtlFabric {
-        RtlFabric { max_spins: Some(target.measured_pbits() as usize), ..RtlFabric::new() }
+        RtlFabric {
+            max_spins: Some(target.measured_pbits() as usize),
+            ..RtlFabric::new()
+        }
     }
 
     /// The declared capabilities, without building anything.
     #[must_use]
     pub fn describe(max_spins: Option<usize>) -> crate::fabric::Fabric {
         use crate::fabric::{Precision, Range};
-        let mut f = crate::fabric::Fabric::unconstrained("ferrotherm-pbit-rtl", crate::ledger::KV260_MEASURED);
+        let mut f = crate::fabric::Fabric::unconstrained(
+            "ferrotherm-pbit-rtl",
+            crate::ledger::KV260_MEASURED,
+        );
         f.max_spins = max_spins;
         f.max_arity = 2;
         // Q.8 on an ABSOLUTE grid: `FixedFabric::new` computes `(w * 256).round()`, with no
@@ -514,8 +550,12 @@ impl RtlFabric {
         // computing a relative error of ~0, and the fabric then quantised every one of them to
         // zero and sampled a graph with no couplings in it. `Precision::Grid` is the variant that
         // says what this hardware actually does, and `check` now refuses that program.
-        f.coupling_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };
-        f.field_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };
+        f.coupling_precision = Precision::Grid {
+            step: 1.0 / (1u32 << FRAC) as f64,
+        };
+        f.field_precision = Precision::Grid {
+            step: 1.0 / (1u32 << FRAC) as f64,
+        };
         f.coupling_range = Some(Range::continuous(-8.0, 2047.0 / 256.0));
         f.field_range = Some(Range::continuous(-8.0, 2047.0 / 256.0));
         f
@@ -563,7 +603,9 @@ impl crate::fabric::Device for RtlFabric {
                 self.load_unused = true;
                 self.graph = Some(g);
             }
-            Err(e) => bad.push(crate::fabric::Unsupported::Unplaceable { detail: e.to_string() }),
+            Err(e) => bad.push(crate::fabric::Unsupported::Unplaceable {
+                detail: e.to_string(),
+            }),
         }
         bad
     }
@@ -585,7 +627,8 @@ impl crate::fabric::Device for RtlFabric {
         let mut last: Option<Vec<bool>> = None;
         for (rung, stage) in schedule.stages().iter().enumerate() {
             // Each rung is its own quantisation of beta*J, which on hardware is its own bitstream.
-            let mut fab = FixedFabric::new(g, stage.beta, seed ^ (rung as u64).wrapping_mul(0x9E37));
+            let mut fab =
+                FixedFabric::new(g, stage.beta, seed ^ (rung as u64).wrapping_mul(0x9E37));
             // EACH RUNG STARTS WHERE THE NETLIST STARTS, which is not where the last one finished.
             //
             // This used to copy the previous rung's spins in, so a ladder annealed. The emitted
@@ -663,14 +706,19 @@ impl crate::fabric::Device for RtlFabric {
         // Every draw leaves the fabric. On the metered board that is the term worth 239 updates
         // apiece, so a chain of 3,000 draws costs far more in readback than in sampling.
         self.ledger.reads += (plan.draws as u64) * (g.n as u64);
-        Ok(crate::samples::SampleSet::from_chain(states, energies, beta, plan.burn_in, thin))
+        Ok(crate::samples::SampleSet::from_chain(
+            states,
+            energies,
+            beta,
+            plan.burn_in,
+            thin,
+        ))
     }
 
     fn ledger(&self) -> crate::ledger::Ledger {
         self.ledger
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -695,9 +743,11 @@ mod tests {
         }
         let m = acc / reads as f64;
         let exact = onsager_m(beta);
-        assert!((m - exact).abs() < 0.03, "fixed-point |M| {m:.4} vs Onsager {exact:.4}");
+        assert!(
+            (m - exact).abs() < 0.03,
+            "fixed-point |M| {m:.4} vs Onsager {exact:.4}"
+        );
     }
-
 
     /// THE SHELL GATE: the AXI4-Lite wrapper is driven like a host would drive it, in simulation,
     /// and must start the fabric, count sweeps, stop at the target, and read back the SAME state
@@ -705,7 +755,11 @@ mod tests {
     /// word is exactly the defect this catches, and it cannot be caught by staring at the RTL.
     #[test]
     fn axi_shell_runs_the_fabric_and_reads_back_what_the_emulator_reaches() {
-        if std::process::Command::new("iverilog").arg("-V").output().is_err() {
+        if std::process::Command::new("iverilog")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
             eprintln!("SKIP: iverilog not installed; the AXI shell gate did not run");
             return;
         }
@@ -719,7 +773,11 @@ mod tests {
         for _ in 0..sweeps {
             fab.sweep();
         }
-        let want: u32 = fab.s.iter().enumerate().fold(0u32, |a, (i, &b)| a | (u32::from(b) << i));
+        let want: u32 = fab
+            .s
+            .iter()
+            .enumerate()
+            .fold(0u32, |a, (i, &b)| a | (u32::from(b) << i));
         let want_pop = fab.s.iter().filter(|&&b| b).count() as u32;
 
         let tb = format!(
@@ -807,10 +865,21 @@ endmodule
             .args(["-g2012", "-o", "sim", "fabric.v", "shell.v", "tb.v"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
-        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        assert!(
+            out.status.success(),
+            "iverilog: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = std::process::Command::new("vvp")
+            .current_dir(&dir)
+            .arg("sim")
+            .output()
+            .unwrap();
         let stdout = String::from_utf8_lossy(&run.stdout);
-        assert!(stdout.contains("FERROTHERM_PASS"), "AXI shell gate:\n{stdout}");
+        assert!(
+            stdout.contains("FERROTHERM_PASS"),
+            "AXI shell gate:\n{stdout}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -819,11 +888,19 @@ endmodule
     /// not installed; CI installs it.
     #[test]
     fn verilog_matches_emulator_bit_exact() {
-        if std::process::Command::new("iverilog").arg("-V").output().is_err() {
+        if std::process::Command::new("iverilog")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
             eprintln!("SKIP: iverilog not installed; the RTL bit-exactness gate did not run");
             return;
         }
-        let g = lattice2d(6, 0.9);
+        let mut g = lattice2d(6, 0.9);
+        // Biases of both signs: a negative one is emitted as a negated literal, and this gate is
+        // what knows whether that literal is the one the emulator added.
+        g.h[3] = -0.7;
+        g.h[10] = 0.4;
         let mut fab = FixedFabric::new(&g, 0.7, 0x1234);
         let rtl = fab.emit_verilog("fabric");
         let (tb, expected) = fab.emit_testbench("fabric", 40);
@@ -837,10 +914,21 @@ endmodule
             .args(["-g2012", "-o", "sim", "fabric.v", "tb.v"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
-        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        assert!(
+            out.status.success(),
+            "iverilog: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = std::process::Command::new("vvp")
+            .current_dir(&dir)
+            .arg("sim")
+            .output()
+            .unwrap();
         let stdout = String::from_utf8_lossy(&run.stdout);
-        assert!(stdout.contains("FERROTHERM_PASS"), "RTL/emulator divergence:\n{stdout}");
+        assert!(
+            stdout.contains("FERROTHERM_PASS"),
+            "RTL/emulator divergence:\n{stdout}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -878,7 +966,10 @@ mod declared_precision {
             .find(|u| matches!(u, Unsupported::CouplingPrecision { .. }))
             .expect("a program that quantises to an empty graph must be refused");
         match found {
-            Unsupported::CouplingPrecision { worst_relative_error, .. } => assert!(
+            Unsupported::CouplingPrecision {
+                worst_relative_error,
+                ..
+            } => assert!(
                 (*worst_relative_error - 1.0).abs() < 1e-12,
                 "a coefficient rounded to zero has lost ALL of itself: {worst_relative_error}"
             ),
@@ -914,9 +1005,17 @@ mod declared_precision {
         let second = Device::ledger(&d).writes - after_load - first;
 
         // The load bought one configuration, so the first run reflashes for the OTHER rungs.
-        assert_eq!(first, (rungs - 1) * 8, "first run: {first} writes over {rungs} rungs");
+        assert_eq!(
+            first,
+            (rungs - 1) * 8,
+            "first run: {first} writes over {rungs} rungs"
+        );
         // The second run holds nothing it can reuse, so it pays for every rung.
-        assert_eq!(second, rungs * 8, "second run: {second} writes over {rungs} rungs");
+        assert_eq!(
+            second,
+            rungs * 8,
+            "second run: {second} writes over {rungs} rungs"
+        );
     }
 
     /// And the declaration names the grid the emitter actually uses.
@@ -940,7 +1039,10 @@ mod declared_precision {
         }
         let p = Program::from_ftp(&src).expect("a well-formed program");
         let mut d = RtlFabric::new();
-        assert!(d.program(&p).is_empty(), "unit couplings sit exactly on a 1/256 grid");
+        assert!(
+            d.program(&p).is_empty(),
+            "unit couplings sit exactly on a 1/256 grid"
+        );
     }
 }
 
