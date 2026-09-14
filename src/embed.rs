@@ -322,6 +322,18 @@ pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
     Some(Embedding { chains, sites: 2 * t * m * m })
 }
 
+/// # Against the counting bound
+///
+/// `examples/clique_chain_bound.rs` (2026-09-13) measures every structured clique construction
+/// in this module against a bound no embedding can beat: `n` connected chains must expose
+/// `n(n-1)` coupler endpoints between them, and `S` sites can expose at most the sum of the `S`
+/// largest hardware degrees less `2(S - n)`, so the least such `S` over `n` is a floor on the
+/// mean chain length. Verified against their hardware graphs, the constructions sit at `1.71`
+/// (Chimera `C(2,2,4)`, `K_8`) falling to `1.115` (`C(16,16,4)`, `K_64`) times that floor, Pegasus
+/// at `2.00` (`P_3`) to `1.22` (`P_16`, `K_180`), and Zephyr at `2.40` (`Z_2`) to `1.26` (`Z_15`,
+/// `K_232`): within 12 to 26% of the least possible mean chain at the largest fabrics. The same
+/// count never excludes `K_{n+1}` at the construction's longest chain on any of the 44 fabric
+/// sizes, so whether one more variable fits is not settled by counting; it is open at every size.
 /// A native clique on **Zephyr** — the Advantage2 fabric — at the frontier size, written down.
 ///
 /// **`K_{2t(2m-1)}` with uniform chains of `m + 1`**: for the shipped `t = 4` that is `K_{16m-8}` —
