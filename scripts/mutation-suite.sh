@@ -828,6 +828,15 @@ mutations=(
   "src/pdit.rs|        let threshold = (u * z) >> WEIGHT_BITS;|        let threshold = (u * z) >> (WEIGHT_BITS - 1);|pdit::tests::the_cumulative_p_trit_fabric_samples_the_potts_law|a threshold that overruns the cumulative sum"
   "src/pdit.rs|p{i}[47:16]|p{i}[47:15]|pdit::tests::the_cumulative_p_trit_rtl_matches_the_emulator_bit_exact|an RTL threshold one bit too wide"
 
+  # Decompositions. The singular values are the column norms after the Jacobi rotations; square
+  # them and the prescribed spectrum comes back squared. The HOSVD's core is the tensor contracted with each
+  # factor's transpose; scale a transpose and the reconstruction is off by that scale. The
+  # randomized range finder's sketch is k + p columns wide; drop the oversampling and the top
+  # singular values are no longer recovered to a millionth.
+  "src/decomp.rs|            s[t] = norms[j];|            s[t] = norms[j] * norms[j];|decomp::tests::the_svd_reconstructs_and_recovers_a_prescribed_spectrum|singular values squared"
+  "src/decomp.rs|                ut[t * rows + i] = factor[i * r + t];|                ut[t * rows + i] = factor[i * r + t] * 0.5;|decomp::tests::the_hosvd_reconstructs_and_its_core_is_all_orthogonal|a Tucker core contracted with half a factor"
+  "src/decomp.rs|    let l = (k + oversample).min(rows).min(cols);|    let l = k.min(rows).min(cols);|decomp::tests::the_randomized_svd_matches_the_full_one_on_a_decaying_spectrum|a range finder with no oversampling"
+
 )
 
 bad=0
@@ -899,7 +908,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=157
+expected_rows=160
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
