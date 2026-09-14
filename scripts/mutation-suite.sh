@@ -804,6 +804,39 @@ check_filters() {
 }
 check_filters
 
+# EVERY OLD STRING MUST STILL BE IN ITS FILE, EXACTLY ONCE. A refactor can remove the line a row
+# mutates and leave the row measuring nothing; the 127-row run of 2026-09-13 found row 118 that way,
+# two hours in ("MUTATION DID NOT APPLY"), because single-row checks only ever exercise new rows.
+# This resolves every row's target against the source before any mutation is applied.
+check_olds() {
+  local row file old new filter label pkg n bad=0
+  for row in "${mutations[@]}"; do
+    IFS='|' read -r file old new filter label pkg <<<"$row"
+    if [ ! -f "$file" ]; then
+      echo "file '$file' does not exist -- '$label'" >&2
+      bad=$((bad + 1))
+      continue
+    fi
+    n=$(grep -cF -- "$old" "$file" || true)
+    if [ "$n" -ne 1 ]; then
+      echo "old string occurs $n times in $file, not 1 -- '$label'" >&2
+      bad=$((bad + 1))
+    fi
+  done
+  if [ "$bad" -gt 0 ]; then
+    echo "$bad row(s) no longer name a line that exists once. A stale row is a row that measures nothing." >&2
+    exit 2
+  fi
+}
+check_olds
+
+# FERROTHERM_MUTATION_PRECHECK_ONLY=1 stops here: the filters and targets have been resolved and
+# nothing has been mutated. A two-minute preflight for a two-hour run.
+if [[ "${FERROTHERM_MUTATION_PRECHECK_ONLY:-0}" = "1" ]]; then
+  echo "precheck only: ${#mutations[@]} rows, every filter names one test and every target exists once"
+  exit 0
+fi
+
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
