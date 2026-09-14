@@ -774,7 +774,7 @@ mutations=(
   "src/rhat.rs|            folded.push((x - med).abs());|            folded.push(x - med);|rhat::tests::a_wrong_spread_with_the_right_centre_is_caught_by_folding|a folded R-hat that does not fold"
   "src/landauer.rs|    BOLTZMANN_CONSTANT * temperature_k * core::f64::consts::LN_2|    BOLTZMANN_CONSTANT * temperature_k|landauer::tests::the_floor_at_room_temperature_and_the_devices_above_it|a Landauer bound that forgets the ln 2"
   "src/landauer.rs|            integral += fwd * (-a).exp();|            integral += fwd * a.exp();|landauer::tests::the_fluctuation_theorems_hold_exactly_on_a_reversible_support_kernel|an integral fluctuation theorem with the sign of the entropy flipped"
-  "src/restart.rs|    let steps: f64 = f[..cutoff].iter().map(|p| 1.0 - p).sum();|    let steps: f64 = cutoff as f64;|restart::tests::a_memoryless_solver_gains_nothing_from_any_cutoff|an expected work that bills every attempt its full cutoff"
+  "src/restart.rs|        steps += 1.0 - p;|        steps += 1.0;|restart::tests::a_memoryless_solver_gains_nothing_from_any_cutoff|an expected work that bills every attempt its full cutoff"
   "src/restart.rs|            return 1u64 << (k - 1);|            return 1u64 << k;|restart::tests::lubys_sequence_is_the_published_one_and_its_blocks_sum_as_they_must|a Luby sequence whose block ends are twice too long"
 
 )

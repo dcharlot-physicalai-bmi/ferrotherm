@@ -69,7 +69,12 @@ pub fn expected_work(f: &[f64], cutoff: usize) -> f64 {
     if success <= 0.0 {
         return f64::INFINITY;
     }
-    let steps: f64 = f[..cutoff].iter().map(|p| 1.0 - p).sum();
+    // A loop rather than a closure: the mutation suite's rows split on '|', so the line a row
+    // names cannot hold a closure's parameter list.
+    let mut steps = 0.0;
+    for p in &f[..cutoff] {
+        steps += 1.0 - p;
+    }
     steps / success
 }
 
