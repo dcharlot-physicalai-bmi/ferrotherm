@@ -17,7 +17,7 @@
 //
 // run: cargo run --release --example informed_scaling_exact
 
-use ferrotherm::autocorr::{tau_int_exact, Kernel};
+use ferrotherm::autocorr::{tau_int_exact, tau_int_fundamental, Kernel, MAX_DENSE_SPINS};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::informed::Balance;
 use ferrotherm::rng::Pcg;
@@ -46,20 +46,27 @@ fn main() {
     let seeds = 4u64;
     println!("EXACT tau_int: BARKER-INFORMED AGAINST CHROMATIC GIBBS, IN FLIPS, ON ALL 2^n STATES\n");
     println!("  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}");
-    println!("  oracle    autocorr::tau_int_exact, tail cut 1e-12, {seeds} seeds averaged; no sampling, no window\n");
+    println!("  oracle    autocorr::tau_int_fundamental (one dense solve, no lags) up to {MAX_DENSE_SPINS} spins; the lag sum of");
+    println!("            autocorr::tau_int_exact (tail cut 1e-12) above it; {seeds} seeds averaged; no sampling, no window\n");
     println!(
         "  {:>4} {:>5}   {:>12} {:>12} {:>8}   {:>9} {:>9}   {:>8} {:>8}",
         "n", "deg", "tau G flips", "tau B flips", "G/B", "lags G", "lags B", "adv:scan", "adv:tree"
     );
     for &n in &[6usize, 8, 10, 12, 14] {
         let (mut tg, mut tb, mut deg, mut lg, mut lb) = (0.0, 0.0, 0.0, 0usize, 0usize);
+        // The direct solve where the dense operator fits; the lag sum above that, with its caps.
+        let tau = |g: &ferrotherm::graph::Graph, kernel: Kernel, cap: usize| {
+            if g.n <= MAX_DENSE_SPINS {
+                tau_int_fundamental(g, beta, kernel, |s| g.energy(s)).expect("n is under the cap and the energy varies")
+            } else {
+                tau_int_exact(g, beta, kernel, |s| g.energy(s), 1e-12, cap).expect("n is under the cap and the energy varies")
+            }
+        };
         for seed in 0..seeds {
             let g = frustrated(n, seed);
             deg += 2.0 * g.n_edges as f64 / n as f64;
-            let a = tau_int_exact(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 2_000_000)
-                .expect("n is under the cap and the energy varies");
-            let b = tau_int_exact(&g, beta, Kernel::Informed(Balance::Barker), |s| g.energy(s), 1e-12, 20_000_000)
-                .expect("n is under the cap and the energy varies");
+            let a = tau(&g, Kernel::ChromaticGibbs, 2_000_000);
+            let b = tau(&g, Kernel::Informed(Balance::Barker), 20_000_000);
             tg += a.tau_int * n as f64;
             tb += b.tau_int;
             lg = lg.max(a.lags);
