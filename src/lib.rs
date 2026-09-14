@@ -209,6 +209,8 @@ pub mod fft;
 pub mod rhat;
 pub mod landauer;
 pub mod restart;
+pub mod freefermion;
+pub mod access;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///
