@@ -114,7 +114,9 @@ mutations=(
   # this crate (step = max|w| / levels); `FixedFabric` uses an absolute Q.8 grid. Under the wrong
   # declaration `check` computed ~0 relative error for a program whose weights were all 0.001 and
   # accepted it, and the fabric quantised every coupling to zero and sampled an empty graph.
-  "src/hdl.rs|        f.coupling_precision = Precision::Grid { step: 1.0 / (1u32 << FRAC) as f64 };|        f.coupling_precision = Precision::Fixed { bits: 12 };|the_declared_step_is_the_one_the_emitter_quantises_on|fabric mis-declares its grid"
+  # (Retargeted 2026-09-14: a formatter split the declaration over three lines; the row now swaps
+  # the declared variant on its first line and parks the grid literal in a discard.)
+  "src/hdl.rs|        f.coupling_precision = Precision::Grid {|        f.coupling_precision = Precision::Fixed { bits: 12 }; let _ = Precision::Grid {|the_declared_step_is_the_one_the_emitter_quantises_on|fabric mis-declares its grid"
 
   # LOOKING AT THE ALTERNATIVES MUST NOT CHANGE THE RECEIPT. `ft_model_select_optimum` assigns a
   # Solution out of `h.answers`, which holds one per TRY. Without the recompute a 12-try solve
