@@ -14,6 +14,13 @@
 /// These are the coefficients of constraint terms introduced by lowering passes, not by the user's
 /// model. They start weak, so the sampler can move freely, and finish strong, so the constraint
 /// actually binds. Ramping them is why they cannot live in compiled weights.
+///
+/// Until 2026-09-13 nothing applied them: [`crate::tempering::anneal_scheduled`] reads a stage's
+/// `beta` and `sweeps` and by contract never rebuilds its graph, so a ramp was written into `.ftp`
+/// files and changed no run. [`crate::model::Compiled::solve_with`] now applies `domain_wall` to
+/// every codeword penalty of a compiled model, stage by stage, scaling the compiled strength
+/// (`1.0` is the compiled penalty); `copy` still has no consumer, since a compiled model has no
+/// copies and no solver here runs a sparsified program under a schedule.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Penalties {
     /// Strength of the domain-wall constraint introduced when a categorical variable is lowered.

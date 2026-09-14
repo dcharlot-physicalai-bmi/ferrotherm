@@ -769,6 +769,7 @@ mutations=(
   "src/autocorr.rs|            sigma += fwd * (fwd / bwd).ln();|            sigma += fwd * fwd.ln();|autocorr::tests::entropy_production_is_zero_for_reversible_kernels_and_positive_for_a_correct_fixed_order_sweep|an entropy production that never looks at the reverse transition"
   "src/autocorr.rs|    let refined = apply_distribution(g, beta, kernel, &clamped);|    let refined = clamped.clone();|autocorr::tests::the_solved_law_has_no_zero_entries_on_a_cold_grid_and_the_sweep_produces_finite_entropy|a solved law whose small entries are the solve's noise, clamped"
   "src/reduce.rs|        Some(v) if v.is_finite() && v > 0.0 => v,|        Some(v) if v.is_finite() && v > 0.0 => v.max(default),|reduce::tests::a_chosen_penalty_is_written_and_a_weak_one_lets_an_ancilla_break|a chosen penalty that is never allowed below the default"
+  "src/model.rs|                let scale = stage.penalties.domain_wall;|                let scale = 1.0;|model::tests::a_scaled_codeword_penalty_is_applied_and_a_ramp_ends_where_it_says|a penalty ramp that every stage ignores, as every solver did until 2026-09-13"
 
 )
 
@@ -841,7 +842,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=135
+expected_rows=136
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

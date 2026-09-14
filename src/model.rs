@@ -1848,6 +1848,9 @@ impl Model {
 
         let mut b = GraphBuilder::new(n);
         let penalty = self.effective_penalty();
+        // The codeword penalties alone, kept beside the full graph so a schedule can scale them
+        // stage by stage: `graph_scaled` is `full + (scale - 1) x codeword`.
+        let mut b_code = GraphBuilder::new(n);
 
         // Encoding penalties: what makes a spin pattern mean a value at all.
         //
@@ -1895,7 +1898,11 @@ impl Model {
         }
 
         for (i, s) in slots.iter().enumerate() {
-            if !s.add_penalty(&mut b, penalty) {
+            // The twin receives the same factors; its exactness answer is the same answer.
+            let exact_twin = s.add_penalty(&mut b_code, penalty);
+            let exact = s.add_penalty(&mut b, penalty);
+            debug_assert_eq!(exact_twin, exact, "the codeword twin must agree on exactness");
+            if !exact {
                 let k = s.k;
                 let spins = s.width();
                 let spare = (1usize << spins) - k;
@@ -1961,6 +1968,7 @@ impl Model {
         }
 
         let graph = b.build();
+        let codeword = b_code.build();
 
         // Lower whatever stayed wider than two, and take the reduced graph in its place.
         let sched = Schedule::geometric(0.05, 6.0, 80, 40);
@@ -1995,6 +2003,7 @@ impl Model {
             sense: self.sense,
             program,
             graph,
+            codeword,
             ancillas,
             linear_slack,
             caveats,
@@ -2785,6 +2794,9 @@ pub enum Method {
 
 /// A compiled model: the program, plus the means to read an answer back.
 pub struct Compiled {
+    /// The codeword penalties alone, over the user and slack spins, so a schedule's per-stage
+    /// penalty scale can be applied: see [`Compiled::graph_scaled`].
+    codeword: crate::graph::Graph,
     /// The lowered program, ready to run or to serialise.
     pub program: Program,
     /// The spin graph the program samples over.
@@ -3220,10 +3232,98 @@ impl Compiled {
     #[must_use]
     pub fn solve_with(&self, sched: &Schedule, seed: u64) -> Solution {
         let mut cost = crate::ledger::Ledger::default();
-        let (best, _) = crate::tempering::anneal_scheduled(&self.graph, sched, seed, Some(&mut cost));
+        let ramped = sched.stages().iter().any(|st| (st.penalties.domain_wall - 1.0).abs() > 1e-12);
+        let best = if ramped {
+            self.anneal_ramped(sched, seed, &mut cost)
+        } else {
+            crate::tempering::anneal_scheduled(&self.graph, sched, seed, Some(&mut cost)).0
+        };
         let mut sol = self.decode(&best);
         sol.cost = cost;
         sol
+    }
+
+    /// The compiled graph with every codeword penalty multiplied by `scale`: the objective and
+    /// the constraint penalties untouched, `full + (scale - 1) x codeword` edge by edge. `1.0` is
+    /// the compiled graph itself.
+    ///
+    /// # Panics
+    ///
+    /// Never: the codeword graph is over a prefix of the compiled graph's spins by construction.
+    #[must_use]
+    pub fn graph_scaled(&self, scale: f64) -> crate::graph::Graph {
+        let (full, code) = (&self.graph, &self.codeword);
+        let code_w = |i: usize, j: usize| -> f64 {
+            if i >= code.n {
+                return 0.0;
+            }
+            (code.offset[i]..code.offset[i + 1]).find(|&k| code.nbr[k] as usize == j).map_or(0.0, |k| code.w[k])
+        };
+        let full_has = |i: usize, j: usize| -> bool {
+            (full.offset[i]..full.offset[i + 1]).any(|k| full.nbr[k] as usize == j)
+        };
+        let mut b = GraphBuilder::new(full.n);
+        for i in 0..full.n {
+            let hc = if i < code.n { code.h[i] } else { 0.0 };
+            b.bias(i, full.h[i] + (scale - 1.0) * hc);
+            for k in full.offset[i]..full.offset[i + 1] {
+                let j = full.nbr[k] as usize;
+                if i < j {
+                    b.couple(i, j, full.w[k] + (scale - 1.0) * code_w(i, j));
+                }
+            }
+        }
+        // A codeword edge that cancelled to nothing in the full graph is still an edge here.
+        for i in 0..code.n {
+            for k in code.offset[i]..code.offset[i + 1] {
+                let j = code.nbr[k] as usize;
+                if i < j && !full_has(i, j) {
+                    b.couple(i, j, (scale - 1.0) * code.w[k]);
+                }
+            }
+        }
+        b.build()
+    }
+
+    /// The scheduled anneal with the stage penalties APPLIED: one graph per stage, the sampler's
+    /// state and stream carried across them, the best state judged on the FINAL stage's graph --
+    /// so a ramp that ends at the compiled strength answers the compiled model, and a schedule
+    /// held at some other strength answers the model at that strength, which is what it asked for.
+    ///
+    /// This is the fix for a knob that did nothing. `Schedule::ramp_domain_wall` wrote per-stage
+    /// penalty strengths that every solver ignored -- `tempering::anneal_scheduled` reads a stage's
+    /// `beta` and `sweeps` and, by its own contract, never rebuilds the graph -- so a ramp was a
+    /// no-op that printed itself into `.ftp` files (2026-09-13). The plain-graph anneal keeps its
+    /// contract; the model, which knows which factors are penalties, is where the ramp belongs.
+    /// The `copy` channel is not applied here because a compiled model has no copies; it belongs
+    /// to sparsified programs and no solver in this crate consumes it yet.
+    fn anneal_ramped(&self, sched: &Schedule, seed: u64, cost: &mut crate::ledger::Ledger) -> Vec<i8> {
+        let stages = sched.stages();
+        let graphs: Vec<crate::graph::Graph> = stages
+            .iter()
+            .map(|stage| {
+                let scale = stage.penalties.domain_wall;
+                self.graph_scaled(scale)
+            })
+            .collect();
+        let (Some(first), Some(judge)) = (graphs.first(), graphs.last()) else { return vec![1; self.graph.n] };
+        let mut smp = crate::gibbs::Sampler::new(first, stages[0].beta, seed);
+        let mut best = smp.s.clone();
+        let mut best_e = judge.energy(&best);
+        for (stage, g) in stages.iter().zip(&graphs) {
+            smp.rebind(g);
+            smp.beta = stage.beta;
+            for _ in 0..stage.sweeps {
+                smp.sweep(Some(cost));
+                let e = judge.energy(&smp.s);
+                cost.reads += judge.n as u64;
+                if e < best_e {
+                    best_e = e;
+                    best = smp.s.clone();
+                }
+            }
+        }
+        best
     }
 
     /// Anneal several times on a caller's ladder and keep the best feasible answer.
@@ -6479,4 +6579,46 @@ mod tests {
         );
     }
 
+
+    /// THE RAMP WAS A NO-OP. A schedule's per-stage codeword penalty is now applied: on a one-hot
+    /// model that rewards an invalid codeword, the penalty scaled to a hundredth returns invalid
+    /// codewords, the compiled strength returns valid ones, and a ramp from a hundredth to full
+    /// ends valid, judged on its final stage. And for both exact encodings the scaled graph is the
+    /// identity it claims, `E_scaled(s) = E_full(s) + (scale - 1) E_codeword(s)`, on random states.
+    /// (A value literal in the objective needs one-hot here, so the sampling half is one-hot's.)
+    #[test]
+    fn a_scaled_codeword_penalty_is_applied_and_a_ramp_ends_where_it_says() {
+        let mut m = Model::new();
+        let a = m.categorical_as("a", 3, crate::encode::Encoding::OneHot);
+        m.objective(Sense::Minimize, Expr::product(-5.0, &[Lit::Is(a, 0)]));
+        m.objective(Sense::Minimize, Expr::product(-5.0, &[Lit::Is(a, 2)]));
+        // Pinned, so a hundredth of it (0.2) sits below the reward for an invalid codeword (5)
+        // and the whole of it (20) above: the scale, not the penalty's size, decides.
+        m.fixed_penalty(20.0);
+        let c = m.compile().unwrap();
+        let base = Schedule::geometric(0.5, 4.0, 20, 10);
+        let valid = |sched: &Schedule| (0..20u64).filter(|&s| c.solve_with(sched, s).invalid.is_empty()).count();
+        let full = valid(&base);
+        let off = valid(&base.clone().ramp_domain_wall(0.01, 0.01));
+        let ramp = valid(&base.clone().ramp_domain_wall(0.01, 1.0));
+        assert!(full >= 18, "at the compiled penalty {full} of 20 valid");
+        assert!(off <= 4, "at a hundredth of it {off} of 20 valid -- the scale is not applied");
+        assert!(ramp >= 16, "a ramp to full must end valid, got {ramp} of 20");
+        let mut rng = crate::rng::Pcg::new(3, 9);
+        for enc in [crate::encode::Encoding::OneHot, crate::encode::Encoding::DomainWall] {
+            let mut m = Model::new();
+            let x = m.categorical_as("x", 4, enc);
+            let y = m.categorical_as("y", 4, enc);
+            m.not_equal(x, y);
+            let c = m.compile().unwrap();
+            for scale in [0.0, 0.3, 1.0, 2.5] {
+                let g = c.graph_scaled(scale);
+                for _ in 0..8 {
+                    let s: Vec<i8> = (0..c.graph.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+                    let want = c.graph.energy(&s) + (scale - 1.0) * c.codeword.energy(&s[..c.codeword.n]);
+                    assert!((g.energy(&s) - want).abs() < 1e-9, "{enc:?} scale {scale}: {} vs {want}", g.energy(&s));
+                }
+            }
+        }
+    }
 }

@@ -107,6 +107,23 @@ impl<'g> Sampler<'g> {
         }
     }
 
+    /// Continue this sampler's state and random stream on another graph of the same size.
+    ///
+    /// What a penalty ramp needs: the model's codeword penalties change between stages of a
+    /// [`crate::schedule::Schedule`], which changes the couplings and nothing else, so the state
+    /// and the stream carry over and only the reference moves. [`crate::model::Compiled::solve_with`]
+    /// uses it; [`crate::tempering::anneal_scheduled`] deliberately does not, since a plain graph
+    /// has no penalties to scale.
+    ///
+    /// # Panics
+    ///
+    /// If `g` has a different number of nodes: a state cannot carry over to a graph it does not fit.
+    pub fn rebind(&mut self, g: &'g Graph) {
+        assert_eq!(g.n, self.g.n, "rebind needs a graph of the same size");
+        self.g = g;
+        self.clamped.resize(g.n, false);
+    }
+
     /// Clamp node i to value v (observation / conditioning input).
     pub fn clamp(&mut self, i: usize, v: i8) {
         debug_assert!(v == 1 || v == -1);
