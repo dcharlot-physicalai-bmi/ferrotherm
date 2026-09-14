@@ -169,7 +169,17 @@ pub fn fold(chains: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let mut pooled: Vec<f64> = chains.iter().flatten().copied().collect();
     pooled.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
     let med = if pooled.len() % 2 == 1 { pooled[pooled.len() / 2] } else { 0.5 * (pooled[pooled.len() / 2 - 1] + pooled[pooled.len() / 2]) };
-    chains.iter().map(|c| c.iter().map(|x| (x - med).abs()).collect()).collect()
+    // Written as loops rather than closures so the mutation suite can name the line: its row
+    // format splits on '|', which a closure's parameter list contains.
+    let mut out = Vec::with_capacity(chains.len());
+    for c in chains {
+        let mut folded = Vec::with_capacity(c.len());
+        for x in c {
+            folded.push((x - med).abs());
+        }
+        out.push(folded);
+    }
+    out
 }
 
 /// Effective sample size of the pooled draws from `M` split chains of `N` draws: the multi-chain

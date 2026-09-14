@@ -771,7 +771,7 @@ mutations=(
   "src/reduce.rs|        Some(v) if v.is_finite() && v > 0.0 => v,|        Some(v) if v.is_finite() && v > 0.0 => v.max(default),|reduce::tests::a_chosen_penalty_is_written_and_a_weak_one_lets_an_ancilla_break|a chosen penalty that is never allowed below the default"
   "src/model.rs|                let scale = stage.penalties.domain_wall;|                let scale = 1.0;|model::tests::a_scaled_codeword_penalty_is_applied_and_a_ramp_ends_where_it_says|a penalty ramp that every stage ignores, as every solver did until 2026-09-13"
   "src/rhat.rs|        out.push(c[half..2 * half].to_vec());|        out.push(c[..half].to_vec());|rhat::tests::a_trend_inside_every_chain_is_caught_by_splitting|an R-hat whose second half is the first half again, so a trend is invisible"
-  "src/rhat.rs|    chains.iter().map(|c| c.iter().map(|x| (x - med).abs()).collect()).collect()|    chains.iter().map(|c| c.iter().map(|x| x - med).collect()).collect()|rhat::tests::a_wrong_spread_with_the_right_centre_is_caught_by_folding|a folded R-hat that does not fold"
+  "src/rhat.rs|            folded.push((x - med).abs());|            folded.push(x - med);|rhat::tests::a_wrong_spread_with_the_right_centre_is_caught_by_folding|a folded R-hat that does not fold"
 
 )
 
