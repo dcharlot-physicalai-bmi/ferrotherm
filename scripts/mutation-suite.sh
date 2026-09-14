@@ -818,6 +818,16 @@ mutations=(
   # an emitter that drops the negated literal's sign puts the wrong field in the netlist.
   "src/hdl.rs|                format!(\"-32'sd{}\", -bias)|                format!(\"32'sd{}\", -bias)|hdl::tests::verilog_matches_emulator_bit_exact|a negative bias emitted with its sign dropped"
 
+  # The cumulative p-dit. Its exponential ROM is e^-gap; double the exponent and the unit samples
+  # at twice the temperature it was quantised for, which the exact-law bound sees. The emulator's
+  # threshold is (u Z) >> 16; shift by one less and the threshold overruns the cumulative sum, so
+  # the walk lands on the last state too often -- the histogram against the exact law sees it.
+  # The RTL's threshold is the same shift; take one bit more of the product and the netlist and
+  # the emulator part company, which the icarus gate sees.
+  "src/pdit.rs|            (top * (-gap).exp()).round() as u32|            (top * (-2.0 * gap).exp()).round() as u32|pdit::tests::the_cumulative_units_exact_law_is_the_softmax_until_the_weight_width_ends|an exponential ROM at twice the temperature"
+  "src/pdit.rs|        let threshold = (u * z) >> WEIGHT_BITS;|        let threshold = (u * z) >> (WEIGHT_BITS - 1);|pdit::tests::the_cumulative_p_trit_fabric_samples_the_potts_law|a threshold that overruns the cumulative sum"
+  "src/pdit.rs|p{i}[47:16]|p{i}[47:15]|pdit::tests::the_cumulative_p_trit_rtl_matches_the_emulator_bit_exact|an RTL threshold one bit too wide"
+
 )
 
 bad=0
@@ -889,7 +899,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=154
+expected_rows=157
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
