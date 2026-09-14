@@ -179,6 +179,28 @@ pub const MAX_ANCILLAS: usize = 1024;
 ///
 /// Never on a program built by this crate: the ancillas it introduces are in range by construction.
 pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
+    to_pairwise_with(p, None)
+}
+
+/// [`to_pairwise`] with the ancilla penalty chosen by the caller; `None` is the default, twice the
+/// sum of every binary coefficient's magnitude.
+///
+/// The default is more than the whole model can pay, which makes it safe and makes it large: the
+/// penalty enters the energy, so a schedule read off the reduced model is read off the
+/// enforcement. `examples/quadratization_exact.rs` finds the exact least penalty `P*` at which every
+/// ground state of the reduced model still respects its ancillas, by bisection on an exact
+/// elimination, and measures what the default costs against it at a matched flip budget.
+///
+/// A non-finite or non-positive penalty falls back to the default.
+///
+/// # Errors
+///
+/// As [`to_pairwise`].
+///
+/// # Panics
+///
+/// Never on a program built by this crate: the ancillas it introduces are in range by construction.
+pub fn to_pairwise_with(p: &Program, penalty: Option<f64>) -> Result<Reduction, ReduceError> {
     if let Some(f) = p.factors.iter().find(|f| f.arity() > MAX_ARITY) {
         return Err(ReduceError::TooWide { arity: f.arity(), limit: MAX_ARITY });
     }
@@ -198,7 +220,11 @@ pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
     let mut ancillas = 0usize;
     let scale: f64 = poly.values().map(|v| v.abs()).sum();
     // Nothing to outbid means nothing to enforce, but an ancilla still needs a positive weight.
-    let penalty = if scale > 0.0 { scale * 2.0 } else { 1.0 };
+    let default = if scale > 0.0 { scale * 2.0 } else { 1.0 };
+    let penalty = match penalty {
+        Some(v) if v.is_finite() && v > 0.0 => v,
+        _ => default,
+    };
 
     while degree(&poly) > 2 {
         // The pair appearing in the most wide monomials. Reducing the commonest pair first removes
@@ -879,5 +905,43 @@ mod tests {
         let p = Program::from_ftp("ftp 1\nspins 3\nfactor 100.0 0 1 2\n").unwrap();
         let r = to_pairwise(&p).unwrap();
         assert!(r.penalty > 100.0, "penalty {} against a weight of 100", r.penalty);
+    }
+
+    /// The chosen penalty is the one written: with none the reduction is `to_pairwise`'s exactly,
+    /// with a generous one a single three-body term's reduced ground state respects its ancilla
+    /// (reduced energy plus offset equals the original optimum), and with a penalty smaller than
+    /// the term a broken ancilla wins -- the reduced ground energy plus offset falls BELOW the
+    /// original optimum, which is what a too-weak penalty looks like.
+    #[test]
+    fn a_chosen_penalty_is_written_and_a_weak_one_lets_an_ancilla_break() {
+        let ftp = "ftp 1\nspins 3\nfactor 1.0 0 1 2\n";
+        let prog = Program::from_ftp(ftp).expect("a well-formed program");
+        let default = to_pairwise(&prog).unwrap();
+        let same = to_pairwise_with(&prog, None).unwrap();
+        assert_eq!(default.penalty, same.penalty);
+        assert_eq!(default.program.spins, same.program.spins);
+        let h = |s: &[i8]| -f64::from(s[0] * s[1] * s[2]);
+        let best = -1.0f64;
+        for penalty in [10.0f64, 0.01] {
+            let red = to_pairwise_with(&prog, Some(penalty)).unwrap();
+            assert_eq!(red.penalty, penalty);
+            let g = red.program.to_graph().expect("pairwise");
+            let m = 1usize << g.n;
+            let mut ground = f64::INFINITY;
+            let mut consistent = true;
+            for x in 0..m {
+                let s: Vec<i8> = (0..g.n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect();
+                let e = g.energy(&s) + red.offset;
+                if e < ground - 1e-9 {
+                    ground = e;
+                    consistent = (h(&s[..3]) - e).abs() < 1e-9;
+                }
+            }
+            if penalty > 1.0 {
+                assert!((ground - best).abs() < 1e-9 && consistent, "penalty {penalty}: ground {ground}, consistent {consistent}");
+            } else {
+                assert!(ground < best - 1e-9, "penalty {penalty}: a broken ancilla must win, ground {ground} vs {best}");
+            }
+        }
     }
 }
