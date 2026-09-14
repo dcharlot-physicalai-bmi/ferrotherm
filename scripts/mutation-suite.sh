@@ -733,7 +733,11 @@ mutations=(
   # kernel that still runs, still converges to a law, and is not the fabric's: the cycle-exact
   # emulator's own histogram is what says so, which is the only witness that ties the operator
   # to the hardware rather than to a description of it.
-  "src/autocorr.rs|            let addr = (fc + 2048) >> 2;|            let addr = (fc + 2048) >> 3;|autocorr::tests::fabric_kernel_matches_the_emulator_in_distribution_and_is_not_boltzmann|a fabric kernel reading the sigmoid ROM at the wrong stride"
+  # Row 118 originally mutated the fixed-stride address line, which 5105303 refactored into the
+  # Quantised arithmetic; the 127-row run of 2026-09-13 reported MUTATION DID NOT APPLY, which is
+  # the suite doing its job. Retargeted to the ROM centre, the one part of the address arithmetic
+  # no other row touches.
+  "src/autocorr.rs|            let arg = (addr as f64 + 0.5) * stride - 8.0;|            let arg = addr as f64 * stride - 8.0;|autocorr::tests::the_rom_is_read_at_the_cell_centre|a fabric kernel reading the sigmoid ROM at the cell edge"
 
 
   # THE SHIPPED PRECISION MUST BE ONE POINT OF THE KNOB, EXACTLY. One bit off in the address

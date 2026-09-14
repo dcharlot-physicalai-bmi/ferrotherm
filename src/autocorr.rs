@@ -1867,4 +1867,21 @@ mod tests {
         let sigma = entropy_production(&g, 2.0, Kernel::Stale { p: 0.1 }).unwrap();
         assert!(sigma.is_finite(), "stale reads at beta 2 have no forbidden flip; Sigma = {sigma}");
     }
+
+    /// The ROM entry is evaluated at the CENTRE of its cell, not its edge: a field that lands
+    /// exactly on a cell boundary (here `0.5 = 32/64`, the shipped stride being `1/64`) must return
+    /// the heat bath at `0.5 + 1/128` with a comparator wide enough not to matter, and not the heat
+    /// bath at `0.5`. Row 118 of the mutation suite reads the edge.
+    #[test]
+    fn the_rom_is_read_at_the_cell_centre() {
+        let mut b = GraphBuilder::new(1);
+        b.bias(0, 0.5);
+        let g = b.build();
+        let k = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 52 };
+        let got = p_site(&g, 1.0, k, 0, &[-1]);
+        let centre = p_up(0.5 + 1.0 / 128.0, 1.0);
+        let edge = p_up(0.5, 1.0);
+        assert!((got - centre).abs() < 1e-12, "ROM read {got} vs centre {centre}");
+        assert!((got - edge).abs() > 1e-3, "ROM read {got} must not be the cell edge {edge}");
+    }
 }
