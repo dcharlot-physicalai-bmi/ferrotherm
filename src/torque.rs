@@ -60,6 +60,23 @@ pub fn mean_degree(logical: &Graph) -> f64 {
 ///
 /// `1.0` for a model with no couplings, which is what the reference implementation returns and
 /// keeps a chain held together rather than collapsing it to zero.
+///
+/// # Against the exact threshold
+///
+/// `examples/chain_threshold_exact.rs` computes the exact minimal chain strength `F*(I, E)` -- the
+/// smallest coupling at which the embedded model's ground energy is a chain-aligned state's -- by
+/// bisection on an exact elimination, for `+-J` instances with no fields: `K_n` on a 2x2x4 Chimera
+/// and 12-vertex `d`-regular graphs on a 3x3x4 Chimera, twenty instances each (2026-09-13). Choi's
+/// sufficient strength (the degree, here) is 3 to 8 times what an instance needs: `F*/Choi` runs
+/// `0.12` to `0.21` on the cliques and `0.28` to `0.33` on the regular graphs. This rule sits above
+/// `F*` on every one of the 157 instances, by a median factor of `5.7` at degree 4 falling to
+/// `1.7` at degree 6 on the regular graphs. And `F*` grows FASTER than the degree, not as its
+/// root: the slope of `log F*` against `log d` is `1.38` on the cliques and `1.23` on the regular
+/// graphs, where this rule grows as `d^0.5`. Extrapolating the two slopes from the degree-6 point
+/// puts the rule below `F*` -- a chain broken in the ground state -- near degree 12, which is
+/// what `examples/chain_strength.rs` and the sampled sweep should be read against. `F*` is a
+/// property of the embedding as much as of the instance; chains of 9 to 11 sites carried the
+/// regular graphs here.
 #[must_use]
 pub fn strength(logical: &Graph) -> f64 {
     strength_with(logical, UTC_PREFACTOR)
