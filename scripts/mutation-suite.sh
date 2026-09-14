@@ -772,6 +772,8 @@ mutations=(
   "src/model.rs|                let scale = stage.penalties.domain_wall;|                let scale = 1.0;|model::tests::a_scaled_codeword_penalty_is_applied_and_a_ramp_ends_where_it_says|a penalty ramp that every stage ignores, as every solver did until 2026-09-13"
   "src/rhat.rs|        out.push(c[half..2 * half].to_vec());|        out.push(c[..half].to_vec());|rhat::tests::a_trend_inside_every_chain_is_caught_by_splitting|an R-hat whose second half is the first half again, so a trend is invisible"
   "src/rhat.rs|            folded.push((x - med).abs());|            folded.push(x - med);|rhat::tests::a_wrong_spread_with_the_right_centre_is_caught_by_folding|a folded R-hat that does not fold"
+  "src/landauer.rs|    BOLTZMANN_CONSTANT * temperature_k * core::f64::consts::LN_2|    BOLTZMANN_CONSTANT * temperature_k|landauer::tests::the_floor_at_room_temperature_and_the_devices_above_it|a Landauer bound that forgets the ln 2"
+  "src/landauer.rs|            integral += fwd * (-a).exp();|            integral += fwd * a.exp();|landauer::tests::the_fluctuation_theorems_hold_exactly_on_a_reversible_support_kernel|an integral fluctuation theorem with the sign of the entropy flipped"
 
 )
 
@@ -844,7 +846,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=138
+expected_rows=140
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
