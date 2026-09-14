@@ -63,6 +63,16 @@
 //! it a function of a bit width, not of `beta`. `examples/pdit_exact.rs` tabulates the total
 //! variation from the softmax and the gap where the floor bites for 8 to 16 bits.
 //!
+//! [`FixedCumulative`] is the other embodiment in the same arithmetic: one draw, an exponential
+//! ROM addressed by each state's gap to the leader in steps of `1/64`, sixteen-bit weights summed
+//! to `Z`, a `16 x Z` multiply for the threshold `(u Z) >> 16`, and a walk up the cumulative sum.
+//! Its exact law is [`cumulative_conditional`], and its floor is set by the **weight width**, not
+//! the address width: a weight `round(65535 e^-g)` is zero once `g > 11.78`, which is the same
+//! `2 beta f > 11.8` the sixteen-bit comparator p-bit floors at, because it is the same sixteen
+//! bits. So the two embodiments floor for different reasons -- Gumbel-max at the ROM's span,
+//! cumulative at the weight's resolution -- and cost differently: `q` draws and no multiply
+//! against one draw and one multiply.
+//!
 //! # The comparison, exactly
 //!
 //! [`native_row`] builds the exact heat-bath sweep kernel over the `q^n` states of a small Potts
@@ -95,10 +105,28 @@
 //! penalty is gone, and with it the frozen chain the penalty buys. Measured before it was written
 //! down, in `the_penalty_that_makes_one_hot_valid_freezes_it_and_the_native_unit_needs_none`.
 //!
+//! # What the embodiments cost in cells
+//!
+//! `examples/pdit_synth.rs` runs yosys's generic flow over sixteen sites of each fabric, weights
+//! baked into the netlist as [`crate::hdl`] bakes them:
+//!
+//! | unit | cells per unit | what dominates |
+//! |---|---|---|
+//! | p-bit, ten-bit sigmoid ROM | 173 | the ROM folds to the few field values a fixed graph reaches |
+//! | cumulative p-trit, `q = 3` | 1,676 | one `16 x Z` multiply; the exponential ROM folds like the sigmoid |
+//! | Gumbel-max p-trit, `q = 3`, ten-bit ROM | 4,027 | three Gumbel ROMs, addressed by noise, which cannot fold |
+//!
+//! Generic cells are a relative measure and the ratio is the result: the embodiment with no
+//! multiply pays for it in three noise-addressed ROMs that synthesis cannot shrink, and the one
+//! with a multiply pays for the multiplier, which a board with DSP slices would price differently.
+//! Per three-state variable that is one unit against three one-hot p-bits (519 cells and three
+//! penalty couplings) or two domain-wall p-bits (346 and one) -- so on cells alone the p-bits win,
+//! and the p-trit's case stays where the exact comparison put it: the chain that does not freeze.
+//!
 //! # What this is not
 //!
-//! A p-trit here is a Gumbel-max unit in Q.8 arithmetic with an emulator and synthesizable RTL
-//! that agree bit for bit under icarus-verilog. Nobody has metered one: a joules figure for it is
+//! A p-trit here is a Gumbel-max or cumulative unit in Q.8 arithmetic with an emulator and
+//! synthesizable RTL that agree bit for bit under icarus-verilog. Nobody has metered one: a joules figure for it is
 //! the ledger's p-bit price times the draws until a board says otherwise, and the ROM floor above
 //! is a property of the RTL as emitted, not of any silicon.
 
@@ -819,6 +847,323 @@ impl FixedPdit {
     }
 }
 
+/// Weight width of the cumulative unit: sixteen bits, `round(65535 e^-g)`.
+pub const WEIGHT_BITS: u32 = 16;
+
+/// The gap step of the exponential ROM: an address is the Q.8 gap shifted right by two, so one
+/// address step is `4/256 = 1/64` in field units.
+pub const EXP_GAP_SHIFT: u32 = 2;
+
+/// The exponential ROM: `round(65535 e^(-a / 64))` for every address `a`, descending.
+///
+/// # Panics
+///
+/// If `bits` is outside `10..=16`: below ten the ROM ends before the weight floor at a gap of
+/// `11.78`, and the saturated tail would then carry a weight the exponential does not.
+#[must_use]
+pub fn exp_rom(bits: u32) -> Vec<u32> {
+    assert!(
+        (10..=16).contains(&bits),
+        "an exponential ROM takes 10 to 16 address bits, not {bits}"
+    );
+    let entries = 1usize << bits;
+    let top = f64::from((1u32 << WEIGHT_BITS) - 1);
+    (0..entries)
+        .map(|a| {
+            let gap = a as f64 * f64::from(1u32 << EXP_GAP_SHIFT) / f64::from(1u32 << FRAC);
+            (top * (-gap).exp()).round() as u32
+        })
+        .collect()
+}
+
+/// The sixteen-bit weights of each state from Q.8 fields: the leader gets the top weight, every
+/// other state the ROM entry at its gap, saturating at the last address.
+#[must_use]
+pub fn cumulative_weights(fields_q: &[i32], rom: &[u32]) -> Vec<u32> {
+    let top = fields_q.iter().copied().max().unwrap_or(0);
+    let last = rom.len() - 1;
+    fields_q
+        .iter()
+        .map(|&f| {
+            let gap = (top - f) as u32 >> EXP_GAP_SHIFT;
+            rom[(gap as usize).min(last)]
+        })
+        .collect()
+}
+
+/// The exact law of the cumulative unit: with weights `w`, cumulative sums `C`, total `Z` and a
+/// sixteen-bit uniform `u`, the state is the first `a` with `(u Z) >> 16 < C_a`, so state `a`
+/// owns the draws `u` in `[ceil(C_(a-1) 2^16 / Z), ceil(C_a 2^16 / Z))` -- a count, not an
+/// integral, so a zero is a real zero.
+///
+/// # Panics
+///
+/// If the ROM or the fields are empty.
+#[must_use]
+pub fn cumulative_conditional(fields_q: &[i32], rom: &[u32]) -> Vec<f64> {
+    assert!(
+        !rom.is_empty() && !fields_q.is_empty(),
+        "a conditional needs a ROM and at least one field"
+    );
+    let w = cumulative_weights(fields_q, rom);
+    let z: u64 = w.iter().map(|&x| u64::from(x)).sum();
+    let draws = 1u64 << WEIGHT_BITS;
+    let first_draw_at = |c: u64| (c * draws).div_ceil(z).min(draws);
+    let mut law = Vec::with_capacity(w.len());
+    let mut below = 0u64;
+    for &wa in &w {
+        let above = below + u64::from(wa);
+        let count = first_draw_at(above) - first_draw_at(below);
+        law.push(count as f64 / draws as f64);
+        below = above;
+    }
+    law
+}
+
+/// The field gap beyond which a sixteen-bit weight rounds to zero: `ln(2 (2^16 - 1))`.
+#[must_use]
+pub fn cumulative_floor() -> f64 {
+    (2.0 * f64::from((1u32 << WEIGHT_BITS) - 1)).ln()
+}
+
+/// A cycle-exact fixed-point emulator of a cumulative (inverse-CDF) p-dit fabric over a Potts
+/// model: the same fields, RNG and colour classes as [`FixedPdit`], one draw per update, an
+/// exponential ROM, a multiply and a walk.
+#[derive(Clone, Debug)]
+pub struct FixedCumulative {
+    /// The Gumbel-max fabric this shares its fields, seeds and classes with.
+    pub base: FixedPdit,
+    /// The exponential ROM, sixteen-bit weights, descending.
+    pub rom: Vec<u32>,
+    /// Address bits of the ROM.
+    pub rom_bits: u32,
+}
+
+impl FixedCumulative {
+    /// Quantise `m` at inverse temperature `beta` with a `rom_bits`-bit exponential ROM.
+    ///
+    /// # Errors
+    ///
+    /// As [`FixedPdit::new`].
+    ///
+    /// # Panics
+    ///
+    /// As [`exp_rom`].
+    pub fn new(m: &Potts, beta: f64, seed: u64, rom_bits: u32) -> Result<FixedCumulative, Unfit> {
+        let base = FixedPdit::new(m, beta, seed, DEFAULT_ROM_BITS)?;
+        Ok(FixedCumulative {
+            base,
+            rom: exp_rom(rom_bits),
+            rom_bits,
+        })
+    }
+
+    /// The exact law of site `i`'s next state given the current one.
+    #[must_use]
+    pub fn conditional_of(&self, i: usize, s: &[u8]) -> Vec<f64> {
+        cumulative_conditional(&self.base.fields_q_of(i, s), &self.rom)
+    }
+
+    fn update_node(&mut self, i: usize) {
+        let w = cumulative_weights(&self.base.fields_q_of(i, &self.base.s), &self.rom);
+        let z: u64 = w.iter().map(|&x| u64::from(x)).sum();
+        let nx = xorshift32(self.base.rng[i]);
+        self.base.rng[i] = nx;
+        let u = u64::from(nx >> 16);
+        let threshold = (u * z) >> WEIGHT_BITS;
+        let mut cumulative = 0u64;
+        let mut chosen = w.len() - 1;
+        for (a, &wa) in w.iter().enumerate() {
+            cumulative += u64::from(wa);
+            if threshold < cumulative {
+                chosen = a;
+                break;
+            }
+        }
+        self.base.s[i] = chosen as u8;
+    }
+
+    /// One sweep, class by class.
+    pub fn sweep(&mut self) {
+        for c in 0..self.base.classes.len() {
+            let class = self.base.classes[c].clone();
+            for &iu in &class {
+                self.update_node(iu as usize);
+            }
+        }
+    }
+
+    /// Back to the power-on state and seeds.
+    pub fn reset(&mut self) {
+        self.base.reset();
+    }
+
+    /// The exact sweep kernel over all `q^n` states.
+    ///
+    /// # Errors
+    ///
+    /// [`Unfit::TooManyStates`] above [`MAX_DENSE_STATES`].
+    pub fn sweep_kernel(&self) -> Result<Vec<f64>, Unfit> {
+        let order = self.base.site_order();
+        dense_sweep_kernel(self.base.q, self.base.n, &order, |i, s| {
+            self.conditional_of(i, s)
+        })
+    }
+
+    /// Emit the synthesizable cumulative p-dit fabric: per node the `q` fields, a max tree, `q`
+    /// gap-addressed ROM reads, their sum, one draw, one `16 x Z` multiply and a cumulative walk.
+    #[must_use]
+    pub fn emit_verilog(&self, module: &str) -> String {
+        let b = &self.base;
+        let (n, q) = (b.n, b.q);
+        let sb = b.state_bits();
+        let pb = b.phase_bits();
+        let bits = self.rom_bits;
+        let classes = b.classes.len();
+        let last = (1u32 << bits) - 1;
+        let mut v = String::new();
+        v.push_str(&format!(
+            "// generated by ferrotherm::pdit -- fixed-point cumulative (inverse-CDF) p-dit fabric\n\
+             // {n} p-dits of radix {q}, Q.{FRAC} weights, {}-entry exponential ROM, xorshift32 per node, one draw per update\n\
+             module {module} (\n    input wire clk,\n    input wire rst,\n    input wire en,\n    output reg [{top}:0] state,\n    output reg [{ptop}:0] phase\n);\n",
+            1usize << bits,
+            top = n * sb - 1,
+            ptop = pb - 1
+        ));
+        v.push_str(&format!(
+            "  function [15:0] ex; input [{}:0] a; begin\n    case (a)\n",
+            bits - 1
+        ));
+        for (a, &w) in self.rom.iter().enumerate() {
+            v.push_str(&format!("      {bits}'d{a}: ex = 16'd{w};\n"));
+        }
+        v.push_str("      default: ex = 16'd0;\n    endcase\n  end endfunction\n\n");
+        v.push_str(
+            "  function [31:0] xs32; input [31:0] x; reg [31:0] a, b; begin\n    a = x ^ (x << 13); b = a ^ (a >> 17); xs32 = b ^ (b << 5);\n  end endfunction\n\n",
+        );
+        v.push_str(&format!("  reg [31:0] rng [0:{}];\n", n - 1));
+        for i in 0..n {
+            v.push_str(&format!(
+                "  wire [{}:0] s{i} = state[{}:{}];\n",
+                sb - 1,
+                i * sb + sb - 1,
+                i * sb
+            ));
+        }
+        for i in 0..n {
+            for a in 0..q {
+                let bias = b.bias_q[i * q + a];
+                let mut terms = vec![if bias < 0 {
+                    format!("-32'sd{}", -bias)
+                } else {
+                    format!("32'sd{bias}")
+                }];
+                for &(j, w) in &b.adj[i] {
+                    let lit = if w < 0 {
+                        format!("-32'sd{}", -w)
+                    } else {
+                        format!("32'sd{w}")
+                    };
+                    terms.push(format!("(s{j} == {sb}'d{a} ? {lit} : 32'sd0)"));
+                }
+                v.push_str(&format!(
+                    "  wire signed [31:0] f{i}_{a} = {};\n",
+                    terms.join(" + ")
+                ));
+            }
+            v.push_str(&format!("  wire signed [31:0] m{i}_0 = f{i}_0;\n"));
+            for a in 1..q {
+                v.push_str(&format!(
+                    "  wire signed [31:0] m{i}_{a} = (f{i}_{a} > m{i}_{p}) ? f{i}_{a} : m{i}_{p};\n",
+                    p = a - 1
+                ));
+            }
+            for a in 0..q {
+                v.push_str(&format!(
+                    "  wire [31:0] g{i}_{a} = (m{i}_{} - f{i}_{a}) >> {EXP_GAP_SHIFT};\n",
+                    q - 1
+                ));
+                v.push_str(&format!(
+                    "  wire [{}:0] ad{i}_{a} = (g{i}_{a} > 32'd{last}) ? {bits}'d{last} : g{i}_{a}[{}:0];\n",
+                    bits - 1,
+                    bits - 1
+                ));
+                v.push_str(&format!("  wire [15:0] w{i}_{a} = ex(ad{i}_{a});\n"));
+            }
+            v.push_str(&format!("  wire [31:0] c{i}_0 = {{16'd0, w{i}_0}};\n"));
+            for a in 1..q {
+                v.push_str(&format!(
+                    "  wire [31:0] c{i}_{a} = c{i}_{} + {{16'd0, w{i}_{a}}};\n",
+                    a - 1
+                ));
+            }
+            v.push_str(&format!("  wire [31:0] d{i} = xs32(rng[{i}]);\n"));
+            v.push_str(&format!(
+                "  wire [47:0] p{i} = d{i}[31:16] * c{i}_{};\n",
+                q - 1
+            ));
+            v.push_str(&format!("  wire [31:0] t{i} = p{i}[47:16];\n"));
+            // The walk: the first a with t < c_a, from the top down as nested selects.
+            let mut sel = format!("{sb}'d{}", q - 1);
+            for a in (0..q - 1).rev() {
+                sel = format!("(t{i} < c{i}_{a}) ? {sb}'d{a} : ({sel})");
+            }
+            v.push_str(&format!("  wire [{}:0] k{i} = {sel};\n", sb - 1));
+        }
+        v.push_str(&format!(
+            "\n  always @(posedge clk) begin\n    if (rst) begin\n      phase <= {pb}'d0;\n"
+        ));
+        for i in 0..n {
+            v.push_str(&format!("      rng[{i}] <= 32'd{};\n", b.seeds[i]));
+            v.push_str(&format!(
+                "      state[{}:{}] <= {sb}'d{};\n",
+                i * sb + sb - 1,
+                i * sb,
+                b.init_s[i]
+            ));
+        }
+        v.push_str(&format!(
+            "    end else if (en) begin\n      phase <= (phase == {pb}'d{}) ? {pb}'d0 : phase + {pb}'d1;\n",
+            classes - 1
+        ));
+        for (ci, class) in b.classes.iter().enumerate() {
+            v.push_str(&format!("      if (phase == {pb}'d{ci}) begin\n"));
+            for &iu in class {
+                let i = iu as usize;
+                v.push_str(&format!(
+                    "        state[{}:{}] <= k{i}; rng[{i}] <= d{i};\n",
+                    i * sb + sb - 1,
+                    i * sb
+                ));
+            }
+            v.push_str("      end\n");
+        }
+        v.push_str("    end\n  end\nendmodule\n");
+        v
+    }
+
+    /// A self-checking testbench and the emulator's packed per-sweep trace, as
+    /// [`FixedPdit::emit_testbench`].
+    pub fn emit_testbench(&mut self, module: &str, sweeps: usize) -> (String, String) {
+        self.reset();
+        let mut expected = String::new();
+        for _ in 0..sweeps {
+            self.sweep();
+            expected.push_str(&self.base.packed_hex());
+            expected.push('\n');
+        }
+        self.reset();
+        let top = self.base.n * self.base.state_bits() - 1;
+        let ptop = self.base.phase_bits() - 1;
+        let classes = self.base.classes.len();
+        let tb = format!(
+            "`timescale 1ns/1ps\nmodule tb;\n  reg clk = 0, rst = 1;\n  wire [{top}:0] state;\n  wire [{ptop}:0] phase;\n  {module} dut(.clk(clk), .rst(rst), .en(1'b1), .state(state), .phase(phase));\n  reg [{top}:0] expected [0:{last}];\n  integer sw, errors = 0;\n  always #5 clk = ~clk;\n  initial begin\n    $readmemh(\"expected.hex\", expected);\n    @(posedge clk); @(posedge clk); @(negedge clk); rst = 0;\n    for (sw = 0; sw < {sweeps}; sw = sw + 1) begin\n      repeat ({classes}) @(posedge clk);\n      #1;\n      if (state !== expected[sw]) begin\n        errors = errors + 1;\n        $display(\"MISMATCH sweep %0d: got %h want %h\", sw, state, expected[sw]);\n      end\n    end\n    if (errors == 0) $display(\"FERROTHERM_PASS\");\n    else $display(\"FERROTHERM_FAIL %0d\", errors);\n    $finish;\n  end\nendmodule\n",
+            last = sweeps - 1,
+        );
+        (tb, expected)
+    }
+}
+
 /// `index = sum_i s_i q^i`, site 0 least significant, as [`Potts::index_of`].
 fn state_of(mut index: usize, q: usize, n: usize) -> Vec<u8> {
     let mut s = vec![0u8; n];
@@ -1455,6 +1800,115 @@ mod tests {
             hot.tau_int_draws,
             native.tau_int_draws
         );
+    }
+
+    /// The cumulative unit's exact law sums to one, is the softmax to a few parts in a thousand,
+    /// and is exactly zero for a state whose gap exceeds the sixteen-bit weight floor `11.78` --
+    /// wider ROMs do not move it, because the floor is the weight's, not the address's.
+    #[test]
+    fn the_cumulative_units_exact_law_is_the_softmax_until_the_weight_width_ends() {
+        let scale = f64::from(1u32 << FRAC);
+        let floor = cumulative_floor();
+        assert!((floor - 11.78).abs() < 0.01, "{floor}");
+        for &bits in &[10u32, 14] {
+            let rom = exp_rom(bits);
+            let fields = [0.0f64, -1.0, -2.0];
+            let fields_q: Vec<i32> = fields.iter().map(|f| (f * scale).round() as i32).collect();
+            let law = cumulative_conditional(&fields_q, &rom);
+            assert!((law.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+            let tv = autocorr::total_variation(&law, &softmax(&fields, 1.0));
+            assert!(tv < 5e-3, "{bits} bits: TV {tv} from the softmax");
+            let beyond = [0i32, -((floor * scale) as i32) - 8, 0];
+            assert_eq!(cumulative_conditional(&beyond, &rom)[1], 0.0);
+            let within = [0i32, -((floor * scale) as i32) + 64, 0];
+            assert!(cumulative_conditional(&within, &rom)[1] > 0.0);
+        }
+    }
+
+    /// The cumulative fabric on the three-state four-ring: its exact sweep kernel's stationary
+    /// law is the Potts law to within the quantisation, and a run of the emulator lands on it.
+    #[test]
+    fn the_cumulative_p_trit_fabric_samples_the_potts_law() {
+        let m = ring(4, 3, 1.0, Interaction::Potts);
+        let beta = 0.6;
+        let exact = enumerate(&m, beta).expect("81 states");
+        let mut fab = FixedCumulative::new(&m, beta, 11, 10).expect("a Potts ring fits");
+        let kernel = fab.sweep_kernel().expect("81 states");
+        let pi = stationary_of(&kernel, 81).expect("irreducible");
+        let tv = autocorr::total_variation(&pi, &exact.p);
+        assert!(tv < 0.01, "cumulative fabric law vs Potts law: TV {tv}");
+        let mut counts = vec![0.0f64; 81];
+        let sweeps = 40_000;
+        for _ in 0..sweeps {
+            fab.sweep();
+            counts[m.index_of(&fab.base.s).expect("a state the model reads")] += 1.0;
+        }
+        let hist: Vec<f64> = counts.iter().map(|c| c / f64::from(sweeps)).collect();
+        let tv = autocorr::total_variation(&hist, &pi);
+        assert!(
+            tv < 0.03,
+            "emulator histogram vs its own exact law: TV {tv}"
+        );
+    }
+
+    /// THE HARDWARE GATE for the cumulative p-dit: the same two models as the Gumbel-max gate,
+    /// replayed bit-exactly under icarus-verilog, multiply and walk included.
+    #[test]
+    fn the_cumulative_p_trit_rtl_matches_the_emulator_bit_exact() {
+        if std::process::Command::new("iverilog")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            eprintln!("SKIP: iverilog not installed; the cumulative p-dit RTL gate did not run");
+            return;
+        }
+        let mut b = PottsBuilder::new(3, 6, Interaction::Potts);
+        for i in 0..6 {
+            b.couple(i, (i + 1) % 6, 1.0);
+        }
+        b.field(0, 2, 0.4);
+        b.field(3, 0, -0.6);
+        let ring6 = b.build();
+        let mut b = PottsBuilder::new(5, 4, Interaction::Potts);
+        b.couple(0, 1, 0.8);
+        b.couple(1, 2, -0.5);
+        b.couple(2, 0, 0.3);
+        b.couple(2, 3, 1.1);
+        b.field(3, 4, 0.5);
+        let five = b.build();
+        for (name, m, beta, bits) in [("ring6", &ring6, 0.7, 10u32), ("five", &five, 0.9, 12)] {
+            let mut fab = FixedCumulative::new(m, beta, 0x5EED, bits).expect("Potts");
+            let rtl = fab.emit_verilog("cpdit");
+            let (tb, expected) = fab.emit_testbench("cpdit", 40);
+            let dir = std::env::temp_dir()
+                .join(format!("ferrotherm_cpdit_{name}_{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("cpdit.v"), rtl).unwrap();
+            std::fs::write(dir.join("tb.v"), tb).unwrap();
+            std::fs::write(dir.join("expected.hex"), expected).unwrap();
+            let out = std::process::Command::new("iverilog")
+                .current_dir(&dir)
+                .args(["-g2012", "-o", "sim", "cpdit.v", "tb.v"])
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "iverilog ({name}): {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let run = std::process::Command::new("vvp")
+                .current_dir(&dir)
+                .arg("sim")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            assert!(
+                stdout.contains("FERROTHERM_PASS"),
+                "cumulative p-dit RTL/emulator divergence ({name}):\n{stdout}"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// THE HARDWARE GATE for the p-dit: the emitted Verilog, simulated with icarus-verilog, must
