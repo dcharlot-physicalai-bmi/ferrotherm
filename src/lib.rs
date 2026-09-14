@@ -206,6 +206,7 @@ pub mod analog;
 pub mod corpora;
 pub mod autocorr;
 pub mod fft;
+pub mod rhat;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///
