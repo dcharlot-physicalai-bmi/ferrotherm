@@ -865,6 +865,16 @@ mutations=(
   "src/syndrome.rs|            *entry = -gamma * j * prod;|            *entry = gamma * j * prod;|syndrome::tests::belief_propagation_is_exact_on_a_tree_and_the_hard_posterior_is_the_relaxed_limit|a relaxed check that rewards the wrong parity"
   "src/syndrome.rs|marg[i] += w * if b == 1 { -1.0 } else { 1.0 };|marg[i] += w * if b == 1 { 1.0 } else { -1.0 };|syndrome::tests::belief_propagation_is_exact_on_a_tree_and_the_hard_posterior_is_the_relaxed_limit|hard marginals with the flip sign inverted"
 
+  # The p-dit's AXI shell counts a sweep when the phase wraps; count two and the fabric stops at
+  # half the target while the host reads twice the sweeps, which the shell gate sees.
+  "src/pdit.rs|done_sweeps <= done_sweeps + 32'd1;|done_sweeps <= done_sweeps + 32'd2;|pdit::tests::the_p_dit_axi_shell_runs_the_fabric_and_reads_back_what_the_emulator_reaches|a shell that counts every sweep twice"
+  # The p-bit shell's counter, after the same fix: the gate now runs hot enough that the state
+  # changes every sweep, so a counter that is off by one phase or by a factor of two shows.
+  "src/hdl.rs|      if (phase) done_sweeps <= done_sweeps + 32'd1;|      if (phase) done_sweeps <= done_sweeps + 32'd2;|hdl::tests::axi_shell_runs_the_fabric_and_reads_back_what_the_emulator_reaches|a p-bit shell that counts every sweep twice"
+  # And the defect itself: count on the other phase and the fabric runs one class past the
+  # target, which is the half-sweep overrun the frozen gate could not see.
+  "src/hdl.rs|      if (phase) done_sweeps <= done_sweeps + 32'd1;|      if (!phase) done_sweeps <= done_sweeps + 32'd1;|hdl::tests::axi_shell_runs_the_fabric_and_reads_back_what_the_emulator_reaches|a p-bit shell that counts on the wrong phase"
+
 )
 
 bad=0
@@ -936,7 +946,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=170
+expected_rows=173
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
