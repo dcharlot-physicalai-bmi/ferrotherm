@@ -304,13 +304,15 @@ module {module} (
   wire phase;
   {core} core (.clk({clock}), .rst(rst), .en(run & ~reached), .state(state), .phase(phase));
 
-  // A sweep is two clocks. Count on the closing phase, not on every edge.
-  reg phase_d = 1'b0;
+  // A sweep is two clocks. Count on the clock that updates the second class, so the fabric
+  // stops with exactly the target's sweeps done. The first cut counted one clock later, on the
+  // wrap of the phase, which is the clock that already performs the NEXT sweep's first class:
+  // every target ran half a sweep long, and the gate did not see it because its lattice had
+  // frozen -- a state the extra half-sweep could not change.
   always @(posedge {clock}) begin
-    if (rst) begin phase_d <= 1'b0; done_sweeps <= 32'd0; end
+    if (rst) done_sweeps <= 32'd0;
     else if (run & ~reached) begin
-      phase_d <= phase;
-      if (phase_d & ~phase) done_sweeps <= done_sweeps + 32'd1;
+      if (phase) done_sweeps <= done_sweeps + 32'd1;
     end
   end
 
@@ -764,8 +766,11 @@ mod tests {
             return;
         }
         let sweeps = 25usize;
+        // Hot enough that the state changes every sweep: on the ordered lattice this gate first
+        // ran on, every spin had frozen down by sweep 25 and the read-back matched any run
+        // length -- including the half-sweep overrun the counter then had.
         let g = lattice2d(4, 0.9);
-        let mut fab = FixedFabric::new(&g, 0.7, 0x5EED);
+        let mut fab = FixedFabric::new(&g, 0.25, 0x5EED);
         let core = fab.emit_verilog("fabric");
         let shell = fab.emit_axi_shell("ft_axi", "fabric", "clk");
         // What the emulator reaches after exactly `sweeps` sweeps -- the answer the host must read.
@@ -779,6 +784,12 @@ mod tests {
             .enumerate()
             .fold(0u32, |a, (i, &b)| a | (u32::from(b) << i));
         let want_pop = fab.s.iter().filter(|&&b| b).count() as u32;
+        let mut one_more = FixedFabric::new(&g, 0.25, 0x5EED);
+        one_more.reset();
+        for _ in 0..=sweeps {
+            one_more.sweep();
+        }
+        assert_ne!(one_more.s, fab.s, "the gate is vacuous if one more sweep changes nothing");
 
         let tb = format!(
             r#"`timescale 1ns/1ps
