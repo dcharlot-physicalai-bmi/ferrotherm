@@ -98,6 +98,9 @@ fn main() {
     let fab = Fabric::with_ppips(&grid, dbs, pp, conns);
 
     let (mut routed, mut pips_total, mut failed) = (0usize, 0usize, 0usize);
+    // Every accepted path, kept so the finished fabric can be asked whether any two couplings
+    // arrived at the same wire. The router has no memory between calls.
+    let mut nets: Vec<Vec<ferrotherm_silicon::route::RouteStep>> = Vec::new();
     let n_links = n_neurons - 1;
     for i in 0..n_neurons {
         let src_t = &placed[i];
@@ -143,6 +146,7 @@ fn main() {
                 if all_ok {
                     routed += 1;
                     pips_total += path.len();
+                    nets.push(path);
                 } else {
                     failed += 1;
                 }
@@ -154,6 +158,14 @@ fn main() {
         }
     }
     println!("couplings routed: {routed} ({pips_total} PIPs total), failed: {failed}");
+
+    // Two nets on one wire is two drivers on one conductor, which a device answers with current
+    // rather than an error, so it is checked before anything is written out.
+    let clashes = ferrotherm_silicon::route::contentions(&nets);
+    for c in clashes.iter().take(5) {
+        println!("  CONTENTION: {} in {} driven by nets {:?}", c.wire, c.tile, c.nets);
+    }
+    println!("contended wires: {}", clashes.len());
 
     // ---- emit the bitstream ----
     let words = assemble(IDCODE_XC7A100T, &fb);
@@ -189,7 +201,7 @@ fn main() {
     println!("wrote bsn_fabric.bin ({} bytes) and bsn_fabric.bit ({} bytes)", bytes.len(), wrapped.len());
     println!(
         "\nverdict: {}",
-        if luts_written == n_neurons && routed == n_links && failed == 0 && unknown == 0 {
+        if luts_written == n_neurons && routed == n_links && failed == 0 && unknown == 0 && clashes.is_empty() {
             "FABRIC EMITTED - every neuron placed, every coupling routed, all bits resolved, \
              stream well formed"
         } else {

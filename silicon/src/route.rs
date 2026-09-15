@@ -245,6 +245,59 @@ impl<'g> Fabric<'g> {
     }
 }
 
+/// A wire that more than one net drives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Contention {
+    /// The tile the wire is in.
+    pub tile: String,
+    /// The wire being driven more than once.
+    pub wire: String,
+    /// The nets claiming it, by their index in the slice handed to [`contentions`].
+    pub nets: Vec<usize>,
+}
+
+/// Wires that more than one net drives, across a set of routed paths.
+///
+/// The search in [`Fabric::route`] has no memory between calls: it is asked for a path, it finds
+/// one, and the next call is free to take the same switch. That is fine while the answer is only
+/// being counted and stops being fine the moment the answer is written into a device, because two
+/// nets arriving at one wire is two drivers on one conductor. The fabric does not report an error
+/// for that. It draws current.
+///
+/// A wire is contended when two DIFFERENT nets drive it, whatever their sources. Sharing a source
+/// is not a defence: distinct couplings carry distinct signals, so a wire both of them reach is a
+/// wire on which one of them is wrong.
+#[must_use]
+pub fn contentions(nets: &[Vec<RouteStep>]) -> Vec<Contention> {
+    // (tile, driven wire) -> the nets that drive it, first appearance first.
+    let mut claims: Vec<((String, String), Vec<usize>)> = Vec::new();
+    for (index, net) in nets.iter().enumerate() {
+        for step in net {
+            let key = (step.tile.clone(), step.pip.dst.clone());
+            let mut found = false;
+            for (existing, owners) in &mut claims {
+                if *existing == key {
+                    if !owners.contains(&index) {
+                        owners.push(index);
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                claims.push((key, vec![index]));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for ((tile, wire), nets) in claims {
+        if nets.len() > 1 {
+            out.push(Contention { tile, wire, nets });
+        }
+    }
+    out
+}
+
 /// Tile kinds that carry interconnect and contain no logic: the switchboxes themselves plus the
 /// break, clock-row and terminator tiles that continue wires across clock-region and die
 /// boundaries. Excluding any of them silently breaks every route that crosses a clock region —
@@ -436,6 +489,48 @@ mod tests {
         // The clock row's own service tiles are not interconnect and must stay out of the walk.
         assert!(!is_interconnect("HCLK_CLB"));
         assert!(!is_interconnect("HCLK_BRAM"));
+    }
+
+    /// Two nets that arrive at one wire are two drivers on one conductor, and the device answers
+    /// that with current rather than an error. The check must name the wire and both nets, and
+    /// must not fire when a net merely reuses its own switch.
+    #[test]
+    fn two_nets_driving_one_wire_are_reported() {
+        let step = |tile: &str, src: &str, dst: &str| RouteStep {
+            tile: tile.to_string(),
+            tile_type: "INT_L".to_string(),
+            pip: Pip {
+                src: src.to_string(),
+                dst: dst.to_string(),
+                directional: true,
+                pseudo: false,
+            },
+        };
+        // Two nets, different sources, same driven wire in the same tile.
+        let clash = vec![
+            vec![step("INT_L_X0Y0", "A", "SHARED"), step("INT_L_X0Y1", "SHARED", "B")],
+            vec![step("INT_L_X0Y0", "C", "SHARED")],
+        ];
+        let found = contentions(&clash);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].tile, "INT_L_X0Y0");
+        assert_eq!(found[0].wire, "SHARED");
+        assert_eq!(found[0].nets, vec![0, 1]);
+
+        // The same wire driven from the same source by two nets is still two nets on one wire.
+        let same_source = vec![
+            vec![step("INT_L_X0Y0", "A", "SHARED")],
+            vec![step("INT_L_X0Y0", "A", "SHARED")],
+        ];
+        assert_eq!(contentions(&same_source).len(), 1, "a shared source is not a defence");
+
+        // Disjoint nets, and a net that drives two different wires in one tile, are both clean.
+        let clean = vec![
+            vec![step("INT_L_X0Y0", "A", "P"), step("INT_L_X0Y0", "A", "Q")],
+            vec![step("INT_L_X0Y1", "C", "P")],
+        ];
+        assert!(contentions(&clean).is_empty(), "{:?}", contentions(&clean));
+        assert!(contentions(&[]).is_empty());
     }
 
     #[test]
