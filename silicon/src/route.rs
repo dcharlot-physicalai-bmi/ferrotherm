@@ -246,12 +246,46 @@ impl<'g> Fabric<'g> {
 }
 
 /// Tile kinds that carry interconnect and contain no logic: the switchboxes themselves plus the
-/// break and terminator tiles that continue wires across clock-region and die boundaries.
-/// Excluding the break tiles silently breaks every route that crosses a clock region — the
-/// symptom is a handful of links failing while their neighbours succeed.
+/// break, clock-row and terminator tiles that continue wires across clock-region and die
+/// boundaries. Excluding any of them silently breaks every route that crosses a clock region —
+/// the symptom is a handful of links failing while their neighbours succeed.
+///
+/// This list was written with that symptom in mind and still had **`HCLK_L` and `HCLK_R` missing**,
+/// which is the same defect one tile type over. An interconnect column is interrupted by a clock
+/// row once per clock region — every fifty rows of logic on an `xc7a100t` — and `tileconn` carries
+/// **223 wire pairs** through it in each vertical direction, so those tiles are as much a wire
+/// continuation as a `BRKH_` is. Laying 64 neurons down one column reported `no route: neuron 27
+/// -> 28`; their tiles sit at grid rows 129 and 131 with `HCLK_L` at 130. One failure in
+/// sixty-three reads like a hard case, and it was the only coupling that had to leave its clock
+/// region. A fabric spanning the part would lose one coupling per boundary, quietly, with the
+/// other sixty-two per region routed and a bitstream that still loads.
 #[must_use]
 pub fn is_interconnect(kind: &str) -> bool {
-    kind.starts_with("INT_") || kind.starts_with("BRKH_") || kind.ends_with("_TERM_INT")
+    kind.starts_with("INT_")
+        || kind.starts_with("BRKH_")
+        || is_clock_row(kind)
+        || kind.ends_with("_TERM_INT")
+}
+
+/// Clock-row tile types that sit inside an interconnect column, by prefix.
+///
+/// Only the two that stand in the interconnect columns belong here. The clock row's other tiles —
+/// `HCLK_CLB`, `HCLK_BRAM`, `HCLK_DSP_L`, `HCLK_IOI3` and the rest — are the service tiles of the
+/// logic columns beside it, and walking into one is the same mistake as walking into a `CLBLL_L`.
+pub const CLOCK_ROW_PREFIXES: [&str; 2] = ["HCLK_L", "HCLK_R"];
+
+/// Whether a tile type is a clock-row tile that continues interconnect wires.
+///
+/// A loop rather than an iterator with a closure: this line is a mutation-suite target, and the
+/// suite splits its rows on `|`, so a closure's pipes would parse the row into nonsense.
+#[must_use]
+pub fn is_clock_row(kind: &str) -> bool {
+    for prefix in CLOCK_ROW_PREFIXES {
+        if kind.starts_with(prefix) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The default expansion rule: interconnect tiles only.
@@ -353,6 +387,55 @@ mod tests {
         assert!(rule("CLBLL_L_X2Y0", "CLBLL_L"), "source endpoint allowed");
         assert!(rule("CLBLL_L_X2Y9", "CLBLL_L"), "target endpoint allowed");
         assert!(!rule("CLBLL_L_X2Y5", "CLBLL_L"), "any other logic tile is refused");
+    }
+
+    /// A vertical route must cross the horizontal clock row. The column here is the real shape:
+    /// two interconnect tiles with an `HCLK_L` between them, and the wire continuing through it in
+    /// both hops, as `tileconn` says it does on the part.
+    #[test]
+    fn a_route_crosses_the_horizontal_clock_row() {
+        let grid = r#"{
+          "INT_L_X0Y0": {"type": "INT_L", "grid_x": 0, "grid_y": 0, "bits": {}, "sites": {}},
+          "HCLK_L_X0Y1": {"type": "HCLK_L", "grid_x": 0, "grid_y": 1, "bits": {}, "sites": {}},
+          "INT_L_X0Y2": {"type": "INT_L", "grid_x": 0, "grid_y": 2, "bits": {}, "sites": {}}}"#;
+        let int_l = r#"{"tile_type": "INT_L", "sites": [], "wires": {},
+          "pips": {"a": {"src_wire": "SRC", "dst_wire": "NN2A0", "is_directional": "1", "is_pseudo": "0"},
+                   "b": {"src_wire": "NN2END0", "dst_wire": "SINK", "is_directional": "1", "is_pseudo": "0"}}}"#;
+        let hclk = r#"{"tile_type": "HCLK_L", "sites": [], "wires": {}, "pips": {}}"#;
+        let grid = TileGrid::parse(grid).unwrap();
+        let mut dbs = HashMap::new();
+        dbs.insert("INT_L".to_string(), PipDb::parse(int_l).unwrap());
+        dbs.insert("HCLK_L".to_string(), PipDb::parse(hclk).unwrap());
+        // The wire continues INT -> HCLK -> INT, which is how the part is wired: 223 such pairs
+        // in each vertical direction.
+        let up = |from: &str, to: &str, a: &str, b: &str| {
+            let mut pairs = HashMap::new();
+            pairs.insert(a.to_string(), b.to_string());
+            Conn { from_type: from.into(), to_type: to.into(), dx: 0, dy: 1, pairs }
+        };
+        let conns = vec![
+            up("INT_L", "HCLK_L", "NN2A0", "HCLK_NN2A0"),
+            up("HCLK_L", "INT_L", "HCLK_NN2A0", "NN2END0"),
+        ];
+        let fab = Fabric::new(&grid, dbs, conns);
+        let path = fab
+            .route(
+                &("INT_L_X0Y0".into(), "SRC".into()),
+                &("INT_L_X0Y2".into(), "SINK".into()),
+                10_000,
+                &interconnect_only,
+            )
+            .expect("the clock row is interconnect, not a wall");
+        // Two PIPs, one in each switchbox; the clock row costs no configuration bits because the
+        // wire merely continues through it.
+        assert_eq!(path.len(), 2, "{path:?}");
+        assert_eq!(path[0].tile, "INT_L_X0Y0");
+        assert_eq!(path[1].tile, "INT_L_X0Y2");
+        assert!(is_interconnect("HCLK_L") && is_interconnect("HCLK_R"));
+        assert!(is_interconnect("HCLK_L_BOT_UTURN"), "the uturn variants sit in the same column");
+        // The clock row's own service tiles are not interconnect and must stay out of the walk.
+        assert!(!is_interconnect("HCLK_CLB"));
+        assert!(!is_interconnect("HCLK_BRAM"));
     }
 
     #[test]
