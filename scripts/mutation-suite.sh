@@ -881,6 +881,11 @@ mutations=(
   # routes while every coupling across one fails, which is how this shipped: 62 of 63 couplings
   # routed and the one failure looked like a hard case.
   "silicon/src/route.rs|pub const CLOCK_ROW_PREFIXES: [&str; 2] = [\"HCLK_L\", \"HCLK_R\"];|pub const CLOCK_ROW_PREFIXES: [&str; 2] = [\"HCLK_WALL\", \"HCLK_R\"];|route::tests::a_route_crosses_the_horizontal_clock_row|a router that treats the clock row as a wall|ferrotherm-silicon"
+  # A .bit header field declares a length that INCLUDES its NUL terminator. Drop the NUL from the
+  # count and the container still parses -- the reader simply returns a string one byte short and
+  # every following field lands one byte early -- so only a byte-for-byte comparison against the
+  # container the parser was always tested against catches it.
+  "silicon/src/bitstream.rs|        let len = text.len() + 1;|        let len = text.len();|bitstream::tests::the_writer_emits_the_container_the_parser_was_tested_against|a header field whose length forgets its terminator|ferrotherm-silicon"
 
 )
 
@@ -953,7 +958,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=174
+expected_rows=175
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
