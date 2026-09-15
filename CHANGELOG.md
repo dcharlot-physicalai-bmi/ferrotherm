@@ -2,6 +2,104 @@
 
 ## Unreleased
 
+### The p-trit: a probabilistic digit of radix `q`, its embodiments, its RTL, and what it buys
+
+`pdit` is the radix-`q` unit of which the p-bit is the case `q = 2`. The Gumbel-max form --
+add a Gumbel draw to each of the `q` fields and take the argmax -- is exactly softmax, and at
+`q = 2` it IS the p-bit: the difference of two Gumbels is logistic, and `softmax([f, -f])` equals
+`kernel::p_up(f)` to `1e-15`. The cumulative form -- one draw, an exponential ROM addressed by
+each state's gap to the leader, a `16 x Z` multiply and a walk up the cumulative sum -- is the
+other embodiment. Both exist as cycle-exact fixed-point emulators in the `hdl` fabric's arithmetic
+(Q.8, xorshift32, ties to the lowest state, greedy colour classes), both emit synthesizable
+Verilog that icarus-verilog replays bit-exactly against the emulator, and both have an exact
+single-site law (`rom_conditional`, `cumulative_conditional`) so a fabric's stationary law is a
+solve and not a sample. Each has a floor: the Gumbel unit's is the ROM's span (`9.7` at ten
+bits), the cumulative unit's the sixteen-bit weight's `11.78` -- the same `2 beta f > 11.8` the
+comparator p-bit floors at, because it is the same sixteen bits.
+
+**What a native unit buys.** Hartley's radix economy `r / ln r` favours three among the
+integers, but only under Hartley's charge; per comparator or per draw binary wins, and the module
+says all three. The p-trit's case is elsewhere: `native_row` and `encoded_row` build the exact
+sweep kernels of a native three-state chain and of its one-hot and domain-wall spellings, and
+compare mixing time and autocorrelation time in noise draws. Cold (`beta = 2`) the penalty that
+makes an encoding valid is the penalty that freezes it -- one-hot at 99.8% valid costs **two
+hundred times** the native unit's draws per independent sample, the domain wall 1.4 times. (The
+first draft compared by Kemeny's constant and was wrong: `K = m - 1` for a perfectly mixing chain
+on `m` states, so it counts states before it measures anything; `kemeny_of` stays with that on its
+label.) In cells, yosys's generic flow prices the Gumbel-max p-trit at 4,027 per unit against 173
+per p-bit, because its three noise-addressed ROMs cannot fold, and the cumulative unit at 1,676,
+its multiplier most of them. Training through the p-trit device, exactly, gives the same
+staircase verdict `ebm` recorded for p-bits, milder: the rule beats loading in three runs of
+eight and is up to 2.2 times worse in the rest.
+
+**Board-ready.** `FixedPdit::emit_axi_shell` wraps the fabric in the same AXI4-Lite register map
+as the p-bit shell, gated in simulation as a host would drive it. Writing that gate found that
+**the p-bit shell had run every target half a sweep long** since it was written: its counter
+advanced on the wrap of the phase, the clock that already performs the next sweep's first class,
+and its gate never saw it because the gate's lattice had frozen -- a state no run length could
+change. Both shells now count on the clock that updates the last class, and the p-bit gate runs
+hot and asserts that one more sweep would change the state.
+
+### The exact transverse-field chain, and the annealer's fixed cost
+
+`freefermion` is Pfeuty's free-fermion ground state and Katsura's finite-temperature trace over
+both parity sectors, in log space, as an oracle for the quantum samplers -- checked against a
+dense Hamiltonian on 4, 6 and 8 spins by a sector-preserving power iteration whose residual
+certifies it and by the whole spectrum under Jacobi, and against the `c = 1/2` Casimir term at 64
+sites. Two things the checks taught: a plain power iteration does not converge in the ordered
+phase, where the parity sectors split by about `(Gamma/J)^N`, and that same splitting keeps the
+finite chain warm at `beta = 100`.
+
+`access` is D-Wave's published QPU access-time model with the five solvers' constants (read
+2026-09-14) and the vendor's 12.5 kW: one read on `Advantage_system4` is 29 ms and 366 J before it
+anneals; ten thousand reads amortise to 1.8 J per read and 320 uJ per qubit read, which is
+4.5e10 Z1 SPICE updates or 2.9e7 metered KV260 flips. The published programming time already
+includes the post-programming thermalisation, so it is not added twice.
+
+### Decompositions in the open
+
+`decomp` is the singular value decomposition by one-sided Jacobi -- not the Gram route `mps`
+takes privately, which squares the condition number and lost the first draft its own tests at
+`1e-8` -- with the Eckart--Young truncation and its closed-form error, the higher-order SVD of a
+dense tensor with an all-orthogonal core, and the randomized range finder with power iterations
+matching the full SVD's top singular values to `1e-6` on a decaying spectrum.
+
+### Codes as spin glasses, decoded at the Nishimori temperature
+
+`sourlas` checks Ruján's and Nishimori's theorem exactly on small codes, over every noise
+pattern of the channel with its probability: the identity `E[xi <sigma>] = E[<sigma>^2]` is zero
+to `1e-12` at `beta_N = (1/2) ln((1-p)/p)` and not elsewhere, and the expected bit error is
+smallest at `beta_N`, zero temperature included -- with ties counted as half an error, because a
+tie broken towards `+1` favours messages with more `+1` bits and the theorem is about the average
+over messages. An even-`C` code without its message bits has a global flip symmetry and decodes
+nothing; the module says so, because its first draft measured a bit error of one half at every
+noise level before it noticed. On the sixteen-bit comparator fabric the decoder's bit error
+equals the exact decoder's at every noise level from `p = 0.3` to `0.005`, even where
+`2 beta_N f` is three times the comparator floor: the floor zeroes the state a spin was already
+decided against, and a decoder reads only the sign.
+
+`gf2` is bit-packed GF(2) linear algebra -- reduced row echelon form, rank, nullspace, solve --
+checked against brute force. `syndrome` is syndrome decoding of a parity-check code as a spin
+glass: the posterior over noise spins with the Nishimori field, exact hard marginals, sum-product
+belief propagation that is exact on a Tanner tree and measurably not on a cyclic code, and the
+relaxed `C`-body model a Gibbs sampler can hold on the heterogeneous factor graph. Measured on a
+(3,5) code of ten bits: a check strength of one already decodes as the hard posterior does, and
+each doubling past that buys nothing and multiplies the chain's autocorrelation time by about a
+thousand (5.5, 4,111, 8.8e8 sweeps at strengths 1, 2, 4) until at eight there is no unique
+stationary law. The strength that makes a relaxation exact is the strength that freezes it.
+
+### The exact oracles, extended
+
+`autocorr` gained the direct stationary solve, Kemeny's constant, the fundamental-matrix
+autocorrelation time, entropy production against a kernel's own law, and kernels for
+quantised, synchronous (Peretto), PIMI, stale-read and site-spread fabrics; `fft` gives
+`certify::tau_int` an `O(N log N)` autocovariance above `4096` samples; `rhat` is split,
+rank-normalised and folded R-hat with bulk and tail ESS; `landauer` is the thermodynamic floor
+under the ledger and the fluctuation theorems a kernel obeys exactly; `restart` is Luby's
+sequence and the expected work of a cutoff. The comparator floor was found here: the fabric
+rounds the unlikely state's probability to zero once `2 beta f > 11.8`, and comparator bits, not
+field or ROM bits, are what move it.
+
 ### Exact independent draws past the enumeration cap
 
 `exact::Elimination::draws` builds a forward-filter / backward-sample sampler (Hamze & de Freitas,
