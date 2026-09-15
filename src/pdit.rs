@@ -119,9 +119,32 @@
 //! Generic cells are a relative measure and the ratio is the result: the embodiment with no
 //! multiply pays for it in three noise-addressed ROMs that synthesis cannot shrink, and the one
 //! with a multiply pays for the multiplier, which a board with DSP slices would price differently.
-//! Per three-state variable that is one unit against three one-hot p-bits (519 cells and three
-//! penalty couplings) or two domain-wall p-bits (346 and one) -- so on cells alone the p-bits win,
-//! and the p-trit's case stays where the exact comparison put it: the chain that does not freeze.
+//!
+//! **A generic cell is not a lookup table, and the ratio above is 58% too large.** Vivado 2026.1
+//! synthesised the same two fabrics out of context for an `xck26-sfvc784-2LV-c`:
+//!
+//! | unit | LUTs per unit | registers per unit | F7 / F8 muxes |
+//! |---|---|---|---|
+//! | p-bit, 64 spins on an 8x8 lattice | **43.1** | 33.0 | none |
+//! | Gumbel-max p-trit, `q = 3`, 16 sites, ten-bit ROM | **635.8** | 34.1 | 1,696 / 576 |
+//!
+//! So a p-trit costs **14.8 times** a p-bit on a real part, where generic cells said 23.3. The
+//! difference is the mux trees: a device builds a noise-addressed ROM from LUT6 primitives and the
+//! F7 and F8 multiplexers that pair them, which packs far better than two-input gates, and the
+//! p-bit arm uses no mux at all. Neither fabric touches a block RAM, though a ROM is what a block
+//! RAM is for -- the tools infer one only from a memory the design indexes as a memory, and these
+//! are written as case statements over constants.
+//!
+//! That measurement arrives with a check on itself: the p-bit arm reproduces the two constants
+//! this crate already recorded from a metered board, [`crate::targets::MEASURED_LUT_PER_PBIT`] at
+//! 44.3 against 43.1 here, and [`crate::targets::MEASURED_REG_PER_PBIT`] at 33.0 against 33.0.
+//! Two synthesis runs months apart on the same device family agree, so the p-trit column is being
+//! read on a scale that is known to be right.
+//!
+//! Per three-state variable that is one native unit at 636 LUTs against three one-hot p-bits at
+//! 129 or two domain-wall p-bits at 86 -- so on area the p-bits win by five to seven times, and
+//! the p-trit's case stays where the exact comparison put it: the chain that does not freeze.
+//! Area is not the number that was ever in doubt.
 //!
 //! # Training through a p-trit
 //!
