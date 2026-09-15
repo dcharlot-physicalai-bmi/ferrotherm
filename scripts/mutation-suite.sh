@@ -892,6 +892,11 @@ mutations=(
   # nothing. Drop the `agreed > 0` half and an unverified grid passes as verified.
   "silicon/src/logic_location.rs|        self.agreed > 0 && self.disagreed.is_empty()|        self.disagreed.is_empty()|logic_location::tests::an_empty_listing_verifies_nothing|a cross-check that verifies on no evidence|ferrotherm-silicon"
 
+  # Two nets on one wire is the smallest contention there is, and the one a chain of couplings
+  # actually produces. Report only three or more and the pair -- two drivers on one conductor --
+  # goes out to the device, which answers it with current rather than an error.
+  "silicon/src/route.rs|        if nets.len() > 1 {|        if nets.len() > 2 {|route::tests::two_nets_driving_one_wire_are_reported|a contention check that needs three drivers|ferrotherm-silicon"
+
 )
 
 bad=0
@@ -963,7 +968,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=176
+expected_rows=177
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
