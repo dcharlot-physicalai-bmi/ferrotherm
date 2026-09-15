@@ -214,6 +214,8 @@ pub mod access;
 pub mod pdit;
 pub mod decomp;
 pub mod sourlas;
+pub mod gf2;
+pub mod syndrome;
 
 /// The README's own code blocks, compiled by `cargo test`.
 ///
