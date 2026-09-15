@@ -157,6 +157,52 @@ pub fn parse_bit(data: &[u8]) -> BitFile<'_> {
     out
 }
 
+/// The bytes every `.bit` container opens with: a two-byte length, a nine-byte field-0 payload,
+/// and the `0x0001` marker that closes it. [`parse_bit`] skips exactly this much before reading
+/// the first tagged field.
+pub const BIT_PREAMBLE: [u8; 13] = [
+    0x00, 0x09, 0x0f, 0xf0, 0x0f, 0xf0, 0x0f, 0xf0, 0x0f, 0xf0, 0x00, 0x00, 0x01,
+];
+
+/// Wrap a raw configuration stream in a `.bit` container.
+///
+/// The inverse of [`parse_bit`], and the reason it exists is a crash rather than a preference.
+/// A raw stream is a perfectly good configuration — the device takes it and asserts DONE — but it
+/// is a `.bin`, and writing one under a `.bit` name hands every tool that reads the extension a
+/// file with no header where it expects one. `openFPGALoader` does not report that as an error:
+/// it **segfaults**. Emitting the container costs about a hundred bytes and makes the output
+/// loadable by name rather than by flag.
+///
+/// The part string is written for the reader's benefit only; what the device actually checks is
+/// the `IDCODE` the stream itself writes, so the two must agree and only one of them is enforced
+/// by hardware.
+///
+/// # Panics
+///
+/// If any header string is 65,535 bytes or longer, or the configuration exceeds `u32::MAX`
+/// bytes — neither is reachable with a real design, and a silent truncation would produce a
+/// container whose declared length disagrees with its contents.
+#[must_use]
+pub fn write_bit(design: &str, part: &str, date: &str, time: &str, config: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(config.len() + 128);
+    out.extend_from_slice(&BIT_PREAMBLE);
+    for (tag, text) in [(b'a', design), (b'b', part), (b'c', date), (b'd', time)] {
+        out.push(tag);
+        // Each field is NUL-terminated inside its own declared length, which is how the vendor
+        // writes it and what `parse_bit` trims back off.
+        let len = text.len() + 1;
+        let len = u16::try_from(len).expect("a header field shorter than 65,535 bytes");
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(text.as_bytes());
+        out.push(0);
+    }
+    out.push(b'e');
+    let len = u32::try_from(config.len()).expect("a configuration stream under 4 GiB");
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(config);
+    out
+}
+
 /// Locate the sync word in a configuration payload, returning the offset of the word AFTER it.
 #[must_use]
 pub fn find_sync(config: &[u8]) -> Option<usize> {
@@ -262,6 +308,28 @@ mod tests {
         v.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         v.extend_from_slice(payload);
         v
+    }
+
+    /// The writer must produce exactly the container this module's parser has always been tested
+    /// against — byte for byte, not merely something that parses back. A writer checked only
+    /// against its own reader agrees with itself and with nothing else.
+    #[test]
+    fn the_writer_emits_the_container_the_parser_was_tested_against() {
+        let payload: Vec<u8> = [DUMMY, SYNC, NOOP].iter().flat_map(|w| w.to_be_bytes()).collect();
+        let hand = synthetic_bit("fabric;UserID=0X0", "7a100tfgg484", &payload);
+        let written =
+            write_bit("fabric;UserID=0X0", "7a100tfgg484", "2026/08/05", "12:00:00", &payload);
+        assert_eq!(written, hand, "the writer and the hand-built container must agree");
+        assert_eq!(&written[..BIT_PREAMBLE.len()], &BIT_PREAMBLE[..]);
+        let parsed = parse_bit(&written);
+        assert_eq!(parsed.design, "fabric;UserID=0X0");
+        assert_eq!(parsed.part, "7a100tfgg484");
+        assert_eq!(parsed.date, "2026/08/05");
+        assert_eq!(parsed.time, "12:00:00");
+        assert_eq!(parsed.config, &payload[..]);
+        // The headerless case still parses as raw. That fallback is correct and is exactly what
+        // made the crash possible elsewhere: the stream was fine, the extension was the lie.
+        assert_eq!(parse_bit(&payload).config, &payload[..]);
     }
 
     #[test]

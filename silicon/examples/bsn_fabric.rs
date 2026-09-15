@@ -174,8 +174,19 @@ fn main() {
     println!("decoded: {} packets, {unknown} unknown, {frame_words} frame words ({} frames)",
              packets.len(), frame_words / 101);
 
-    std::fs::write("bsn_fabric.bit", &bytes).expect("write");
-    println!("wrote bsn_fabric.bit");
+    // Both forms. The raw stream is what the device consumes; the container is what every tool
+    // that reads the extension expects to find, and handing one a headerless `.bit` is how
+    // openFPGALoader was made to segfault rather than complain.
+    std::fs::write("bsn_fabric.bin", &bytes).expect("write");
+    let wrapped = ferrotherm_silicon::bitstream::write_bit(
+        "bsn_fabric;UserID=0XFFFFFFFF",
+        "7a100tfgg484",
+        "2026/09/15",
+        "00:00:00",
+        &bytes,
+    );
+    std::fs::write("bsn_fabric.bit", &wrapped).expect("write");
+    println!("wrote bsn_fabric.bin ({} bytes) and bsn_fabric.bit ({} bytes)", bytes.len(), wrapped.len());
     println!(
         "\nverdict: {}",
         if luts_written == n_neurons && routed == n_links && failed == 0 && unknown == 0 {
