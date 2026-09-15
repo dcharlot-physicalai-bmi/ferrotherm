@@ -887,6 +887,11 @@ mutations=(
   # container the parser was always tested against catches it.
   "silicon/src/bitstream.rs|        let len = text.len() + 1;|        let len = text.len();|bitstream::tests::the_writer_emits_the_container_the_parser_was_tested_against|a header field whose length forgets its terminator|ferrotherm-silicon"
 
+  # A cross-check that reports success on no evidence is the failure it was written to prevent:
+  # with an empty listing nothing was compared, so `disagreed.is_empty()` is true and means
+  # nothing. Drop the `agreed > 0` half and an unverified grid passes as verified.
+  "silicon/src/logic_location.rs|        self.agreed > 0 && self.disagreed.is_empty()|        self.disagreed.is_empty()|logic_location::tests::an_empty_listing_verifies_nothing|a cross-check that verifies on no evidence|ferrotherm-silicon"
+
 )
 
 bad=0
@@ -958,7 +963,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=175
+expected_rows=176
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
