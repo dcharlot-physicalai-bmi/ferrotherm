@@ -7,6 +7,7 @@ pub mod bitstream;
 pub mod frame;
 pub mod framebuf;
 pub mod json;
+pub mod logic_location;
 pub mod pips;
 pub mod route;
 pub mod segbits;
