@@ -848,6 +848,23 @@ mutations=(
   "src/sourlas.rs|        } else if agree < 0.0 {|        } else if agree > 0.0 {|sourlas::tests::the_nishimori_temperature_minimises_the_expected_bit_error|a decoder that reads the marginal's sign backwards"
   "src/sourlas.rs|2 => b.couple(s[0], s[1], f64::from(j)),|2 => b.couple(s[0], s[1], -f64::from(j)),|sourlas::tests::a_gibbs_kernel_decodes_as_the_posterior_and_the_fabric_agrees_on_a_noisy_channel|an Ising posterior with its couplings negated"
 
+  # GF(2). A solve is inconsistent when the augmented column pivots; invert the test and it
+  # answers inconsistent systems and refuses solvable ones. A nullspace vector sets a pivot bit
+  # where the reduced row has a one in the free column; invert that and the matrix no longer
+  # annihilates it. The reduction swaps the pivot row into place; skip the swap and the row it
+  # eliminates with lacks the pivot, which the brute-force nullspace sees.
+  "src/gf2.rs|        if pivots.contains(&self.cols) {|        if !pivots.contains(&self.cols) {|gf2::tests::solve_agrees_with_brute_force_on_consistency_and_solves_when_it_can|a solver that inverts consistency"
+  "src/gf2.rs|                    if r.get(i, f) {|                    if !r.get(i, f) {|gf2::tests::the_nullspace_is_exactly_what_brute_force_finds|a nullspace built from the complement"
+  "src/gf2.rs|            m.swap_rows(row, p);|            m.swap_rows(row, row);|gf2::tests::the_nullspace_is_exactly_what_brute_force_finds|a reduction that never brings the pivot up"
+
+  # Syndrome decoding. Belief propagation flips a check message's sign on an odd syndrome; flip it the other
+  # way and BP is no longer exact on the tree. The relaxed factor's energy is -gamma J prod;
+  # drop the sign and the relaxation converges to the wrong posterior. The hard marginal counts
+  # a flipped bit as -1; count it as +1 and the marginals invert.
+  "src/syndrome.rs|let sign = if syndrome[mu] == 1 { -1.0 } else { 1.0 };|let sign = if syndrome[mu] == 1 { 1.0 } else { -1.0 };|syndrome::tests::belief_propagation_is_exact_on_a_tree_and_the_hard_posterior_is_the_relaxed_limit|check messages with the syndrome's sign reversed"
+  "src/syndrome.rs|            *entry = -gamma * j * prod;|            *entry = gamma * j * prod;|syndrome::tests::belief_propagation_is_exact_on_a_tree_and_the_hard_posterior_is_the_relaxed_limit|a relaxed check that rewards the wrong parity"
+  "src/syndrome.rs|marg[i] += w * if b == 1 { -1.0 } else { 1.0 };|marg[i] += w * if b == 1 { 1.0 } else { -1.0 };|syndrome::tests::belief_propagation_is_exact_on_a_tree_and_the_hard_posterior_is_the_relaxed_limit|hard marginals with the flip sign inverted"
+
 )
 
 bad=0
@@ -919,7 +936,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=164
+expected_rows=170
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
