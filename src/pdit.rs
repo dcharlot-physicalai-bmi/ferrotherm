@@ -123,6 +123,32 @@
 //! penalty couplings) or two domain-wall p-bits (346 and one) -- so on cells alone the p-bits win,
 //! and the p-trit's case stays where the exact comparison put it: the chain that does not freeze.
 //!
+//! # Training through a p-trit
+//!
+//! [`crate::ebm`] measured, for p-bits, whether the learning rule run with the device's own law
+//! as its negative phase absorbs the device's arithmetic; it does not, because the device's law
+//! is piecewise constant in the loaded parameters and the rule chatters between lattice cells.
+//! `examples/ptrit_train_exact.rs` asks the same of the Gumbel-max p-trit on a three-state ring
+//! of five sites with random couplings and fields, everything exact over the `243` states:
+//!
+//! | scale | ROM bits | loaded truth, KL | rule through the device, KL |
+//! |---|---|---|---|
+//! | 0.6 | 8 | 4.6e-6 | 2.7e-6 |
+//! | 0.6 | 10 | 4.7e-6 | 1.0e-5 |
+//! | 0.6 | 12 | 4.7e-6 | 4.9e-6 |
+//! | 0.6 | 14 | 4.7e-6 | 4.2e-6 |
+//! | 1.2 | 8 | 4.0e-6 | 4.4e-6 |
+//! | 1.2 | 10 | 3.8e-6 | 1.7e-6 |
+//! | 1.2 | 12 | 3.8e-6 | 5.9e-6 |
+//! | 1.2 | 14 | 3.8e-6 | 5.7e-6 |
+//!
+//! (`KL(device || data)`; the exact Boltzmann rule as a control reaches `2e-8` or better.) The
+//! loaded device sits about a part in a thousand from the data law in total variation at every
+//! ROM width, so at these field scales the error is the Q.8 grid's and not the ROM's; the rule
+//! beats loading in three runs of eight and is up to 2.2 times worse in the others -- the same
+//! verdict as for p-bits, milder because nothing here approaches the floor. A radix does not
+//! change what a staircase is.
+//!
 //! # What this is not
 //!
 //! A p-trit here is a Gumbel-max or cumulative unit in Q.8 arithmetic with an emulator and
@@ -666,7 +692,19 @@ impl FixedPdit {
     /// [`Unfit::TooManyStates`] above [`MAX_DENSE_STATES`].
     pub fn sweep_kernel(&self) -> Result<Vec<f64>, Unfit> {
         let order = self.site_order();
-        dense_sweep_kernel(self.q, self.n, &order, |i, s| self.conditional_of(i, s))
+        // The fields take few distinct values across the q^n states, and each exact conditional
+        // costs q^2 2^bits: memoise by field vector.
+        let memo: std::cell::RefCell<std::collections::HashMap<Vec<i32>, Vec<f64>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+        dense_sweep_kernel(self.q, self.n, &order, |i, s| {
+            let fields = self.fields_q_of(i, s);
+            if let Some(law) = memo.borrow().get(&fields) {
+                return law.clone();
+            }
+            let law = rom_conditional(&fields, &self.rom);
+            memo.borrow_mut().insert(fields, law.clone());
+            law
+        })
     }
 
     /// Bits one site's state occupies in the packed state vector: enough for `q - 1`.
@@ -1172,8 +1210,16 @@ impl FixedCumulative {
     /// [`Unfit::TooManyStates`] above [`MAX_DENSE_STATES`].
     pub fn sweep_kernel(&self) -> Result<Vec<f64>, Unfit> {
         let order = self.base.site_order();
+        let memo: std::cell::RefCell<std::collections::HashMap<Vec<i32>, Vec<f64>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
         dense_sweep_kernel(self.base.q, self.base.n, &order, |i, s| {
-            self.conditional_of(i, s)
+            let fields = self.base.fields_q_of(i, s);
+            if let Some(law) = memo.borrow().get(&fields) {
+                return law.clone();
+            }
+            let law = cumulative_conditional(&fields, &self.rom);
+            memo.borrow_mut().insert(fields, law.clone());
+            law
         })
     }
 
