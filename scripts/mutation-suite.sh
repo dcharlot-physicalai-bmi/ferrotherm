@@ -875,6 +875,13 @@ mutations=(
   # target, which is the half-sweep overrun the frozen gate could not see.
   "src/hdl.rs|      if (phase) done_sweeps <= done_sweeps + 32'd1;|      if (!phase) done_sweeps <= done_sweeps + 32'd1;|hdl::tests::axi_shell_runs_the_fabric_and_reads_back_what_the_emulator_reaches|a p-bit shell that counts on the wrong phase"
 
+  # The silicon router's first row. An interconnect column is interrupted by a clock row once per
+  # clock region, and the wires continue straight through it -- 223 pairs in each vertical
+  # direction on an xc7a100t. Treat that row as a wall and every coupling inside a region still
+  # routes while every coupling across one fails, which is how this shipped: 62 of 63 couplings
+  # routed and the one failure looked like a hard case.
+  "silicon/src/route.rs|pub const CLOCK_ROW_PREFIXES: [&str; 2] = [\"HCLK_L\", \"HCLK_R\"];|pub const CLOCK_ROW_PREFIXES: [&str; 2] = [\"HCLK_WALL\", \"HCLK_R\"];|route::tests::a_route_crosses_the_horizontal_clock_row|a router that treats the clock row as a wall|ferrotherm-silicon"
+
 )
 
 bad=0
@@ -946,7 +953,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=173
+expected_rows=174
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
