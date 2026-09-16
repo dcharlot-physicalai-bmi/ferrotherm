@@ -7,6 +7,23 @@ with no vendor toolchain in the path.
 Work through it at a terminal with a board plugged in. Each section asks you to predict an outcome
 before you run the command. The gap between your prediction and the result is where the learning is.
 
+## Start here
+
+```sh
+git clone https://github.com/f4pga/prjxray-db
+cargo run --release -p ferrotherm-silicon --example lab -- prjxray-db 64
+```
+
+That is the whole path in one command: it loads the fabric map, places 64 neurons, routes their
+couplings, checks for shorted wires, and writes a bitstream. It ends by printing the command that
+puts the result on the board.
+
+Run it now, before reading further. The rest of this guide explains what each of its six stages
+did and why each one can go wrong — which is easier to follow once you have seen the output.
+
+If a database file is missing it says which one and what it was for, rather than failing with a
+path error.
+
 ---
 
 ## What will you have built by the end?
@@ -258,7 +275,8 @@ rather than a symptom to wait for.
 
 | | |
 |---|---|
-| The whole path as runnable code | [`examples/bsn_fabric.rs`](examples/bsn_fabric.rs) |
+| The whole path in one command | [`examples/lab.rs`](examples/lab.rs) |
+| The same path written out stage by stage | [`examples/bsn_fabric.rs`](examples/bsn_fabric.rs) |
 | What a given board can and cannot do | [`ferrotherm::fabric`](../src/fabric.rs) |
 | Why a radix-3 unit exists at all | [`ferrotherm::pdit`](../src/pdit.rs) |
 | What a p-bit costs, in joules | [`ferrotherm::ledger`](../src/ledger.rs) |

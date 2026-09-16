@@ -52,3 +52,5 @@ julia/*/Manifest.toml
 # The committed reference streams live beside the crate (`silicon/bsn_fabric.bit`).
 /bsn_fabric.bit
 /bsn_fabric.bin
+/lab_fabric.bit
+/lab_fabric.bin
