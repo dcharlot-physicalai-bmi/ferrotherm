@@ -10,6 +10,9 @@ crate calls, links, or depends on any external entity's software.
 
 ## Using it
 
+**New to this? Read [GUIDE.md](GUIDE.md)** — a step-by-step walkthrough from an unplugged board
+to a fabric the device accepts, with the eight traps that produce believable wrong answers.
+
 The declared capabilities need no board attached, which is most of the value: a caller can ask what
 rules their program out before buying hardware.
 
@@ -41,7 +44,7 @@ println!("{:.4}", bsn_fire_prob(3, 5));         // 1.0000
 
 | capability | evidence |
 |---|---|
-| Identify a board | IDCODE 0x13631093 = XC7A100T on a live Alchitry Pt V2 |
+| Identify a board | IDCODE device bits 0x3631093 = XC7A100T on a live Alchitry Pt V2. The top nibble is a silicon revision, so the same part reads 0x03631093 or 0x13631093 and both are right; compare the low 28 bits |
 | Read configuration registers | STAT/BOOTSTS; IDCODE read by TWO independent paths (JTAG DR and a type-1 config read) agree exactly |
 | **Configure real silicon** | 104,140-byte bitstream loaded over JTAG; fabric cleared to 0x00000000 then came back configured |
 | Fabric map | 30,932-tile tilegrid parsed in 0.02 s; 15,850 SLICE sites x 4 = 63,400 LUT6 = the datasheet figure |
