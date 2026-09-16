@@ -142,9 +142,41 @@
 //! read on a scale that is known to be right.
 //!
 //! Per three-state variable that is one native unit at 636 LUTs against three one-hot p-bits at
-//! 129 or two domain-wall p-bits at 86 -- so on area the p-bits win by five to seven times, and
-//! the p-trit's case stays where the exact comparison put it: the chain that does not freeze.
-//! Area is not the number that was ever in doubt.
+//! 129 or two domain-wall p-bits at 86 -- so on area the p-bits win by five to seven times.
+//!
+//! # What the embodiments cost in joules
+//!
+//! Area is not the number that was ever in doubt. Both fabrics were implemented for an `xck26`,
+//! flashed onto a Kria KV260 through its FPGA manager with each load confirmed in the kernel log,
+//! and metered on the board's own INA260 across the 5 V rail -- p-bit, p-trit, p-bit again, so
+//! that the pair is a comparison rather than drift:
+//!
+//! | pass | fabric | watts |
+//! |---|---|---|
+//! | 1 | p-bit, 1,024 spins | 3.870742 |
+//! | 2 | p-trit, 64 sites | 4.011461 |
+//! | 3 | p-bit, 1,024 spins | 3.877865 |
+//!
+//! The p-bit arm reproduces to **0.18%**. At 100 MHz with two colour classes a sweep is two
+//! clocks, so the p-bit fabric runs `5.12e10` updates a second and the p-trit `3.2e9`. Against the
+//! pre-flash reference the p-bit costs **7.8 pJ an update** and the p-trit **168 pJ**:
+//!
+//! **A p-trit update costs 21.5 times a p-bit update, where the area ratio is 14.4.** The excess
+//! over area is the three draws and the mux tree, which switch on every update while a LUT that
+//! merely holds a table does not. Per three-state variable that is 168 pJ native against three
+//! one-hot p-bits at 23.4, so the encodings are **7.2 times cheaper in energy** as well as five to
+//! seven times cheaper in area.
+//!
+//! The absolute figures are lower bounds and the ratio is not. Both arms are referenced to the
+//! same pre-flash reading, which had a previous design loaded rather than an idle fabric, so both
+//! are over-subtracted by the same amount -- this run's p-bit reads 7.8 pJ where a campaign with a
+//! proper idle baseline read 10.85 ([`crate::ledger::KV260_MEASURED`]), a factor of 1.39. The
+//! ratio divides that confound out; the per-update joules do not.
+//!
+//! So every measure that can be taken of a p-trit against a p-bit -- generic cells, lookup tables,
+//! registers, joules per update -- says the same thing, and the exact comparison above still says
+//! the opposite about the only thing a sampler is for. A p-trit is dearer to build and dearer to
+//! run, and its chain does not freeze.
 //!
 //! # Training through a p-trit
 //!
