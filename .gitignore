@@ -47,3 +47,8 @@ zig-out/
 # "direct dependency, but does not appear in the manifest".
 julia/*/Manifest.toml
 .claude/
+
+# Build outputs of `ferrotherm-silicon`'s fabric emitter, written to the working directory.
+# The committed reference streams live beside the crate (`silicon/bsn_fabric.bit`).
+/bsn_fabric.bit
+/bsn_fabric.bin
