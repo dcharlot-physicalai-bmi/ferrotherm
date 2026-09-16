@@ -191,8 +191,15 @@ fn main() {
         if clashes.is_empty() { " -- safe to write" } else { " -- DO NOT LOAD THIS" }
     );
 
-    // ---- stage 6: the stream -------------------------------------------------------------
-    println!("\n== 6. the bitstream ==");
+    // ---- stage 6: the parity every vendor frame carries -----------------------------------
+    println!("\n== 6. frame parity ==");
+    let odd_before = fb.odd_frames();
+    let sealed = fb.set_x7_parity();
+    println!("  {odd_before} of {} frames had the parity no vendor frame has", fb.len());
+    println!("  {sealed} parity bits written; {} frames still odd", fb.odd_frames());
+
+    // ---- stage 7: the stream -------------------------------------------------------------
+    println!("\n== 7. the bitstream ==");
     let frames = fb.len();
     let set_bits: usize = fb
         .frames
@@ -214,7 +221,8 @@ fn main() {
     println!("  wrote lab_fabric.bin (raw) and lab_fabric.bit (with a header)");
 
     // ---- what to do next -----------------------------------------------------------------
-    let complete = written == n_neurons && failed == 0 && unknown == 0 && clashes.is_empty();
+    let even = fb.odd_frames() == 0;
+    let complete = written == n_neurons && failed == 0 && unknown == 0 && clashes.is_empty() && even;
     println!("\n== {} ==", if complete { "READY" } else { "INCOMPLETE -- read the counts above" });
     if complete {
         println!("  openFPGALoader -c ft2232 --fpga-part xc7a100tfgg484 lab_fabric.bit");

@@ -125,6 +125,37 @@ impl FrameBuf {
         Some(init)
     }
 
+    /// Give every frame the parity bit its set-bit count calls for, and say how many got one.
+    ///
+    /// Call this last, after the design's bits are in. Vendor frames all carry it and, before
+    /// this existed, half of ours did not; [`crate::ecc`] has the measurements. It is safe to
+    /// call on a design placed in logic: nothing in the Project X-Ray Artix-7 database resolves
+    /// into the field it writes.
+    ///
+    /// The one design that must not call it is one that configures `HCLK` tiles by hand at a bit
+    /// index below 14, which no published segbit does.
+    pub fn set_x7_parity(&mut self) -> usize {
+        let mut written = 0;
+        for f in self.frames.values_mut() {
+            if crate::ecc::set_x7_parity(f).unwrap_or(false) {
+                written += 1;
+            }
+        }
+        written
+    }
+
+    /// Frames whose set-bit count is odd, which is the shape no vendor frame has.
+    #[must_use]
+    pub fn odd_frames(&self) -> usize {
+        let mut odd = 0;
+        for f in self.frames.values() {
+            if !crate::ecc::is_even(f) {
+                odd += 1;
+            }
+        }
+        odd
+    }
+
     /// Contiguous runs of frames, as (start address, words). Frames stream through FDRI with the
     /// address auto-incrementing, so each run needs exactly one FAR write.
     #[must_use]
@@ -224,5 +255,35 @@ mod tests {
         assert_eq!(runs[0].1.len(), 3 * WORDS_PER_FRAME);
         assert_eq!(runs[1].0, 20);
         assert_eq!(runs[1].1.len(), 2 * WORDS_PER_FRAME);
+    }
+
+    /// Sealing a buffer leaves no frame with the parity no vendor frame has -- and the fixture
+    /// asserts it started with some, so a sealer that did nothing would not pass.
+    #[test]
+    fn sealing_removes_every_odd_frame() {
+        let mut fb = FrameBuf::new();
+        for addr in 0..8u32 {
+            fb.apply(BitAddr { frame: addr, word: 3, bit: (addr % 32) as u16, set: true }).unwrap();
+        }
+        assert_eq!(fb.odd_frames(), 8, "the fixture must start with frames to seal");
+        let written = fb.set_x7_parity();
+        assert_eq!(written, 8);
+        assert_eq!(fb.odd_frames(), 0);
+        // and the design's own bits are untouched
+        for f in fb.frames.values() {
+            assert_eq!(f[3].count_ones(), 1);
+        }
+    }
+
+    /// Sealing twice must not undo itself.
+    #[test]
+    fn sealing_is_idempotent() {
+        let mut fb = FrameBuf::new();
+        fb.apply(BitAddr { frame: 7, word: 2, bit: 9, set: true }).unwrap();
+        fb.set_x7_parity();
+        let once = fb.frames.clone();
+        fb.set_x7_parity();
+        assert_eq!(fb.frames, once);
+        assert_eq!(fb.odd_frames(), 0);
     }
 }

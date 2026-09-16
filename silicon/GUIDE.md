@@ -15,10 +15,10 @@ cargo run --release -p ferrotherm-silicon --example lab -- prjxray-db 64
 ```
 
 That is the whole path in one command: it loads the fabric map, places 64 neurons, routes their
-couplings, checks for shorted wires, and writes a bitstream. It ends by printing the command that
-puts the result on the board.
+couplings, checks for shorted wires, gives every frame its parity bit, and writes a bitstream. It
+ends by printing the command that puts the result on the board.
 
-Run it now, before reading further. The rest of this guide explains what each of its six stages
+Run it now, before reading further. The rest of this guide explains what each of its seven stages
 did and why each one can go wrong — which is easier to follow once you have seen the output.
 
 If a database file is missing it says which one and what it was for, rather than failing with a
@@ -145,6 +145,34 @@ assert!(clashes.is_empty(), "{clashes:?}");
 **The general principle:** when a failure mode is invisible to the system that produces it, the
 check belongs in the producer. There is no downstream test that recovers this one.
 
+## What makes a frame look like a vendor's?
+
+Its parity. Every configuration frame carries an error-correcting code so the device can scrub its
+own memory for upsets while the design runs, and the code's field is reserved inside the frame:
+sweeping the whole Project X-Ray Artix-7 database for a configuration bit that resolves into frame
+word 50, bits 0 to 13, finds none. Four tile types, reverse-engineered separately, agree on the
+same boundary.
+
+**Predict first:** across four Vivado designs, 21,680 frames. How many have an odd number of set
+bits? And of the 40 frames this library generates — how many?
+
+<details>
+<summary>The answer</summary>
+
+None of the vendor's, and twenty of ours: half, which is what "never set" looks like when the
+underlying counts are arbitrary. The board raised `DONE` on ours anyway, because configuration does
+not check the code — readback and upset detection do.
+
+```rust
+let odd = fb.odd_frames();
+let written = fb.set_x7_parity();
+```
+
+A structural defect the device does not object to is the kind that survives to production. The only
+thing that finds it is comparing against something you did not write. [`ecc`](src/ecc.rs) carries
+the measurements and the part of the code that is still open.
+</details>
+
 ## Where does the configuration actually go?
 
 Into frames, by address. A switch or a truth-table bit resolves to a triple:
@@ -267,7 +295,9 @@ rather than a symptom to wait for.
    length a route first has to cross a clock region, then find it.
 3. **Make a contention on purpose.** Route two couplings to the same input wire. Confirm
    `contentions()` names both nets — and do not load the result.
-4. **Price a variable.** Using 43.6 lookup tables and 7.8 pJ for a p-bit against 628 and 168 pJ for
+4. **Break the parity on purpose.** Set one more bit in a sealed frame and re-run
+   `frame_parity`. Predict how many frames it reports as odd before you run it.
+5. **Price a variable.** Using 43.6 lookup tables and 7.8 pJ for a p-bit against 628 and 168 pJ for
    a p-trit, work out the cheaper way to hold one three-state variable. Then read
    [`pdit`](../src/pdit.rs) on why the dearer one can still be the right choice.
 
@@ -275,7 +305,9 @@ rather than a symptom to wait for.
 
 | | |
 |---|---|
+| The board you measure joules on | [KV260.md](KV260.md) |
 | The whole path in one command | [`examples/lab.rs`](examples/lab.rs) |
+| Whether a bitstream is vendor-shaped | [`examples/frame_parity.rs`](examples/frame_parity.rs) |
 | The same path written out stage by stage | [`examples/bsn_fabric.rs`](examples/bsn_fabric.rs) |
 | What a given board can and cannot do | [`ferrotherm::fabric`](../src/fabric.rs) |
 | Why a radix-3 unit exists at all | [`ferrotherm::pdit`](../src/pdit.rs) |

@@ -897,6 +897,27 @@ mutations=(
   # goes out to the device, which answers it with current rather than an error.
   "silicon/src/route.rs|        if nets.len() > 1 {|        if nets.len() > 2 {|route::tests::two_nets_driving_one_wire_are_reported|a contention check that needs three drivers|ferrotherm-silicon"
 
+  # The parity bit is inside the count it corrects. Count first and write second, without clearing
+  # the bit that is already there, and the answer alternates: right on a fresh frame, wrong on the
+  # second pass over the same one. Both passes return a plausible bool and the frame still loads.
+  "silicon/src/ecc.rs|    frame[word] &= !mask;|    frame[word] &= u32::MAX;|ecc::tests::setting_parity_is_idempotent|a parity write that counts the bit it is about to write|ferrotherm-silicon"
+
+  # A survey of no frames has nothing odd in it. Drop the clause that requires frames to have been
+  # counted and the verdict reads VENDOR-SHAPED for a file with no configuration stream at all --
+  # the same shape as a cross-check that verifies because it compared nothing.
+  "silicon/src/ecc.rs|        self.frames > 0 && self.odd == 0 && self.remainder == 0|        self.odd == 0 && self.remainder == 0|ecc::tests::an_empty_survey_is_not_vendor_shaped|a parity verdict that passes on an empty stream|ferrotherm-silicon"
+
+  # UltraScale+ widened the frame address's minor field to eight bits, and its block-RAM content
+  # columns are 256 frames deep. Carry the 7-series seven-bit mask across and the top half of every
+  # wide column folds silently onto the bottom half: every address still decodes, every frame still
+  # writes, and half of them land somewhere else.
+  "silicon/src/usplus.rs|            minor: (far & 0xFF) as u8,|            minor: (far & 0x7F) as u8,|usplus::tests::the_minor_field_is_eight_bits|a 7-series minor mask applied to UltraScale+|ferrotherm-silicon"
+
+  # The boot header of an UltraScale+ image contains the sync word as its bus-width pattern. Take
+  # the first match and the reader parses the header as configuration, finds no frames, and reports
+  # an empty design for a file that holds twenty thousand frames.
+  "silicon/src/usplus.rs|        if config.get(i + 1) == Some(&NOOP) {|        if config.get(i + 1).is_some() {|usplus::tests::the_first_sync_word_is_not_the_configuration_stream|a sync search that stops at the boot header|ferrotherm-silicon"
+
 )
 
 bad=0
@@ -968,7 +989,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=177
+expected_rows=181
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

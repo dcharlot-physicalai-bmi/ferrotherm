@@ -4,6 +4,7 @@
 //! from Open Interface Engineering's openie-fpga; this crate is fully independent of it.
 
 pub mod bitstream;
+pub mod ecc;
 pub mod frame;
 pub mod framebuf;
 pub mod json;
@@ -12,6 +13,7 @@ pub mod pips;
 pub mod route;
 pub mod segbits;
 pub mod tilegrid;
+pub mod usplus;
 pub mod lut;
 
 #[cfg(feature = "flash")]

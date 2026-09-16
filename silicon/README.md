@@ -12,6 +12,7 @@ crate calls, links, or depends on any external entity's software.
 
 **New to this? Read [GUIDE.md](GUIDE.md)** — a step-by-step walkthrough from an unplugged board
 to a fabric the device accepts, with the eight traps that produce believable wrong answers.
+[KV260.md](KV260.md) is its companion for the board with the power instrument.
 
 The declared capabilities need no board attached, which is most of the value: a caller can ask what
 rules their program out before buying hardware.
@@ -52,10 +53,14 @@ println!("{:.4}", bsn_fire_prob(3, 5));         // 1.0000
 | PIP database | 3,629/3,629 non-pseudo INT_L PIPs resolve to bits; the reversed key resolves 7 |
 | **Route a signal** | LOGIC_OUTS_L0 (INT_L_X0Y102) -> IMUX3 (INT_R_X1Y102) over an east single-length wire; both PIPs -> physical bits |
 | Assemble a bitstream | generated header word-identical to a stream produced for this exact part |
+| Frame parity | 0 of 21,680 frames odd across four independent Vivado designs and 0 of 21,123 across two Kria K26 images; 20 of our own 40 were, until `FrameBuf::set_x7_parity` |
+| UltraScale+ geometry | 93-word frame and 8-bit minor read off a Kria K26 reference image: its frame data divides by 93 and not by 101, and its minor field runs to 255 |
 
 Not yet done: binding a p-bit fabric's LUTs to SLICE site pins (the CLB-to-interconnect node
 model), and reading fabric state back (CAPTURE + FDRO) so a running sampler can be observed
-without I/O pins.
+without I/O pins. On UltraScale+ the bitstream layer is ported but the fabric map is not, so the
+KV260 is read and checked here rather than configured; the twelve non-parity bits of the frame ECC
+this review did not recover.
 
 ## Layers (build order = board-readiness order)
 

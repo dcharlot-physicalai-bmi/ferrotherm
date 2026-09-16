@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Frame parity, and the UltraScale+ geometry behind the second demo board
+
+`silicon::ecc` is the part of the per-frame configuration ECC this project can back with
+evidence. Two independent lines fix it. The field is reserved: sweeping every `segbits_*.db` in
+the Project X-Ray Artix-7 database for a configuration bit that resolves into frame word 50,
+bits 0 to 13, finds none -- across the three tile types that occupy that word with a one-word
+span the lowest bit index is 14, and `HCLK_CMT`, which spans words 45 to 54, agrees. And real
+frames obey it: 0 of 21,680 frames odd across four independent Vivado designs (`arty-a7`
+pmod/swbut/uart and `basys3` swbut, whose frames span a 472-dimensional subspace over GF(2), each
+design adding directions the others do not), and 0 of 21,123 across two Kria K26 images. **Twenty
+of this library's own forty frames were**, until now -- half, which is what "never set" looks like
+when the counts underneath are arbitrary. The board raised `DONE` on them anyway, because
+configuration does not check the code; readback and upset detection do. `FrameBuf::set_x7_parity`
+seals a buffer, the `lab` example reports the count as a stage, and `frame_parity` surveys any
+bitstream of either family. The other twelve bits are a Hamming code whose bit-to-syndrome map
+this review did not recover -- raw linear position and power-of-two-skipping labellings, under
+forward and reversed word order, forward and reversed bit order, and 66 offsets, none reproduced
+the vendor frames -- and they are left zero and said to be.
+
+`silicon::usplus` is the Zynq UltraScale+ side of the bitstream path, measured off a Kria K26
+reference image rather than assumed: the frame is **93 words**, because that image's frame data is
+1,948,908 words and its partial template's 15,531 and both divide by 93 exactly and by neither 101
+nor 123; the frame address's minor field is **eight** bits, because over 20,905 address writes the
+minor runs to 255 and the block-RAM content columns are exactly 256 frames deep; and what the
+Linux FPGA manager loads is a little-endian boot image whose header carries `0xAA995566` as its
+own bus-width pattern, so a reader that stops at the first sync word parses the header and reports
+an empty design for a file holding twenty thousand frames. The 549 (block type, row, column)
+groups that image writes decode to four clock rows of 134 logic columns and 3 block-RAM columns,
+with column depths of 4, 6, 8, 9, 10, 12, 16, 76 and 256. The fabric map is not ported, so the
+KV260 is read and checked here rather than configured, and [silicon/KV260.md](silicon/KV260.md)
+says which of the two boards answers which question.
+
 ### The p-trit: a probabilistic digit of radix `q`, its embodiments, its RTL, and what it buys
 
 `pdit` is the radix-`q` unit of which the p-bit is the case `q = 2`. The Gumbel-max form --
