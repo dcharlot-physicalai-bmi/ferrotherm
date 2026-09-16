@@ -211,11 +211,18 @@ mod tests {
 
     /// Running it twice must not toggle. The bit is inside the count it corrects, so a naive
     /// implementation that counts before clearing alternates between right and wrong.
+    ///
+    /// The fixture's weight must be ODD, and the assertion says so. An even-weight frame never
+    /// gets the bit, so both implementations leave it alone and both look idempotent -- which is
+    /// what an earlier `0xDEAD_BEEF` (24 set bits) did, and the mutation walked straight through
+    /// it.
     #[test]
     fn setting_parity_is_idempotent() {
         let mut f = vec![0u32; WORDS_PER_FRAME];
-        f[7] = 0xDEAD_BEEF;
+        f[7] = 0b111;
+        assert!(!is_even(&f), "the fixture must be odd or nothing gets written");
         let first = set_x7_parity(&mut f).unwrap();
+        assert!(first, "an odd frame gets the bit");
         let snapshot = f.clone();
         let second = set_x7_parity(&mut f).unwrap();
         assert_eq!(first, second);
