@@ -68,6 +68,15 @@
 //! integer multiply-add"* — a tie with `int8`, from Johnson's `deepfloat` work at FAIR. The
 //! multiples reported elsewhere come from baselines other than a tuned integer unit.
 //!
+//! **Two companies took this thesis at silicon, and one left.** Lemurian Labs' PAL — "parallel
+//! adaptive logarithm", which extends the logarithmic number system with multiple bases and
+//! interleaved exponents — was the other funded attempt; the company turned software-first in 2024
+//! and now builds a hardware-agnostic stack instead. The surviving silicon effort has **taped out,
+//! not shipped**: beta is stated for Q1 2027, and every performance figure it publishes is labelled
+//! by its own whitepaper *"based on modeling and simulation and will be verified upon silicon
+//! availability."* A format argument that has not yet met a wafer is exactly the kind this module
+//! exists to price from first principles instead.
+//!
 //! That is the number this module exists to supply. Whether two 1,024-entry tables cost back the
 //! multiplier they saved depends on how they are shared across a systolic array, which is a
 //! circuit question nobody outside the vendor can answer — but it is the question, and it is the
