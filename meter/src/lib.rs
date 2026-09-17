@@ -536,6 +536,10 @@ impl Run {
             e_read: f64::NAN,
             e_write: f64::NAN,
             reflash_hz_cap: None,
+            // THIS crate is the one that meters. A price it derives comes from an instrument, an
+            // idle baseline and a stated reading count, which is what `Metered` means -- and it is
+            // the only place in the workspace entitled to construct one.
+            evidence: ferrotherm::ledger::Evidence::Metered,
             // Leaked deliberately: `Prices::source` is &'static str, and a measurement's provenance
             // has to travel with it. One string per derived price, for the life of the process.
             source: Box::leak(
@@ -600,6 +604,37 @@ fn field(line: &str, name: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A price this crate derives is Metered, and it is the only grade it may claim.
+    ///
+    /// The evidence grade travels with the number or it is not evidence. `meter` is the producer
+    /// of metered prices in this workspace; every other `Prices` in the tree is Simulated, Derived
+    /// or Unstated, and a price that came off an instrument has to be distinguishable from one
+    /// that came off a spreadsheet.
+    #[test]
+    fn a_derived_price_is_graded_metered() {
+        let m = Run {
+            seconds: 10.0,
+            mean_watts: 4.05,
+            idle_watts: 3.5,
+            idle_sigma: 0.008,
+            joules_total: 40.5,
+            joules_above_idle: 0.55,
+            samples: 100,
+            machine: "test".into(),
+            backend: "test",
+        };
+        let l = Ledger { samples: 1_000_000, reads: 0, writes: 0 };
+        let p = m.prices_from(&l).expect("a sample-dominated run");
+        assert_eq!(p.evidence, ferrotherm::ledger::Evidence::Metered);
+        assert!(p.source.contains("measured on"));
+        // and a comparison against anything weaker drops to the weaker grade
+        assert_eq!(
+            ferrotherm::ledger::weaker(p.evidence, ferrotherm::ledger::Z1_SPICE.evidence),
+            ferrotherm::ledger::Evidence::Simulated
+        );
+    }
+
 
     /// Measuring power means OWNING the machine.
     ///
