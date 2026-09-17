@@ -571,6 +571,22 @@ elimination, planar max-cut, Gardner, AGS, Curie–Weiss, Bethe-on-trees, `buscl
 the four largest competitors' repositories for `onsager` or `gardner` returns zero hits in every one;
 their suites test their API surface. That is the difference between a sampler and a reference.
 
+### Against the coupled-oscillator programme
+
+`docs/ABSORPTION.md` answers what a thermodynamic stack needs in order to contain a continuous
+dynamical-system machine entirely, and `kuramoto`, `nonrev`, `dsisa`, `precision` and `phasegen`
+are the answer in code. The reduction is exact on the grid — a Kuramoto system with symmetric
+coupling *is* the XY model, and on `q` points *is* `potts::Interaction::Clock`, to `1e-12` over a
+full enumeration — and the grid's cost is a bound rather than a hope: **one extra bit of phase
+precision halves the KL**, measured at 0.687, 0.086 and 0.005 nats for 8, 11 and 15 bits. The
+energy half of the same exchange is `12 kT 2^{2b}` against Landauer's `b kT ln 2`, so an analogue
+variable is **69× the floor at one bit and 141,823× at eight** and never undercuts it at any depth.
+Asymmetric coupling is divergence-free and still has no stationary law anyone can name
+(`max |grad E . F_A| = 0.3633` where `max |div F_A| = 0`); the construction that does work,
+`A grad E`, keeps an invariant measure and its discrete image measures **4.01× faster than the
+reversible chain with the same proposal**, from transition matrices rather than runs. Every figure
+is printed by `cargo run --release --example absorption`, not transcribed.
+
 ### Free energy, certified
 
 `ln Z` is the number every thermodynamic-computing paper quotes and no sampling stack certifies.

@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+### Containing the coupled-oscillator programme
+
+Five modules and `docs/ABSORPTION.md`, contributed against this tree and reproduced on it: the
+example's output is byte-identical to the one shipped with the drop, and every figure the document
+quotes is printed by `cargo run --release --example absorption` rather than transcribed.
+
+`kuramoto` is the general system — asymmetric `K`, nonzero `omega` — of which `oim` is the
+special case, with its Hodge split into gradient, solenoidal and harmonic parts and an exact
+pointwise membership test (the drift is a gradient field **iff** `K` is symmetric). The reduction
+that matters is exact: the symmetric part's drift is `-grad E` of the XY energy, and on a `q`-point
+grid that is `potts::Interaction::Clock` to `1e-12` over a full enumeration. What the grid costs is
+a bound, not a hope — rounding moves each phase by at most `pi/q` and the cosine is 1-Lipschitz, so
+`KL <= 2 beta epsilon(q)` with `epsilon` falling like `2^-b`, and **one extra bit of phase precision
+halves the KL**: 0.687, 0.086 and 0.005 nats at 8, 11 and 15 bits.
+
+`precision` supplies the energy half of the same exchange. Resolving `b` bits from an analogue node
+is limited by `kT/C` sampling noise, and equating a full-scale sinusoid's `V^2/8` against `kT/C` at
+an ideal quantiser's `(3/2) 2^{2b}` gives `C = 12 kT 2^{2b} / V^2` — so `C V^2` is `12 kT 2^{2b}`
+and **the voltage cancels**. Against Landauer's `b kT ln 2` that is **69x at one bit and 141,823x at
+eight**, above one at every depth from 1 to 32. Priced end to end, a published 16,384-oscillator
+generator with a 37M-parameter decoder spends **99.9967% of its joules in the decoder**, so a free
+substrate improves the total by `1.00003x`. One caveat that cuts the other way and is stated: at ten
+steps between reads there is nothing to amortise, so readout dominance is a property of this
+project's fabric and not of that architecture.
+
+`nonrev` is the acceleration an asymmetric coupling only looks like. The antisymmetric part *is*
+divergence-free — `max |div F_A| = 0.000e0` over a 24x24 scan, identically zero — but Boltzmann
+invariance needs `div(pi F) = 0`, whose second term does not vanish: `max |grad E . F_A| = 0.3633`
+at a coupling asymmetry of 0.375. **So an asymmetrically-coupled oscillator network has no
+stationary distribution anyone can name.** `kuramoto::divergence` and
+`kuramoto::solenoidal_divergence` stay separate functions for exactly that reason. The construction
+that does work is `g = A grad E`, whose two invariance identities are machine-checked rather than
+cited, and whose discrete image — lifting, one direction bit per site with a reversal on rejection —
+measures **4.01x faster than the reversible chain with the same proposal** (`tau_int` 3.265 against
+13.109, computed from transition matrices, stationarity intact to 8e-17 with detailed balance broken
+on purpose).
+
+`dsisa` lowers the published nine-instruction dynamical-system ISA onto this crate, asserting that a
+lowered program and the hand-written code it lowers to produce identical state **and identical
+ledgers**. Their untemperatured `Evolve` is this crate's at `beta = infinity`, in code rather than in
+argument. The lowering prices what the ISA never did: on a four-node ring at Z1 rates, configuration
+is 99.86% of a one-sweep program and needs **390,000 sweeps to fall under a tenth of the bill**,
+because `Connect` is a write and writes are the expensive operation.
+
+`phasegen` is that architecture with the decoder deleted. Outputs become Gaussian units inside the
+same energy, so outputs-given-phases is one Cholesky and a phase given everything else is exactly
+von Mises — the circular heat bath, which on a `q`-point grid is the clock-model heat bath this
+crate already samples. The outputs integrate out in closed form, so `enumerate_grid` returns the
+**exact `ln Z` of a complete generative model**, 7.330681 on the shipped fixture. A convolutional
+decoder has no partition function; this has one because every block was chosen so that it would.
+
 ### Reading a fabric that has no output pins
 
 `silicon::capture` is the path from a running sampler to named values. `GCAPTURE` copies every

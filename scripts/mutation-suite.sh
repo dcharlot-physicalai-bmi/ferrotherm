@@ -942,6 +942,33 @@ mutations=(
   # keeps a leading `=`, which prints plausibly and matches nothing.
   "silicon/src/logic_location.rs|            if let Some(name) = field.strip_prefix(\"Latch=\") {|            if let Some(name) = field.strip_prefix(\"Latch\") {|logic_location::tests::parses_the_documented_line_shape_and_skips_the_rest|a latch name that keeps its separator|ferrotherm-silicon"
 
+  # The analogue floor is 12 kT 2^{2b}, and the exponent is the whole argument: it is what makes the
+  # ratio against Landauer grow like 2^{2b}/b instead of staying near one. Halve the exponent and
+  # every number in the table is still a plausible energy and the conclusion is gone.
+  "src/precision.rs|    kappa * BOLTZMANN_CONSTANT * temperature_k * 2.0f64.powi(2 * bits as i32)|    kappa * BOLTZMANN_CONSTANT * temperature_k * 2.0f64.powi(bits as i32)|precision::tests::the_thermal_bound_is_independent_of_voltage_and_quadruples_per_bit|an analogue floor that doubles per bit instead of quadrupling"
+
+  # `divergence` and `solenoidal_divergence` are deliberately separate functions because conflating
+  # them is exactly how an asymmetric coupling gets mistaken for a measure-preserving perturbation.
+  # Take the full coupling here and the solenoidal part stops being identically zero, which turns
+  # the finding into its opposite while every number stays finite and plausible.
+  "src/kuramoto.rs|                terms.push(-a[i * n + j] * (phi[j] - phi[i]).cos());|                terms.push(-self.k[i * n + j] * (phi[j] - phi[i]).cos());|kuramoto::tests::an_antisymmetric_coupling_is_divergence_free_but_not_gibbs_preserving|a solenoidal divergence taken over the full coupling"
+
+  # Lifting is exactly the reversal on rejection. Drop it and the chain proposes one direction
+  # forever: it still runs, still accepts by Metropolis, still looks like a sampler, and no longer
+  # has the target as its stationary law. Only the sweep-level test sees this -- the matrix-level
+  # stationarity tests are about `lifted_matrix` and cannot fail for it.
+  "src/nonrev.rs|                self.v[i] = -step;|                self.v[i] = step;|nonrev::tests::a_lifted_sweep_reproduces_the_enumerated_distribution|a lifted chain that never reverses"
+
+  # The whole point of lowering their instruction set is that connectivity is a WRITE, and a write is
+  # the expensive operation. Price it as a read and the configuration share collapses, which is the
+  # answer the architecture would like.
+  "src/dsisa.rs|        let config = self.configuration_writes as f64 * prices.e_write;|        let config = self.configuration_writes as f64 * prices.e_read;|dsisa::tests::configuration_can_cost_more_than_computation|a configuration phase priced as reads"
+
+  # The von Mises conditional is (R, phi) with phi = atan2(sin, cos). Transpose the arguments and the
+  # concentration is still right, the sampler still draws a circular distribution, and the mean angle
+  # is reflected about pi/4 -- a generator that samples smoothly from the wrong law.
+  "src/phasegen.rs|        (c.hypot(s), s.atan2(c))|        (c.hypot(s), c.atan2(s))|phasegen::tests::the_phase_conditional_is_exactly_the_von_mises_the_field_names|a von Mises mean angle with its arguments transposed"
+
 )
 
 bad=0
@@ -1013,7 +1040,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=186
+expected_rows=191
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
