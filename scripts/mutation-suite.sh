@@ -1007,6 +1007,21 @@ mutations=(
   # better than Euler, still converging, and no longer a reference.
   "src/pathwise.rs|        phi[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);|        phi[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + k3[i] + k4[i]);|pathwise::tests::the_reference_integrator_is_fourth_order|a Runge-Kutta weight that drops the order"
 
+  # Mitchell's worst multiply is exactly 1/9, at three halves, and the constant is the whole claim a
+  # logarithmic datapath has to answer. State it as anything else and every correction measured
+  # against it is measured against the wrong bar.
+  "src/logdomain.rs|pub const MAX_MUL_RELATIVE_ERROR: f64 = 1.0 / 9.0;|pub const MAX_MUL_RELATIVE_ERROR: f64 = 1.0 / 8.0;|logdomain::tests::mitchells_worst_multiply_is_exactly_one_ninth|a worst case stated as one eighth"
+
+  # The forward and inverse corrections are DIFFERENT functions. Leave the reconstruction raw -- the
+  # obvious first implementation -- and the error plateaus near a percent no matter how much table
+  # is thrown at it, while every table-size number still falls and looks like progress.
+  "src/logdomain.rs|            inverse.push(2.0f64.powf(mid) - (1.0 + mid));|            inverse.push(0.0);|logdomain::tests::correcting_mitchell_to_fp16_accuracy_costs_ten_bits_of_table|a correction that leaves the reconstruction raw"
+
+  # Amdahl's denominator is the share you did NOT touch plus the share you did, divided. Drop the
+  # first term and a datapath optimisation reports the speed-up of the datapath as the speed-up of
+  # the device, which is the arithmetic every accelerator claim turns on.
+  "src/logdomain.rs|    let terms = [1.0 - share, share / factor];|    let terms = [1.0, share / factor];|logdomain::tests::a_free_multiplier_is_still_bounded_by_what_it_was_a_share_of|an Amdahl denominator that forgets the untouched share"
+
 )
 
 bad=0
@@ -1078,7 +1093,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=199
+expected_rows=202
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

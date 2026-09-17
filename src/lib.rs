@@ -98,6 +98,7 @@ pub mod nce;
 pub mod roofdual;
 pub mod ensembles;
 pub mod ldpc;
+pub mod logdomain;
 pub mod restore;
 pub mod torque;
 pub mod mbar;
