@@ -3039,6 +3039,10 @@ pub extern "C" fn ft_model_joules(
         e_write,
         reflash_hz_cap: None,
         source: "supplied across the C ABI by the caller",
+        // A number that arrives across an ABI carries no provenance with it. The caller may have
+        // metered it or invented it and the signature cannot tell the difference, so the grade is
+        // the honest one -- which is exactly the situation `Evidence` was added for.
+        evidence: crate::ledger::Evidence::Unstated,
     };
     match unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) {
         Some(s) => s.joules(&prices).unwrap_or(f64::NAN),

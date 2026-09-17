@@ -6,6 +6,59 @@
 //! "many local updates are performed between infrequent I/O operations" — and the ledger makes
 //! that arithmetic executable instead of promotional.
 
+/// How much a per-operation energy figure is worth as evidence.
+///
+/// This exists because the field it describes has stopped distinguishing. A 2026 sweep of
+/// specialised AI silicon found **no tokens-per-watt figure on a language model verified by any
+/// independent third party, for any vendor** — the one power-measured result in the space is a
+/// ResNet-50 submission from a company that has since shut down, and the only rule-governed harness
+/// with a power methodology recorded zero power submissions in its most recent round. What
+/// circulates instead is a mixture of metered, simulated, derived and projected numbers, quoted in
+/// the same units and compared to one another without remark.
+///
+/// A `f64` cannot tell you which it is holding. [`Prices::source`] says so in prose, and prose does
+/// not stop a ratio being taken. This does: [`weaker`] gives the grade any comparison inherits, so
+/// a metered number divided by a projection is typed as a projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Evidence {
+    /// No published or measured figure at all. The weakest grade, and the honest one.
+    Unstated,
+    /// A roadmap number or design target for hardware that does not exist yet.
+    Projected,
+    /// Computed analytically from stated parameters. Nothing was instrumented.
+    Derived,
+    /// Circuit simulation of a design — SPICE or equivalent. No silicon was measured.
+    Simulated,
+    /// Measured on physical hardware, without a fully stated measurement protocol.
+    Measured,
+    /// Metered on physical silicon with the protocol stated: instrument, baseline, and a
+    /// reproduced control. The strongest grade, and the rarest.
+    Metered,
+}
+
+impl core::fmt::Display for Evidence {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let s = match self {
+            Evidence::Unstated => "unstated",
+            Evidence::Projected => "projected",
+            Evidence::Derived => "derived",
+            Evidence::Simulated => "simulated",
+            Evidence::Measured => "measured",
+            Evidence::Metered => "metered",
+        };
+        f.write_str(s)
+    }
+}
+
+/// The grade a comparison between two figures can carry: the weaker of the two.
+///
+/// A measured number divided by a projected one is a projection. Reporting the ratio at the
+/// stronger grade is the single most common error in the literature this type was written against.
+#[must_use]
+pub fn weaker(a: Evidence, b: Evidence) -> Evidence {
+    if a <= b { a } else { b }
+}
+
 /// Per-operation energy prices, in joules. These describe a DEVICE MODEL, not measured silicon,
 /// unless the source says otherwise; keep the provenance in the name.
 #[derive(Clone, Copy, Debug)]
@@ -30,6 +83,11 @@ pub struct Prices {
     /// Extropic's pre-silicon SPICE estimates, and the HTTP surface reported them for a plain CPU
     /// run on a laptop. Nothing was lying; nothing had been asked to say whose numbers these were.
     pub source: &'static str,
+    /// What kind of evidence [`Prices::source`] describes.
+    ///
+    /// Typed rather than left to the prose, so that a ratio across grades can be caught by the
+    /// compiler's user rather than by a careful reader.
+    pub evidence: Evidence,
 }
 
 impl Prices {
@@ -45,6 +103,7 @@ impl Prices {
         e_write: f64::NAN,
         reflash_hz_cap: None,
         source: "no published or measured per-operation energy for this machine",
+        evidence: Evidence::Unstated,
     };
 
     /// Whether these prices describe anything.
@@ -67,6 +126,7 @@ pub const Z1_SPICE: Prices = Prices {
     // competitor should be the one that flatters the competitor.
     source: "Z1-class SPICE estimates, arXiv:2608.01615 Table IV — taped-out but uncharacterised \
              silicon, not measured. Applies to that device model and to nothing else.",
+    evidence: Evidence::Simulated,
 };
 
 /// **MEASURED** per-sample energy of this crate's own p-bit fabric on real silicon.
@@ -141,6 +201,7 @@ pub const KV260_MEASURED: Prices = Prices {
     source: "MEASURED on a Kria KV260 (xck26), 2026-09-06: 1,024 p-bits at 100 MHz drew 0.5554 W \
              above an idle PL on the SOM's INA260 (5 V rail, whole board), 23.1 sigma, over 51.2 \
              flips/ns. Reads and writes were not exercised and are unstated, not zero.",
+    evidence: Evidence::Metered,
 };
 
 /// Every machine this crate states prices for, in a stable order, each beside its name.
@@ -258,6 +319,60 @@ impl Ledger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A ratio across evidence grades inherits the weaker one.
+    ///
+    /// The error this prevents is the field's most common: our own metered KV260 figure divided by
+    /// a vendor's pre-silicon SPICE estimate is not a measurement of anything, and the number that
+    /// comes out of that division must not be reported as though it were.
+    #[test]
+    fn a_comparison_is_only_as_good_as_its_weaker_side() {
+        assert_eq!(KV260_MEASURED.evidence, Evidence::Metered);
+        assert_eq!(Z1_SPICE.evidence, Evidence::Simulated);
+        assert_eq!(
+            weaker(KV260_MEASURED.evidence, Z1_SPICE.evidence),
+            Evidence::Simulated,
+            "metered over simulated is simulated, whichever way round it is written"
+        );
+        assert_eq!(weaker(Z1_SPICE.evidence, KV260_MEASURED.evidence), Evidence::Simulated);
+        // It is an order, and the order is the argument.
+        assert!(Evidence::Metered > Evidence::Measured);
+        assert!(Evidence::Measured > Evidence::Simulated);
+        assert!(Evidence::Simulated > Evidence::Derived);
+        assert!(Evidence::Derived > Evidence::Projected);
+        assert!(Evidence::Projected > Evidence::Unstated);
+        // An unstated price drags any comparison to the bottom, which is the point of grading it.
+        assert_eq!(weaker(KV260_MEASURED.evidence, Prices::UNSTATED.evidence), Evidence::Unstated);
+    }
+
+    /// The one price in this crate that was metered says so in the type, not only in the prose.
+    #[test]
+    fn only_the_metered_price_claims_to_be_metered() {
+        let graded = [
+            (Prices::UNSTATED, Evidence::Unstated),
+            (Z1_SPICE, Evidence::Simulated),
+            (KV260_MEASURED, Evidence::Metered),
+        ];
+        let mut metered = 0;
+        for (p, want) in graded {
+            assert_eq!(p.evidence, want, "{} was graded wrong", p.source);
+            if p.evidence == Evidence::Metered {
+                metered += 1;
+            }
+        }
+        assert_eq!(metered, 1, "exactly one price in this crate was metered on silicon");
+        // and the grade must agree with the prose, or one of them is lying
+        assert!(KV260_MEASURED.source.contains("MEASURED"));
+        assert!(Z1_SPICE.source.contains("SPICE"));
+    }
+
+    #[test]
+    fn evidence_prints_as_the_word_it_is() {
+        assert_eq!(Evidence::Metered.to_string(), "metered");
+        assert_eq!(Evidence::Projected.to_string(), "projected");
+        assert_ne!(Evidence::Derived.to_string(), Evidence::Simulated.to_string());
+    }
+
 
     #[test]
     fn write_to_sample_ratio_is_the_finding() {

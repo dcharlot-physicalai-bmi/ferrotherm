@@ -212,6 +212,7 @@ pub fn oscillator_fabric_floor(bits: u32, e_update: f64) -> Prices {
                  thermal bound at the stated bit depth (12 kT 2^{2b} at 300 K), which no analogue \
                  readout can undercut. The per-update energy is the caller's, because no coupled- \
                  oscillator machine has published one. Writes are unstated, not zero.",
+        evidence: crate::ledger::Evidence::Derived,
     }
 }
 

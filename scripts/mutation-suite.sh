@@ -1022,6 +1022,11 @@ mutations=(
   # the device, which is the arithmetic every accelerator claim turns on.
   "src/logdomain.rs|    let terms = [1.0 - share, share / factor];|    let terms = [1.0, share / factor];|logdomain::tests::a_free_multiplier_is_still_bounded_by_what_it_was_a_share_of|an Amdahl denominator that forgets the untouched share"
 
+  # A ratio between two energy figures is only as good as its WEAKER side. Return the stronger and a
+  # metered number divided by a pre-silicon projection reports as metered -- which is the single most
+  # common error in the literature this type was written against.
+  "src/ledger.rs|    if a <= b { a } else { b }|    if a >= b { a } else { b }|ledger::tests::a_comparison_is_only_as_good_as_its_weaker_side|a comparison graded by its stronger side"
+
 )
 
 bad=0
@@ -1093,7 +1098,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=202
+expected_rows=203
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
