@@ -213,6 +213,7 @@ pub mod analog;
 pub mod corpora;
 pub mod autocorr;
 pub mod fft;
+pub mod floors;
 pub mod rhat;
 pub mod landauer;
 pub mod restart;

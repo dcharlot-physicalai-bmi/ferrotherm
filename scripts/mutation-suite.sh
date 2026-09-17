@@ -1027,6 +1027,26 @@ mutations=(
   # common error in the literature this type was written against.
   "src/ledger.rs|    if a <= b { a } else { b }|    if a >= b { a } else { b }|ledger::tests::a_comparison_is_only_as_good_as_its_weaker_side|a comparison graded by its stronger side"
 
+  # The TUR floor scales with the SQUARE of the signal-to-noise ratio, and the square is the whole
+  # finding: it is what makes a coarse answer cheap and a sharp one expensive in exact proportion.
+  # Linear in SNR and the floor still rises with precision, still looks like a bound, and prices
+  # every sampling machine wrong by a factor of the SNR.
+  "src/floors.rs|    2.0 * BOLTZMANN_CONSTANT * temperature_k * snr * snr|    2.0 * BOLTZMANN_CONSTANT * temperature_k * snr|floors::tests::you_pay_for_the_precision_you_extract|a sampling floor linear in SNR rather than squared"
+
+  # Energy, time and ACCURACY. Drop the quality term and the bound says dissipation falls to zero as
+  # the drive slows, which is the exact misreading the published inequality exists to prevent.
+  "src/floors.rs|    wasserstein_sq / (beta * gamma * tau_drive * (1.0 - quality))|    wasserstein_sq / (beta * gamma * tau_drive)|floors::tests::the_energy_time_accuracy_bound_trades_three_ways|an energy-time bound that forgets accuracy"
+
+  # The Bures-Wasserstein distance between Gaussians is built from the square ROOTS of the
+  # variances. Use the variances and the distance is finite, positive, zero when the laws agree --
+  # and wrong, so every floor computed from it is wrong in an unsafe direction.
+  "src/floors.rs|        let r = s0[i].sqrt() - s1[i].sqrt();|        let r = s0[i] - s1[i];|floors::tests::the_wasserstein_distance_matches_its_closed_form|a Bures distance on variances rather than their roots"
+
+  # A per-sample cost divided by SWEEPS rather than by independent samples flatters a correlated
+  # chain by exactly its autocorrelation time -- which for a cold fabric is three orders of
+  # magnitude, and is the number this crate measures everywhere else.
+  "src/floors.rs|    let effective_samples = sweeps / (2.0 * tau_int);|    let effective_samples = sweeps;|floors::tests::a_metered_run_can_be_priced_against_its_own_floor|a per-sample cost that ignores autocorrelation"
+
 )
 
 bad=0
@@ -1098,7 +1118,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=203
+expected_rows=207
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
