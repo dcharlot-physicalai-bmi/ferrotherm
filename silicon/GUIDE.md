@@ -200,6 +200,40 @@ assert!(report.verified());
 `verified()` requires at least one agreement, not merely an absence of disagreements. A check that
 passes when nothing was compared is not a check.
 
+## How do you read a fabric that has no output pins?
+
+You ask the configuration port. `GCAPTURE` copies every flip-flop's current value into the
+configuration memory cell that held its initial value, and a frame readback streams it out. The
+design keeps running — capture reads, it does not stop the clock.
+
+```sh
+cargo run -p ferrotherm-silicon --example capture
+```
+
+**Predict first:** you ask for two frames and the device sends back a buffer. How many frames long
+is it?
+
+<details>
+<summary>The answer, and what it costs to get wrong</summary>
+
+Three. One frame of pipeline contents comes first and belongs to no address. Take the buffer at
+face value and every frame reads one address late — with real bits, from the real device, and
+nothing anywhere that looks wrong. `capture::strip_pad` refuses a buffer too short to identify it
+rather than returning whatever is there.
+
+Two more things the readback will not tell you about itself. A frame is 3,232 anonymous bits, so
+the name of a flip-flop comes from Vivado's logic-location file and nowhere else — the same file
+that cross-checks the column arithmetic. And frame addresses increment by one *inside* a column
+and stop at its end, where the 7-series minor field wraps at 128; a run past that boundary is
+refused, because every frame after it would carry an address it did not come from.
+</details>
+
+**The control bit that does not arrive.** `CTL0` is written through `MASK`, and only the bits set
+in the mask reach the register. The stream this library generates writes `CTL0 = 0x00000501` under
+`MASK = 0x00000401`, so bit 8 — set in the value — never lands. Reading lookup-table RAM back
+needs it; capturing flip-flops does not. Any control-register change you make has to clear the
+mask first, and a write that does not is silent.
+
 ## How do you put it on the board?
 
 ```sh
@@ -282,6 +316,8 @@ rather than a symptom to wait for.
 | The IDCODE does not match your constant | The top four bits are a silicon revision | Compare the low 28 bits only |
 | A few routes fail, most succeed | A structural boundary, not congestion | Which region do the failures cross? |
 | Nothing — but current is high | Two nets on one wire | `contentions()` before writing |
+| A readback whose frames are all one address late | The pipeline frame was kept | `capture::strip_pad` |
+| A control-register write with no effect | The bit was outside `MASK` | `capture::reaches` |
 | The loader crashes on a valid stream | A raw image under a `.bit` name | `write_bit` for a container, or name it `.bin` |
 | Flash succeeds, behaviour unchanged | The file was not in `/lib/firmware` | `dmesg`, never `state` |
 | The board measures ~0 W | The fabric was optimised away | `DONT_TOUCH` and an observable sink |
@@ -308,6 +344,7 @@ rather than a symptom to wait for.
 | The board you measure joules on | [KV260.md](KV260.md) |
 | The whole path in one command | [`examples/lab.rs`](examples/lab.rs) |
 | Whether a bitstream is vendor-shaped | [`examples/frame_parity.rs`](examples/frame_parity.rs) |
+| Reading a running fabric back | [`examples/capture.rs`](examples/capture.rs) |
 | The same path written out stage by stage | [`examples/bsn_fabric.rs`](examples/bsn_fabric.rs) |
 | What a given board can and cannot do | [`ferrotherm::fabric`](../src/fabric.rs) |
 | Why a radix-3 unit exists at all | [`ferrotherm::pdit`](../src/pdit.rs) |

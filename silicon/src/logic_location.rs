@@ -40,6 +40,13 @@ pub struct LlBit {
     pub slr: String,
     /// The physical block, for example `SLICE_X104Y461`.
     pub block: String,
+    /// The latch within that block, for example `CQ` — absent on cells that are not a latch.
+    ///
+    /// This is the field that makes a readback readable. A captured frame is 3,232 anonymous
+    /// bits; the latch name is what says which of them is the flip-flop you care about.
+    pub latch: Option<String>,
+    /// The net the cell belongs to, as the design named it.
+    pub net: Option<String>,
 }
 
 impl LlBit {
@@ -119,9 +126,17 @@ pub fn parse_ll(text: &str) -> Vec<LlBit> {
             continue;
         };
         let mut block = None;
+        let mut latch = None;
+        let mut net = None;
         for field in &cols[6..] {
             if let Some(name) = field.strip_prefix("Block=") {
                 block = Some(name.to_string());
+            }
+            if let Some(name) = field.strip_prefix("Latch=") {
+                latch = Some(name.to_string());
+            }
+            if let Some(name) = field.strip_prefix("Net=") {
+                net = Some(name.to_string());
             }
         }
         let Some(block) = block else { continue };
@@ -130,6 +145,8 @@ pub fn parse_ll(text: &str) -> Vec<LlBit> {
             frame_offset,
             slr: cols[4].to_string(),
             block,
+            latch,
+            net,
         });
     }
     out
@@ -206,6 +223,10 @@ Info   something else entirely
         assert_eq!(bits[0].slr, "SLR1");
         assert_eq!(bits[0].block, "SLICE_X0Y0");
         assert_eq!(bits[2].block, "SLICE_X1Y0");
+        // the latch and net names come through, because a captured frame is anonymous without them
+        assert_eq!(bits[0].latch.as_deref(), Some("CQ"));
+        assert_eq!(bits[2].latch.as_deref(), Some("CQ2"));
+        assert!(bits[0].net.is_some(), "the sample line carries a net");
     }
 
     /// The column base clears the 7-series minor field and nothing else. `0x0008cb0c` has minor
@@ -219,12 +240,16 @@ Info   something else entirely
             frame_offset: 0,
             slr: "SLR1".into(),
             block: "SLICE_X0Y0".into(),
+            latch: None,
+            net: None,
         };
         let high = LlBit {
             frame_address: 0x0008_cb8c,
             frame_offset: 0,
             slr: "SLR1".into(),
             block: "SLICE_X1Y0".into(),
+            latch: None,
+            net: None,
         };
         assert_eq!(low.column_base(), 0x0008_cb00);
         assert_eq!(high.column_base(), 0x0008_cb80, "bit 7 is column, not minor");

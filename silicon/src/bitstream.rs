@@ -54,6 +54,14 @@ pub mod cmd {
     pub const START: u32 = 0x05;
     /// Reset the CAPTURE signal.
     pub const RCAP: u32 = 0x06;
+    /// Pulse GCAPTURE: latch the fabric's live flip-flop state into configuration memory so a
+    /// frame readback returns what the design is doing rather than what was configured.
+    ///
+    /// This opcode comes from UG470's command table, not from a stream this project has watched a
+    /// device accept, and it is the only constant here in that position. Everything the
+    /// [`crate::capture`] module builds around it is checked offline; the latch itself is not yet
+    /// exercised on silicon.
+    pub const GCAPTURE: u32 = 0x0C;
     /// Pulse GRESTORE, restoring flip-flop initial values.
     pub const GRESTORE: u32 = 0x0A;
     /// Switch to the configured clock rate.
@@ -89,6 +97,17 @@ pub fn type1_write(reg: u32, count: u32) -> u32 {
 #[must_use]
 pub fn type2_write(count: u32) -> u32 {
     0x5000_0000 | (count & 0x07FF_FFFF)
+}
+
+/// Type-2 packet header for a READ continuation: the form a long frame readback uses.
+///
+/// A write continuation and a read continuation differ by one bit of the opcode field, and the
+/// JTAG readback path shifted the read form as a bare literal. Naming it here is what keeps the
+/// two from being confused: a readback issued with the write header returns nothing and looks
+/// like a board that is not answering.
+#[must_use]
+pub fn type2_read(count: u32) -> u32 {
+    0x4800_0000 | (count & 0x07FF_FFFF)
 }
 
 /// The payload of a Xilinx `.bit` container, plus whatever metadata the header carried.
@@ -377,5 +396,9 @@ mod tests {
         assert_eq!(type1_write(reg::CMD, 1), 0x3000_8001);
         assert_eq!(type1_write(reg::FAR, 1), 0x3000_2001);
         assert_eq!(type2_write(0x1234), 0x5000_1234);
+        // the read continuation is a DIFFERENT header, and this is the literal the JTAG
+        // readback path shifts; if the two were interchangeable this assertion would not hold
+        assert_eq!(type2_read(0x1234), 0x4800_1234);
+        assert_ne!(type2_read(0x1234), type2_write(0x1234));
     }
 }

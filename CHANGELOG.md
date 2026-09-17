@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Reading a fabric that has no output pins
+
+`silicon::capture` is the path from a running sampler to named values. `GCAPTURE` copies every
+flip-flop into the configuration memory cell that held its initial value and a frame readback
+streams it out, with the design still running. Three things the readback does not tell you about
+itself, each built and tested here: it returns **one pad frame** of pipeline contents first, so a
+reader that takes the buffer at face value has every frame one address late, with real bits from
+the real device and nothing that looks wrong; a frame is **3,232 anonymous bits**, so the name of a
+flip-flop comes from Vivado's logic-location file and nowhere else (`LlBit` now carries `Latch=`
+and `Net=`, and `Readout::sample` answers by name, with `Sample::observed` refusing to call a run
+that covered nothing a result); and frame addresses increment by one **inside a column** and stop
+at its end, where the 7-series minor field wraps at 128, so a run past that boundary is refused
+rather than mislabelled. `Tap::capture_frames` drives it over JTAG and `bitstream::type2_read`
+names the read continuation the readback path had been shifting as a literal.
+
+Also found here: the configuration stream writes `CTL0 = 0x0000_0501` under `MASK = 0x0000_0401`,
+so **bit 8 never lands** — `MASK` gates which `CTL0` bits a write reaches, and reading lookup-table
+RAM back needs exactly that bit. `capture::reaches` is the arithmetic. Capturing flip-flops does
+not depend on it.
+
+What no test in this crate can establish is that `GCAPTURE` latches on this board: that needs a
+part, a running design, and a value known by other means. The opcode is the only constant in the
+crate taken from a document rather than from a stream a device was watched to accept, and it says
+so where it is declared.
+
 ### Frame parity, and the UltraScale+ geometry behind the second demo board
 
 `silicon::ecc` is the part of the per-frame configuration ECC this project can back with

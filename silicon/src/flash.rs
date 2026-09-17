@@ -438,7 +438,7 @@ impl Tap {
             type1_write(reg::FAR, 1),
             far,
             type1_read(reg::FDRO, 0),
-            0x4800_0000 | (want as u32 & 0x07FF_FFFF), // type-2 read continuation
+            crate::bitstream::type2_read(want as u32), // type-2 read continuation
             NOOP,
             NOOP,
         ])?;
@@ -451,6 +451,35 @@ impl Tap {
         }
         self.shift_ir(IR_BYPASS)?;
         Ok(words[WORDS..].to_vec()) // drop the dummy frame
+    }
+
+    /// Latch the running fabric's flip-flop state into configuration memory and read it back.
+    ///
+    /// Same transport as [`Tap::read_frames`]; the difference is one command word ahead of the
+    /// read, and it is the difference between seeing what the design is doing and seeing the
+    /// bitstream that was loaded. [`crate::capture`] builds the packet sequence and explains the
+    /// pad frame, the column limit, and the control bit that a lookup-table readback needs and
+    /// this stream does not deliver.
+    ///
+    /// The design keeps running. Capture copies state; it does not stop the clock.
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, or [`crate::capture::CaptureError`]'s message when the buffer
+    /// that came back cannot carry the frames requested.
+    pub fn capture_frames(&mut self, far: u32, n_frames: usize) -> Result<Vec<u32>, String> {
+        let want = crate::capture::readback_words(n_frames);
+        self.reset()?;
+        self.cfg_in_words(&crate::capture::capture_and_read(far, n_frames))?;
+        self.shift_ir(IR_CFG_OUT)?;
+        let raw = self.shift_dr(&vec![0u8; want * 4], true)?;
+        let mut words = Vec::with_capacity(want);
+        for c in raw.as_chunks::<4>().0 {
+            words.push(u32::from_be_bytes(c.map(reverse_byte)));
+        }
+        self.shift_ir(IR_BYPASS)?;
+        let body = crate::capture::strip_pad(&words, n_frames).map_err(|e| e.to_string())?;
+        Ok(body.to_vec())
     }
 
     /// Hold the TAP in Run-Test/Idle for `n` TCK cycles.

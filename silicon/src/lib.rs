@@ -4,6 +4,7 @@
 //! from Open Interface Engineering's openie-fpga; this crate is fully independent of it.
 
 pub mod bitstream;
+pub mod capture;
 pub mod ecc;
 pub mod frame;
 pub mod framebuf;

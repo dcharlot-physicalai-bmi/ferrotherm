@@ -918,6 +918,30 @@ mutations=(
   # an empty design for a file that holds twenty thousand frames.
   "silicon/src/usplus.rs|        if config.get(i + 1) == Some(&NOOP) {|        if config.get(i + 1).is_some() {|usplus::tests::the_first_sync_word_is_not_the_configuration_stream|a sync search that stops at the boot header|ferrotherm-silicon"
 
+  # A frame readback streams one frame of pipeline contents before the frame that was asked for.
+  # Forget it and every frame is read one address late -- with real bits, from the real device, and
+  # nothing anywhere that looks wrong. The pad frame in the fixture is deliberately not zero.
+  "silicon/src/capture.rs|pub const PAD_FRAMES: usize = 1;|pub const PAD_FRAMES: usize = 0;|capture::tests::the_pad_frame_is_dropped_and_a_short_read_refused|a readback that keeps the pipeline frame|ferrotherm-silicon"
+
+  # The frame data register is READ during a capture and WRITTEN during configuration, and the two
+  # headers differ by one field. Issue the write form and the device loads the frames it was meant
+  # to fetch, which is a readback that silently reconfigures the part.
+  "silicon/src/capture.rs|        type1_read(reg::FDRO, 0),|        type1_write(reg::FDRO, 0),|capture::tests::the_stream_captures_before_it_reads|a frame readback issued as a frame write|ferrotherm-silicon"
+
+  # Frame addresses increment by one inside a column and stop doing so at its end, where the 7-series
+  # minor field wraps at 128. Let a run past the boundary through and every frame after it carries an
+  # address it did not come from.
+  "silicon/src/capture.rs|        if minor as usize + n_frames > FRAMES_PER_COLUMN {|        if minor as usize + n_frames > 256 {|capture::tests::a_run_past_the_column_end_is_refused|a readback run that walks off its column|ferrotherm-silicon"
+
+  # A sample that reached none of the located cells has no disagreement in it, which reads exactly
+  # like a clean result. Same shape as a cross-check that verifies because it compared nothing.
+  "silicon/src/capture.rs|        !self.values.is_empty()|        self.values.len() < usize::MAX|capture::tests::a_sample_that_covered_nothing_is_not_an_observation|a readout that observes nothing and says so|ferrotherm-silicon"
+
+  # A located cell is anonymous without its latch name: a captured frame is 3,232 bits and the name
+  # is the only thing that says which one is the flip-flop. Trim the prefix wrong and every name
+  # keeps a leading `=`, which prints plausibly and matches nothing.
+  "silicon/src/logic_location.rs|            if let Some(name) = field.strip_prefix(\"Latch=\") {|            if let Some(name) = field.strip_prefix(\"Latch\") {|logic_location::tests::parses_the_documented_line_shape_and_skips_the_rest|a latch name that keeps its separator|ferrotherm-silicon"
+
 )
 
 bad=0
@@ -989,7 +1013,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=181
+expected_rows=186
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

@@ -26,7 +26,7 @@ fn seven_series(bytes: &[u8]) -> Vec<u32> {
     frame_data(&to_words(&bytes[at..]))
 }
 
-/// The frame-data words of a little-endian UltraScale+ boot image.
+/// The frame-data words of a little-endian `UltraScale+` boot image.
 fn ultrascale(bytes: &[u8]) -> Vec<u32> {
     let w = usplus::words(bytes);
     let Some(at) = usplus::config_start(&w) else { return Vec::new() };
