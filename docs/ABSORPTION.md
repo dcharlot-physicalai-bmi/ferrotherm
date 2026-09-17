@@ -355,11 +355,27 @@ Not yet built, in the order I would build them:
    fabric is buildable and truncation is nearly free; if it is flat the architecture owes four
    orders of magnitude in silicon. **What is still missing is that number for a real trained `K`,
    because the published models ship a decoder rather than a coupling matrix.**
-2. **Pathwise gradients through the dynamics.** Their training is differentiable simulation against
-   a distribution-matching loss; our estimators are REINFORCE, parameter-shift and EBM-kernel.
-   Adding differentiable simulation, and physics-aware training to close the gap between the Euler
-   map trained and the ODE a chip would run, absorbs their training story. They funded exactly this
-   externally, which says they know the sim-to-hardware gap is open.
+2. ~~**Pathwise gradients through the dynamics.**~~ **Built, and it turned up a second gap.**
+   `pathwise::euler_adjoint` is the exact reverse-mode gradient through the Euler map, checked
+   entry by entry against central differences to `7e-10` — and, because a gradient check validates
+   the derivative of *whatever* was implemented, the forward map is pinned to the two-oscillator
+   closed form before any gradient is taken. `examples/pathwise` fits a coupling from zero with it,
+   to machine-zero feature error.
+
+   The second gap is the sim-to-hardware one, and it is now measurable rather than asserted.
+   `pathwise::integrator_gap` compares the Euler map against a fourth-order reference in **both**
+   the trajectory and the gradient, each error relative to the size of the quantity it belongs to.
+   Over five systems and five step sizes the gradient's relative error exceeds the trajectory's in
+   **22 of 25** cases, by as much as **32x** — largest on the strongly coupled and larger systems,
+   which is where a real model lives. So a step size chosen by watching the trajectory is not one
+   the gradient agrees with, and `dt` is a trained parameter in disguise: a model fitted through a
+   coarse Euler map has absorbed that map's error into its weights, and silicon has no such error
+   to cancel.
+
+   The three exceptions are pinned in a test of their own, because the temptation is to state this
+   as a theorem and it is not one. They are the smallest, most weakly coupled fixture at its finest
+   steps, where both errors are already under a percent. What remains true without exception is the
+   weaker and more useful claim: **the two errors are not proxies for one another.**
 3. **A measured ADC line.** The read price in `precision::oscillator_fabric_floor` is a thermal
    bound. A real converter's energy, metered, turns §5's readout row from a floor into a fact.
 4. **Scale.** Everything here is verified at `n` in the single digits, where exact oracles exist.

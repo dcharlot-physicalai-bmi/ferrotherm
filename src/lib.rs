@@ -180,6 +180,7 @@ pub mod hdl;
 pub mod ffi;
 pub mod cim;
 pub mod oim;
+pub mod pathwise;
 pub mod kuramoto;
 pub mod nonrev;
 pub mod dsisa;

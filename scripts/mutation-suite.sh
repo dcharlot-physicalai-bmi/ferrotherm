@@ -992,6 +992,21 @@ mutations=(
   # are 2 beta times a mass in energy units. Halve one and they stop adding.
   "src/kuramoto.rs|        2.0 * self.dropped_mass * beta|        1.0 * self.dropped_mass * beta|kuramoto::tests::the_covering_and_truncation_gaps_are_one_currency|a truncation bound at half strength"
 
+  # The parameter gradient belongs to the oscillator the cotangent is ON, not the one the coupling
+  # points at. Swap the endpoint and every entry of dL/dK is the transpose of itself -- a gradient
+  # that still descends on a symmetric model and trains the wrong thing on an asymmetric one, which
+  # is the only kind the published architecture has.
+  "src/pathwise.rs|                d_k[i * n + j] += dt * lam[i] * (phi[j] - phi[i]).sin();|                d_k[i * n + j] += dt * lam[j] * (phi[j] - phi[i]).sin();|pathwise::tests::the_adjoint_matches_central_differences|an adjoint indexed by the wrong endpoint"
+
+  # The reverse pass applies the TRANSPOSE of the Jacobian. Apply the Jacobian itself and the
+  # gradient is finite, smooth, and of a different function.
+  "src/pathwise.rs|                terms.push(jac[i * n + j] * lam[i]);|                terms.push(jac[j * n + i] * lam[i]);|pathwise::tests::the_adjoint_matches_central_differences|a Jacobian transposed the wrong way in the reverse pass"
+
+  # The reference integrator is the standin for the differential equation, so its order IS the
+  # argument. Drop one of the middle weights and it silently becomes second order -- still far
+  # better than Euler, still converging, and no longer a reference.
+  "src/pathwise.rs|        phi[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);|        phi[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + k3[i] + k4[i]);|pathwise::tests::the_reference_integrator_is_fourth_order|a Runge-Kutta weight that drops the order"
+
 )
 
 bad=0
@@ -1063,7 +1078,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=196
+expected_rows=199
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

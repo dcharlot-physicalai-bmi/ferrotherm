@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Training through the dynamics, and the step size that is a trained parameter in disguise
+
+Every learning estimator in this crate before now differentiates a log-probability — REINFORCE,
+parameter-shift, the contrastive-divergence family — and needs no derivative of the dynamics at
+all. The published coupled-oscillator generators are trained the other way: noise enters once, the
+trajectory is deterministic, and the gradient goes back through the integrator. `pathwise` is that
+gradient. `euler_adjoint` carries a cotangent backwards through every Euler step, agreeing with
+central differences entry by entry to `7e-10`, and `examples/pathwise` fits a coupling from zero
+with it to machine-zero feature error.
+
+The forward map is pinned to a closed form **before** any gradient is taken, because a
+finite-difference check validates the derivative of whatever function was implemented: two
+oscillators below threshold lock at `asin(d_omega / 2k)`, and the taped trajectory has to reach it
+first.
+
+**The finding is a second gap, and it is the sim-to-hardware one.** `integrator_gap` compares the
+Euler map against a fourth-order reference in both the trajectory and the gradient, each error
+relative to the size of the quantity it belongs to. Over five systems and five step sizes the
+gradient's relative error exceeds the trajectory's in **22 of 25** cases and by as much as **32x**,
+largest on the strongly coupled and larger systems. A step size chosen by watching the trajectory
+is therefore not a step size the gradient agrees with, and `dt` is a trained parameter in disguise:
+a model fitted through a coarse Euler map has absorbed that map's error into its weights, and the
+silicon it is loaded onto has no such error to cancel.
+
+The three exceptions are pinned in `the_gradient_penalty_is_not_always_above_one` rather than
+elided. The first draft of this module's documentation asserted the effect held "at every step size
+tried" — written before the measurement, and false at the third step size of the first fixture.
+What survives without exception is the weaker and more useful claim: the two errors are not proxies
+for one another.
+
 ### The sparsity gap, priced in the same unit as the grid
 
 `docs/ABSORPTION.md` named one number as deciding whether a dense coupled-oscillator architecture
