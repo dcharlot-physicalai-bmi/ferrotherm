@@ -979,6 +979,19 @@ mutations=(
   # of the readout instead -- 7.33 at 16 points, 8.72 at 32, for the same model.
   "src/phasegen.rs|        self.log_z - self.n as f64 * (self.q as f64 / TAU).ln()|        self.log_z|phasegen::tests::the_partition_function_is_the_models_not_the_grids|a partition function that moves with the grid it was read on"
 
+  # A degree budget is met only if BOTH endpoints agree to keep a coupling. Take each node's heaviest
+  # and union them and a popular node ends up above the budget -- a graph the fabric still cannot
+  # wire, reported as one that fits.
+  "src/kuramoto.rs|                if top[i * n + j] && top[j * n + i] {|                if top[i * n + j] {|kuramoto::tests::keeping_each_nodes_heaviest_is_not_enough_to_bound_the_degree|a degree budget met by only one endpoint"
+
+  # The dropped mass IS the bound. Fail to count a coupling that was dropped and the bound reports
+  # zero cost for a truncation that moved the distribution, which is a bound in the unsafe direction.
+  "src/kuramoto.rs|                    dropped_terms.push(w.abs());|                    dropped_terms.push(0.0);|kuramoto::tests::the_truncation_bound_holds_against_the_measured_kl|a dropped coupling that is not counted"
+
+  # The factor of two is what makes the truncation gap and the covering gap the same currency: both
+  # are 2 beta times a mass in energy units. Halve one and they stop adding.
+  "src/kuramoto.rs|        2.0 * self.dropped_mass * beta|        1.0 * self.dropped_mass * beta|kuramoto::tests::the_covering_and_truncation_gaps_are_one_currency|a truncation bound at half strength"
+
 )
 
 bad=0
@@ -1050,7 +1063,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=193
+expected_rows=196
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

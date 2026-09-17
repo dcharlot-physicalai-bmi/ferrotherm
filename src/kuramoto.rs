@@ -99,6 +99,34 @@
 //! variable is continuous and yours is discrete" from an objection into an exchange rate, and
 //! [`crate::precision`] is where it is priced in joules.
 //!
+//! # The second gap: a fabric is sparse as well as discrete
+//!
+//! [`Kuramoto::covering_gap`] prices one mismatch between a trained oscillator network and a
+//! fabric — the fabric's phases are discrete. There is a second, and it is the one that decides
+//! whether the architecture can be built at all: the fabric's *couplings* are sparse, and a
+//! trained `K` is dense.
+//!
+//! Three routes onto a degree-`d` fabric exist and they pay in three different currencies:
+//!
+//! | route | what it costs | where |
+//! |---|---|---|
+//! | **Truncate** — drop the light couplings | accuracy, in nats | [`Kuramoto::truncate_to_degree`] |
+//! | **Sparsify** — split heavy variables into copies | nodes, exactly preserving ground states | [`crate::sparsify`] |
+//! | **Embed** — place the dense model on a named machine | physical sites, in chains | [`crate::embed`] |
+//!
+//! Only the first is priced here, and it is priced the same way the grid is. Dropping a set `D` of
+//! couplings moves the energy pointwise by at most `sum_{(i,j) in D} |S_ij|`
+//! ([`Truncated::dropped_mass`]), so the identical three-line argument gives
+//! `KL <= 2 beta * dropped_mass` ([`Truncated::kl_bound`]). Both mismatches therefore land in the
+//! same unit and simply add:
+//!
+//! ```text
+//!   KL(dense continuum  ||  sparse q-point grid)  <=  2 beta (epsilon_covering + dropped_mass)
+//! ```
+//!
+//! which is the whole exchange rate between a trained continuous dense machine and a fabric this
+//! crate can certify, in one line and in nats.
+//!
 //! # Dense coupling is a physical claim, and this module makes its cost visible
 //!
 //! `K` here is dense and row-major, because the published models are dense. That is deliberate and
@@ -717,6 +745,162 @@ impl Kuramoto {
     pub fn quantisation_kl_bound(&self, beta: f64, q: usize) -> f64 {
         2.0 * beta * self.covering_gap(q)
     }
+
+    /// Drop every symmetric coupling whose magnitude is below `threshold`.
+    ///
+    /// # Panics
+    ///
+    /// If `threshold` is negative or not finite.
+    #[must_use]
+    pub fn truncate_below(&self, threshold: f64) -> Truncated {
+        assert!(
+            threshold >= 0.0 && threshold.is_finite(),
+            "a magnitude threshold must be finite and non-negative, got {threshold}"
+        );
+        let n = self.n;
+        let s = self.symmetric_part();
+        let mut keep = vec![false; n * n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if s[i * n + j].abs() >= threshold {
+                    keep[i * n + j] = true;
+                    keep[j * n + i] = true;
+                }
+            }
+        }
+        self.apply_mask(&keep)
+    }
+
+    /// Keep only the couplings that **both** endpoints rank among their `d` heaviest.
+    ///
+    /// The mutual rule is what makes the degree bound hold: taking each oscillator's `d` heaviest
+    /// and unioning them leaves a node that many others chose with a degree above `d`, which is a
+    /// graph the fabric still cannot wire. Requiring both sides to agree caps every degree at `d`
+    /// by construction, and [`Truncated::degree`] reports what was actually reached.
+    ///
+    /// This is a feasible degree-`d` truncation, not the best one. The KL it costs is therefore an
+    /// **upper bound on what the best degree-`d` truncation would cost**, which is the direction
+    /// that makes it usable as an argument: if this much of the model survives, at least this much
+    /// does.
+    ///
+    /// # Panics
+    ///
+    /// If `d` is zero.
+    #[must_use]
+    pub fn truncate_to_degree(&self, d: usize) -> Truncated {
+        assert!(d > 0, "a degree budget of zero keeps no couplings at all");
+        let n = self.n;
+        let s = self.symmetric_part();
+        // Each node's d heaviest partners, RANKED rather than thresholded. A magnitude cut at the
+        // d-th heaviest looks equivalent and is not: on a coupling whose weights tie -- the flat
+        // case, and the one a fabric designer would reach for first -- a strict cut discards every
+        // pair and reports degree zero, and a non-strict one keeps them all and overshoots the
+        // budget. Ranking with the index as tiebreak keeps exactly d and is deterministic.
+        let mut top = vec![false; n * n];
+        for i in 0..n {
+            let mut order: Vec<(f64, usize)> = Vec::with_capacity(n);
+            for j in 0..n {
+                if j != i && s[i * n + j] != 0.0 {
+                    order.push((s[i * n + j].abs(), j));
+                }
+            }
+            order.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal).then(a.1.cmp(&b.1))
+            });
+            for &(_, j) in order.iter().take(d) {
+                top[i * n + j] = true;
+            }
+        }
+        let mut keep = vec![false; n * n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if top[i * n + j] && top[j * n + i] {
+                    keep[i * n + j] = true;
+                    keep[j * n + i] = true;
+                }
+            }
+        }
+        self.apply_mask(&keep)
+    }
+
+    /// Build the truncated system from a symmetric keep-mask over pairs.
+    fn apply_mask(&self, keep: &[bool]) -> Truncated {
+        let n = self.n;
+        let s = self.symmetric_part();
+        let mut k = vec![0.0; n * n];
+        let mut dropped_terms = Vec::new();
+        let mut deg = vec![0usize; n];
+        let (mut kept, mut dropped) = (0usize, 0usize);
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let w = s[i * n + j];
+                if keep[i * n + j] {
+                    k[i * n + j] = w;
+                    k[j * n + i] = w;
+                    if w != 0.0 {
+                        kept += 1;
+                        deg[i] += 1;
+                        deg[j] += 1;
+                    }
+                } else if w != 0.0 {
+                    dropped += 1;
+                    dropped_terms.push(w.abs());
+                }
+            }
+        }
+        let system = Kuramoto { n, omega: vec![0.0; n], k };
+        Truncated {
+            system,
+            dropped_mass: sum_up(&dropped_terms),
+            kept,
+            dropped,
+            degree: deg.into_iter().max().unwrap_or(0),
+        }
+    }
+}
+
+/// A coupling matrix with some of its pairs removed, and what removing them can cost.
+///
+/// The natural frequencies and the antisymmetric part are **not** carried over: neither appears in
+/// an energy, so neither has a truncation cost this argument can price. A caller that needs them
+/// needs [`crate::nonrev`].
+#[derive(Clone, Debug)]
+pub struct Truncated {
+    /// The sparser system: symmetric, zero-frequency, the kept couplings only.
+    pub system: Kuramoto,
+    /// `sum |S_ij|` over the pairs that were dropped — the pointwise energy error.
+    pub dropped_mass: f64,
+    /// Nonzero pairs kept.
+    pub kept: usize,
+    /// Nonzero pairs dropped.
+    pub dropped: usize,
+    /// The largest degree any oscillator has left.
+    pub degree: usize,
+}
+
+impl Truncated {
+    /// How many nats dropping those couplings can cost, at inverse temperature `beta`.
+    ///
+    /// `2 beta * dropped_mass`, by the identical argument as
+    /// [`Kuramoto::quantisation_kl_bound`]: two Boltzmann measures whose energies differ by at most
+    /// `epsilon` pointwise have `|ln Z1 - ln Z2| <= beta epsilon` and `KL <= 2 beta epsilon`.
+    #[must_use]
+    pub fn kl_bound(&self, beta: f64) -> f64 {
+        2.0 * self.dropped_mass * beta
+    }
+
+    /// The fraction of the coupling mass that survived.
+    ///
+    /// Reported beside the count because the two answer different questions: a model can keep a
+    /// tenth of its pairs and nine tenths of its mass, and it is the mass that the bound is about.
+    #[must_use]
+    pub fn mass_kept(&self) -> f64 {
+        let total = self.system.coupling_mass() + self.dropped_mass;
+        if total <= 0.0 {
+            return 1.0;
+        }
+        self.system.coupling_mass() / total
+    }
 }
 
 /// The phases a clock-model state stands for: `theta_i = 2 pi a_i / q`.
@@ -1071,6 +1255,161 @@ mod tests {
         let third = TAU / 3.0;
         let (r, _) = sys.order_parameter(&[0.0, third, 2.0 * third]);
         assert!(r < 1e-15, "evenly spread phases must give r = 0, got {r}");
+    }
+
+    /// A dense coupling with a spread of magnitudes, deterministic in its seed.
+    fn dense(n: usize, seed: u64) -> Kuramoto {
+        let mut rng = Pcg::new(seed, 0x0DE5_5E11);
+        let mut k = vec![0.0; n * n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                // A heavy tail: most pairs weak, a few strong, which is the shape a trained
+                // coupling has and the shape that decides whether truncation is cheap.
+                let u = rng.f64();
+                let w = 0.05 + 1.2 * u * u * u;
+                k[i * n + j] = if rng.f64() < 0.5 { w } else { -w };
+                k[j * n + i] = k[i * n + j];
+            }
+        }
+        Kuramoto::gradient(k, n).expect("symmetric by construction")
+    }
+
+    /// The truncation bound holds against the KL that actually happens, and is not vacuous.
+    ///
+    /// Both laws are enumerated exactly on the same grid, so the only thing being compared is what
+    /// dropping the couplings did. If the bound were wrong in the unsafe direction this fails; if
+    /// it were a thousand times loose it would pass, so the second assertion is the one that keeps
+    /// it useful.
+    #[test]
+    fn the_truncation_bound_holds_against_the_measured_kl() {
+        let n = 5;
+        let q = 6;
+        let beta = 0.6;
+        let sys = dense(n, 20_260_917);
+        let full = crate::potts::enumerate(&sys.to_clock(q), beta).expect("small enough");
+        let mut saw_a_real_cost = false;
+        for d in [1usize, 2, 3, 4] {
+            let t = sys.truncate_to_degree(d);
+            assert!(t.degree <= d, "degree {} exceeds the budget {d}", t.degree);
+            let cut = crate::potts::enumerate(&t.system.to_clock(q), beta).expect("small enough");
+            let measured = crate::diffuse::kl(&full.p, &cut.p);
+            let bound = t.kl_bound(beta);
+            assert!(
+                measured <= bound + 1e-12,
+                "at degree {d} the measured KL {measured} exceeded its bound {bound}"
+            );
+            if t.dropped > 0 {
+                assert!(measured > 0.0, "dropping {} pairs cost nothing at all", t.dropped);
+                saw_a_real_cost = true;
+            }
+            // Not vacuous: the bound is within three orders of what happens, at every degree.
+            assert!(
+                bound < 1e3 * measured.max(1e-12),
+                "the bound {bound} says nothing about a measured {measured} at degree {d}"
+            );
+        }
+        assert!(saw_a_real_cost, "the fixture never dropped a coupling, so nothing was tested");
+    }
+
+    /// The mutual rule is what makes the degree bound true; the union rule does not.
+    ///
+    /// Stated as a test because the union is the obvious implementation and it is wrong in the
+    /// direction that matters: it produces a graph the fabric still cannot wire, while reporting a
+    /// budget it met.
+    #[test]
+    fn keeping_each_nodes_heaviest_is_not_enough_to_bound_the_degree() {
+        let n = 8;
+        let d = 2;
+        let sys = dense(n, 77);
+        let s = sys.symmetric_part();
+        // The union rule: a pair survives if EITHER endpoint ranks it in its top d.
+        let mut deg = vec![0usize; n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let top = |a: usize, b: usize| {
+                    let w = s[a * n + b].abs();
+                    let mut heavier = 0;
+                    for c in 0..n {
+                        if c != a && s[a * n + c].abs() > w {
+                            heavier += 1;
+                        }
+                    }
+                    heavier < d
+                };
+                if top(i, j) || top(j, i) {
+                    deg[i] += 1;
+                    deg[j] += 1;
+                }
+            }
+        }
+        let union_degree = deg.into_iter().max().unwrap_or(0);
+        assert!(
+            union_degree > d,
+            "the union rule was expected to overshoot the budget on this fixture, it reached \
+             {union_degree}"
+        );
+        // The mutual rule, which is what is shipped, does not.
+        assert!(sys.truncate_to_degree(d).degree <= d);
+    }
+
+    /// A coupling whose weights all tie must still truncate to a degree-`d` graph, not to nothing.
+    ///
+    /// This is the case a magnitude threshold gets wrong in both directions, and the flat profile
+    /// is the one a fabric designer reaches for first. The first draft of `truncate_to_degree` cut
+    /// strictly above the `d`-th heaviest magnitude, which on ties kept **no pairs at all** and
+    /// reported degree zero while claiming to have met the budget.
+    #[test]
+    fn a_coupling_with_no_spread_still_truncates_to_a_degree() {
+        let n = 8;
+        let mut k = vec![0.0; n * n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                k[i * n + j] = 0.4;
+                k[j * n + i] = 0.4;
+            }
+        }
+        let sys = Kuramoto::gradient(k, n).expect("symmetric");
+        for d in 1..=4usize {
+            let t = sys.truncate_to_degree(d);
+            assert!(t.degree <= d, "degree {} exceeds the budget {d}", t.degree);
+            assert!(t.kept > 0, "a flat coupling truncated to degree {d} kept no pairs at all");
+            assert!(t.mass_kept() > 0.0, "and therefore none of its mass");
+        }
+        // And it is a real truncation, not the identity: degree 1 keeps far fewer than all 28.
+        assert!(sys.truncate_to_degree(1).kept < n * (n - 1) / 2);
+    }
+
+    /// The two gaps are in the same unit and add, which is the whole point of pricing them alike.
+    #[test]
+    fn the_covering_and_truncation_gaps_are_one_currency() {
+        let sys = dense(6, 5);
+        let beta = 1.0;
+        let q = 32;
+        let t = sys.truncate_to_degree(3);
+        let grid = t.system.quantisation_kl_bound(beta, q);
+        let cut = t.kl_bound(beta);
+        // Both are 2 beta times a mass in energy units, so the total is 2 beta times their sum.
+        let total = 2.0 * beta * (t.system.covering_gap(q) + t.dropped_mass);
+        assert!((grid + cut - total).abs() < 1e-12, "{grid} + {cut} != {total}");
+        assert!(cut > 0.0 && grid > 0.0, "both gaps must be real on this fixture");
+    }
+
+    /// A threshold of zero keeps everything and costs nothing; a threshold above every coupling
+    /// keeps nothing and its bound is the whole coupling mass.
+    #[test]
+    fn truncation_at_the_two_extremes() {
+        let sys = dense(5, 9);
+        let all = sys.truncate_below(0.0);
+        assert_eq!(all.dropped, 0);
+        assert_eq!(all.dropped_mass, 0.0);
+        assert_eq!(all.kl_bound(3.0), 0.0);
+        assert!((all.mass_kept() - 1.0).abs() < 1e-12);
+
+        let none = sys.truncate_below(1e9);
+        assert_eq!(none.kept, 0);
+        assert_eq!(none.degree, 0);
+        assert!((none.dropped_mass - sys.coupling_mass()).abs() < 1e-12);
+        assert_eq!(none.mass_kept(), 0.0);
     }
 
     #[test]

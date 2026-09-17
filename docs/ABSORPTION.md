@@ -337,10 +337,24 @@ Shipped, tested, clippy-clean at `-D warnings`, 48 new tests, no regressions acr
 
 Not yet built, in the order I would build them:
 
-1. **Sparse `K`.** Everything here is dense, which is right for replication and wrong for a fabric.
-   The sparsify-versus-embed measurement this crate already has needs to run on a trained coupling
-   matrix, and the number it produces — how much of the generative quality survives sparsification —
-   is the one number that decides whether their architecture can be built at all.
+1. ~~**Sparse `K`.**~~ **Answered, with one input still missing.** `kuramoto::truncate_to_degree`
+   and `Truncated::kl_bound` price the third mismatch in the same unit as the first two — dropping a
+   set of couplings moves the energy pointwise by at most their total mass, so `KL <= 2 beta *
+   dropped_mass`, and the grid gap and the sparsity gap simply add. `examples/sparse_k` measures the
+   truncation exactly, by enumerating both laws.
+
+   The answer is that **it depends entirely on the trained weights, and not at all on the
+   architecture**. On a heavy-tailed coupling, truncating to degree 3 of a possible 4 keeps 95.6% of
+   the coupling mass and costs `0.0007` nats. On a flat coupling of the same size and degree it
+   keeps 60% and costs `0.0505` — seventy times more. Against that, keeping every coupling exactly
+   by copy-splitting costs a factor of **4,096 in oscillators** at the published `n = 16384` on a
+   degree-6 fabric: 67,108,864 of them for a model of 16,384.
+
+   So the measurement to demand of any dense oscillator architecture is one number: what fraction of
+   the coupling mass sits in the heaviest `d` couplings per oscillator. If it is concentrated the
+   fabric is buildable and truncation is nearly free; if it is flat the architecture owes four
+   orders of magnitude in silicon. **What is still missing is that number for a real trained `K`,
+   because the published models ship a decoder rather than a coupling matrix.**
 2. **Pathwise gradients through the dynamics.** Their training is differentiable simulation against
    a distribution-matching loss; our estimators are REINFORCE, parameter-shift and EBM-kernel.
    Adding differentiable simulation, and physics-aware training to close the gap between the Euler

@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### The sparsity gap, priced in the same unit as the grid
+
+`docs/ABSORPTION.md` named one number as deciding whether a dense coupled-oscillator architecture
+can be built at all: how much of a trained coupling survives being made sparse enough for a fabric
+to wire. `kuramoto::truncate_to_degree` and `Truncated::kl_bound` are that measurement, and the
+bound is the identical three-line argument the phase grid already uses — dropping a set of
+couplings moves the energy pointwise by at most their total mass, so `KL <= 2 beta *
+dropped_mass`. The two mismatches between a trained continuous dense machine and a fabric this
+crate can certify therefore land in one unit and add:
+
+```text
+  KL(dense continuum || sparse q-point grid)  <=  2 beta (epsilon_covering + dropped_mass)
+```
+
+`examples/sparse_k` measures the truncation exactly rather than bounding it, by enumerating both
+laws, and the answer is that **it depends on the trained weights and not on the architecture**. On
+a heavy-tailed coupling, truncating to degree 3 of a possible 4 keeps 95.6% of the mass and costs
+`0.0007` nats; on a flat coupling of the same size and degree it keeps 60% and costs `0.0505`,
+seventy times more. Against that, keeping every coupling exactly by copy-splitting
+(`sparsify::copies_for`) costs a factor of **4,096 in oscillators** at the published `n = 16384` on
+a degree-6 fabric — 67,108,864 for a model of 16,384. The number to demand of any such
+architecture is therefore one number: what fraction of the coupling mass sits in the heaviest `d`
+couplings per oscillator.
+
+The flat profile is in the example as a control and earned its place immediately: the first
+implementation ranked couplings by a magnitude **threshold** at the `d`-th heaviest, which on a
+coupling whose weights tie discards every pair and reports degree zero while claiming to have met
+the budget. Ranking with the index as tiebreak is what `truncate_to_degree` does, and
+`a_coupling_with_no_spread_still_truncates_to_a_degree` is the test that would have caught it.
+
+Truncation keeps the node count and pays in nats; `sparsify` keeps the ground states exactly and
+pays in nodes; `embed` places the model on a named machine and pays in chains. The module
+documentation now says which of the three each cost belongs to, because they are not
+interchangeable and the field quotes them as though they were.
+
 ### Containing the coupled-oscillator programme
 
 Five modules and `docs/ABSORPTION.md`, contributed against this tree and reproduced on it: the
