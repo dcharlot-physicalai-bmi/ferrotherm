@@ -969,6 +969,16 @@ mutations=(
   # is reflected about pi/4 -- a generator that samples smoothly from the wrong law.
   "src/phasegen.rs|        (c.hypot(s), s.atan2(c))|        (c.hypot(s), c.atan2(s))|phasegen::tests::the_phase_conditional_is_exactly_the_von_mises_the_field_names|a von Mises mean angle with its arguments transposed"
 
+  # The noise a Langevin step injects IS the temperature. Halve its power and the chain still runs,
+  # still looks stationary, and samples a distribution twice as cold -- which is the failure mode an
+  # identity proof cannot see, because the identities are about the drift.
+  "src/nonrev.rs|        let sigma = (2.0 * self.dt / self.beta).sqrt();|        let sigma = (1.0 * self.dt / self.beta).sqrt();|nonrev::tests::the_skew_drift_leaves_a_gaussian_target_where_it_found_it|a Langevin step at half the temperature it states"
+
+  # A grid partition function is the model's plus one cell volume per phase, and it rises by n ln 2
+  # for every doubling of q. Return it unadjusted and the number quoted for the model is a property
+  # of the readout instead -- 7.33 at 16 points, 8.72 at 32, for the same model.
+  "src/phasegen.rs|        self.log_z - self.n as f64 * (self.q as f64 / TAU).ln()|        self.log_z|phasegen::tests::the_partition_function_is_the_models_not_the_grids|a partition function that moves with the grid it was read on"
+
 )
 
 bad=0
@@ -1040,7 +1050,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=191
+expected_rows=193
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

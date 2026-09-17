@@ -5,6 +5,7 @@
 
 use ferrotherm::dsisa::{Assembled, Insn, Program, Substrate};
 use ferrotherm::kuramoto::{Kuramoto, dense_coupling_bytes};
+use ferrotherm::landauer::BOLTZMANN_CONSTANT;
 use ferrotherm::ledger::Z1_SPICE;
 use ferrotherm::nonrev::{
     balance_defect, exact_tau_int, lifted_matrix, reversible_matrix, site_measure,
@@ -23,7 +24,7 @@ fn main() {
         println!(
             "  {b:>2} bits: analogue floor {:.3e} J, Landauer {:.3e} J, ratio {:.1}",
             analog_bit_energy(b, ROOM_TEMPERATURE_K),
-            f64::from(b) * 1.380_649e-23 * ROOM_TEMPERATURE_K * core::f64::consts::LN_2,
+            f64::from(b) * BOLTZMANN_CONSTANT * ROOM_TEMPERATURE_K * core::f64::consts::LN_2,
             analog_to_landauer_ratio(b)
         );
     }
@@ -136,7 +137,12 @@ fn main() {
     )
     .expect("well formed");
     let e = pg.enumerate_grid(16, 1.0).expect("small enough");
-    println!("  exact ln Z of the WHOLE generator (outputs included) = {:.6}", e.log_z);
+    println!("  ln Z on the q = 16 grid, outputs included     = {:.6}", e.log_z);
+    println!("  ln Z of the model, readout divided out        = {:.6}", e.log_z_continuum());
+    println!(
+        "  the gap is the cell volume, n ln(q / 2 pi)    = {:.6}",
+        e.log_z - e.log_z_continuum()
+    );
     println!("  most probable of {} grid states carries p = {:.4}", e.p.len(),
         e.p.iter().copied().fold(0.0f64, f64::max));
 }

@@ -158,11 +158,17 @@ pub fn skew_matrix(n: usize, scale: f64, seed: u64) -> Vec<f64> {
     a
 }
 
-/// Overdamped Langevin on the torus with an added skew drift `A grad E`.
+/// Overdamped Langevin in `R^n` with an added skew drift `A grad E`.
 ///
 /// The invariant measure is `e^{-beta E}` for **any** antisymmetric `A`, by the two identities in
 /// the module documentation. `A = 0` recovers the ordinary reversible sampler, so a caller can vary
 /// one argument and compare.
+///
+/// The state is **not** reduced modulo `2 pi`. That is deliberate and worth saying, because the
+/// energies this crate hands it are usually periodic: a periodic energy has a periodic gradient, so
+/// the dynamics are well defined either way and a caller who wants phases in `[0, 2 pi)` reduces on
+/// readout. Reducing inside the step would be wrong for the non-periodic energies the integrator
+/// also accepts — the quadratic target its invariance test uses is one.
 #[derive(Clone, Debug)]
 pub struct SkewLangevin {
     a: Vec<f64>,
@@ -722,6 +728,142 @@ mod tests {
             * sum_up(&got.iter().zip(want.iter()).map(|(a, b)| (a - b).abs()).collect::<Vec<_>>());
         assert!(tv < 0.01, "total variation {tv} against the exact distribution is too large");
         assert_eq!(led.samples, (2_000 + draws) * n as u64, "one sample charged per site per sweep");
+    }
+
+    /// The invariance the identities predict, **measured** on the implementation.
+    ///
+    /// The identities above are about the construction; this is about the code. A quadratic energy
+    /// `E = 1/2 x^T M x` has the exact stationary law `N(0, (beta M)^-1)`, so the skew drift either
+    /// leaves that covariance where it found it or it does not, and no algebra is involved in
+    /// finding out.
+    ///
+    /// Three arms, because one would not separate the causes:
+    ///
+    /// * `A` skew — must land on the closed form;
+    /// * `A = 0` — the reversible control, so a miss cannot be blamed on the integrator;
+    /// * `A` **symmetric** — which the identities do not cover, and which must visibly miss, or
+    ///   this test could not have failed for the skew arm.
+    ///
+    /// The tolerance is 10% of each entry, and the budget behind it is stated rather than tuned:
+    /// solving the discrete Lyapunov equation for this step size puts Euler–Maruyama's bias at
+    /// 2.0% on the skew arm, and the slowest mode relaxes in about 500 steps, so 4 million steps
+    /// carry roughly 4,000 independent samples and 2.2% of sampling error. The symmetric arm misses
+    /// the off-diagonal by 105% — ten times the tolerance, and with the sign reversed.
+    #[test]
+    fn the_skew_drift_leaves_a_gaussian_target_where_it_found_it() {
+        const N: usize = 2;
+        // Symmetric positive definite, and deliberately only mildly conditioned: an ill-conditioned
+        // target is where the skew drift helps most and also where a fixed step count measures
+        // least, and this test is about correctness rather than about speed.
+        const M: [f64; 4] = [2.0, 0.5, 0.5, 1.0];
+        const DT: f64 = 1e-2;
+        const STEPS: usize = 4_000_000;
+        const BURN: usize = 200_000;
+        let beta = 1.0;
+        let want = crate::continuous::inverse(&M, N).expect("positive definite");
+
+        // THROUGH THE REAL INTEGRATOR. An inline reimplementation of Euler-Maruyama here would
+        // measure this test's own loop and leave `SkewLangevin::step` unexercised, which is the
+        // shape of coverage this module was already carrying.
+        let through_api = |a: Vec<f64>| -> [f64; 3] {
+            let sl = SkewLangevin::new(a, N, beta, DT);
+            let mut rng = Pcg::new(90_210, 17);
+            let mut x = vec![0.0f64; N];
+            let mut g = vec![0.0f64; N];
+            let (mut s00, mut s11, mut s01, mut kept) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+            for step in 0..STEPS {
+                for i in 0..N {
+                    let row: Vec<f64> = (0..N).map(|j| M[i * N + j] * x[j]).collect();
+                    g[i] = sum_up(&row);
+                }
+                sl.step(&mut x, &g, &mut rng, None);
+                if step >= BURN {
+                    s00 += x[0] * x[0];
+                    s11 += x[1] * x[1];
+                    s01 += x[0] * x[1];
+                    kept += 1.0;
+                }
+            }
+            [s00 / kept, s11 / kept, s01 / kept]
+        };
+
+        // The negative control cannot go through the type, because the constructor refuses a
+        // matrix that is not exactly antisymmetric -- which is itself one of the guarantees. So the
+        // wrong drift is applied by hand, and the refusal is asserted separately below.
+        let by_hand = |drift: [f64; 4]| -> f64 {
+            let mut rng = Pcg::new(90_210, 17);
+            let mut x = [0.0f64; N];
+            let (mut s01, mut kept) = (0.0f64, 0.0f64);
+            let sigma = (2.0 * DT / beta).sqrt();
+            for step in 0..STEPS {
+                let mut g = [0.0f64; N];
+                for i in 0..N {
+                    let row: Vec<f64> = (0..N).map(|j| M[i * N + j] * x[j]).collect();
+                    g[i] = sum_up(&row);
+                }
+                let mut extra = [0.0f64; N];
+                for i in 0..N {
+                    let row: Vec<f64> = (0..N).map(|j| drift[i * N + j] * g[j]).collect();
+                    extra[i] = sum_up(&row);
+                }
+                for i in 0..N {
+                    x[i] += DT * (-g[i] + extra[i]) + sigma * gaussian(&mut rng);
+                }
+                if step >= BURN {
+                    s01 += x[0] * x[1];
+                    kept += 1.0;
+                }
+            }
+            s01 / kept
+        };
+
+        let skew = skew_matrix(N, 1.5, 4242);
+        assert_eq!(antisymmetry_defect(&skew, N), 0.0, "constructed antisymmetric, not rounded to it");
+        let got = through_api(skew);
+        let control = through_api(vec![0.0; 4]);
+        // A symmetric perturbation, chosen small enough that the integrator stays stable: a
+        // divergent arm would prove the test notices SOMETHING, not that it notices the measure.
+        let symmetric = [0.0f64, 0.4, 0.4, 0.0];
+        assert!(
+            antisymmetry_defect(&symmetric, N) > 0.0,
+            "the control must be the thing the constructor refuses"
+        );
+        let wrong_off_diagonal = by_hand(symmetric);
+
+        let entries = [(0usize, 0usize), (1, 1), (0, 1)];
+        for (k, (i, j)) in entries.into_iter().enumerate() {
+            let target = want[i * N + j];
+            let tol = 0.1 * target.abs();
+            assert!(
+                (got[k] - target).abs() < tol,
+                "the skew drift moved cov[{i}][{j}]: {} against {target}",
+                got[k]
+            );
+            assert!(
+                (control[k] - target).abs() < tol,
+                "the reversible control missed cov[{i}][{j}] too ({} against {target}), so the \
+                 integrator is at fault and the skew arm proves nothing",
+                control[k]
+            );
+        }
+        // The off-diagonal is where a symmetric added drift shows: the exact value is negative and
+        // the perturbed chain puts it the other side of zero.
+        let target = want[1];
+        assert!(target < 0.0, "the fixture must have a negative off-diagonal to reverse");
+        assert!(
+            (wrong_off_diagonal - target).abs() > 5.0 * 0.1 * target.abs(),
+            "a symmetric added drift should NOT preserve the target; cov[0][1] came out \
+             {wrong_off_diagonal} against {target}"
+        );
+    }
+
+    /// The constructor refuses a drift that is antisymmetric only to within rounding, which is
+    /// what makes the invariance above a property of the type rather than of the caller.
+    #[test]
+    #[should_panic(expected = "exactly antisymmetric")]
+    fn a_drift_that_is_not_exactly_antisymmetric_is_refused() {
+        let nearly = vec![0.0, 1.0, -1.0 + 1e-15, 0.0];
+        let _ = SkewLangevin::new(nearly, 2, 1.0, 1e-3);
     }
 
     #[test]

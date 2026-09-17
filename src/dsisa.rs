@@ -357,9 +357,13 @@ impl Assembled {
 
     /// Execute on the chosen substrate.
     ///
-    /// `beta` is the inverse temperature for [`Substrate::Spins`] and, for [`Substrate::Phases`],
-    /// the reciprocal of the Euler step — so that a larger `beta` means a less noisy, more
-    /// deterministic evolution on both, and the argument has one meaning across substrates.
+    /// `beta` is the inverse temperature for [`Substrate::Spins`]. For [`Substrate::Phases`] it is
+    /// the reciprocal of the Euler step, and that is a **convention rather than a shared quantity**:
+    /// the phase lane integrates a deterministic drift and has no temperature at all, so it is not
+    /// "less noisy" at a larger `beta` — it is noiseless at every `beta` and merely finer. What the
+    /// two share is the direction, colder on one and finer on the other, and nothing else. A caller
+    /// who needs an actual temperature on continuous state needs a Langevin integrator;
+    /// [`crate::nonrev::SkewLangevin`] is one, and it carries its own `beta`.
     ///
     /// # Panics
     ///

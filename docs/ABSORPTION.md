@@ -301,8 +301,17 @@ distance between them.
 What this buys that the decoder architecture cannot have: the outputs integrate out in closed form,
 leaving `E_eff(theta) = -1/2 (b + Cu)^T A^-1 (b + Cu) - sum S_ij cos(theta_i - theta_j)`, which is
 enumerable on a grid. So `enumerate_grid` returns **the exact distribution and exact `ln Z` of a
-complete generative model** — 7.330681 on the shipped fixture — and the block-Gibbs sampler is
-scored against it. No published generative model in this field has an exact partition function,
+complete generative model** — and the block-Gibbs sampler is scored against it.
+
+Which `ln Z`, though, is worth one sentence, because the obvious reading is wrong. `log_z` is the
+partition function of the model **as read on the grid**: 7.330681 at `q = 16` and 8.716975 at
+`q = 32`, rising by `n ln 2` for every doubling, because the grid sum carries a factor of one cell
+volume per phase. The phase integrand is smooth and periodic, so that sum is the torus integral to
+machine precision and the two differ by exactly `n ln(q / 2 pi)`. `log_z_continuum` divides it out
+and returns **5.461258** at every `q`, which independent quadrature over the torus confirms. The
+model's number is that one; the grid's number is a property of the readout.
+
+No published generative model in this field has an exact partition function,
 because a convolutional decoder has none. This one does, because every block was chosen so that it
 would.
 

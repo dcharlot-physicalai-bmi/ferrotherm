@@ -62,6 +62,20 @@
 //! has an exact partition function, because a convolutional decoder has none; this one does, because
 //! every block of it was chosen so that it would.
 //!
+//! **Which `ln Z`, though.** [`Enumerated::log_z`] is the partition function of the model *as read
+//! on the grid*, and it rises by `n ln 2` for every doubling of `q` — quote it without its `q` and
+//! you have stated a property of the readout as though it were a property of the model. The phase
+//! integrand is smooth and periodic, so the grid sum is the continuum integral to machine precision
+//! and the two differ by exactly the cell volume:
+//!
+//! ```text
+//!   ln Z_grid(q)  =  ln Z  +  n ln(q / 2 pi)
+//! ```
+//!
+//! [`Enumerated::log_z_continuum`] divides that out and is the same number at every `q`. On the
+//! fixture this module ships, `log_z` is 7.330681 at `q = 16` and 8.716975 at `q = 32`; the model's
+//! own `ln Z` is 5.461258 at both, and independent quadrature over the torus agrees with it.
+//!
 //! That is the absorption in its constructive form. The rival architecture is a transport map with
 //! no invariant measure, no temperature and no likelihood. This one is an energy-based model with
 //! all three, it runs on the same fabric, its phase block is the same physics, and it can be
@@ -440,12 +454,30 @@ pub struct Enumerated {
     pub n: usize,
     /// The inverse temperature.
     pub beta: f64,
-    /// `ln Z` of the **whole** model, outputs included.
+    /// `ln Z` of the whole model — outputs included — **as discretised on this grid**.
+    ///
+    /// Grid-conditional: it rises by `n ln 2` per doubling of `q`. For the number that belongs to
+    /// the model rather than to the readout, see [`Enumerated::log_z_continuum`].
     pub log_z: f64,
     /// Probability of every grid state, phase 0 fastest.
     pub p: Vec<f64>,
     /// Effective energy of every grid state, in the same order.
     pub energies: Vec<f64>,
+}
+
+impl Enumerated {
+    /// `ln Z` of the continuum model, with the grid's readout resolution divided out.
+    ///
+    /// The phase integrand is smooth and periodic, so a uniform grid sum is the torus integral to
+    /// machine precision — spectral convergence, not a first-order rule — and the grid sum and the
+    /// integral differ by exactly the cell volume `(2 pi / q)^n`. Subtracting it leaves a number
+    /// that does not move when the readout does, which is the one worth quoting.
+    ///
+    /// The difference is not small: on this module's fixture it is `1.869` nats at `q = 16`.
+    #[must_use]
+    pub fn log_z_continuum(&self) -> f64 {
+        self.log_z - self.n as f64 * (self.q as f64 / TAU).ln()
+    }
 }
 
 /// A standard normal by Box–Muller, from the crate's generator.
@@ -699,6 +731,43 @@ mod tests {
         assert!(tv < 0.05, "total variation {tv} against the exact generator is too large");
         assert_eq!(led.samples, (2_000 + draws) * 2);
         assert_eq!(led.reads, (2_000 + draws) * 2);
+    }
+
+    /// The partition function that belongs to the model, separated from the one that belongs to
+    /// the grid it was read on.
+    ///
+    /// Anchored twice. `log_z` must rise by exactly `n ln 2` per doubling of `q` -- which is the
+    /// statement that it is grid-conditional -- and `log_z_continuum` must be the same number at
+    /// every `q`, against an outside value: quadrature over the torus at 2000 x 2000 midpoints
+    /// gives 5.461258 for this fixture.
+    #[test]
+    fn the_partition_function_is_the_models_not_the_grids() {
+        let g = fixture();
+        let beta = 1.0;
+        let mut previous: Option<f64> = None;
+        for q in [8usize, 16, 32, 64] {
+            let e = g.enumerate_grid(q, beta).expect("small enough");
+            if let Some(p) = previous {
+                let step = e.log_z - p;
+                assert!(
+                    // 1e-7, not 1e-9: the grid sum converges to the integral spectrally rather
+                    // than exactly, and at q = 8 the residual is still 1.6e-9. Either tolerance
+                    // separates this from the effect it is about, which is 1.386 nats.
+                    (step - 2.0 * core::f64::consts::LN_2).abs() < 1e-7,
+                    "log_z should rise by n ln 2 per doubling of q, rose by {step} at q = {q}"
+                );
+            }
+            previous = Some(e.log_z);
+            assert!(
+                (e.log_z_continuum() - 5.461_258).abs() < 1e-5,
+                "the model's own ln Z moved with the grid: {} at q = {q}",
+                e.log_z_continuum()
+            );
+        }
+        // And the two are not the same number, so the distinction is not decorative.
+        let at16 = g.enumerate_grid(16, beta).expect("small enough");
+        assert!((at16.log_z - 7.330_681).abs() < 1e-5);
+        assert!((at16.log_z - at16.log_z_continuum() - 1.869_423).abs() < 1e-5);
     }
 
     #[test]
