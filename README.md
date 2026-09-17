@@ -568,8 +568,11 @@ can settle: **does it reproduce what is independently known, and how much of the
 cover.** Eighteen external sources of truth reproduced in CI — Onsager, transfer matrix, exact
 elimination, planar max-cut, Gardner, AGS, Curie–Weiss, Bethe-on-trees, `busclique` — and 117 of the
 911 tests compare against an exact answer rather than against the code's own behaviour. Searching
-the four largest competitors' repositories for `onsager` or `gardner` returns zero hits in every one;
-their suites test their API surface. That is the difference between a sampler and a reference.
+the four largest competitors' repositories for `onsager` or `gardner` returns zero hits in every one.
+They do verify — THRML against an exact Boltzmann law by enumeration at `max_err < 0.02`, thermox
+against `jax.scipy.linalg.expm` at `atol=1e-1` — so the difference is the **class** of oracle:
+enumeration at a size you can brute-force checks the arithmetic, and a closed form that holds in the
+thermodynamic limit checks the physics. `LANDSCAPE.md` carries the correction in full.
 
 ### Against the coupled-oscillator programme
 

@@ -58,6 +58,16 @@
 //! **plateaus near 1.2% and never arrives**, which is worth knowing before concluding a correction
 //! is cheap.
 //!
+//! **The literature agrees on the shape and on the size of the prize.** Parhami states the floor
+//! qualitatively — *"LNS addition and subtraction require lookup tables whose size grows
+//! exponentially with the logarithm width"* — and the table above is that sentence with numbers in
+//! it. On the payoff: every published LNS result that names a **tuned integer datapath** as its
+//! baseline is worth tens of percent rather than multiples (53.5% energy against fixed-point in one
+//! 2025 study, 42.61% against integer quantisation in another), and the most direct comparison of
+//! all finds an 8-bit log-float multiply-add at *"0.96x the power and 1.12x the area of 8/32-bit
+//! integer multiply-add"* — a tie with `int8`, from Johnson's `deepfloat` work at FAIR. The
+//! multiples reported elsewhere come from baselines other than a tuned integer unit.
+//!
 //! That is the number this module exists to supply. Whether two 1,024-entry tables cost back the
 //! multiplier they saved depends on how they are shared across a systolic array, which is a
 //! circuit question nobody outside the vendor can answer — but it is the question, and it is the

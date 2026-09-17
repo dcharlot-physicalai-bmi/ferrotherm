@@ -61,6 +61,10 @@ pub const Z1_SPICE: Prices = Prices {
     e_read: 1.692e-12,
     e_write: 153.6e-12,
     reflash_hz_cap: Some(1.0),
+    // THE VENDOR PUBLISHES TWO. Table IV gives 7.09e-15 J per pbit per Gibbs cycle; the later Z1T
+    // write-up gives 1.3e-14 J per sample, 1.83x apart, and neither is metered. The smaller, older
+    // and more favourable-to-them figure is the one taken here, because a price set against a
+    // competitor should be the one that flatters the competitor.
     source: "Z1-class SPICE estimates, arXiv:2608.01615 Table IV — taped-out but uncharacterised \
              silicon, not measured. Applies to that device model and to nothing else.",
 };

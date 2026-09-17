@@ -225,9 +225,14 @@ pub fn oscillator_fabric_floor(bits: u32, e_update: f64) -> Prices {
 /// **not** transfer to it: one eight-bit conversion at the `kT/C` bound is 3.26 fJ, under half a
 /// single published Gibbs update, so no step count from one upward makes readout the larger half.
 ///
-/// That holds at the floor, and real converters are not at the floor. A competent eight-bit SAR
-/// converter spends tens of femtojoules — some tens of times the bound — and at that multiple the
-/// two halves are comparable again at ten steps. The honest summary is that readout dominance is a
+/// That holds at the floor, and real converters are not at the floor. The analog compute-in-memory
+/// literature, which arrives at this same `4^b` scaling from ADC circuit design rather than from
+/// `kT/C` — *"the power consumption of a DAC and ADC scales exponentially with precision … steepening
+/// to `4^N` once thermal noise limits necessitate larger sampling capacitors"* — anchors a 28 nm
+/// converter at **30 fJ/Op at 35 dB SQNR** (about 5.7 bits) with **100 fJ/Op** as its modelled
+/// ceiling. Against this module's floor those are **147x** at six bits and about **30x** at eight,
+/// so the "tens of times" below is the sourced figure rather than an estimate, and at that multiple
+/// the two halves are comparable again at ten steps. The honest summary is that readout dominance is a
 /// property of *this crate's* fabric, which takes thousands of updates between reads, and not of an
 /// architecture that reads after ten. Both halves, in any case, are dwarfed by the decoder; see
 /// [`GeneratorBudget`].

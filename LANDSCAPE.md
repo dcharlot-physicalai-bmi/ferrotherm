@@ -24,10 +24,21 @@ The second kind is what makes something a reference. Measured across the field's
 
 | stack | test files | what they test |
 |---|---|---|
-| **thermox** (Normal) | 5 | conditional, linalg, log_prob, sampler, utils — API surface |
-| **THRML** (Extropic) | 13 | block management, block sampling, discrete EBM, factor, interaction, observers, MNIST train — API surface |
+| **thermox** (Normal) | 5 | `expm` against `jax.scipy.linalg.expm`, and the identities `Ax≈b`, `AA⁻¹≈I`, at `atol=1e-1` |
+| **THRML** (Extropic) | 13 | an exact Boltzmann law **by enumeration** at small `n`, at `max_err < 0.02`; the rest is API surface |
 | **torx** (Extropic) | 15 | gates, circuits, gradients, simulators, p-dits — API surface |
 | **ferrotherm** | **911 tests**, of which **117** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
+
+> **CORRECTED 2026-09-17.** Two of these rows previously read "API surface", and that was wrong.
+> `thrml/tests/test_ising.py` compares sampled against exact enumerated Boltzmann distributions
+> (`assertLess(max_err, 0.02)`), and `thermox/tests/test_linalg.py` compares against
+> `jax.scipy.linalg.expm` and against mathematical identities (`atol=1e-1`). Both were read
+> directly before this correction was made. **These are real oracles and the earlier claim
+> understated them.** What survives is narrower and still a difference in kind: their oracles are
+> *enumeration and self-consistency at a size you can brute-force*, at tolerances of `1e-1` and
+> `2e-2`; the comparison below is against *closed-form results from the literature that hold in the
+> thermodynamic limit*. Enumerating a small lattice checks your arithmetic. Onsager checks your
+> physics.
 
 Searching the four largest competitors' repositories for `onsager` and `gardner` returns **zero
 hits in every one**. Onsager's 1944 solution is *the* exact result for a 2D Ising system and the
@@ -253,7 +264,9 @@ so this map reports when it has gone stale rather than being trusted indefinitel
 On the only axis that can be settled by computation — *does it reproduce what is independently
 known, and how much of the field does it cover* — ferrotherm is the reference implementation for
 thermodynamic computing. Twenty-one external sources of truth, 125 verification-bearing tests, seven
-machine-checked theorems, and the field's only calibrated error bars, against competitors whose
-suites test their own API surface.
+machine-checked theorems, and the field's only calibrated error bars. The competitors do verify —
+against enumeration and self-consistency at brute-forceable sizes, at `1e-1` and `2e-2` tolerances
+(see the correction above). The difference is the class of oracle and the coverage, not its
+presence.
 
 Adoption will follow or it will not. It is not evidence either way.
