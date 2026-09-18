@@ -396,8 +396,18 @@ Not yet built, in the order I would build them:
    Resolving power rises monotonically with size — `1.0, 1.7, 2.3, 3.6, 5.0, 5.5, 7.1, 8.7` sigma
    across the ladder — at least as fast as `sqrt(n)`, because an intensive observable's error
    shrinks as it is averaged over more spins while the gap it must resolve does not shrink with it.
-   So a small lattice is where an exact oracle is *cheapest* and where it *discriminates least*.
-   Verifying only at single-digit `n` is not the conservative choice it looks like, and
+   So along *this* ladder a small lattice is where an exact oracle is cheapest and where it
+   discriminates least, and verifying only at single-digit `n` is not the conservative choice it
+   looks like.
+
+   **That is a statement about this ladder, not a law, and the distinction was measured rather than
+   reasoned about.** The ladder holds the statistic and the budget fixed and varies only `n`, so `n`
+   is the only thing that can move the power. Injecting one real defect into the Gibbs update
+   instead — a `beta` scaled by `d` — and asking which test notices gives identical answers from a
+   4-spin test and a 125-spin one: both survive `d = 1.02` and `1.05`, both catch `1.10` and `1.20`.
+   Resolving power is a property of the **statistic** and the **budget**; size moves it only when
+   those are held still. The large oracle's real advantage is **reach** — `cftp` referees a model
+   where enumeration (`2^125`) and elimination (`2^25` per node) both fail outright — and
    `pfaffian::tests::an_exact_check_discriminates_better_as_the_lattice_grows` pins both halves:
    blind at `n = 16`, resolving at `n = 144`, from one fixed budget.
 

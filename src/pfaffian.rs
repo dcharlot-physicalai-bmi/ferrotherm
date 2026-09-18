@@ -1341,9 +1341,15 @@ mod tests {
     /// exact answer separates almost nothing. At `n = 144` the same budget tells them apart.
     ///
     /// The mechanism is that `<E>/N` is intensive -- averaging it over more spins shrinks its error
-    /// while the quantity it estimates stays put -- so signal-to-noise RISES with `n`. A small
-    /// lattice is therefore the WEAKEST place to compare against an exact answer, not the
-    /// strongest, which is the reverse of how a small exact test is usually read.
+    /// while the quantity it estimates stays put -- so signal-to-noise RISES with `n`. Along this
+    /// ladder a small lattice is therefore the WEAKEST place to compare against an exact answer,
+    /// not the strongest, which is the reverse of how a small exact test is usually read.
+    ///
+    /// That is scoped to this ladder on purpose: it holds the statistic and the budget fixed and
+    /// varies only `n`. It is NOT a law that a bigger test discriminates better. Measured against a
+    /// real injected defect rather than a size sweep, a 4-spin exact-Boltzmann TV check and a
+    /// 125-spin chi-square referee catch exactly the same defects. Resolving power belongs to the
+    /// statistic and the budget; size moves it only when those are held still.
     ///
     /// `examples/scale` runs the full ladder to `n = 900`, where the separation reaches 8.7 sigma
     /// against an exact answer that takes 30 seconds to compute and `10^271` terms to enumerate.

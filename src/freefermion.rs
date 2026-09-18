@@ -468,4 +468,66 @@ mod tests {
             "no convergence: {at_8} then {at_64}"
         );
     }
+
+    /// The module header says this spectrum is "an oracle for every quantum sampler in this crate".
+    /// It was not one: until this test, `freefermion` was named by exactly one file outside itself,
+    /// `lib.rs`, which only declares the module. Nothing in `sse`, `sqa`, `vmc`, `qaoa`, `mps` or
+    /// `tensor` referred to it, and `thermal_energy`'s own line — "the exact thermal energy, which
+    /// `crate::sse` estimates with an error bar" — described a pairing that had never been made.
+    ///
+    /// # What it buys
+    ///
+    /// `sse`'s non-trivial quantum checks are exact diagonalisation of a **two-site chain** and a
+    /// **four-site ring**; the rest are limits where the model stops being quantum (zero transverse
+    /// field) or stops being coupled (decoupled sites). Jordan–Wigner has no such ceiling: the
+    /// chain is free fermions at every size, so this scores the sampler at `n = 32`, where a dense
+    /// Hamiltonian would be `2^32` on a side.
+    ///
+    /// # Why the mean over seeds
+    ///
+    /// One seed is one draw. Scoring `n = 64` at a much larger budget, the eight seeds `19..97`
+    /// gave `z` from `-0.91` to `+2.79` and averaged `+0.10` — so a single-seed threshold either
+    /// has to be loose enough to be nearly vacuous or it is flaky. The mean over seeds has a
+    /// standard error of `1/sqrt(k)` and the threshold can be tight.
+    #[test]
+    fn the_quantum_sampler_is_scored_against_the_exact_chain_beyond_diagonalisation() {
+        let (n, beta, gamma) = (32usize, 1.2f64, 1.8f64);
+        let seeds = [19u64, 23, 31];
+        let g = crate::ising::ring(n, 1.0, 0.0);
+
+        let mean_z = |gamma_truth: f64| -> f64 {
+            let exact = thermal_energy(n, 1.0, gamma_truth, beta);
+            let mut total = 0.0;
+            for &seed in &seeds {
+                let p = crate::sse::Params {
+                    beta,
+                    gamma,
+                    equilibrate: 2_000,
+                    measure: 20_000,
+                    cutoff: 16,
+                };
+                let out = crate::sse::run(&g, &p, seed).expect("these parameters are valid");
+                // The crate's own warning: a truncated string is biased, so a disagreement below
+                // would have two possible causes and this test could not tell them apart.
+                assert_eq!(out.saturated, 0, "the operator string truncated at seed {seed}");
+                assert!(out.energy.stderr > 0.0, "a measured energy has an error bar");
+                total += (out.energy.value - exact) / out.energy.stderr;
+            }
+            total / seeds.len() as f64
+        };
+
+        let agree = mean_z(gamma);
+        assert!(
+            agree.abs() < 2.5,
+            "the sampler must agree with the exact chain at n={n}: mean z = {agree:+.2}"
+        );
+
+        // THE CONTROL. A comparison that cannot reject anything is not a comparison. Two percent in
+        // the transverse field, which is a small enough error to be a plausible defect.
+        let wrong = mean_z(gamma * 1.02);
+        assert!(
+            wrong > 6.0,
+            "a 2% error in Gamma must be caught: mean z = {wrong:+.2}, and agreement was {agree:+.2}"
+        );
+    }
 }

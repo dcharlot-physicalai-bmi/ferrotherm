@@ -629,4 +629,144 @@ mod tests {
         assert_eq!(led.samples, d.updates);
         assert_eq!(led.reads, g.n as u64);
     }
+
+    /// The module's opening claim is that every other sampler here returns an approximately
+    /// Boltzmann state and asks the caller to believe a burn-in. Until this test, nothing used
+    /// that fact: the twelve tests above check coupling from the past against enumeration and
+    /// elimination, and no test anywhere used it to referee another sampler.
+    ///
+    /// # Why a 3D lattice
+    ///
+    /// The oracles this crate already trusts both have ceilings, and they are different ceilings.
+    /// Enumeration is `2^n`. Elimination is `2^treewidth`, which on an `l x l x l` cube is
+    /// `2^(l*l)`. At `l = 5` that is `2^125` states and a treewidth of 25, so neither reaches —
+    /// and coupling from the past does, because coalescence does not care about either quantity.
+    /// It is the only exact referee available on this model.
+    ///
+    /// # The statistic
+    ///
+    /// Chi-square over every spin's marginal, not the largest deviation. A maximum over `n`
+    /// comparisons throws away the signal in the other `n - 1` and then needs a threshold that
+    /// grows with `n` to control the false alarm; at a budget this size that combination could not
+    /// reject a 15% temperature error on three seeds out of five. The sum keeps all of it.
+    ///
+    /// The exact draws need no autocorrelation correction — they are independent by construction,
+    /// which is the whole point of the algorithm. The chain's variance does, and it is taken from
+    /// the global magnetisation, the slowest mode, and applied to every spin. That is deliberately
+    /// conservative: under agreement the statistic lands BELOW its degrees of freedom.
+    #[test]
+    fn an_approximate_sampler_is_refereed_where_no_other_exact_oracle_reaches() {
+        let l = 5usize;
+        let n = l * l * l;
+        let beta = 0.15;
+        let k = 5_000usize;
+
+        let idx = |x: usize, y: usize, z: usize| (z * l + y) * l + x;
+        let mut gb = GraphBuilder::new(n);
+        for z in 0..l {
+            for y in 0..l {
+                for x in 0..l {
+                    let i = idx(x, y, z);
+                    if x + 1 < l {
+                        gb.couple(i, idx(x + 1, y, z), 1.0);
+                    }
+                    if y + 1 < l {
+                        gb.couple(i, idx(x, y + 1, z), 1.0);
+                    }
+                    if z + 1 < l {
+                        gb.couple(i, idx(x, y, z + 1), 1.0);
+                    }
+                    gb.bias(i, 0.2);
+                }
+            }
+        }
+        let g = gb.build();
+
+        let marginals = |states: &[Vec<i8>]| -> Vec<f64> {
+            let mut m = vec![0.0f64; n];
+            for st in states {
+                for (i, &v) in st.iter().enumerate() {
+                    if v > 0 {
+                        m[i] += 1.0;
+                    }
+                }
+            }
+            for v in &mut m {
+                *v /= states.len() as f64;
+            }
+            m
+        };
+
+        let chi2_against = |beta_chain: f64, burn: usize| -> f64 {
+            let truth = exact_draws(&g, beta, 11, k).expect("attractive, and it coalesces here");
+            let mut tstates = Vec::with_capacity(k);
+            for d in &truth {
+                tstates.push(d.state.clone());
+            }
+            let tm = marginals(&tstates);
+
+            let mut smp = crate::gibbs::Sampler::new(&g, beta_chain, 0x6188_5);
+            smp.sweeps(burn, None);
+            let mut gstates = Vec::with_capacity(k);
+            let mut mag = Vec::with_capacity(k);
+            for _ in 0..k {
+                smp.sweep(None);
+                let st = smp.read_all(None);
+                let mut total = 0.0f64;
+                for &v in &st {
+                    total += f64::from(v);
+                }
+                mag.push(total / n as f64);
+                gstates.push(st);
+            }
+            let gm = marginals(&gstates);
+            let tau = crate::certify::tau_int(&mag).max(0.5);
+
+            let mut chi2 = 0.0f64;
+            for i in 0..n {
+                let vt = tm[i] * (1.0 - tm[i]) / k as f64;
+                let vg = gm[i] * (1.0 - gm[i]) * 2.0 * tau / k as f64;
+                let v = vt + vg;
+                if v > 0.0 {
+                    let d = tm[i] - gm[i];
+                    chi2 += d * d / v;
+                }
+            }
+            chi2
+        };
+
+        // THE PREMISE. The referee is only a referee if it actually coalesced, and cheaply enough
+        // that the chain below can be burned in past it. Asserted with its number, not assumed.
+        let worst = exact_draws(&g, beta, 11, 200)
+            .expect("coalesces")
+            .iter()
+            .map(|d| d.coalesced_at)
+            .max()
+            .expect("200 draws");
+        assert!(worst <= 128, "coalescence took {worst} sweeps, which is not a cheap referee");
+        let burn = 20 * worst;
+
+        // The 99.9% point of chi-square(n) by Wilson-Hilferty.
+        let z = crate::rhat::inverse_normal_cdf(0.999);
+        let a = 2.0 / (9.0 * n as f64);
+        let limit = n as f64 * (1.0 - a + z * a.sqrt()).powi(3);
+
+        let agree = chi2_against(beta, burn);
+        assert!(
+            agree < limit,
+            "a correctly burned-in chain must agree with exact draws: chi2 {agree:.1} vs {limit:.1}"
+        );
+
+        // THE CONTROL. A check that cannot reject anything is not a check. Same chain, same
+        // budget, same referee, 15% colder.
+        let wrong = chi2_against(beta * 1.15, burn);
+        assert!(
+            wrong > limit,
+            "a chain at the wrong temperature must be rejected: chi2 {wrong:.1} vs {limit:.1}"
+        );
+        assert!(
+            wrong > 2.0 * agree,
+            "the separation must be real, not marginal: {agree:.1} -> {wrong:.1}"
+        );
+    }
 }

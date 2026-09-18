@@ -620,4 +620,51 @@ mod tests {
         assert!(t.log_z >= truth - 1e-9, "TRW {} below {truth}", t.log_z);
         assert!(t.log_z < trivial_upper_bound(&g, beta));
     }
+
+    /// A bound that has only ever been checked against enumeration is only known to be a bound
+    /// at enumeration sizes. Every case in `bounds_exact_log_z_from_above` has `n <= 20`. This
+    /// checks the whole deterministic bracket —
+    ///
+    /// ```text
+    ///   gibbs_bogoliubov  <=  ln Z  <=  trw
+    /// ```
+    ///
+    /// — against [`crate::pfaffian`]'s exact `ln Z` on a `20 x 20` grid, `2^400` states, at three
+    /// temperatures including the critical one. Both bounds hold, and neither is decorative: the
+    /// control below refuses a bracket wide enough to contain any answer. Measured per spin the
+    /// gaps are size-independent — about `0.01..0.10` below and `0.04..0.10` above — so both
+    /// bounds are extensively loose, tightest for mean field deep in the ordered phase and worst
+    /// for TRW at criticality. That is a property of the bounds, now measured, not of the sizes
+    /// they used to be checked at.
+    #[test]
+    fn the_bracket_holds_at_sizes_enumeration_cannot_reach() {
+        let l = 20usize;
+        let g = ising::grid2d(l, l, 1.0);
+        let n = g.n as f64;
+        let beta_c = (1.0 + 2.0_f64.sqrt()).ln() / 2.0;
+
+        for beta in [0.25, beta_c, 0.6] {
+            let exact = crate::pfaffian::log_partition(&g, beta).expect("a grid is planar");
+            let lower = crate::meanfield::naive_mean_field(&g, beta, 5_000, 0.5).log_z;
+            let cover = TreeCover::random(&g, 8, 1);
+            let t = trw(&g, beta, &cover, 20_000, 0.5);
+            let jensen = tree_decomposition_bound(&g, beta, &cover);
+            assert!(t.converged(1e-9), "trw did not converge at beta {beta}: residual {}", t.residual);
+
+            assert!(lower <= exact, "mean field {lower} ABOVE exact {exact} at beta {beta}, n={}", g.n);
+            assert!(exact <= t.log_z, "TRW {} BELOW exact {exact} at beta {beta}, n={}", t.log_z, g.n);
+            assert!(exact <= jensen, "Jensen {jensen} BELOW exact {exact} at beta {beta}");
+            assert!(t.log_z <= jensen + 1e-9, "message passing must not be worse than the split");
+
+            // THE CONTROL. A bracket `[-inf, +inf]` passes every assertion above. Both gaps must be
+            // bounded per spin -- the measured values are under 0.10 -- or the bracket says nothing.
+            let gap_lo = (exact - lower) / n;
+            let gap_hi = (t.log_z - exact) / n;
+            assert!(gap_lo < 0.15, "the lower bound is uninformative: {gap_lo} per spin at beta {beta}");
+            assert!(gap_hi < 0.15, "the upper bound is uninformative: {gap_hi} per spin at beta {beta}");
+            // And the exact value must sit strictly inside, not on an edge that a sign error could
+            // still satisfy.
+            assert!(gap_lo > 1e-6 && gap_hi > 1e-6, "a bound touching the truth is suspicious");
+        }
+    }
 }
