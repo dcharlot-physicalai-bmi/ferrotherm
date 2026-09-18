@@ -665,7 +665,7 @@ fn assign_cost(v: i8, field: f64) -> f64 {
 /// Build a complete assignment one variable at a time from a restricted candidate list.
 ///
 /// At each step every unassigned variable offers both of its values, each priced by
-/// [`assign_cost`] against the field its assigned neighbours already exert. The candidate list
+/// `assign_cost` against the field its assigned neighbours already exert. The candidate list
 /// keeps every offer within `alpha` of the range between the best and the worst, and one is drawn
 /// uniformly from it.
 ///

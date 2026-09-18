@@ -1257,7 +1257,7 @@ fn decode_cycle(x: &[u8], n: usize) -> Result<Vec<usize>, DecodeError> {
 /// Hamiltonian cycle (Lucas section 7.1).
 ///
 /// A pure feasibility model: the ground energy is zero exactly when the graph has a Hamiltonian
-/// cycle. See [`cycle_penalties`] for the three constraint groups.
+/// cycle. See `cycle_penalties` for the three constraint groups.
 ///
 /// **There is no objective, so the only inequality is `A > 0`.** The asymmetric test is that a
 /// graph with no Hamiltonian cycle -- a path, a star -- has ground energy strictly above zero, and

@@ -1,7 +1,7 @@
 //! The Coherent Ising Machine: a network of degenerate optical parametric oscillators, simulated
 //! at mean-field, with the amplitude-heterogeneity correction that makes its readout trustworthy.
 //!
-//! [`crate::fabric::catalog::qboson_cpqc`] already declares a coherent Ising machine as a
+//! [`crate::fabric::Fabric::qboson_cpqc`] already declares a coherent Ising machine as a
 //! deployment target for this crate's programs, and until this module there was nothing here that
 //! could run one. That is the hole this fills.
 //!

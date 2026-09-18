@@ -95,7 +95,7 @@ pub enum BayesError {
         /// The parent listed more than once.
         parent: usize,
     },
-    /// More parents than [`MAX_PARENTS`], so the table would not fit in memory.
+    /// More parents than `MAX_PARENTS`, so the table would not fit in memory.
     TooManyParents {
         /// The child.
         child: usize,
