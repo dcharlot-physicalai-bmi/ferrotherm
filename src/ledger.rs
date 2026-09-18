@@ -186,7 +186,19 @@ pub const Z1_SPICE: Prices = Prices {
 ///
 /// Against [`Z1_SPICE`]'s projected `7.09e-15` J per sample, this measured `1.085e-11` is **~1,530x**
 /// more per flip. That is the honest shape of the gap between 16 nm FPGA CMOS and a thermodynamic
-/// p-bit — and it is the first entry in that comparison that is not itself a projection.
+/// p-bit.
+///
+/// **CORRECTED 2026-09-18.** This paragraph used to end "and it is the first entry in that
+/// comparison that is not itself a projection." A global literature sweep retired that sentence.
+/// [`PEGASUS_28NM_ASIC`] is fabricated silicon whose authors state `1.2e-12` J per update
+/// including I/O — about **9x below** this figure — and arXiv:2606.25313 (June 2026, before this
+/// measurement) reports the wall power of two multi-FPGA p-bit machines. What this entry still is:
+/// the one with a stated metering protocol — instrument, idle baseline, a reproduced control —
+/// and an open path from a library call to the bitstream that was metered.
+///
+/// It is also an INCREMENT: `0.5554 W` above an idle PL. The whole board drew `3.6917 W` with the
+/// fabric on, which over `5.12e10` flips per second is **`7.21e-11` J per flip** — the figure to
+/// hold against anyone else's wall power, and nearly seven times this one.
 ///
 /// # Why reads and writes are unstated
 ///
@@ -204,6 +216,36 @@ pub const KV260_MEASURED: Prices = Prices {
     evidence: Evidence::Metered,
 };
 
+/// A fabricated 28 nm four-chip digital Ising accelerator: the lowest MEASURED energy per update this
+/// project has located, and the authors' own stated figure rather than a quotient computed here.
+///
+/// arXiv:2609.07907 (7 Sept 2026; Wu, Raut, Khor, Alswaidan, Lee, Kuang, Aadit, Raju, Chinmay, Das,
+/// Mai, Camsari and Srimani): 27,648 spins, degree-15 Pegasus connectivity, 10-bit coefficients,
+/// 30.24e9 peak updates per second at 140 MHz.
+///
+/// # Why it is here
+///
+/// Because it is the number that disciplines every other one. Against [`KV260_MEASURED`] it is
+/// about 9x lower, which makes the FPGA-to-ASIC gap for this job a measured quantity instead of a
+/// rule of thumb. Against [`Z1_SPICE`] it is about **169x higher** — so the best measured update
+/// energy located anywhere is still more than two orders of magnitude above the projected one,
+/// and that gap, not any vendor multiplier, is the state of the field.
+///
+/// Graded [`Evidence::Measured`] and not [`Evidence::Metered`]: the abstract was read and the
+/// measurement protocol was not, which is exactly what that grade is for. The figure INCLUDES I/O
+/// power, so reads are not separable from it and stay unstated rather than zero.
+pub const PEGASUS_28NM_ASIC: Prices = Prices {
+    e_sample: 1.2e-12,
+    e_read: f64::NAN,
+    e_write: f64::NAN,
+    reflash_hz_cap: None,
+    source: "STATED BY ITS AUTHORS, arXiv:2609.07907 (2026-09-07): a fabricated 28 nm four-chip \
+             digital Ising accelerator, 27,648 spins, Pegasus degree 15, '1.2 pJ/update including \
+             I/O power' at 140 MHz. Abstract read; metering protocol not. Reads and writes are \
+             folded into that figure and are unstated here, not zero.",
+    evidence: Evidence::Measured,
+};
+
 /// Every machine this crate states prices for, in a stable order, each beside its name.
 ///
 /// The reason this is a table and not three constants a caller looks up by hand: a joules figure
@@ -216,10 +258,12 @@ pub const KV260_MEASURED: Prices = Prices {
 /// [`Prices::UNSTATED`] is deliberately in here. It is the honest answer for a machine nobody has
 /// characterised, and a caller who can select it by name can demonstrate that pricing a run
 /// against it yields no figure rather than a zero.
-pub const CATALOGUE: [(&str, Prices); 3] = [
+pub const CATALOGUE: [(&str, Prices); 4] = [
     ("UNSTATED", Prices::UNSTATED),
     ("Z1_SPICE", Z1_SPICE),
     ("KV260_MEASURED", KV260_MEASURED),
+    // APPENDED, never inserted: the binding surfaces enumerate this table by index.
+    ("PEGASUS_28NM_ASIC", PEGASUS_28NM_ASIC),
 ];
 
 /// Operation counts accumulated by a run.
@@ -463,5 +507,45 @@ mod tests {
             None,
             "a device that states no cap implies no floor"
         );
+    }
+
+    /// The comparison this module exists to keep honest, on STATED figures only.
+    ///
+    /// Three machines, three grades, in the order the evidence ladder puts them — and the ordering
+    /// of the ENERGIES is not the ordering of the GRADES, which is the whole point: the weakest
+    /// evidence carries the most flattering number. A fabricated ASIC beats this project's FPGA
+    /// fabric by about nine, and the projection beats the ASIC by about a hundred and seventy.
+    /// A sentence in this file once called the KV260 figure the first non-projected entry in the
+    /// comparison; it was retired by a literature sweep, and this test is what replaces it.
+    #[test]
+    fn the_best_measured_update_sits_between_the_projection_and_our_fabric() {
+        let (z1, asic, kv) = (Z1_SPICE, PEGASUS_28NM_ASIC, KV260_MEASURED);
+        assert!(z1.e_sample < asic.e_sample && asic.e_sample < kv.e_sample, "energies ascend");
+        assert!(z1.evidence < asic.evidence && asic.evidence < kv.evidence, "and so do the grades");
+
+        let fpga_over_asic = kv.e_sample / asic.e_sample;
+        assert!((fpga_over_asic - 9.04).abs() < 0.01, "FPGA fabric over ASIC: {fpga_over_asic}");
+        let asic_over_projection = asic.e_sample / z1.e_sample;
+        assert!((asic_over_projection - 169.25).abs() < 0.01, "ASIC over projection: {asic_over_projection}");
+
+        // a comparison inherits the weaker grade, in either direction
+        assert_eq!(weaker(asic.evidence, kv.evidence), Evidence::Measured);
+        assert_eq!(weaker(asic.evidence, z1.evidence), Evidence::Simulated);
+
+        // The like-for-like figure against anyone's WALL power is the whole board, not the
+        // increment: 3.6917 W with the fabric on, over 1,024 p-bits at 50 MHz of updates each.
+        let whole_board: f64 = 3.6917 / 5.12e10;
+        assert!((whole_board - 7.21e-11).abs() < 1e-13, "whole-board J per flip: {whole_board}");
+        assert!(whole_board / kv.e_sample > 6.0, "the increment flatters by more than six");
+
+        // the table: appended, named once each, and the ASIC priced like the KV260 -- samples only
+        assert_eq!(CATALOGUE.len(), 4);
+        assert_eq!(CATALOGUE[3].0, "PEGASUS_28NM_ASIC");
+        for (i, (a, _)) in CATALOGUE.iter().enumerate() {
+            for (b, _) in &CATALOGUE[i + 1..] {
+                assert_ne!(a, b, "a machine named twice");
+            }
+        }
+        assert!(asic.e_read.is_nan() && asic.e_write.is_nan(), "folded into the figure, not zero");
     }
 }

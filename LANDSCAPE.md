@@ -27,7 +27,7 @@ The second kind is what makes something a reference. Measured across the field's
 | **thermox** (Normal) | 5 | `expm` against `jax.scipy.linalg.expm`, and the identities `Ax≈b`, `AA⁻¹≈I`, at `atol=1e-1` |
 | **THRML** (Extropic) | 13 | an exact Boltzmann law **by enumeration** at small `n`, at `max_err < 0.02`; the rest is API surface |
 | **torx** (Extropic) | 15 | gates, circuits, gradients, simulators, p-dits — API surface |
-| **ferrotherm** | **1999 tests**, of which **441** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
+| **ferrotherm** | **2000 tests**, of which **441** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
 
 > **CORRECTED 2026-09-17.** Two of these rows previously read "API surface", and that was wrong.
 > `thrml/tests/test_ising.py` compares sampled against exact enumerated Boltzmann distributions
@@ -205,8 +205,34 @@ Honesty about a reference includes where it is thin:
   `ledger::KV260_MEASURED` is a wattmeter reading. A 1,024 p-bit fabric emitted by `hdl`, implemented
   in Vivado for `xck26`, flashed to a Kria KV260 and metered on the SOM's own INA260: **0.5554 W
   above an idle PL at 23.1 sigma**, over 51.2 flips/ns, giving **10.85 +- 0.47 pJ per node update**.
-  Against Extropic's projected `7.09 fJ` that is **~1,530x**, and it is the first entry in that
-  comparison that is not itself a projection.
+  Against Extropic's projected `7.09 fJ` that is **~1,530x**.
+
+  **CORRECTED 2026-09-18 — that sentence used to end "and it is the first entry in that comparison
+  that is not itself a projection." A global literature sweep retired it.** Measured figures exist,
+  one of them well below ours, and ours was an increment being held against other people's totals:
+
+  | machine | J per update | what the number is | grade |
+  |---|---|---|---|
+  | Extropic Z1, arXiv:2608.01615 Table IV | 7.09 fJ | SPICE, uncharacterised silicon | simulated |
+  | 28 nm four-chip Pegasus ASIC, arXiv:2609.07907 | **1.2 pJ**, incl. I/O | fabricated; the authors' own stated figure | measured |
+  | **ferrotherm, KV260 fabric increment** | **10.85 pJ** | above an idle PL, INA260, 23.1 sigma | **metered** |
+  | DSIM-1, six FPGAs, arXiv:2606.25313 | 59–71 pJ | **our quotient**: 150–180 W wall / 2.53e12 flips/s | measured, derived here |
+  | **ferrotherm, KV260 whole board** | **72.1 pJ** | 3.6917 W / 5.12e10 flips/s | **metered** |
+  | DSIM-2, 18x VP1902 | 0.47–1.6 nJ | **our quotient**: 1.4–1.6 kW / 1e12–3e12 flips/s | measured, derived here |
+
+  The DSIM paper states wall power and flip rates and never a joule per flip, so those two rows are
+  arithmetic done here, and it gives one power range per platform without saying which clock it
+  belongs to — pairing it with the PEAK flip rate is the assumption that flatters them, which is
+  the rule this project applies to a competitor's number. Four things follow. **Like for like, a
+  six-FPGA machine from June matches our single board** (59–71 against 72 pJ): the 10.85 is what
+  the fabric adds, not what the wall supplies. **The FPGA-to-ASIC gap for this job is now measured,
+  about 9x**, rather than a rule of thumb. **The best measured update energy located anywhere is
+  still ~169x above the projected one** — that gap, not any vendor multiplier, is the state of the
+  field. And what remains particular to this entry is a stated metering protocol and an open path
+  from a library call to the bitstream that was metered; their correctness checks are a GPU
+  baseline and one certified Max-Cut optimum, where this stack holds a sampler against exact
+  distributional oracles. `ledger::PEGASUS_28NM_ASIC` carries the ASIC's figure with its grade, and
+  `the_best_measured_update_sits_between_the_projection_and_our_fabric` pins the ratios.
 
   **And the vendor tool was caught under-predicting.** Vivado's own estimator put the PL at
   **0.100 W**; the board drew **0.5554 W** — **5.6x** low. Without a switching-activity file it
@@ -265,7 +291,7 @@ On the only axis that can be settled by computation — *does it reproduce what 
 known, and how much of the field does it cover* — ferrotherm is the reference implementation for
 thermodynamic computing. 19 external sources of truth, 441 verification-bearing tests, seven
 machine-checked theorems, and the field's only calibrated error bars. 19 external sources, 441
-verification-bearing tests of 1999 — and `scripts/check-counts.sh` derives all four figures from the
+verification-bearing tests of 2000 — and `scripts/check-counts.sh` derives all four figures from the
 suite rather than trusting this sentence, because three earlier versions of it disagreed with each
 other. The competitors do verify —
 against enumeration and self-consistency at brute-forceable sizes, at `1e-1` and `2e-2` tolerances
