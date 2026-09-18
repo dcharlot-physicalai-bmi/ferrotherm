@@ -10,7 +10,7 @@
 //! That is not six unlucky mistakes. It is one structural fault with six symptoms, and it was in the
 //! decoder's **type**:
 //!
-//! ```ignore
+//! ```text
 //! fn next(&mut self) -> Option<(u32, Body)>   // the old one
 //! ```
 //!
@@ -19,7 +19,7 @@
 //! somewhere further up — which is exactly the game of whack-a-mole the six defects record. A
 //! decoder that cannot say "this input is malformed" forces every caller to guess.
 //!
-//! ```ignore
+//! ```text
 //! fn next(&mut self) -> Result<Option<Field<'a>>, WireError>   // this one
 //! ```
 //!

@@ -122,7 +122,7 @@ difference between programming a qubit and programming *some* qubit. The harness
 code under `cfg(kani)` (no dependency added); `scripts/check-proofs.sh` runs them, and its selftest
 feeds Kani a false theorem and requires the refutation.
 
-- `cargo test --workspace` — 699 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 1991 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -565,9 +565,12 @@ either fabric.** `ft_clique_embed` carries the constructions to Python, Zig and 
 
 `LANDSCAPE.md` compares ferrotherm to every other thermodynamic stack on the axis that computation
 can settle: **does it reproduce what is independently known, and how much of the field does it
-cover.** Eighteen external sources of truth reproduced in CI — Onsager, transfer matrix, exact
-elimination, planar max-cut, Gardner, AGS, Curie–Weiss, Bethe-on-trees, `busclique` — and 117 of the
-911 tests compare against an exact answer rather than against the code's own behaviour. Searching
+cover.** 19 external sources of truth reproduced in CI — Onsager, transfer matrix, exact
+elimination, planar max-cut, Gardner, the replica capacity, Krauth–Mézard, Curie–Weiss,
+Bethe-on-trees, Pfaffian, Katsura, Pfeuty, Nishimori, Wolff, Swendsen–Wang, Gauss–Hermite,
+Landauer, Jarzynski and `busclique` — and 434 of the 1991 tests compare against an exact answer
+rather than against the code's own behaviour. `scripts/check-counts.sh` re-derives every one of
+those figures from the suite and fails if this paragraph drifts from it. Searching
 the four largest competitors' repositories for `onsager` or `gardner` returns zero hits in every one.
 They do verify — THRML against an exact Boltzmann law by enumeration at `max_err < 0.02`, thermox
 against `jax.scipy.linalg.expm` at `atol=1e-1` — so the difference is the **class** of oracle:
