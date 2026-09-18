@@ -91,6 +91,43 @@ penalty is *added* to whatever objective the model encodes, so a large one disto
 
 ---
 
+### A hardware p-trit's sampling rule, held to the exact law — `examples/sps_exact`
+
+Rhee, Jang, … K. M. Kim (KAIST), *Advanced Science* 2026, e76754 (doi:10.1002/advs.76754) report a
+NbOx Mott-memristor **p-trit** — the first device-level counterpart to the p-trit this crate emits
+as RTL — and drive it with **Segmented Probabilistic Sampling**: one scalar input per node, and in
+each 2π/3 phase interval only the two ADJACENT states get probability. The paper calls the rule
+approximate and validates it by solution quality on Max-3-Cut. It never asks what the chain
+samples. On all 3⁶ states, by a direct solve, against the enumerated law (heat-bath control: TV
+`1e-15`):
+
+| rule, as decomposed here | β = 0.5 | β = 1 | β = 2 | β = 4 |
+|---|---|---|---|---|
+| third state excluded, exact pair odds — TV at the programmed β | 0.466 | 0.393 | 0.230 | 0.111 |
+| … TV at the NEAREST β, and that β | 0.297 @ 1.22 | 0.230 @ 1.73 | 0.140 @ 2.83 | 0.092 @ 4.81 |
+| ground-state mass, against Boltzmann's at the same β | 0.186 / 0.058 | 0.324 / 0.146 | 0.586 / 0.417 | 0.842 / 0.790 |
+
+Three things follow, none of which depends on how the paper's one ambiguous equation is read.
+**It is not a Boltzmann sampler at the temperature it is programmed for.** **It samples COLDER** —
+the nearest β is always above the nominal one, because the state it excludes is the costliest —
+which hands optimisation more ground-state mass for free and is a bias for the inference and
+learning uses the paper proposes. And **an ordinal device (off–osc–on, no on↔off path) finds the
+optima and cannot share them**: with the omitted interval clamped to the nearer end, ground-state
+mass is 0.998, yet TV stays above 0.42 at every sharpness, and the whole of it is in the split
+among symmetry-related ground states — the cyclic rule puts 0.0832 on each of twelve, exactly
+1/12, where the ordinal one puts 0.16–0.18 on a few and **zero** on most. The look-up-table remap
+the authors offer as a cure is what restores the symmetry.
+
+What is read from the paper and what is ours is stated at the top of the example. The ordinal
+rows are a BRACKET, not a claim about their machine: a saturating voltage map collapses
+ground-state mass to ~0.5, which their own reported convergence rules out, so that reading is
+shown and rejected. Their headline comparison deserves the same care — "~33% of the overhead" is
+one operation against three because the binary baseline solves Max-3-Cut by three recursive
+bisections, which is not how three states are put on binary hardware; one-hot and domain-wall are,
+and the table above this section measures them. Their prototype's fourteen nodes are
+microcontrollers emulating the measured device, and 2.4 nJ per bit is an estimate for the
+oscillator alone.
+
 ## 3. Thermodynamic linear algebra — `src/tla.rs`
 
 **Why it belongs here.** An Ornstein–Uhlenbeck network's stationary distribution is
