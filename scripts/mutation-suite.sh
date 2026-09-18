@@ -1047,6 +1047,14 @@ mutations=(
   # magnitude, and is the number this crate measures everywhere else.
   "src/floors.rs|    let effective_samples = sweeps / (2.0 * tau_int);|    let effective_samples = sweeps;|floors::tests::a_metered_run_can_be_priced_against_its_own_floor|a per-sample cost that ignores autocorrelation"
 
+  # ---- exact verification at scale ---------------------------------------------------------------
+  # An interval so wide it cannot miss reports agreement with every hypothesis at once, including
+  # wrong ones. Widen the 95% band tenfold: the ladder test requires the interval at n = 144 to
+  # EXCLUDE a lattice one percent colder, and almost nothing else in the suite asks `covers` to
+  # say no. Rows above prove a test notices a broken value; this one proves a test notices a
+  # meaningless error bar.
+  "src/samples.rs|self.value - 1.96 * self.stderr, self.value + 1.96 * self.stderr|self.value - 19.6 * self.stderr, self.value + 19.6 * self.stderr|pfaffian::tests::an_exact_check_discriminates_better_as_the_lattice_grows|a confidence interval ten times too wide to miss"
+
 )
 
 bad=0

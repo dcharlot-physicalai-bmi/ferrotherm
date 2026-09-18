@@ -378,9 +378,34 @@ Not yet built, in the order I would build them:
    weaker and more useful claim: **the two errors are not proxies for one another.**
 3. **A measured ADC line.** The read price in `precision::oscillator_fabric_floor` is a thermal
    bound. A real converter's energy, metered, turns §5's readout row from a floor into a fact.
-4. **Scale.** Everything here is verified at `n` in the single digits, where exact oracles exist.
-   The path to `n = 16384` is the crate's existing chromatic and multispin machinery, and the honest
-   statement is that it has not been run there yet.
+4. ~~**Scale.**~~ **Answered on planar couplings, and the premise turned out to be wrong.** The
+   sentence that used to sit here said everything is verified at `n` in the single digits, "where
+   exact oracles exist". That carries a premise — that enumeration is the only exact oracle — and
+   `pfaffian` refutes it. The Kac–Ward determinant returns `ln Z` and `<E>` for **any** planar
+   graph at **any** beta in `O((2E)^3)`: polynomial, not exponential, and exact rather than
+   estimated. The crate had it all along and used it to verify nothing but itself.
+
+   `examples/scale` wires it to the cluster sampler and walks a ladder to `n = 900`, where the
+   exact answer takes 29 seconds and enumerating it would take `10^271` terms. All eight rungs'
+   95% intervals cover the exact energy, and the determinant's phase residual stays at `3.8e-15`
+   — zero in exact arithmetic, and a free check that the embedding stayed sound.
+
+   **The finding is the other way round from the assumption.** Every rung is also asked a question
+   it must answer *no* to: does the same interval also cover a lattice one percent colder? At
+   `n = 16, 36, 64` it does. There, agreeing with the exact answer separates almost nothing.
+   Resolving power rises monotonically with size — `1.0, 1.7, 2.3, 3.6, 5.0, 5.5, 7.1, 8.7` sigma
+   across the ladder — at least as fast as `sqrt(n)`, because an intensive observable's error
+   shrinks as it is averaged over more spins while the gap it must resolve does not shrink with it.
+   So a small lattice is where an exact oracle is *cheapest* and where it *discriminates least*.
+   Verifying only at single-digit `n` is not the conservative choice it looks like, and
+   `pfaffian::tests::an_exact_check_discriminates_better_as_the_lattice_grows` pins both halves:
+   blind at `n = 16`, resolving at `n = 144`, from one fixed budget.
+
+   **What this does not settle.** Kac–Ward is a planarity argument, and their coupling is dense and
+   asymmetric — exactly the structure it refuses. Computing `Z` exactly for a dense non-planar
+   coupling at `n = 16384` is `#P`-hard, so this is not a gap in the crate but a fact about the
+   problem. What is now available at scale is an exact referee for the *planar* case, which is the
+   one a real oscillator fabric with nearest-neighbour coupling would actually build.
 
 ---
 

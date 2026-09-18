@@ -1330,6 +1330,90 @@ mod tests {
         assert!(s.energy.unwrap().abs() < 1e-12, "no correlation at infinite temperature");
         assert_eq!(s.free_energy_density(), None, "free energy diverges at beta = 0");
     }
+
+    /// How far an exact check REACHES is one question; how much it DISCRIMINATES is another, and
+    /// the two move in opposite directions with size.
+    ///
+    /// Enumeration stops at `2^n`, so every small exact test in this crate lives where the oracle
+    /// is cheapest. This determinant does not stop there, and running the same fixed sampler budget
+    /// against it at two sizes shows what the small test was actually buying: at `n = 16` one
+    /// interval covers the true lattice AND a lattice one percent colder, so agreeing with the
+    /// exact answer separates almost nothing. At `n = 144` the same budget tells them apart.
+    ///
+    /// The mechanism is that `<E>/N` is intensive -- averaging it over more spins shrinks its error
+    /// while the quantity it estimates stays put -- so signal-to-noise RISES with `n`. A small
+    /// lattice is therefore the WEAKEST place to compare against an exact answer, not the
+    /// strongest, which is the reverse of how a small exact test is usually read.
+    ///
+    /// `examples/scale` runs the full ladder to `n = 900`, where the separation reaches 8.7 sigma
+    /// against an exact answer that takes 30 seconds to compute and `10^271` terms to enumerate.
+    #[test]
+    fn an_exact_check_discriminates_better_as_the_lattice_grows() {
+        let beta = (1.0 + 2.0_f64.sqrt()).ln() / 2.0;
+        let detune = 1.01;
+        let plan = crate::samples::Plan::new(2_000, 4_000, 1);
+        let mut separation: Vec<(usize, f64, bool)> = Vec::new();
+
+        for l in [4usize, 12] {
+            let g = crate::ising::grid2d(l, l, 1.0);
+            let truth = solve(&g, beta).expect("a grid is planar");
+            let colder = solve(&g, beta * detune).expect("same grid, colder");
+            let e_true = truth.energy_density().expect("Params::default asks for the energy");
+            let e_cold = colder.energy_density().expect("Params::default asks for the energy");
+
+            // The premise the comparison rests on: the two lattices really are different. If the
+            // detuned energy equalled the true one there would be nothing to resolve and the test
+            // would pass by describing an identity.
+            assert!(
+                (e_cold - e_true).abs() > 1e-4,
+                "1% in beta must move <E>/N at l={l}: {e_true} vs {e_cold}"
+            );
+
+            let mut s = crate::cluster::Sampler::new(&g, beta, 0x5CA1_E000 + l as u64)
+                .expect("a ferromagnet is unfrustrated");
+            let set = s.collect(&plan, crate::cluster::Update::SwendsenWang, None);
+            let est = set.mean_energy().expect("1500 draws have a mean");
+            let value = est.value / g.n as f64;
+            let stderr = est.stderr / g.n as f64;
+
+            let per_spin = crate::samples::Estimate {
+                value,
+                stderr,
+                ess: est.ess,
+                tau_int: est.tau_int,
+            };
+            assert!(
+                per_spin.covers(e_true),
+                "the sampler must agree with the exact answer at l={l}: {value} +- {stderr} vs {e_true}"
+            );
+            // Resolving power is a property of the DESIGN -- the size and the budget -- not of
+            // one draw's luck, so the numerator is the exact gap between the two lattices rather
+            // than the distance from wherever this seed happened to land. Whether the realised
+            // interval also excludes the colder lattice is checked separately, below.
+            separation.push((l, (e_cold - e_true).abs() / stderr, per_spin.covers(e_cold)));
+        }
+
+        let small = separation[0].1;
+        let large = separation[1].1;
+        assert!(
+            separation[0].2,
+            "at n=16 the interval is expected to cover the colder lattice too -- to be BLIND"
+        );
+        assert!(
+            !separation[1].2,
+            "at n=144 the interval must exclude the colder lattice"
+        );
+        assert!(
+            small < 1.96,
+            "at n=16 the interval is expected to be BLIND to a 1% error, and was not: {small} sigma"
+        );
+        assert!(
+            large > 1.96,
+            "at n=144 the interval must resolve a 1% error, and did not: {large} sigma"
+        );
+        assert!(
+            large > 3.0 * small,
+            "discrimination must grow substantially with size: {small} -> {large} sigma"
+        );
+    }
 }
-
-
