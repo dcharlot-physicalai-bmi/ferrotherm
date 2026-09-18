@@ -225,6 +225,98 @@ pub struct SamplerCost {
     pub ratio_to_floor: f64,
     /// The weakest evidence anywhere in this figure — the grade the ratio inherits.
     pub evidence: Evidence,
+    /// How convergence was established. A cost carrying [`Convergence::SingleChain`] rests on a
+    /// diagnostic that cannot detect its own failure; the number is real, the claim is weak.
+    pub convergence: Convergence,
+}
+
+/// How a run's convergence was established — which [`cost_per_effective_sample`] now requires,
+/// because the diagnostic it used to rely on alone cannot report its own failure.
+///
+/// `tau_int` is computed from one chain's own trace, and a trace is only evidence about the
+/// timescales it CONTAINS. A chain that never leaves the basin it started in fluctuates only
+/// inside that basin, so its autocorrelation decays fast and `tau_int` comes back **small** —
+/// which prices the run as though it bought MANY independent samples, at a LOW cost per sample.
+/// The error flatters the run, on the one number this crate exists to report honestly.
+///
+/// `examples/burnin` measures that: a chain below the critical temperature reports a tight
+/// interval around an answer that is wrong by construction, with an autocorrelation time that
+/// says it is well mixed. Both instruments named below catch it, and until now neither was wired
+/// to the pricing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Convergence {
+    /// Coupling from the past coalesced, so the draw is exactly stationary and the burn-in is
+    /// known rather than assumed. See [`crate::cftp`].
+    Certified {
+        /// Sweeps back coalescence actually required — `cftp::Draw::coalesced_at`.
+        coalesced_at: f64,
+        /// Sweeps the run actually discarded. Less than `coalesced_at` is a refusal, not a
+        /// warning: the draws are from the starting state, not from the model.
+        burn_in: f64,
+    },
+    /// Several chains from dispersed starts agree. See [`crate::rhat`].
+    MultiChain {
+        /// Split, rank-normalised, folded R-hat. Vehtari, Gelman, Simpson, Carpenter and Bürkner
+        /// (*Bayesian Analysis*, 2021) recommend refusing above [`Convergence::RHAT_LIMIT`].
+        rhat: f64,
+    },
+    /// One chain's own autocorrelation, and nothing else.
+    ///
+    /// Named rather than defaulted, because this is the case that cannot fail loudly. It is
+    /// priced, since sometimes it is all a caller has, and it is recorded on the result so a
+    /// reader can see what the figure rests on.
+    SingleChain,
+}
+
+impl Convergence {
+    /// The R-hat above which [`Convergence::MultiChain`] is refused (Vehtari et al. 2021).
+    pub const RHAT_LIMIT: f64 = 1.01;
+
+    /// Why this run must not be priced, or `None` if it may be. The `Option` IS the refusal, so
+    /// there is no `Result` here and no error section: `None` is the permission to proceed.
+    #[must_use]
+    pub fn refusal(&self) -> Option<String> {
+        match *self {
+            Convergence::Certified { coalesced_at, burn_in } => {
+                if !coalesced_at.is_finite() || !burn_in.is_finite() {
+                    Some("a coalescence time and a burn-in must both be finite".to_string())
+                } else if coalesced_at < 0.0 || burn_in < 0.0 {
+                    // Without this a NEGATIVE coalescence time passes the comparison below --
+                    // `200 < -5` is false -- so nonsense would read as a certification.
+                    Some(format!(
+                        "sweep counts cannot be negative: coalesced_at {coalesced_at}, burn_in {burn_in}"
+                    ))
+                } else if burn_in < coalesced_at {
+                    Some(format!(
+                        "the burn-in was {burn_in} sweeps and coalescence required {coalesced_at}: \
+                         these draws carry the starting state, so there is nothing here to price"
+                    ))
+                } else {
+                    None
+                }
+            }
+            Convergence::MultiChain { rhat } => {
+                if !rhat.is_finite() || rhat < 1.0 {
+                    Some(format!("an R-hat must be finite and at least 1, got {rhat}"))
+                } else if rhat > Convergence::RHAT_LIMIT {
+                    Some(format!(
+                        "R-hat is {rhat}, above the {} limit: the chains do not agree, so they \
+                         are not all sampling the same distribution",
+                        Convergence::RHAT_LIMIT
+                    ))
+                } else {
+                    None
+                }
+            }
+            Convergence::SingleChain => None,
+        }
+    }
+
+    /// Whether convergence was established by an instrument that could have said no.
+    #[must_use]
+    pub fn is_certified(&self) -> bool {
+        !matches!(self, Convergence::SingleChain)
+    }
 }
 
 /// Price a real sampling run per independent sample, against its own thermodynamic floor.
@@ -246,6 +338,7 @@ pub fn cost_per_effective_sample(
     prices: &Prices,
     sweeps: f64,
     tau_int: f64,
+    convergence: Convergence,
     snr: f64,
     temperature_k: f64,
 ) -> Result<SamplerCost, String> {
@@ -256,6 +349,12 @@ pub fn cost_per_effective_sample(
         return Err(format!(
             "an integrated autocorrelation time must be positive and finite, got {tau_int}"
         ));
+    }
+    // CONVERGENCE IS CHECKED BEFORE ANYTHING IS DIVIDED. A chain that did not converge has no
+    // effective samples to be cheap per, and `tau_int` is structurally unable to say so: it
+    // summarises the timescales the trace contains, and a barrier never crossed contributes none.
+    if let Some(why) = convergence.refusal() {
+        return Err(why);
     }
     let joules = ledger
         .joules(prices)
@@ -273,6 +372,7 @@ pub fn cost_per_effective_sample(
         floor,
         ratio_to_floor: if floor > 0.0 { per / floor } else { f64::INFINITY },
         evidence: prices.evidence,
+        convergence,
     })
 }
 
@@ -384,6 +484,7 @@ mod tests {
             &KV260_MEASURED,
             1_000_000.0,
             10.0,
+            Convergence::SingleChain,
             1.0,
             ROOM_TEMPERATURE_K,
         )
@@ -412,6 +513,7 @@ mod tests {
                 &KV260_MEASURED,
                 1_000_000.0,
                 10.0,
+                Convergence::SingleChain,
                 1.0,
                 ROOM_TEMPERATURE_K
             )
@@ -425,7 +527,15 @@ mod tests {
     fn a_simulated_price_yields_a_simulated_cost() {
         let ledger = Ledger { samples: 1_000_000, reads: 0, writes: 0 };
         let got =
-            cost_per_effective_sample(&ledger, &Z1_SPICE, 1_000.0, 2.0, 1.0, ROOM_TEMPERATURE_K)
+            cost_per_effective_sample(
+                &ledger,
+                &Z1_SPICE,
+                1_000.0,
+                2.0,
+                Convergence::SingleChain,
+                1.0,
+                ROOM_TEMPERATURE_K,
+            )
                 .expect("Z1_SPICE states a sample price");
         assert_eq!(got.evidence, Evidence::Simulated);
         assert_ne!(got.evidence, Evidence::Metered, "a projection cannot become a measurement");
@@ -436,7 +546,15 @@ mod tests {
     fn a_run_that_measured_nothing_is_refused_rather_than_priced() {
         let ledger = Ledger { samples: 1_000, reads: 0, writes: 0 };
         let at = |sweeps, tau| {
-            cost_per_effective_sample(&ledger, &KV260_MEASURED, sweeps, tau, 1.0, ROOM_TEMPERATURE_K)
+            cost_per_effective_sample(
+                &ledger,
+                &KV260_MEASURED,
+                sweeps,
+                tau,
+                Convergence::SingleChain,
+                1.0,
+                ROOM_TEMPERATURE_K,
+            )
         };
         assert!(at(0.0, 1.0).is_err(), "no sweeps");
         assert!(at(-1.0, 1.0).is_err(), "negative sweeps");
@@ -449,9 +567,83 @@ mod tests {
             &Prices::UNSTATED,
             10.0,
             1.0,
+            Convergence::SingleChain,
             1.0,
             ROOM_TEMPERATURE_K,
         );
         assert!(unpriced.is_err(), "an unstated price must not yield a number");
+    }
+
+    /// The pricing used to divide by `tau_int` alone, and `tau_int` cannot report the one failure
+    /// that matters most here.
+    ///
+    /// A chain that never leaves its starting basin fluctuates only inside it, so its measured
+    /// autocorrelation is SMALL — which bought it MANY effective samples and a LOW cost per
+    /// sample. `examples/burnin` measures the whole thing: at `beta = 0.6` on an 8x8 ferromagnet,
+    /// a chain started all-up reports `<m> = +0.974 +- 0.0009` against a truth of exactly zero —
+    /// 1060 standard errors out — with `tau_int = 1.13`, which is near the ideal value of one.
+    /// R-hat over dispersed chains is 27.2 and coupling from the past puts the required burn-in
+    /// between `2^19` and `2^20` sweeps against the 200 that were used.
+    ///
+    /// So the refusal is not conservatism. The number it refuses to produce has no denominator:
+    /// a run that did not sample the target has no independent samples of it to be cheap per.
+    #[test]
+    fn a_run_that_did_not_converge_is_refused_rather_than_priced() {
+        let ledger = Ledger { samples: 1_000_000, reads: 0, writes: 0 };
+        let price = |c: Convergence| {
+            cost_per_effective_sample(
+                &ledger,
+                &KV260_MEASURED,
+                1_000_000.0,
+                10.0,
+                c,
+                1.0,
+                ROOM_TEMPERATURE_K,
+            )
+        };
+
+        // THE PREMISE, asserted rather than assumed: everything else about this run prices, so a
+        // refusal below is about convergence and not about the ledger, the prices or the sweeps.
+        let ok = price(Convergence::SingleChain).expect("this run is otherwise priceable");
+        assert!(ok.joules_per_effective_sample > 0.0);
+        assert_eq!(ok.convergence, Convergence::SingleChain);
+        assert!(!Convergence::SingleChain.is_certified(), "one chain cannot certify itself");
+
+        // A burn-in shorter than coalescence required.
+        let short = Convergence::Certified { coalesced_at: 1_048_576.0, burn_in: 200.0 };
+        assert!(price(short).is_err(), "a burn-in below coalescence must be refused");
+        // And the control: the same instrument, with a burn-in that was long enough.
+        let long = Convergence::Certified { coalesced_at: 100.0, burn_in: 200.0 };
+        let good = price(long).expect("an adequate burn-in is priced");
+        assert!(good.convergence.is_certified());
+
+        // Chains from dispersed starts that disagree.
+        assert!(price(Convergence::MultiChain { rhat: 27.199 }).is_err(), "R-hat 27 must refuse");
+        assert!(
+            price(Convergence::MultiChain { rhat: 1.005 }).is_ok(),
+            "an R-hat inside the limit is not refused"
+        );
+        // The limit itself is Vehtari et al. 2021, and it must be the limit that decides.
+        assert!(price(Convergence::MultiChain { rhat: 1.0101 }).is_err(), "just above the limit");
+        assert!(price(Convergence::MultiChain { rhat: 1.0 }).is_ok(), "exactly one is perfect");
+        assert!(price(Convergence::MultiChain { rhat: 0.5 }).is_err(), "R-hat below 1 is not real");
+        assert!(price(Convergence::MultiChain { rhat: f64::NAN }).is_err(), "NaN R-hat");
+    }
+
+    /// The refusal must not be reachable by accident from a non-finite input, which would make the
+    /// gate look present while the real check never ran.
+    #[test]
+    fn a_convergence_claim_made_of_non_finite_numbers_is_refused() {
+        let inf = Convergence::Certified { coalesced_at: f64::INFINITY, burn_in: 1.0 };
+        assert!(inf.refusal().is_some(), "an infinite coalescence time is not a certification");
+        let nan = Convergence::Certified { coalesced_at: 1.0, burn_in: f64::NAN };
+        assert!(nan.refusal().is_some(), "a NaN burn-in is not a certification");
+        // A NEGATIVE coalescence time would otherwise pass `burn_in < coalesced_at`, since
+        // `200 < -5` is false, and nonsense would read as a certification.
+        let neg = Convergence::Certified { coalesced_at: -5.0, burn_in: 200.0 };
+        assert!(neg.refusal().is_some(), "a negative coalescence time is not a certification");
+        // and the ordinary case still passes, so the guard did not swallow everything
+        let fine = Convergence::Certified { coalesced_at: 1.0, burn_in: 2.0 };
+        assert!(fine.refusal().is_none(), "a real certification is not refused");
     }
 }

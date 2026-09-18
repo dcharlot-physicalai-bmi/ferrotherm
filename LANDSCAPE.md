@@ -27,7 +27,7 @@ The second kind is what makes something a reference. Measured across the field's
 | **thermox** (Normal) | 5 | `expm` against `jax.scipy.linalg.expm`, and the identities `Ax≈b`, `AA⁻¹≈I`, at `atol=1e-1` |
 | **THRML** (Extropic) | 13 | an exact Boltzmann law **by enumeration** at small `n`, at `max_err < 0.02`; the rest is API surface |
 | **torx** (Extropic) | 15 | gates, circuits, gradients, simulators, p-dits — API surface |
-| **ferrotherm** | **1990 tests**, of which **435** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
+| **ferrotherm** | **1992 tests**, of which **435** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
 
 > **CORRECTED 2026-09-17.** Two of these rows previously read "API surface", and that was wrong.
 > `thrml/tests/test_ising.py` compares sampled against exact enumerated Boltzmann distributions
@@ -265,11 +265,28 @@ On the only axis that can be settled by computation — *does it reproduce what 
 known, and how much of the field does it cover* — ferrotherm is the reference implementation for
 thermodynamic computing. 19 external sources of truth, 435 verification-bearing tests, seven
 machine-checked theorems, and the field's only calibrated error bars. 19 external sources, 435
-verification-bearing tests of 1990 — and `scripts/check-counts.sh` derives all four figures from the
+verification-bearing tests of 1992 — and `scripts/check-counts.sh` derives all four figures from the
 suite rather than trusting this sentence, because three earlier versions of it disagreed with each
 other. The competitors do verify —
 against enumeration and self-consistency at brute-forceable sizes, at `1e-1` and `2e-2` tolerances
 (see the correction above). The difference is the class of oracle and the coverage, not its
 presence.
+
+**And one of those four claims is narrower than it reads, which we found by testing it rather
+than by being told.** "Calibrated error bars" is established two ways: `certify` checks interval
+coverage on draws taken directly from the exact Boltzmann distribution by inverse-CDF, which
+certifies the interval machinery and no chain at all; and `calibration` checks a real chain's bars
+on a 12-spin ring with a field, which mixes freely. Both are sound. Neither says anything about a
+chain that has not converged — and `examples/burnin` shows what that costs: an 8x8 ferromagnet
+below its critical temperature, started all-up, reports `<m> = +0.974 +- 0.0009` against a truth of
+exactly zero, **1060 standard errors out**, with an integrated autocorrelation time of 1.13 — near
+the ideal value of one. The diagnostic returns its best possible score.
+
+A bar is calibrated conditional on convergence, and `tau_int` cannot check that condition: it
+summarises the timescales a trace contains, and a barrier never crossed contributes none. So
+`floors::cost_per_effective_sample` now takes a `Convergence` argument and refuses rather than
+pricing a run whose convergence was never established — by coupling from the past, which returns
+the burn-in actually required, or by R-hat over dispersed chains. Both instruments were already in
+the crate and neither was wired to the pricing.
 
 Adoption will follow or it will not. It is not evidence either way.

@@ -1055,6 +1055,16 @@ mutations=(
   # meaningless error bar.
   "src/samples.rs|self.value - 1.96 * self.stderr, self.value + 1.96 * self.stderr|self.value - 19.6 * self.stderr, self.value + 19.6 * self.stderr|pfaffian::tests::an_exact_check_discriminates_better_as_the_lattice_grows|a confidence interval ten times too wide to miss"
 
+  # ---- the convergence term the pricing did not have -------------------------------------------
+  # Both of these shipped: `cost_per_effective_sample` divided sweeps by `2 tau_int` and took no
+  # convergence input at all. A chain stuck in its starting basin has a SMALL tau_int -- it only
+  # fluctuates inside that basin -- so it priced as many cheap independent samples. The error runs
+  # in the direction that flatters the run, on the one number this crate exists to report honestly.
+  # Disable either refusal and the named test must notice.
+  "src/floors.rs|} else if burn_in < coalesced_at {|} else if false {|floors::tests::a_run_that_did_not_converge_is_refused_rather_than_priced|a burn-in shorter than coalescence required, priced anyway"
+
+  "src/floors.rs|} else if rhat > Convergence::RHAT_LIMIT {|} else if false {|floors::tests::a_run_that_did_not_converge_is_refused_rather_than_priced|chains that do not agree, priced anyway"
+
 )
 
 bad=0
@@ -1126,7 +1136,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=208
+expected_rows=210
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
