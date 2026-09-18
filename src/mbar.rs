@@ -849,4 +849,92 @@ mod tests {
             Invalid::NotAnchored(0.5)
         );
     }
+
+    /// MBAR had only ever been checked against enumeration. This scores its `ln Z` profile against
+    /// [`crate::pfaffian`]'s exact value on a `20 x 20` grid — `2^400` states — at the top of a
+    /// five-rung ladder anchored at `beta = 0`, where `ln Z = n ln 2` exactly.
+    ///
+    /// # Why the mean over seeds, and a warning about reading a ladder
+    ///
+    /// The first run of this comparison showed every rung at `+2` sigma, same sign, and it was
+    /// tempting to call that a systematic bias with a physical story (energy is extensive, so rung
+    /// overlap shrinks with `n`). Three experiments refuted it: a second seed gave `+0.2, 0.0,
+    /// +0.4, +1.2`; four times the draws did not scale the excursion as a bias would; and a
+    /// seventeen-rung ladder showed `z` drifting smoothly from `+2.0` to `-1.5` along the rungs.
+    /// **MBAR's rung estimates share samples and one anchor, so their errors are correlated by
+    /// construction — a run of same-sign deviations along a ladder is one event, not many.** Over
+    /// six seeds the top rung's `z` had mean `+0.55` and standard deviation `1.01`: the bars are
+    /// calibrated, and a tiny bias is neither shown nor excluded at this budget.
+    ///
+    /// Resolving power is large because `ln Z` is extensive: the control below moves the truth by
+    /// one percent in `beta` and the estimate sits thirteen standard errors from it.
+    #[test]
+    fn the_profile_matches_exact_log_z_beyond_enumeration() {
+        use crate::cluster::{Sampler, Update};
+        use crate::samples::Plan;
+        let l = 20usize;
+        let g = crate::ising::grid2d(l, l, 1.0);
+        let betas = [0.0f64, 0.10, 0.20, 0.30, 0.40];
+        let draws = 2_000usize;
+        let top = betas.len() - 1;
+
+        let profile_at = |seed: u64| -> Profile {
+            let mut traces = Vec::new();
+            for (k, &beta) in betas.iter().enumerate() {
+                let energies: Vec<f64> = if beta == 0.0 {
+                    // The anchor rung: uniform draws, every spin a fair coin.
+                    let mut rng = crate::rng::Pcg::new(seed, k as u64);
+                    let mut out = Vec::with_capacity(draws);
+                    for _ in 0..draws {
+                        let mut st = vec![1i8; g.n];
+                        for v in &mut st {
+                            if rng.f64() < 0.5 {
+                                *v = -1;
+                            }
+                        }
+                        out.push(g.energy(&st));
+                    }
+                    out
+                } else {
+                    let mut smp = Sampler::new(&g, beta, seed ^ (k as u64 * 7919))
+                        .expect("a ferromagnet is unfrustrated");
+                    smp.collect(&Plan::new(500, draws, 2), Update::SwendsenWang, None)
+                        .energies()
+                        .to_vec()
+                };
+                traces.push((beta, energies));
+            }
+            let p = ladder(g.n, &traces, 1e-10, 10_000).expect("a valid anchored ladder");
+            assert!(p.mbar.converged, "MBAR did not converge at seed {seed}: {}", p.mbar.residual);
+            p
+        };
+
+        let exact = crate::pfaffian::log_partition(&g, betas[top]).expect("a grid is planar");
+        let seeds = [11u64, 23, 31];
+        let mut total_z = 0.0;
+        let mut last = None;
+        for &seed in &seeds {
+            let p = profile_at(seed);
+            assert!(p.stderr[top] > 0.0, "the top rung has an error bar");
+            total_z += (p.log_z[top] - exact) / p.stderr[top];
+            last = Some(p);
+        }
+        let mean_z = total_z / seeds.len() as f64;
+        assert!(
+            mean_z.abs() < 2.0,
+            "MBAR must agree with exact ln Z at n={}: mean z over {} seeds = {mean_z:+.2}",
+            g.n,
+            seeds.len()
+        );
+
+        // THE CONTROL. Same profile, truth taken one percent away in beta. If the comparison
+        // could not tell these apart it would not be a comparison.
+        let p = last.expect("three seeds ran");
+        let wrong = crate::pfaffian::log_partition(&g, betas[top] * 1.01).expect("planar");
+        let z_wrong = ((p.log_z[top] - wrong) / p.stderr[top]).abs();
+        assert!(
+            z_wrong > 6.0,
+            "a 1% error in beta must be caught: |z| = {z_wrong:.1}, and agreement was {mean_z:+.2}"
+        );
+    }
 }
