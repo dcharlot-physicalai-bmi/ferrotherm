@@ -192,6 +192,49 @@ impl LengthProfile {
         Ok(LengthProfile::from_dos(&exact_dos(g)?, beta_lo, beta_hi, grid))
     }
 
+    /// The same profile on a **planar** graph of any size, from [`crate::pfaffian`]'s exact `ln Z`.
+    ///
+    /// [`LengthProfile::exact`] enumerates the spectrum and refuses past
+    /// [`crate::samples::ENUMERATION_LIMIT`] — twenty spins. The metric is `Var(E)`, which is the
+    /// second derivative of `ln Z` in `β`, and on a planar graph the Kac–Ward determinant returns
+    /// `ln Z` exactly at any size, so the profile does not need a spectrum at all: at each grid
+    /// point it takes three exact determinants at `β - d, β, β + d` and second-differences them.
+    /// The step `d` is fixed and independent of the grid spacing, so a coarse grid does not
+    /// coarsen the derivative. This is the route the enumeration path is itself tested against.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`crate::pfaffian::log_partition`] refuses: a biased node, a non-planar graph, or
+    /// a non-finite `β`. **A torus is not planar** — [`crate::ising::lattice2d`] is periodic and
+    /// is refused; [`crate::ising::grid2d`] is the open lattice this accepts.
+    ///
+    /// # Panics
+    ///
+    /// Fewer than two grid points, or a span that is not finite and increasing.
+    pub fn planar(
+        g: &Graph,
+        beta_lo: f64,
+        beta_hi: f64,
+        grid: usize,
+    ) -> Result<LengthProfile, crate::pfaffian::Error> {
+        assert!(grid >= 2, "a profile needs at least two grid points");
+        assert!(beta_hi > beta_lo && beta_lo.is_finite() && beta_hi.is_finite(), "bad span");
+        const D: f64 = 1e-4;
+        let k = (grid - 1) as f64;
+        let betas: Vec<f64> = (0..grid)
+            .map(|i| if i + 1 == grid { beta_hi } else { beta_lo + (beta_hi - beta_lo) * i as f64 / k })
+            .collect();
+        let mut speeds = Vec::with_capacity(grid);
+        for &b in &betas {
+            let lo = crate::pfaffian::log_partition(g, b - D)?;
+            let mid = crate::pfaffian::log_partition(g, b)?;
+            let hi = crate::pfaffian::log_partition(g, b + D)?;
+            let var = (hi - 2.0 * mid + lo) / (D * D);
+            speeds.push(var.max(0.0).sqrt());
+        }
+        Ok(LengthProfile::from_speed(&betas, &speeds).expect("a uniform grid of a real metric"))
+    }
+
     /// A profile from measured energy traces — `(β, energies)` pairs, the shape
     /// [`crate::tempering::LadderTraces::as_pairs`] returns.
     ///
@@ -784,5 +827,73 @@ mod tests {
         // the grid and panic. Both ends of the pair send it to the hot end instead.
         assert_eq!(prof.length_at(f64::NAN), 0.0);
         assert_eq!(prof.beta_at(f64::NAN), 0.1);
+    }
+
+    /// [`LengthProfile::exact`] refuses past twenty spins, and every profile this module had ever
+    /// computed exactly was at or below that. [`LengthProfile::planar`] takes the metric from
+    /// [`crate::pfaffian`]'s exact `ln Z` instead of a spectrum, so on a planar graph the ceiling
+    /// is gone. Checked three ways:
+    ///
+    /// 1. **The bridge, where both answer.** On a 4x4 open grid the two profiles agree to a
+    ///    relative `1.7e-8` in every speed and in the total length — a number, not a tolerance.
+    /// 2. **Beyond, by an independent route.** On an 8x8 grid enumeration refuses (asserted, since
+    ///    that refusal is the premise) and the planar profile runs; its `Var(E)` from the second
+    ///    difference of `ln Z` agrees with `-d<E>/dβ` from pfaffian's *analytic* energy to
+    ///    `2.4e-8`. Two exact routes, differing in every intermediate, one number.
+    /// 3. **A control the check must fail.** The same tolerance against the *neighbouring* grid
+    ///    point rejects by two orders of magnitude, so a flat or constant stencil could not read
+    ///    as agreement and the tolerance is tight relative to how fast the metric actually moves.
+    #[test]
+    fn the_planar_profile_matches_enumeration_and_reaches_past_it() {
+        let (lo, hi, grid) = (0.05, 0.35, 13);
+        let tol = 1e-6;
+
+        // 1. the bridge
+        let g = ising::grid2d(4, 4, 1.0);
+        let e = LengthProfile::exact(&g, lo, hi, grid).expect("16 spins enumerate");
+        let p = LengthProfile::planar(&g, lo, hi, grid).expect("an open grid is planar");
+        let mut worst = 0.0f64;
+        let mut worst_neighbour = f64::INFINITY;
+        for i in 0..grid {
+            let rel = ((e.speeds()[i] - p.speeds()[i]) / e.speeds()[i]).abs();
+            worst = worst.max(rel);
+            // 3. the control: the same comparison one grid step over must NOT pass
+            if i + 1 < grid {
+                let off = ((e.speeds()[i + 1] - p.speeds()[i]) / e.speeds()[i + 1]).abs();
+                worst_neighbour = worst_neighbour.min(off);
+            }
+        }
+        assert!(worst < tol, "planar vs enumeration: worst relative speed mismatch {worst:.2e}");
+        assert!(
+            ((e.length() - p.length()) / e.length()).abs() < tol,
+            "total length {} vs {}",
+            e.length(),
+            p.length()
+        );
+        assert!(
+            worst_neighbour > 100.0 * tol,
+            "the control must fail by a wide margin: neighbouring point differs by only {worst_neighbour:.2e}"
+        );
+
+        // 2. beyond the ceiling, cross-checked by an independent exact route
+        let g = ising::grid2d(8, 8, 1.0);
+        assert!(
+            matches!(LengthProfile::exact(&g, lo, hi, grid), Err(Refused::TooLargeToEnumerate { .. })),
+            "64 spins must be past the enumeration limit, or this test proves nothing about reach"
+        );
+        let p = LengthProfile::planar(&g, lo, hi, grid).expect("an 8x8 open grid is planar");
+        let i = grid / 2;
+        let b = p.betas()[i];
+        let d = 1e-4;
+        let ep = crate::pfaffian::solve(&g, b + d).expect("planar").energy.expect("asked for");
+        let em = crate::pfaffian::solve(&g, b - d).expect("planar").energy.expect("asked for");
+        let var_from_energy = -(ep - em) / (2.0 * d);
+        let var_planar = p.speeds()[i] * p.speeds()[i];
+        let rel = ((var_planar - var_from_energy) / var_from_energy).abs();
+        assert!(rel < tol, "at n=64, beta {b}: d2 ln Z gives {var_planar}, -dE/dbeta gives {var_from_energy} ({rel:.2e})");
+        // and the ladder it places is usable: strictly increasing, inside the span
+        let ladder = p.ladder(6);
+        assert!(ladder.windows(2).all(|w| w[1] > w[0]), "rungs must increase: {ladder:?}");
+        assert!(ladder[0] >= lo && *ladder.last().expect("six rungs") <= hi, "rungs inside the span");
     }
 }
