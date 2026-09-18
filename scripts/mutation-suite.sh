@@ -1065,6 +1065,17 @@ mutations=(
 
   "src/floors.rs|} else if rhat > Convergence::RHAT_LIMIT {|} else if false {|floors::tests::a_run_that_did_not_converge_is_refused_rather_than_priced|chains that do not agree, priced anyway"
 
+  # The first `refusal` rejected any R-hat under one as "not real". A sample R-hat is
+  # sqrt((N-1)/N + B/(N W)), so well-mixed chains land just UNDER one -- four real chains gave
+  # 0.99985 -- and the rule refused exactly the best-converged runs. The test beside it checked 1.0
+  # and 0.5 and never a realistic value. Put the old floor back and real chains must notice.
+  "src/floors.rs|} else if rhat < Convergence::RHAT_FLOOR {|} else if rhat < 1.0 {|floors::tests::convergence_from_chains_takes_the_strictest_diagnostic_and_refuses_too_little_evidence|an R-hat just under one refused as impossible"
+
+  # `from_chains` takes the LARGEST of three R-hats because each is blind where another sees.
+  # Collapse them to the plain one and chains with equal means and different spreads -- which
+  # plain R-hat passes, by an assertion in the same test -- would be priced.
+  "src/floors.rs|let all = [d.rhat, d.rhat_rank, d.rhat_folded];|let all = [d.rhat, d.rhat, d.rhat];|floors::tests::convergence_from_chains_takes_the_strictest_diagnostic_and_refuses_too_little_evidence|the strictest diagnostic replaced by the most forgiving"
+
 )
 
 bad=0
@@ -1136,7 +1147,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=210
+expected_rows=212
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

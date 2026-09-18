@@ -272,6 +272,66 @@ impl Convergence {
     /// The R-hat above which [`Convergence::MultiChain`] is refused (Vehtari et al. 2021).
     pub const RHAT_LIMIT: f64 = 1.01;
 
+    /// The R-hat below which [`Convergence::MultiChain`] is refused — and it is NOT one.
+    ///
+    /// A sample R-hat is `sqrt((N - 1)/N + B/(N W))` for split chains of `N` draws, so when the
+    /// chains agree well (`B -> 0`) it sits slightly BELOW one: four chains of 2,000 draws from
+    /// one law give `0.99985`. The first version of this type refused anything under one as "not
+    /// real", which refused exactly the best-converged runs, and the test written beside it
+    /// checked `1.0` and `0.5` and never a realistic value. What the formula does bound is
+    /// `R^2 >= (N - 1)/N`: an R-hat under `0.99` means fewer than about fifty draws per split
+    /// chain, which is too little evidence to call agreement — so that is where the floor is.
+    pub const RHAT_FLOOR: f64 = 0.99;
+
+    /// From the chains themselves: one observable's trace per chain, started from DISPERSED states.
+    ///
+    /// This exists so that the strong claim is as easy to make as the weak one. Without it a
+    /// caller has to assemble traces, pick a diagnostic and build the variant by hand, while
+    /// [`Convergence::SingleChain`] needs nothing — and the path of least resistance would be
+    /// the one diagnostic that cannot fail.
+    ///
+    /// It takes the **largest** of [`crate::rhat`]'s three potential scale reductions — split,
+    /// rank-normalised and folded — because each is blind where another sees: plain R-hat passes
+    /// chains whose means agree and whose spreads do not, which the folded one catches, and the
+    /// rank-normalised one survives tails the plain one does not. If any of the three is `NaN` —
+    /// fewer than two chains, fewer than four draws, a constant chain — the result is `NaN` and
+    /// [`Convergence::refusal`] refuses it: too little evidence is not agreement. (`f64::max`
+    /// silently DROPS a `NaN`, so that case is handled by hand.)
+    #[must_use]
+    pub fn from_chains(chains: &[Vec<f64>]) -> Convergence {
+        let d = crate::rhat::diagnose(chains);
+        let all = [d.rhat, d.rhat_rank, d.rhat_folded];
+        let mut worst = f64::NEG_INFINITY;
+        for r in all {
+            if r.is_nan() {
+                return Convergence::MultiChain { rhat: f64::NAN };
+            }
+            if r > worst {
+                worst = r;
+            }
+        }
+        Convergence::MultiChain { rhat: worst }
+    }
+
+    /// From perfect draws of the same model: the burn-in a chain used, held against the WORST
+    /// coalescence time coupling from the past needed across `draws`.
+    ///
+    /// No draws at all is an infinite requirement, which [`Convergence::refusal`] refuses: an
+    /// empty measurement certifies nothing. Note what is certified — [`crate::cftp`] couples the
+    /// single-site heat-bath chain, so this bounds a Gibbs sampler's burn-in exactly and is only
+    /// a loose upper bound for a cluster sampler, which mixes faster than the chain measured.
+    #[must_use]
+    pub fn from_perfect_draws(draws: &[crate::cftp::Draw], burn_in: usize) -> Convergence {
+        let mut worst: Option<usize> = None;
+        for d in draws {
+            worst = Some(worst.map_or(d.coalesced_at, |w| w.max(d.coalesced_at)));
+        }
+        Convergence::Certified {
+            coalesced_at: worst.map_or(f64::INFINITY, |w| w as f64),
+            burn_in: burn_in as f64,
+        }
+    }
+
     /// Why this run must not be priced, or `None` if it may be. The `Option` IS the refusal, so
     /// there is no `Result` here and no error section: `None` is the permission to proceed.
     #[must_use]
@@ -296,8 +356,14 @@ impl Convergence {
                 }
             }
             Convergence::MultiChain { rhat } => {
-                if !rhat.is_finite() || rhat < 1.0 {
-                    Some(format!("an R-hat must be finite and at least 1, got {rhat}"))
+                if !rhat.is_finite() {
+                    Some(format!("an R-hat must be finite, got {rhat}"))
+                } else if rhat < Convergence::RHAT_FLOOR {
+                    Some(format!(
+                        "R-hat is {rhat}, below the {} floor: since R^2 >= (N - 1)/N that means \
+                         fewer than about fifty draws per split chain, too few to call agreement",
+                        Convergence::RHAT_FLOOR
+                    ))
                 } else if rhat > Convergence::RHAT_LIMIT {
                     Some(format!(
                         "R-hat is {rhat}, above the {} limit: the chains do not agree, so they \
@@ -626,7 +692,15 @@ mod tests {
         // The limit itself is Vehtari et al. 2021, and it must be the limit that decides.
         assert!(price(Convergence::MultiChain { rhat: 1.0101 }).is_err(), "just above the limit");
         assert!(price(Convergence::MultiChain { rhat: 1.0 }).is_ok(), "exactly one is perfect");
-        assert!(price(Convergence::MultiChain { rhat: 0.5 }).is_err(), "R-hat below 1 is not real");
+        // SLIGHTLY BELOW ONE IS THE BEST OUTCOME, NOT AN IMPOSSIBLE ONE: R^2 = (N-1)/N + B/(N W),
+        // so well-mixed chains land just under 1. This value is measured, from four real chains,
+        // and the first version of `refusal` rejected it.
+        assert!(
+            price(Convergence::MultiChain { rhat: 0.999_849_864 }).is_ok(),
+            "an R-hat just under one is excellent agreement and must be priced"
+        );
+        assert!(price(Convergence::MultiChain { rhat: 0.98 }).is_err(), "under the floor: too few draws");
+        assert!(price(Convergence::MultiChain { rhat: 0.5 }).is_err(), "far under the floor");
         assert!(price(Convergence::MultiChain { rhat: f64::NAN }).is_err(), "NaN R-hat");
     }
 
@@ -645,5 +719,86 @@ mod tests {
         // and the ordinary case still passes, so the guard did not swallow everything
         let fine = Convergence::Certified { coalesced_at: 1.0, burn_in: 2.0 };
         assert!(fine.refusal().is_none(), "a real certification is not refused");
+    }
+
+    /// Standard normals by Box-Muller, so the fixtures below need nothing the crate does not have.
+    fn normals(seed: u64, n: usize, scale: f64, shift: f64) -> Vec<f64> {
+        let mut rng = crate::rng::Pcg::new(seed, 0xC0_17E5);
+        let mut out = Vec::with_capacity(n);
+        while out.len() < n {
+            let u1 = rng.f64().max(1e-300);
+            let u2 = rng.f64();
+            let r = (-2.0 * u1.ln()).sqrt();
+            out.push(shift + scale * r * (core::f64::consts::TAU * u2).cos());
+        }
+        out
+    }
+
+    /// The constructor exists so the strong claim is as easy as the weak one — so it has to be
+    /// STRONG. It takes the largest of three R-hats because each is blind where another sees,
+    /// and the fixture that proves it is the one `rhat`'s own header describes: chains whose
+    /// means agree and whose spreads do not. Plain split R-hat passes them. The folded one does
+    /// not, and neither may this.
+    #[test]
+    fn convergence_from_chains_takes_the_strictest_diagnostic_and_refuses_too_little_evidence() {
+        // Four chains of one distribution: agreement, and it must not be refused.
+        let same: Vec<Vec<f64>> = (0..4).map(|k| normals(k, 2_000, 1.0, 0.0)).collect();
+        let c = Convergence::from_chains(&same);
+        assert!(c.refusal().is_none(), "four chains of one law must agree: {c:?}");
+        assert!(c.is_certified());
+
+        // Two up, two down: the burn-in failure itself. Every diagnostic sees it.
+        let split = vec![
+            normals(10, 2_000, 0.1, 1.0),
+            normals(11, 2_000, 0.1, -1.0),
+            normals(12, 2_000, 0.1, 1.0),
+            normals(13, 2_000, 0.1, -1.0),
+        ];
+        assert!(Convergence::from_chains(&split).refusal().is_some(), "chains in two basins");
+
+        // SAME MEAN, DIFFERENT SPREAD. The premise first: plain split R-hat really does pass this,
+        // or the assertion after it would prove nothing about taking the maximum.
+        let spread = vec![
+            normals(20, 2_000, 1.0, 0.0),
+            normals(21, 2_000, 1.0, 0.0),
+            normals(22, 2_000, 3.0, 0.0),
+            normals(23, 2_000, 3.0, 0.0),
+        ];
+        let plain = crate::rhat::split_rhat(&spread);
+        assert!(
+            plain < Convergence::RHAT_LIMIT,
+            "the fixture must fool plain R-hat or it tests nothing: {plain}"
+        );
+        assert!(
+            Convergence::MultiChain { rhat: plain }.refusal().is_none(),
+            "and built by hand from plain R-hat it WOULD be priced"
+        );
+        let strict = Convergence::from_chains(&spread);
+        assert!(strict.refusal().is_some(), "the folded diagnostic must catch it: {strict:?}");
+
+        // Too little evidence is not agreement: one chain, and chains too short to diagnose.
+        let one = vec![normals(30, 2_000, 1.0, 0.0)];
+        assert!(Convergence::from_chains(&one).refusal().is_some(), "one chain certifies nothing");
+        let short = vec![vec![0.1, 0.2, 0.3], vec![0.2, 0.1, 0.3]];
+        assert!(Convergence::from_chains(&short).refusal().is_some(), "three draws certify nothing");
+        assert!(Convergence::from_chains(&[]).refusal().is_some(), "no chains certify nothing");
+    }
+
+    /// The other instrument, from real perfect draws rather than typed numbers.
+    #[test]
+    fn convergence_from_perfect_draws_holds_the_burn_in_against_the_worst_coalescence() {
+        let g = crate::ising::grid2d(4, 4, 1.0);
+        let draws = crate::cftp::exact_draws(&g, 0.2, 7, 50).expect("a hot ferromagnet coalesces");
+        let worst = draws.iter().map(|d| d.coalesced_at).max().expect("fifty draws");
+        assert!(worst >= 1, "coalescence takes at least one sweep");
+
+        let enough = Convergence::from_perfect_draws(&draws, worst);
+        assert!(enough.refusal().is_none(), "a burn-in equal to the worst coalescence is adequate");
+        let short = Convergence::from_perfect_draws(&draws, worst - 1);
+        assert!(short.refusal().is_some(), "one sweep short of the worst draw must be refused");
+        // it is the WORST draw that binds, not the first or the mean
+        assert_eq!(enough, Convergence::Certified { coalesced_at: worst as f64, burn_in: worst as f64 });
+        // and an empty measurement certifies nothing
+        assert!(Convergence::from_perfect_draws(&[], 1_000_000).refusal().is_some());
     }
 }

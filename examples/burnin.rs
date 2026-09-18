@@ -26,7 +26,8 @@
 //
 // run: cargo run --release --example burnin
 
-use ferrotherm::{certify, cftp, gibbs, ising, rhat};
+use ferrotherm::floors::Convergence;
+use ferrotherm::{certify, cftp, gibbs, ising};
 
 /// Mean spin of a state.
 fn magnetization(s: &[i8]) -> f64 {
@@ -91,10 +92,15 @@ fn main() {
         trace(&g, beta, 0x3333, 1, burn_in, draws),
         trace(&g, beta, 0x4444, -1, burn_in, draws),
     ];
-    let r = rhat::split_rhat(&chains);
+    // `from_chains` takes the strictest of the split, rank-normalised and folded R-hats, so the
+    // strong claim costs one call -- and what is printed is the pricing's own refusal, verbatim.
+    let multi = Convergence::from_chains(&chains);
     println!("INSTRUMENT ONE -- rhat, four chains from dispersed starts (two up, two down):");
-    println!("  split R-hat         {r:.3}          <- Vehtari et al. 2021 refuse above 1.01");
-    println!("  verdict             {}", if r > 1.01 { "REFUSED -- the chains do not agree" } else { "accepted" });
+    println!("  {multi:?}");
+    match multi.refusal() {
+        Some(why) => println!("  the pricing says     REFUSED: {why}"),
+        None => println!("  the pricing says     accepted"),
+    }
     println!();
 
     // Instrument two: coupling from the past, which certifies the burn-in instead of assuming it.
@@ -104,14 +110,10 @@ fn main() {
             Ok(d) => {
                 println!("  coalesced_at        {} sweeps", d.coalesced_at);
                 println!("  burn-in used        {burn_in} sweeps");
-                println!(
-                    "  verdict             {}",
-                    if (d.coalesced_at as f64) > burn_in as f64 {
-                        "REFUSED -- the burn-in was shorter than coalescence required"
-                    } else {
-                        "adequate"
-                    }
-                );
+                match Convergence::from_perfect_draws(&[d], burn_in).refusal() {
+                    Some(why) => println!("  the pricing says     REFUSED: {why}"),
+                    None => println!("  the pricing says     adequate"),
+                }
             }
             Err(e) => {
                 println!("  REFUSED: {e:?}");
