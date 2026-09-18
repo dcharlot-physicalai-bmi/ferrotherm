@@ -313,6 +313,163 @@ const fn mix(z: u64) -> u64 {
     x ^ (x >> 31)
 }
 
+/// Perfect sampling for **any** Ising model — frustrated ones included — by a bounding chain.
+///
+/// [`Perfect`] needs an attractive model, because its sandwich argument is monotonicity, and it
+/// refuses everything else. That refusal is correct and it is also most of the models anyone
+/// trains: a fitted Boltzmann machine has couplings of both signs. The bounding chain of Huber
+/// (*Ann. Appl. Probab.* 14:734, 2004), after Häggström and Nelander (*Scand. J. Statist.* 26:395,
+/// 1999), drops the requirement by tracking what is KNOWN instead of two extreme states.
+///
+/// # The construction
+///
+/// Every site is `+1`, `-1` or **unknown**. Start everything unknown at time `-T` and run the same
+/// systematic heat-bath sweep on the same uniforms. At site `i` the local field is not known
+/// either, but it is bracketed: a known neighbour contributes `J_ij s_j` to both ends and an
+/// unknown one contributes `-|J_ij|` to the low end and `+|J_ij|` to the high. The heat-bath
+/// probability is increasing in the field, so with the site's uniform `u`
+///
+/// ```text
+///   u <  p_up(lo)   =>  +1 under EVERY completion of the unknowns
+///   u >= p_up(hi)   =>  -1 under every completion
+///   otherwise       =>  unknown
+/// ```
+///
+/// and if nothing is unknown at time 0, every start at `-T` agrees there — which is the coupling-
+/// from-the-past condition, so the state is an exact draw. No gauge, no sign condition.
+///
+/// # What it costs, and when it fails
+///
+/// Unknowns breed unknowns through strong couplings and die under strong fields, so coalescence is
+/// fast when sites are pinned or weakly coupled and does not happen at all deep in a frustrated
+/// ordered phase. There it hits the cap and says [`Refused::NotCoalesced`]; it never answers
+/// approximately. That is the useful property: on a trained model it either **certifies** how many
+/// sweeps forget the start, or reports that it cannot.
+///
+/// On an attractive model this is [`Perfect`] exactly — a site is unknown precisely where the top
+/// and bottom chains differ — and because both draw from [`Perfect`]'s uniform stream, the two
+/// return the same state at the same coalescence time, bit for bit. There is a test.
+#[derive(Clone, Copy)]
+pub struct Bounding<'g> {
+    g: &'g Graph,
+    beta: f64,
+    max_steps: usize,
+}
+
+impl core::fmt::Debug for Bounding<'_> {
+    /// `Graph` is not `Debug`, so this reports the sampler's own parameters rather than the model.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Bounding {{ n: {}, beta: {}, max_steps: {} }}", self.g.n, self.beta, self.max_steps)
+    }
+}
+
+impl<'g> Bounding<'g> {
+    /// A bounding-chain sampler for `g` at `beta`. Couplings and fields of any sign are accepted.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::BadBeta`] when `beta` is negative or not finite.
+    pub fn new(g: &'g Graph, beta: f64) -> Result<Bounding<'g>, Refused> {
+        if !(beta.is_finite() && beta >= 0.0) {
+            return Err(Refused::BadBeta { beta });
+        }
+        Ok(Bounding { g, beta, max_steps: DEFAULT_MAX_STEPS })
+    }
+
+    /// Stop doubling once an attempt reaches this many sweeps. Coerced up to 1.
+    #[must_use]
+    pub fn with_max_steps(mut self, steps: usize) -> Bounding<'g> {
+        self.max_steps = steps.max(1);
+        self
+    }
+
+    /// One systematic sweep of the bounding chain, `0` standing for unknown.
+    fn sweep(&self, seed: u64, t: usize, s: &mut [i8]) {
+        let g = self.g;
+        let mut rng = Perfect::stream(seed, t);
+        for i in 0..g.n {
+            let u = rng.f64();
+            let (mut lo, mut hi) = (g.h[i], g.h[i]);
+            for k in g.offset[i]..g.offset[i + 1] {
+                let v = s[g.nbr[k] as usize];
+                if v == 0 {
+                    // AN UNKNOWN NEIGHBOUR WIDENS THE BRACKET BY ITS FULL COUPLING, BOTH WAYS.
+                    // Anything narrower admits a completion the bracket does not cover, and the
+                    // draw that "coalesces" is then biased without any sign that it is.
+                    let a = g.w[k].abs();
+                    lo -= a;
+                    hi += a;
+                } else {
+                    let c = g.w[k] * f64::from(v);
+                    lo += c;
+                    hi += c;
+                }
+            }
+            s[i] = if u < p_up(lo, self.beta) {
+                1
+            } else if u >= p_up(hi, self.beta) {
+                -1
+            } else {
+                0
+            };
+        }
+    }
+
+    /// The state at time 0 of the chain started all-unknown at `-steps`, or `None` if any site is
+    /// still unknown then. One attempt; [`Bounding::draw`] is the doubling loop around it.
+    #[must_use]
+    pub fn from_past(&self, seed: u64, steps: usize) -> Option<Vec<i8>> {
+        let mut s = vec![0i8; self.g.n];
+        for t in (1..=steps).rev() {
+            self.sweep(seed, t, &mut s);
+        }
+        s.iter().all(|&v| v != 0).then_some(s)
+    }
+
+    /// One exact draw, doubling the look-back until nothing is unknown at time 0.
+    ///
+    /// The ledger is charged two site updates per site per sweep — the two ends of the bracket are
+    /// two field evaluations, which is what [`Perfect`]'s two chains cost — and one read per site.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::NotCoalesced`] if unknowns survive at [`Bounding::with_max_steps`].
+    pub fn draw(&self, seed: u64, ledger: Option<&mut Ledger>) -> Result<Draw, Refused> {
+        let n = self.g.n;
+        let (mut steps, mut total, mut doublings) = (1usize, 0usize, 0usize);
+        let (state, coalesced_at) = loop {
+            doublings += 1;
+            total += steps;
+            if let Some(s) = self.from_past(seed, steps) {
+                break (s, steps);
+            }
+            if steps >= self.max_steps {
+                return Err(Refused::NotCoalesced { steps });
+            }
+            steps = steps.saturating_mul(2).min(self.max_steps);
+        };
+        let updates = 2 * total as u64 * n as u64;
+        if let Some(l) = ledger {
+            l.samples += updates;
+            l.reads += n as u64;
+        }
+        Ok(Draw { state, coalesced_at, doublings, updates })
+    }
+
+    /// `k` independent exact draws, seeded as [`Perfect::draws`] seeds its own.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Bounding::draw`] refuses, from the first draw that is refused.
+    pub fn draws(&self, seed: u64, k: usize, mut ledger: Option<&mut Ledger>) -> Result<Vec<Draw>, Refused> {
+        let mut out = Vec::with_capacity(k);
+        for i in 0..k {
+            out.push(self.draw(mix(seed.wrapping_add(i as u64)), ledger.as_deref_mut())?);
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,5 +925,143 @@ mod tests {
             wrong > 2.0 * agree,
             "the separation must be real, not marginal: {agree:.1} -> {wrong:.1}"
         );
+    }
+
+    /// A model [`Perfect`] refuses: a frustrated triangle with two more spins and fields.
+    fn frustrated() -> Graph {
+        let mut b = GraphBuilder::new(5);
+        b.couple(0, 1, 1.0);
+        b.couple(1, 2, 0.8);
+        b.couple(0, 2, -0.9);
+        b.couple(2, 3, -0.7);
+        b.couple(3, 4, 0.6);
+        b.couple(4, 0, -0.5);
+        b.bias(1, 0.3);
+        b.bias(3, -0.2);
+        b.build()
+    }
+
+    fn tv_to_exact(g: &Graph, beta: f64, d: &[Draw]) -> f64 {
+        let mut hist = vec![0.0f64; 1 << g.n];
+        for x in d {
+            let mut k = 0usize;
+            for (i, &v) in x.state.iter().enumerate() {
+                if v > 0 {
+                    k |= 1 << i;
+                }
+            }
+            hist[k] += 1.0 / d.len() as f64;
+        }
+        crate::ising::tv(&hist, &crate::ising::exact_boltzmann(g, beta))
+    }
+
+    /// On an attractive model a site is unknown exactly where the top and bottom chains differ, so
+    /// the bounding chain IS the monotone sampler — and drawing from the same uniform stream, it
+    /// must return the same state at the same coalescence time. Not statistically: bit for bit.
+    #[test]
+    fn on_an_attractive_model_the_bounding_chain_is_the_monotone_sampler_bit_for_bit() {
+        let g = crate::ising::grid2d(4, 4, 1.0);
+        for beta in [0.2, 0.44] {
+            let mono = Perfect::new(&g, beta).unwrap();
+            let bound = Bounding::new(&g, beta).unwrap();
+            for seed in 0..25u64 {
+                let (a, b) = (mono.draw(seed, None).unwrap(), bound.draw(seed, None).unwrap());
+                assert_eq!(a.state, b.state, "states differ at beta {beta}, seed {seed}");
+                assert_eq!(a.coalesced_at, b.coalesced_at, "coalescence differs at seed {seed}");
+                assert_eq!(a.updates, b.updates, "and so the ledger charge differs");
+            }
+        }
+    }
+
+    /// The models the monotone sampler refuses, sampled exactly.
+    ///
+    /// The contrast is the premise, so it is asserted on the fixture where it is large: the
+    /// frustrated triangle of `the_refusal_prevents_a_measurable_bias`, where the sandwich with its
+    /// refusal bypassed sits about seven sampling floors from the truth. (A first version asserted
+    /// the contrast on the five-spin model below and the premise failed — the sandwich is off by
+    /// under two floors there — which is what a premise assertion is for.) The five-spin model,
+    /// mixed signs and fields, then checks exactness at a warm and a cold temperature, where
+    /// coalescence takes up to 64 and up to 2,048 sweeps.
+    #[test]
+    fn a_frustrated_model_is_sampled_exactly_by_the_bounding_chain() {
+        let mut b = GraphBuilder::new(3);
+        b.couple(0, 1, 1.0);
+        b.couple(1, 2, 1.0);
+        b.couple(0, 2, -1.0);
+        let tri = b.build();
+        let (beta, draws) = (0.7, 20_000usize);
+        assert!(Perfect::new(&tri, beta).is_err(), "the fixture must be one Perfect refuses");
+        let floor = 0.5 * (8.0 / draws as f64).sqrt();
+        let biased = tv_to_exact(&tri, beta, &Perfect::unchecked(&tri, beta).draws(4, draws, None).unwrap());
+        assert!(biased > 5.0 * floor, "premise: the sandwich is biased here: {biased:.4} vs {floor:.4}");
+        let exact = tv_to_exact(&tri, beta, &Bounding::new(&tri, beta).unwrap().draws(4, draws, None).unwrap());
+        assert!(exact < 1.5 * floor, "triangle: tv {exact:.4} against a {floor:.4} floor");
+
+        let g = frustrated();
+        let draws = 40_000usize;
+        let floor = 0.5 * ((1 << g.n) as f64 / draws as f64).sqrt();
+        for beta in [0.7, 1.4] {
+            assert!(Perfect::new(&g, beta).is_err(), "the fixture must be one Perfect refuses");
+            let d = Bounding::new(&g, beta).unwrap().draws(4, draws, None).unwrap();
+            let tv = tv_to_exact(&g, beta, &d);
+            assert!(tv < 1.5 * floor, "beta {beta}: tv {tv:.4} against a {floor:.4} floor");
+        }
+    }
+
+    /// Deep in a frustrated ordered phase unknowns never die out. The answer to that is a refusal
+    /// at the cap, never an approximate draw.
+    #[test]
+    fn a_bounding_chain_that_cannot_coalesce_refuses_at_the_cap() {
+        let mut b = GraphBuilder::new(8);
+        for i in 0..8 {
+            for j in i + 1..8 {
+                b.couple(i, j, if (i + j) % 2 == 0 { 1.5 } else { -1.5 });
+            }
+        }
+        let g = b.build();
+        let cold = Bounding::new(&g, 3.0).unwrap().with_max_steps(64);
+        assert_eq!(cold.draw(1, None).unwrap_err(), Refused::NotCoalesced { steps: 64 });
+        assert!(Bounding::new(&g, f64::NAN).is_err() && Bounding::new(&g, -1.0).is_err());
+        // and the same model hot coalesces, so the refusal is about temperature, not the model
+        assert!(Bounding::new(&g, 0.02).unwrap().draw(1, None).is_ok());
+    }
+
+    /// Past enumeration, on a model the monotone sampler refuses: a 3 x 12 strip with couplings of
+    /// random sign and random fields. Thirty-six spins is `2^36` states, but the strip's treewidth
+    /// is three, so [`crate::exact::Elimination`] still gives every marginal exactly.
+    #[test]
+    fn a_frustrated_strip_matches_exact_elimination_beyond_enumeration() {
+        let (w, h) = (12usize, 3usize);
+        let mut rng = Pcg::new(41, 9);
+        let mut b = GraphBuilder::new(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                if x + 1 < w {
+                    b.couple(i, i + 1, if rng.f64() < 0.5 { 0.6 } else { -0.6 });
+                }
+                if y + 1 < h {
+                    b.couple(i, i + w, if rng.f64() < 0.5 { 0.6 } else { -0.6 });
+                }
+                b.bias(i, 0.4 * (rng.f64() - 0.5));
+            }
+        }
+        let g = b.build();
+        let beta = 0.4;
+        assert!(Perfect::new(&g, beta).is_err(), "premise: the strip must be frustrated");
+
+        let want = crate::exact::Elimination::default().marginals(&g, beta).unwrap();
+        let n = 3000;
+        let d = Bounding::new(&g, beta).unwrap().draws(909, n, None).unwrap();
+        for i in 0..g.n {
+            let got = up_rate(&d, i);
+            let se = (want[i] * (1.0 - want[i]) / n as f64).sqrt();
+            assert!(
+                (got - want[i]).abs() < 4.5 * se,
+                "site {i}: {got:.4} against the exact {:.4}, {:.1} standard errors",
+                want[i],
+                (got - want[i]).abs() / se
+            );
+        }
     }
 }

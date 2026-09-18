@@ -1076,6 +1076,12 @@ mutations=(
   # plain R-hat passes, by an assertion in the same test -- would be priced.
   "src/floors.rs|let all = [d.rhat, d.rhat_rank, d.rhat_folded];|let all = [d.rhat, d.rhat, d.rhat];|floors::tests::convergence_from_chains_takes_the_strictest_diagnostic_and_refuses_too_little_evidence|the strictest diagnostic replaced by the most forgiving"
 
+  # ---- the bounding chain ---------------------------------------------------------------------
+  # An unknown neighbour must widen the field bracket by its FULL coupling, both ways. Narrow it
+  # and the chain still "coalesces" -- faster, in fact -- onto a draw that is not from the model,
+  # with nothing in the output to say so. On a frustrated model the exactness test must notice.
+  "src/cftp.rs|                    let a = g.w[k].abs();|                    let a = 0.0 * g.w[k].abs();|cftp::tests::a_frustrated_model_is_sampled_exactly_by_the_bounding_chain|an unknown neighbour that widens nothing"
+
 )
 
 bad=0
@@ -1147,7 +1153,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=212
+expected_rows=213
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
