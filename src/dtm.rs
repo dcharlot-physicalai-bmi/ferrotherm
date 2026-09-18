@@ -23,6 +23,27 @@
 //! `n = 12`. So at these sizes the constant is at least forty times what the 1% criterion needs,
 //! and flat in `n`; what it needs at 4,900 sites with latents is not a question enumeration can
 //! answer, and the example says so rather than extrapolating.
+//!
+//! # `K_mix`, certified past enumeration
+//!
+//! [`crate::cftp::Bounding`] can answer part of it. A trained conditional has couplings of both
+//! signs, which monotone coupling from the past refuses; the bounding chain does not, and the
+//! look-back at which it has no unknown site left is a CERTIFIED number of sweeps after which the
+//! chain has forgotten every start — exact, with no trace and no window. `examples/kmix_certified.rs`
+//! (2026-09-18) runs `kmix_exact`'s chain, recipe, seeds and clamp contexts, so at 3x3 and 4x3 the
+//! trained models are the same models: the exact `K(1%)` comes out 6, 4, 4, 3 again and the
+//! certificate reads **8**, a power-of-two upper bound one notch above it. Then it keeps going on
+//! the all-visible nearest-neighbour grid: worst certified coalescence over 8 contexts x 32 exact
+//! draws is 16 sweeps at `n = 36..144`, 32 at 256, and **64 at every size from 576 to 4,900**,
+//! with the three later denoising steps at 16 throughout and **no refusal in 10,240 draws**.
+//!
+//! So on this model family the paper's constant covers the paper's site count, by about four —
+//! and "about forty times generous", which is what `n = 12` says, does not transfer: the margin
+//! shrinks with size and then stops shrinking. A trend fitted to the sizes up to 576 predicted
+//! 128 to 256 sweeps at 4,900 and was wrong; the run is why this paragraph has a number in it and
+//! not a slope. What it does NOT cover is the flagship configuration: latents, twelve-neighbour
+//! connectivity, eight steps, real images. More neighbours breed more unknowns, and that case is
+//! unmeasured.
 
 use crate::rng::Pcg;
 

@@ -194,6 +194,15 @@ as a safety stop, and a run it truncates says so loudly rather than reporting a 
 though the run had finished. **Regenerating this row needs the dataset and a real training run; the
 number above stands as an unreproducible historical claim until then, and should not be quoted.**
 
+**`K_mix`, certified at the paper's site count.** `examples/kmix_exact` measured the sweeps a
+denoising step needs exactly at `n = 9` and `12` (at most 6, against the paper's 250) and said what
+it could not reach. `cftp::Bounding` — perfect sampling for models with couplings of both signs —
+reaches it: `examples/kmix_certified` reproduces those two sizes (certificate 8 beside an exact 6)
+and then certifies the all-visible nearest-neighbour grid up to **70×70 = 4,900 sites: worst
+coalescence 64 sweeps, no refusal in 10,240 exact draws**, flat from 576 sites up. The constant
+covers the site count by about four on this family; the forty-fold margin seen at twelve spins
+does not transfer, and the flagship configuration (latents, G12, eight steps) is unmeasured.
+
 **The total-correlation penalty is load-bearing, measured both ways.** Without it `|J|` grows
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.
