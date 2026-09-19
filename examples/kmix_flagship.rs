@@ -131,6 +131,15 @@ enum Arm {
     /// sensor ran about one doubling optimistic against the scoring's 144 draws, and it projects
     /// once more before scoring, which is what one would do before deploying any model.
     Project,
+    /// `Project` with its margin DERIVED instead of guessed. Coalescence from the past is
+    /// submultiplicative: a bounding chain started all-unknown is the worst start, so
+    /// `P(T > a + b) <= P(T > a) P(T > b)`. If every one of `s` draws coalesces within `B / m`
+    /// sweeps, the rule of three bounds the failure rate there by `3 / s`, and so at the full
+    /// budget `B` by `(3 / s)^m`. With `s = 8` draws and `m = 8` that is `0.375^8 = 3.9e-4` per
+    /// draw. The bound is PER CLAMP CONTEXT -- a mixture over contexts goes the wrong way under
+    /// Jensen -- so the eight draws are spread over four contexts and the claim covers contexts
+    /// like those sensed, not every context there is.
+    ProjectQ,
 }
 
 /// The paper's controller input: "the autocorrelations of each learned conditional at a delay
@@ -166,16 +175,18 @@ fn layer_autocorrelation(g: &Graph, lag: usize, trace: usize, seed: u64) -> f64 
     if counted == 0 { 0.0 } else { total / counted as f64 }
 }
 
-/// Scale `layer`'s couplings down by a tenth until four bounding-chain draws on its conditional
-/// under `x_next` all coalesce within `cap` sweeps. Returns the factor applied.
-fn project_layer(dtm: &mut Dtm, layer: usize, x_next: &[i8], cap: usize, seed: u64) -> f64 {
+/// Scale `layer`'s couplings down by a tenth until `per` bounding-chain draws on its conditional
+/// under EACH of `contexts` all coalesce within `cap` sweeps. Returns the factor applied.
+fn project_layer(dtm: &mut Dtm, layer: usize, contexts: &[Vec<i8>], per: u64, cap: usize, seed: u64) -> f64 {
     let mut factor = 1.0;
     for _ in 0..80 {
-        let g = conditional(dtm, layer, x_next);
-        let b = Bounding::new(&g, 1.0).expect("finite").with_max_steps(cap);
         let mut ok = true;
-        for d in 0..4u64 {
-            ok &= b.draw(seed + d, None).is_ok();
+        for (c, x_next) in contexts.iter().enumerate() {
+            let g = conditional(dtm, layer, x_next);
+            let b = Bounding::new(&g, 1.0).expect("finite").with_max_steps(cap);
+            for d in 0..per {
+                ok &= b.draw(seed + 64 * c as u64 + d, None).is_ok();
+            }
         }
         if ok {
             break;
@@ -220,6 +231,7 @@ fn main() {
             ("R-ACP", Arm::Rhat(0.01)),
             ("C-ACP", Arm::Cert(0.05)),
             ("PROJECT", Arm::Project),
+            ("QPROJ", Arm::ProjectQ),
             ("TC .02", Arm::Fixed(0.02)),
             ("TC .05", Arm::Fixed(0.05)),
             ("TC .10", Arm::Fixed(0.10)),
@@ -296,7 +308,7 @@ fn main() {
             let mut lambda = vec![
                 match how {
                     Arm::Fixed(v) | Arm::Acp(v) | Arm::Rhat(v) | Arm::Cert(v) => v,
-                    Arm::Project => 0.0,
+                    Arm::Project | Arm::ProjectQ => 0.0,
                 };
                 t_steps
             ];
@@ -343,7 +355,18 @@ fn main() {
                                     lambda[layer] = if disagree { (1.0 + acp_delta) * lp } else { (1.0 - acp_delta) * lp };
                                 }
                                 Arm::Project => {
-                                    shrunk[layer] *= project_layer(&mut dtm, layer, &x, k_mix / 2, 0x9807 + done as u64 * 8 + layer as u64 * 4);
+                                    shrunk[layer] *= project_layer(&mut dtm, layer, core::slice::from_ref(&x), 4, k_mix / 2, 0x9807 + done as u64 * 8 + layer as u64 * 4);
+                                }
+                                Arm::ProjectQ => {
+                                    let mut ctxs = vec![x.clone()];
+                                    for _ in 0..3 {
+                                        let mut y = draw(&mut chain);
+                                        for u in 0..=layer {
+                                            forward_step(&mut y, gamma, times[u + 1] - times[u], &mut rng);
+                                        }
+                                        ctxs.push(y);
+                                    }
+                                    shrunk[layer] *= project_layer(&mut dtm, layer, &ctxs, 2, k_mix / 8, 0x9A07 + done as u64 * 8 + layer as u64 * 4);
                                 }
                                 Arm::Cert(_) => {
                                     // A refusal at this cap costs about 2 * K_mix sweeps, so asking
@@ -370,16 +393,20 @@ fn main() {
                     }
                 }
 
-                if let Arm::Project = how {
-                    // Project before deploying: two fresh clamp contexts per layer.
+                if matches!(how, Arm::Project | Arm::ProjectQ) {
+                    // Project before deploying, on fresh clamp contexts.
+                    let quantile = matches!(how, Arm::ProjectQ);
                     for layer in 0..t_steps {
-                        for ctx in 0..2u64 {
+                        let mut ctxs = Vec::new();
+                        for _ in 0..if quantile { 4 } else { 2 } {
                             let mut x = draw(&mut chain);
                             for u in 0..=layer {
                                 forward_step(&mut x, gamma, times[u + 1] - times[u], &mut rng);
                             }
-                            shrunk[layer] *= project_layer(&mut dtm, layer, &x, k_mix / 2, 0xDE91 + done as u64 * 16 + layer as u64 * 2 + ctx);
+                            ctxs.push(x);
                         }
+                        let (per, cap) = if quantile { (2, k_mix / 8) } else { (4, k_mix / 2) };
+                        shrunk[layer] *= project_layer(&mut dtm, layer, &ctxs, per, cap, 0xDE91 + done as u64 * 16 + layer as u64 * 2);
                     }
                 }
                 let mut srng = Pcg::new(77, done as u64);
@@ -445,7 +472,7 @@ fn main() {
                 };
                 let show = |v: Option<usize>| v.map_or("-".to_string(), |x| x.to_string());
                 // The last column is the penalty per layer, or for `Project` the scale per layer.
-                let shown = if let Arm::Project = how { &shrunk } else { &lambda };
+                let shown = if matches!(how, Arm::Project | Arm::ProjectQ) { &shrunk } else { &lambda };
                 let lmin = shown.iter().copied().fold(f64::INFINITY, f64::min);
                 let lmax = shown.iter().copied().fold(0.0f64, f64::max);
                 let lavg = shown.iter().sum::<f64>() / t_steps as f64;

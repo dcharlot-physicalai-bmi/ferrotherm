@@ -141,6 +141,31 @@
 //! stays possible, where the paper-style controller and no penalty end at 144 of 144 refused.
 //! (Verdicts near the R-hat line are noisier than their labels: four 400-sample chains put about
 //! 0.005 of standard error on it, so 1.016 against 1.01 is one standard error, not a finding.)
+//!
+//! # A margin that is derived, and what it costs
+//!
+//! `QPROJ` is the projection with its margin taken from a theorem instead of a guess. Coalescence
+//! from the past is submultiplicative — a bounding chain started all-unknown is the worst start,
+//! so `P(T > a + b) <= P(T > a) P(T > b)` — and so a layer that passes every one of eight draws at
+//! an eighth of the budget has, by the rule of three, a failure rate there under `3/8`, and at the
+//! full budget under `(3/8)^8 = 3.9e-4` a draw. That bound is per clamp context; a mixture over
+//! contexts goes the wrong way under Jensen, and with the eight draws spread over four contexts
+//! each context is tested twice. So the theorem MOTIVATES the margin. It does not deliver a
+//! guarantee across contexts, and this is not written as one.
+//!
+//! It **certifies in all nine cells** — three sizes by three training lengths, worst coalescence
+//! 64, 32 and 32 sweeps, no refusal, R-hat at most 1.009 — including through the transients that
+//! caught every other arm. Of three predictions written before their runs, this is the one that
+//! held. It pays in learning: **0.47, 0.14 and 0.06** at `L = 10, 20, 28`. And it is visibly
+//! over-conservative: its worst draw sits four to eight times INSIDE the budget, so the real tail
+//! is lighter than the worst-case bound.
+//!
+//! The uniform frontier, now swept at all three sizes, is **0.39, 0.17 and 0.087**, at penalties
+//! of 0.10, 0.10 and 0.20 — it falls with size while the penalty needed to certify rises. So
+//! `QPROJ` beats it at `L = 10` and sits just under it at the larger sizes. Its practical
+//! advantage is not the number: a uniform penalty requires knowing a size-dependent strength in
+//! advance, found here only by a sweep, and this finds its operating point by itself. Nothing
+//! measured here beats the frontier at size while certified.
 
 use crate::rng::Pcg;
 

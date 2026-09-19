@@ -257,11 +257,22 @@ poison to the other.
 **The matched actuator closes part of the gap, and the rest is statistical (`PROJECT`).** Train
 with no penalty; whenever a layer fails the certificate, scale its couplings down until it passes.
 
-| L (sites) | uniform frontier | `C-ACP` | `PROJECT` |
-|---|---|---|---|
-| 10 (100) | 0.39, certified | **0.50, certified** | 0.66; slowest draw 256, R-hat 1.016 |
-| 20 (400) | 0.17, certified | 0.23; slowest draw 512 | **0.25, certified** |
-| 28 (784) | not swept | 0.22; slowest draw 2,048 | 0.11; slowest draw 512 |
+| L (sites) | uniform frontier (penalty) | `C-ACP` | `PROJECT` | `QPROJ` |
+|---|---|---|---|---|
+| 10 (100) | 0.39, certified (0.10) | **0.50, certified** | 0.66; slowest draw 256, R-hat 1.016 | 0.47, certified |
+| 20 (400) | 0.17, certified (0.10) | 0.23; slowest draw 512 | **0.25, certified** | 0.14, certified |
+| 28 (784) | 0.087, certified (0.20) | 0.22; slowest draw 2,048 | 0.11; slowest draw 512 | 0.063, certified |
+
+`QPROJ` is the projection with a DERIVED margin: coalescence from the past is submultiplicative, so
+a layer passing eight of eight draws at an eighth of the budget has a failure rate under
+`(3/8)^8 = 3.9e-4` a draw at the full one. That bound is per clamp context and the draws are spread
+over four, so the theorem motivates the margin and does not guarantee it. It **certifies in all
+nine cells** (three sizes by three training lengths; worst coalescence 64, 32, 32) — the one
+prediction of three that held — and it is over-conservative, its worst draw sitting four to eight
+times inside the budget. **The frontier falls with size, 0.39 → 0.17 → 0.087, while the penalty
+needed to certify rises, 0.10 → 0.20; nothing measured here beats it at size while certified.**
+`QPROJ`'s advantage is that it finds its operating point by itself, where a uniform penalty needs
+a size-dependent strength known in advance.
 
 Learned structure at 32,000 steps, with why a cell is not certified. Two predictions written before
 these runs — that each new arm would hold the budget everywhere — were both wrong, and are
