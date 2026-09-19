@@ -862,7 +862,7 @@ mod tests {
             }
             let tm = marginals(&tstates);
 
-            let mut smp = crate::gibbs::Sampler::new(&g, beta_chain, 0x6188_5);
+            let mut smp = crate::gibbs::Sampler::new(&g, beta_chain, 0x0006_1885);
             smp.sweeps(burn, None);
             let mut gstates = Vec::with_capacity(k);
             let mut mag = Vec::with_capacity(k);

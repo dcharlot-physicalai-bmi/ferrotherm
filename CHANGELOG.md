@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### What it costs to look: a metered read, and joules per certified sample with its readout
+
+`ledger::KV260_MEASURED` prices a flip and refuses a read, because its bitstream could not perform
+one — the block design disabled every PS-to-PL port. `examples/board_build -- kv260-axi` now emits
+the same 1,024-p-bit fabric behind `emit_axi_shell` on `M_AXI_HPM0_FPD`, with the host reader and
+the metering protocol, and on 2026-09-19 it was built (45,196 LUTs, WNS +4.029 ns), loaded and
+metered on the Kria KV260. The result is `ledger::KV260_AXI_METERED`, appended to `CATALOGUE`.
+
+| | |
+|---|---|
+| a spin value read out (one A53 core, single-beat AXI4-Lite) | **581 ± 56 pJ**, `+0.0768 W` over `1.32e8` reads/s, 10.3 σ |
+| a flip, by run/halt on the same placement | **9.13 ± 0.13 pJ**, `+0.4675 W` over `5.12e10` flips/s, 69 σ |
+| read / flip | **64** |
+| one full-state readout | 7.75 µs, during which the fabric completes 388 sweeps |
+
+So `floors::cost_per_effective_sample` can now state what it was built to state: a certified draw
+of 64 sweeps, read out once, costs about **1.2 µJ delivered, and half of that is the readout.** The
+break-even is about 64 sweeps per readout; a sampler that mixes faster than that on this board is
+paying mostly to be looked at, and a chain whose correlation time is under 388 sweeps is bounded
+by the read path rather than by the fabric. This is single-beat AXI4-Lite through a CPU, the most
+expensive way to move a bit off the fabric; a burst or DMA path was not built.
+
+The run/halt flip sits 16% below the 10.85 pJ of 2026-09-06, as it should: that baseline was an
+idle PL and included the clock tree, and this one cancels it. The older constant is unchanged.
+
+Three things that went wrong, kept on the record. **A control failed:** the plan was to report
+`axi − cpu` as the bus's share of a read, and it came out `−0.0714 W` — a core stalled on AXI draws
+less than one spinning in cache, so the arm bounds nothing, and a test now holds it negative so
+nobody revives it. **A mutant survived:** `("KV260_AXI_METERED", KV260_MEASURED)` passed every
+test, because nothing bound any catalogue name to its constant; and the test that claimed
+"exactly one price in this crate was metered" was counting its own three-entry array, which two
+later machines had never entered. Both now walk `CATALOGUE`. **A hand mutation harness corrupted
+the file it was testing:** it restored by reverse-replace, the mutant's new text already occurred
+earlier in the file, and the two boards' flip energies were swapped until a checksum guard refused
+to continue. It restores from saved bytes now.
+
+The sensor logs are in `measurements/kv260-read-2026-09-19/`, and
+`the_metered_read_is_rederived_from_its_own_sensor_log` recomputes both constants from them —
+with the known-answer controls (5.0e7 sweeps/s in every running arm, zero when held) asserted
+from the same files. The board is shared with another session's power campaign: the protocol
+refuses to start while one is running, flags any foreign FPGA load, and the other session's
+bitstream was restored afterwards.
+
 ### Training through the dynamics, and the step size that is a trained parameter in disguise
 
 Every learning estimator in this crate before now differentiates a log-probability — REINFORCE,

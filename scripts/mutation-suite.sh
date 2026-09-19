@@ -942,6 +942,22 @@ mutations=(
   # that lost the bit walked back to the same payload. The fixture now ends in 0xC3.
   "silicon/src/mpsse.rs|((last >> 7) << 7)|((last >> 7) << 6)|mpsse::tests::the_plan_shifts_exactly_the_bytes_it_was_given|a final data bit placed where the chip ignores it|ferrotherm-silicon"
 
+  # The metered read and the metered flip are RE-DERIVED from the sensor logs committed beside
+  # them, so a constant edited away from its evidence fails against the evidence. Two rows because
+  # the two constants come from two logs.
+  "src/ledger.rs|    e_read: 5.8126e-10,|    e_read: 5.8126e-12,|ledger::tests::the_metered_read_is_rederived_from_its_own_sensor_log|a read price that drifts from its sensor log"
+  "src/ledger.rs|    e_sample: 9.1316e-12,|    e_sample: 9.1316e-11,|ledger::tests::the_metered_read_is_rederived_from_its_own_sensor_log|a flip price that drifts from its sensor log"
+
+  # A spin read costs about 64 flips on the board that metered both. Price a read as a flip and a
+  # run that reads its state every draw loses half its bill, which is the half the old price set
+  # could not state and the reason it refused.
+  "src/ledger.rs|                + charge(self.reads, p.e_read)?|                + charge(self.reads, p.e_sample)?|floors::tests::a_certified_draw_is_priced_with_its_readout_on_metered_silicon|a read priced as a flip"
+
+  # THIS MUTANT SURVIVED ITS FIRST RUN. The two KV260 entries share a grade and an instrument, so a
+  # table that handed out the older board's prices under the newer board's name passed every test:
+  # nothing bound any catalogue name to the constant it names. The grade test now does.
+  "src/ledger.rs|    (\"KV260_AXI_METERED\", KV260_AXI_METERED),|    (\"KV260_AXI_METERED\", KV260_MEASURED),|ledger::tests::only_the_metered_price_claims_to_be_metered|a catalogue name bound to another machine's prices"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1179,7 +1195,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=218
+expected_rows=222
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

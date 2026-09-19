@@ -204,7 +204,9 @@ pub const Z1_SPICE: Prices = Prices {
 ///
 /// They were not measured. This run clocked a free-running fabric with no host traffic, so
 /// [`Ledger::joules`] **refuses** any workload that touches them rather than pricing them at zero.
-/// That refusal is the point of the type.
+/// That refusal is the point of the type. It was not repaired by editing this constant: the
+/// bitstream it describes had no read path to meter. [`KV260_AXI_METERED`] is a different
+/// bitstream on the same board, with one, and states the read.
 pub const KV260_MEASURED: Prices = Prices {
     e_sample: 1.0848e-11,
     e_read: f64::NAN,
@@ -246,6 +248,53 @@ pub const PEGASUS_28NM_ASIC: Prices = Prices {
     evidence: Evidence::Measured,
 };
 
+/// The Kria KV260 again, thirteen days on, WITH A READ PATH — the first price in this crate for
+/// moving a spin off a fabric, and a second metering of the flip by a different method.
+///
+/// [`KV260_MEASURED`] could not price a read because its bitstream had no way to perform one: the
+/// block design disabled every PS-to-PL port. This one hangs
+/// [`crate::hdl::FixedFabric::emit_axi_shell`] off `M_AXI_HPM0_FPD`, and `examples/board_build`
+/// (`kv260-axi`) emits the design, the host reader and the protocol. The sensor logs are in
+/// `measurements/kv260-read-2026-09-19/`, and a test below re-derives both constants from them.
+///
+/// # The read: `5.81e-10` J per spin value
+///
+/// One A53 core reading the fabric's 32 state words round-robin over single-beat AXI4-Lite moved
+/// `1.3205e8` spin values a second and raised the board `+0.0768 W` over the same fabric running
+/// unread (8 paired passes, se `0.0074`, 10.3 sigma). That is **581 ± 56 pJ per spin read — about
+/// 64 flips.** One full-state readout takes 7.75 µs, during which the fabric completes 388 sweeps:
+/// on this board the read path, not the sampler, bounds any chain whose correlation time is
+/// shorter than that.
+///
+/// It INCLUDES the core that issues the read, because a read needs a master. The attempt to
+/// subtract the core failed and is kept on the record: an arm spinning the same loop over cached
+/// memory drew `0.0714 W` MORE than the arm reading the fabric, so a core stalled on a bus is not
+/// a busy core and the difference bounds nothing. And single-beat AXI4-Lite through a CPU is the
+/// most expensive way to move a bit off this fabric; a burst or DMA path was not built.
+///
+/// # The flip: `9.13e-12` J, by run/halt on one placement
+///
+/// The shell's `run` bit holds spins and generators while the clock keeps toggling. Running minus
+/// held is `+0.4675 W` (se `0.0067`, 69 sigma) over `5.1199e10` flips a second. No reload between
+/// arms, so placement, routing and clock tree are identical and cancel. It sits 16% under
+/// [`KV260_MEASURED`]'s `1.0848e-11`, whose baseline was an idle PL and so included the clock tree
+/// and the configured logic's static draw. Two methods, two definitions, one fabric; neither
+/// replaces the other, and the older constant is unchanged.
+///
+/// Writes were not exercised — the couplings are in the bitstream — and stay unstated.
+pub const KV260_AXI_METERED: Prices = Prices {
+    e_sample: 9.1316e-12,
+    e_read: 5.8126e-10,
+    e_write: f64::NAN,
+    reflash_hz_cap: None,
+    source: "METERED on a Kria KV260 (xck26), 2026-09-19, one bitstream: 1,024 p-bits at 100 MHz \
+             behind an AXI4-Lite shell on M_AXI_HPM0_FPD. Flip: run minus halt, +0.4675 W over \
+             5.12e10 flips/s (69 sigma), datapath only, clock tree cancelled. Read: one A53 core, \
+             single-beat reads, +0.0768 W over 1.32e8 spin values/s (10.3 sigma), INCLUDING the \
+             core. INA260, 5 V rail, 8 paired passes each. Writes not exercised: unstated, not zero.",
+    evidence: Evidence::Metered,
+};
+
 /// Every machine this crate states prices for, in a stable order, each beside its name.
 ///
 /// The reason this is a table and not three constants a caller looks up by hand: a joules figure
@@ -258,12 +307,13 @@ pub const PEGASUS_28NM_ASIC: Prices = Prices {
 /// [`Prices::UNSTATED`] is deliberately in here. It is the honest answer for a machine nobody has
 /// characterised, and a caller who can select it by name can demonstrate that pricing a run
 /// against it yields no figure rather than a zero.
-pub const CATALOGUE: [(&str, Prices); 4] = [
+pub const CATALOGUE: [(&str, Prices); 5] = [
     ("UNSTATED", Prices::UNSTATED),
     ("Z1_SPICE", Z1_SPICE),
     ("KV260_MEASURED", KV260_MEASURED),
     // APPENDED, never inserted: the binding surfaces enumerate this table by index.
     ("PEGASUS_28NM_ASIC", PEGASUS_28NM_ASIC),
+    ("KV260_AXI_METERED", KV260_AXI_METERED),
 ];
 
 /// Operation counts accumulated by a run.
@@ -393,18 +443,44 @@ mod tests {
     #[test]
     fn only_the_metered_price_claims_to_be_metered() {
         let graded = [
-            (Prices::UNSTATED, Evidence::Unstated),
-            (Z1_SPICE, Evidence::Simulated),
-            (KV260_MEASURED, Evidence::Metered),
+            ("UNSTATED", Evidence::Unstated),
+            ("Z1_SPICE", Evidence::Simulated),
+            ("KV260_MEASURED", Evidence::Metered),
+            ("PEGASUS_28NM_ASIC", Evidence::Measured),
+            ("KV260_AXI_METERED", Evidence::Metered),
         ];
-        let mut metered = 0;
-        for (p, want) in graded {
-            assert_eq!(p.evidence, want, "{} was graded wrong", p.source);
+        // OVER THE CATALOGUE, not over a list written here. This test used to walk its own three
+        // entries and conclude "exactly one price in this crate was metered" -- a count of the
+        // test's array, which two later entries joined the crate without ever entering.
+        assert_eq!(CATALOGUE.len(), graded.len(), "a machine joined the table without a grade here");
+        let mut metered = Vec::new();
+        for ((name, p), (want_name, want)) in CATALOGUE.iter().zip(graded) {
+            assert_eq!(*name, want_name);
+            assert_eq!(p.evidence, want, "{name} was graded wrong");
+            // THE NAME MUST BE BOUND TO THE CONSTANT IT NAMES. Nothing checked this for any entry:
+            // `("KV260_AXI_METERED", KV260_MEASURED)` passed every test in the crate, because the
+            // two share a grade and an instrument, and a binding that asked for the board with a
+            // metered read would have been handed the one that refuses reads, by name.
+            let constant = match *name {
+                "UNSTATED" => Prices::UNSTATED,
+                "Z1_SPICE" => Z1_SPICE,
+                "KV260_MEASURED" => KV260_MEASURED,
+                "PEGASUS_28NM_ASIC" => PEGASUS_28NM_ASIC,
+                "KV260_AXI_METERED" => KV260_AXI_METERED,
+                other => panic!("{other} is in the table and has no constant named here"),
+            };
+            assert_eq!(p.source, constant.source, "{name} is bound to another machine's prices");
+            for (got, want) in [(p.e_sample, constant.e_sample), (p.e_read, constant.e_read), (p.e_write, constant.e_write)] {
+                assert_eq!(got.to_bits(), want.to_bits(), "{name}: a price that is not its constant's");
+            }
             if p.evidence == Evidence::Metered {
-                metered += 1;
+                // Metered means this project's protocol on this project's instrument, and the
+                // source has to say which instrument.
+                assert!(p.source.contains("INA260"), "{name} claims a meter and names none");
+                metered.push(*name);
             }
         }
-        assert_eq!(metered, 1, "exactly one price in this crate was metered on silicon");
+        assert_eq!(metered, ["KV260_MEASURED", "KV260_AXI_METERED"], "both on the one board we own");
         // and the grade must agree with the prose, or one of them is lying
         assert!(KV260_MEASURED.source.contains("MEASURED"));
         assert!(Z1_SPICE.source.contains("SPICE"));
@@ -539,13 +615,139 @@ mod tests {
         assert!(whole_board / kv.e_sample > 6.0, "the increment flatters by more than six");
 
         // the table: appended, named once each, and the ASIC priced like the KV260 -- samples only
-        assert_eq!(CATALOGUE.len(), 4);
+        assert_eq!(CATALOGUE.len(), 5);
         assert_eq!(CATALOGUE[3].0, "PEGASUS_28NM_ASIC");
+        assert_eq!(CATALOGUE[4].0, "KV260_AXI_METERED", "appended, so every earlier index holds");
         for (i, (a, _)) in CATALOGUE.iter().enumerate() {
             for (b, _) in &CATALOGUE[i + 1..] {
                 assert_ne!(a, b, "a machine named twice");
             }
         }
         assert!(asic.e_read.is_nan() && asic.e_write.is_nan(), "folded into the figure, not zero");
+    }
+
+    /// Per-pass mean power of each arm, and the host program's own account of each arm.
+    type ArmMeans = std::collections::BTreeMap<(u32, String), f64>;
+    type ArmFacts = std::collections::BTreeMap<(u32, String), std::collections::BTreeMap<String, f64>>;
+
+    fn parse_sensor_log(text: &str) -> (ArmMeans, ArmFacts, usize) {
+        let mut sums: std::collections::BTreeMap<(u32, String), (f64, usize)> = Default::default();
+        let mut facts = ArmFacts::new();
+        let mut flags = 0;
+        for line in text.lines() {
+            let t: Vec<&str> = line.split_whitespace().collect();
+            match t.first().copied() {
+                Some("S") => {
+                    let e = sums.entry((t[1].parse().unwrap(), t[2].to_string())).or_insert((0.0, 0));
+                    e.0 += t[3].parse::<f64>().unwrap() * 1e-6;
+                    e.1 += 1;
+                }
+                Some("A") => {
+                    let pass: u32 = t[1].parse().unwrap();
+                    let mut arm = String::new();
+                    let mut kv = std::collections::BTreeMap::new();
+                    for f in &t[2..] {
+                        let (k, v) = f.split_once('=').unwrap();
+                        if k == "arm" {
+                            arm = v.to_string();
+                        } else if let Ok(x) = v.parse::<f64>() {
+                            kv.insert(k.to_string(), x);
+                        }
+                    }
+                    facts.insert((pass, arm), kv);
+                }
+                Some("#") if line.contains("FOREIGN") || line.contains("ABORT") => flags += 1,
+                _ => {}
+            }
+        }
+        (sums.into_iter().map(|(k, (s, n))| (k, s / n as f64)).collect(), facts, flags)
+    }
+
+    /// Mean and standard error of one difference PER PASS: the 768 samples of an arm share sensor
+    /// conversion windows and are not 768 measurements, but the 8 passes are 8.
+    fn paired(means: &ArmMeans, hi: &str, lo: &str) -> (f64, f64, usize) {
+        let d: Vec<f64> = (1..=64)
+            .filter_map(|p| Some(means.get(&(p, hi.to_string()))? - means.get(&(p, lo.to_string()))?))
+            .collect();
+        let n = d.len() as f64;
+        let m = d.iter().sum::<f64>() / n;
+        let var = d.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0);
+        (m, (var / n).sqrt(), d.len())
+    }
+
+    /// The constants in [`KV260_AXI_METERED`] are RE-DERIVED here from the sensor logs they came
+    /// from, so they cannot drift from their evidence, and the evidence cannot be lost with a
+    /// scratch directory the way an earlier audit's was.
+    #[test]
+    fn the_metered_read_is_rederived_from_its_own_sensor_log() {
+        let (means, facts, flags) =
+            parse_sensor_log(include_str!("../measurements/kv260-read-2026-09-19/read_meter_1.dat"));
+        assert_eq!(flags, 0, "a pass during which someone else loaded the FPGA is not evidence");
+        let (watts, se, passes) = paired(&means, "axi", "idle");
+        assert_eq!(passes, 8);
+        assert!(watts / se > 5.0, "a read must clear the sensor's noise: {watts} W, se {se}");
+
+        // CONTROLS WITH KNOWN ANSWERS. 100 MHz and two clocks a sweep is 5.0e7; the PS clock is
+        // 20 ppm slow. A port whose width disagreed with the PS would return words that fail this.
+        let mut words_per_s = 0.0;
+        for ((_, arm), kv) in &facts {
+            let sweeps = kv["sweeps_per_s"];
+            assert!((sweeps / 5.0e7 - 1.0).abs() < 1e-4, "{arm}: {sweeps} sweeps/s is not this fabric");
+            if arm == "axi" {
+                words_per_s += kv["reads_per_s"] / 8.0;
+                assert!(kv["word0_changes"] > 1000.0, "the words read must be a fabric that is moving");
+            }
+        }
+        let e_read = watts / (words_per_s * 32.0);
+        assert!(
+            (e_read / KV260_AXI_METERED.e_read - 1.0).abs() < 1e-3,
+            "the log says {e_read:e} J per spin read, the constant says {:e}",
+            KV260_AXI_METERED.e_read
+        );
+
+        // THE CONTROL THAT FAILED stays failed. If a later edit starts reporting `axi - cpu` as
+        // the bus's share of a read, this is the measurement that says it is not one.
+        let (bus, bus_se, _) = paired(&means, "axi", "cpu");
+        assert!(bus < -5.0 * bus_se, "a core stalled on AXI drew LESS than a busy one: {bus} W");
+
+        // The flip, by run/halt on the same placement.
+        let (means, facts, flags) =
+            parse_sensor_log(include_str!("../measurements/kv260-read-2026-09-19/read_meter_2.dat"));
+        assert_eq!(flags, 0);
+        let (watts, se, passes) = paired(&means, "idle", "halt");
+        assert_eq!(passes, 8);
+        assert!(watts / se > 5.0);
+        let mut flips_per_s = 0.0;
+        for ((_, arm), kv) in &facts {
+            if arm == "halt" {
+                // Held means held: no sweeps, and a popcount that never moves.
+                assert_eq!(kv["sweeps_per_s"], 0.0);
+                assert_eq!(kv["pop_min"], kv["pop_max"]);
+                assert_eq!(kv["word0_changes"], 0.0);
+            } else {
+                flips_per_s += kv["sweeps_per_s"] * 1024.0 / 8.0;
+            }
+        }
+        let e_sample = watts / flips_per_s;
+        assert!((e_sample / KV260_AXI_METERED.e_sample - 1.0).abs() < 1e-3, "{e_sample:e} J per flip");
+
+        // Two meterings of one fabric, thirteen days and one method apart. They must not agree
+        // exactly -- the older baseline was an idle PL and includes the clock tree -- and they
+        // must not be far apart either.
+        let older = KV260_MEASURED.e_sample / KV260_AXI_METERED.e_sample;
+        assert!((1.05..1.35).contains(&older), "idle-PL baseline over run/halt = {older}");
+
+        // What the read costs in the unit the fabric is priced in, and what that does to a run
+        // that reads its whole state every sweep: the reads are the bill.
+        let ratio = KV260_AXI_METERED.e_read / KV260_AXI_METERED.e_sample;
+        assert!((55.0..72.0).contains(&ratio), "a spin read costs {ratio} flips");
+        let every_sweep = Ledger { samples: 1024 * 1000, reads: 1024 * 1000, writes: 0 };
+        let never = Ledger { samples: 1024 * 1000, reads: 0, writes: 0 };
+        let a = every_sweep.joules(&KV260_AXI_METERED).expect("samples and reads are both metered");
+        let b = never.joules(&KV260_AXI_METERED).expect("samples are metered");
+        assert!(a / b > 56.0, "reading every sweep multiplies the bill by {}", a / b);
+        // And it still refuses what nobody metered.
+        assert!(!KV260_AXI_METERED.is_stated());
+        assert_eq!(Ledger { samples: 1, reads: 1, writes: 1 }.joules(&KV260_AXI_METERED), None);
     }
 }

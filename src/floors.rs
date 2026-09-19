@@ -588,6 +588,53 @@ mod tests {
         );
     }
 
+    /// JOULES PER CERTIFIED SAMPLE, WITH ITS READOUT, ON METERED SILICON -- the figure this module
+    /// was built to state and could not, because until 2026-09-19 no price set in the crate had a
+    /// metered read and a sample that is never read out is not a sample anyone received.
+    #[test]
+    fn a_certified_draw_is_priced_with_its_readout_on_metered_silicon() {
+        use crate::ledger::KV260_AXI_METERED;
+        // A thousand independent draws on the 1,024-spin metered fabric. Each is `per_draw` sweeps
+        // from a certified start and ONE readout of the whole state.
+        let (n, draws, per_draw) = (1_024u64, 1_000u64, 64u64);
+        let ledger = Ledger { samples: draws * per_draw * n, reads: draws * n, writes: 0 };
+        let certified = Convergence::Certified { coalesced_at: 48.0, burn_in: per_draw as f64 };
+        // One independent sample per `per_draw` sweeps is `tau_int = per_draw / 2` in this
+        // function's units, since it counts `sweeps / (2 tau_int)`.
+        let price = |prices| {
+            cost_per_effective_sample(
+                &ledger,
+                prices,
+                (draws * per_draw) as f64,
+                per_draw as f64 / 2.0,
+                certified,
+                1.0,
+                ROOM_TEMPERATURE_K,
+            )
+        };
+        let got = price(&KV260_AXI_METERED).expect("samples and reads are both metered");
+        assert!((got.effective_samples - draws as f64).abs() < 1e-9);
+        assert_eq!(got.evidence, Evidence::Metered);
+        assert!(got.convergence.is_certified());
+
+        // THE FINDING. At 64 sweeps a draw the readout is HALF THE BILL: a spin read costs about
+        // 64 flips on this board, so the break-even readout interval is about 64 sweeps, and any
+        // sampler that mixes faster than that is paying mostly to be looked at.
+        let sampling = (draws * per_draw * n) as f64 * KV260_AXI_METERED.e_sample;
+        let share = 1.0 - sampling / got.joules;
+        assert!((0.45..0.55).contains(&share), "the readout's share of the energy = {share}");
+        let break_even = KV260_AXI_METERED.e_read / KV260_AXI_METERED.e_sample;
+        assert!((55.0..72.0).contains(&break_even), "break-even sweeps per readout = {break_even}");
+        // about 1.2 microjoules a certified, delivered sample
+        assert!((1.0e-6..1.4e-6).contains(&got.joules_per_effective_sample), "{:e}", got.joules_per_effective_sample);
+
+        // The older measurement still refuses this run, and should: it never metered a read.
+        assert!(price(&KV260_MEASURED).is_err());
+        // And a draw taken before its chain coalesced is refused whatever the price set knows.
+        let early = Convergence::Certified { coalesced_at: 48.0, burn_in: 40.0 };
+        assert!(cost_per_effective_sample(&ledger, &KV260_AXI_METERED, 64_000.0, 32.0, early, 1.0, ROOM_TEMPERATURE_K).is_err());
+    }
+
     /// The grade cannot improve by being divided by a floor.
     #[test]
     fn a_simulated_price_yields_a_simulated_cost() {
