@@ -34,11 +34,20 @@
 // repository, so the visible sites are trained on a frustrated +-J grid at beta 0.8 drawn by a
 // persistent Gibbs chain. What is measured is the mixing of conditionals trained on that.
 //
-// Count-based throughout; valid on a busy machine. NOT run in CI: the 70x70 stage takes minutes.
-// run: cargo run --release --example kmix_flagship [max_L]
+// A SECOND MODE, `frontier`, asks the question the first one raises. If a fixed penalty at 0.35
+// certifies by not learning and no penalty learns by not mixing, where between them is the point
+// that does both -- and does a CONTROLLER find it? It sweeps fixed strengths beside two
+// controllers: `ACP`, `dtm::acp_update` fed each layer's per-site spin autocorrelation at the
+// training lag (the paper's definition of the input; WHICH observable is our choice, the paper
+// names none, and the constants are this crate's); and `R-ACP`, the same multiplicative law fed
+// by `Convergence::from_chains` over dispersed starts. Each row also prints `a(K)`, what the
+// paper-style controller would read on that very model, beside the R-hat it is being held against.
+//
+// Count-based throughout; valid on a busy machine. NOT run in CI: the larger stages take minutes.
+// run: cargo run --release --example kmix_flagship [max_L] [base|frontier] [min_L] [arm-filter]
 
 use ferrotherm::cftp::Bounding;
-use ferrotherm::dtm::{forward_step, gamma_coupling, pattern_grid, Dtm, G12};
+use ferrotherm::dtm::{acp_update, forward_step, gamma_coupling, pattern_grid, Dtm, G12};
 use ferrotherm::floors::Convergence;
 use ferrotherm::gibbs;
 use ferrotherm::graph::{Graph, GraphBuilder};
@@ -94,6 +103,54 @@ fn rhat_after(g: &Graph, k_mix: usize, trace: usize) -> Convergence {
     Convergence::from_chains(&chains)
 }
 
+/// How the total-correlation penalty is set.
+#[derive(Clone, Copy)]
+enum Arm {
+    /// One strength for every layer, for the whole run.
+    Fixed(f64),
+    /// The paper's adaptive correlation penalty, per layer, from this starting strength.
+    Acp(f64),
+    /// The same multiplicative controller driven by a CONVERGENCE diagnostic instead: raise a
+    /// layer's penalty when four chains from dispersed starts still disagree after `K_mix` sweeps
+    /// (`Convergence::from_chains` refuses), lower it when they agree. A normalised single-chain
+    /// autocorrelation subtracts each site's own mean, so a chain stuck in one mode reads as
+    /// decorrelated; chains started apart cannot make that mistake.
+    Rhat(f64),
+}
+
+/// The paper's controller input: "the autocorrelations of each learned conditional at a delay
+/// equal to the number of sampling iterations used during gradient estimation". The paper does not
+/// say WHICH observable. This takes each site's own spin autocorrelation at that lag and averages
+/// over the sites that move at all, so one slow site anywhere registers.
+fn layer_autocorrelation(g: &Graph, lag: usize, trace: usize, seed: u64) -> f64 {
+    let mut s = gibbs::Sampler::new(g, 1.0, seed);
+    s.sweeps(4 * lag, None);
+    let mut states: Vec<Vec<i8>> = Vec::with_capacity(trace);
+    for _ in 0..trace {
+        s.sweep(None);
+        states.push(s.read_all(None));
+    }
+    let (mut total, mut counted) = (0.0f64, 0usize);
+    for i in 0..g.n {
+        let mut mean = 0.0;
+        for st in &states {
+            mean += f64::from(st[i]);
+        }
+        mean /= trace as f64;
+        let var = 1.0 - mean * mean;
+        if var < 1e-6 {
+            continue;
+        }
+        let mut c = 0.0;
+        for k in 0..trace - lag {
+            c += f64::from(states[k][i]) * f64::from(states[k + lag][i]);
+        }
+        total += (c / (trace - lag) as f64 - mean * mean) / var;
+        counted += 1;
+    }
+    if counted == 0 { 0.0 } else { total / counted as f64 }
+}
+
 /// Mean nearest-neighbour correlation over the data grid's edges, from a set of visible vectors.
 fn edge_correlations(samples: &[Vec<i8>], side: usize) -> Vec<f64> {
     let mut out = Vec::new();
@@ -115,6 +172,24 @@ fn edge_correlations(samples: &[Vec<i8>], side: usize) -> Vec<f64> {
 
 fn main() {
     let max_l: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(28);
+    // `base` is the two arms the first measurement ran; `frontier` is the adaptive penalty beside a
+    // sweep of fixed strengths, which is what the controller is supposed to find its way along.
+    let frontier = std::env::args().nth(2).is_some_and(|a| a == "frontier");
+    let min_l: usize = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let only: Option<String> = std::env::args().nth(4);
+    let arms: Vec<(&str, Arm)> = if frontier {
+        vec![
+            ("ACP", Arm::Acp(0.01)),
+            ("R-ACP", Arm::Rhat(0.01)),
+            ("TC .02", Arm::Fixed(0.02)),
+            ("TC .05", Arm::Fixed(0.05)),
+            ("TC .10", Arm::Fixed(0.10)),
+            ("TC .20", Arm::Fixed(0.20)),
+        ]
+    } else {
+        vec![("TC .35", Arm::Fixed(0.35)), ("no TC", Arm::Fixed(0.0))]
+    };
+    let (acp_every, acp_eps, acp_delta, acp_min) = (100usize, 0.03, 0.2, 1e-4);
     let t_steps = 8usize;
     let gamma = 1.0;
     let times: Vec<f64> = (0..=t_steps).map(|i| i as f64 * 0.35).collect();
@@ -128,13 +203,16 @@ fn main() {
     println!("            1 - mean|c_model - c_data| / mean|c_data|; zero for a model that learned nothing");
     println!("  score     certificate over every layer (cap {cap}); R-hat: worst layer, 4 dispersed chains after {k_mix}\n");
     println!(
-        "  {:>3} {:>5} {:>4} {:>5}  {:>7} {:>6}   {:>7} {:>6} {:>6}   {:>9} {:>9} {:>8}   {:>9}  verdict",
-        "L", "n", "nv", "deg", "arm", "steps", "learned", "|J|avg", "|J|max", "cert. med", "cert. max", "refused", "R-hat@250"
+        "  {:>3} {:>5} {:>4} {:>5}  {:>7} {:>6}   {:>7} {:>6} {:>6}   {:>9} {:>9} {:>8}   {:>9} {:>7}  {:>17}  verdict",
+        "L", "n", "nv", "deg", "arm", "steps", "learned", "|J|avg", "|J|max", "cert. med", "cert. max", "refused", "R-hat@250", "a(K)", "lambda min/avg/max"
     );
 
     for &l in &[10usize, 20, 28, 40, 70] {
         if l > max_l {
             break;
+        }
+        if l < min_l {
+            continue;
         }
         let n = l * l;
         let side = (0.4 * l as f64).round() as usize;
@@ -156,7 +234,10 @@ fn main() {
         let checkpoints: &[usize] = if n >= 1_600 { &[2_000, 8_000] } else { &[2_000, 8_000, 32_000] };
         let gen_samples = if n >= 1_600 { 120usize } else { 300usize };
 
-        for (arm, lambda_tc) in [("TC .35", 0.35f64), ("no TC", 0.0)] {
+        for &(arm, how) in &arms {
+            if only.as_ref().is_some_and(|f| !arm.contains(f.as_str())) {
+                continue;
+            }
             let mut chain = gibbs::Sampler::new(&model, 0.8, 0xDA7A + l as u64);
             chain.sweeps(2_000, None);
             let draw = |c: &mut gibbs::Sampler| -> Vec<i8> {
@@ -173,6 +254,8 @@ fn main() {
             let mut rng = Pcg::new(9, 0xD7);
             let mut dtm = Dtm::new(t_steps, n, nv, edges.clone(), gamma, times.clone());
             let mut done = 0usize;
+            let mut lambda = vec![match how { Arm::Fixed(v) | Arm::Acp(v) | Arm::Rhat(v) => v }; t_steps];
+            let mut a_prev: Vec<Option<f64>> = vec![None; t_steps];
             for &target in checkpoints {
                 while done < target {
                     let t = done % t_steps;
@@ -186,8 +269,31 @@ fn main() {
                         forward_step(&mut x, gamma, times[t + 1] - times[t], &mut rng);
                         pairs.push((x_t, x));
                     }
-                    dtm.train_step(t, &pairs, k_sweeps, lr, lambda_tc, &mut rng);
+                    dtm.train_step(t, &pairs, k_sweeps, lr, lambda[t], &mut rng);
                     done += 1;
+                    // THE CONTROLLER. Every `acp_every` updates of a layer, measure that layer's
+                    // conditional at the training lag under a fresh clamp context and move its
+                    // penalty. The lag is `k_sweeps`, because that is the paper's definition: the
+                    // question is whether the samples the GRADIENT used had forgotten their start.
+                    if !matches!(how, Arm::Fixed(_)) && done.is_multiple_of(t_steps * acp_every) {
+                        for layer in 0..t_steps {
+                            let mut x = draw(&mut chain);
+                            for u in 0..=layer {
+                                forward_step(&mut x, gamma, times[u + 1] - times[u], &mut rng);
+                            }
+                            let g = conditional(&dtm, layer, &x);
+                            if let Arm::Acp(_) = how {
+                                let a = layer_autocorrelation(&g, k_sweeps, 40 * k_sweeps, 0xACB0 + done as u64 + layer as u64);
+                                lambda[layer] = acp_update(lambda[layer], a, a_prev[layer], acp_eps, acp_delta, acp_min);
+                                a_prev[layer] = Some(a);
+                            } else {
+                                // Held to the constraint that matters at deployment: K_mix sweeps.
+                                let disagree = rhat_after(&g, k_mix, 200).refusal().is_some();
+                                let lp = lambda[layer].max(acp_min);
+                                lambda[layer] = if disagree { (1.0 + acp_delta) * lp } else { (1.0 - acp_delta) * lp };
+                            }
+                        }
+                    }
                 }
 
                 let mut srng = Pcg::new(77, done as u64);
@@ -202,6 +308,7 @@ fn main() {
                 let (mut jsum, mut jcount, mut jmax) = (0.0f64, 0usize, 0.0f64);
                 let (mut certs, mut refused) = (Vec::new(), 0usize);
                 let mut worst = 1.0f64;
+                let mut worst_a = f64::NEG_INFINITY;
                 let mut rhat_refused = false;
                 let (contexts, per) = if n >= 1_600 { (2u64, 3usize) } else { (3u64, 6usize) };
                 for t in 0..t_steps {
@@ -225,6 +332,9 @@ fn main() {
                             }
                         }
                         if c == 0 {
+                            // What the paper-style controller would read on this very layer, so
+                            // the two diagnostics can be held against each other on one model.
+                            worst_a = worst_a.max(layer_autocorrelation(&g, k_sweeps, 40 * k_sweeps, 0xA11C + t as u64));
                             let r = rhat_after(&g, k_mix, 400);
                             rhat_refused |= r.refusal().is_some();
                             if let Convergence::MultiChain { rhat } = r
@@ -248,8 +358,11 @@ fn main() {
                     "not certified; R-hat passes"
                 };
                 let show = |v: Option<usize>| v.map_or("-".to_string(), |x| x.to_string());
+                let lmin = lambda.iter().copied().fold(f64::INFINITY, f64::min);
+                let lmax = lambda.iter().copied().fold(0.0f64, f64::max);
+                let lavg = lambda.iter().sum::<f64>() / t_steps as f64;
                 println!(
-                    "  {l:>3} {n:>5} {nv:>4} {degree:>5.1}  {arm:>7} {done:>6}   {learned:>7.3} {:>6.3} {jmax:>6.3}   {:>9} {:>9} {refused:>8}   {worst:>9.4}  {verdict}",
+                    "  {l:>3} {n:>5} {nv:>4} {degree:>5.1}  {arm:>7} {done:>6}   {learned:>7.3} {:>6.3} {jmax:>6.3}   {:>9} {:>9} {refused:>8}   {worst:>9.4} {worst_a:>7.3}  {lmin:>5.3}/{lavg:>5.3}/{lmax:>5.3}  {verdict}",
                     jsum / jcount as f64,
                     show(med),
                     show(max)

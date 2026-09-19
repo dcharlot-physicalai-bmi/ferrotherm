@@ -225,9 +225,22 @@ simplification. The paper adapts it per layer, lowering a layer's penalty when i
 autocorrelation at lag `K` is near zero and raising it otherwise — and `dtm::acp_update`, this
 crate's version of that controller, had until this measurement never been called by anything but
 its own test.** (Its constants are documented as the paper's; two automated reads of the paper did
-not locate them, so they are flagged unverified at the function.) Whether
-the adaptive penalty finds a point that both learns and certifies is the next measurement, and
-the data here is synthetic.
+not locate them, so they are flagged unverified at the function.) The data here is synthetic.
+
+**The certified frontier shrinks with size, and neither controller finds it
+(`kmix_flagship <L> frontier`).** Sweeping the fixed penalty, the best setting that still certifies
+after 32,000 steps learns **0.39** at `L = 10` (penalty 0.10) and **0.17** at `L = 20`; everything
+that learns more fails a referee. A bounding chain that fails to coalesce is a sufficient condition
+failing, not proof of slow mixing, so that frontier is a lower bound. A controller of the form the
+paper describes — `acp_update` fed each layer's per-site spin autocorrelation at lag `K`, which is
+*our* choice of an observable the paper does not name — drove the penalty to **zero** at both
+sizes: on the resulting `L = 20` model it reads **0.023 on its worst layer**, under its own 0.03
+threshold, while R-hat over dispersed chains reads **1.92** after 250 sweeps and the certificate
+refuses 144 of 144. That is `examples/burnin` inside a training loop — a mean-subtracted
+single-chain statistic reads a stuck chain as decorrelated. **The repair we tried did not work
+either:** the same law driven by R-hat pulled it to 1.009 and the certificate still refused every
+draw, because a multiplicative law that decays to its floor early needs ~38 updates to climb back
+and the run has 40.
 
 **The total-correlation penalty is load-bearing, measured both ways.** Without it `|J|` grows
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,

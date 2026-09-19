@@ -72,6 +72,31 @@
 //! and until this was written it was called by nothing but its own scripted test: no trainer here
 //! had ever used it. (An earlier version of this paragraph said the paper starts the penalty "near
 //! 0.01". That number is this crate's scripted test, not the paper; see [`acp_update`].)
+//!
+//! # The certified frontier, and two controllers that do not find it
+//!
+//! `kmix_flagship <L> frontier` sweeps the fixed penalty and runs two controllers. After 32,000
+//! steps the best point that still CERTIFIES learns **0.39** of the structure at `L = 10`
+//! (penalty 0.10, worst coalescence 64 sweeps) and **0.17** at `L = 20`; every setting that learns
+//! more fails a referee. So what can be learned while `K_mix = 250` stays certified shrinks with
+//! size — and since a bounding chain that fails to coalesce is a sufficient condition failing, not
+//! a proof of slow mixing, that frontier is a lower bound.
+//!
+//! A controller of the form the paper describes — [`acp_update`], fed each layer's per-site spin
+//! autocorrelation at lag `K`, which is OUR choice of an observable the paper leaves unnamed, with
+//! this crate's constants — drove the penalty to ZERO at both sizes. On the resulting `L = 20`
+//! model that observable reads **0.023 on its worst layer**, under its own 0.03 threshold, while
+//! R-hat over chains from dispersed starts reads **1.92** after 250 sweeps and the certificate
+//! refuses 144 of 144 draws. It is the `examples/burnin` pathology inside a training loop: a
+//! normalised single-chain statistic subtracts each site's own mean, so a chain stuck in one mode
+//! reads as decorrelated, and the controller lowers the penalty exactly when the chain is stuck.
+//!
+//! The obvious repair — the same multiplicative law driven by
+//! [`crate::floors::Convergence::from_chains`] instead — was tried and **did not work**. It pulled
+//! R-hat from 1.92 to 1.009 and the certificate still refused every draw. It is rate-limited: the
+//! penalty decays to its floor while the young model mixes easily, then needs about 38 updates of
+//! 1.2x to climb back to 0.1, and the run has 40. A controller that finds the frontier needs a
+//! floor near it, a law that rises faster than it falls, or the certificate as its input.
 
 use crate::rng::Pcg;
 
