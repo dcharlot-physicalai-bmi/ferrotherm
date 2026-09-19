@@ -65,9 +65,13 @@
 //!
 //! That is the mixing-expressivity tradeoff the paper names, on its own wiring, with referees
 //! that either certify or refuse — and it is a statement about a FIXED penalty, which is this
-//! crate's simplification and not the paper's method. The paper adapts the penalty per layer with
-//! the controller [`acp_update`] implements, starting near 0.01. Until this was written that
-//! function was called by nothing but its own scripted test: no trainer here had ever used it.
+//! crate's simplification and not the paper's method. The paper adapts the penalty per layer. In
+//! its words, "we periodically measure the autocorrelations of each learned conditional at a delay
+//! equal to the number of sampling iterations used during gradient estimation", and a layer's
+//! penalty is lowered when that is near zero and raised otherwise. [`acp_update`] implements such a controller,
+//! and until this was written it was called by nothing but its own scripted test: no trainer here
+//! had ever used it. (An earlier version of this paragraph said the paper starts the penalty "near
+//! 0.01". That number is this crate's scripted test, not the paper; see [`acp_update`].)
 
 use crate::rng::Pcg;
 
@@ -604,6 +608,13 @@ impl Dtm {
 /// The ACP (autocorrelation-penalty) controller update law (DTM paper, Appendix H):
 /// eps = 0.03, delta = 0.2, `lambda_min` = 1e-4 are the published defaults.
 ///
+/// **PROVENANCE UNVERIFIED, 2026-09-18.** Two automated reads of the paper's arXiv HTML located the
+/// controller described in words — lower the penalty when the autocorrelation at lag `K` is near
+/// zero, raise it otherwise — and did NOT locate these three constants, an initial value, an
+/// update period, or a closed-form gradient in Appendix H. That is a statement about what those
+/// reads found, not about the paper. Treat the constants as this crate's until someone checks the
+/// PDF, and do not cite them as the paper's.
+///
 /// # Panics
 ///
 /// If `k` is not below the number of sites.
@@ -1039,7 +1050,7 @@ mod tests {
 
         let base = make();
         let extra = base.clamp_field(0, &x_next);
-        let tc_at = |a: f64| -> f64 {
+        let tc_at = |a: f64| -> (f64, f64) {
             let mut b = crate::graph::GraphBuilder::new(n);
             for (k, &(u, v)) in edges.iter().enumerate() {
                 b.couple(u as usize, v as usize, base.steps[0].j[k] + a * step[k]);
@@ -1068,13 +1079,38 @@ mod tests {
                     }
                 }
             }
-            marginal - joint
+            // THE PAPER'S OWN FUNCTIONAL, which is the KL in the OTHER direction: its Eq. 15 is
+            // `D(prod_i P(s_i | x) || P(s | x))`, product of marginals to joint, where
+            // `sum H(p_i) - H(p)` is joint to product. Both vanish only at independence, but they
+            // are different numbers, and a sign pinned under one is not thereby pinned under the
+            // other. So both are returned and both are held to the same ordering.
+            let mut reverse = 0.0;
+            for (x, &px) in p.iter().enumerate() {
+                let mut q = 1.0;
+                for (i, &u) in up.iter().enumerate() {
+                    q *= if (x >> i) & 1 == 1 { u } else { 1.0 - u };
+                }
+                if q > 0.0 {
+                    reverse += q * (q / px).ln();
+                }
+            }
+            (marginal - joint, reverse)
         };
         let (along, here, against) = (tc_at(0.25), tc_at(0.0), tc_at(-0.25));
-        assert!(here > 1e-3, "premise: the conditional must HAVE total correlation to lose: {here}");
+        assert!(here.0 > 1e-3 && here.1 > 1e-3, "premise: there must BE total correlation to lose: {here:?}");
         assert!(
-            along < here && here < against,
-            "the TC term must descend total correlation: along {along:.6}, here {here:.6}, against {against:.6}"
+            along.0 < here.0 && here.0 < against.0,
+            "joint-to-product: along {:.6}, here {:.6}, against {:.6}",
+            along.0,
+            here.0,
+            against.0
+        );
+        assert!(
+            along.1 < here.1 && here.1 < against.1,
+            "the paper's Eq. 15, product-to-joint: along {:.6}, here {:.6}, against {:.6}",
+            along.1,
+            here.1,
+            against.1
         );
     }
 }

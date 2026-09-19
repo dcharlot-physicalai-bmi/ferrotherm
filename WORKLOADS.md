@@ -221,8 +221,11 @@ grid as data. Two referees: the bounding-chain certificate, and R-hat over dispe
 reproduce; sampling noise caps it near 0.9. The fixed penalty keeps every layer certifiably fast
 and the model learns almost nothing; without it the model learns and the conditionals leave the
 fast-mixing regime, worse with size. **This indicts a FIXED penalty, which is this crate's
-simplification. The paper adapts it per layer (`dtm::acp_update`, starting near 0.01) — a
-controller that, until this measurement, nothing in this repository had ever called.** Whether
+simplification. The paper adapts it per layer, lowering a layer's penalty when its conditional's
+autocorrelation at lag `K` is near zero and raising it otherwise — and `dtm::acp_update`, this
+crate's version of that controller, had until this measurement never been called by anything but
+its own test.** (Its constants are documented as the paper's; two automated reads of the paper did
+not locate them, so they are flagged unverified at the function.) Whether
 the adaptive penalty finds a point that both learns and certifies is the next measurement, and
 the data here is synthetic.
 
@@ -237,9 +240,11 @@ nothing pinned either. Both updates have a fixed point, so "the increments decel
 is true of both and discriminates nothing — the reversed one settles at a model *more* correlated
 than the data, `⟨ss⟩ = (⟨ss⟩_data − λ·m_a·m_b)/(1 − λ)`, which is the opposite of what a penalty
 meant to keep sampling easy is for. The direction is now decided by the quantity the term is named
-for: on an enumerable conditional, total correlation `Σ H(p_i) − H(p)` is **0.1734** nats, falls to
-**0.1617** along `train_step`'s step and rises to **0.1856** along the reversed one, and that step
-shrinks every one of the eight couplings toward zero. The example is fixed, a test pins the sign,
+for — and under BOTH of its readings, because the paper's Eq. 15 is `D(∏ P(s_i|x) ‖ P(s|x))`,
+product of marginals to joint, which is not the same number as the more familiar `Σ H(p_i) − H(p)`.
+On an enumerable conditional the paper's functional is **0.1839** nats, falling to **0.1704** along
+`train_step`'s step and rising to **0.1981** along the reversed one; the other reads 0.1734, 0.1617
+and 0.1856. Same ordering, and the step shrinks every one of the eight couplings toward zero. The example is fixed, a test pins the sign,
 and a mutation row reverses it. **The 72.9% figure above was taken with the reversed sign as well
 as the wall-clock defect — one more reason not to quote it.**
 
