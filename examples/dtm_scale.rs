@@ -197,8 +197,16 @@ fn main() {
         for k in 0..lay.edges.len() {
             let (a, b) = lay.edges[k];
             let (ma, mb) = (neg_si[a as usize] / m, neg_si[b as usize] / m);
+            // THE SIGN, AND THAT IT WAS WRONG HERE UNTIL 2026-09-18. `tc` is MINUS the connected
+            // correlation `c_ab = <s_a s_b> - m_a m_b`, and with `E = -J s s` a penalty on total
+            // correlation must SHRINK a positive correlation: `J -= lr lambda c_ab`, which is
+            // `J += lr lambda tc`. This line used to subtract `lambda * tc`, ascending the penalty
+            // and driving the model to be MORE correlated than the data. It still settled -- that
+            // update has a fixed point too -- which is why watching |J| decelerate never caught it.
+            // `dtm::tests::the_total_correlation_term_descends_...` decides the direction by the
+            // conditional's exact total correlation, and `Dtm::train_step` always had it right.
             let tc = ma * mb - neg_ss[k] / m;
-            lay.j[k] += lr * ((pos_ss[k] - neg_ss[k]) / m - lambda * tc);
+            lay.j[k] += lr * ((pos_ss[k] - neg_ss[k]) / m + lambda * tc);
         }
         for i in 0..n {
             lay.h[i] += lr * (pos_si[i] - neg_si[i]) / m;

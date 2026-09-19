@@ -207,6 +207,19 @@ does not transfer, and the flagship configuration (latents, G12, eight steps) is
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.
 
+⛔ **CORRECTED 2026-09-18 — that measurement was made with the penalty's sign REVERSED, and could
+not have noticed.** `examples/dtm_scale` applied the term as `J += lr·λ·c_ab`, where `c_ab` is the
+model's connected correlation; `Dtm::train_step` applies `J -= lr·λ·c_ab`. Opposite signs, and
+nothing pinned either. Both updates have a fixed point, so "the increments decelerate and settle"
+is true of both and discriminates nothing — the reversed one settles at a model *more* correlated
+than the data, `⟨ss⟩ = (⟨ss⟩_data − λ·m_a·m_b)/(1 − λ)`, which is the opposite of what a penalty
+meant to keep sampling easy is for. The direction is now decided by the quantity the term is named
+for: on an enumerable conditional, total correlation `Σ H(p_i) − H(p)` is **0.1734** nats, falls to
+**0.1617** along `train_step`'s step and rises to **0.1856** along the reversed one, and that step
+shrinks every one of the eight couplings toward zero. The example is fixed, a test pins the sign,
+and a mutation row reverses it. **The 72.9% figure above was taken with the reversed sign as well
+as the wall-clock defect — one more reason not to quote it.**
+
 ⚠ **Calibrate this one.** This is *not* the published FID ≈ 28. Reaching that needs K ≈ 1000 and
 ≥100 epochs: roughly 2,170 CPU-hours, or ~14 hours on the WebGPU path.
 

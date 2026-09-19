@@ -1082,6 +1082,13 @@ mutations=(
   # with nothing in the output to say so. On a frustrated model the exactness test must notice.
   "src/cftp.rs|                    let a = g.w[k].abs();|                    let a = 0.0 * g.w[k].abs();|cftp::tests::a_frustrated_model_is_sampled_exactly_by_the_bounding_chain|an unknown neighbour that widens nothing"
 
+  # ---- the total-correlation penalty's SIGN ------------------------------------------------------
+  # `examples/dtm_scale` carried this term reversed for as long as it existed: it ASCENDED total
+  # correlation, driving the model to be more correlated than the data, and because the reversed
+  # update also has a fixed point, watching |J| settle never noticed. The test decides the direction
+  # by the conditional's exact total correlation. Reverse the library's sign and it must go red.
+  "src/dtm.rs|                g += lambda_tc * -(ma * mb - neg_ss[k] / m);|                g += lambda_tc * (ma * mb - neg_ss[k] / m);|dtm::tests::the_total_correlation_term_descends_the_conditionals_exact_total_correlation|a correlation penalty that rewards correlation"
+
 )
 
 bad=0
@@ -1153,7 +1160,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=213
+expected_rows=214
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

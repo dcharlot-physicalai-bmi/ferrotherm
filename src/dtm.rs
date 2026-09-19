@@ -973,4 +973,84 @@ mod tests {
             "training did not reduce exact NLL: {nll0:.3} -> {nll1:.3}"
         );
     }
+
+    /// WHICH WAY THE TOTAL-CORRELATION TERM PUSHES, decided by the quantity it is named for.
+    ///
+    /// `train_step` and `examples/dtm_scale` carried the term with OPPOSITE signs and nothing
+    /// pinned either: with `c_ab` the model's connected correlation, one does `J -= lr lambda c_ab`
+    /// and the other `J += lr lambda c_ab`. Both settle — each has a fixed point — so watching
+    /// `|J|` decelerate, which is how the penalty was judged "load-bearing", cannot tell them
+    /// apart. One of them ascends the penalty it is supposed to descend.
+    ///
+    /// The term reuses the negative-phase statistics and draws no randomness, so two calls from
+    /// the same generator state, with `lambda` off and on, differ in the couplings by exactly the
+    /// TC step. With one clamp context repeated across the batch there is a single conditional,
+    /// and its total correlation `sum_i H(p_i) - H(p)` is exact by enumeration. Moving along the
+    /// step must LOWER it, and moving against it must raise it.
+    #[test]
+    fn the_total_correlation_term_descends_the_conditionals_exact_total_correlation() {
+        let n = 6usize;
+        let edges: Vec<(u16, u16)> = vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0), (0, 3), (1, 4)];
+        let make = || {
+            let mut d = Dtm::new(1, n, n, edges.clone(), 1.0, vec![0.0, 0.5]);
+            let js = [0.6, -0.4, 0.5, 0.3, -0.5, 0.4, 0.35, -0.3];
+            d.steps[0].j.copy_from_slice(&js);
+            d.steps[0].h.copy_from_slice(&[0.1, -0.2, 0.0, 0.15, -0.1, 0.05]);
+            d
+        };
+        let x_next: Vec<i8> = vec![1, -1, 1, 1, -1, 1];
+        let batch: Vec<(Vec<i8>, Vec<i8>)> = (0..512).map(|_| (x_next.clone(), x_next.clone())).collect();
+
+        let (mut off, mut on) = (make(), make());
+        let rng = Pcg::new(3, 3);
+        let (lr, lambda) = (1.0, 0.5);
+        off.train_step(0, &batch, 40, lr, 0.0, &mut rng.clone());
+        on.train_step(0, &batch, 40, lr, lambda, &mut rng.clone());
+        let step: Vec<f64> = on.steps[0].j.iter().zip(&off.steps[0].j).map(|(a, b)| a - b).collect();
+        assert!(
+            step.iter().any(|d| d.abs() > 1e-2),
+            "premise: the TC term must move something, or the test compares a model with itself: {step:?}"
+        );
+        assert_eq!(on.steps[0].h, off.steps[0].h, "and it must not touch the fields");
+
+        let base = make();
+        let extra = base.clamp_field(0, &x_next);
+        let tc_at = |a: f64| -> f64 {
+            let mut b = crate::graph::GraphBuilder::new(n);
+            for (k, &(u, v)) in edges.iter().enumerate() {
+                b.couple(u as usize, v as usize, base.steps[0].j[k] + a * step[k]);
+            }
+            for i in 0..n {
+                b.bias(i, base.steps[0].h[i] + extra[i]);
+            }
+            let p = crate::autocorr::boltzmann(&b.build(), 1.0).expect("six spins enumerate");
+            let mut joint = 0.0;
+            let mut up = vec![0.0f64; n];
+            for (x, &px) in p.iter().enumerate() {
+                if px > 0.0 {
+                    joint -= px * px.ln();
+                }
+                for (i, u) in up.iter_mut().enumerate() {
+                    if (x >> i) & 1 == 1 {
+                        *u += px;
+                    }
+                }
+            }
+            let mut marginal = 0.0;
+            for &u in &up {
+                for q in [u, 1.0 - u] {
+                    if q > 0.0 {
+                        marginal -= q * q.ln();
+                    }
+                }
+            }
+            marginal - joint
+        };
+        let (along, here, against) = (tc_at(0.25), tc_at(0.0), tc_at(-0.25));
+        assert!(here > 1e-3, "premise: the conditional must HAVE total correlation to lose: {here}");
+        assert!(
+            along < here && here < against,
+            "the TC term must descend total correlation: along {along:.6}, here {here:.6}, against {against:.6}"
+        );
+    }
 }
