@@ -923,6 +923,25 @@ mutations=(
   # nothing anywhere that looks wrong. The pad frame in the fixture is deliberately not zero.
   "silicon/src/capture.rs|pub const PAD_FRAMES: usize = 1;|pub const PAD_FRAMES: usize = 0;|capture::tests::the_pad_frame_is_dropped_and_a_short_read_refused|a readback that keeps the pipeline frame|ferrotherm-silicon"
 
+  # A JTAG shift that reads returns a byte for every byte sent. Send the whole shift before reading
+  # any of it and the FTDI's return buffer fills, its engine stalls, the host's write never
+  # completes, and nothing errors: on 2026-09-19 a 36-frame readback of a real XC7A100T sat in a
+  # blocking write for twenty-nine minutes. The plan is a pure function so that this can be a row.
+  "silicon/src/mpsse.rs|    for chunk in tx[..n - 1].chunks(RETURN_BUFFER_SAFE) {|    for chunk in tx[..n - 1].chunks(65536) {|mpsse::tests::no_step_asks_the_chip_to_hold_more_than_it_can|a captured shift sent whole into a 4 KB buffer|ferrotherm-silicon"
+
+  # The other half of the same deadlock: cut the shift but never collect the pieces' replies.
+  "silicon/src/mpsse.rs|        steps.push(Step { cmd, reads: chunk.len() });|        steps.push(Step { cmd, reads: 0 });|mpsse::tests::no_step_asks_the_chip_to_hold_more_than_it_can|a step that writes and never collects its reply|ferrotherm-silicon"
+
+  # Cutting a shift into pieces must not re-enter Shift-DR for each one. Do that and every piece
+  # after the first passes through Update-DR and Capture-DR: the register is reloaded mid-read and
+  # the bytes that come back are real, plausible, and from the wrong place.
+  "silicon/src/mpsse.rs|        let mut cmd = core::mem::take(&mut prefix);|        let mut cmd = prefix.clone();|mpsse::tests::the_plan_shifts_exactly_the_bytes_it_was_given|a shift that re-enters Shift-DR for every piece|ferrotherm-silicon"
+
+  # The last bit of a shift does not travel as data; it rides the TMS clock that leaves Shift-DR.
+  # THIS MUTANT SURVIVED ITS FIRST RUN: the fixture's last byte was 0x3A, top bit clear, so a plan
+  # that lost the bit walked back to the same payload. The fixture now ends in 0xC3.
+  "silicon/src/mpsse.rs|((last >> 7) << 7)|((last >> 7) << 6)|mpsse::tests::the_plan_shifts_exactly_the_bytes_it_was_given|a final data bit placed where the chip ignores it|ferrotherm-silicon"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1160,7 +1179,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=214
+expected_rows=218
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

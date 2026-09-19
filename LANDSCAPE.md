@@ -27,7 +27,7 @@ The second kind is what makes something a reference. Measured across the field's
 | **thermox** (Normal) | 5 | `expm` against `jax.scipy.linalg.expm`, and the identities `Ax≈b`, `AA⁻¹≈I`, at `atol=1e-1` |
 | **THRML** (Extropic) | 13 | an exact Boltzmann law **by enumeration** at small `n`, at `max_err < 0.02`; the rest is API surface |
 | **torx** (Extropic) | 15 | gates, circuits, gradients, simulators, p-dits — API surface |
-| **ferrotherm** | **2005 tests**, of which **444** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
+| **ferrotherm** | **2008 tests**, of which **444** name an exact, closed-form, quadrature, oracle or enumeration comparison | the field's known answers |
 
 > **CORRECTED 2026-09-17.** Two of these rows previously read "API surface", and that was wrong.
 > `thrml/tests/test_ising.py` compares sampled against exact enumerated Boltzmann distributions
@@ -291,7 +291,7 @@ On the only axis that can be settled by computation — *does it reproduce what 
 known, and how much of the field does it cover* — ferrotherm is the reference implementation for
 thermodynamic computing. 19 external sources of truth, 444 verification-bearing tests, seven
 machine-checked theorems, and the field's only calibrated error bars. 19 external sources, 444
-verification-bearing tests of 2005 — and `scripts/check-counts.sh` derives all four figures from the
+verification-bearing tests of 2008 — and `scripts/check-counts.sh` derives all four figures from the
 suite rather than trusting this sentence, because three earlier versions of it disagreed with each
 other. The competitors do verify —
 against enumeration and self-consistency at brute-forceable sizes, at `1e-1` and `2e-2` tolerances

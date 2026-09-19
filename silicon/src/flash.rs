@@ -265,13 +265,21 @@ impl Tap {
             cmds.push(0x02);
             cmds.push(((last >> 7) << 7) | 0x03); // last data bit + Exit1, Update, RTI
         }
-        self.ftdi.write(&cmds)?;
         if !capture {
+            self.ftdi.write(&cmds)?;
             return Ok(Vec::new());
         }
-        // reads: (n-1) whole bytes, one 7-bit byte, one 1-bit TMS byte
+        // A CAPTURED SHIFT IS NOT SENT WHOLE. Every byte out brings a byte back, and a reply larger
+        // than the chip's return buffer stalls its engine, which stops draining our write, which
+        // never completes -- a deadlock with no error, met on real silicon at 36 frames. The plan
+        // in `crate::mpsse` writes a piece and collects its reply before the next, and it lives
+        // outside this feature-gated module so that a test can hold it to the buffer's size.
         let want = n.saturating_sub(1) + 2;
-        let raw = self.ftdi.read(want)?;
+        let mut raw = Vec::with_capacity(want);
+        for step in crate::mpsse::plan_capturing_shift(tx) {
+            self.ftdi.write(&step.cmd)?;
+            raw.extend(self.ftdi.read(step.reads)?);
+        }
         let mut out = Vec::with_capacity(n);
         if n > 1 {
             out.extend_from_slice(&raw[..n - 1]);

@@ -5,6 +5,7 @@
 
 pub mod bitstream;
 pub mod capture;
+pub mod mpsse;
 pub mod ecc;
 pub mod frame;
 pub mod framebuf;

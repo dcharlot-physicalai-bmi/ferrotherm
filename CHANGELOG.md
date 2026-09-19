@@ -138,10 +138,26 @@ so **bit 8 never lands** — `MASK` gates which `CTL0` bits a write reaches, and
 RAM back needs exactly that bit. `capture::reaches` is the arithmetic. Capturing flip-flops does
 not depend on it.
 
-What no test in this crate can establish is that `GCAPTURE` latches on this board: that needs a
-part, a running design, and a value known by other means. The opcode is the only constant in the
-crate taken from a document rather than from a stream a device was watched to accept, and it says
-so where it is declared.
+Whether `GCAPTURE` latches is not something a test in this crate can establish, so it was put to a
+part. `examples/capture_hw` ran on 2026-09-19 against the design an Alchitry Pt V2 (XC7A100T) boots
+from flash. The test is differential, because nobody here knows what that design should hold: of
+576 columns, two moved between captures 30 ms apart (11 bits, 2 bits); on both, two plain readbacks
+were identical, two captures differed, and a plain readback after a capture equalled it bit for
+bit. So the opcode — until now the one constant taken from a document rather than from a stream a
+device was watched to accept — latches live state into configuration memory on this part. **Not
+established:** that a captured bit is the value of a named flip-flop. No captured bit has been
+compared with a value known by other means, and our own emitted fabric cannot supply one, being
+combinational.
+
+The first attempt hung for twenty-nine minutes on 0.01 s of CPU. `Tap::shift_dr` wrote a captured
+shift whole before reading any reply; an MPSSE byte shift returns a byte per byte, the FT2232H
+holds 4 KB, and at 36 frames (14.5 KB) the chip stalled, stopped draining the write, and the host
+blocked in it with nothing erroring. Every earlier readback had been a few frames. It could not
+have been a test, because the module that talks to the chip compiles only with the hardware
+feature — so the plan now lives in `silicon::mpsse` as a pure function (write a piece, collect its
+reply, write the next), with four mutation rows. One of those mutants **survived its first run**:
+the fixture's last byte was `0x3A`, top bit clear, so a plan that dropped the one bit that rides
+the TMS clock out of Shift-DR walked back to the same payload. The fixture now ends in `0xC3`.
 
 ### Frame parity, and the UltraScale+ geometry behind the second demo board
 

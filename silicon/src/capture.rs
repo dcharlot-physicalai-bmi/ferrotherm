@@ -29,10 +29,23 @@
 //!
 //! # What is checked and what is not
 //!
-//! Everything here is built and tested offline. The packet sequence, the pad-frame rule, the
-//! address walk and the naming all have tests. What no test in this crate can establish is that
-//! `GCAPTURE` latches on this board: that needs a part, a running design, and a value known by
-//! other means. [`crate::bitstream::cmd::GCAPTURE`] carries the same caveat.
+//! The packet sequence, the pad-frame rule, the address walk and the naming all have offline
+//! tests. Whether `GCAPTURE` latches is not a thing a test in this crate can establish, so it was
+//! put to a part: `examples/capture_hw`, on 2026-09-19, against the design an Alchitry Pt V2
+//! (XC7A100T) boots from its flash. The test is differential, because nobody here knows what that
+//! design's flip-flops should hold. Over 576 columns, two columns moved between two captures
+//! 30 ms apart (11 bits and 2 bits). On both: two plain readbacks were identical, so the movement
+//! is not readback noise; two captures differed, so it is live state; and a plain readback after
+//! a capture equalled that capture bit for bit, so the latch writes configuration memory and the
+//! value stays. `STAT` read `DONE=1 CRC_ERR=0` before and after.
+//!
+//! WHAT THAT RUN DOES NOT ESTABLISH: that a captured bit is the value of a NAMED flip-flop. No
+//! captured bit has yet been compared with a value known by other means, so the naming path
+//! ([`Readout::latch`] through a `.ll` listing) is still checked offline only. Our own emitted
+//! fabric cannot supply that value: it is combinational and has no flip-flop to latch.
+//!
+//! The same run found a deadlock in the JTAG driver that no earlier readback was long enough to
+//! meet; see [`crate::mpsse`].
 
 use crate::bitstream::{cmd, reg, type1_read, type1_write, type2_read, DUMMY, NOOP, SYNC};
 use crate::frame::WORDS_PER_FRAME;

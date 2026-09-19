@@ -57,5 +57,9 @@ required-features = ["flash"]
 name = "readback"
 required-features = ["flash"]
 
+[[example]]
+name = "capture_hw"
+required-features = ["flash"]
+
 [lints]
 workspace = true

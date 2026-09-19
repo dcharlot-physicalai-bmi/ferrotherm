@@ -54,14 +54,17 @@ println!("{:.4}", bsn_fire_prob(3, 5));         // 1.0000
 | **Route a signal** | LOGIC_OUTS_L0 (INT_L_X0Y102) -> IMUX3 (INT_R_X1Y102) over an east single-length wire; both PIPs -> physical bits |
 | Assemble a bitstream | generated header word-identical to a stream produced for this exact part |
 | Frame parity | 0 of 21,680 frames odd across four independent Vivado designs and 0 of 21,123 across two Kria K26 images; 20 of our own 40 were, until `FrameBuf::set_x7_parity` |
-| Read a fabric back | Frame readback over JTAG returns frames the device holds; the capture path that latches live flip-flops first is built and tested offline, and is the one capability here awaiting a board |
+| Read a fabric back | Frame readback over JTAG returns frames the device holds; the capture path that latches live flip-flops first has now latched on an XC7A100T: over 576 columns, state moved between captures in two, read back identically without a capture, and persisted after one. No captured bit has yet been checked against a named, independently known value |
 | UltraScale+ geometry | 93-word frame and 8-bit minor read off a Kria K26 reference image: its frame data divides by 93 and not by 101, and its minor field runs to 255 |
 
-Reading fabric state back is built but not yet exercised on silicon: [`capture`](src/capture.rs)
-carries the packet sequence, the pad-frame rule, the column limit and the naming path, all tested
-offline, and `Tap::capture_frames` drives it over JTAG. What no offline test can settle is that
-`GCAPTURE` latches on this board — that needs a part, a running design, and a value known by other
-means. Still not done: binding a p-bit fabric's LUTs to SLICE site pins (the CLB-to-interconnect
+Reading fabric state back has been exercised on silicon once: [`capture`](src/capture.rs) carries
+the packet sequence, the pad-frame rule, the column limit and the naming path, all tested offline,
+`Tap::capture_frames` drives it over JTAG, and `examples/capture_hw` showed `GCAPTURE` latching on
+the Pt V2's XC7A100T by a differential test that needs no knowledge of the running design. What
+remains open is the naming path: no captured bit has been compared with a value known by other
+means. Getting there exposed a deadlock in the JTAG driver — a captured shift was written whole
+before any of its reply was read, which an FTDI's 4 KB return buffer cannot carry — now planned in
+[`mpsse`](src/mpsse.rs), outside the hardware feature, where a test can hold it. Still not done: binding a p-bit fabric's LUTs to SLICE site pins (the CLB-to-interconnect
 node model). On UltraScale+ the bitstream layer is ported but the fabric map is not, so the
 KV260 is read and checked here rather than configured; the twelve non-parity bits of the frame ECC
 this review did not recover.

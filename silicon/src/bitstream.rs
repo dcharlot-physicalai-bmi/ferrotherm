@@ -58,9 +58,9 @@ pub mod cmd {
     /// frame readback returns what the design is doing rather than what was configured.
     ///
     /// This opcode comes from UG470's command table, not from a stream this project has watched a
-    /// device accept, and it is the only constant here in that position. Everything the
-    /// [`crate::capture`] module builds around it is checked offline; the latch itself is not yet
-    /// exercised on silicon.
+    /// device accept. On 2026-09-19 an XC7A100T accepted it and latched: see the differential
+    /// test recorded in [`crate::capture`]. What that run does not establish is recorded there
+    /// too.
     pub const GCAPTURE: u32 = 0x0C;
     /// Pulse GRESTORE, restoring flip-flop initial values.
     pub const GRESTORE: u32 = 0x0A;
