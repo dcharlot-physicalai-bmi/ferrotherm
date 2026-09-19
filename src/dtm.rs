@@ -44,6 +44,30 @@
 //! not a slope. What it does NOT cover is the flagship configuration: latents, twelve-neighbour
 //! connectivity, eight steps, real images. More neighbours breed more unknowns, and that case is
 //! unmeasured.
+//!
+//! # The flagship SHAPE: a fixed penalty buys `K_mix` by not learning
+//!
+//! `examples/kmix_flagship.rs` (2026-09-18) measures it: G12 wiring, 16% of sites visible at
+//! random, eight steps, `dtm_scale`'s settings, trained by [`Dtm::train_step`] on a frustrated
+//! `+-J` grid (Fashion-MNIST is not in this repository). Two instruments, because one may decline:
+//! the [`crate::cftp::Bounding`] certificate, and R-hat over four dispersed chains traced AFTER
+//! the paper's 250 sweeps, through [`crate::floors::Convergence::from_chains`] — which can say 250
+//! is not enough. "Learned" is the share of the data's nearest-neighbour correlations that
+//! GENERATED samples reproduce, zero for a model that learned nothing.
+//!
+//! With the total-correlation penalty FIXED at `dtm_scale`'s 0.35, every layer certifies at every
+//! size and training length — worst coalescence 16 to 32 sweeps — and the model learns **0.13,
+//! 0.03 and 0.03** of the structure at `L = 10, 20, 28` after 32,000 steps. With the penalty off
+//! it learns **0.80, 0.59 and 0.45**, and the certificate refuses every exact draw at `L >= 20`
+//! (144 of 144 at an 8,192-sweep cap) while R-hat after 250 sweeps reads **1.137** and **1.055**
+//! at `L = 28`. At `L = 28` "learned" FALLS between 8,000 and 32,000 steps as `|J|` reaches 3.4:
+//! generation runs at 250 sweeps too, so once mixing fails the samples degrade.
+//!
+//! That is the mixing-expressivity tradeoff the paper names, on its own wiring, with referees
+//! that either certify or refuse — and it is a statement about a FIXED penalty, which is this
+//! crate's simplification and not the paper's method. The paper adapts the penalty per layer with
+//! the controller [`acp_update`] implements, starting near 0.01. Until this was written that
+//! function was called by nothing but its own scripted test: no trainer here had ever used it.
 
 use crate::rng::Pcg;
 

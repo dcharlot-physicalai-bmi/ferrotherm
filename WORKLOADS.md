@@ -203,6 +203,29 @@ coalescence 64 sweeps, no refusal in 10,240 exact draws**, flat from 576 sites u
 covers the site count by about four on this family; the forty-fold margin seen at twelve spins
 does not transfer, and the flagship configuration (latents, G12, eight steps) is unmeasured.
 
+**On the flagship SHAPE a fixed penalty buys `K_mix` by not learning — `examples/kmix_flagship`.**
+G12 wiring, 16% of sites visible at random, eight steps, `dtm_scale`'s settings, a frustrated `+-J`
+grid as data. Two referees: the bounding-chain certificate, and R-hat over dispersed chains traced
+*after* the paper's 250 sweeps, which can say 250 is not enough.
+
+| L (sites) | penalty | learned @ 32k steps | worst coalescence | refused | R-hat after 250 |
+|---|---|---|---|---|---|
+| 10 (100) | 0.35 | 0.13 | 8 | 0 | 1.006 |
+| 10 (100) | off | **0.80** | cap (8,192) | 27 of 144 | 1.010 |
+| 20 (400) | 0.35 | 0.03 | 16 | 0 | 1.004 |
+| 20 (400) | off | **0.59** | — | **144 of 144** | 1.007 |
+| 28 (784) | 0.35 | 0.03 | 16 | 0 | 1.002 |
+| 28 (784) | off | **0.40** (0.45 at 8k) | — | **144 of 144** | **1.055** (1.137 at 8k) |
+
+"Learned" is the share of the data's nearest-neighbour correlations that *generated* samples
+reproduce; sampling noise caps it near 0.9. The fixed penalty keeps every layer certifiably fast
+and the model learns almost nothing; without it the model learns and the conditionals leave the
+fast-mixing regime, worse with size. **This indicts a FIXED penalty, which is this crate's
+simplification. The paper adapts it per layer (`dtm::acp_update`, starting near 0.01) — a
+controller that, until this measurement, nothing in this repository had ever called.** Whether
+the adaptive penalty finds a point that both learns and certifies is the next measurement, and
+the data here is synthetic.
+
 **The total-correlation penalty is load-bearing, measured both ways.** Without it `|J|` grows
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.
