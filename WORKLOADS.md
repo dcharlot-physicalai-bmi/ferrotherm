@@ -242,6 +242,18 @@ either:** the same law driven by R-hat pulled it to 1.009 and the certificate st
 draw, because a multiplicative law that decays to its floor early needs ~38 updates to climb back
 and the run has 40.
 
+**A third controller, driven by the certificate, is a partial success (`C-ACP`).** Its sensor is
+the certificate at the deployment budget — does a bounding chain coalesce within `K_mix` on four
+draws — and it doubles a layer's penalty on a refusal, easing it by a tenth when all four finish
+inside half the budget. It is the only controller that keeps exact sampling possible: **no draw
+refused at any size**, where the other two end at 144 of 144. At `L = 10` it certifies and learns
+**0.50** against the uniform frontier's 0.39, by penalising one layer heavily and the rest barely
+(0.001–0.122). It does not hold the budget at size — slowest draw 512 sweeps at `L = 20`, 2,048 at
+`L = 28`, where one layer's penalty has run away to 4.1 without fixing it. That is an actuator
+mismatch: the penalty acts on *correlations*, and a bounding chain's coalescence is governed by
+coupling *magnitudes*, so a large coupling with almost no correlation is invisible to the one and
+poison to the other.
+
 **The total-correlation penalty is load-bearing, measured both ways.** Without it `|J|` grows
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.

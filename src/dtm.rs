@@ -97,6 +97,28 @@
 //! penalty decays to its floor while the young model mixes easily, then needs about 38 updates of
 //! 1.2x to climb back to 0.1, and the run has 40. A controller that finds the frontier needs a
 //! floor near it, a law that rises faster than it falls, or the certificate as its input.
+//!
+//! # A third controller, driven by the certificate: a partial success, and why only partial
+//!
+//! `C-ACP` takes all three lessons. Its sensor is the certificate AT THE DEPLOYMENT BUDGET — does
+//! a bounding chain on this layer's conditional coalesce within `K_mix` sweeps, on four draws — and
+//! its law doubles a layer's penalty on a refusal and eases it by a tenth when all four finish
+//! inside half the budget. It is the only one of the three that keeps the model where exact
+//! sampling is possible: **no draw refused at any size**, R-hat at most 1.007, where the other two
+//! end with 144 of 144 refused. At `L = 10` it certifies and learns **0.50** against the uniform
+//! frontier's 0.39, by running almost no penalty on most layers and a large one on one (0.001 to
+//! 0.122) — which a uniform penalty cannot do.
+//!
+//! It does not hold the budget at size. At `L = 20` it learns 0.23 (frontier 0.17) with its
+//! slowest draw at 512 sweeps, twice the budget; at `L = 28`, 0.22 with the slowest at 2,048,
+//! eight times, and the penalty on one layer has run away to **4.1** without fixing it. That is
+//! an ACTUATOR MISMATCH, not a tuning problem. The penalty acts on the model's correlations. A
+//! bounding chain's coalescence is governed by coupling MAGNITUDES — each unknown neighbour widens
+//! the bracket by `|J|` — so a large coupling with almost no correlation, frustrated or
+//! latent-to-latent, is invisible to the penalty and poison to the certificate. It also permits
+//! transients: at `L = 10` the 8,000-step checkpoint fails before the 32,000-step one certifies,
+//! because the penalty eased for ten updates before the first refusal arrived. A prediction
+//! written down before the run — "certifies at every checkpoint" — was wrong on exactly that.
 
 use crate::rng::Pcg;
 

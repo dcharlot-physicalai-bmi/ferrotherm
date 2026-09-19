@@ -116,6 +116,13 @@ enum Arm {
     /// autocorrelation subtracts each site's own mean, so a chain stuck in one mode reads as
     /// decorrelated; chains started apart cannot make that mistake.
     Rhat(f64),
+    /// The CERTIFICATE AT THE DEPLOYMENT BUDGET as the sensor. Each update asks a layer's
+    /// conditional the exact question that matters: does a bounding chain coalesce within `K_mix`
+    /// sweeps? Refused on any of four draws: DOUBLE the penalty. All four inside half the budget:
+    /// ease it by a tenth. Otherwise hold. Two things the failed `Rhat` arm taught: the input must
+    /// be able to see a stuck chain, and the law must rise much faster than it falls, or it spends
+    /// the run climbing back from a floor it reached while the young model still mixed easily.
+    Cert(f64),
 }
 
 /// The paper's controller input: "the autocorrelations of each learned conditional at a delay
@@ -181,6 +188,7 @@ fn main() {
         vec![
             ("ACP", Arm::Acp(0.01)),
             ("R-ACP", Arm::Rhat(0.01)),
+            ("C-ACP", Arm::Cert(0.05)),
             ("TC .02", Arm::Fixed(0.02)),
             ("TC .05", Arm::Fixed(0.05)),
             ("TC .10", Arm::Fixed(0.10)),
@@ -254,7 +262,7 @@ fn main() {
             let mut rng = Pcg::new(9, 0xD7);
             let mut dtm = Dtm::new(t_steps, n, nv, edges.clone(), gamma, times.clone());
             let mut done = 0usize;
-            let mut lambda = vec![match how { Arm::Fixed(v) | Arm::Acp(v) | Arm::Rhat(v) => v }; t_steps];
+            let mut lambda = vec![match how { Arm::Fixed(v) | Arm::Acp(v) | Arm::Rhat(v) | Arm::Cert(v) => v }; t_steps];
             let mut a_prev: Vec<Option<f64>> = vec![None; t_steps];
             for &target in checkpoints {
                 while done < target {
@@ -282,15 +290,39 @@ fn main() {
                                 forward_step(&mut x, gamma, times[u + 1] - times[u], &mut rng);
                             }
                             let g = conditional(&dtm, layer, &x);
-                            if let Arm::Acp(_) = how {
-                                let a = layer_autocorrelation(&g, k_sweeps, 40 * k_sweeps, 0xACB0 + done as u64 + layer as u64);
-                                lambda[layer] = acp_update(lambda[layer], a, a_prev[layer], acp_eps, acp_delta, acp_min);
-                                a_prev[layer] = Some(a);
-                            } else {
-                                // Held to the constraint that matters at deployment: K_mix sweeps.
-                                let disagree = rhat_after(&g, k_mix, 200).refusal().is_some();
-                                let lp = lambda[layer].max(acp_min);
-                                lambda[layer] = if disagree { (1.0 + acp_delta) * lp } else { (1.0 - acp_delta) * lp };
+                            match how {
+                                Arm::Fixed(_) => {}
+                                Arm::Acp(_) => {
+                                    let a = layer_autocorrelation(&g, k_sweeps, 40 * k_sweeps, 0xACB0 + done as u64 + layer as u64);
+                                    lambda[layer] = acp_update(lambda[layer], a, a_prev[layer], acp_eps, acp_delta, acp_min);
+                                    a_prev[layer] = Some(a);
+                                }
+                                Arm::Rhat(_) => {
+                                    // Held to the constraint that matters at deployment: K_mix sweeps.
+                                    let disagree = rhat_after(&g, k_mix, 200).refusal().is_some();
+                                    let lp = lambda[layer].max(acp_min);
+                                    lambda[layer] = if disagree { (1.0 + acp_delta) * lp } else { (1.0 - acp_delta) * lp };
+                                }
+                                Arm::Cert(_) => {
+                                    // A refusal at this cap costs about 2 * K_mix sweeps, so asking
+                                    // the deployment question directly is cheap.
+                                    let b = Bounding::new(&g, 1.0).expect("finite").with_max_steps(k_mix);
+                                    let (mut slowest, mut refused_here) = (0usize, false);
+                                    for d in 0..4u64 {
+                                        match b.draw(0xCE27 + done as u64 * 8 + layer as u64 * 4 + d, None) {
+                                            Ok(x) => slowest = slowest.max(x.coalesced_at),
+                                            Err(_) => refused_here = true,
+                                        }
+                                    }
+                                    let lp = lambda[layer].max(1e-3);
+                                    lambda[layer] = if refused_here {
+                                        2.0 * lp
+                                    } else if slowest <= k_mix.div_ceil(2) + 3 {
+                                        0.9 * lp
+                                    } else {
+                                        lp
+                                    };
+                                }
                             }
                         }
                     }
