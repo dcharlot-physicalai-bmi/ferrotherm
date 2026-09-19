@@ -705,8 +705,10 @@ impl crate::fabric::Device for RtlFabric {
             states.push(st);
         }
         self.ledger.samples += (g.n as u64) * (plan.sweeps() as u64);
-        // Every draw leaves the fabric. On the metered board that is the term worth 239 updates
-        // apiece, so a chain of 3,000 draws costs far more in readback than in sampling.
+        // Every draw leaves the fabric, and a spin read out is worth many updates: 239 under
+        // `Z1_SPICE`'s projection, and 64 where it was METERED (`KV260_AXI_METERED`, single-beat
+        // AXI4-Lite). This comment used to say "on the metered board ... 239", which was the
+        // projection's ratio attributed to a board that had not yet metered a read at all.
         self.ledger.reads += (plan.draws as u64) * (g.n as u64);
         Ok(crate::samples::SampleSet::from_chain(
             states,

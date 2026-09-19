@@ -958,6 +958,26 @@ mutations=(
   # nothing bound any catalogue name to the constant it names. The grade test now does.
   "src/ledger.rs|    (\"KV260_AXI_METERED\", KV260_AXI_METERED),|    (\"KV260_AXI_METERED\", KV260_MEASURED),|ledger::tests::only_the_metered_price_claims_to_be_metered|a catalogue name bound to another machine's prices"
 
+  # THE WRITABLE FABRIC. Its contract is that a fabric programmed with a graph IS the fixed fabric
+  # of that graph, state for state -- in the emulator, and in the emitted RTL driven over AXI by
+  # the same bus words `program` returns. Each row breaks one link of that chain: the emulator's
+  # write, the refusals that stop a half-fitting problem being written, and the RTL's decoder and
+  # four-clock schedule. (Swapping the two halves of a bus word was also tried and caught; it
+  # contains a pipe and cannot be a row, so the shifted-field form below stands in for it.)
+  "src/writable.rs|(hi << 16) });|(hi << 12) });|writable::tests::rtl_written_over_axi_matches_the_fixed_fabric_of_what_was_written|the second weight of a pair landing four bits low in its bus word"
+  "src/writable.rs|                self.core.adj[i][slot].1 = w;|                self.core.adj[i][slot].1 = -w;|writable::tests::a_programmed_fabric_is_the_fixed_fabric_of_its_target|an emulator that writes the negated weight"
+  "src/writable.rs|            if nbrs != wired.as_slice() {|            if false {|writable::tests::a_weight_that_does_not_fit_is_refused_and_nothing_is_written|the same node count wired differently and accepted"
+  "src/writable.rs|if (phase & sub) done_sweeps|if (phase) done_sweeps|writable::tests::rtl_written_over_axi_matches_the_fixed_fabric_of_what_was_written|a sweep counter that forgets a sweep is four clocks"
+  "src/writable.rs|    if !(f64::from(WMIN)..=f64::from(WMAX)).contains(&q) {|    if !(f64::from(WMIN)..=f64::from(WMAX + 1)).contains(&q) {|writable::tests::a_weight_that_does_not_fit_is_refused_and_nothing_is_written|a weight of +8.0 accepted and wrapped to -8.0"
+  "src/writable.rs|cfg_word <= awaddr_r[{word_hi}:2];|cfg_word <= awaddr_r[{word_hi}:2] ^ 1;|writable::tests::rtl_written_over_axi_matches_the_fixed_fabric_of_what_was_written|configuration words that land in the neighbouring word"
+
+  # A slave that drops its write response before the master has accepted it. The polite testbench
+  # ties `bready` high and CANNOT see this -- run against this same mutant it stays green -- and
+  # on a board it is a core stalled for ever on a transaction that will never complete. Both
+  # shells are held to a master that skews its channels and accepts responses late.
+  "src/writable.rs|      if (bvalid_r && s_axi_bready) begin|      if (bvalid_r) begin|writable::tests::neither_shell_deadlocks_under_a_badly_behaved_master|a writable shell that drops a response nobody has accepted"
+  "src/hdl.rs|      if (bvalid_r && s_axi_bready) begin|      if (bvalid_r) begin|writable::tests::neither_shell_deadlocks_under_a_badly_behaved_master|a fixed shell that drops a response nobody has accepted"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1195,7 +1215,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=222
+expected_rows=230
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

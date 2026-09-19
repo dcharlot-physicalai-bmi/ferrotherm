@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### A fabric whose couplings are registers — and a board that stopped answering
+
+`writable::WritableFabric` is `hdl::FixedFabric` with its constants turned into state: the wiring
+is fixed at synthesis, and every weight and bias is a 12-bit signed Q.8 register a host writes over
+AXI4-Lite. Its contract is that a fabric programmed with a graph **is the fixed fabric of that
+graph, state for state**, so it carries no emulator of its own — it mutates a `FixedFabric`, and
+the icarus-verilog gate drives the emitted RTL over its bus with the very words `program` returns
+and holds it to the trace of a `FixedFabric` built from the target. `program` validates everything
+before writing anything, and refuses (never clamps) a weight outside ±8.0 or a graph wired
+differently — including the same node count wired differently, which the first draft of its test
+did not try.
+
+What programmability costs on this part: the sigmoid ROM can no longer constant-fold, so it moves
+into block RAM, whose reads are registered — four clocks a sweep instead of two — and the node
+grows from 44 LUTs to 137. What it buys: a new problem, or a new TEMPERATURE (scale the weights;
+the ROM is indexed by the field), is a register write instead of a bitstream. `RtlFabric` charges
+a full reconfiguration per rung of a ladder; this does not need one.
+
+**On the KV260** it built (35,152 LUTs, 128 `RAMB18`, WNS +0.550 ns), loaded, and passed its
+controls with known answers: bias `+max` → popcount 256/256, `-max` → 0; 68,241,408 configuration
+words accepted of 68,241,408 sent; `2.49995e7` sweeps/s against `2.5e7`; 7.58 M word writes/s from
+one core. **A write was not metered.** Within a minute of that smoke run the board stopped
+answering SSH while still answering ping, before the eight-pass protocol started, and it needs a
+power cycle. The cause is unknown. The testable hypothesis — a bus deadlock in the shell — was put
+to a randomised master in simulation (skewed channels, late `bready`/`rready`, a concurrent
+reader, 3,000 writes) and **not supported**; both shells pass, and the gate demonstrably can fail:
+a shell that drops a response before it is accepted is caught by it and invisible to the polite
+testbench. The first version of that stress master was itself wrong (it could skip the data beat
+entirely and then report the slave as hung), and was rewritten before its verdict was believed.
+`e_write` stays unstated.
+
 ### What it costs to look: a metered read, and joules per certified sample with its readout
 
 `ledger::KV260_MEASURED` prices a flip and refuses a read, because its bitstream could not perform
