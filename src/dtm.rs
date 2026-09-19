@@ -119,6 +119,28 @@
 //! transients: at `L = 10` the 8,000-step checkpoint fails before the 32,000-step one certifies,
 //! because the penalty eased for ten updates before the first refusal arrived. A prediction
 //! written down before the run — "certifies at every checkpoint" — was wrong on exactly that.
+//!
+//! # The matched actuator, and what is left over
+//!
+//! `PROJECT` trains with no penalty and, whenever a layer fails the certificate, scales that
+//! layer's couplings down by a tenth until it passes: a projection onto the certifiable set,
+//! acting on the magnitudes the certificate responds to. It is held to half the deployment budget
+//! and projects once more before scoring. The prediction written first was that it would hold the
+//! budget at all three sizes. It holds it at ONE. At `L = 20` it certifies and learns **0.25**,
+//! the best certified point at that size (uniform frontier 0.17). At `L = 10` it learns 0.66 with
+//! its slowest draw at 256 sweeps and R-hat at 1.016; at `L = 28`, 0.11 with the slowest at 512.
+//! It is the matched actuator — worst draws of 128 and 512 where the penalty-driven arm had 512
+//! and 2,048 — and it does not close the gap.
+//!
+//! What is left over is STATISTICAL. The sensor tests eight draws; the scoring takes the maximum
+//! over 144, across fresh clamp contexts, and coalescence time is heavy-tailed. Controlling the
+//! maximum of a small sample does not bound the maximum of a large one. A controller that
+//! guarantees the budget has to control a QUANTILE with a margin that grows with the logarithm of
+//! how many draws it must cover, or spend far more on sensing. Every certificate-aware arm does
+//! achieve the qualitative thing the other two do not: no draw is ever refused, so exact sampling
+//! stays possible, where the paper-style controller and no penalty end at 144 of 144 refused.
+//! (Verdicts near the R-hat line are noisier than their labels: four 400-sample chains put about
+//! 0.005 of standard error on it, so 1.016 against 1.01 is one standard error, not a finding.)
 
 use crate::rng::Pcg;
 

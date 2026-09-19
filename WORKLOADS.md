@@ -254,6 +254,23 @@ mismatch: the penalty acts on *correlations*, and a bounding chain's coalescence
 coupling *magnitudes*, so a large coupling with almost no correlation is invisible to the one and
 poison to the other.
 
+**The matched actuator closes part of the gap, and the rest is statistical (`PROJECT`).** Train
+with no penalty; whenever a layer fails the certificate, scale its couplings down until it passes.
+
+| L (sites) | uniform frontier | `C-ACP` | `PROJECT` |
+|---|---|---|---|
+| 10 (100) | 0.39, certified | **0.50, certified** | 0.66; slowest draw 256, R-hat 1.016 |
+| 20 (400) | 0.17, certified | 0.23; slowest draw 512 | **0.25, certified** |
+| 28 (784) | not swept | 0.22; slowest draw 2,048 | 0.11; slowest draw 512 |
+
+Learned structure at 32,000 steps, with why a cell is not certified. Two predictions written before
+these runs — that each new arm would hold the budget everywhere — were both wrong, and are
+recorded as wrong in `dtm.rs`. What remains is not tuning: the sensor tests eight draws, scoring
+takes the maximum over 144 across fresh clamp contexts, and coalescence time is heavy-tailed, so
+controlling a small sample's maximum does not bound a large one's. **What every certificate-aware
+arm does achieve is that no draw is ever refused — exact sampling stays possible — where the
+paper-style controller and no penalty end at 144 of 144 refused.**
+
 **The total-correlation penalty is load-bearing, measured both ways.** Without it `|J|` grows
 linearly and never settles — an unmixed negative phase underestimating the model's own correlations,
 which looks like learning and is not. With it the increments decelerate and settle.

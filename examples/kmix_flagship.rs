@@ -123,6 +123,14 @@ enum Arm {
     /// be able to see a stuck chain, and the law must rise much faster than it falls, or it spends
     /// the run climbing back from a floor it reached while the young model still mixed easily.
     Cert(f64),
+    /// THE MATCHED ACTUATOR. `Cert` failed at size because its actuator, a penalty on correlations,
+    /// does not act on what its sensor measures: a bounding chain coalesces according to coupling
+    /// MAGNITUDES. So this one trains with no penalty at all and, whenever a layer fails the
+    /// certificate, scales that layer's couplings down by a tenth until it passes -- a projection
+    /// onto the certifiable set. It is held to HALF the deployment budget, because a four-draw
+    /// sensor ran about one doubling optimistic against the scoring's 144 draws, and it projects
+    /// once more before scoring, which is what one would do before deploying any model.
+    Project,
 }
 
 /// The paper's controller input: "the autocorrelations of each learned conditional at a delay
@@ -158,6 +166,28 @@ fn layer_autocorrelation(g: &Graph, lag: usize, trace: usize, seed: u64) -> f64 
     if counted == 0 { 0.0 } else { total / counted as f64 }
 }
 
+/// Scale `layer`'s couplings down by a tenth until four bounding-chain draws on its conditional
+/// under `x_next` all coalesce within `cap` sweeps. Returns the factor applied.
+fn project_layer(dtm: &mut Dtm, layer: usize, x_next: &[i8], cap: usize, seed: u64) -> f64 {
+    let mut factor = 1.0;
+    for _ in 0..80 {
+        let g = conditional(dtm, layer, x_next);
+        let b = Bounding::new(&g, 1.0).expect("finite").with_max_steps(cap);
+        let mut ok = true;
+        for d in 0..4u64 {
+            ok &= b.draw(seed + d, None).is_ok();
+        }
+        if ok {
+            break;
+        }
+        for j in &mut dtm.steps[layer].j {
+            *j *= 0.9;
+        }
+        factor *= 0.9;
+    }
+    factor
+}
+
 /// Mean nearest-neighbour correlation over the data grid's edges, from a set of visible vectors.
 fn edge_correlations(samples: &[Vec<i8>], side: usize) -> Vec<f64> {
     let mut out = Vec::new();
@@ -189,6 +219,7 @@ fn main() {
             ("ACP", Arm::Acp(0.01)),
             ("R-ACP", Arm::Rhat(0.01)),
             ("C-ACP", Arm::Cert(0.05)),
+            ("PROJECT", Arm::Project),
             ("TC .02", Arm::Fixed(0.02)),
             ("TC .05", Arm::Fixed(0.05)),
             ("TC .10", Arm::Fixed(0.10)),
@@ -262,7 +293,15 @@ fn main() {
             let mut rng = Pcg::new(9, 0xD7);
             let mut dtm = Dtm::new(t_steps, n, nv, edges.clone(), gamma, times.clone());
             let mut done = 0usize;
-            let mut lambda = vec![match how { Arm::Fixed(v) | Arm::Acp(v) | Arm::Rhat(v) | Arm::Cert(v) => v }; t_steps];
+            let mut lambda = vec![
+                match how {
+                    Arm::Fixed(v) | Arm::Acp(v) | Arm::Rhat(v) | Arm::Cert(v) => v,
+                    Arm::Project => 0.0,
+                };
+                t_steps
+            ];
+            // For `Project`: the factor each layer's couplings have been scaled by so far.
+            let mut shrunk = vec![1.0f64; t_steps];
             let mut a_prev: Vec<Option<f64>> = vec![None; t_steps];
             for &target in checkpoints {
                 while done < target {
@@ -303,6 +342,9 @@ fn main() {
                                     let lp = lambda[layer].max(acp_min);
                                     lambda[layer] = if disagree { (1.0 + acp_delta) * lp } else { (1.0 - acp_delta) * lp };
                                 }
+                                Arm::Project => {
+                                    shrunk[layer] *= project_layer(&mut dtm, layer, &x, k_mix / 2, 0x9807 + done as u64 * 8 + layer as u64 * 4);
+                                }
                                 Arm::Cert(_) => {
                                     // A refusal at this cap costs about 2 * K_mix sweeps, so asking
                                     // the deployment question directly is cheap.
@@ -328,6 +370,18 @@ fn main() {
                     }
                 }
 
+                if let Arm::Project = how {
+                    // Project before deploying: two fresh clamp contexts per layer.
+                    for layer in 0..t_steps {
+                        for ctx in 0..2u64 {
+                            let mut x = draw(&mut chain);
+                            for u in 0..=layer {
+                                forward_step(&mut x, gamma, times[u + 1] - times[u], &mut rng);
+                            }
+                            shrunk[layer] *= project_layer(&mut dtm, layer, &x, k_mix / 2, 0xDE91 + done as u64 * 16 + layer as u64 * 2 + ctx);
+                        }
+                    }
+                }
                 let mut srng = Pcg::new(77, done as u64);
                 let mut generated = Vec::with_capacity(gen_samples);
                 for _ in 0..gen_samples {
@@ -390,9 +444,11 @@ fn main() {
                     "not certified; R-hat passes"
                 };
                 let show = |v: Option<usize>| v.map_or("-".to_string(), |x| x.to_string());
-                let lmin = lambda.iter().copied().fold(f64::INFINITY, f64::min);
-                let lmax = lambda.iter().copied().fold(0.0f64, f64::max);
-                let lavg = lambda.iter().sum::<f64>() / t_steps as f64;
+                // The last column is the penalty per layer, or for `Project` the scale per layer.
+                let shown = if let Arm::Project = how { &shrunk } else { &lambda };
+                let lmin = shown.iter().copied().fold(f64::INFINITY, f64::min);
+                let lmax = shown.iter().copied().fold(0.0f64, f64::max);
+                let lavg = shown.iter().sum::<f64>() / t_steps as f64;
                 println!(
                     "  {l:>3} {n:>5} {nv:>4} {degree:>5.1}  {arm:>7} {done:>6}   {learned:>7.3} {:>6.3} {jmax:>6.3}   {:>9} {:>9} {refused:>8}   {worst:>9.4} {worst_a:>7.3}  {lmin:>5.3}/{lavg:>5.3}/{lmax:>5.3}  {verdict}",
                     jsum / jcount as f64,
