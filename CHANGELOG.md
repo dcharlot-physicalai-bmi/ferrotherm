@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### `apps`: an answer, its certificate and its bill — and the first thing the bill says
+
+A 2026-09-20 survey of what this field ships found that the streamlined developer experiences
+(Ocean, Amplify, JijModeling, Kaiwu) share one shape — state the task, one line to solve, a
+classical fallback — and that **no offering, open or closed, returns joules alongside the answer.**
+`apps` is that layer. An entry point returns the answer in the task's own units, how it was
+estimated and whether that estimate converged, an exact optimum or a bound where one exists, and
+what it cost on whatever machine the caller names, carrying the evidence grade of those prices.
+
+The first task is restoring a binary image, chosen because both of its estimators have exact
+oracles in this crate. The energy is a **derivation, not a model with a tunable data weight**: with
+a Bernoulli channel of flip probability `p` and an Ising prior of strength `J`, the negative log
+posterior is this crate's energy with `w = J` and `h_i = t_i · ln((1-p)/p) / 2`, at `β = 1`. The
+temperature is not a knob — the energy already is the negative log posterior.
+
+**Why a sampler, on a problem min-cut solves exactly.** `J > 0` makes the energy submodular, so
+`roofdual` returns its exact minimiser by one max-flow: the MAP is not a reason to own sampling
+hardware. But the MAP is not the estimator the task wants. The labelling minimising expected wrong
+PIXELS is the per-pixel posterior mode (MPM; Marroquin, Mitter and Poggio 1987), and a min-cut
+returns one labelling and no marginals. Over 200 images drawn **exactly from the prior** by
+`exact::Elimination::draws`, corrupted at `p = 0.25` and restored by exact marginals against the
+exact minimiser:
+
+| | wrong pixels |
+|---|---|
+| the noisy observation | 24.96% |
+| exact MAP (one max-flow) | 19.82% |
+| exact MPM (marginals) | **17.26%** |
+
+No sampler appears in that test. If MPM had not won there, no sampler could have rescued the
+argument and this module would be recommending the wrong estimator.
+
+**And the first thing the bill says is that nobody can pay it.** Restoring an image writes one
+field per pixel — the observation IS the field — so every frame is a full reprogram, and
+`Ledger::joules` therefore returns `None` for **every** machine in `CATALOGUE`, because no price
+set states `e_write`. That is not a gap in the layer; it is the layer reporting, in an
+application's own units, the measurement our own board owes us and did not deliver before it
+wedged. `Restoration::bill` splits the bill rather than collapsing it to a refusal: on
+`KV260_AXI_METERED` the sampling and the readback price, the 36 field writes do not, and the
+readback is over three quarters of the part that does.
+
+Three things went wrong and are on the record. **A mutant survived**: replacing the channel's whole
+log-odds with the constant `1.0` passed every test in the module, because they all ran at
+`p = 0.25` where `ln((1-p)/p) = 1.0986` — the parameter, not the assertion, was the blind spot;
+`the_field_is_the_channels_log_odds_and_not_a_tunable_weight` now checks the field against its
+derivation at five noise levels. **An assertion was a coin flip**: demanding the sampled MPM and
+the exact MPM agree pixel for pixel is demanding a tie-break, and this instance holds a marginal of
+0.5063; the test now asserts agreement only where the exact marginal is further from a tie than the
+run's own worst marginal error, and that this covers nine tenths of the image. **A limit was
+asserted without its condition**: "a channel that never lies must be believed" is false when the
+prior outvotes it, which on a 4-connected grid is `ln((1-p)/p) / 2 < 4J`; the inequality is now
+asserted, and so is the case on the other side of it.
+
 ### The writable fabric as a device: a ladder that anneals, and a claim of mine corrected
 
 `writable::WritableRtl` puts the writable fabric behind `fabric::Device`. One netlist; a rung is a

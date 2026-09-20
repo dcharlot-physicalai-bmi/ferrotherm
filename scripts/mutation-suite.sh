@@ -995,6 +995,26 @@ mutations=(
   "src/writable.rs|        if self.seed == Some(seed) {|        if self.seed.is_some() {|writable::tests::a_new_seed_is_a_new_netlist_and_is_charged_as_a_load|a new seed served by the old netlist for free"
   "src/writable.rs|          cfg_en   <= 1'b1;|          cfg_en   <= 1'b1; soft_rst <= 1'b1;|writable::tests::rtl_reprogrammed_mid_run_without_a_reset_carries_its_state|RTL that resets the chain on every configuration write"
 
+  # THE APPLICATION LAYER. Its energy is a DERIVATION, not a model with a tunable data weight: the
+  # field is the channel's log-odds and the couplings are the prior.
+  #
+  # ROW 1 SURVIVED ITS FIRST RUN. Replacing the whole log-odds with the constant 1.0 passed every
+  # test in the module, because those tests run at p = 0.25 where ln((1-p)/p) = 1.0986 -- within
+  # ten percent of the constant replacing it. The parameter, not the assertion, was the blind spot,
+  # and `the_field_is_the_channels_log_odds_and_not_a_tunable_weight` is the answer to it.
+  #
+  # Two further mutants were run by hand and caught but cannot be rows, their text containing a
+  # pipe: a per-pixel mode taken at threshold 0.4 instead of 0.5, and a bill that silently drops an
+  # operation its prices could not price. Both RED. The refusal rows below are likewise written in
+  # their pipe-free form -- deleting the `return Err`, not the condition that reaches it.
+  "src/apps.rs|    let lambda = ((1.0 - flip_probability) / flip_probability).ln();|    let lambda = 1.0;|apps::tests::the_field_is_the_channels_log_odds_and_not_a_tunable_weight|a data term that forgets the channel's log-odds"
+  "src/apps.rs|            b.bias(i, t * lambda / 2.0);|            b.bias(i, t * lambda);|apps::tests::an_mpm_estimate_beats_the_exact_map_on_pixel_error|a data term twice as strong as the channel says"
+  "src/apps.rs|                b.couple(i, i + w, smoothness);|                b.couple(i, i + w, smoothness * 0.5);|apps::tests::the_field_is_the_channels_log_odds_and_not_a_tunable_weight|a prior that smooths vertically less than horizontally"
+  "src/apps.rs|            let draws = (chains * sweeps) as f64;|            let draws = (chains * sweeps / 2) as f64;|apps::tests::the_sampled_posterior_converges_to_the_exact_one|a posterior normalised by half the draws it averaged"
+  "src/apps.rs|        return Err(Refused::Smoothness(smoothness));|        return Ok(GraphBuilder::new(1).build());|apps::tests::an_ill_posed_task_is_refused_by_name|a supermodular smoothness accepted, breaking the MAP oracle"
+  "src/apps.rs|        return Err(Refused::FlipProbability(flip_probability));|        return Ok(GraphBuilder::new(1).build());|apps::tests::an_ill_posed_task_is_refused_by_name|a flip probability of 0 or 0.5 accepted"
+  "src/apps.rs|            if chains < 2 {|            if chains < 1 {|apps::tests::an_ill_posed_task_is_refused_by_name|a single chain graded on its own trace"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1232,7 +1252,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=237
+expected_rows=244
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
