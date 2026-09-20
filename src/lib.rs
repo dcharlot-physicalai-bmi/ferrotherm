@@ -181,6 +181,7 @@ pub mod hdl;
 pub mod writable;
 pub mod apps;
 pub mod gbp;
+pub mod logit;
 pub mod ffi;
 pub mod cim;
 pub mod oim;

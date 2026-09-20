@@ -51,6 +51,16 @@
 //! **MAP is a flow problem, MPM is a sampling problem**, and only the second is a reason to own
 //! sampling hardware.
 //!
+//! # A third application, and why it is not behind this door
+//!
+//! [`crate::logit`] is the same argument on a classifier's confidence, and it deliberately has no
+//! entry point here. Its unit of work is a gradient evaluation of a non-Gaussian potential, and
+//! **no price set in this crate states a cost for one** — a [`Ledger`] for it would be three
+//! numbers in the wrong currency. The image task's bill could at least name the half nobody has
+//! metered; that one could not name any of it, so it reports its work in gradient evaluations and
+//! claims no joules. Both facts point the same way: the field prices a binary p-bit update and
+//! nothing else.
+//!
 //! `an_mpm_estimate_beats_the_exact_map_on_pixel_error` puts that to the test with no sampler in
 //! it at all: images drawn EXACTLY from the prior by [`crate::exact::Elimination::draws`],
 //! corrupted, then restored by exact marginals against the exact minimiser. If MPM did not win

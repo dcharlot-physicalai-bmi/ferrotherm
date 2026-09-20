@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### A classifier's confidence — and the finding I did not expect
+
+`logit` is Bayesian logistic regression, and it is the third application chosen by a rule the first
+two produced rather than by taste: a max-flow owns the most probable image and sampling earns its
+place on the per-pixel marginals; message passing owns a Gaussian's mean and is overconfident about
+every variance. **A deterministic method owns the first moment; the sampler earns its place on the
+second.** In machine learning the second moment is calibration, so that is what this is.
+
+The quantity wanted is never the weights. It is `p(y=1 | x, D) = ∫ sigmoid(xᵀw) p(w|D) dw`, an
+integral over the whole posterior with no closed form in any dimension. Three routes: the **plug-in**
+(the most probable weights, which is what a trained classifier uses — the width is discarded), the
+**Laplace** Gaussian at the mode, and **sampling**. In two dimensions the posterior integrates on a
+grid, so there is an exact oracle; above two the route refuses rather than returning a quadrature
+that has quietly stopped converging.
+
+**I wrote the test asserting both cheap routes are overconfident — the received wisdom — and the
+measurement said otherwise.** On the same data, at the same query, the plug-in is *over*confident
+and Laplace is *under*confident:
+
+| query | exact | plug-in | Laplace |
+|---|---|---|---|
+| `(0.5, 2.5)`, away from the data | `0.614` | **`0.825`** | `0.593` |
+| `(-3.0, 1.0)` | `0.0072` | **`0.00009`** | `0.045` |
+
+Every route agrees on every decision, so this is about confidence alone. The plug-in is
+overconfident at 3 of 4 queries and worst by 0.21; Laplace is underconfident at 4 of 4; they miss in
+**opposite directions at 3 of 4**. So the two cheap routes bracket the answer without either one
+bounding it, and neither can be made safe by a margin, because a margin has to point somewhere.
+That is a stronger reason to do the integral than "the cheap one is too sure", which a conservative
+fudge would have answered. The sampler's RMS error falls `0.0061 → 0.0034 → 0.00076` across a 100×
+budget — a factor of 8, against the 10 a standard error predicts.
+
+**A convergence check is not a correctness check.** The oracle test checked that refining the grid
+and widening the box stopped moving the answer — and a mutant that averaged the *logit* instead of
+the probability passed both, because a wrong integrand converges just as obediently. The oracle now
+has an independent answer to meet: with no data the posterior *is* the prior, so the predictive is a
+one-dimensional Gaussian-logistic integral from another routine, on another grid, in another number
+of dimensions. And a probability lies in `[0, 1]`, which that mutant misses by reaching 7.75.
+
+Two more notes on the mutation pass, both mine rather than the code's. One mutant read STILL GREEN
+because **I pointed it at the wrong test** — the assertion it broke lives in the oracle test, not
+the refusal test; with the right filter it is caught. One is **equivalent on these fixtures**:
+centring the quadrature box on the origin rather than the mode changes nothing here, because every
+box in the test is wide enough that its centre cannot matter — which is exactly what the widening
+check establishes. Recorded rather than contrived around.
+
+`logit` deliberately has no `apps` entry point. Its unit of work is a gradient evaluation of a
+non-Gaussian potential, and no price set in this crate states a cost for one, so a `Ledger` would be
+three numbers in the wrong currency. The image task's bill could at least name the half nobody has
+metered; this one could not name any of it. Both point the same way: **the field prices a binary
+p-bit update and nothing else.**
+
 ### Gaussian belief propagation, and the quantity it gets wrong on every loop
 
 `gbp` is the algorithm the robotics side of this field actually runs — local message passing on a

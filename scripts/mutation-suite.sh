@@ -1033,6 +1033,30 @@ mutations=(
   "src/apps.rs|                samples: r.steps * n as u64,|                samples: r.steps,|apps::tests::three_routes_to_one_gaussians_marginals_and_only_two_have_the_variance|a sampling route billed per step, not per node update"
   "src/apps.rs|                reads: (samples as u64) * (n as u64),|                reads: (samples as u64),|apps::tests::three_routes_to_one_gaussians_marginals_and_only_two_have_the_variance|a readback billed per draw, not per node per draw"
 
+  # BAYESIAN LOGISTIC REGRESSION -- a classifier's CONFIDENCE, where the sampler's case is again the
+  # second moment. The oracle is grid quadrature, and the rows below break the model, the oracle
+  # and the cheap route in turn.
+  #
+  # ROW 3 SURVIVED ITS FIRST RUN, AND THE REASON IS GENERAL. The oracle test checked that refining
+  # the grid and widening the box stopped moving the answer -- which a WRONG INTEGRAND does just as
+  # obediently. A convergence check is not a correctness check. The test now holds the quadrature
+  # against an independent answer (with no data the posterior IS the prior, so the predictive is a
+  # one-dimensional Gaussian-logistic integral from another routine) and against the fact that a
+  # probability lies in [0, 1], which the logit-averaging mutant misses by reaching 7.75.
+  #
+  # Run by hand and caught but not rows: a prior twice as strong as declared (its text contains a
+  # closure, so a pipe). Run and found EQUIVALENT on these fixtures: centring the quadrature box on
+  # the origin rather than the mode -- every box in the test is wide enough that its centre cannot
+  # change the answer, which is exactly what the widening check establishes. Recorded, not contrived
+  # around.
+  "src/logit.rs|            let c = -s * sigmoid(-s * self.row_dot(i, q));|            let c = s * sigmoid(-s * self.row_dot(i, q));|logit::tests::the_potential_and_its_gradient_are_what_the_model_says_they_are|a likelihood gradient with the wrong sign"
+  "src/logit.rs|            u += softplus(-s * self.row_dot(i, w));|            u += softplus(s * self.row_dot(i, w));|logit::tests::the_potential_and_its_gradient_are_what_the_model_says_they_are|a potential that swaps the labels"
+  "src/logit.rs|                            num[k] += p * sigmoid(a_q);|                            num[k] += p * a_q;|logit::tests::the_quadrature_oracle_has_stopped_moving_before_anything_is_measured_against_it|a quadrature averaging the logit, not the probability"
+  "src/logit.rs|                        den += p;|                        den += 1.0;|logit::tests::the_quadrature_oracle_has_stopped_moving_before_anything_is_measured_against_it|a quadrature that forgets to weight its denominator"
+  "src/logit.rs|        let hw = half_width * self.prior_sd;|        let hw = half_width;|logit::tests::the_quadrature_oracle_has_stopped_moving_before_anything_is_measured_against_it|a quadrature box whose width ignores the prior's scale"
+  "src/logit.rs|                if d != 2 {|                if false {|logit::tests::the_quadrature_oracle_has_stopped_moving_before_anything_is_measured_against_it|grid quadrature offered above two dimensions"
+  "src/logit.rs|                        gauss_logistic(mu, var.max(0.0).sqrt())|                        sigmoid(mu)|logit::tests::the_cheap_routes_get_the_decision_right_and_bracket_the_confidence_without_bounding_it|a Laplace route collapsed to the plug-in"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1270,7 +1294,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=252
+expected_rows=259
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
