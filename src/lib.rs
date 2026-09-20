@@ -182,6 +182,7 @@ pub mod writable;
 pub mod apps;
 pub mod gbp;
 pub mod logit;
+pub mod mrf;
 pub mod ffi;
 pub mod cim;
 pub mod oim;

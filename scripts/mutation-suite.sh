@@ -1054,6 +1054,24 @@ mutations=(
   "src/apps.rs|                    1.0, // beta is 1: the energy already IS the negative log posterior|                    2.0, // beta is 1: the energy already IS the negative log posterior|apps::tests::the_fabric_route_restores_and_bills_in_the_unit_that_was_metered|a fabric quantised at the wrong temperature"
   "src/floors.rs|                if a.len() == b.len() && !a.is_empty() && a == b {|                if false {|floors::tests::four_identical_chains_are_refused_by_name_because_rhat_cannot_see_them|the identical-chain check removed, leaving R-hat blind"
 
+  # A CERTIFIED OPTIMALITY GAP ON A MULTI-LABEL MRF. Three labels is NP-hard, so the answer cannot
+  # be checked against an optimum at any useful size -- it arrives with a lower bound instead, and
+  # these rows are what stand between that bound and a number that merely looks like one.
+  #
+  # Two mutants were run and found EQUIVALENT ON THE LP FIXTURE and are filed against soundness
+  # instead: dropping the reweighting leaves the triangle's tree minima unchanged (its rho is 2/3
+  # and the minimiser does not move), so the fixture that pins D = 1 < LP = 1.5 < E_min = 2 cannot
+  # see it, while the 24-instance soundness sweep can. A fixture that pins one number exactly is
+  # not thereby sensitive to everything upstream of it.
+  "src/mrf.rs|            w * forest_min_energy(m, &reweighted)|            forest_min_energy(m, &reweighted)|mrf::tests::the_fixed_splitting_is_weaker_than_the_lp_bound_and_says_so|forest minima summed without their convex weights"
+  "src/mrf.rs|                    let scaled = c / cover.rho[e];|                    let scaled = c;|mrf::tests::neither_route_is_ever_above_the_true_minimum|the tree reweighting dropped, so the forests average to a weaker model"
+  "src/mrf.rs|        let l = -u / beta;|        let l = -u * beta;|mrf::tests::neither_route_is_ever_above_the_true_minimum|a log partition turned into an energy by multiplying"
+  "src/mrf.rs|                b.field(i, a as u8, -costs[i * q + a]);|                b.field(i, a as u8, costs[i * q + a]);|mrf::tests::a_structured_instance_certifies_far_tighter_than_an_adversarial_one|a data cost entered with the wrong sign"
+  "src/mrf.rs|            message[i] = acc.clone();|            message[i] = vec![0.0f64; q];|mrf::tests::a_forests_log_partition_and_minimum_are_exact_against_enumeration|a min-sum root that drops its own field"
+  "src/mrf.rs|                if c < best_c - 1e-15 {|                if c > best_c + 1e-15 {|mrf::tests::icm_descends_to_a_local_minimum_from_a_deliberately_bad_start|iterated conditional modes ascending instead of descending"
+  "src/mrf.rs|    let gap = m.single_site_gap_max().unwrap_or(1.0);|    let gap = 1.0;|mrf::tests::rescaling_every_cost_does_not_change_the_labelling|an annealing ladder in absolute beta rather than the model's units"
+  "src/mrf.rs|        bound: crate::round::sum_down(&terms),|        bound: crate::round::sum_up(&terms),|mrf::tests::the_weighted_sum_rounds_in_the_direction_that_keeps_each_bound_sound|a lower bound rounded upward, away from soundness"
+
   # GAUSSIAN BELIEF PROPAGATION, and the application entry point over it. Its two classical facts
   # are load-bearing here: exact on a tree in BOTH moments, and on a loop the mean stays exact
   # while the variance does not. The tree rows below break the first, which is the only way to
@@ -1333,7 +1351,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=264
+expected_rows=272
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

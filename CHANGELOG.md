@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+### A multi-label MRF, and a gap that is a fact rather than a hope
+
+Restoring a binary image has an exact answer: two labels with an attractive prior is submodular, so
+one max-flow returns the minimiser. **Three labels is NP-hard**, and nothing here or anywhere
+returns the exact minimum of a general multi-label Potts MRF at the sizes vision uses. So `mrf`
+answers with a certificate instead — a number `L` with a proof that no labelling whatever has
+energy below it, and a labelling of energy `E` that is therefore within `E - L` of optimal.
+
+Split the model over Kruskal spanning forests with convex weights, give each forest its edge tables
+divided by the edge's appearance probability `ρ_e`, and the weights average back to the original
+model. Then `min_x E(x) ≥ Σ_t w_t · min_x E_t(x) =: D`, every term exact by min-sum on a graph with
+no loops. On `24 × 24` with five labels — `5^576` labellings, no exact answer in reach:
+
+| instance | certified gap | labelling |
+|---|---|---|
+| structured, as a real labelling problem looks | **2.6%** | recovers the truth, 0 of 576 pixels wrong |
+| adversarial, independent uniform costs | 27.7% | — |
+
+and on 24 instances small enough to enumerate every labelling: **0 violations, and on 4 of them the
+certificate closes on the optimum outright** — it proves the answer optimal.
+
+**What the gap is made of, which is the useful half.** On every enumerable instance the search finds
+the true minimum, so the whole reported gap belongs to the bound, not the labelling. It says which
+half to improve.
+
+**What this is not, stated because a reader would otherwise assume it.** It is **not** the LP
+relaxation and **not** the TRW-S bound: those optimise over all splittings, and this evaluates one.
+A three-node fixture pins the distance — a triangle with two labels, unit costs, where
+`D = 1 < LP = 1.5 < E_min = 2`. If the module ever returns `1.5` it has silently acquired
+reparameterisation and the documentation is wrong.
+
+The thermal route is kept, because the bridge from a sampling quantity to an optimisation one is
+this crate's subject: tree reweighting bounds `log Z`, and `Z ≥ exp(−β E_min)` turns that into
+`E_min ≥ −U(β)/β`. It is strictly the weaker of the two and approaches `D` from below, its
+derivative in `β` being `Σ w_t H_t/β²` — an entropy, so never negative. One consequence contradicts
+the obvious guess: **sweeping `β` and taking the best is valid but mathematically pointless**, since
+the largest always wins. The sweep guards arithmetic, not mathematics — at large `β` the
+subtraction in `−U/β` loses digits, and on one instance `β = 101` beat the `β = 453` at the end of
+the ladder.
+
+Rounding has a direction here and it is not the usual one. `D` is summed with `sum_down` and `U`
+with `sum_up`: the floating-point slack is spent, on both routes, on the side that keeps the
+certificate sound.
+
+**Three errors of mine, caught by scouting the mathematics before trusting it.** I had claimed the
+cold limit was the LP bound — it is not, it is the fixed splitting's own value, and the counterexample
+above is now a test. I had node tables undivided on a general argument — that is correct only
+because Kruskal forests span every site, which `dual_bound` now asserts rather than assumes. And the
+search ladder was in absolute `β`, which silently becomes an infinite-temperature run on costs ten
+times larger; it is in the model's own units now, with a test that rescaling every cost by a hundred
+does not change the labelling.
+
+Two mutants survived and both were test gaps rather than defects: reversing the rounding direction
+has an effect below any tolerance the bound's own tests can use, so it is asserted as a property of
+the source; and ICM was never tested, because the annealer above it already reached the optimum on
+every small instance, so it now has its own descent test from a deliberately bad start.
+
+The Middlebury benchmark's data is **not** vendored — it carries no SPDX licence and its Tsukuba
+pair is a third party's — and no number here is a claim to reproduce anything published. The
+fixtures are generated Middlebury-style instances.
+
 ### An image goes in, a p-bit netlist comes out, and the hardware restores it
 
 The 2026-09-20 survey found no open path, anywhere, from a problem-level model to emitted p-bit
