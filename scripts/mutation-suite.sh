@@ -28,6 +28,20 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
+# A STALE CRASH SENTINEL MEANS THIS TREE IS NOT TRUSTWORTHY, and it is checked BEFORE the dirty
+# check below -- because a leftover mutant makes the tree dirty, so the dirty check always wins the
+# race and answers "commit first", which is the opposite of what happened and would have the reader
+# committing a deliberate defect. (I wrote it in the other order first and watched it do exactly
+# that.) `mutation-check.sh` recovers a sentinel when it runs a row; this precheck is one of the
+# conditions this project gates a PUSH on and exits before any row runs, so it must say so itself.
+# See that script for why a sentinel exists at all: a trap cannot catch SIGKILL.
+if [[ -f "$here/.mutation-in-flight" ]]; then
+  echo "REFUSING: .mutation-in-flight says a previous run was killed mid-mutation with" >&2
+  echo "          '$(cat "$here/.mutation-in-flight")' left mutated, and never restored it." >&2
+  echo "          Run scripts/mutation-check.sh (it recovers on startup), or restore that file." >&2
+  exit 2
+fi
+
 if ! git diff --quiet; then
   echo "refusing to run: the tree is dirty, and every mutation restores with git checkout." >&2
   echo "commit first — that is the whole safety property." >&2

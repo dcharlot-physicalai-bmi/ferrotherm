@@ -54,3 +54,8 @@ julia/*/Manifest.toml
 /bsn_fabric.bin
 /lab_fabric.bit
 /lab_fabric.bin
+
+# the mutation harness's crash sentinel: written before a file is mutated, removed after it is
+# restored. It exists precisely because a SIGKILL cannot be trapped, so it must outlive the
+# process -- and it must never be committed, since its presence means the tree is not trustworthy.
+.mutation-in-flight

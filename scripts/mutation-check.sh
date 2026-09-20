@@ -35,6 +35,19 @@ file="$1"; old="$2"; new="$3"; filter="$4"; label="$5"; pkg="${6:-}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
+# RECOVERY RUNS FIRST, BEFORE THE DIRTY-FILE CHECK BELOW. The commonest way to meet a stale mutant
+# is to re-run the very row that was killed, and that file is then dirty -- so a recovery placed
+# after the check would refuse the run instead of repairing it, and refuse it with a message about
+# uncommitted work that is the opposite of what happened.
+sentinel="$here/.mutation-in-flight"
+if [[ -f "$sentinel" ]]; then
+  stale="$(cat "$sentinel")"
+  echo "RECOVERED: a previous run was killed with '$stale' mutated and could not restore it." >&2
+  echo "           Restoring it now. A run that ended this way reported no verdict for that row." >&2
+  git checkout -- "$stale" 2>/dev/null || true
+  rm -f "$sentinel"
+fi
+
 if ! git diff --quiet -- "$file"; then
   echo "refusing to run: $file has uncommitted changes, and this restores from git." >&2
   echo "commit first — that is the whole safety property." >&2
@@ -50,8 +63,21 @@ fi
 #
 # The trap fires on ordinary exit as well as INT, TERM and HUP, so the restore happens even if the
 # test run is interrupted. It is idempotent: restoring an already-restored file is a no-op.
-restore() { git checkout -- "$file" 2>/dev/null || true; }
+#
+# ⛔ AND A TRAP CANNOT CATCH SIGKILL, which is how this actually failed on 2026-09-20. Three
+# sessions were compiling Rust on one machine, a row's `cargo test` was OOM-killed, and the whole
+# process group went with it -- exit 137, no trap, and whatever mutant was in flight left in the
+# working tree. It happened to land between rows that time, so nothing was lost. The point is that
+# nothing NOTICED: a mutated file is ordinary-looking uncommitted work, which is the exact failure
+# the paragraph above says this design prevents, and against a kill it does not.
+#
+# So the intent is written to disk BEFORE the mutation and removed after the restore. A sentinel
+# that outlives the process is the only thing that can survive a signal the process cannot handle.
+# The next run finds it, restores that file, and says so loudly rather than starting work on a
+# tree it has no reason to trust.
+restore() { git checkout -- "$file" 2>/dev/null || true; rm -f "$sentinel"; }
 trap restore EXIT INT TERM HUP
+printf '%s\n' "$file" > "$sentinel"
 
 python3 - "$file" "$old" "$new" <<'PY' || { printf '  %-38s MUTATION DID NOT APPLY\n' "$label"; exit 0; }
 import sys

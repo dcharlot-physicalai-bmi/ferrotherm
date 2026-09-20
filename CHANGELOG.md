@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### A trap cannot catch SIGKILL, and the mutation harness was relying on one
+
+`mutation-check.sh` applies a deliberate defect, runs a test, and restores the file from git. Its
+safety rests on a trap that fires on `EXIT`, `INT`, `TERM` and `HUP` — written after an interrupted
+run once left `if false {` sitting in `src/model.rs`, where it looks exactly like ordinary
+uncommitted work.
+
+On 2026-09-20 three sessions were compiling Rust on one machine, a row's `cargo test` was
+OOM-killed, and the whole process group went with it: **exit 137, no trap, no restore.** It landed
+between rows that time, so nothing was lost. The point is that nothing would have *noticed*.
+
+A signal the process cannot handle can only be survived by something that outlives the process, so
+the intent is now written to disk before the mutation and removed after the restore. A stale
+`.mutation-in-flight` is found by the next run, which restores the named file and says so loudly;
+and `mutation-suite.sh`'s precheck — one of the conditions this project gates a push on, and which
+exits before any row runs — refuses outright rather than reporting that every filter names a test
+over a tree holding a defect.
+
+**Both checks run before their script's dirty-tree check, and that ordering is the fix, not a
+detail.** A leftover mutant makes the tree dirty, so the dirty check otherwise wins the race and
+answers "commit first" — the opposite of what happened, and an instruction to commit a deliberate
+defect. I wrote both in the other order first and watched each do exactly that.
+
+Demonstrated rather than asserted: a normal row leaves no sentinel and still returns its verdict; a
+planted sentinel with a real mutant in the file is recovered on the next run, which then reports
+`RED` for its own row on a clean file; and the precheck's refusal names the kill rather than the
+dirt.
+
 ### A classifier's confidence — and the finding I did not expect
 
 `logit` is Bayesian logistic regression, and it is the third application chosen by a rule the first
