@@ -254,6 +254,22 @@ pub enum Convergence {
         /// warning: the draws are from the starting state, not from the model.
         burn_in: f64,
     },
+    /// Several chains were run and at least two of them are the SAME chain, element for element.
+    ///
+    /// **R-hat cannot see this**, which is why it needs its own variant. R-hat is
+    /// `sqrt((N-1)/N + B/(N W))`; identical chains have between-chain variance `B = 0` exactly, so
+    /// it collapses to `sqrt((N-1)/N)` — `0.99975` at 2,000 draws, sitting comfortably inside the
+    /// floor and indistinguishable from the `0.99985` four genuinely independent chains give. The
+    /// diagnostic whose entire purpose is to catch chains that are not exploring independently
+    /// returns its healthiest possible answer for chains that are not independent at all.
+    ///
+    /// Found on 2026-09-20 by a mutation that gave every chain of an emitted p-bit fabric the same
+    /// generator seed. On that hardware the seeds are reset constants of the netlist, so this is
+    /// the likely mistake and not a contrived one.
+    Identical {
+        /// How many chains were compared.
+        chains: usize,
+    },
     /// Several chains from dispersed starts agree. See [`crate::rhat`].
     MultiChain {
         /// Split, rank-normalised, folded R-hat. Vehtari, Gelman, Simpson, Carpenter and Bürkner
@@ -299,6 +315,16 @@ impl Convergence {
     /// silently DROPS a `NaN`, so that case is handled by hand.)
     #[must_use]
     pub fn from_chains(chains: &[Vec<f64>]) -> Convergence {
+        // IDENTITY IS CHECKED BEFORE R-HAT, because R-hat is blind to it -- see
+        // [`Convergence::Identical`]. Exact equality is the right test: the way this happens is a
+        // seed that did not vary, and a repeated random stream repeats bit for bit.
+        for (i, a) in chains.iter().enumerate() {
+            for b in &chains[i + 1..] {
+                if a.len() == b.len() && !a.is_empty() && a == b {
+                    return Convergence::Identical { chains: chains.len() };
+                }
+            }
+        }
         let d = crate::rhat::diagnose(chains);
         let all = [d.rhat, d.rhat_rank, d.rhat_folded];
         let mut worst = f64::NEG_INFINITY;
@@ -355,6 +381,12 @@ impl Convergence {
                     None
                 }
             }
+            Convergence::Identical { chains } => Some(format!(
+                "{chains} chains were run and two of them are the same chain, element for element \
+                 -- so they carry one chain's worth of evidence, not {chains}. Check that the \
+                 seeds actually differ; R-hat cannot report this, because identical chains have \
+                 zero between-chain variance and it reads that as perfect agreement."
+            )),
             Convergence::MultiChain { rhat } => {
                 if !rhat.is_finite() {
                     Some(format!("an R-hat must be finite, got {rhat}"))
@@ -379,9 +411,19 @@ impl Convergence {
     }
 
     /// Whether convergence was established by an instrument that could have said no.
+    ///
+    /// **Stated positively, and that is the point.** This was `!matches!(self, SingleChain)` — a
+    /// negation, which silently grants the affirmative answer to every variant added afterwards.
+    /// [`Convergence::Identical`] arrived on 2026-09-20 and was "certified" on the day it was
+    /// written, being neither `SingleChain` nor anything else the author had thought about. A
+    /// predicate that grants a property should name what has it, so the default for a new case is
+    /// NO rather than yes.
     #[must_use]
     pub fn is_certified(&self) -> bool {
-        !matches!(self, Convergence::SingleChain)
+        matches!(
+            self,
+            Convergence::Certified { .. } | Convergence::MultiChain { .. }
+        )
     }
 }
 
@@ -633,6 +675,58 @@ mod tests {
         // And a draw taken before its chain coalesced is refused whatever the price set knows.
         let early = Convergence::Certified { coalesced_at: 48.0, burn_in: 40.0 };
         assert!(cost_per_effective_sample(&ledger, &KV260_AXI_METERED, 64_000.0, 32.0, early, 1.0, ROOM_TEMPERATURE_K).is_err());
+    }
+
+    /// **R-HAT IS BLIND TO CHAINS THAT ARE THE SAME CHAIN**, and this is the measurement that says
+    /// so rather than the claim. Four identical chains and four independent ones give R-hats that
+    /// differ in the fourth decimal place, both comfortably inside the floor — so the diagnostic
+    /// whose purpose is to catch chains that are not exploring independently returns its
+    /// healthiest answer for chains that are not independent at all.
+    #[test]
+    fn four_identical_chains_are_refused_by_name_because_rhat_cannot_see_them() {
+        let mut rng = crate::rng::Pcg::new(0x1DE0_71CA, 5);
+        let draw = |rng: &mut crate::rng::Pcg, n: usize| -> Vec<f64> {
+            (0..n).map(|_| (rng.next_u64() >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)).collect()
+        };
+        let n = 2_000;
+        // Four INDEPENDENT chains from one law: the healthy case, and the number the floor was set
+        // against.
+        let independent: Vec<Vec<f64>> = (0..4).map(|_| draw(&mut rng, n)).collect();
+        let healthy = Convergence::from_chains(&independent);
+        assert!(healthy.refusal().is_none(), "independent chains must pass: {healthy:?}");
+        let healthy_rhat = match healthy {
+            Convergence::MultiChain { rhat } => rhat,
+            other => panic!("expected MultiChain, got {other:?}"),
+        };
+
+        // The same chain, four times. This is what a seed that did not vary produces.
+        let one = draw(&mut rng, n);
+        let identical = vec![one.clone(), one.clone(), one.clone(), one];
+        let got = Convergence::from_chains(&identical);
+        assert_eq!(got, Convergence::Identical { chains: 4 });
+        let why = got.refusal().expect("identical chains certify nothing");
+        assert!(why.contains("same chain"), "{why}");
+        assert!(!got.is_certified());
+
+        // AND THE REASON THE VARIANT HAS TO EXIST: strip the identity check and R-hat calls this
+        // healthier than the honest run. Recomputed here the way `from_chains` would without it.
+        let d = crate::rhat::diagnose(&identical);
+        let blind = [d.rhat, d.rhat_rank, d.rhat_folded].into_iter().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            blind > Convergence::RHAT_FLOOR && blind < Convergence::RHAT_LIMIT,
+            "R-hat on four identical chains is {blind}, which this test exists because it PASSES"
+        );
+        assert!(
+            (blind - healthy_rhat).abs() < 0.01,
+            "identical {blind} and independent {healthy_rhat} differ by less than the floor's own \
+             precision, which is exactly why R-hat cannot be asked to tell them apart"
+        );
+        eprintln!("R-hat: four independent chains {healthy_rhat:.5}, four IDENTICAL chains {blind:.5}");
+
+        // Two of four identical is still one chain's evidence short, and is still refused.
+        let a = draw(&mut rng, n);
+        let mixed = vec![a.clone(), draw(&mut rng, n), a, draw(&mut rng, n)];
+        assert_eq!(Convergence::from_chains(&mixed), Convergence::Identical { chains: 4 });
     }
 
     /// The grade cannot improve by being divided by a floor.

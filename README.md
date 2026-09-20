@@ -122,7 +122,7 @@ difference between programming a qubit and programming *some* qubit. The harness
 code under `cfg(kani)` (no dependency added); `scripts/check-proofs.sh` runs them, and its selftest
 feeds Kani a false theorem and requires the refutation.
 
-- `cargo test --workspace` — 2036 tests across the six crates, including: exact-Boltzmann TV on an
+- `cargo test --workspace` — 2039 tests across the six crates, including: exact-Boltzmann TV on an
   enumerable system, clamped-conditional exactness,
   proper coloring, degree-16 bipartite Z1 grid (longest edge √17), write/sample price ratio.
 - `cargo test --lib bound::` — **optimality-gap certificates**. `bound::forest` splits the energy into forests,
@@ -568,7 +568,7 @@ can settle: **does it reproduce what is independently known, and how much of the
 cover.** 19 external sources of truth reproduced in CI — Onsager, transfer matrix, exact
 elimination, planar max-cut, Gardner, the replica capacity, Krauth–Mézard, Curie–Weiss,
 Bethe-on-trees, Pfaffian, Katsura, Pfeuty, Nishimori, Wolff, Swendsen–Wang, Gauss–Hermite,
-Landauer, Jarzynski and `busclique` — and 448 of the 2036 tests compare against an exact answer
+Landauer, Jarzynski and `busclique` — and 448 of the 2039 tests compare against an exact answer
 rather than against the code's own behaviour. `scripts/check-counts.sh` re-derives every one of
 those figures from the suite and fails if this paragraph drifts from it. Searching
 the four largest competitors' repositories for `onsager` or `gardner` returns zero hits in every one.

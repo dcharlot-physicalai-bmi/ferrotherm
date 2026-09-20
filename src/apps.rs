@@ -128,6 +128,24 @@ pub enum Estimator {
     /// The single most probable image. Exact here, by one max-flow, because `J > 0` makes the
     /// energy submodular — so this arm needs no sampler and gets no convergence question.
     Map,
+    /// The same estimate, computed by the **p-bit fabric this crate emits for an FPGA** — Q.8
+    /// weights, a sigmoid ROM, one `xorshift32` per node, two colour classes a sweep. The
+    /// emulator is cycle-exact with that Verilog, and `the_restored_image_comes_out_of_emitted_
+    /// hardware` runs the emitted RTL to prove it.
+    ///
+    /// This is the whole path in one call: an image becomes a posterior, the posterior becomes a
+    /// netlist, the netlist restores the image. A 2026-09-20 survey of this field did not locate
+    /// an open path from a problem-level model to emitted p-bit RTL anywhere.
+    Fabric {
+        /// Independent chains. **On this fabric a chain's randomness is a reset constant of the
+        /// netlist**, so `R` chains are `R` netlists — a convergence diagnostic costs `R`
+        /// implementations here, and the ledger charges it.
+        chains: usize,
+        /// Sweeps discarded per chain.
+        burn_in: usize,
+        /// Sweeps recorded per chain.
+        sweeps: usize,
+    },
     /// The per-pixel posterior mode, estimated from chains. The estimator that minimises expected
     /// pixel error, and the one a min-cut cannot produce.
     Mpm {
@@ -157,6 +175,10 @@ pub enum Refused {
     TooFewChains(usize),
     /// The chains ran but did not converge, with the diagnostic's own words.
     NotConverged(String),
+    /// The posterior does not fit the fabric's registers, in the fabric's own words. A coupling
+    /// outside signed Q.8 in twelve bits is refused rather than clamped: a clamped coupling
+    /// samples a different problem and reports nothing about this one.
+    DoesNotFit(String),
 }
 
 impl core::fmt::Display for Refused {
@@ -173,6 +195,7 @@ impl core::fmt::Display for Refused {
                  cannot report its own failure"
             ),
             Refused::NotConverged(why) => write!(f, "{why}"),
+            Refused::DoesNotFit(why) => write!(f, "this posterior does not fit the fabric: {why}"),
         }
     }
 }
@@ -336,6 +359,52 @@ pub fn posterior(observed: &Image, flip_probability: f64, smoothness: f64) -> Re
     Ok(b.build())
 }
 
+/// The per-pixel posterior mode from accumulated up-counts, with the convergence the chains
+/// earned — the tail both chain-based estimators share.
+///
+/// Extracted after `Estimator::Fabric` duplicated it and the mutation suite's precheck refused two
+/// rows for naming a line that now existed twice. An ambiguous mutation target is not a stale one,
+/// but it measures just as little: the harness cannot say which copy it broke.
+fn mode_from_counts(
+    sums: &[f64],
+    traces: &[Vec<f64>],
+    observed: &Image,
+    g: &Graph,
+    cost: Ledger,
+    method: &str,
+    seed: u64,
+) -> Result<Restoration, Refused> {
+    let convergence = Convergence::from_chains(traces);
+    if let Some(why) = convergence.refusal() {
+        return Err(Refused::NotConverged(why));
+    }
+    // DERIVED from the traces, not passed in: a caller and a callee that each believe a different
+    // number of draws were averaged is a disagreement nothing would report, and the traces are the
+    // record of what actually happened.
+    let draws = (traces.len() * traces.first().map_or(0, Vec::len)) as f64;
+    let posterior: Vec<f64> = sums.iter().map(|&v| v / draws).collect();
+    // The per-pixel mode. A marginal of exactly 0.5 is a tie the data cannot break, and it is
+    // resolved towards the observation rather than by the sign of a floating-point comparison.
+    let state: Vec<i8> = posterior
+        .iter()
+        .zip(&observed.pixels)
+        .map(|(&m, &t)| if m > 0.5 || (m == 0.5 && t) { 1i8 } else { -1i8 })
+        .collect();
+    let image = Image::from_spins(observed.width, observed.height, &state)
+        .expect("the model has one node per pixel");
+    let energy = g.energy(&state);
+    let receipt = Receipt::of(g, state, method, seed, cost);
+    Ok(Restoration {
+        image,
+        posterior,
+        energy,
+        optimum: None,
+        convergence: Some(convergence),
+        cost,
+        receipt,
+    })
+}
+
 /// Restore `observed`, and return the answer with its certificate and its bill.
 ///
 /// ```
@@ -378,6 +447,14 @@ pub fn restore(
 ) -> Result<Restoration, Refused> {
     let g = posterior(observed, flip_probability, smoothness)?;
     let n = g.n;
+    // ONE GUARD FOR BOTH CHAIN-BASED ESTIMATORS, and before any chain is run. It sat inside each
+    // arm until the two arms made it two identical lines, which the mutation suite's precheck
+    // refused: an ambiguous target measures as little as a stale one.
+    if let Estimator::Mpm { chains, .. } | Estimator::Fabric { chains, .. } = estimator
+        && chains < 2
+    {
+        return Err(Refused::TooFewChains(chains));
+    }
     // Loading the model is a write per node, charged here because it is charged everywhere else:
     // on this hardware class a write is the most expensive line in the ledger, and an application
     // layer that quietly dropped it would report the cheap half of its own bill.
@@ -425,10 +502,48 @@ pub fn restore(
                 receipt,
             })
         }
-        Estimator::Mpm { chains, burn_in, sweeps } => {
-            if chains < 2 {
-                return Err(Refused::TooFewChains(chains));
+        Estimator::Fabric { chains, burn_in, sweeps } => {
+            let mut sums = vec![0.0f64; n];
+            let mut traces: Vec<Vec<f64>> = Vec::with_capacity(chains);
+            for c in 0..chains {
+                // A NEW SEED IS A NEW NETLIST. The generators are reset constants of the emitted
+                // Verilog, so independent chains are independent implementations -- charged here
+                // as the load each one is, which is what makes the diagnostic's cost visible
+                // rather than free. `cost.writes` already holds the first load.
+                if c > 0 {
+                    cost.writes += n as u64;
+                }
+                let mut fab = crate::writable::WritableFabric::new(
+                    &g,
+                    1.0, // beta is 1: the energy already IS the negative log posterior
+                    seed ^ (c as u64).wrapping_mul(0x9E37_79B9),
+                )
+                .map_err(|e| Refused::DoesNotFit(e.to_string()))?;
+                for _ in 0..burn_in {
+                    fab.core.sweep();
+                }
+                cost.samples += (burn_in as u64) * (n as u64);
+                let mut trace = Vec::with_capacity(sweeps);
+                for _ in 0..sweeps {
+                    fab.core.sweep();
+                    cost.samples += n as u64;
+                    // Every recorded draw leaves the fabric: n reads, at the site that performs them.
+                    cost.reads += n as u64;
+                    let mut up = 0.0;
+                    for (acc, &b) in sums.iter_mut().zip(&fab.core.s) {
+                        if b {
+                            *acc += 1.0;
+                            up += 1.0;
+                        }
+                    }
+                    trace.push(2.0 * up / n as f64 - 1.0);
+                }
+                traces.push(trace);
             }
+            let method = format!("apps::restore/fabric({chains} netlists, {burn_in}+{sweeps} sweeps)");
+            mode_from_counts(&sums, &traces, observed, &g, cost, &method, seed)
+        }
+        Estimator::Mpm { chains, burn_in, sweeps } => {
             let mut sums = vec![0.0f64; n];
             let mut traces: Vec<Vec<f64>> = Vec::with_capacity(chains);
             for c in 0..chains {
@@ -461,40 +576,8 @@ pub fn restore(
                 }
                 traces.push(trace);
             }
-            let convergence = Convergence::from_chains(&traces);
-            if let Some(why) = convergence.refusal() {
-                return Err(Refused::NotConverged(why));
-            }
-            let draws = (chains * sweeps) as f64;
-            let posterior: Vec<f64> = sums.iter().map(|&s| s / draws).collect();
-            // The per-pixel mode. A marginal of exactly 0.5 is a tie the data cannot break, and it
-            // is resolved towards the observation rather than by the sign of a floating-point
-            // comparison.
-            let state: Vec<i8> = posterior
-                .iter()
-                .zip(&observed.pixels)
-                .map(|(&m, &t)| {
-                    if m > 0.5 || (m == 0.5 && t) {
-                        1i8
-                    } else {
-                        -1i8
-                    }
-                })
-                .collect();
-            let image = Image::from_spins(observed.width, observed.height, &state)
-                .expect("the model has one node per pixel");
-            let energy = g.energy(&state);
             let method = format!("apps::restore/mpm({chains} chains, {burn_in}+{sweeps} sweeps)");
-            let receipt = Receipt::of(&g, state, &method, seed, cost);
-            Ok(Restoration {
-                image,
-                posterior,
-                energy,
-                optimum: None,
-                convergence: Some(convergence),
-                cost,
-                receipt,
-            })
+            mode_from_counts(&sums, &traces, observed, &g, cost, &method, seed)
         }
     }
 }
@@ -970,6 +1053,201 @@ mod tests {
         let hot = crate::gbp::grid(6, 6, 1.0, -0.9);
         let out = marginals(&hot, Route::MessagePassing { max_iters: 500, tol: 1e-12, damping: 0.0 });
         assert!(out.is_err_and(|e| e.contains("did not settle")), "an unconverged run is not a belief");
+    }
+
+    /// **THE PATH, END TO END, WITH THE HARDWARE AT THE FAR END OF IT.** An image becomes a
+    /// posterior, the posterior becomes a p-bit netlist, and the EMITTED VERILOG — simulated by
+    /// icarus-verilog, not by this crate — reaches the state the restoration reports.
+    ///
+    /// A 2026-09-20 survey of this field did not locate an open path from a problem-level model to
+    /// emitted p-bit RTL anywhere. This is that path, and the assertion is bit-for-bit rather than
+    /// distributional: the Verilog's spins after `k` sweeps equal the emulator's, exactly.
+    #[test]
+    fn the_restored_image_comes_out_of_emitted_hardware() {
+        if std::process::Command::new("iverilog").arg("-V").output().is_err() {
+            eprintln!("SKIP: iverilog not installed; the emitted-hardware gate did not run");
+            return;
+        }
+        // 5x5 keeps the emitted Verilog small enough to simulate in a unit test; the fabric this
+        // crate metered on a KV260 is the same design at 1,024 p-bits.
+        let speckle: Vec<bool> = (0..25).map(|i| i % 4 != 0).collect();
+        let observed = Image::new(5, 5, speckle).expect("5x5");
+        let (p, j, sweeps) = (0.2, 0.7, 17usize);
+        let g = posterior(&observed, p, j).expect("well posed");
+        let mut fab = crate::writable::WritableFabric::new(&g, 1.0, 0xF00D)
+            .expect("a posterior at this noise and smoothness fits Q.8 in twelve bits");
+
+        // What the emulator reaches -- and what `restore` would report from the same netlist.
+        for _ in 0..sweeps {
+            fab.core.sweep();
+        }
+        let want = fab
+            .core
+            .s
+            .iter()
+            .enumerate()
+            .fold(0u32, |a, (i, &b)| a | (u32::from(b) << i));
+        // A gate that could not fail is not a gate: one more sweep must move the state, or any
+        // run length would reproduce `want`.
+        let mut one_more = crate::writable::WritableFabric::new(&g, 1.0, 0xF00D).expect("fits");
+        for _ in 0..=sweeps {
+            one_more.core.sweep();
+        }
+        assert_ne!(one_more.core.s, fab.core.s, "vacuous: the fabric has frozen by sweep {sweeps}");
+
+        let core = fab.emit_verilog("wfab");
+        let shell = fab.emit_axi_shell("wf_axi", "wfab", "clk");
+        let tb = format!(
+            r#"`timescale 1ns/1ps
+module tb;
+  reg clk = 0, rst_n = 0;
+  reg [31:0] awaddr = 0, wdata = 0, araddr = 0;
+  reg awvalid = 0, wvalid = 0, bready = 1, arvalid = 0, rready = 1;
+  wire awready, wready, bvalid, arready, rvalid;
+  wire [31:0] rdata; wire [1:0] bresp, rresp;
+  wf_axi dut(.clk(clk), .rst_n(rst_n),
+    .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
+    .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
+    .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
+    .s_axi_araddr(araddr), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
+    .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready));
+  always #5 clk = ~clk;
+  reg [31:0] got, got_done, got_status;
+  integer guard;
+  reg aw_done, w_done;
+  task wr(input [31:0] a, input [31:0] d);
+    begin
+      aw_done = 0; w_done = 0;
+      @(posedge clk); awaddr <= a; wdata <= d; awvalid <= 1; wvalid <= 1;
+      while (!aw_done || !w_done) begin
+        @(posedge clk);
+        if (awready) begin awvalid <= 0; aw_done = 1; end
+        if (wready)  begin wvalid  <= 0; w_done  = 1; end
+      end
+      while (!bvalid) @(posedge clk);
+      @(posedge clk);
+    end
+  endtask
+  task rd(input [31:0] a, output [31:0] d);
+    begin
+      @(posedge clk); araddr <= a; arvalid <= 1;
+      @(posedge clk); while (!arready) @(posedge clk);
+      arvalid <= 0;
+      while (!rvalid) @(posedge clk);
+      d = rdata;
+      @(posedge clk);
+    end
+  endtask
+  initial begin #20000000; $display("FERROTHERM_FAIL watchdog"); $finish; end
+  initial begin
+    repeat (4) @(posedge clk); rst_n = 1; repeat (2) @(posedge clk);
+    wr(32'h08, 32'd{sweeps});
+    wr(32'h00, 32'h1);
+    guard = 0; got_status = 0;
+    while ((got_status[1] !== 1'b1) && guard < 200000) begin rd(32'h04, got_status); guard = guard + 1; end
+    if (got_status[1] !== 1'b1) begin $display("FERROTHERM_FAIL never reached target"); $finish; end
+    rd(32'h0C, got_done);
+    rd(32'h20, got);
+    if (got_done !== 32'd{sweeps}) $display("FERROTHERM_FAIL sweeps %0d want {sweeps}", got_done);
+    else if (got !== 32'h{want:08x}) $display("FERROTHERM_FAIL state %h want {want:08x}", got);
+    else $display("FERROTHERM_PASS");
+    $finish;
+  end
+endmodule
+"#
+        );
+        let dir = std::env::temp_dir().join(format!("ferrotherm_restore_hw_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("fabric.v"), core).unwrap();
+        std::fs::write(dir.join("shell.v"), shell).unwrap();
+        std::fs::write(dir.join("tb.v"), tb).unwrap();
+        let out = std::process::Command::new("iverilog")
+            .current_dir(&dir)
+            .args(["-g2012", "-o", "sim", "fabric.v", "shell.v", "tb.v"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
+        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(stdout.contains("FERROTHERM_PASS"), "emitted-hardware gate:\n{stdout}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The fabric route as an application: it restores, it is graded, and its bill is in the unit
+    /// the KV260 was metered in — a p-bit update and a spin read.
+    #[test]
+    fn the_fabric_route_restores_and_bills_in_the_unit_that_was_metered() {
+        use crate::ledger::KV260_AXI_METERED;
+        let speckle: Vec<bool> = (0..64).map(|i| i % 5 != 0).collect();
+        let observed = Image::new(8, 8, speckle).expect("8x8");
+        let (chains, burn_in, sweeps) = (4usize, 200usize, 2_000usize);
+        let r = restore(&observed, 0.2, 0.7, Estimator::Fabric { chains, burn_in, sweeps }, 0xB0A7)
+            .expect("a posterior that fits, and chains that mixed");
+
+        // THE COUNTS, EXACTLY. A netlist per chain, because the generators are reset constants.
+        let n = 64u64;
+        assert_eq!(r.cost.writes, n * chains as u64, "a chain is a netlist on this fabric");
+        assert_eq!(r.cost.samples, n * chains as u64 * (burn_in + sweeps) as u64);
+        assert_eq!(r.cost.reads, n * chains as u64 * sweeps as u64);
+
+        // It restores: the speckle is smoothed, so the answer is closer to plain white than the
+        // observation was.
+        let white = Image::new(8, 8, vec![true; 64]).expect("8x8");
+        let before = observed.differences(&white).expect("same shape");
+        let after = r.image.differences(&white).expect("same shape");
+        assert!(after < before, "the fabric did not restore anything: {after} vs {before}");
+
+        // AND IT RESTORES THE RIGHT POSTERIOR, which "it restored something" does not check: a
+        // fabric quantised at the wrong temperature smooths an image too, just a different one.
+        // Held against the exact marginals, and against the same estimator in floating point, so
+        // what is measured is the QUANTISATION and nothing else.
+        let long = Estimator::Fabric { chains: 4, burn_in: 500, sweeps: 20_000 };
+        let fab = restore(&observed, 0.2, 0.7, long, 1).expect("converged");
+        let cpu = restore(&observed, 0.2, 0.7, Estimator::Mpm { chains: 4, burn_in: 500, sweeps: 20_000 }, 1)
+            .expect("converged");
+        let (_, exact) = exact_mpm(&observed, 0.2, 0.7).expect("an 8-wide grid eliminates");
+        let worst = |v: &[f64]| {
+            v.iter().zip(&exact).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max)
+        };
+        let (e_fab, e_cpu) = (worst(&fab.posterior), worst(&cpu.posterior));
+        assert!(e_fab < 0.01, "the fabric is not sampling this posterior: worst marginal off by {e_fab}");
+        // Q.8 weights and a 1,024-entry sigmoid ROM cost a small multiple of the sampling error --
+        // not a different problem. Stated as a band so it catches drift in either direction.
+        assert!(
+            e_fab < 8.0 * e_cpu,
+            "quantisation cost {e_fab} against floating point's {e_cpu}: that is a different model, \
+             not a quantised one"
+        );
+        // And nothing the data decides comes out differently.
+        let mut decided = 0usize;
+        for (k, m) in exact.iter().enumerate() {
+            if (m - 0.5).abs() > 0.05 {
+                decided += 1;
+                assert_eq!(
+                    fab.posterior[k] > 0.5,
+                    *m > 0.5,
+                    "pixel {k}: exact marginal {m:.4} is decided and the fabric disagrees"
+                );
+            }
+        }
+        assert!(decided * 10 >= 9 * exact.len(), "only {decided} of {} pixels decided", exact.len());
+        eprintln!(
+            "emitted p-bit fabric vs the exact posterior: worst marginal off by {e_fab:.4} \
+             (floating point {e_cpu:.4}), {decided}/{} pixels decided and none disagree",
+            exact.len()
+        );
+
+        // And the bill is in metered units -- with the write still unpriced, as it is everywhere.
+        let bill = r.bill(&KV260_AXI_METERED);
+        assert!(bill.priced > 0.0);
+        assert!(!bill.complete() && bill.unpriced.writes == n * chains as u64);
+        assert_eq!(bill.evidence, crate::ledger::Evidence::Metered);
+        eprintln!(
+            "8x8 restored on the emitted fabric: {:.3} uJ of sampling and readback at metered \
+             prices, {} node configurations unpriced",
+            bill.priced * 1e6,
+            bill.unpriced.writes
+        );
     }
 
     /// Every refusal, and the reason each one is a refusal rather than a default.

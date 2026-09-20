@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### An image goes in, a p-bit netlist comes out, and the hardware restores it
+
+The 2026-09-20 survey found no open path, anywhere, from a problem-level model to emitted p-bit
+RTL. Both ends of that path were already here — `apps::restore` builds a posterior, `writable`
+emits a fabric — and nothing joined them. `Estimator::Fabric` does:
+
+an image → the Bernoulli-channel posterior → a `WritableFabric` → **the emitted Verilog**, which
+`the_restored_image_comes_out_of_emitted_hardware` simulates in icarus-verilog and finds on the
+emulator's state **bit for bit**. Needs no board, because the claim is about the RTL.
+
+**What quantisation costs, measured against the exact posterior.** Q.8 weights, a 1,024-entry
+sigmoid ROM and one `xorshift32` per node put the fabric's worst marginal `0.0025` from exact,
+against `0.0010` for the same estimator in floating point — a small multiple of the sampling error,
+not a different problem. All 64 pixels are decided and the fabric disagrees on none.
+
+**And a constraint of this hardware the ledger now shows.** A chain's randomness is a *reset
+constant of the netlist*, so four chains are four implementations: `writes = 4n`. A convergence
+diagnostic is not free on hardware whose randomness is baked in, and the bill says so. At metered
+prices an 8×8 restoration costs 303 µJ of sampling and readback — dominated by reading every sweep,
+which thinning would cut, since a spin read is worth 64 flips on that board.
+
+### R-hat cannot see four chains that are the same chain
+
+Found by a mutation that gave every chain of the fabric one seed — the likely mistake on hardware
+whose seeds are reset constants. It **survived**, and the defect was in the library, not the test.
+
+Identical chains have between-chain variance `B = 0` exactly, so R-hat collapses to `sqrt((N-1)/N)`:
+
+| four chains of 2,000 draws | R-hat |
+|---|---|
+| genuinely independent | `1.00010` |
+| **identical** | **`1.00000`** |
+
+It scores the degenerate case *better*. The diagnostic whose entire purpose is to catch chains that
+are not exploring independently returns its healthiest possible answer for chains that are not
+independent at all, and no threshold on R-hat can separate them. `Convergence::Identical` now
+refuses them by name.
+
+**And the new variant was "certified" on the day it was written.** `is_certified` was
+`!matches!(self, SingleChain)` — a negation, which silently grants the affirmative answer to every
+variant added afterwards. It now names what has the property, so the default for a new case is no.
+
+Recorded as equivalent rather than contrived around: changing the hardware gate's sweep count
+mutates the emulator's target and the testbench's together, so the comparison stays consistent.
+
+**An ambiguous mutation target measures as little as a stale one**, and the suite's precheck said
+so: the new arm duplicated two lines existing rows named, and a harness cannot report which copy it
+broke. Fixed by removing the duplication rather than the rows. The shared tail of both chain-based
+estimators is one function now, which **derives the draw count from the traces instead of being
+told it** — a caller and a callee believing different numbers of draws were averaged is a
+disagreement nothing would have reported — and the two-chain guard is one check, ahead of any chain
+being run rather than inside each arm.
+
 ### A trap cannot catch SIGKILL, and the mutation harness was relying on one
 
 `mutation-check.sh` applies a deliberate defect, runs a test, and restores the file from git. Its

@@ -1024,10 +1024,35 @@ mutations=(
   "src/apps.rs|    let lambda = ((1.0 - flip_probability) / flip_probability).ln();|    let lambda = 1.0;|apps::tests::the_field_is_the_channels_log_odds_and_not_a_tunable_weight|a data term that forgets the channel's log-odds"
   "src/apps.rs|            b.bias(i, t * lambda / 2.0);|            b.bias(i, t * lambda);|apps::tests::an_mpm_estimate_beats_the_exact_map_on_pixel_error|a data term twice as strong as the channel says"
   "src/apps.rs|                b.couple(i, i + w, smoothness);|                b.couple(i, i + w, smoothness * 0.5);|apps::tests::the_field_is_the_channels_log_odds_and_not_a_tunable_weight|a prior that smooths vertically less than horizontally"
-  "src/apps.rs|            let draws = (chains * sweeps) as f64;|            let draws = (chains * sweeps / 2) as f64;|apps::tests::the_sampled_posterior_converges_to_the_exact_one|a posterior normalised by half the draws it averaged"
+  "src/apps.rs|    let draws = (traces.len() * traces.first().map_or(0, Vec::len)) as f64;|    let draws = (traces.len() * traces.first().map_or(0, Vec::len) / 2) as f64;|apps::tests::the_sampled_posterior_converges_to_the_exact_one|a posterior normalised by half the draws it averaged"
   "src/apps.rs|        return Err(Refused::Smoothness(smoothness));|        return Ok(GraphBuilder::new(1).build());|apps::tests::an_ill_posed_task_is_refused_by_name|a supermodular smoothness accepted, breaking the MAP oracle"
   "src/apps.rs|        return Err(Refused::FlipProbability(flip_probability));|        return Ok(GraphBuilder::new(1).build());|apps::tests::an_ill_posed_task_is_refused_by_name|a flip probability of 0 or 0.5 accepted"
-  "src/apps.rs|            if chains < 2 {|            if chains < 1 {|apps::tests::an_ill_posed_task_is_refused_by_name|a single chain graded on its own trace"
+  "src/apps.rs|        && chains < 2|        && chains < 1|apps::tests::an_ill_posed_task_is_refused_by_name|a single chain graded on its own trace"
+
+  # THE PATH TO EMITTED HARDWARE, and the diagnostic that nearly let it lie. `apps::restore`'s
+  # fabric route builds the p-bit netlist this crate emits for an FPGA, so an image becomes a
+  # posterior becomes a netlist. On that fabric a chain's randomness is a RESET CONSTANT of the
+  # netlist, which makes "one seed for every chain" the likely mistake rather than a contrived one.
+  #
+  # ROW 3 SURVIVED ITS FIRST RUN, AND EXPOSED A LIBRARY DEFECT RATHER THAN A TEST GAP. Four
+  # IDENTICAL chains passed `floors::Convergence::from_chains`: identical chains have zero
+  # between-chain variance, so R-hat collapses to sqrt((N-1)/N) and reads 1.00000 against the
+  # 1.00010 four genuinely independent chains give -- it scores the degenerate case BETTER. The
+  # diagnostic whose whole purpose is to catch chains that are not exploring independently cannot
+  # see chains that are not independent at all. `Convergence::Identical` now refuses them, and the
+  # last row below is that guard. (`is_certified` then certified the new variant on the day it was
+  # added, being `!matches!(self, SingleChain)` -- a negation grants every future variant the
+  # affirmative answer. Now stated positively; run by hand and caught, but its text contains an
+  # or-pattern pipe so it cannot be a row.)
+  #
+  # Run and found EQUIVALENT: changing the hardware gate's sweep count. Both the emulator's target
+  # and the testbench's read the same constant, so the comparison stays consistent and the mutant
+  # changes nothing. Recorded, not contrived around.
+  "src/apps.rs|                if c > 0 {|                if false {|apps::tests::the_fabric_route_restores_and_bills_in_the_unit_that_was_metered|a netlist per chain that is not charged as a load"
+  "src/apps.rs|                    cost.reads += n as u64;|                    cost.reads += 1;|apps::tests::the_fabric_route_restores_and_bills_in_the_unit_that_was_metered|a whole-state readback billed as a single read"
+  "src/apps.rs|                    seed ^ (c as u64).wrapping_mul(0x9E37_79B9),|                    seed,|apps::tests::the_fabric_route_restores_and_bills_in_the_unit_that_was_metered|every chain given the same generator seed"
+  "src/apps.rs|                    1.0, // beta is 1: the energy already IS the negative log posterior|                    2.0, // beta is 1: the energy already IS the negative log posterior|apps::tests::the_fabric_route_restores_and_bills_in_the_unit_that_was_metered|a fabric quantised at the wrong temperature"
+  "src/floors.rs|                if a.len() == b.len() && !a.is_empty() && a == b {|                if false {|floors::tests::four_identical_chains_are_refused_by_name_because_rhat_cannot_see_them|the identical-chain check removed, leaving R-hat blind"
 
   # GAUSSIAN BELIEF PROPAGATION, and the application entry point over it. Its two classical facts
   # are load-bearing here: exact on a tree in BOTH moments, and on a loop the mean stays exact
@@ -1308,7 +1333,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=259
+expected_rows=264
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
