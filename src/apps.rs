@@ -489,6 +489,117 @@ pub fn restore(
     }
 }
 
+/// Which route to take to a Gaussian's marginals.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Route {
+    /// Invert the precision matrix. `O(n³)` and exact: the oracle, not a method.
+    Exact,
+    /// Gaussian belief propagation. Local, sparse, and what the robotics literature runs — with
+    /// **the wrong variances on any graph with a loop**, by a margin iteration cannot remove. See
+    /// [`crate::gbp`].
+    MessagePassing {
+        /// Sweeps before giving up.
+        max_iters: usize,
+        /// Largest message change that counts as settled.
+        tol: f64,
+        /// Mixing with the previous message, in `[0, 1)`. Changes what converges, not where to.
+        damping: f64,
+    },
+    /// Equilibrate an Ornstein-Uhlenbeck network whose stationary covariance IS `Λ⁻¹`. Unbiased in
+    /// both moments, so its only error is a standard error.
+    Sampling {
+        /// Stride between recorded samples, in units of time. A few relaxation times gives
+        /// near-independent draws.
+        stride_h: f64,
+        /// Strides discarded before recording.
+        burn: usize,
+        /// Samples recorded.
+        samples: usize,
+    },
+}
+
+/// A Gaussian's per-node marginals, by whichever route was asked for, and what it cost.
+pub struct Marginals {
+    /// Posterior mean per node.
+    pub mean: Vec<f64>,
+    /// Posterior marginal variance per node.
+    pub variance: Vec<f64>,
+    /// The route taken.
+    pub route: Route,
+    /// Message-passing sweeps, or recorded samples. `0` for the exact route.
+    pub iterations: usize,
+    /// The device operations this cost.
+    ///
+    /// **On the sampling route these are CONTINUOUS-node updates.** Every price in
+    /// [`crate::ledger::CATALOGUE`] is for a binary p-bit update, and no machine this crate knows
+    /// of has metered a continuous one — so pricing this ledger against them is a claim the caller
+    /// is making and not one this crate makes. It is carried rather than withheld because the
+    /// operation COUNT is a fact about the run either way.
+    pub cost: Ledger,
+}
+
+/// A Gaussian's marginals: the mean every route gets right, and the variance only two of them do.
+///
+/// ```
+/// use ferrotherm::apps::{marginals, Route};
+/// use ferrotherm::gbp::grid;
+///
+/// let model = grid(5, 5, 1.0, -0.22);          // a 5x5 factor graph: loops everywhere
+/// let exact = marginals(&model, Route::Exact).expect("positive definite");
+/// let bp = marginals(&model, Route::MessagePassing { max_iters: 5_000, tol: 1e-13, damping: 0.0 })
+///     .expect("this grid converges");
+///
+/// // Message passing has the mean exactly...
+/// for i in 0..model.n {
+///     assert!((bp.mean[i] - exact.mean[i]).abs() < 1e-9);
+/// }
+/// // ...and is overconfident about it on every single node.
+/// assert!((0..model.n).all(|i| bp.variance[i] < exact.variance[i]));
+/// ```
+///
+/// # Errors
+///
+/// A message naming what was ill-formed, singular, or did not converge.
+pub fn marginals(model: &crate::gbp::Info, route: Route) -> Result<Marginals, String> {
+    model.check().map_err(|e| e.to_string())?;
+    let n = model.n;
+    match route {
+        Route::Exact => {
+            let (mean, variance) = model.exact()?;
+            Ok(Marginals { mean, variance, route, iterations: 0, cost: Ledger::default() })
+        }
+        Route::MessagePassing { max_iters, tol, damping } => {
+            let b = model
+                .belief_propagation(max_iters, tol, damping)
+                .map_err(|e| e.to_string())?;
+            // A sweep touches every node and every directed message; the readback is the beliefs.
+            let cost = Ledger {
+                samples: (b.iterations as u64) * (n as u64 + 2 * model.edges.len() as u64),
+                reads: n as u64,
+                writes: n as u64,
+            };
+            Ok(Marginals {
+                mean: b.mean,
+                variance: b.variance,
+                route,
+                iterations: b.iterations,
+                cost,
+            })
+        }
+        Route::Sampling { stride_h, burn, samples } => {
+            let spd = model.to_spd().map_err(|e| e.to_string())?;
+            let r = crate::tla::solve_spd_exact_ou(&spd, 1.0, stride_h, burn, samples, 0xC0FF_EE01);
+            let variance = (0..n).map(|i| r.a_inv[i * n + i]).collect();
+            let cost = Ledger {
+                samples: r.steps * n as u64,
+                reads: (samples as u64) * (n as u64),
+                writes: n as u64,
+            };
+            Ok(Marginals { mean: r.x, variance, route, iterations: samples, cost })
+        }
+    }
+}
+
 /// The exact per-pixel posterior mode, by elimination rather than by sampling — the oracle the
 /// [`Estimator::Mpm`] arm is held to.
 ///
@@ -779,6 +890,76 @@ mod tests {
         let g = posterior(&observed, 0.2, 0.7).expect("well posed");
         let v = r.receipt.verify(&g).expect("the receipt must verify against its own model");
         assert!((v.energy - r.energy).abs() < 1e-12);
+    }
+
+    /// **THE SECOND TASK, AND THE SECOND TIME THE SAMPLER'S CASE IS THE SECOND MOMENT.** Three
+    /// routes to one Gaussian's marginals, all three held to an exact inverse: every route has the
+    /// mean, only two have the variance, and the one that is wrong is the one robotics runs.
+    ///
+    /// The shape of the argument is the same as the image task's — a deterministic method owns the
+    /// first moment, and the sampler earns its place on the second — which is worth noticing,
+    /// because it says where to look for the next application rather than where to hope.
+    #[test]
+    fn three_routes_to_one_gaussians_marginals_and_only_two_have_the_variance() {
+        let model = crate::gbp::grid(5, 5, 1.0, -0.22);
+        let exact = marginals(&model, Route::Exact).expect("positive definite");
+        assert_eq!(exact.cost, Ledger::default(), "the oracle runs on no device and is charged as none");
+
+        let bp = marginals(
+            &model,
+            Route::MessagePassing { max_iters: 20_000, tol: 1e-14, damping: 0.0 },
+        )
+        .expect("this grid converges");
+        let sampled = marginals(&model, Route::Sampling { stride_h: 3.0, burn: 200, samples: 100_000 })
+            .expect("positive definite");
+
+        // EVERY route has the mean. This is the half a deterministic method owns.
+        for r in [&bp, &sampled] {
+            let e = (0..model.n)
+                .map(|i| (r.mean[i] - exact.mean[i]).abs())
+                .fold(0.0f64, f64::max);
+            assert!(e < 1e-2, "{:?}: worst mean error {e:e}", r.route);
+        }
+
+        // THE VARIANCE SPLITS THEM. Message passing is overconfident on every node, by a margin
+        // that is a property of the graph; the sampler is inside its own standard error.
+        let bp_err = (0..model.n)
+            .map(|i| (bp.variance[i] - exact.variance[i]).abs())
+            .fold(0.0f64, f64::max);
+        let s_err = (0..model.n)
+            .map(|i| (sampled.variance[i] - exact.variance[i]).abs())
+            .fold(0.0f64, f64::max);
+        assert!(
+            (0..model.n).all(|i| bp.variance[i] < exact.variance[i]),
+            "message passing must be overconfident on every node"
+        );
+        assert!(bp_err > 0.05, "and by a visible margin: {bp_err:e}");
+        assert!(s_err < bp_err / 2.0, "the sampler must be well under it: {s_err:.5} vs {bp_err:.5}");
+
+        // AND THE BILL, in the operations each route actually performs -- counted EXACTLY, because
+        // "more than zero" is what a mutant that billed the sampler per step instead of per node
+        // update passed. The sampler's advantage on the second moment is bought, not free.
+        let (n, e) = (model.n as u64, model.edges.len() as u64);
+        assert_eq!(
+            bp.cost.samples,
+            bp.iterations as u64 * (n + 2 * e),
+            "a message-passing sweep touches every node and every directed message"
+        );
+        assert_eq!(sampled.cost.samples, (200 + 100_000) * n, "burn-in is node updates too");
+        assert_eq!(sampled.cost.reads, 100_000 * n, "one read per node per recorded draw");
+        assert_eq!((bp.cost.reads, bp.cost.writes), (n, n));
+        let ratio = sampled.cost.samples as f64 / bp.cost.samples as f64;
+        assert!(ratio > 1.0, "the accurate variance costs more node updates, not fewer: {ratio:.1}x");
+        eprintln!(
+            "5x5 grid, worst variance error: message passing {bp_err:.5} in {} sweeps, \
+             sampling {s_err:.5} in {} draws ({ratio:.0}x the node updates)",
+            bp.iterations, sampled.iterations
+        );
+
+        // A model whose messages do not settle is refused by name, through this entry point too.
+        let hot = crate::gbp::grid(6, 6, 1.0, -0.9);
+        let out = marginals(&hot, Route::MessagePassing { max_iters: 500, tol: 1e-12, damping: 0.0 });
+        assert!(out.is_err_and(|e| e.contains("did not settle")), "an unconverged run is not a belief");
     }
 
     /// Every refusal, and the reason each one is a refusal rather than a default.

@@ -180,6 +180,7 @@ pub mod targets;
 pub mod hdl;
 pub mod writable;
 pub mod apps;
+pub mod gbp;
 pub mod ffi;
 pub mod cim;
 pub mod oim;

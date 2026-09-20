@@ -1015,6 +1015,24 @@ mutations=(
   "src/apps.rs|        return Err(Refused::FlipProbability(flip_probability));|        return Ok(GraphBuilder::new(1).build());|apps::tests::an_ill_posed_task_is_refused_by_name|a flip probability of 0 or 0.5 accepted"
   "src/apps.rs|            if chains < 2 {|            if chains < 1 {|apps::tests::an_ill_posed_task_is_refused_by_name|a single chain graded on its own trace"
 
+  # GAUSSIAN BELIEF PROPAGATION, and the application entry point over it. Its two classical facts
+  # are load-bearing here: exact on a tree in BOTH moments, and on a loop the mean stays exact
+  # while the variance does not. The tree rows below break the first, which is the only way to
+  # tell a correct implementation from one that is wrong everywhere -- a module whose variances
+  # were merely wrong would still "reproduce" the loopy finding.
+  "src/gbp.rs|                    let np = -w * w / cav_p;|                    let np = w * w / cav_p;|gbp::tests::on_a_tree_belief_propagation_is_exact_in_both_moments|a message precision with the wrong sign"
+  "src/gbp.rs|                    let cav_p = tot_p - m_prec[back];|                    let cav_p = tot_p;|gbp::tests::on_a_tree_belief_propagation_is_exact_in_both_moments|a cavity that does not exclude the reply, the classic BP bug"
+  "src/gbp.rs|                    let cav_e = tot_e - m_info[back];|                    let cav_e = tot_e;|gbp::tests::on_a_tree_belief_propagation_is_exact_in_both_moments|a cavity information that does not exclude the reply"
+  "src/gbp.rs|            variance[i] = 1.0 / p;|            variance[i] = p;|gbp::tests::on_a_tree_belief_propagation_is_exact_in_both_moments|a variance reported as a precision"
+  "src/gbp.rs|        if !(residual <= tol) {|        if false {|gbp::tests::a_model_that_does_not_settle_is_refused_rather_than_reported|an unsettled run returned as a belief"
+  "src/gbp.rs|            if !seen.insert(key) {|            if seen.insert(key) {|gbp::tests::an_ill_formed_model_is_named_rather_than_solved|a duplicate-edge check inverted"
+
+  # THE LAST ROW SURVIVED ITS FIRST RUN. The comparison asserted only that the sampler cost MORE
+  # node updates than message passing, and billing per step instead of per node still cleared that
+  # by 79x. Counts are asserted exactly now, as the image task's already were.
+  "src/apps.rs|                samples: r.steps * n as u64,|                samples: r.steps,|apps::tests::three_routes_to_one_gaussians_marginals_and_only_two_have_the_variance|a sampling route billed per step, not per node update"
+  "src/apps.rs|                reads: (samples as u64) * (n as u64),|                reads: (samples as u64),|apps::tests::three_routes_to_one_gaussians_marginals_and_only_two_have_the_variance|a readback billed per draw, not per node per draw"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1252,7 +1270,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=244
+expected_rows=252
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

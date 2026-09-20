@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Gaussian belief propagation, and the quantity it gets wrong on every loop
+
+`gbp` is the algorithm the robotics side of this field actually runs — local message passing on a
+Gaussian factor graph, no global solve, which is how bundle adjustment is spread across an IPU's
+tiles and how a pose graph stays current. The 2026-09-20 survey did not locate any attempt to run
+it on thermodynamic, analog-OU or p-bit hardware. It is here because its failure mode is in exactly
+the quantity the sampling route gets right.
+
+Two classical facts, both now measured against an exact inverse rather than cited. On a **tree**,
+belief propagation is exact in both moments. On a **loop**, if it converges, the mean stays exact
+and the variance does not (Weiss and Freeman 2001) — and the error is a property of the fixed
+point, not of the path to it. On a 5×5 grid:
+
+| | worst error |
+|---|---|
+| mean, message passing | `1.6e-14` — exact |
+| **variance, message passing** | **0.079, on 25 of 25 nodes overconfident** |
+| variance, message passing at 100× the iterations | 0.079, unchanged to `1e-9` |
+| variance, OU sampling at 1e3 / 1e4 / 1e5 draws | 0.133 / 0.037 / 0.018 |
+
+The sampler crosses under message passing's floor somewhere under ten thousand draws, and keeps
+going, because its error is a standard error and message passing's is a constant of the graph. Both
+directions are asserted: "close to exact" would pass for a dense solve wearing a message-passing
+costume, and "wrong" would pass for an implementation whose means were wrong too, which is the
+ordinary way to get this algorithm wrong. Damping is shown not to rescue it — it changes which
+models converge, not where they converge to.
+
+`apps::marginals` is the entry point over all three routes, and it prices them. On that grid:
+message passing reaches 0.079 in 12 sweeps; sampling reaches 0.014 in 100,000 draws, for **1,988×
+the node updates**. That is the trade stated in the unit the machine is built in, not hidden.
+
+What this does **not** claim: that sampling is the cheaper way to get a Gaussian mean. It is not,
+and arXiv:2608.09743 makes that case at length — the OU dynamics' mean is preconditioned gradient
+descent, and a digital method does that better. Both applications in `apps` now have the same
+shape, which is worth noticing because it says where to look next: a deterministic method owns the
+first moment, and the sampler earns its place on the second.
+
+A note carried at the point of use: on the sampling route the ledger counts **continuous**-node
+updates, and every price in `CATALOGUE` is for a binary p-bit update. Pricing one against the other
+is a claim the caller makes, not one this crate makes.
+
+**A mutant survived.** The route comparison asserted only that sampling cost *more* node updates
+than message passing — and billing the sampler per step instead of per node still cleared that by
+79×. The operation counts are asserted exactly now, as the image task's already were.
+
 ### `apps`: an answer, its certificate and its bill — and the first thing the bill says
 
 A 2026-09-20 survey of what this field ships found that the streamlined developer experiences
