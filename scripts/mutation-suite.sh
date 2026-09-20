@@ -978,6 +978,23 @@ mutations=(
   "src/writable.rs|      if (bvalid_r && s_axi_bready) begin|      if (bvalid_r) begin|writable::tests::neither_shell_deadlocks_under_a_badly_behaved_master|a writable shell that drops a response nobody has accepted"
   "src/hdl.rs|      if (bvalid_r && s_axi_bready) begin|      if (bvalid_r) begin|writable::tests::neither_shell_deadlocks_under_a_badly_behaved_master|a fixed shell that drops a response nobody has accepted"
 
+  # THE WRITABLE DEVICE. Its ladder anneals because a write touches weights and nothing else; it
+  # refuses a rung its registers cannot hold BEFORE running any of the ladder; and it charges a
+  # load for a new seed, because seeds are reset constants of the netlist.
+  #
+  # THE LAST ROW SURVIVED ITS FIRST RUN, and the defect was in the gate. An RTL that reset the chain
+  # on every configuration write still reproduced the "carried" state: the run resumed at the same
+  # position in every generator's stream, and eleven hot sweeps on shared random numbers made the
+  # two chains COALESCE -- the mechanism `cftp` is built on, here erasing the memory the gate
+  # existed to see. The gate is now two cold sweeps long and asserts against that alternative.
+  "src/writable.rs|                f.core.reset(); // the shell|                // the shell|writable::tests::a_new_seed_is_a_new_netlist_and_is_charged_as_a_load|a rerun that continues where the last run stopped"
+  "src/writable.rs|        if self.held_scale == Some(c) {|        if false && self.held_scale == Some(c) {|writable::tests::a_ladder_on_the_writable_fabric_anneals_and_costs_one_more_write_not_fewer|an unchanged temperature charged as a write"
+  "src/writable.rs|            self.set_temperature(stage.beta)?;|            self.set_temperature(stage.beta)?; self.fabric.as_mut().expect(\"s\").core.reset();|writable::tests::a_ladder_on_the_writable_fabric_anneals_and_costs_one_more_write_not_fewer|a writable device that resets at every rung like the fixed one"
+  "src/writable.rs|            if raw != 0.0 && (*v).abs() < step / 2.0 {|            if false && raw != 0.0 && (*v).abs() < step / 2.0 {|writable::tests::a_rung_the_registers_cannot_hold_refuses_the_whole_ladder_before_running_any_of_it|a coupling deleted by rounding and run anyway"
+  "src/writable.rs|                let t = WritableRtl::scaled(g, stage.beta / ROM_BETA)?;|                let t = WritableRtl::scaled(g, 1.0)?;|writable::tests::a_rung_the_registers_cannot_hold_refuses_the_whole_ladder_before_running_any_of_it|a ladder refused only after its good rungs ran"
+  "src/writable.rs|        if self.seed == Some(seed) {|        if self.seed.is_some() {|writable::tests::a_new_seed_is_a_new_netlist_and_is_charged_as_a_load|a new seed served by the old netlist for free"
+  "src/writable.rs|          cfg_en   <= 1'b1;|          cfg_en   <= 1'b1; soft_rst <= 1'b1;|writable::tests::rtl_reprogrammed_mid_run_without_a_reset_carries_its_state|RTL that resets the chain on every configuration write"
+
   # The frame data register is READ during a capture and WRITTEN during configuration, and the two
   # headers differ by one field. Issue the write form and the device loads the frames it was meant
   # to fetch, which is a readback that silently reconfigures the part.
@@ -1215,7 +1232,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=230
+expected_rows=237
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### The writable fabric as a device: a ladder that anneals, and a claim of mine corrected
+
+`writable::WritableRtl` puts the writable fabric behind `fabric::Device`. One netlist; a rung is a
+register write; and because a write touches weights and nothing else, **spins and generators carry
+from rung to rung** — the ladder is simulated annealing, where `hdl::RtlFabric`'s is N independent
+runs from reset, because a reconfigured fixed fabric has no state input. Same program, same
+twelve-rung ladder, same 96 sweeps and the same reads, over twelve seeds on a frustrated 8×8
+torus: mean best energy **−71.0 annealed against −67.5 for twelve restarts**, and the better answer
+on 10 seeds of 12. A modest gain at this budget, stated as what it is.
+
+**I said this would "stop charging a reflash per rung". That was wrong in the ledger's own unit.**
+A rung at a new temperature rewrites every node: `writes += n`, which is what `RtlFabric` charges
+too — and this fabric's load holds the program at the ROM's β, so its first rung is a FURTHER
+write: `n·(R+1)` against `n·R`. A test pins both counts. What differs is what a write IS (a bus
+transaction measured at 2.53 M node configurations a second, against a Vivado run and a bitstream
+load), and neither is an energy: the device declares `Prices::UNSTATED`, because this netlist ran
+on a board and was never metered.
+
+It refuses rather than approximates: a rung whose `β·J` leaves ±8, or whose nonzero coupling
+rounds to zero in Q.8, is refused **before any rung runs**, so a ladder that fails at its sixth
+rung leaves nothing on the ledger; and a new seed is a new netlist, charged as a load.
+
+**The carry gate was blind, and a mutant said so.** The icarus-verilog gate reprograms the emitted
+RTL mid-run with no reset and holds it to the emulator. Its first version ran eleven hot sweeps
+after the reprogram — and an RTL mutated to RESET the chain on every configuration write still
+passed. The run resumes at the same position in every generator's stream either way, and eleven
+sweeps of shared random numbers at β = 0.25 make two chains coalesce whatever spins they started
+from: the mechanism `cftp` is built on, erasing the memory the gate existed to see. It was testing
+that the generators carried. It is now two cold sweeps long and asserts against exactly that
+alternative, and the mutant is a suite row.
+
+`scripts/mutation-hand.sh` is the mutation check for a file that is not yet committed — saved-byte
+restore, checksum before and after, verdict from the `test result:` line. It was rewritten from
+memory in three sessions and wiped from scratch twice; it lives in the repository now.
+
 ### A fabric whose couplings are registers — and a board that stopped answering
 
 `writable::WritableFabric` is `hdl::FixedFabric` with its constants turned into state: the wiring
