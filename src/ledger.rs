@@ -295,6 +295,39 @@ pub const KV260_AXI_METERED: Prices = Prices {
     evidence: Evidence::Metered,
 };
 
+/// A fabricated 16 nm sampling accelerator, and **the closest thing in print to a competitor for
+/// the figures this crate metered itself.**
+///
+/// arXiv:2606.16148 (Zhao, Verhelst et al., KU Leuven): *"AIA can generate 1277 MSample/s at 0.9V
+/// and 20 GSamples/s/W at 0.7V which is up to 2× faster and 1.45x more energy efficient compared to
+/// the previous state-of-the-art Markov Random Field (MRF) accelerator"*, implemented in Intel
+/// 16 nm on a 4 mm² die. `20 GSamples/s/W` is `5.0e-11` J per sample, which is the number here.
+///
+/// # ⚠ Read this before comparing it with [`KV260_AXI_METERED`]
+///
+/// **A "sample" here may not be one node update.** The figure comes from a sampler microbenchmark
+/// over distributions of varying entropy, on an architecture built for general approximate
+/// inference — so the operation being priced is this crate's `e_sample` only if their sample and
+/// our single-node redraw are the same work. That has not been established, and until it is, the
+/// apparent ratio against our `9.13e-12` is **not** a like-for-like claim about silicon. It is
+/// recorded here so the comparison is available and fenced, rather than made casually elsewhere.
+///
+/// Graded [`Evidence::Measured`] rather than [`Evidence::Metered`]: the chip is real and the figure
+/// is its authors', but the metering protocol — what was held fixed, what the idle baseline was —
+/// is not stated in the terms [`KV260_AXI_METERED`] states them. Reads and writes are not
+/// separated from the figure and stay unstated, not zero.
+pub const AIA_16NM_SAMPLER: Prices = Prices {
+    e_sample: 5.0e-11,
+    e_read: f64::NAN,
+    e_write: f64::NAN,
+    reflash_hz_cap: None,
+    source: "STATED BY ITS AUTHORS, arXiv:2606.16148: AIA, a 16 nm multicore SoC for approximate \
+             inference, '20 GSamples/s/W at 0.7V' = 5.0e-11 J per sample, from a sampler \
+             microbenchmark. Silicon, 4 mm2, Intel 16 nm. WHETHER THEIR 'SAMPLE' IS THIS CRATE'S \
+             NODE UPDATE IS NOT ESTABLISHED. Reads and writes unstated, not zero.",
+    evidence: Evidence::Measured,
+};
+
 /// Every machine this crate states prices for, in a stable order, each beside its name.
 ///
 /// The reason this is a table and not three constants a caller looks up by hand: a joules figure
@@ -307,13 +340,14 @@ pub const KV260_AXI_METERED: Prices = Prices {
 /// [`Prices::UNSTATED`] is deliberately in here. It is the honest answer for a machine nobody has
 /// characterised, and a caller who can select it by name can demonstrate that pricing a run
 /// against it yields no figure rather than a zero.
-pub const CATALOGUE: [(&str, Prices); 5] = [
+pub const CATALOGUE: [(&str, Prices); 6] = [
     ("UNSTATED", Prices::UNSTATED),
     ("Z1_SPICE", Z1_SPICE),
     ("KV260_MEASURED", KV260_MEASURED),
     // APPENDED, never inserted: the binding surfaces enumerate this table by index.
     ("PEGASUS_28NM_ASIC", PEGASUS_28NM_ASIC),
     ("KV260_AXI_METERED", KV260_AXI_METERED),
+    ("AIA_16NM_SAMPLER", AIA_16NM_SAMPLER),
 ];
 
 /// Operation counts accumulated by a run.
@@ -448,6 +482,7 @@ mod tests {
             ("KV260_MEASURED", Evidence::Metered),
             ("PEGASUS_28NM_ASIC", Evidence::Measured),
             ("KV260_AXI_METERED", Evidence::Metered),
+            ("AIA_16NM_SAMPLER", Evidence::Measured),
         ];
         // OVER THE CATALOGUE, not over a list written here. This test used to walk its own three
         // entries and conclude "exactly one price in this crate was metered" -- a count of the
@@ -467,6 +502,7 @@ mod tests {
                 "KV260_MEASURED" => KV260_MEASURED,
                 "PEGASUS_28NM_ASIC" => PEGASUS_28NM_ASIC,
                 "KV260_AXI_METERED" => KV260_AXI_METERED,
+                "AIA_16NM_SAMPLER" => AIA_16NM_SAMPLER,
                 other => panic!("{other} is in the table and has no constant named here"),
             };
             assert_eq!(p.source, constant.source, "{name} is bound to another machine's prices");
@@ -501,6 +537,39 @@ mod tests {
         assert!((ratio - 21664.0).abs() < 100.0, "write/sample = {ratio}");
         let rr = Z1_SPICE.e_read / Z1_SPICE.e_sample;
         assert!((rr - 238.6).abs() < 5.0, "read/sample = {rr}");
+    }
+
+    /// **A PRICE MUST BE RE-DERIVABLE FROM THE QUOTATION IT CITES**, or it is a number somebody
+    /// typed. [`KV260_AXI_METERED`] is re-derived from its sensor logs; this does the same for the
+    /// entries whose evidence is a published figure, by reading the figure back out of the
+    /// `source` string and recomputing the price from it.
+    ///
+    /// Written after a mutant moved [`AIA_16NM_SAMPLER`]'s energy by a factor of ten and every
+    /// test in this file stayed green: the catalogue check compares each entry against its
+    /// constant, so changing the constant changes both sides and they still agree.
+    #[test]
+    fn a_cited_price_is_recomputed_from_the_figure_its_own_source_quotes() {
+        // "20 GSamples/s/W" -> 1 / 20e9 J per sample.
+        let src = AIA_16NM_SAMPLER.source;
+        assert!(src.contains("20 GSamples/s/W"), "the source no longer quotes the figure it is built from");
+        let want = 1.0 / 20e9;
+        assert!(
+            (AIA_16NM_SAMPLER.e_sample - want).abs() < 1e-18,
+            "source says 20 GSamples/s/W = {want:e} J per sample; the constant says {:e}",
+            AIA_16NM_SAMPLER.e_sample
+        );
+        // And the arithmetic in the source text must agree with itself.
+        assert!(src.contains("5.0e-11"), "the source states a converted value that must match");
+
+        // The same discipline for the other cited figure: the ASIC's stated pJ per update.
+        assert!(PEGASUS_28NM_ASIC.source.contains("1.2 pJ/update"));
+        assert!((PEGASUS_28NM_ASIC.e_sample - 1.2e-12).abs() < 1e-24);
+
+        // The board figures are re-derived from sensor logs elsewhere; here, just that they still
+        // quote the protocol their grade depends on.
+        for p in [KV260_MEASURED, KV260_AXI_METERED] {
+            assert!(p.source.contains("INA260"), "a metered grade must name its instrument");
+        }
     }
 
     /// The measured board figure, and the gap it puts a number on.
@@ -615,7 +684,7 @@ mod tests {
         assert!(whole_board / kv.e_sample > 6.0, "the increment flatters by more than six");
 
         // the table: appended, named once each, and the ASIC priced like the KV260 -- samples only
-        assert_eq!(CATALOGUE.len(), 5);
+        assert_eq!(CATALOGUE.len(), 6);
         assert_eq!(CATALOGUE[3].0, "PEGASUS_28NM_ASIC");
         assert_eq!(CATALOGUE[4].0, "KV260_AXI_METERED", "appended, so every earlier index holds");
         for (i, (a, _)) in CATALOGUE.iter().enumerate() {

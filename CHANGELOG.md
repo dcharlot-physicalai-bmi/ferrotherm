@@ -2,6 +2,74 @@
 
 ## Unreleased
 
+### The workload that loses, a citation of ours that was wrong, and 14 papers read at the source
+
+**A catalogue that only listed wins would not be a measurement of anything.** `WORKLOADS.md` §3 sold
+thermodynamic linear algebra on the line *"equilibrating one solves a linear system"* and stopped
+there. `tla::dominance` now measures that against this crate's own code, on the fair work axis — one
+matrix-vector product per conjugate-gradient iteration, one per Euler–Maruyama step:
+
+| matrix-vector products | conjugate gradient | the OU mean |
+|---|---|---|
+| ~40 (= `n`) | **`1e-15`** | `1.0` |
+| 10,000 | — | `1.2e-1` |
+
+250× the work for fourteen orders of magnitude worse accuracy. The obvious defence is that the
+sampler returns a covariance a solve does not — and **on a dense system that fails too**: the cheap
+integrator's covariance bias shrinks with `dt` rather than with steps, and shrinking `dt` costs
+steps, so the best available over 200,000 products is about 7%; the unbiased integrator reaches 0.8%
+but opens with an `O(n³)` eigendecomposition, already dearer than inverting the matrix. Against an
+exact inverse at `n` product-equivalents and zero error, both lose. **What is not measured, and so
+not claimed anywhere, is the large-sparse case** — the only ground this workload's argument can
+still stand on.
+
+**And a citation of ours was wrong, in two ways.** Since yesterday three files said arXiv:2608.09743
+"argues the mean of these dynamics is preconditioned gradient descent", attributed to Cambridge.
+Reading the paper instead of a summary of it: it is a **Signaloid** paper (one author also at
+Cambridge), and its theorem is about the **covariance** dynamics of matrix inversion with `b` set to
+zero — *"the covariance dynamics are mathematically identical to preconditioned gradient descent on
+the Frobenius norm of the residual"*. Not the mean. Our measurement is of the mean route to `Ax = b`,
+so it complements theirs rather than repeating it, and the earlier citation named the wrong moment.
+Corrected in `src/tla.rs`, `src/gbp.rs`, `WORKLOADS.md` and above.
+
+Three caveats on their numbers, now passed on because this is what the catalogue is for: the
+100,000-fold speedup is Python wall-clock on one laptop with the sampler **held at a fixed 1,000,000
+samples** against a solver stopped at a tolerance; their gradient descent is handed precomputed
+eigenvalues, which they say *"defeats the purpose of iterative methods in practice"*; and their own
+Table 4 has it 20–100× **slower** than Newton–Schulz at condition number 100. They fence the headline
+themselves — the redundancy is *"specific to problems that involve a convex quadratic potential with
+a single global minimum"*.
+
+### `AIA_16NM_SAMPLER` joins the catalogue, fenced
+
+arXiv:2606.16148 (KU Leuven), Intel 16 nm, silicon: *"20 GSamples/s/W at 0.7V"* = **50 pJ per
+sample**, the nearest thing in print to a competitor for our own metered figures. Graded `Measured`
+rather than `Metered` — the chip is real and the figure is its authors', but the protocol is not
+stated in the terms ours is. **And it is fenced rather than compared:** their figure comes from a
+sampler microbenchmark, and whether their "sample" is this crate's single-node redraw has not been
+established, so the apparent ratio against our `9.13e-12` is not a like-for-like claim.
+
+Three more, read at the source and added to "claims not to repeat": arXiv:2608.06803's *"130× lower
+energy"* rests on a classical baseline *"computed using a 15 W per-core power estimate"* and its own
+chip figure is an assumed operating point (*"We use 50 μs solve time and 9 mW chip power"*) — a
+projection against a projection; **CN101 (arXiv:2608.00754) reports no energy figure at all**, its
+targets *"deferred to later chips"*; and arXiv:2410.14093's 284 µs / 3.4 W on a vehicle states no
+timing for any other solver, so it is an absolute figure rather than a comparison. The digital bar
+for sampling-based control is arXiv:2601.17231, which does name its baselines: 2.33 ms / 14.90 mJ per
+control step on an FPGA against 7.24 ms / 37.44 mJ on a Jetson Orin Nano.
+
+### Three mutants survived, and two were the same defect
+
+**A comparison test that does not pin the budget each side received cannot tell a fair comparison
+from a rigged one.** Starving the sampler to 10 products, or handing the covariance sweep its worst
+setting instead of its best, both *widen* the gap the assertions look for — so both passed. The
+tests now assert the work each side actually spent, and that the sweep's best is a minimum.
+
+The third: moving a catalogue price by a factor of ten passed everything, because the catalogue
+checks each entry against its constant and a mutant changes both. **A cited price is now recomputed
+from the figure quoted in its own source string**, the way the metered ones are recomputed from
+their sensor logs — a price that cannot be re-derived from its citation is a number somebody typed.
+
 ### A multi-label MRF, and a gap that is a fact rather than a hope
 
 Restoring a binary image has an exact answer: two labels with an attractive prior is submodular, so
@@ -228,8 +296,9 @@ message passing reaches 0.079 in 12 sweeps; sampling reaches 0.014 in 100,000 dr
 the node updates**. That is the trade stated in the unit the machine is built in, not hidden.
 
 What this does **not** claim: that sampling is the cheaper way to get a Gaussian mean. It is not,
-and arXiv:2608.09743 makes that case at length — the OU dynamics' mean is preconditioned gradient
-descent, and a digital method does that better. Both applications in `apps` now have the same
+and `tla::dominance` measures how badly on this crate's own code. (This paragraph first credited
+that to arXiv:2608.09743; reading the paper rather than a summary, its theorem is about the
+covariance rather than the mean — corrected in `WORKLOADS.md` §3.) Both applications in `apps` now have the same
 shape, which is worth noticing because it says where to look next: a deterministic method owns the
 first moment, and the sampler earns its place on the second.
 

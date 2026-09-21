@@ -37,9 +37,12 @@
 //! asserted.
 //!
 //! What this does not claim: that sampling is the cheaper way to get a Gaussian mean. It is not,
-//! and arXiv:2608.09743 makes that case at length — the OU dynamics' mean is preconditioned
-//! gradient descent, and a deterministic digital method does that better. The claim here is about
-//! the second moment.
+//! and [`crate::tla`]'s `dominance` tests measure how badly on this crate's own code.
+//!
+//! (An earlier version of this paragraph attributed that to arXiv:2608.09743. Reading the paper
+//! rather than a summary of it: its theorem is about the COVARIANCE dynamics of matrix inversion,
+//! not the mean, and it is a Signaloid paper rather than a Cambridge one. The correction and what
+//! the paper actually says are in [`crate::tla`].)
 
 use crate::tla::Spd;
 

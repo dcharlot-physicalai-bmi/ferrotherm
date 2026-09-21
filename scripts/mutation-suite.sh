@@ -1067,6 +1067,25 @@ mutations=(
   "src/mrf.rs|                    let scaled = c / cover.rho[e];|                    let scaled = c;|mrf::tests::neither_route_is_ever_above_the_true_minimum|the tree reweighting dropped, so the forests average to a weaker model"
   "src/mrf.rs|        let l = -u / beta;|        let l = -u * beta;|mrf::tests::neither_route_is_ever_above_the_true_minimum|a log partition turned into an energy by multiplying"
   "src/mrf.rs|                b.field(i, a as u8, -costs[i * q + a]);|                b.field(i, a as u8, costs[i * q + a]);|mrf::tests::a_structured_instance_certifies_far_tighter_than_an_adversarial_one|a data cost entered with the wrong sign"
+
+  # THE WORKLOAD THAT LOSES, AND THE PRICE THAT CITES A PAPER. `tla::dominance` measures a
+  # deterministic solve against this crate's own sampler at equal matrix-vector products, and
+  # WORKLOADS.md section 3 now reports that the sampler loses on a dense system at both moments.
+  #
+  # THREE OF THESE SURVIVED THEIR FIRST RUN, and two are the same defect: a comparison test that
+  # does not pin THE BUDGET EACH SIDE RECEIVED cannot tell a fair comparison from a rigged one.
+  # Starving the sampler to 10 products, or handing the covariance sweep its worst setting instead
+  # of its best, both WIDEN the gap the assertions look for, so both passed. The tests now assert
+  # the work each side spent, and that the sweep's best is a minimum.
+  #
+  # The third: a price moved by a factor of ten passed every check, because the catalogue compares
+  # each entry against its constant and a mutant changes both. A cited price is now RECOMPUTED from
+  # the figure quoted in its own source string, the way the metered ones are recomputed from logs.
+  "src/tla.rs|            let al = rs / denom;|            let al = 0.5 * rs / denom;|tla::dominance::a_deterministic_solve_dominates_the_sampled_mean_at_equal_work|a conjugate-gradient step halved, so it no longer converges in n"
+  "src/tla.rs|        let x = cg(&a, &sys.b, n, 40);|        let x = cg(&a, &sys.b, n, 2);|tla::dominance::a_deterministic_solve_dominates_the_sampled_mean_at_equal_work|the deterministic side given 2 products instead of n"
+  "src/tla.rs|        let r = solve_spd(&sys, 1.0, 0.9 / cond, 5_000, 10_000, 0xC0DE);|        let r = solve_spd(&sys, 1.0, 0.9 / cond, 5_000, 10, 0xC0DE);|tla::dominance::a_deterministic_solve_dominates_the_sampled_mean_at_equal_work|the sampled side starved of work, flattering the gap"
+  "src/tla.rs|        let best = errs.iter().copied().fold(f64::INFINITY, f64::min);|        let best = errs.iter().copied().fold(f64::NEG_INFINITY, f64::max);|tla::dominance::on_a_dense_system_the_sampled_covariance_loses_too|the covariance sweep taking its worst setting, not its best"
+  "src/ledger.rs|    e_sample: 5.0e-11,|    e_sample: 5.0e-12,|ledger::tests::a_cited_price_is_recomputed_from_the_figure_its_own_source_quotes|a cited price a decade away from the figure its source quotes"
   "src/mrf.rs|            message[i] = acc.clone();|            message[i] = vec![0.0f64; q];|mrf::tests::a_forests_log_partition_and_minimum_are_exact_against_enumeration|a min-sum root that drops its own field"
   "src/mrf.rs|                if c < best_c - 1e-15 {|                if c > best_c + 1e-15 {|mrf::tests::icm_descends_to_a_local_minimum_from_a_deliberately_bad_start|iterated conditional modes ascending instead of descending"
   "src/mrf.rs|    let gap = m.single_site_gap_max().unwrap_or(1.0);|    let gap = 1.0;|mrf::tests::rescaling_every_cost_does_not_change_the_labelling|an annealing ladder in absolute beta rather than the model's units"
@@ -1351,7 +1370,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=272
+expected_rows=277
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

@@ -140,6 +140,59 @@ inverse. This is the workload Normal Computing's programme is built around.
 per-eigenmode covariance bias follows the predicted `2/(2 - dt·α)` law — so the bias is not merely
 observed, it is *predicted and confirmed*. Sampled covariance recovers `A⁻¹`.
 
+### ⛔ AND IT LOSES, ON A DENSE SYSTEM, AT BOTH MOMENTS
+
+This entry used to stop above, and stopping there was selling the workload. `tla::dominance`
+measures it against our own code on the fair work axis — one matrix-vector product per
+conjugate-gradient iteration, one per Euler–Maruyama step, so both methods are billed in the same
+unit.
+
+| matrix-vector products | conjugate gradient | the OU mean |
+|---|---|---|
+| ~40 (= `n`) | **`1e-15`** | `1.0` |
+| 10,000 | — | `1.2e-1` |
+
+**250× the work for fourteen orders of magnitude worse accuracy.** The critique holds and it is not
+close.
+
+The obvious defence is that the sampler returns a covariance a solve does not. **On a dense system
+that defence does not survive either, and this part goes past what the paper claims.** The cheap
+integrator's covariance bias does not shrink with steps — it shrinks with `dt`, and shrinking `dt`
+costs steps, so the two fight; at 200,000 matvecs the best error available is about **7%**. The
+unbiased integrator reaches 0.8%, but it opens with an `O(n³)` eigendecomposition, which already
+costs more than inverting the matrix. Against an exact inverse at `n` matvec-equivalents and zero
+error, both lose.
+
+**What we do NOT claim, because we have not measured it.** The large-sparse case, where `O(n³)` is
+unaffordable and a selective-inversion route has its own fill-in problem, is a genuinely open
+comparison. It is the only place this workload's argument can still live, and until it is measured
+here this entry is a record of a method that loses on the case we did test.
+
+**Why it stays in the catalogue.** Because it is the honest state of a workload this field is built
+around, and because a catalogue that only listed wins would not be a measurement of anything.
+
+### The adjacent paper, and a correction to our own citation of it
+
+arXiv:2608.09743 (Kirsten et al., **Signaloid**, 2026-08-10 — one author also at Cambridge) is the
+nearest published result, and until this entry was written we cited it, from a summary rather than
+the paper, as *"the mean of the OU dynamics is preconditioned gradient descent"*. **That is not what
+it says.** Its theorem is about the **covariance** dynamics of matrix inversion, with `b` set to
+zero: *"to a first-order approximation, the covariance dynamics are mathematically identical to
+preconditioned gradient descent on the Frobenius norm of the residual"*. The measurement above is
+about the **mean** route to `Ax = b`, which is a different quantity — so our result complements
+theirs rather than repeating it, and the earlier citation was wrong in the moment it named.
+
+Read at the source, their numbers also carry caveats worth passing on, because they are the kind
+this catalogue exists to surface. The 100,000-fold speedup is Python/NumPy wall-clock on one
+laptop, with the sampler **held at a fixed 1,000,000 samples** while the solver stops at a
+tolerance — not equal budgets. Their gradient descent is handed precomputed eigenvalues, which the
+authors say *"defeats the purpose of iterative methods in practice"*. And their own Table 4 has
+that gradient descent 20–100× **slower** than Newton–Schulz once the condition number reaches 100.
+They also fence their headline themselves: the redundancy is *"specific to problems that involve a
+convex quadratic potential with a single global minimum"*, and for non-convex landscapes the noise
+*"could remain algorithmically essential to escape local minima and cross energy barriers"* —
+which is the ground every other workload in this file stands on.
+
 ---
 
 ## 4. Spin-glass physics — `src/ising.rs`, `src/planted.rs`
@@ -383,4 +436,21 @@ Every headline multiplier in this field deserves the treatment above. In particu
 `QUBODrivers.ExactSampler`, the JuMP ecosystem's own correctness oracle, is 2ⁿ brute force.
 
 We hold ourselves to the same standard, in public, including when it costs a number we would rather
-quote — as it does in entries 1 and 5 above.
+quote — as it does in entries 1 and 5 above, and in entry 3, where the workload loses.
+
+**Added 2026-09-21, each read at the source rather than in summary.**
+
+- **arXiv:2608.06803's "130× lower energy" on a real CMOS Ising chip** compares against a classical
+  baseline whose energy is not measured: *"the CPU energy is computed using a 15 W per-core power
+  estimate obtained by normalizing the CPU TDP by the number of cores"*. Its own chip figure is an
+  assumed operating point — *"We use 50 μs solve time and 9 mW chip power"* — rather than a metering
+  result. A projection against a projection, on both sides of the ratio.
+- **arXiv:2608.00754 (CN101) reports no energy figure at all.** The chip is fabricated and the
+  functional results are silicon, but *"the energy and latency targets that motivate the programme
+  are deferred to later chips"*. Any joules-per-something attributed to CN101 did not come from that
+  paper.
+- **arXiv:2410.14093's Ising machine on a vehicle** measures itself honestly — 284 µs, 3.4 W — but
+  states no timing for any other solver on the same assignment problem, so it is an absolute figure
+  and not a comparison. The digital bar for sampling-based control is instead arXiv:2601.17231, which
+  does name its baselines: 2.33 ms and 14.90 mJ per control step on an FPGA against 7.24 ms and
+  37.44 mJ on a Jetson Orin Nano.
