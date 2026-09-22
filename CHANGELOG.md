@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### A metered write — the first one, and `e_write` stops being `NaN`
+
+`ledger::KV260_WRITABLE_METERED` is the first price in this crate for a **write**. It took a fabric
+whose couplings are registers rather than bitstream — `writable::WritableFabric` — and this is the
+first time that fabric has run on silicon. `KV260_AXI_METERED.e_write` stays `NaN` and should: its
+couplings live in the configuration bitstream, so that design has no write to perform.
+
+| quantity | value |
+|---|---|
+| `write − idle` | +0.1114 W, se 0.0077, **14.5 σ** |
+| write rate | 7,582,370 words/s = 2,527,457 node writes/s |
+| **energy per node written** | **44.07 ± 3.04 nJ** |
+| `idle − halt` | +0.1225 W, se 0.0052, **23.5 σ** |
+| **energy per node update** | **19.145 ± 0.814 pJ** |
+
+**A write costs 2,302 node updates on the same fabric.** That is what a tempering ladder pays per
+node per rung to rewrite its couplings, and it is the number that decides whether a schedule belongs
+in the fabric or in the problem.
+
+**Writability is not free and now has a price.** 19.145 pJ per node update against
+`KV260_AXI_METERED`'s 9.1316 pJ — 2.1× — on one board, one method, one sensor, for a fabric with 137
+LUTs per p-bit against 44 and **four clocks a sweep against two**. The sweep rate measured on the
+part, 24,999,464/s against 2.5e7, is that four confirmed on silicon rather than read off the RTL.
+
+**And a misreading the two constants invite, now asserted against.** `e_read` is quoted per SPIN and
+a read word carries 32 of them, so comparing it to a per-word write makes the write look 25× dearer.
+Per AXI **beat** the read is 18.6 nJ and the write 14.7 nJ: a single-beat AXI4-Lite transaction
+costs 15–19 nJ on this board in either direction, and 581 pJ is low only because one word carries 32
+spins. The rederivation test pins both the factor-of-two beat comparison and the 25× trap.
+
+Controls, all in the log: driving every bias to `+max` puts all 256 spins up and `−max` puts all 256
+down, so the physics follows what was written; `words_accepted == words_sent` in all 8 passes; the
+halted arm sweeps zero with a frozen popcount; no foreign load during any pass.
+
+### ⛔ What wedged the board on 2026-09-19, established
+
+`/sys/class/fpga_manager/fpga0/flags` was **20**, and with that set **every bitstream load errors** —
+including the read design that had loaded successfully hours earlier. `dmesg` shows
+`writing <name> to Xilinx ZynqMP FPGA Manager` immediately followed by
+`Error while writing image data to FPGA`, which is also what fills this board's August log.
+
+The harness checked that a write had been **attempted**, not that it had **succeeded**, so a failed
+load passed the guard, the previous design stayed resident with `state=operating`, and the first
+`/dev/mem` access reached an address no slave answered. The core hung in a bus transaction — which
+is why the journal for that boot ends with a clean logout, routine housekeeping, and then nothing at
+all. No oops, no panic, nothing to find afterwards.
+
+`examples/board_build` now emits a meter script that refuses when new `Error while writing image
+data` lines appear, and writes an fsynced breadcrumb naming the access it is about to make. **The
+guard fired on the first run of this session and stopped before touching `/dev/mem`.** Setting
+`flags` to 0 makes the load succeed.
+
 ### The board answers, and a fixture that cannot settle the question it was asked
 
 The Alchitry Pt V2 was reconnected. `ROADMAP.md` had recorded the Alchitry path as open because

@@ -1363,6 +1363,15 @@ mutations=(
   "silicon/src/capture.rs|    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);|    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::RCAP, NOOP, NOOP]);|capture::tests::a_restore_capture_stream_restores_before_it_captures|a restore stream that issues some other command|ferrotherm-silicon"
   "silicon/src/capture.rs|    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);|    w.splice(9..9, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);|capture::tests::a_restore_capture_stream_restores_before_it_captures|a restore spliced after the capture instead of before it|ferrotherm-silicon"
 
+  # THE FIRST METERED WRITE. Both constants are re-derived from the sensor log they came from, so a
+  # constant that drifts from its own evidence is caught here rather than quoted onward. The third
+  # row is the control that says which fabric the log describes: a writable p-bit takes FOUR clocks
+  # a sweep where the fixed one takes two, and the 24,999,464 sweeps/s in the log is that four
+  # measured on the part. Read it as two and the flip energy doubles with nothing to say so.
+  "src/ledger.rs|    e_write: 4.407325e-08,|    e_write: 4.407325e-07,|ledger::tests::the_metered_write_is_rederived_from_its_own_sensor_log|a metered write energy that is not what its own sensor log says"
+  "src/ledger.rs|    e_sample: 1.914510e-11,|    e_sample: 1.914510e-10,|ledger::tests::the_metered_write_is_rederived_from_its_own_sensor_log|a writable flip energy that is not what its own sensor log says"
+  "src/ledger.rs|                    assert!((sweeps / 2.5e7 - 1.0).abs() < 1e-4, \"{arm}: {sweeps} sweeps/s is not this fabric\");|                    assert!((sweeps / 5.0e7 - 1.0).abs() < 1e-4, \"{arm}: {sweeps} sweeps/s is not this fabric\");|ledger::tests::the_metered_write_is_rederived_from_its_own_sensor_log|two clocks a sweep where this fabric takes four"
+
 )
 
 bad=0
@@ -1434,7 +1443,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=298
+expected_rows=301
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

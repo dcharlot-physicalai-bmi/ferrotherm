@@ -484,11 +484,30 @@ afi = int(sh("busybox devmem 0xFD615000 32").strip(), 16)
 if (afi >> 8) & 3 != {afi}:
     sys.exit("REFUSED: afi_fs=%#x, HPM0 is not {hpm0_width} bits wide; this bitstream would read garbage" % afi)
 before = int(sh("dmesg | grep -c 'writing %s'" % BIT).strip() or 0)
+# A WRITE THAT WAS ATTEMPTED IS NOT A WRITE THAT SUCCEEDED, and this board's own kernel log is
+# full of "writing X to Xilinx ZynqMP FPGA Manager" followed immediately by "Error while writing
+# image data to FPGA". Counting only the attempt passes a FAILED load, which leaves the PREVIOUS
+# design running with state=operating -- and then the first register access below reaches an
+# address no slave answers, which hangs the core and takes the board down. That is exactly the
+# failure this file's own header warns about, and until 2026-09-22 the guard did not cover it.
+err_before = int(sh("dmesg | grep -c 'Error while writing image data'").strip() or 0)
 open("/sys/class/fpga_manager/fpga0/firmware", "w").write(BIT)
 time.sleep(5)
 after = int(sh("dmesg | grep -c 'writing %s'" % BIT).strip() or 0)
 if after <= before:
     sys.exit("REFUSED: LOAD-NOOP, dmesg shows no write of " + BIT)
+err_after = int(sh("dmesg | grep -c 'Error while writing image data'").strip() or 0)
+if err_after > err_before:
+    sys.exit("REFUSED: THE LOAD ERRORED (%d new 'Error while writing image data' lines). The "
+             "previous design is still running and touching this address map would hang the core."
+             % (err_after - err_before))
+# A BREADCRUMB, FSYNCED, because a hang takes the reason down with it. The 2026-09-19 wedge left
+# no kernel trace at all: the journal's last entries are a clean logout and routine housekeeping,
+# then silence. Nothing named the access that did it. This names it before making it.
+with open("wedge_breadcrumb.txt", "w") as _b:
+    _b.write("loaded %s; about to open /dev/mem and touch the shell's registers\n" % BIT)
+    _b.flush()
+    os.fsync(_b.fileno())
 print("# meter_read bitstream=%s passes=%d settle=%.0f sample=%.0f afi_fs=%#x" % (BIT, passes, settle, sample, afi), flush=True)
 for p in range(1, passes + 1):
     order = list(ARMS); random.shuffle(order)

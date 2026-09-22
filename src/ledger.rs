@@ -377,6 +377,55 @@ pub const AIA_16NM_SAMPLER: Prices = Prices {
     evidence: Evidence::Measured,
 };
 
+/// **The first METERED WRITE in this crate** — Kria KV260, 2026-09-22, on a fabric whose couplings
+/// are registers rather than bitstream.
+///
+/// [`KV260_AXI_METERED`] cannot price a write and says so: its couplings live in the configuration
+/// bitstream, so there is no write to perform. Pricing one needed
+/// [`crate::writable::WritableFabric`], and this is the first time that fabric has run on silicon.
+///
+/// # The write: `4.407e-8` J per node
+///
+/// One A53 core rewrites every node's three configuration words, round and round, alternating
+/// `J = 256` and `J = 255` in Q.8 so the register bits really toggle while the physics stays where
+/// it was. That raised the board `+0.1114 W` over the same fabric running unwritten (8 paired
+/// passes, se `0.0077`, **14.5 sigma**) at `2,527,457` node writes a second. **44.07 ± 3.04 nJ per
+/// node written**, or `14.69 nJ` per 32-bit word.
+///
+/// **A write costs 2,302 node updates on this same fabric.** That is what a tempering ladder pays
+/// per node per rung to rewrite its couplings, and it is the number that decides whether a schedule
+/// belongs in the fabric or in the problem.
+///
+/// # The per-beat cost dominates, which corrects an easy misreading
+///
+/// [`KV260_AXI_METERED`] quotes `581 pJ` per spin READ, which makes this write look 25x dearer. It
+/// is not. A read word carries 32 spin values, so per AXI beat that read is `18.6 nJ` against this
+/// write's `14.7 nJ`. **A single-beat AXI4-Lite transaction costs 15 to 19 nJ on this board in
+/// either direction**; `581 pJ` is low only because one word carries 32 spins. Compare beats to
+/// beats, or compare a read of 32 spins against a write of one coupling and be wrong by 25x.
+///
+/// # The flip: `1.915e-11` J, and what writability costs
+///
+/// Run minus held on one placement, `+0.1225 W` (se `0.0052`, 23.5 sigma) over `6.3999e9` flips a
+/// second. That is **2.1x** [`KV260_AXI_METERED`]'s `9.1316e-12` on the same board by the same
+/// method — the price of a fabric with 137 LUTs per p-bit against 44, taking four clocks a sweep
+/// against two. Writability is not free and this is what it costs.
+///
+/// Reads were not exercised on this design and stay unstated.
+pub const KV260_WRITABLE_METERED: Prices = Prices {
+    e_sample: 1.914510e-11,
+    e_read: f64::NAN,
+    e_write: 4.407325e-08,
+    reflash_hz_cap: None,
+    source: "METERED on a Kria KV260 (xck26), 2026-09-22, one bitstream: 256 p-bits at 100 MHz \
+             behind writable::WritableFabric's AXI4-Lite shell on M_AXI_HPM0_FPD, couplings as \
+             12-bit Q.8 registers. Write: one A53 core rewriting every node, +0.1114 W over \
+             2.527e6 node writes/s (14.5 sigma), INCLUDING the core. Flip: run minus halt, \
+             +0.1225 W over 6.40e9 flips/s (23.5 sigma), clock tree cancelled. INA260, 5 V rail, \
+             8 paired passes. Reads not exercised on this design: unstated, not zero.",
+    evidence: Evidence::Metered,
+};
+
 /// Every machine this crate states prices for, in a stable order, each beside its name.
 ///
 /// The reason this is a table and not three constants a caller looks up by hand: a joules figure
@@ -389,7 +438,7 @@ pub const AIA_16NM_SAMPLER: Prices = Prices {
 /// [`Prices::UNSTATED`] is deliberately in here. It is the honest answer for a machine nobody has
 /// characterised, and a caller who can select it by name can demonstrate that pricing a run
 /// against it yields no figure rather than a zero.
-pub const CATALOGUE: [(&str, Prices); 6] = [
+pub const CATALOGUE: [(&str, Prices); 7] = [
     ("UNSTATED", Prices::UNSTATED),
     ("Z1_SPICE", Z1_SPICE),
     ("KV260_MEASURED", KV260_MEASURED),
@@ -397,6 +446,7 @@ pub const CATALOGUE: [(&str, Prices); 6] = [
     ("PEGASUS_28NM_ASIC", PEGASUS_28NM_ASIC),
     ("KV260_AXI_METERED", KV260_AXI_METERED),
     ("AIA_16NM_SAMPLER", AIA_16NM_SAMPLER),
+    ("KV260_WRITABLE_METERED", KV260_WRITABLE_METERED),
 ];
 
 /// Operation counts accumulated by a run.
@@ -532,6 +582,7 @@ mod tests {
             ("PEGASUS_28NM_ASIC", Evidence::Measured),
             ("KV260_AXI_METERED", Evidence::Metered),
             ("AIA_16NM_SAMPLER", Evidence::Measured),
+            ("KV260_WRITABLE_METERED", Evidence::Metered),
         ];
         // OVER THE CATALOGUE, not over a list written here. This test used to walk its own three
         // entries and conclude "exactly one price in this crate was metered" -- a count of the
@@ -552,6 +603,7 @@ mod tests {
                 "PEGASUS_28NM_ASIC" => PEGASUS_28NM_ASIC,
                 "KV260_AXI_METERED" => KV260_AXI_METERED,
                 "AIA_16NM_SAMPLER" => AIA_16NM_SAMPLER,
+                "KV260_WRITABLE_METERED" => KV260_WRITABLE_METERED,
                 other => panic!("{other} is in the table and has no constant named here"),
             };
             assert_eq!(p.source, constant.source, "{name} is bound to another machine's prices");
@@ -565,7 +617,11 @@ mod tests {
                 metered.push(*name);
             }
         }
-        assert_eq!(metered, ["KV260_MEASURED", "KV260_AXI_METERED"], "both on the one board we own");
+        assert_eq!(
+            metered,
+            ["KV260_MEASURED", "KV260_AXI_METERED", "KV260_WRITABLE_METERED"],
+            "all three on the one board we own, and no other machine may claim the grade"
+        );
         // and the grade must agree with the prose, or one of them is lying
         assert!(KV260_MEASURED.source.contains("MEASURED"));
         assert!(Z1_SPICE.source.contains("SPICE"));
@@ -733,9 +789,10 @@ mod tests {
         assert!(whole_board / kv.e_sample > 6.0, "the increment flatters by more than six");
 
         // the table: appended, named once each, and the ASIC priced like the KV260 -- samples only
-        assert_eq!(CATALOGUE.len(), 6);
+        assert_eq!(CATALOGUE.len(), 7);
         assert_eq!(CATALOGUE[3].0, "PEGASUS_28NM_ASIC");
         assert_eq!(CATALOGUE[4].0, "KV260_AXI_METERED", "appended, so every earlier index holds");
+        assert_eq!(CATALOGUE[6].0, "KV260_WRITABLE_METERED", "and the metered write appended after it");
         for (i, (a, _)) in CATALOGUE.iter().enumerate() {
             for (b, _) in &CATALOGUE[i + 1..] {
                 assert_ne!(a, b, "a machine named twice");
@@ -791,6 +848,94 @@ mod tests {
         let m = d.iter().sum::<f64>() / n;
         let var = d.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0);
         (m, (var / n).sqrt(), d.len())
+    }
+
+    /// The constants in [`KV260_WRITABLE_METERED`] are RE-DERIVED here from the sensor log they came
+    /// from — **the first metered write in this crate**, so it is the one number most worth tying to
+    /// its evidence.
+    #[test]
+    fn the_metered_write_is_rederived_from_its_own_sensor_log() {
+        let (means, facts, flags) =
+            parse_sensor_log(include_str!("../measurements/kv260-write-2026-09-22/write_meter_1.dat"));
+        assert_eq!(flags, 0, "a pass during which someone else loaded the FPGA is not evidence");
+
+        // CONTROLS WITH KNOWN ANSWERS, taken before either constant is computed.
+        let mut node_writes_per_s = 0.0;
+        let mut words_per_s = 0.0;
+        let (mut wrote, mut held) = (0usize, 0usize);
+        for ((_, arm), kv) in &facts {
+            match arm.as_str() {
+                "halt" => {
+                    // Held means held: no sweeps, and a popcount that never moves.
+                    assert_eq!(kv["sweeps_per_s"], 0.0, "a held fabric does not sweep");
+                    assert_eq!(kv["pop_min"], kv["pop_max"], "a held fabric does not change state");
+                    held += 1;
+                }
+                arm => {
+                    // 100 MHz at FOUR clocks a sweep is 2.5e7 -- what a writable fabric costs where
+                    // `FixedFabric` takes two. Measured on the part, not assumed from the RTL.
+                    let sweeps = kv["sweeps_per_s"];
+                    assert!((sweeps / 2.5e7 - 1.0).abs() < 1e-4, "{arm}: {sweeps} sweeps/s is not this fabric");
+                    if arm == "write" {
+                        // The write path is lossless: the shell accepted exactly what was sent.
+                        assert_eq!(kv["words_sent"], kv["words_accepted"], "a dropped word is a wrong bill");
+                        assert!(kv["words_sent"] > 0.0, "the write arm must actually write");
+                        node_writes_per_s += kv["node_writes_per_s"] / 8.0;
+                        words_per_s += kv["words_per_s"] / 8.0;
+                        wrote += 1;
+                    } else {
+                        assert_eq!(kv["words_sent"], 0.0, "only the write arm writes");
+                    }
+                }
+            }
+        }
+        assert_eq!((wrote, held), (8, 8), "8 passes of each arm");
+        // Three words a node, as `ft_write` programs them.
+        assert!((words_per_s / node_writes_per_s - 3.0).abs() < 1e-6, "a node is three config words");
+
+        let (watts, se, passes) = paired(&means, "write", "idle");
+        assert_eq!(passes, 8);
+        assert!(watts / se > 5.0, "a write must clear the sensor's noise: {watts} W, se {se}");
+        let e_write = watts / node_writes_per_s;
+        assert!(
+            (e_write / KV260_WRITABLE_METERED.e_write - 1.0).abs() < 1e-3,
+            "the log says {e_write:e} J per node written, the constant says {:e}",
+            KV260_WRITABLE_METERED.e_write
+        );
+
+        // The flip on the same placement, by run/halt: no reload between arms, so routing and
+        // clock tree are identical and cancel.
+        let (watts, se, passes) = paired(&means, "idle", "halt");
+        assert_eq!(passes, 8);
+        assert!(watts / se > 5.0);
+        let flips_per_s = 2.5e7 * 256.0 * 0.99997854; // sweeps/s x 256 nodes, at the measured rate
+        let e_sample = watts / flips_per_s;
+        assert!(
+            (e_sample / KV260_WRITABLE_METERED.e_sample - 1.0).abs() < 1e-3,
+            "the log says {e_sample:e} J per flip, the constant says {:e}",
+            KV260_WRITABLE_METERED.e_sample
+        );
+
+        // WHAT THE WRITE COSTS IN THE UNIT THE FABRIC IS PRICED IN. This is the number that decides
+        // whether a schedule belongs in the fabric or in the problem.
+        let ratio = e_write / e_sample;
+        assert!((2250.0..2350.0).contains(&ratio), "a node write is {ratio} node updates");
+
+        // WRITABILITY IS NOT FREE, and this is the only pair of constants that can say so: two
+        // fabrics, one board, one method, one sensor.
+        let price = KV260_WRITABLE_METERED.e_sample / KV260_AXI_METERED.e_sample;
+        assert!((2.0..2.2).contains(&price), "a writable p-bit flips for {price}x a fixed one");
+
+        // AND THE MISREADING THE TWO CONSTANTS INVITE. `KV260_AXI_METERED.e_read` is per SPIN, and
+        // a read word carries 32 of them, so comparing it to a per-word write makes the write look
+        // 25x dearer. Per AXI BEAT the two are within a factor of two, which is the honest
+        // statement: on this board a single-beat transaction costs 15-19 nJ in either direction.
+        let read_per_beat = KV260_AXI_METERED.e_read * 32.0;
+        let write_per_beat = e_write / 3.0;
+        let beats = read_per_beat / write_per_beat;
+        assert!((1.0..2.0).contains(&beats), "read beat over write beat is {beats}, not a factor of two");
+        let per_spin = KV260_AXI_METERED.e_read / write_per_beat;
+        assert!(per_spin < 0.1, "and per SPIN the read looks {per_spin}x a write, which is the trap");
     }
 
     /// The constants in [`KV260_AXI_METERED`] are RE-DERIVED here from the sensor logs they came
