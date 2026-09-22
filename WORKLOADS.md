@@ -709,6 +709,29 @@ quote — as it does in entries 1 and 5 above, and in entry 3, where the workloa
   order"*, that is **4.95e7 single-spin updates per generated sample**. Each chain's sweeps are
   sequential, so that figure cannot be divided by a p-bit count to get a wall-clock.
 
+- **arXiv:2605.07884's "only 100 iterations" is 100 iterations per replica, and there are 64 of
+  them.** The abstract reads *"probabilistic IMs (PIMs) and oscillator-based IMs achieve optimal ML
+  detection with systems up to 2048×2048 antennas with only 100 iterations"*. Section III states the
+  schedule: *"A single solving attempt uses independently parallelized 64 replicas of the system
+  (R = 64) for both bPIM and OIM, each consisting of 100 iterations (N_it = 100), where an iteration
+  is defined as a full system sweep for the bPIM"*. **One detection is 6,400 sweeps, not 100.**
+
+  This is disclosed, not hidden — Fig. 4 explicitly sweeps `(N_it, R)` over `(100,64)`, `(400,64)`
+  and `(400,128)`, and the body says so again. The entry exists because of where the multiplier is
+  *not*: the abstract, and the stated complexity *"O(N_iter N^2) as a function of problem size and
+  number of iterations"*, which carries `N_it` and not `R`.
+
+  **And the distinction that matters for this crate is that `R` is free in latency and not in
+  energy.** The replicas are *"independently parallelized"*, so 64 of them cost area rather than
+  wall-clock, which is exactly the right trade for the 6G latency argument the paper is making. A
+  ledger does not get that discount: 64 replicas dissipate 64 replicas' worth of node updates
+  whether they run side by side or one after another. Their own cited timing —
+  *"a bPIM implementation on FPGA [16] totaled 0.47 ms for 100 sweeps on sparsified 64×64 BPSK MIMO
+  instances"* — is one replica's worth of sweeps.
+
+  So: quote the latency claim as a latency claim. Any joules-per-detection derived from
+  "100 iterations" is low by `R`.
+
 ### The general form: an advantage that does not charge readout is bounded by readout
 
 Every entry above is a particular case of one rule, and `ledger::advantage_after_readout` and

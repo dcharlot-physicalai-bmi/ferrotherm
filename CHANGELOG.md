@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### A replica count is free in latency and not in energy
+
+`WORKLOADS.md` gains a third claims-not-to-repeat entry. arXiv:2605.07884's abstract reads *"achieve
+optimal ML detection with systems up to 2048×2048 antennas with only 100 iterations"*; its Section
+III states *"A single solving attempt uses independently parallelized 64 replicas of the system
+(R = 64) ... each consisting of 100 iterations (N_it = 100), where an iteration is defined as a full
+system sweep"*. **One detection is 6,400 sweeps, not 100.**
+
+The multiplier is disclosed — Fig. 4 sweeps `(N_it, R)` over `(100,64)`, `(400,64)`, `(400,128)`.
+The entry is about where it is absent: the abstract, and the stated complexity *"O(N_iter N^2)"*,
+which carries `N_it` and not `R`. And about the distinction this crate exists to keep: the replicas
+are *"independently parallelized"*, so `R` costs area rather than wall-clock — the right trade for
+the 6G latency argument being made, and no discount at all on a ledger, which charges 64 replicas'
+worth of node updates however they are arranged. Their cited *"0.47 ms for 100 sweeps"* FPGA figure
+is one replica's worth.
+
+A test was drafted for this and **rejected as vacuous before it was written**: the two quantities it
+compared differed by `q(q-1)(deg+1)`, strictly positive for every `q ≥ 2` and every degree, so the
+assertion could not fail for any input. It also hard-coded `(q-1)*2` adders for a domain-wall chain
+where `Encoding::DomainWall::penalty_couplings(q)` gives `q-2`, i.e. `2q-4` — wrong by two at every
+`q`. The claim is real; the test was not.
+
 ### Training at a finite relaxation budget: a warm start turns the residual into a 1/β divergence
 
 `eqprop_gradient_relaxed` is the middle term `src/eqprop.rs` was missing — the **exact** law after
