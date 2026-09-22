@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Training at a finite relaxation budget: a warm start turns the residual into a 1/β divergence
+
+`eqprop_gradient_relaxed` is the middle term `src/eqprop.rs` was missing — the **exact** law after
+`b` chromatic sweeps, advanced through `gibbs::Sampler::sweep`'s own conditionals with no Monte
+Carlo. Sampling cannot answer this question: the estimator divides a difference of moments by `β`,
+so at small `β` sampling noise diverges as `1/β` exactly as a relaxation residual does, and draws
+cannot separate them.
+
+arXiv:2604.23806 §5 specifies the two phases as *"The nudged-phase stationary state `x⋆^β(θ)` is
+reached by relaxation from `x⋆^0(θ)`"*. Under a finite budget `x⋆^0` is **not** stationary — it is
+the free law after `b` sweeps, and the nudged phase runs `b` more from there. At `β = 0` the nudged
+kernel *is* the free kernel, so the nudged phase ends `2b` sweeps out while the free reference sits
+at `b`: they differ **with no nudge at all**, and the one-sided quotient divides that by `β`.
+
+Maximum error against the exact gradient at `b = 1`:
+
+| β | 0.4 | 0.2 | 0.1 | 0.05 | 0.02 | 0.01 | 0.001 |
+|---|---|---|---|---|---|---|---|
+| **warm, one-sided** | 8.71e-2 | 7.46e-2 | 1.12e-1 | 2.23e-1 | 5.54e-1 | 1.11e0 | **1.10e1** |
+| warm, centered | 8.90e-2 | 8.66e-2 | 8.60e-2 | 8.58e-2 | 8.58e-2 | 8.58e-2 | 8.58e-2 |
+| cold, one-sided | 1.04e-1 | 9.91e-2 | 9.73e-2 | 9.66e-2 | 9.62e-2 | 9.60e-2 | 9.59e-2 |
+
+**127× worse in the direction the theory says is better.** Three readings:
+
+- **Symmetric nudging does more than its stated job.** The paper sells it as a rate upgrade, `O(β)`
+  to `O(β²)`. At a finite budget it is the difference between converging and diverging — at `β = 0`
+  both `±β` phases relax to the same place, so the residual cancels in the symmetric difference.
+- **It is protocol-dependent and our own protocol hides it.** `Relaxation::Cold`, which is exactly
+  what `eqprop_gradient` samples and what this crate has always run, is flat at every `β` above.
+- **`β → 0` is not the limit to chase** once the budget is finite and the start warm: the error has
+  an interior minimum near `β = 0.2`. Given enough sweeps the protocols become bit-identical and
+  the classical picture returns, so this is about budgets, not about the estimator.
+
+The control is that the finite-budget operator becomes `eqprop_gradient_exact` when the budget stops
+binding — `1.7e-15`/`2.2e-15` one-sided, `3.5e-16`/`1.1e-15` centered — between two independent
+implementations, one advancing a law and one enumerating a Boltzmann sum.
+
+**This shipped wrong first, in the direction that erases the finding.** The initial version put the
+free phase at exact equilibrium, which is what `x⋆^0(θ)` means in the infinite-budget theory, and
+measured the warm row flat at `8.6e-2` with no divergence. The residual exists only because the free
+*reference* is also short of equilibrium. That version is the first of the four mutations recorded
+against this entry rather than quietly deleted.
+
+The paper's own constants appear in no assertion — its substrate is a `D = 64` rank-16 Langevin
+system with `K = 300` Euler–Maruyama steps against our six-spin Ising machine, so only the ordering
+and the sign of the degradation are portable. Its `E1` sign flip explicitly does not transfer: with
+no sampling noise the one-sided cosine here stays positive (`+0.97`, `+0.84`, `+0.56`), so a
+"cosine goes negative" gate would have been a guaranteed red rather than a measurement.
+
 ### The third term: an advantage that does not charge readout is bounded by readout
 
 `ledger::advantage_after_readout` and `ledger::read_budget_for_advantage` are inverses of each

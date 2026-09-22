@@ -1339,6 +1339,16 @@ mutations=(
   "src/ledger.rs|    if budget > 0.0 { Some(budget / reads as f64) } else { None }|    if budget > 0.0 { Some(budget) } else { None }|ledger::tests::the_readout_budget_and_the_advantage_are_inverses|a total budget reported as a per-read budget"
   "src/ledger.rs|            let floor = crate::floors::readout_floor(1.0, t);|            let floor = crate::floors::readout_floor(8.0, t);|ledger::tests::whitelams_ten_orders_of_magnitude_need_a_readout_at_the_landauer_floor|a Landauer floor charged per byte where one node value is one bit"
 
+  # TRAINING AT A FINITE RELAXATION BUDGET. The first row is the implementation this entry SHIPPED
+  # WITH FIRST and had to correct: putting the free phase at exact equilibrium -- which is what
+  # x*^0(theta) means in the infinite-budget theory -- erases the residual and measures the warm row
+  # flat at 8.6e-2, no divergence at all. The residual exists only because the free REFERENCE is
+  # also short of equilibrium. Recorded here rather than quietly fixed.
+  "src/eqprop.rs|            let free = relax(g, &clamp, &uniform_law(g, &clamp), sweeps);|            let free = boltzmann_law(g, &clamp);|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|a free phase put at exact equilibrium which erases the residual it exists to measure"
+  "src/eqprop.rs|            (free.clone(), free)|            (free, uniform_law(g, &clamp))|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|a nudged phase restarted cold so the warm protocol collapses into the cold one"
+  "src/eqprop.rs|                let (mut y, mut w) = (xi, mass);|                let (mut y, mut w) = (xi, 1.0);|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|each source state contributing unit mass instead of its own probability"
+  "src/eqprop.rs|    for _ in 0..sweeps {|    for _ in 0..1 {|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|a relaxation budget ignored after the first sweep"
+
 )
 
 bad=0
@@ -1410,7 +1420,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=291
+expected_rows=295
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

@@ -566,6 +566,77 @@ solve is `O(8^n)` in the spin count).
 
 ---
 
+## 9. Training at a finite relaxation budget — `src/eqprop.rs`
+
+Equilibrium propagation needs two equilibria, and hardware gives it two *budgets*. `src/eqprop.rs`
+had the two ends of that — `eqprop_gradient_exact` (the equilibrium limit, by enumeration) and
+`eqprop_gradient` (sampled, with a `burn_in` nobody had ever swept). `eqprop_gradient_relaxed` is
+the middle: the **exact** law after `b` chromatic sweeps, advanced through
+`gibbs::Sampler::sweep`'s own conditionals with no Monte Carlo anywhere.
+
+**Sampling cannot answer this question.** The estimator divides a difference of moments by `β`, so
+at small `β` the sampling noise diverges as `1/β` exactly as a relaxation residual does, and draws
+cannot separate them. Advancing the law separates them.
+
+### The protocol is the whole effect
+
+arXiv:2604.23806 §5 specifies the two phases as *"The nudged-phase stationary state `x⋆^β(θ)` is
+reached by relaxation from `x⋆^0(θ)`"*. Under a finite budget `x⋆^0` is **not** stationary: it is
+the free law after `b` sweeps, and the nudged phase runs `b` more from there. At `β = 0` the nudged
+kernel *is* the free kernel, so the nudged phase ends `2b` sweeps from the start while the free
+reference sits at `b`. They differ **with no nudge at all**, and the one-sided quotient divides that
+leftover by `β`.
+
+Maximum error against the exact gradient, `b = 1`:
+
+| β | 0.4 | 0.2 | 0.1 | 0.05 | 0.02 | 0.01 | 0.001 |
+|---|---|---|---|---|---|---|---|
+| **warm, one-sided** | 8.71e-2 | 7.46e-2 | 1.12e-1 | 2.23e-1 | 5.54e-1 | 1.11e0 | **1.10e1** |
+| warm, centered | 8.90e-2 | 8.66e-2 | 8.60e-2 | 8.58e-2 | 8.58e-2 | 8.58e-2 | 8.58e-2 |
+| cold, one-sided | 1.04e-1 | 9.91e-2 | 9.73e-2 | 9.66e-2 | 9.62e-2 | 9.60e-2 | 9.59e-2 |
+
+**A 127× degradation from β = 0.4 to β = 0.001, in the direction the theory says is better.**
+
+### Three readings, and the third is the useful one
+
+**Symmetric nudging is doing more than the paper claims for it.** Its headline is a rate upgrade,
+`O(β)` to `O(β²)`. Here, at a finite budget, it is the difference between converging and diverging:
+at `β = 0` both `±β` phases relax to the same place, the residual cancels in the symmetric
+difference, and only the truncation floor is left.
+
+**It is protocol-dependent, and this crate's own protocol never shows it.** `Relaxation::Cold` —
+both phases from their own fresh chain, which is exactly what `eqprop_gradient` samples and what
+ferrotherm has always run — is flat at every `β` in the table. The divergence belongs to the warm
+start, not to one-sided EqProp. We had been running the protocol that hides it.
+
+**At a finite budget with a warm start, `β → 0` is not the limit to chase.** The error has an
+interior minimum near `β = 0.2`; below it the residual term `R/β` wins. The infinite-budget theory
+says colder is always better, and here that is false by two orders of magnitude. Given enough
+sweeps the two protocols become bit-identical and the classical picture returns — so this is a
+statement about budgets, not about the estimator being wrong.
+
+### The control, and what is not claimed
+
+The finite-budget operator must become `eqprop_gradient_exact` once the budget stops binding, and it
+does: `1.7e-15` and `2.2e-15` one-sided, `3.5e-16` and `1.1e-15` centered. Those are independent
+implementations — one advances a law through the sampler's own conditionals, the other enumerates a
+Boltzmann sum — so the control anchors the new operator instead of restating it.
+
+**The paper's constants are not thresholds here and appear in no assertion.** Its substrate is a
+`D = 64`, rank-16 bilinearly-coupled Langevin system with `K = 300` Euler–Maruyama steps; this is a
+six-spin Ising machine under chromatic Gibbs. Only the ordering and the sign of the degradation are
+portable. Its `E1` sign flip in particular does **not** transfer: with no sampling noise the
+one-sided cosine similarity here degrades monotonically but stays positive (`+0.97`, `+0.84`,
+`+0.56` at `β = 0.2, 0.05, 0.01`), so a "cosine goes negative" gate would have been a guaranteed
+red rather than a measurement.
+
+**This entry was wrong once, in the direction that erases it.** The first implementation put the
+free phase at exact equilibrium — which is what `x⋆^0(θ)` means in the infinite-budget theory — and
+measured the warm row flat at `8.6e-2`, no divergence at all. The residual only exists because the
+free reference is *also* short of equilibrium. That version is the first mutation in the suite.
+
+---
+
 ## What we deliberately do not do
 
 **Routing, scheduling and portfolio optimisation.** They are MILP in a QUBO costume and they lose to
