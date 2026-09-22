@@ -624,7 +624,17 @@ the capacity **`α_c = 0.1379`** (AGS: 0.138), with retrieval present at `α = 0
 `0.10` in the samplers' own runs. `examples/learning_theory` shows the table. `dense_memory` is the
 modern Hopfield network — degree-2 provably the classical one minus a constant, degree 3 and the
 exponential memory holding hundreds of patterns in 100 spins where the classical one holds 14, and
-Ramsauer's attention as the exponential memory's one-step update — and it is a *program*:
+Ramsauer's attention as the exponential memory's one-step update. That last claim used to be an
+assertion about algebra and is now an identity anyone can refute: `lse_energy` writes the energy
+`E(ξ) = −lse(β, Xᵀξ) + ½ξᵀξ`, and `ξ − ∇E(ξ) = T(ξ)` holds to central differences at `h = 1e-6`
+over 100 queries × 16 coordinates — the energy never calls the attention map and the difference
+quotient never sees a softmax. **Attention is one gradient step, at step size exactly 1.** And the
+step the field takes from there is false: a machine that *relaxes* to that energy returns its
+minimiser `T^∞(ξ)`, not `T(ξ)`. One-step retrieval needs a query already sitting on a stored pattern
+**and** a high `β` — Ramsauer's separation hypothesis. On a diffuse query, which is what a real
+attention head has, one step is **41–90% away from the fixed point at every `β` measured**, and the
+descent takes up to 68 iterations rather than one. `WORKLOADS.md` §7 has the table;
+`examples/attention_fixed_point` prints it. And the memory is also a *program*:
 `to_hubo`/`to_program` write the memory as a higher-order `.ftp` model (an identity checked to
 1e-9), from which the native annealer retrieves, the pairwise reduction is measured exact but
 dynamically frozen, and the degree-2 memory reaches its exact ground state on a Chimera. `eqprop`
