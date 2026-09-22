@@ -180,6 +180,38 @@ pub enum Kernel {
         /// Probability that a read of an already-updated neighbour returns its pre-sweep value.
         p: f64,
     },
+    /// TICK-RANDOM, the synchronous policy of Onizawa & Hanyu (arXiv:2604.01564, 2026): at each
+    /// global tick an independent Bernoulli mask selects each spin with probability
+    /// `p_flip = 1/c`, and every selected spin is resampled from its heat-bath conditional given
+    /// the PREVIOUS state. `c` is their time-multiplexing reuse factor -- "the number of logical
+    /// p-bits that are sequentially mapped onto a single physical p-bit" -- so `c >= 1` and
+    /// `p` in `(0, 1]`. At `p = 1` every site moves every tick, which is exactly
+    /// [`Kernel::Synchronous`]; as `p` falls, ticks in which two adjacent sites move together
+    /// become rare and the law approaches the single-site Boltzmann limit. `p = 0` is the identity
+    /// map, which has no unique invariant law, and [`stationary_solved`] says so rather than
+    /// returning one.
+    ///
+    /// # The claim this kernel exists to settle
+    ///
+    /// The paper's Discussion argues reuse is free: *"time-multiplexed reuse corresponds to a
+    /// temporal rescaling of the underlying Markov process rather than a change in its transition
+    /// kernel"*, and *"Such time-thinning arguments are well established in stochastic simulation
+    /// theory and imply that only the convergence speed, not the stationary distribution, is
+    /// affected."* The Conclusion restates it: *"the effective update rate can be reduced without
+    /// altering the target stationary distribution"*.
+    ///
+    /// **For this branch that is false, and `examples/tick_random_exact.rs` measures by how much.**
+    /// The thinning theorem is sound for a continuous-time chain where at most one site moves at a
+    /// time -- their Poisson/asynchronous branch. A Bernoulli mask is not a thinning of that chain:
+    /// it puts probability `p^2` on two ADJACENT sites moving from the same stale state, and that
+    /// term is what breaks detailed balance. It sits inside the per-site conditional, so changing
+    /// `c` changes the kernel itself, not only the clock.
+    TickRandom {
+        /// Probability that a given spin is selected for update on a tick: the paper's
+        /// `p_flip = 1/c`. Must lie in `(0, 1]`; `0` is the identity map and has no unique
+        /// invariant law.
+        p: f64,
+    },
     /// The chromatic sweep with every p-bit at its OWN temperature: site `i` samples its heat-bath
     /// conditional at `beta * exp(spread * z_i)`, `z_i` a standard normal drawn from `seed` -- the
     /// gain (MTJ 'alpha') spread of a fabric whose sigmoid slopes differ cell to cell. The sweep
@@ -426,6 +458,15 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;
             0.5 * (1.0 + crate::hopfield::erf(z / std::f64::consts::SQRT_2))
         }
+        // EXPLICIT, not folded into the catch-all: the arm below is the plain heat bath, which is
+        // exactly `TickRandom { p: 1.0 }`, so a missing arm here would run every p as Synchronous
+        // and the whole sweep would read as "the law does not move with p" -- the paper's claim,
+        // produced by our own omission.
+        Kernel::TickRandom { p } => {
+            assert!((0.0..=1.0).contains(&p), "TickRandom p is a probability, got {p}");
+            let stay = if s[i] > 0 { 1.0 } else { 0.0 };
+            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)
+        }
         _ => p_up(g.field(i, s), beta),
     }
 }
@@ -547,7 +588,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             }
             cur
         }
-        Kernel::Synchronous | Kernel::Pimi { .. } => {
+        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } => {
             // (P v)(x) = E[v(y)] under the product law y_i ~ Bernoulli(q_i(x)), every q_i from the
             // PREVIOUS state x. Per x, contract v one site at a time under that product, from the
             // top bit down, so the block that remains keeps its bit layout.
@@ -695,7 +736,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::Synchronous | Kernel::Pimi { .. } => {
+        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } => {
             // (mu P)(y) = sum_x mu(x) prod_i q_i^x(y_i): each source state lays its product law
             // over every target, built by doubling one site at a time (bit i set gets q_i).
             let mut out = vec![0.0f64; m];
@@ -987,7 +1028,12 @@ pub fn tau_int_fundamental(
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
+        Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::Pimi { .. }
+        | Kernel::Stale { .. }
+        | Kernel::SiteSpread { .. }
+        | Kernel::TickRandom { .. } => {
             stationary_solved(g, beta, kernel)?
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -1046,7 +1092,12 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
         return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
     }
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
+        Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::Pimi { .. }
+        | Kernel::Stale { .. }
+        | Kernel::SiteSpread { .. }
+        | Kernel::TickRandom { .. } => {
             stationary_solved(g, beta, kernel)?
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -1083,7 +1134,12 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
 /// without a unique invariant law.
 pub fn own_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
     match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
+        Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::Pimi { .. }
+        | Kernel::Stale { .. }
+        | Kernel::SiteSpread { .. }
+        | Kernel::TickRandom { .. } => {
             stationary_solved(g, beta, kernel)
         }
         Kernel::Synchronous => peretto(g, beta),
@@ -1172,7 +1228,12 @@ pub fn tau_int_exact(
     // For the exact Gibbs and informed kernels that is the Boltzmann distribution; for the
     // fabric's arithmetic it is not, and using Boltzmann there would measure a transient.
     let pi = match kernel {
-        Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
+        Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::Pimi { .. }
+        | Kernel::Stale { .. }
+        | Kernel::SiteSpread { .. }
+        | Kernel::TickRandom { .. } => {
             stationary(g, beta, kernel, 1e-14, 500_000)?.0
         }
         Kernel::Synchronous => peretto(g, beta)?,
@@ -1884,5 +1945,166 @@ mod tests {
         let edge = p_up(0.5, 1.0);
         assert!((got - centre).abs() < 1e-12, "ROM read {got} vs centre {centre}");
         assert!((got - edge).abs() > 1e-3, "ROM read {got} must not be the cell edge {edge}");
+    }
+
+    /// Build the 10-spin fixtures the tick-random test uses: a 5x2 grid (bipartite) and a 10-ring
+    /// with chords (0,4) and (2,7) (odd cycles, so frustrated). Twelve spins is what
+    /// `examples/tick_random_exact.rs` runs; the dense solve is `O(8^n)` in the spin count, so the
+    /// example takes seven minutes and this pair takes seconds.
+    fn tick_fixtures() -> (Graph, Graph, Graph) {
+        use crate::graph::GraphBuilder;
+        use crate::rng::Pcg;
+        let (w, h) = (5usize, 2usize);
+        let mut rng = Pcg::new(7, 0x6A);
+        let mut b = GraphBuilder::new(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                if x + 1 < w {
+                    b.couple(i, i + 1, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+                }
+                if y + 1 < h {
+                    b.couple(i, i + w, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+                }
+            }
+        }
+        for i in 0..w * h {
+            b.bias(i, (rng.f64() - 0.5) * 0.4);
+        }
+        let grid = b.build();
+
+        let n = 10usize;
+        let mut rng = Pcg::new(3, 0x6A);
+        let mut b = GraphBuilder::new(n);
+        for i in 0..n {
+            b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+        }
+        for &(i, j) in &[(0usize, 4usize), (2usize, 7usize)] {
+            b.couple(i, j, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+        }
+        for i in 0..n {
+            b.bias(i, (rng.f64() - 0.5) * 0.4);
+        }
+        let ring = b.build();
+
+        // The SAME fields with every coupling removed. The control for the whole test: without an
+        // interaction there is no adjacent pair to move together, so p must not matter at all.
+        let mut rng = Pcg::new(3, 0x6A);
+        let mut b = GraphBuilder::new(n);
+        for i in 0..n {
+            b.bias(i, (rng.f64() - 0.5) * 0.4);
+        }
+        (grid, ring, b.build())
+    }
+
+    /// **Time-multiplexed reuse changes the law it is claimed not to change** — Onizawa & Hanyu,
+    /// arXiv:2604.01564, for their synchronous tick-random policy.
+    ///
+    /// The paper argues reuse is free: *"time-multiplexed reuse corresponds to a temporal rescaling
+    /// of the underlying Markov process rather than a change in its transition kernel"*, and *"only
+    /// the convergence speed, not the stationary distribution, is affected"*. The Conclusion
+    /// restates it. So `TV(pi_{1/c}, pi_1)` should be zero for every `c`. It is not:
+    ///
+    /// | fixture | beta | c = 1.25 | c = 1.5 | c = 2 | c = 3 | c = 10 |
+    /// |---|---|---|---|---|---|---|
+    /// | 5x2 grid | 0.5 | 0.287 | 0.376 | 0.450 | 0.503 | 0.558 |
+    /// | 5x2 grid | 2 | 0.620 | 0.650 | 0.671 | 0.684 | 0.697 |
+    /// | 10-ring + chords | 1 | 0.371 | 0.431 | 0.476 | 0.507 | 0.538 |
+    /// | 10-ring + chords | 3 | 0.136 | 0.176 | 0.211 | 0.235 | 0.260 |
+    ///
+    /// At **c = 3** — which is the paper's own headline reuse factor, and the top-scoring
+    /// synchronous row in both its cost tables — the two laws disagree on between **23.5% and
+    /// 68.4%** of the probability mass across these eight cells. That is not a temporal rescaling.
+    ///
+    /// # Why the thinning argument fails here and not for their other branch
+    ///
+    /// Thinning is sound for a continuous-time chain where at most one site moves at a time, which
+    /// is their Poisson/asynchronous policy. A Bernoulli mask is not a thinning of that chain: it
+    /// leaves probability `p^2` on two ADJACENT sites moving from the same stale state, and that is
+    /// the term that breaks detailed balance. The **uncoupled control is the proof of mechanism** —
+    /// with the same fields and no couplings there is no adjacent pair, and the law stops moving
+    /// with `p` entirely (worst TV 3.9e-15 against Boltzmann, over every `p` and `beta`).
+    ///
+    /// # What is deliberately NOT asserted
+    ///
+    /// **Monotonicity.** On these 10-spin fixtures TV from Boltzmann does fall monotonically as `p`
+    /// falls, in all 8 cells. On the 12-spin frustrated ring of `examples/tick_random_exact.rs` it
+    /// does **not**: at `beta = 2` it runs 0.150, 0.0015, 0.0048, 0.0047, 0.0031, 0.0009 — down,
+    /// up, and down again. The direction is fixture-dependent and an assertion on it would be a
+    /// claim this crate cannot support. That the law MOVES is robust; which way it moves is not.
+    #[test]
+    fn tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move() {
+        let (grid, ring, uncoupled) = tick_fixtures();
+        let betas = [0.5f64, 1.0, 2.0, 3.0];
+        // p = 1/c for the paper's own c-set {1, 1.25, 1.5, 2, 3} plus c = 10 from its Table 5.
+        let reused = [0.8f64, 2.0 / 3.0, 0.5, 1.0 / 3.0, 0.1];
+
+        let (mut cells, mut worst_identity, mut smallest_move, mut smallest_at_c3) =
+            (0usize, 0.0f64, f64::INFINITY, f64::INFINITY);
+        for g in [&grid, &ring] {
+            for &beta in &betas {
+                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 1.0 }).expect("solvable");
+                // p = 1 IS the synchronous kernel -- every site, every tick, from the previous
+                // state. Held against that kernel and not against `peretto`, because the closed
+                // form carries its own conditioning: the same comparison against `peretto` needs a
+                // 1e-5 tolerance at beta = 3 on 12 spins, where this one is exact.
+                let sync = stationary_solved(g, beta, Kernel::Synchronous).expect("solvable");
+                let identity = total_variation(&one, &sync);
+                assert_eq!(identity, 0.0, "TickRandom p=1 must BE Synchronous, got TV {identity:e} at beta {beta}");
+                worst_identity = worst_identity.max(identity);
+
+                for (k, &p) in reused.iter().enumerate() {
+                    let law = stationary_solved(g, beta, Kernel::TickRandom { p }).expect("solvable");
+                    let moved = total_variation(&law, &one);
+                    smallest_move = smallest_move.min(moved);
+                    if (p - 1.0 / 3.0).abs() < 1e-12 {
+                        smallest_at_c3 = smallest_at_c3.min(moved);
+                    }
+                    assert!(moved > 0.10, "reuse must move the law: beta {beta}, p index {k}, TV {moved}");
+                    cells += 1;
+                }
+            }
+        }
+        assert_eq!(cells, 40, "2 fixtures x 4 betas x 5 reuse factors");
+        assert_eq!(worst_identity, 0.0, "the p=1 identity is exact in every cell, not merely close");
+        // Measured 0.1359 (ring, beta = 3, c = 1.25) and 0.2354 (ring, beta = 3, c = 3).
+        assert!(smallest_move > 0.13, "smallest movement over all 40 cells: {smallest_move}");
+        assert!(smallest_at_c3 > 0.23, "smallest movement at the paper's own c = 3: {smallest_at_c3}");
+
+        // THE CONTROL, and the mechanism. Same fields, no couplings, so no adjacent pair can move
+        // together -- and the law stops depending on p. Without this the test could not tell "the
+        // mask changes the law" from "the solver is sensitive to p".
+        for &beta in &betas {
+            let bolt = boltzmann(&uncoupled, beta).expect("small");
+            for &p in [1.0f64].iter().chain(reused.iter()) {
+                let law = stationary_solved(&uncoupled, beta, Kernel::TickRandom { p }).expect("solvable");
+                let tv = total_variation(&law, &bolt);
+                assert!(tv < 1e-13, "uncoupled sites cannot feel the mask: beta {beta}, p {p}, TV {tv}");
+            }
+        }
+
+        // p = 0 is the identity map. It has no unique invariant law and must say so rather than
+        // return whatever a singular solve leaves in the buffer.
+        match stationary_solved(&ring, 1.0, Kernel::TickRandom { p: 0.0 }) {
+            Err(AutocorrError::Reducible) => {}
+            other => panic!("p = 0 is the identity map and must be refused as reducible, got {other:?}"),
+        }
+
+        // The movement is FIRST ORDER in p with no intercept: TV -> 0 as p -> 0, but TV/p tends to
+        // a finite non-zero limit. Both halves are asserted -- a test that only checked TV -> 0
+        // would also pass if the law never moved at all.
+        let bolt = boltzmann(&ring, 1.0).expect("small");
+        let mut ratios = Vec::new();
+        for &p in &[0.01f64, 0.02, 0.05, 0.1] {
+            let law = stationary_solved(&ring, 1.0, Kernel::TickRandom { p }).expect("solvable");
+            let tv = total_variation(&law, &bolt);
+            assert!(tv < 0.02, "TV must vanish with p: p {p}, TV {tv}");
+            ratios.push(tv / p);
+        }
+        // Measured 0.1439, 0.1447, 0.1473, 0.1520 -- a finite non-zero limit, not a collapse.
+        for (r, p) in ratios.iter().zip([0.01f64, 0.02, 0.05, 0.1]) {
+            assert!((0.13..0.16).contains(r), "TV/p must tend to a finite non-zero limit: p {p}, TV/p {r}");
+        }
+        assert!(ratios[3] > ratios[0], "and it approaches that limit from below: {ratios:?}");
     }
 }

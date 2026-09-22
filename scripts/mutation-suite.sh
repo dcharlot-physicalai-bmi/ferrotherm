@@ -1318,6 +1318,17 @@ mutations=(
   "src/dense_memory.rs|        (self.patterns.len() as f64).ln() / beta + 0.5 * self.n as f64|        (self.patterns.len() as f64).ln() / beta + self.n as f64|dense_memory::tests::the_omitted_constants_are_what_put_the_energy_floor_at_zero|the largest squared pattern norm not halved"
   "src/dense_memory.rs|                    let moved = dist(&next, &cur);|                    let moved = 0.0;|dense_memory::tests::one_attention_step_is_the_minimiser_only_where_the_pattern_is_already_found|an iteration that stops after one step so the gap it measures is zero by construction"
 
+  # TICK-RANDOM: THE KERNEL THAT SETTLES A PUBLISHED CLAIM, AND THE ARM THAT WOULD HAVE MADE IT
+  # AGREE. `p_site` ends in a catch-all `_ => p_up(...)`, which IS the synchronous conditional, so a
+  # `TickRandom` that never reached its own arm would run every reuse factor as Synchronous and the
+  # sweep would report that the law does not move with c -- arXiv:2604.01564's claim, manufactured by
+  # our own omission. T1 is exactly that omission and must be caught. The arm is written explicitly
+  # for this reason and the mutation is what proves the reason is real.
+  "src/autocorr.rs|            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)|            p_up(g.field(i, s), beta)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|a mask never applied so every reuse factor runs as the synchronous kernel"
+  "src/autocorr.rs|            let stay = if s[i] > 0 { 1.0 } else { 0.0 };|            let stay = if s[i] > 0 { 0.0 } else { 1.0 };|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|an unselected spin that flips instead of holding its value"
+  "src/autocorr.rs|            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)|            p * stay + (1.0 - p) * p_up(g.field(i, s), beta)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|the selection probability attached to the wrong one of the two terms"
+  "src/autocorr.rs|                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 1.0 }).expect(\"solvable\");|                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 0.99 }).expect(\"solvable\");|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|a p=1 reference that is not actually p=1 so the exact identity is no longer exact"
+
 )
 
 bad=0
@@ -1389,7 +1400,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=283
+expected_rows=287
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

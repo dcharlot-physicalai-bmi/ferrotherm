@@ -491,6 +491,81 @@ identical patterns, where `lse` is exact and `E(ξ) = ½‖ξ − x‖²` on the
 
 ---
 
+## 8. Does reusing a p-bit change the answer? — `src/autocorr.rs`, `Kernel::TickRandom`
+
+Onizawa & Hanyu (arXiv:2604.01564, 2026) introduce a **time-multiplexing reuse factor `c`** — *"the
+number of logical p-bits that are sequentially mapped onto a single physical p-bit"* — and their
+synchronous **tick-random** policy selects each spin on each tick with probability `p_flip = 1/c`,
+updating every selected spin from the previous state. Reusing hardware this way is the paper's route
+to a large cost saving, and the paper argues it is free:
+
+> time-multiplexed reuse corresponds to a temporal rescaling of the underlying Markov process rather
+> than a change in its transition kernel.
+
+> Such time-thinning arguments are well established in stochastic simulation theory and imply that
+> only the convergence speed, not the stationary distribution, is affected.
+
+The Conclusion restates it: *"the effective update rate can be reduced without altering the target
+stationary distribution"*. **So `TV(π_{1/c}, π_1)` should be zero for every `c`.** The oracle here is
+the exact stationary law of each kernel, solved rather than sampled, so the column below is
+arithmetic and not a statistic:
+
+| fixture | β | c = 1.25 | c = 1.5 | c = 2 | **c = 3** | c = 10 |
+|---|---|---|---|---|---|---|
+| 5×2 grid (bipartite) | 0.5 | 0.287 | 0.376 | 0.450 | **0.503** | 0.558 |
+| 5×2 grid | 1 | 0.492 | 0.564 | 0.619 | **0.659** | 0.700 |
+| 5×2 grid | 2 | 0.620 | 0.650 | 0.671 | **0.684** | 0.697 |
+| 5×2 grid | 3 | 0.609 | 0.614 | 0.620 | **0.624** | 0.628 |
+| 10-ring + 2 chords (frustrated) | 0.5 | 0.271 | 0.360 | 0.434 | **0.486** | 0.539 |
+| 10-ring + 2 chords | 1 | 0.371 | 0.431 | 0.476 | **0.507** | 0.538 |
+| 10-ring + 2 chords | 2 | 0.199 | 0.242 | 0.280 | **0.306** | 0.332 |
+| 10-ring + 2 chords | 3 | 0.136 | 0.176 | 0.211 | **0.235** | 0.260 |
+
+**At `c = 3` the two laws disagree on 23.5% to 68.4% of the probability mass.** `c = 3` is not a
+corner: it is the reuse factor the paper's own prose headlines, and in both its cost tables the
+tick-random row at `c = 3` is the top-scoring synchronous entry. This is not a temporal rescaling.
+
+### Why the thinning argument holds for their other branch and not this one
+
+Thinning is sound for a continuous-time chain in which at most one site moves at a time — their
+**Poisson/asynchronous** policy, where the argument is correct and we make no claim against it. A
+Bernoulli mask is not a thinning of that chain: it leaves probability `p²` on two **adjacent** sites
+moving together from the same stale state, and that is the term that breaks detailed balance. It
+lives inside the per-site conditional, so changing `c` changes the kernel, not the clock.
+
+**The uncoupled control is the proof of mechanism, not a smoke test.** Take the same fields and
+delete every coupling: now no adjacent pair exists, and the law stops depending on `p` altogether —
+worst TV from Boltzmann `3.9e-15` over every `p` and every β. The movement above is the interaction
+term, measured.
+
+Two more facts pin the ends. `TickRandom { p: 1.0 }` is **bit-identical** to `Kernel::Synchronous` —
+total variation exactly `0.0`, in all eight cells, not merely close. (Held against that kernel rather
+than against `peretto`: the closed form carries its own conditioning, and the same comparison against
+`peretto` needs a `1e-5` tolerance at β = 3 on twelve spins where this one is exact.) And `p = 0` is
+the identity map, which has no unique invariant law — `stationary_solved` returns `Reducible` rather
+than whatever a singular solve leaves behind. In between, the movement is **first order in `p` with
+no intercept**: `TV/p` = 0.1439, 0.1447, 0.1473, 0.1520 at `p` = 0.01, 0.02, 0.05, 0.1.
+
+### ⚠ What this entry deliberately does NOT assert
+
+**The direction.** On the 10-spin fixtures the distance from Boltzmann falls monotonically as `p`
+falls, in all eight cells. On the 12-spin frustrated ring of `examples/tick_random_exact.rs` it does
+**not**: at β = 2 it runs `0.150, 0.0015, 0.0048, 0.0047, 0.0031, 0.0009` — down, up, and down again.
+An independent replica of this kernel, built to check us, reported monotonicity in 24 of 24 cells on
+*its own* coupling draws and so would have licensed an assertion that our own fixtures refute. That
+the law **moves** is robust across every fixture, β and `c` we have run; **which way it moves is
+not**, and no test here claims it.
+
+The scope is also stated rather than implied: this is the synchronous tick-random branch. It says
+nothing about the asynchronous branch, and nothing about whether the paper's cut-quality results
+hold — a kernel can sample the wrong law and still anneal to good cuts, which is the separation
+`WORKLOADS.md` keeps throughout between *sampling* and *optimisation*.
+
+`examples/tick_random_exact.rs` prints the full twelve-spin table (about seven minutes: the dense
+solve is `O(8^n)` in the spin count).
+
+---
+
 ## What we deliberately do not do
 
 **Routing, scheduling and portfolio optimisation.** They are MILP in a QUBO costume and they lose to
@@ -525,3 +600,40 @@ quote — as it does in entries 1 and 5 above, and in entry 3, where the workloa
   and not a comparison. The digital bar for sampling-based control is instead arXiv:2601.17231, which
   does name its baselines: 2.33 ms and 14.90 mJ per control step on an FPGA against 7.24 ms and
   37.44 mJ on a Jetson Orin Nano.
+
+**Added 2026-09-22, read at the source in both versions, main text and supplement.**
+
+- **arXiv:2603.27996's Table I row labelled "FPGA (experimental)" is arithmetic, not a measurement.**
+  The row reads `15000 Gsample/s, 25 W, 600 Gsamples/J, ~10^2` improvement over the GPU. The
+  supplement's own first word about those numbers is *derived*: *"The FPGA numbers reported in Table I
+  are derived from the p-computer architecture described in Section II. To isolate the random number
+  generation capability, we strip away all logic, LUT, and MAC unit, and retain only the 32-bit
+  LFSR-based pseudo-random number generators. The architecture supports 10^5 independent p-bits
+  (Table S1), each containing its own LFSR, clocked at 150 MHz ... yielding an aggregate throughput of
+  10^5 x 150 x 10^6 = 1.5 x 10^13 samples/s"*. Every cell is a product of three Table S1 parameters,
+  and `1.5e13 / 25 W` is the efficiency exactly. **The asymmetry is what makes it worth recording:**
+  one paragraph earlier the GPU side of the same table states instrument, sampling rate and averaging
+  window — *"asynchronously sampling the on-board power sensors at 100 ms intervals, and the reported
+  power corresponds to the time-averaged draw over the kernel execution window"* — so a single label,
+  "(experimental)", spans a metered figure and a projected one. The supplement's own Table S1 does not
+  repeat the label: it attaches *"experimental values are from our A100 LFSR microbenchmark"* and
+  lists the FPGA rows as plain "FPGA". **This review did not locate any sentence, in either version,
+  stating that the 25 W board power was measured, on what instrument, at what utilisation, or against
+  what idle baseline.** A real Alveo U250 was really programmed — but the supplement says it was used
+  *"to generate equilibrium training configurations via Gibbs sampling"*, not to benchmark RNG
+  throughput. On our own ladder that row is `Derived`; the GPU row, lacking an idle baseline and a
+  reproduced control, is `Measured` rather than `Metered`.
+  The authors fence the number twice themselves, and both fences are worth passing on: *"a 'sample'
+  refers to one 32-bit random number produced by the underlying stochastic hardware primitive, not a
+  full Ising configuration or a complete Gibbs sweep"*, and *"these efficiency figures refer to raw
+  stochastic sample generation, not full end-to-end diffusion inference"*. Their "sample" is one LFSR
+  output from a design with the LUT and MAC stripped out; a `Ledger` sample here is a full single-node
+  Gibbs update including the field sum. **The two are not the same operation and the ratio does not
+  transfer.**
+- **The same paper's sampling cost, which does check out, is worth quoting because it is large.**
+  *"For T = 100 and Nchains = 10, this corresponds to 49,500 Gibbs sweeps per generated sample"* —
+  confirmed independently in the supplement as `10 x 4950`, with the authors themselves flagging the
+  off-by-one (*"t - 1 sweeps per chain, not t - 1 chains"*, and the final reverse step costs none). On
+  the 1000-spin 3D spin glass they name, and given that a sweep *"updates every spin once in a fixed
+  order"*, that is **4.95e7 single-spin updates per generated sample**. Each chain's sweeps are
+  sequential, so that figure cannot be divided by a p-bit count to get a wall-clock.

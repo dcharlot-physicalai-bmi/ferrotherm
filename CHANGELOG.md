@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### Reusing a p-bit changes the answer: `Kernel::TickRandom`, and a label that spans two grades
+
+**`Kernel::TickRandom { p }` is the synchronous tick-random policy of Onizawa & Hanyu
+(arXiv:2604.01564): each tick, an independent Bernoulli mask selects every spin with probability
+`p_flip = 1/c`, and the selected spins resample from the previous state.** `c` is their
+time-multiplexing reuse factor, the route to their cost saving, and the paper argues reuse is free:
+*"time-multiplexed reuse corresponds to a temporal rescaling of the underlying Markov process rather
+than a change in its transition kernel"*, so *"only the convergence speed, not the stationary
+distribution, is affected"*.
+
+**`TV(π_{1/c}, π_1)` should therefore be zero for every `c`. Solved exactly, it is not:**
+
+| fixture | β | c = 1.25 | c = 2 | **c = 3** | c = 10 |
+|---|---|---|---|---|---|
+| 5×2 grid | 0.5 | 0.287 | 0.450 | **0.503** | 0.558 |
+| 5×2 grid | 2 | 0.620 | 0.671 | **0.684** | 0.697 |
+| 10-ring + chords | 1 | 0.371 | 0.476 | **0.507** | 0.538 |
+| 10-ring + chords | 3 | 0.136 | 0.211 | **0.235** | 0.260 |
+
+At `c = 3` — the reuse factor the paper's prose headlines, and the top-scoring synchronous row in
+both its cost tables — the two laws disagree on **23.5% to 68.4%** of the probability mass. Thinning
+is sound for a continuous-time chain where at most one site moves at a time, which is their
+*asynchronous* branch and is untouched by this. A Bernoulli mask is not a thinning of that chain: it
+leaves probability `p²` on two adjacent sites moving together from the same stale state, and that
+term breaks detailed balance from inside the per-site conditional.
+
+**The uncoupled control is the proof of mechanism.** Same fields, every coupling deleted, so no
+adjacent pair exists — and the law stops depending on `p` at all: worst TV `3.9e-15` over every `p`
+and β. The ends are pinned too: `TickRandom { p: 1.0 }` is **bit-identical** to `Kernel::Synchronous`
+(TV exactly `0.0`, all eight cells — held against that kernel rather than the `peretto` closed form,
+which needs a `1e-5` tolerance at β = 3 where this is exact), and `p = 0` is the identity map, which
+`stationary_solved` refuses as `Reducible`. In between the movement is first order in `p` with no
+intercept: `TV/p` = 0.1439, 0.1447, 0.1473, 0.1520.
+
+**⚠ The direction is deliberately not asserted.** On the 10-spin fixtures the distance from Boltzmann
+falls monotonically as `p` falls, 8 of 8. On the 12-spin frustrated ring it does not — at β = 2 it
+runs `0.150, 0.0015, 0.0048, 0.0047, 0.0031, 0.0009`. An independent replica built to check this work
+found monotonicity in 24 of 24 cells on *its own* coupling draws, and would have licensed an
+assertion our own fixtures refute. That the law moves is robust; which way is not.
+
+`examples/tick_random_exact.rs` prints the twelve-spin table. `WORKLOADS.md` §8 carries the entry.
+Four mutations, each seen red: a mask never applied (which would have run every `c` as the synchronous
+kernel and *reproduced the paper's claim out of our own omission* — `p_site` ends in a catch-all that
+is exactly the synchronous conditional, which is why the arm is written explicitly), an unselected
+spin that flips instead of holding, the probability on the wrong term, and a `p = 1` reference that is
+not actually 1.
+
+**And a claims-not-to-repeat entry on arXiv:2603.27996.** Its Table I row labelled
+*"FPGA (experimental)"* — 15,000 Gsample/s, 25 W, 600 Gsamples/J, ~10² over the GPU — is arithmetic.
+The supplement's own first word about those numbers is *derived*, from three Table S1 parameters
+(`10^5` p-bits × 150 MHz, over a 25 W board power), on a design with *"all logic, LUT, and MAC unit"*
+stripped away. One paragraph earlier the GPU side of the same table states instrument, sampling rate
+and averaging window. **A single label spans a metered figure and a projected one**; the supplement's
+own Table S1 does not repeat it. This review did not locate any sentence, in either version, stating
+that the 25 W was measured. On our ladder the FPGA row is `Derived` and the GPU row is `Measured`, not
+`Metered` — it states no idle baseline and no reproduced control. The paper fences its own number
+twice (*"not a full Ising configuration or a complete Gibbs sweep"*), and those fences are recorded
+with it.
+
 ### Attention has an energy, and relaxing to it does not compute attention
 
 **The bridge the whole "thermodynamic computing for AI" thesis rests on is that softmax attention and
