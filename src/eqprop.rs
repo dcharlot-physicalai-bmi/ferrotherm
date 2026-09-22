@@ -284,9 +284,21 @@ fn uniform_law(g: &Graph, clamp: &[Option<i8>]) -> Vec<f64> {
     ok.iter().map(|b| if *b { 1.0 / count } else { 0.0 }).collect()
 }
 
-/// The Boltzmann law at unit temperature over the states the clamp permits — the equilibrium the
-/// chromatic sweep is reversible with respect to, and therefore the free phase's stationary state.
-fn boltzmann_law(g: &Graph, clamp: &[Option<i8>]) -> Vec<f64> {
+/// The Boltzmann law at unit temperature over the states a clamp permits — the equilibrium the
+/// chromatic sweep is reversible with respect to, and therefore the fixed point of any amount of
+/// relaxation.
+///
+/// Public because it is the oracle a sampler on this graph is checked against: advancing this law
+/// through a sweep must return it exactly, and
+/// `a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence` opens by asserting
+/// that at three budgets. `clamp[i]` pins site `i` when it is `Some`.
+///
+/// # Panics
+///
+/// If `g` has more than 20 spins, since the law is enumerated over `2^n` states.
+#[must_use]
+pub fn boltzmann_law(g: &Graph, clamp: &[Option<i8>]) -> Vec<f64> {
+    assert!(g.n <= 20, "the law is enumerated over 2^n states");
     let (n, m) = (g.n, 1usize << g.n);
     let mut s = vec![-1i8; n];
     let mut logs = vec![f64::NEG_INFINITY; m];
@@ -540,6 +552,25 @@ mod tests {
         let err = |beta: f64, centered: bool, sweeps: usize, start: Relaxation| {
             max_err(&eqprop_gradient_relaxed(&g, &task, &x, &t, beta, centered, sweeps, start), &truth)
         };
+
+        // CONTROL 0. The chromatic sweep is reversible with respect to the Boltzmann law, so that
+        // law is the relaxation operator's FIXED POINT: advancing it must return it exactly, at any
+        // budget. This is the invariant-measure check, and it is what says `relax` transports
+        // probability correctly rather than merely converging to something.
+        {
+            let clamp = clamp_mask(&g, &task, &x);
+            let eq = boltzmann_law(&g, &clamp);
+            for sweeps in [1usize, 3, 17] {
+                let moved = relax(&g, &clamp, &eq, sweeps);
+                let drift = eq.iter().zip(&moved).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
+                assert!(drift < 1e-15, "the Boltzmann law is the sweep's fixed point: drift {drift:e} after {sweeps}");
+            }
+            // and it is a fixed point of THIS operator, not of any operator: the uniform law is not.
+            let uni = uniform_law(&g, &clamp);
+            let moved = relax(&g, &clamp, &uni, 1);
+            let drift = uni.iter().zip(&moved).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
+            assert!(drift > 1e-6, "the uniform law must NOT be a fixed point, else the operator does nothing: {drift:e}");
+        }
 
         // CONTROL. The finite-budget operator must become the crate's existing exact estimator when
         // the budget stops binding. These are independent implementations -- one advances the law

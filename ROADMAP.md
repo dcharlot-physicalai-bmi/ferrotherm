@@ -518,7 +518,13 @@ wasm32's need not match aarch64's in the last ulp. What was measured is stronger
 of this crate's own sampler, which is the CPU path compiled to wasm32; running the GPU backend
 behind `Device` in a browser needs an async trait or a worker bridge, since `Device` is synchronous
 and browser WebGPU is not. That is a design decision rather than a missing function. Also open: the
-Alchitry path (that board never enumerated over USB).
+Alchitry path, though no longer for the reason recorded here until 2026-09-22 — **that board
+enumerates and answers.** Over this crate's own USB/MPSSE/JTAG stack it returns
+`IDCODE 0x13631093` (XC7A100T) from the JTAG data register and again from a type-1 read of the
+configuration register, two independent paths agreeing, with `DONE=1 EOS=1 CRC_ERR=0`. What is
+actually open is the **sequential fabric**: `silicon/src/lib.rs` refuses a `Device` with
+"flip-flops and clock are pending", and until that exists the emitted fabric is combinational, so
+no captured bit can be compared against a flip-flop whose value we chose.
 *Why:* **no library in this field has a public path to any silicon.** Extropic's packages contain
 zero device code; every "backend" is a simulator. Closing library→bitstream→board→readback in the
 open is a first, and we already own the whole toolchain.

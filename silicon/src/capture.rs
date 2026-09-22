@@ -44,8 +44,32 @@
 //! ([`Readout::latch`] through a `.ll` listing) is still checked offline only. Our own emitted
 //! fabric cannot supply that value: it is combinational and has no flip-flop to latch.
 //!
-//! The same run found a deadlock in the JTAG driver that no earlier readback was long enough to
-//! meet; see [`crate::mpsse`].
+//! **2026-09-22, an attempt at that, and why the fixture cannot answer it.** If a captured bit is
+//! flip-flop state, then driving the state the other way should round-trip: `GRESTORE` loads every
+//! flip-flop FROM its configuration cell, so capture a state, command it back, capture again, and
+//! it must come back. [`restore_capture_and_read`] issues both commands in ONE stream, because the
+//! fabric clock stops for neither and a USB round trip between them is hundreds of fabric cycles.
+//! `examples/restore_hw` ran it against the same boot design, eight paired passes per column:
+//! **+0.4 ± 0.9 and +0.4 ± 1.0 bits, no effect at 3σ.**
+//!
+//! That negative is a property of the fixture and not evidence about the opcode, and the same run
+//! measured why. Bits moving between two captures, against the delay between them, are FLAT: 2, 6,
+//! 4, 5 on one column and 13, 11, 12, 10 on the other, at 0, 1, 10 and 100 ms. At zero delay the
+//! state has already moved as far as it goes, so it is reclocking every fabric cycle rather than
+//! accumulating. **A value imposed on a flip-flop that reclocks every cycle is gone before the next
+//! command reaches it**, whatever `GRESTORE` does. Only 2 of 576 columns hold moving state at all.
+//!
+//! ⚠ The first version of that experiment compared ONE restore against ONE control and reported
+//! "state came back" on a column where the same pair measured the opposite way minutes later; the
+//! counts swing by half their own value. It is paired and repeated now, and the verdict stopped
+//! moving. A single comparison between two noisy counts is not a measurement.
+//!
+//! WHAT WOULD SETTLE IT: a design whose state HOLDS between two commands. That is our own
+//! sequential fabric, which this crate does not yet assemble: `lib.rs` refuses a `Device` with
+//! "flip-flops and clock are pending" rather than returning one that cannot sample.
+//!
+//! The 2026-09-19 run found a deadlock in the JTAG driver that no earlier readback was long enough
+//! to meet; see [`crate::mpsse`].
 
 use crate::bitstream::{cmd, reg, type1_read, type1_write, type2_read, DUMMY, NOOP, SYNC};
 use crate::frame::WORDS_PER_FRAME;
@@ -149,6 +173,31 @@ pub fn capture_and_read(far: u32, n_frames: usize) -> Vec<u32> {
         NOOP,
         NOOP,
     ]
+}
+
+/// The same read, with **GRESTORE issued immediately before GCAPTURE in the same stream**.
+///
+/// `GRESTORE` forces every flip-flop to the initial value its configuration cell was loaded with.
+/// That value is knowable independently of any capture: it is what a plain frame read returns
+/// before anything is captured. So a capture taken right after a restore has a *predicted* answer,
+/// which is what [`capture_and_read`] on its own cannot offer — see this module's note on what the
+/// 2026-09-19 run did not establish.
+///
+/// **Both commands ride in one packet stream on purpose.** The fabric clock does not stop for
+/// either of them, so anything that separates them lets the design clock its flip-flops away from
+/// the values the restore just imposed. A USB round trip between the two would be microseconds,
+/// which at a fabric clock in the hundreds of megahertz is hundreds of cycles; back to back in one
+/// stream it is a handful of configuration clocks.
+///
+/// Built by splicing one command block into [`capture_and_read`] rather than by repeating its
+/// words. Repeating them put a second copy of the readback sequence in this file, and an existing
+/// mutation row naming one of those lines stopped matching uniquely -- the suite's precheck caught
+/// it. A variant that is literally the original plus a command cannot drift from it either.
+#[must_use]
+pub fn restore_capture_and_read(far: u32, n_frames: usize) -> Vec<u32> {
+    let mut w = capture_and_read(far, n_frames);
+    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);
+    w
 }
 
 /// Drop the pad frame, or say why the buffer cannot carry the frames requested.
@@ -286,6 +335,39 @@ impl Sample {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The restore stream orders its two commands, and the order is the whole point.**
+    ///
+    /// `GRESTORE` must be issued BEFORE `GCAPTURE`: restore loads the flip-flops from their
+    /// configuration cells, capture writes them back. Reversed, the capture would latch the state
+    /// the design happens to be in and the restore would then load exactly that, which reads as a
+    /// success on hardware while testing nothing.
+    ///
+    /// Also pinned: the stream is `capture_and_read` plus one command, so it cannot drift away from
+    /// the read it is supposed to be a variant of.
+    #[test]
+    fn a_restore_capture_stream_restores_before_it_captures() {
+        let far = 0x0040_0100;
+        let plain = capture_and_read(far, 4);
+        let restore = restore_capture_and_read(far, 4);
+
+        let at = |w: &[u32], v: u32| w.iter().position(|&x| x == v);
+        let g_restore = at(&restore, cmd::GRESTORE).expect("the stream must issue GRESTORE");
+        let g_capture = at(&restore, cmd::GCAPTURE).expect("the stream must issue GCAPTURE");
+        assert!(g_restore < g_capture, "GRESTORE must precede GCAPTURE, got {g_restore} then {g_capture}");
+        assert!(at(&plain, cmd::GRESTORE).is_none(), "the plain capture must NOT restore");
+
+        // One command BLOCK longer: the type-1 header, the command, and the two NOOP settles that
+        // every command in this stream is followed by. Identical everywhere else, so the variant
+        // cannot drift away from the read it is a variant of.
+        assert_eq!(restore.len(), plain.len() + 4, "exactly one extra command block");
+        let block = g_restore - 1..=g_restore + 2;
+        let stripped: Vec<u32> =
+            restore.iter().copied().enumerate().filter(|&(i, _)| !block.contains(&i)).map(|(_, w)| w).collect();
+        assert_eq!(stripped, plain, "apart from the restore block the two streams are the same read");
+        assert_eq!(restore[g_restore - 1], plain[3], "the restore uses the same type-1 CMD header");
+        assert_eq!((restore[g_restore + 1], restore[g_restore + 2]), (NOOP, NOOP), "a command settles on two NOOPs");
+    }
 
     fn listing() -> Vec<LlBit> {
         crate::logic_location::parse_ll(

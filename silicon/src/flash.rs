@@ -490,6 +490,34 @@ impl Tap {
         Ok(body.to_vec())
     }
 
+    /// Restore every flip-flop to its configured initial value, then capture and read back.
+    ///
+    /// [`Tap::capture_frames`] reports what the design is doing, and nothing outside the device
+    /// says what that should be. This reports what the design is doing *immediately after being
+    /// told what to hold*, and the value it was told is the one a plain [`Tap::read_frames`]
+    /// returns. That makes the answer predictable from outside, which is the whole point of it.
+    ///
+    /// The design keeps running; the restore imposes a state, it does not stop the clock.
+    ///
+    /// # Errors
+    ///
+    /// The USB transfer's error, or [`crate::capture::CaptureError`]'s message when the buffer
+    /// that came back cannot carry the frames requested.
+    pub fn restore_capture_frames(&mut self, far: u32, n_frames: usize) -> Result<Vec<u32>, String> {
+        let want = crate::capture::readback_words(n_frames);
+        self.reset()?;
+        self.cfg_in_words(&crate::capture::restore_capture_and_read(far, n_frames))?;
+        self.shift_ir(IR_CFG_OUT)?;
+        let raw = self.shift_dr(&vec![0u8; want * 4], true)?;
+        let mut words = Vec::with_capacity(want);
+        for c in raw.as_chunks::<4>().0 {
+            words.push(u32::from_be_bytes(c.map(reverse_byte)));
+        }
+        self.shift_ir(IR_BYPASS)?;
+        let body = crate::capture::strip_pad(&words, n_frames).map_err(|e| e.to_string())?;
+        Ok(body.to_vec())
+    }
+
     /// Hold the TAP in Run-Test/Idle for `n` TCK cycles.
     ///
     /// A TMS command clocks at most 6 cycles, so long settles need many commands — but they are

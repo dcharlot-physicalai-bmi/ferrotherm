@@ -1349,6 +1349,20 @@ mutations=(
   "src/eqprop.rs|                let (mut y, mut w) = (xi, mass);|                let (mut y, mut w) = (xi, 1.0);|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|each source state contributing unit mass instead of its own probability"
   "src/eqprop.rs|    for _ in 0..sweeps {|    for _ in 0..1 {|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|a relaxation budget ignored after the first sweep"
 
+  # THE BOLTZMANN LAW IS THE RELAXATION OPERATOR'S FIXED POINT, which is the invariant-measure
+  # check `relax` was missing: advancing that law must return it exactly at any budget. Build it
+  # from the wrong sign of the energy and it is no longer invariant.
+  "src/eqprop.rs|        *l = -g.energy(&s);|        *l = g.energy(&s);|eqprop::tests::a_warm_start_turns_the_relaxation_residual_into_a_one_over_beta_divergence|an equilibrium built from the wrong sign of the energy"
+
+  # SILICON: the restore stream's command identity AND its order. GRESTORE before GCAPTURE is the
+  # whole experiment -- reversed, the capture latches whatever the design is in and the restore
+  # loads exactly that, which reads as a success on hardware while testing nothing. Both are one
+  # line each only because the stream is built by splicing a block into `capture_and_read`; when it
+  # repeated those words instead, the order mutation spanned six lines and could not be a row, and
+  # a second copy of the readback sequence broke an existing row's uniqueness.
+  "silicon/src/capture.rs|    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);|    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::RCAP, NOOP, NOOP]);|capture::tests::a_restore_capture_stream_restores_before_it_captures|a restore stream that issues some other command|ferrotherm-silicon"
+  "silicon/src/capture.rs|    w.splice(3..3, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);|    w.splice(9..9, [type1_write(reg::CMD, 1), cmd::GRESTORE, NOOP, NOOP]);|capture::tests::a_restore_capture_stream_restores_before_it_captures|a restore spliced after the capture instead of before it|ferrotherm-silicon"
+
 )
 
 bad=0
@@ -1420,7 +1434,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=295
+expected_rows=298
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

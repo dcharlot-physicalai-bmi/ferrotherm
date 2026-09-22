@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### The board answers, and a fixture that cannot settle the question it was asked
+
+The Alchitry Pt V2 was reconnected. `ROADMAP.md` had recorded the Alchitry path as open because
+*"that board never enumerated over USB"*; over this crate's own USB/MPSSE/JTAG stack it returns
+`IDCODE 0x13631093` (XC7A100T) from the JTAG data register **and** from a type-1 read of the
+configuration register, two independent paths agreeing, with `DONE=1 EOS=1 CRC_ERR=0`. That
+sentence is corrected. What is actually open is the sequential fabric.
+
+**The open question, attempted.** `capture` has recorded since 2026-09-19 that `GCAPTURE` latches
+something live, and that no captured bit had been compared against a value known by other means.
+`GRESTORE` loads every flip-flop FROM its configuration cell, so the state can be driven the other
+way: capture a state, command it back, capture again, and it must come back.
+`capture::restore_capture_and_read` issues both commands in **one stream**, because the fabric clock
+stops for neither and a USB round trip between them is hundreds of fabric cycles.
+
+**It came out null, and the same run measured why.** Eight paired passes per column against the boot
+design: **+0.4 ± 0.9 and +0.4 ± 1.0 bits, no effect at 3σ.** Bits moving between two captures are
+FLAT against the delay between them — 2, 6, 4, 5 on one column and 13, 11, 12, 10 on the other, at
+0, 1, 10 and 100 ms. At zero delay the state has already moved as far as it goes, so it reclocks
+every fabric cycle rather than accumulating. **A value imposed on a flip-flop that reclocks every
+cycle is gone before the next command reaches it**, whatever `GRESTORE` does. The negative is a
+property of the fixture, not evidence about the opcode, and only 2 of 576 columns hold moving state
+at all.
+
+**⚠ The first version of that experiment was a coin flip.** It compared ONE restore against ONE
+control and reported "state came back" on a column where the same pair measured the opposite way
+minutes later; these counts swing by half their own value. Paired over eight passes with the
+standard error taken across passes rather than across bits — the protocol the KV260 metering already
+used — the verdict stopped moving. A single comparison between two noisy counts is not a
+measurement, and this is the second time that shape has been caught in this crate.
+
+**The suite's precheck caught the first version of this.** Writing the restore stream out word for
+word put a second copy of the readback sequence in `capture.rs`, and an existing mutation row naming
+one of those lines stopped matching uniquely — *"old string occurs 2 times, not 1"*, which is a row
+that has quietly stopped measuring anything. The stream is now built by splicing one command block
+into `capture_and_read`, so it is literally the original plus a command. That also made the ORDER
+mutation a single line, so swapping GRESTORE and GCAPTURE is a recorded row rather than a hand run.
+
+**`eqprop::boltzmann_law` is public, and is now the relaxation operator's fixed-point oracle.** It
+had become dead code when the Warm protocol was corrected to relax the free phase rather than seat
+it at equilibrium. Rather than delete it or silence the warning, it is what the new control checks
+against: the chromatic sweep is reversible with respect to the Boltzmann law, so advancing that law
+must return it exactly at any budget — held to `1e-15` at 1, 3 and 17 sweeps, with the uniform law
+asserted NOT to be a fixed point so the check cannot pass on an operator that does nothing.
+
 ### A replica count is free in latency and not in energy
 
 `WORKLOADS.md` gains a third claims-not-to-repeat entry. arXiv:2605.07884's abstract reads *"achieve

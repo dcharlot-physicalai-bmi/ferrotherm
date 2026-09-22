@@ -34,6 +34,10 @@ name = "idcode"
 required-features = ["flash"]
 
 [[example]]
+name = "restore_hw"
+required-features = ["flash"]
+
+[[example]]
 name = "probe"
 required-features = ["flash"]
 
