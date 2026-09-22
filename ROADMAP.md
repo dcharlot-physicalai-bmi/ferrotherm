@@ -525,6 +525,15 @@ configuration register, two independent paths agreeing, with `DONE=1 EOS=1 CRC_E
 actually open is the **sequential fabric**: `silicon/src/lib.rs` refuses a `Device` with
 "flip-flops and clock are pending", and until that exists the emitted fabric is combinational, so
 no captured bit can be compared against a flip-flop whose value we chose.
+
+**Both routes to such a flip-flop were measured on 2026-09-22 and both are shut.** The Vivado this
+project uses holds 641 parts across four UltraScale+ families and **no 7-series at all**, so the
+XC7A100T is not targetable from it without a vendor device install. And our own path emits
+frame-level artifacts rather than bootable images — `lab_fabric.bit` is 17,168 bytes against roughly
+3.8 MB for a full configuration — so streaming it reaches `DONE=1` and `CRC_ERR=0`, every word
+accepted, and stops at `EOS=0, INIT_COMPLETE=0`: **accepted, not started.** That is the same
+`done 1` this roadmap has recorded since 2026-09-15, stated now with what it does and does not
+include. Closing this item is the sequential fabric, and nothing smaller.
 *Why:* **no library in this field has a public path to any silicon.** Extropic's packages contain
 zero device code; every "backend" is a simulator. Closing library→bitstream→board→readback in the
 open is a first, and we already own the whole toolchain.

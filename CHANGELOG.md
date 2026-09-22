@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Both routes to a holding flip-flop on the Alchitry, measured and shut
+
+`capture` has recorded since 2026-09-19 that no captured bit had been compared against a value known
+by other means, and named what would settle it: a design whose state HOLDS, with a flip-flop whose
+value we chose. On 2026-09-22 both routes to one were tried on the board and both are closed — which
+is worth more than the previous "needs our own sequential fabric", because it says what each needs.
+
+**A vendor-built design is not available from this install.** `get_parts xc7a100t*` returns nothing:
+the Vivado this project uses carries **641 parts across `zynquplus`, `azynquplus`, `qzynquplus` and
+`kintexuplus`, and no 7-series at all**. The XC7A100T is not targetable from it without adding
+device support through the vendor installer, which is a multi-gigabyte install on a shared machine.
+
+**And our own path emits frame artifacts, not bootable images.** `lab_fabric.bit` is 17,168 bytes
+against roughly 3.8 MB for a full XC7A100T configuration. Streamed through our own USB/MPSSE/JTAG
+stack it reaches `DONE=1` with `CRC_ERR=0` — every word accepted — and stops at `EOS=0,
+INIT_COMPLETE=0`. **Accepted, not started.** That is exactly the `done 1` recorded on 2026-09-15,
+and not a regression; it is what a frame-level artifact can reach. The board answers normally
+afterwards (IDCODE cross-checked on both paths, no CRC error) and a power cycle restores its boot
+design.
+
+So `silicon/src/lib.rs` withholding a `Device` because "flip-flops and clock are pending" is not a
+placeholder standing in for unfinished plumbing. It is the same gap seen from the board, and closing
+it is the sequential fabric and nothing smaller.
+
 ### A metered write — the first one, and `e_write` stops being `NaN`
 
 `ledger::KV260_WRITABLE_METERED` is the first price in this crate for a **write**. It took a fabric

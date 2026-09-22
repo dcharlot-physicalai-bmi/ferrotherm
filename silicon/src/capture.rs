@@ -64,9 +64,22 @@
 //! counts swing by half their own value. It is paired and repeated now, and the verdict stopped
 //! moving. A single comparison between two noisy counts is not a measurement.
 //!
-//! WHAT WOULD SETTLE IT: a design whose state HOLDS between two commands. That is our own
-//! sequential fabric, which this crate does not yet assemble: `lib.rs` refuses a `Device` with
-//! "flip-flops and clock are pending" rather than returning one that cannot sample.
+//! WHAT WOULD SETTLE IT: a design whose state HOLDS between two commands, with a flip-flop whose
+//! value we chose. **Neither route to one is open today, and on 2026-09-22 both were measured
+//! rather than assumed:**
+//!
+//! - **A vendor-built design.** The Vivado install this project uses carries 641 parts across
+//!   `zynquplus`, `azynquplus`, `qzynquplus` and `kintexuplus` — and **no 7-series at all**, so
+//!   `get_parts xc7a100t*` returns nothing. The XC7A100T cannot be targeted from it without adding
+//!   device support through the vendor installer.
+//! - **Our own.** The pure-Rust path emits FRAME-LEVEL artifacts, not bootable images:
+//!   `lab_fabric.bit` is 17,168 bytes against roughly 3.8 MB for a full XC7A100T configuration.
+//!   Streaming it reaches `DONE=1` with `CRC_ERR=0` — the device accepts every word — and stops at
+//!   `EOS=0, INIT_COMPLETE=0`. **Accepted, not started.** That is the same `done 1` recorded on
+//!   2026-09-15 and it is not a regression; it is what a frame artifact can reach.
+//!
+//! So `lib.rs`'s refusal — a `Device` withheld because "flip-flops and clock are pending" — is not
+//! a placeholder. It is the same gap, seen from the board.
 //!
 //! The 2026-09-19 run found a deadlock in the JTAG driver that no earlier readback was long enough
 //! to meet; see [`crate::mpsse`].
