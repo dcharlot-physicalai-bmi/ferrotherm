@@ -1329,6 +1329,16 @@ mutations=(
   "src/autocorr.rs|            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)|            p * stay + (1.0 - p) * p_up(g.field(i, s), beta)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|the selection probability attached to the wrong one of the two terms"
   "src/autocorr.rs|                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 1.0 }).expect(\"solvable\");|                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 0.99 }).expect(\"solvable\");|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|a p=1 reference that is not actually p=1 so the exact identity is no longer exact"
 
+  # THE THIRD TERM. An energy-advantage claim is almost always a ratio of two DYNAMICS figures, and
+  # the device's answer is still inside the device when the ratio is quoted. `advantage_after_readout`
+  # and `read_budget_for_advantage` are inverses, so the round-trip test is a check between two
+  # independently written expressions rather than a restatement of one -- and W1/W3 are the two ways
+  # that round trip could have been made to agree with itself.
+  "src/ledger.rs|    let total = dynamics_j + reads as f64 * e_read;|    let total = dynamics_j;|ledger::tests::whitelams_ten_orders_of_magnitude_need_a_readout_at_the_landauer_floor|an advantage that never charges the readout whose omission it exists to measure"
+  "src/ledger.rs|    let budget = baseline_j / advantage - dynamics_j;|    let budget = baseline_j / advantage + dynamics_j;|ledger::tests::the_readout_budget_and_the_advantage_are_inverses|a budget that adds the dynamics it should subtract"
+  "src/ledger.rs|    if budget > 0.0 { Some(budget / reads as f64) } else { None }|    if budget > 0.0 { Some(budget) } else { None }|ledger::tests::the_readout_budget_and_the_advantage_are_inverses|a total budget reported as a per-read budget"
+  "src/ledger.rs|            let floor = crate::floors::readout_floor(1.0, t);|            let floor = crate::floors::readout_floor(8.0, t);|ledger::tests::whitelams_ten_orders_of_magnitude_need_a_readout_at_the_landauer_floor|a Landauer floor charged per byte where one node value is one bit"
+
 )
 
 bad=0
@@ -1400,7 +1410,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=287
+expected_rows=291
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

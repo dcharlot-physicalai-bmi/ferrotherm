@@ -59,6 +59,55 @@ pub fn weaker(a: Evidence, b: Evidence) -> Evidence {
     if a <= b { a } else { b }
 }
 
+/// The energy advantage that survives once the answer is **read out**.
+///
+/// `baseline_j / (dynamics_j + reads * e_read)`. An energy-advantage claim for a physical computer
+/// is almost always a ratio of two *dynamics* figures: what the digital baseline burns computing,
+/// against what the physical device dissipates evolving. The device's answer is then still inside
+/// the device. Getting it out is a third term, and it is charged nowhere in the claim.
+///
+/// This is the forward direction. [`read_budget_for_advantage`] is its inverse, and
+/// `the_readout_budget_and_the_advantage_are_inverses` round-trips them.
+///
+/// # Panics
+///
+/// If any energy is negative or non-finite, or if `dynamics_j + reads * e_read` is zero — a ratio
+/// against nothing is not an advantage.
+#[must_use]
+pub fn advantage_after_readout(baseline_j: f64, dynamics_j: f64, reads: u64, e_read: f64) -> f64 {
+    assert!(baseline_j.is_finite() && baseline_j >= 0.0, "baseline must be a non-negative energy, got {baseline_j}");
+    assert!(dynamics_j.is_finite() && dynamics_j >= 0.0, "dynamics must be a non-negative energy, got {dynamics_j}");
+    assert!(e_read.is_finite() && e_read >= 0.0, "a read price must be a non-negative energy, got {e_read}");
+    let total = dynamics_j + reads as f64 * e_read;
+    assert!(total > 0.0, "a claimed advantage needs something in the denominator");
+    baseline_j / total
+}
+
+/// **The largest per-read energy at which a claimed advantage still holds** — the bound an
+/// unpriced readout has to satisfy for the headline to be true.
+///
+/// Inverting [`advantage_after_readout`]: `(baseline_j / advantage - dynamics_j) / reads`. Divided
+/// by [`crate::floors::readout_floor`] this becomes the useful, constant-free form — *"every value
+/// read out must cost no more than N times its own Landauer floor"* — which can be checked against
+/// any real device without agreeing on what that device is.
+///
+/// `None` when the claim cannot hold **at any readout cost**, free readout included: the dynamics
+/// alone already exceed the budget the advantage allows.
+///
+/// # Panics
+///
+/// If `reads` is zero (a claim with no readout has no readout bound to report), if the advantage is
+/// not positive and finite, or if either energy is negative or non-finite.
+#[must_use]
+pub fn read_budget_for_advantage(baseline_j: f64, dynamics_j: f64, reads: u64, advantage: f64) -> Option<f64> {
+    assert!(reads > 0, "a claim that reads nothing has no readout bound");
+    assert!(advantage > 0.0 && advantage.is_finite(), "an advantage is positive and finite, got {advantage}");
+    assert!(baseline_j.is_finite() && baseline_j >= 0.0, "baseline must be a non-negative energy, got {baseline_j}");
+    assert!(dynamics_j.is_finite() && dynamics_j >= 0.0, "dynamics must be a non-negative energy, got {dynamics_j}");
+    let budget = baseline_j / advantage - dynamics_j;
+    if budget > 0.0 { Some(budget / reads as f64) } else { None }
+}
+
 /// Per-operation energy prices, in joules. These describe a DEVICE MODEL, not measured silicon,
 /// unless the source says otherwise; keep the provenance in the name.
 #[derive(Clone, Copy, Debug)]
@@ -819,4 +868,120 @@ mod tests {
         assert!(!KV260_AXI_METERED.is_stated());
         assert_eq!(Ledger { samples: 1, reads: 1, writes: 1 }.joules(&KV260_AXI_METERED), None);
     }
+
+    /// The two directions of the readout question are inverses, checked as a round trip rather than
+    /// as a restatement of either formula.
+    ///
+    /// [`read_budget_for_advantage`] answers "how cheap must a read be for this claim to hold";
+    /// [`advantage_after_readout`] answers "what is left of the claim at this read price". Feeding
+    /// each into the other must return the input. Written as two separate expressions on purpose: a
+    /// single formula asserted against itself is the repo's most common vacuity, and a round trip
+    /// through two independently written ones is not.
+    #[test]
+    fn the_readout_budget_and_the_advantage_are_inverses() {
+        let cases = [
+            (2.0833e-3f64, 1.2083e-14f64, 2_592_000u64, 1e11f64),
+            (1.0, 1e-9, 1_000, 5.0),
+            (7.5e-6, 2.5e-9, 42, 137.0),
+        ];
+        let mut checked = 0usize;
+        for &(baseline, dynamics, reads, want) in &cases {
+            let budget = read_budget_for_advantage(baseline, dynamics, reads, want).expect("attainable");
+            let back = advantage_after_readout(baseline, dynamics, reads, budget);
+            assert!((back - want).abs() / want < 1e-9, "round trip: asked {want}, budget {budget:e}, got back {back}");
+            // and the budget is binding: a read ten percent dearer must lose the claim.
+            let dearer = advantage_after_readout(baseline, dynamics, reads, budget * 1.1);
+            assert!(dearer < want, "the budget must be a real ceiling: {dearer} vs {want}");
+            checked += 1;
+        }
+        assert_eq!(checked, 3, "every case must be exercised");
+
+        // A claim the dynamics alone already break has no readout budget, free readout included.
+        assert_eq!(read_budget_for_advantage(1.0, 1.0, 10, 2.0), None, "dynamics already exceed the budget");
+        // and one that is only just attainable still reports a positive budget.
+        assert!(read_budget_for_advantage(1.0, 0.4, 10, 2.0).is_some(), "0.5 > 0.4 leaves room");
+    }
+
+    /// **Whitelam\'s ten orders of magnitude require a readout at the Landauer floor.**
+    ///
+    /// arXiv:2506.15121 (v3) prices a generative Langevin computer against a digital denoiser. Both
+    /// figures are the paper\'s own, verbatim: the digital budget is *"not less than
+    /// 5\u{d7}10^{14} k_BT"* per denoising trajectory, and *"Over 1000 independent denoising
+    /// trajectories of the trained computer we calculate a mean heat emission of
+    /// \u{27e8}Q\u{27e9}=2.9\u{d7}10^{3} k_BT"*. Their ratio is *"more than 10^{11}"*.
+    ///
+    /// **Both numbers are dynamics.** The heat is defined as
+    /// `Q = V(x(0)) - V(x(t_f))` — the potential energy at the two ends of a trajectory — so
+    /// obtaining the paper\'s own reported quantity requires reading the full state twice, over
+    /// `N_v + N_h = 784 + 512 = 1296` units. That is 2,592 values per trajectory and 2,592,000 over
+    /// the 1000 trajectories the mean is taken over. The claim charges none of them.
+    ///
+    /// | per-value readout cost | advantage that survives |
+    /// |---|---|
+    /// | free | 1.72e11 — the paper\'s own ratio, reproduced |
+    /// | 1.18 x the Landauer floor | 1e11 — the last point the headline holds |
+    /// | 10 x the floor | 2.4e10 |
+    /// | 26.4 x the floor | 1e10 |
+    /// | one metered KV260 AXI read | **1.38** |
+    ///
+    /// The middle rows need no device and no agreement about one: **for "more than 10^11" to
+    /// survive, every one of those 2,592 values must be read out for no more than 1.18 times
+    /// `kT ln 2`** — essentially at the thermodynamic floor for reading one bit, with no room for a
+    /// wire, an amplifier or an ADC. That is a bound on any readout, not a complaint about a
+    /// particular one.
+    ///
+    /// The free-readout row is the control: with reads priced at zero this machinery returns the
+    /// paper\'s ratio exactly, so the collapse in the last row is attributable to the readout and
+    /// not to the arithmetic here.
+    #[test]
+    fn whitelams_ten_orders_of_magnitude_need_a_readout_at_the_landauer_floor() {
+        // The paper\'s OWN kT, from its own sentence: 1 pJ per MAC "or 2.4e8 k_BT".
+        let kt = 1e-12 / 2.4e8;
+        let trajectories = 1000.0f64;
+        let units = 784u64 + 512;
+        let reads = 2 * units * 1000; // both ends of each trajectory, every unit
+        assert_eq!(reads, 2_592_000, "1296 units read at both ends of 1000 trajectories");
+
+        let baseline = 5e14 * kt * trajectories;
+        let dynamics = 2.9e3 * kt * trajectories;
+
+        // CONTROL: with a free readout this reproduces the paper\'s own ratio, which is a closed
+        // form in its two published numbers and carries no physical constant at all.
+        let free = advantage_after_readout(baseline, dynamics, reads, 0.0);
+        let paper = 5e14 / 2.9e3;
+        assert!((free - paper).abs() / paper < 1e-12, "free readout must reproduce the paper: {free} vs {paper}");
+        assert!(free > 1e11, "and the paper says more than 1e11: {free}");
+
+        // THE FINDING, in units nobody has to agree on a device to check.
+        let budget = read_budget_for_advantage(baseline, dynamics, reads, 1e11).expect("attainable");
+        for &t in &[300.0f64, 301.8] {
+            // 300 K is this crate\'s constant; 301.8 K is what the paper\'s own kT implies. The
+            // conclusion must not turn on which is used, so both are asserted.
+            let floor = crate::floors::readout_floor(1.0, t);
+            let in_floors = budget / floor;
+            assert!(
+                (1.0..1.25).contains(&in_floors),
+                "at {t} K the readout budget is {in_floors} Landauer floors, and the claim is that it is barely above 1"
+            );
+        }
+
+        // Ten times the floor already costs an order of magnitude of the headline.
+        let floor = crate::floors::readout_floor(1.0, 300.0);
+        let at_ten = advantage_after_readout(baseline, dynamics, reads, 10.0 * floor);
+        assert!((2e10..3e10).contains(&at_ten), "at 10x the Landauer floor: {at_ten}");
+        let at_264 = advantage_after_readout(baseline, dynamics, reads, 26.4 * floor);
+        assert!((0.9e10..1.1e10).contains(&at_264), "at 26.4x the Landauer floor: {at_264}");
+
+        // And what a real, metered read does to it. KV260_AXI_METERED is the only read price in the
+        // catalogue graded Metered, and it is one single-beat AXI4-Lite read of one node.
+        let metered = advantage_after_readout(baseline, dynamics, reads, KV260_AXI_METERED.e_read);
+        assert!(metered < 10.0, "a metered readout leaves {metered}, not 1e11");
+        assert!(metered > 1.0, "though the computer is still ahead, barely: {metered}");
+        // The collapse is eleven orders of magnitude, and it is the readout, not the dynamics:
+        // the dynamics term is negligible against the readout term at this price.
+        let readout_only = reads as f64 * KV260_AXI_METERED.e_read;
+        assert!(readout_only > 1e10 * dynamics, "the readout dwarfs the dynamics: {readout_only} vs {dynamics}");
+        assert!(free / metered > 1e10, "the readout costs eleven orders of magnitude of the claim");
+    }
+
 }

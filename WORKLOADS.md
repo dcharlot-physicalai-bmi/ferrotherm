@@ -637,3 +637,48 @@ quote — as it does in entries 1 and 5 above, and in entry 3, where the workloa
   the 1000-spin 3D spin glass they name, and given that a sweep *"updates every spin once in a fixed
   order"*, that is **4.95e7 single-spin updates per generated sample**. Each chain's sweeps are
   sequential, so that figure cannot be divided by a p-bit count to get a wall-clock.
+
+### The general form: an advantage that does not charge readout is bounded by readout
+
+Every entry above is a particular case of one rule, and `ledger::advantage_after_readout` and
+`ledger::read_budget_for_advantage` compute it. An energy-advantage claim for a physical computer is
+almost always a ratio of two **dynamics** figures — what the digital baseline burns computing,
+against what the device dissipates evolving. When the ratio is quoted, the device's answer is still
+inside the device. **Getting it out is a third term, and it is charged nowhere.**
+
+Inverting the ratio gives a bound that needs no device and no agreement about one: *for this claim
+to hold, every value read out must cost no more than N times its own `kT ln 2`.* When `N` comes out
+near 1, the claim is not a hardware target — it is a statement that readout is thermodynamically
+free.
+
+- **arXiv:2506.15121 (Whitelam, LBNL), "more than 10^11".** Both of its numbers are the paper's own
+  and both are dynamics: *"the order-of-magnitude energy budget of denoising using a neural network
+  is not less than 5×10^{14} k_BT"*, against *"Over 1000 independent denoising trajectories of the
+  trained computer we calculate a mean heat emission of ⟨Q⟩=2.9×10^{3} k_BT"*. The heat is defined
+  as *"Q=V(x(0))-V(x(t_f))"* — the potential at the two ends of a trajectory — so obtaining the
+  paper's own reported quantity means reading the full state twice, across
+  `N_v + N_h = 784 + 512 = 1296` units: **2,592 values per trajectory, 2,592,000 over the 1000 the
+  mean is taken over.**
+
+  | per-value readout cost | advantage that survives |
+  |---|---|
+  | free | **1.72e11** — the paper's ratio, reproduced exactly |
+  | 1.18 × the Landauer floor | 1e11 — the last point the headline holds |
+  | 10 × the floor | 2.4e10 |
+  | 26.4 × the floor | 1e10 |
+  | one metered KV260 AXI read | **1.38** |
+
+  **For "more than 10^11" to survive, each of those 2,592 values must be read out for no more than
+  1.18 times `kT ln 2`** — at the floor for reading one bit, with nothing left over for a wire, an
+  amplifier or a converter. The free-readout row is the control: priced at zero, the same arithmetic
+  returns the paper's own ratio, so the collapse is the readout and not our bookkeeping. The
+  conclusion does not turn on which temperature is used — 300 K (this crate's constant) and 301.8 K
+  (what the paper's own `kT` implies) are both asserted.
+
+  **This is a bound on any readout, not a complaint about one board.** The KV260 row is there because
+  it is the only read price in `ledger::CATALOGUE` graded `Metered`, and it shows where a real
+  single-beat AXI4-Lite read of one node sits: about 2.0e11 times its own Landauer floor. The paper
+  claims a physical implementation only prospectively — *"Realized physically ... such systems could
+  perform autonomous generative computation"* — so nothing here says the measurement it did report is
+  wrong. What it says is that the quoted ratio is a ratio of dynamics, and the term it omits is the
+  one that decides the answer.

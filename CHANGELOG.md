@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### The third term: an advantage that does not charge readout is bounded by readout
+
+`ledger::advantage_after_readout` and `ledger::read_budget_for_advantage` are inverses of each
+other, and between them they price the term nearly every energy-advantage claim omits. **Such a
+claim is almost always a ratio of two *dynamics* figures** — what the digital baseline burns
+computing, against what the physical device dissipates evolving. When the ratio is quoted the
+device's answer is still inside the device, and getting it out is charged nowhere.
+
+Inverting the ratio gives a bound that needs no device and no agreement about one: *for this claim
+to hold, every value read out must cost no more than N times its own `kT ln 2`*. When `N` lands near
+1, the claim is not a hardware target — it says readout is thermodynamically free.
+
+**arXiv:2506.15121 (Whitelam, LBNL) claims "more than 10^11".** Both of its numbers are its own and
+both are dynamics: the digital budget is *"not less than 5×10^{14} k_BT"* per trajectory, against
+*"a mean heat emission of ⟨Q⟩=2.9×10^{3} k_BT"* over 1000 trajectories. The heat is defined as
+*"Q=V(x(0))-V(x(t_f))"*, so obtaining the paper's own reported quantity means reading the full state
+twice, across `784 + 512 = 1296` units — **2,592 values per trajectory, 2,592,000 over the 1000 the
+mean is taken over.**
+
+| per-value readout cost | advantage that survives |
+|---|---|
+| free | **1.72e11** — the paper's ratio, reproduced exactly |
+| 1.18 × the Landauer floor | 1e11 — the last point the headline holds |
+| 10 × the floor | 2.4e10 |
+| 26.4 × the floor | 1e10 |
+| one metered KV260 AXI read | **1.38** |
+
+**For "more than 10^11" to survive, each of those 2,592 values must be read out for no more than
+1.18 × `kT ln 2`** — the floor for reading one bit, with nothing left for a wire, an amplifier or a
+converter. The free-readout row is the control: priced at zero, the same arithmetic returns the
+paper's ratio exactly, so the collapse is the readout and not our bookkeeping. Asserted at both
+300 K (this crate's constant) and 301.8 K (what the paper's own `kT` implies), because the
+conclusion must not turn on that choice.
+
+This is a bound on **any** readout. The KV260 row is there because it is the only read price in
+`CATALOGUE` graded `Metered`, and it shows where a real single-beat AXI4-Lite read of one node sits:
+about 2.0e11 times its own Landauer floor. The paper claims a physical implementation only
+prospectively, so nothing here says the measurement it did report is wrong — only that the quoted
+ratio is a ratio of dynamics, and the omitted term is the one that decides it.
+
+Four mutations, each seen red: the readout term dropped from the denominator, the dynamics added
+where it should be subtracted, a total budget reported as a per-read budget, and the Landauer floor
+charged per byte where one node value is one bit.
+
 ### Reusing a p-bit changes the answer: `Kernel::TickRandom`, and a label that spans two grades
 
 **`Kernel::TickRandom { p }` is the synchronous tick-random policy of Onizawa & Hanyu
