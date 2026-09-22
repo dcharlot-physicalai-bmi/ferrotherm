@@ -32,10 +32,37 @@ cd "$here"
 
 sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 base="$(sha "$file")"
-keep="$(mktemp)"
+
+# 4. THE SAVED BYTES LIVE IN THE REPO, AND A RESTORE NEVER TRUNCATES BEFORE IT CAN READ.
+#
+# Added 2026-09-21, after this script emptied a 857-line file it was protecting. The saved copy had
+# been `mktemp`, so it sat in /var/folders and was reaped while a `cargo test` waited out a load
+# average of 31. The restore was one expression:
+#
+#     open(dst,'wb').write(open(src,'rb').read())
+#
+# Python evaluates `open(dst,'wb')` FIRST, which truncates, and only then discovers that `src` is
+# gone and raises. A missing backup therefore became data loss, and the `RESTORE FAILED` line this
+# script printed was correct and far too late. Both halves are fixed: the copy is kept inside the
+# repository where nothing sweeps it, and the restore reads the bytes, checks them against the
+# recorded digest, and only then opens the target for writing. If it cannot, it says so and LEAVES
+# THE FILE ALONE -- a mutated file is recoverable, an emptied one is not.
+keep="$here/.mutation-hand-keep"
 python3 -c "import sys;open(sys.argv[2],'wb').write(open(sys.argv[1],'rb').read())" "$file" "$keep"
 restore() {
-  python3 -c "import sys;open(sys.argv[1],'wb').write(open(sys.argv[2],'rb').read())" "$file" "$keep"
+  python3 - "$file" "$keep" "$base" <<'RESTORE_PY'
+import sys, os, hashlib
+dst, src, want = sys.argv[1:4]
+if not os.path.exists(src):
+    sys.stderr.write(f"RESTORE IMPOSSIBLE: saved bytes gone at {src}; {dst} LEFT AS IS\n")
+    sys.exit(9)
+data = open(src, 'rb').read()
+got = hashlib.sha256(data).hexdigest()
+if got != want:
+    sys.stderr.write(f"RESTORE IMPOSSIBLE: saved bytes are not what was saved ({got} vs {want}); {dst} LEFT AS IS\n")
+    sys.exit(9)
+open(dst, 'wb').write(data)          # reached only once the bytes are in hand and verified
+RESTORE_PY
 }
 trap 'restore; rm -f "$keep"' EXIT INT TERM HUP
 
@@ -53,9 +80,11 @@ if [[ -n "$pkg" ]]; then
 else
   out="$(cargo test --release --lib "$filter" 2>&1)"
 fi
-restore
+restore || true
 if [[ "$(sha "$file")" != "$base" ]]; then
-  echo "RESTORE FAILED for '$label': $file is not the file this started with" >&2
+  echo "RESTORE FAILED for '$label': $file is not the file this started with." >&2
+  echo "                 The bytes it started with are still at $keep -- copy them back BEFORE" >&2
+  echo "                 doing anything else, and do not let this script run again first." >&2
   exit 9
 fi
 

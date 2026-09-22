@@ -179,6 +179,60 @@ impl DenseMemory {
         }
         out
     }
+
+    /// The **energy whose gradient is that attention map** (Ramsauer et al. 2020, Eq. 7):
+    ///
+    /// ```text
+    ///     E(ξ) = −lse(β, Xᵀξ) + ½ ξᵀξ,      lse(β, z) = β⁻¹ ln Σ_μ exp(β z_μ)
+    /// ```
+    ///
+    /// with `X` the stored patterns as columns. The two additive constants of the published form
+    /// (`β⁻¹ ln P` and `½ M²`, `M = max‖x_μ‖`) are omitted: they shift `E` and not `∇E`, and
+    /// everything this is used for is a gradient. [`DenseMemory::lse_constant`] returns them for a
+    /// caller that wants the published value.
+    ///
+    /// # Why it matters that this exists
+    ///
+    /// [`DenseMemory::attention_update`] is described everywhere — here included, until now — as a
+    /// map that *is* softmax attention. That is a statement about its algebra. This function makes
+    /// the stronger and more useful statement checkable: **attention is one gradient step on a
+    /// stated energy**, `ξ − ∇E(ξ) = T(ξ)` exactly, which is what lets a sampler be defined on it
+    /// at all. `attention_is_exactly_one_gradient_step_on_this_energy` holds it to central
+    /// differences.
+    ///
+    /// # Panics
+    ///
+    /// If `xi` is not the pattern length, or `beta` is not positive and finite.
+    #[must_use]
+    pub fn lse_energy(&self, xi: &[f64], beta: f64) -> f64 {
+        assert_eq!(xi.len(), self.n, "a query must be the pattern length");
+        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+        let logits: Vec<f64> = self
+            .patterns
+            .iter()
+            .map(|p| beta * p.iter().zip(xi).map(|(&a, &q)| f64::from(a) * q).sum::<f64>())
+            .collect();
+        let mx = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let sum: f64 = logits.iter().map(|l| (l - mx).exp()).sum();
+        let lse = (mx + sum.ln()) / beta;
+        let quad: f64 = xi.iter().map(|q| q * q).sum::<f64>() / 2.0;
+        -lse + quad
+    }
+
+    /// The additive constants the published energy carries and [`DenseMemory::lse_energy`] omits:
+    /// `β⁻¹ ln P + ½M²`. They do not change a gradient, a fixed point, or any Boltzmann ratio —
+    /// what they do is put the energy floor at zero, which
+    /// `the_omitted_constants_are_what_put_the_energy_floor_at_zero` measures.
+    ///
+    /// # Panics
+    ///
+    /// If `beta` is not positive and finite.
+    #[must_use]
+    pub fn lse_constant(&self, beta: f64) -> f64 {
+        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+        // Every stored pattern is ±1, so ‖x_μ‖² = n for all of them and the max is exact.
+        (self.patterns.len() as f64).ln() / beta + 0.5 * self.n as f64
+    }
 }
 
 // ---- the program path: the same memory as a higher-order program ----------------------------
@@ -334,6 +388,246 @@ pub fn overlap(pattern: &[i8], s: &[i8]) -> f64 {
 mod tests {
     use super::*;
     use crate::hopfield::{hebbian, random_patterns};
+
+    /// **Attention is one gradient step on [`DenseMemory::lse_energy`]** — the identity
+    /// `ξ − ∇E(ξ) = T(ξ)`, with `T` = [`DenseMemory::attention_update`], held to central
+    /// differences at `h = 1e-6` on 100 random queries (K = 8, d = 16, β = 2).
+    ///
+    /// The two sides are independent code: `lse_energy` never calls `attention_update` and the
+    /// difference quotient never sees a softmax. A gradient that is off by a sign, that drops the
+    /// `½ξᵀξ` term, or that is not a gradient at all fails here.
+    ///
+    /// # The regime is asserted, not assumed
+    ///
+    /// The identity is trivially satisfiable in the limit where one pattern dominates: there
+    /// `T(ξ)` is just that pattern and the energy is `−max_μ x_μ·ξ + ½ξᵀξ`, a function whose
+    /// gradient anyone would get right. So queries are drawn from two families and the test
+    /// requires them to **partition**: every diffuse draw leaves the softmax mixed (top weight
+    /// below 0.9) and every on-pattern draw peaks (above 0.99). Counting draws past a threshold is
+    /// not enough — a version of this test that did so was satisfied by the wrong family when the
+    /// mixed regime was deleted outright.
+    #[test]
+    fn attention_is_exactly_one_gradient_step_on_this_energy() {
+        let (k, d, beta, h) = (8usize, 16usize, 2.0f64, 1e-6f64);
+        let mem = DenseMemory::new(random_patterns(d, k, 77), Energy::Exponential { b: 2.0 });
+        let mut rng = Pcg::new(404, 0);
+        let mut worst = 0.0f64;
+        // Per-family top softmax weights, so the two families can be required to partition.
+        let (mut diffuse_top, mut pattern_top) = (Vec::new(), Vec::new());
+        for draw in 0..100 {
+            // A diffuse query keeps the softmax mixed: uniform(-scale, scale) makes beta*x·xi have
+            // standard deviation beta*scale*sqrt(d/3) = 4.6*scale, well inside the soft part of the
+            // softmax at these scales. A query sitting ON a stored pattern is the retrieval case:
+            // its own logit is beta*g*d = 32g against ~+-8g for the others, a gap of ~24g, so
+            // g = 0.5 puts the top weight past 0.99.
+            let xi: Vec<f64> = if draw % 3 == 2 {
+                mem.patterns[draw % k].iter().map(|&a| 0.5 * f64::from(a)).collect()
+            } else {
+                let scale = [0.05, 0.2][draw % 3];
+                (0..d).map(|_| scale * (2.0 * rng.f64() - 1.0)).collect()
+            };
+
+            let mut grad = vec![0.0; d];
+            for i in 0..d {
+                let (mut up, mut dn) = (xi.clone(), xi.clone());
+                up[i] += h;
+                dn[i] -= h;
+                grad[i] = (mem.lse_energy(&up, beta) - mem.lse_energy(&dn, beta)) / (2.0 * h);
+            }
+            let t = mem.attention_update(&xi, beta);
+            for i in 0..d {
+                let err = (grad[i] - (xi[i] - t[i])).abs();
+                worst = worst.max(err);
+                assert!(err < 1e-6, "draw {draw} coord {i}: dE/dxi = {} but xi - T(xi) = {}", grad[i], xi[i] - t[i]);
+            }
+
+            let logits: Vec<f64> = mem.patterns.iter().map(|p| beta * p.iter().zip(&xi).map(|(&a, &q)| f64::from(a) * q).sum::<f64>()).collect();
+            let mx = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let w: Vec<f64> = logits.iter().map(|l| (l - mx).exp()).collect();
+            let top = w.iter().copied().fold(f64::NEG_INFINITY, f64::max) / w.iter().sum::<f64>();
+            if draw % 3 == 2 { pattern_top.push(top) } else { diffuse_top.push(top) }
+        }
+        assert_eq!(diffuse_top.len(), 67, "the construction makes 67 diffuse draws of 100");
+        assert_eq!(pattern_top.len(), 33, "and 33 on a stored pattern");
+        let hi = |v: &[f64]| v.iter().copied().fold(0.0f64, f64::max);
+        let lo = |v: &[f64]| v.iter().copied().fold(1.0f64, f64::min);
+        assert!(hi(&diffuse_top) < 0.9, "every diffuse draw must leave the softmax mixed: worst top weight {}", hi(&diffuse_top));
+        assert!(lo(&pattern_top) > 0.99, "every pattern draw must peak: weakest top weight {}", lo(&pattern_top));
+        assert!(lo(&diffuse_top) < 0.35, "and the diffuse family must reach genuinely flat, not just under the bar: flattest was {}", lo(&diffuse_top));
+        // A softmax over K terms cannot have a largest weight below 1/K, so a recorded weight under
+        // that did not come from this softmax. Without this line, writing 0.0 into `diffuse_top`
+        // satisfies both bounds above and the regime check measures nothing.
+        assert!(lo(&diffuse_top) >= 1.0 / k as f64, "a top softmax weight cannot be below 1/K = {}: got {}", 1.0 / k as f64, lo(&diffuse_top));
+        assert!(hi(&pattern_top) <= 1.0, "nor above 1: got {}", hi(&pattern_top));
+        assert!(worst < 1e-6, "worst coordinate error over 100 draws: {worst}");
+    }
+
+    /// **One attention step is not the energy\'s minimiser**, except in one corner.
+    ///
+    /// The identity above says `T(ξ) = ξ − ∇E(ξ)`: one gradient step, step size exactly 1. It is
+    /// commonly read one step further — "attention is an energy-based model, so a machine that
+    /// relaxes to that energy computes attention". That reading is measured here and it fails.
+    ///
+    /// Iterating `T` to its fixed point and comparing against one step:
+    ///
+    /// | query | β = 0.25 | β = 1 | β = 4 |
+    /// |---|---|---|---|
+    /// | on a stored pattern | 0.818 | 0.0088 | 0.0 |
+    /// | diffuse | 0.572 | 0.781 | 0.412 |
+    ///
+    /// (relative distance `‖T(ξ) − T^∞(ξ)‖ / ‖T^∞(ξ)‖`, mean over 20 draws each.)
+    ///
+    /// **One-step retrieval needs both conditions**, a query already on a pattern *and* a high β —
+    /// which is Ramsauer et al.\'s separation hypothesis, and is what their one-step theorem
+    /// assumes. Drop either and the fixed point is somewhere else: at β = 0.25 a pattern query is
+    /// still 82% away, and a diffuse query is 41–90% away at **every** β measured, never small.
+    ///
+    /// So a sampler that relaxes to this energy does not return `T(ξ)`. It returns `T^∞(ξ)`, which
+    /// in the regime an attention head actually operates in is a different vector. The descent is
+    /// real — 0 energy increases in 300 iterations, the concave-convex guarantee — but it takes up
+    /// to 68 iterations, not one.
+    #[test]
+    fn one_attention_step_is_the_minimiser_only_where_the_pattern_is_already_found() {
+        let (k, d) = (8usize, 16usize);
+        let mem = DenseMemory::new(random_patterns(d, k, 77), Energy::Exponential { b: 2.0 });
+        let nrm = |a: &[f64]| a.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let dist = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt();
+        let mut increases = 0usize;
+        let mut worst_iters = 0usize;
+        let mut table = Vec::new();
+        for &beta in &[0.25f64, 1.0, 4.0] {
+            let mut rng = Pcg::new(404, 0);
+            let (mut on_pattern, mut diffuse) = (Vec::new(), Vec::new());
+            for draw in 0..60 {
+                let retrieval = draw % 3 == 2;
+                let xi: Vec<f64> = if retrieval {
+                    mem.patterns[draw % k].iter().map(|&a| 0.5 * f64::from(a)).collect()
+                } else {
+                    (0..d).map(|_| 0.2 * (2.0 * rng.f64() - 1.0)).collect()
+                };
+                let one = mem.attention_update(&xi, beta);
+                let (mut cur, mut e_prev, mut iters) = (one.clone(), mem.lse_energy(&xi, beta), 1usize);
+                loop {
+                    let e = mem.lse_energy(&cur, beta);
+                    // The iteration is a descent method, so the energy never rises.
+                    if e > e_prev + 1e-12 { increases += 1; }
+                    e_prev = e;
+                    let next = mem.attention_update(&cur, beta);
+                    let moved = dist(&next, &cur);
+                    cur = next;
+                    if moved < 1e-12 || iters > 5000 { break; }
+                    iters += 1;
+                }
+                worst_iters = worst_iters.max(iters);
+                let rel = dist(&one, &cur) / nrm(&cur).max(1e-30);
+                if retrieval { on_pattern.push(rel) } else { diffuse.push(rel) }
+            }
+            let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+            assert_eq!(on_pattern.len(), 20, "20 pattern queries per beta");
+            assert_eq!(diffuse.len(), 40, "40 diffuse queries per beta");
+            table.push((beta, mean(&on_pattern), mean(&diffuse)));
+        }
+        assert_eq!(increases, 0, "the attention iteration is a descent method: {increases} energy increases");
+        assert!(worst_iters >= 20, "the fixed point must be genuinely far for at least one draw, else this test compares a vector to itself: worst was {worst_iters} iterations");
+
+        // The corner where one step IS the answer: on a pattern, at high beta.
+        let (b4, on4, diff4) = table[2];
+        assert!((b4 - 4.0).abs() < 1e-12);
+        assert!(on4 < 1e-3, "at beta = 4 a pattern query must converge in one step: {on4}");
+        // Drop beta and the same query no longer converges in one step.
+        let (b_lo, on_lo, diff_lo) = table[0];
+        assert!((b_lo - 0.25).abs() < 1e-12);
+        assert!(on_lo > 0.5, "at beta = 0.25 the SAME pattern query must not converge in one step: {on_lo}");
+        // Drop the separated query and no beta rescues it.
+        for &(beta, _, diff) in &table {
+            assert!(diff > 0.4, "a diffuse query must stay far from the fixed point at beta = {beta}: {diff}");
+            assert!(diff < 1.0, "and not so far that the fixed point is degenerate at beta = {beta}: {diff}");
+        }
+        assert!(diff4 > 10.0 * on4, "at beta = 4 the two regimes must be far apart: diffuse {diff4} vs on-pattern {on4}");
+        assert!(diff_lo < 2.0 * on_lo, "at beta = 0.25 neither regime converges, so they are comparable: diffuse {diff_lo} vs on-pattern {on_lo}");
+    }
+
+    /// **The published constants are what make the energy non-negative.** [`DenseMemory::lse_constant`]
+    /// is not bookkeeping: with `β⁻¹ ln P + ½M²` added, `E(ξ) ≥ ½(‖ξ‖ − M)² ≥ 0` for every query,
+    /// because `lse(β, Xᵀξ) ≤ max_μ x_μ·ξ + β⁻¹ ln P ≤ ‖ξ‖M + β⁻¹ ln P`. Without them the energy is
+    /// negative on more than half of a 200-draw scan.
+    ///
+    /// **That bound is sound but slack, and measuring it says by how much.** `lse ≤ max + β⁻¹ ln P`
+    /// is tight only when all P logits are *equal*, so a separated pattern set — where one logit
+    /// dominates, which is the whole point of a memory — leaves precisely `β⁻¹ ln P` on the table.
+    /// Measured infimum: **1.0399, against ln(8)/2 = 1.0397.** Zero is attained only in the
+    /// degenerate case of P identical patterns, where `lse` is exact and `E(ξ) = ½‖ξ − x‖²`.
+    #[test]
+    fn the_omitted_constants_are_what_put_the_energy_floor_at_zero() {
+        let (d, beta) = (16usize, 2.0f64);
+        let mem = DenseMemory::new(random_patterns(d, 8, 78), Energy::Exponential { b: 2.0 });
+        // Recomputed from the pattern data, not from the formula under test: every stored vector
+        // is +-1, so M^2 is the largest squared norm actually present.
+        let m2 = mem.patterns.iter().map(|p| p.iter().map(|&a| f64::from(a) * f64::from(a)).sum::<f64>()).fold(0.0f64, f64::max);
+        let want = (mem.patterns.len() as f64).ln() / beta + 0.5 * m2;
+        assert!((mem.lse_constant(beta) - want).abs() < 1e-12, "constant {} should be beta^-1 ln P + M^2/2 = {want}", mem.lse_constant(beta));
+        assert!((m2 - d as f64).abs() < 1e-12, "+-1 patterns have squared norm n = {d}, measured {m2}");
+
+        let c = mem.lse_constant(beta);
+        let m = m2.sqrt();
+        let mut rng = Pcg::new(405, 0);
+        let (mut went_negative, mut tightest) = (0usize, f64::INFINITY);
+        for draw in 0..200 {
+            // Scan the norm through M, where the bound 1/2 (|xi| - M)^2 is tight.
+            let gain = 0.2 + 1.2 * (draw as f64 / 199.0);
+            let raw: Vec<f64> = (0..d).map(|_| 2.0 * rng.f64() - 1.0).collect();
+            let rn = raw.iter().map(|v| v * v).sum::<f64>().sqrt();
+            let xi: Vec<f64> = if draw % 2 == 0 {
+                mem.patterns[draw % mem.patterns.len()].iter().map(|&a| gain * f64::from(a)).collect()
+            } else {
+                raw.iter().map(|v| v * gain * m / rn).collect()
+            };
+            let ours = mem.lse_energy(&xi, beta);
+            let published = ours + c;
+            if ours < 0.0 { went_negative += 1; }
+            assert!(published >= -1e-12, "the published energy must be non-negative, draw {draw} gave {published}");
+            let n = xi.iter().map(|v| v * v).sum::<f64>().sqrt();
+            let floor = 0.5 * (n - m).powi(2);
+            assert!(published >= floor - 1e-9, "draw {draw}: published {published} below its own bound {floor}");
+            tightest = tightest.min(published);
+        }
+        assert!(went_negative >= 100, "without the constants the energy is routinely negative: only {went_negative} of 200");
+
+        // `lse <= max + beta^-1 ln P` is tight only when all P logits are EQUAL, so a separated
+        // pattern set leaves precisely `beta^-1 ln P` on the table.
+        let slack = (mem.patterns.len() as f64).ln() / beta;
+        assert!(tightest > slack, "a separated set cannot reach below the lse slack: {tightest} vs {slack}");
+        assert!(tightest < 1.001 * slack, "and it comes right down to it: {tightest} vs {slack}");
+
+        // Where the floor IS attained: P identical patterns make lse exact, so the constants cancel
+        // the ln P term outright and E(xi) = 1/2 |xi - x|^2, which is 0 at xi = x.
+        //
+        // Every reference below is the squared distance of the DRAWN vector, never a closed form in
+        // the loop index: a mutant can substitute `2.0 * flips` for a measured energy and be exactly
+        // right, which is how an earlier version of this loop passed while measuring nothing.
+        let one = mem.patterns[0].clone();
+        let degenerate = DenseMemory::new(vec![one.clone(); 8], Energy::Exponential { b: 2.0 });
+        let at: Vec<f64> = one.iter().map(|&a| f64::from(a)).collect();
+        let (mut span_lo, mut span_hi) = (f64::INFINITY, 0.0f64);
+        let mut rng2 = Pcg::new(406, 0);
+        for draw in 0..60 {
+            // draw 0 sits exactly on the pattern -- the only place the floor is attained.
+            let reach = if draw == 0 { 0.0 } else { 0.05 + 3.0 * (draw as f64 / 59.0) };
+            let xi: Vec<f64> = at.iter().map(|v| v + reach * (2.0 * rng2.f64() - 1.0)).collect();
+            let want: f64 = xi.iter().zip(&at).map(|(q, x)| (q - x) * (q - x)).sum::<f64>() / 2.0;
+            let got = degenerate.lse_energy(&xi, beta) + degenerate.lse_constant(beta);
+            assert!((got - want).abs() < 1e-9, "draw {draw}: published energy {got} should be |xi-x|^2/2 = {want}");
+            // and the un-shifted energy is the same curve moved down by exactly the constant.
+            let bare = degenerate.lse_energy(&xi, beta);
+            assert!((got - bare - degenerate.lse_constant(beta)).abs() < 1e-12, "the constant is the only difference between the two");
+            span_lo = span_lo.min(got);
+            span_hi = span_hi.max(got);
+        }
+        assert!(span_lo.abs() < 1e-12, "the floor is exactly attained at xi = x: {span_lo}");
+        // The range must outrun the constant under test, or the constant would be setting the scale
+        // of its own check. Measured top of range 23.46 against a constant of 9.04.
+        assert!(span_hi > 2.0 * c, "the identity must be checked well away from the floor: top of range {span_hi} against a constant of {c}");
+    }
 
     /// Degree 2 IS the classical memory: `E_dense(s)` = `E_Hebb(s)` − P/2 for every state.
     #[test]

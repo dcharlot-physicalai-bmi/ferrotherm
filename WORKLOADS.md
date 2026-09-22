@@ -420,6 +420,77 @@ Five mutations of the pass were each required to turn the enumeration red. One a
 was the mutation failing to apply rather than the check failing to see, which is why the mutation
 script now refuses to run when its pattern does not match.
 
+## 7. Attention as an energy — `src/dense_memory.rs`
+
+Softmax attention and the modern Hopfield network are the same object. That is the bridge the whole
+"thermodynamic computing for AI" thesis rests on, and it is usually asserted rather than checked, so
+here it is checked and then pushed until it breaks.
+
+**The identity, held to central differences.** Write the energy
+
+```text
+    E(ξ) = −lse(β, Xᵀξ) + ½ ξᵀξ,      lse(β, z) = β⁻¹ ln Σ_μ exp(β z_μ)
+```
+
+with the stored patterns as the columns of `X`. Then `T(ξ) = ξ − ∇E(ξ)` is exactly softmax
+attention: `X softmax(β Xᵀξ)`. `lse_energy` never calls `attention_update` and the difference
+quotient never sees a softmax, so the two sides are independent code. At `h = 1e-6`, K = 8, d = 16,
+β = 2, over 100 queries and every one of 16 coordinates, the worst disagreement is below 1e-6.
+
+Attention is therefore **one gradient step, at step size exactly 1**, on a function we can write
+down. Three mutations of the energy — dropping `½ξᵀξ`, flipping the `lse` sign, forgetting the
+`β⁻¹` — each turn it red.
+
+### ⛔ AND THE OBVIOUS NEXT STEP IS FALSE
+
+The step everyone takes from there is: *attention is an energy-based model, so a machine that
+relaxes to that energy computes attention.* It does not. Relaxation returns the energy's minimiser,
+`T^∞(ξ)`. Attention returns `T(ξ)`. They are the same vector only in one corner.
+
+Iterating `T` to its fixed point and measuring `‖T(ξ) − T^∞(ξ)‖ / ‖T^∞(ξ)‖`, mean over 20 draws:
+
+| query | β = 0.25 | β = 1 | β = 4 |
+|---|---|---|---|
+| sits on a stored pattern | 0.818 | 0.0088 | **0.0** |
+| diffuse | 0.572 | 0.781 | 0.412 |
+
+**One-step retrieval needs both conditions.** A query already on a pattern *and* a high β — which
+is Ramsauer et al.'s separation hypothesis, and is exactly what their one-step theorem assumes. Drop
+either one and the fixed point is somewhere else: at β = 0.25 the same pattern query is still 82%
+away, and a diffuse query is **41–90% away at every β measured, never small** — and a diffuse query
+is what a real attention head has, since a head that already sat on its answer would not need to run.
+
+The descent is real: 0 energy increases across 300 iterations, which is the concave-convex guarantee
+holding. It just takes up to 68 iterations, not one. So the substitution is not a speedup with a
+constant factor to argue about; in the regime that matters it computes a different function.
+
+**Three of the five mutations against this entry survived the first version of its tests**, and each
+survivor was a way the test measured its own bookkeeping instead of the code:
+
+- Deleting the mixed-query regime entirely — every draw at one scale — still satisfied a
+  *"at least 20 draws were blended"* count, because the remaining family drifted under the bar. The
+  two families now have to **partition**: every diffuse draw below 0.9 and every pattern draw above
+  0.99, with exact counts.
+- Writing `0.0` into the recorded softmax weights satisfied both of those bounds. A softmax over K
+  terms cannot have a largest weight below `1/K`, and that line now says so.
+- Substituting the expected value for the measured energy was exactly right, because the expected
+  value was `2·flips` — a closed form in the loop index. The references are now squared distances of
+  a randomly drawn vector, which no expression in the index reproduces.
+
+### What the omitted constants are for
+
+The published energy carries `β⁻¹ ln P + ½M²` on top, and they are not bookkeeping: they put the
+floor at zero, since `lse(β, Xᵀξ) ≤ max_μ x_μ·ξ + β⁻¹ ln P ≤ ‖ξ‖M + β⁻¹ ln P` gives
+`E ≥ ½(‖ξ‖ − M)² ≥ 0`. Without them the energy is negative on more than half of a 200-draw scan.
+
+**That bound is sound but slack, and measuring it says by how much.** `lse ≤ max + β⁻¹ ln P` is tight
+only when all P logits are *equal*, so a separated pattern set — where one logit dominates, which is
+the whole point of a memory — leaves precisely `β⁻¹ ln P` on the table. Measured infimum over 200
+draws: **1.0399, against ln(8)/2 = 1.0397.** Zero is attained only in the degenerate case of P
+identical patterns, where `lse` is exact and `E(ξ) = ½‖ξ − x‖²` on the nose.
+
+---
+
 ## What we deliberately do not do
 
 **Routing, scheduling and portfolio optimisation.** They are MILP in a QUBO costume and they lose to

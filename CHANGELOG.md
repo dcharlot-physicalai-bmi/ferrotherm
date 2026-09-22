@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### Attention has an energy, and relaxing to it does not compute attention
+
+**The bridge the whole "thermodynamic computing for AI" thesis rests on is that softmax attention and
+the modern Hopfield network are the same object.** It is usually asserted. `DenseMemory::lse_energy`
+makes it checkable — `E(ξ) = −lse(β, Xᵀξ) + ½ξᵀξ` — and the identity `ξ − ∇E(ξ) = T(ξ)` now holds to
+central differences at `h = 1e-6`, over 100 queries × 16 coordinates, worst disagreement below
+`1e-6`. The two sides are independent code: the energy never calls the attention map and the
+difference quotient never sees a softmax. Attention is **one gradient step, at step size exactly 1**,
+on a function we can write down.
+
+**The step everyone takes from there is false.** *Attention is an energy-based model, so a machine
+that relaxes to that energy computes attention* — it does not. Relaxation returns the minimiser
+`T^∞(ξ)`; attention returns `T(ξ)`. Measured as `‖T(ξ) − T^∞(ξ)‖ / ‖T^∞(ξ)‖`:
+
+| query | β = 0.25 | β = 1 | β = 4 |
+|---|---|---|---|
+| sits on a stored pattern | 0.818 | 0.0088 | **0.0** |
+| diffuse | 0.572 | 0.781 | 0.412 |
+
+One-step retrieval needs **both** conditions — a query already on a pattern *and* a high β, which is
+Ramsauer et al.'s separation hypothesis and exactly what their one-step theorem assumes. Drop either
+and the fixed point is elsewhere: at β = 0.25 the same pattern query is still 82% away, and a diffuse
+query is **41–90% away at every β measured, never small** — and diffuse is what a real attention head
+has, since a head already sitting on its answer would not need to run. The descent is genuine (0
+energy increases in 300 iterations, the concave–convex guarantee) but takes up to 68 iterations, not
+one. So the substitution is not a speedup with a constant factor to argue about; in the regime that
+matters it computes a different function. `WORKLOADS.md` §7 carries the entry.
+
+**The published energy's two constants are not bookkeeping.** `β⁻¹ ln P + ½M²` is what puts the floor
+at zero; without them the energy is negative on more than half of a 200-draw scan. That bound is
+sound but **slack, and measuring it says by how much**: `lse ≤ max + β⁻¹ ln P` is tight only when all
+P logits are *equal*, so a separated pattern set — the whole point of a memory — leaves precisely
+`β⁻¹ ln P` on the table. Measured infimum **1.0399 against ln(8)/2 = 1.0397**. Zero is reached only in
+the degenerate case of P identical patterns, where `E(ξ) = ½‖ξ − x‖²` on the nose.
+
+**Three of the first five mutations against these tests survived**, each a way a test measured its own
+bookkeeping rather than the code, and each is recorded in `WORKLOADS.md` §7 rather than quietly fixed:
+deleting the mixed-query regime outright still satisfied an *"at least 20 draws were blended"* count;
+writing `0.0` into the recorded softmax weights satisfied the bounds that replaced it (a softmax over
+K terms cannot have a largest weight below `1/K`, and the test now says so); and substituting the
+expected value for the measured energy was exactly right, because the expected value was a closed
+form in the loop index. References are now squared distances of a drawn vector.
+
+**And the harness that guards all of this emptied the file it was protecting.** `mutation-hand.sh`
+restored with `open(dst,'wb').write(open(src,'rb').read())`. Python opens the destination first —
+truncating it — and only then discovers the source is missing, so when its `mktemp` copy was reaped
+out of `/var/folders` during a long run, an 857-line module became 0 bytes and the script's own
+`RESTORE FAILED` line printed correctly and far too late. The saved bytes now live inside the
+repository, and the restore reads them, checks them against the digest recorded before the mutation,
+and only then opens the target — failing loudly and **leaving the file untouched** when it cannot. A
+mutated file is recoverable; an emptied one is not. Proved against the exact mechanism: fed a missing
+source, the old one-liner leaves 0 bytes and the new restore leaves the file intact.
+
 ### The workload that loses, a citation of ours that was wrong, and 14 papers read at the source
 
 **A catalogue that only listed wins would not be a measurement of anything.** `WORKLOADS.md` §3 sold

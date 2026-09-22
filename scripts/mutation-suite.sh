@@ -1299,6 +1299,25 @@ mutations=(
   # by the conditional's exact total correlation. Reverse the library's sign and it must go red.
   "src/dtm.rs|                g += lambda_tc * -(ma * mb - neg_ss[k] / m);|                g += lambda_tc * (ma * mb - neg_ss[k] / m);|dtm::tests::the_total_correlation_term_descends_the_conditionals_exact_total_correlation|a correlation penalty that rewards correlation"
 
+  # ATTENTION HAS AN ENERGY, AND THESE ARE WHAT HOLD THE IDENTITY TO IT. `lse_energy` is checked by
+  # central differences against `attention_update`, two pieces of code that share no line, so the
+  # first three rows each break the energy and must be caught by the difference quotient. The last
+  # one is the only row here that mutates a test rather than the library, and deliberately: the
+  # finding in WORKLOADS.md section 7 is the SIZE OF A GAP between one step and the fixed point, so
+  # the thing that has to be shown able to fail is the iteration that measures it.
+  #
+  # Three of the first five mutations written against these tests SURVIVED, and the fixes are in
+  # place rather than the rows quietly dropped: a count of blended draws that the wrong family
+  # satisfied, a recorded softmax weight of 0.0 that satisfied the bounds replacing it, and an
+  # expected value that was a closed form in the loop index so substituting it for the measurement
+  # was exactly right. See WORKLOADS.md section 7.
+  "src/dense_memory.rs|        let lse = (mx + sum.ln()) / beta;|        let lse = mx + sum.ln();|dense_memory::tests::attention_is_exactly_one_gradient_step_on_this_energy|a log-sum-exp left unscaled by beta"
+  "src/dense_memory.rs|        -lse + quad|        lse + quad|dense_memory::tests::attention_is_exactly_one_gradient_step_on_this_energy|the energy's lse term entering with the wrong sign"
+  "src/dense_memory.rs|        -lse + quad|        -lse + 0.0 * quad|dense_memory::tests::attention_is_exactly_one_gradient_step_on_this_energy|the quadratic term dropped so the gradient loses its xi"
+  "src/dense_memory.rs|        (self.patterns.len() as f64).ln() / beta + 0.5 * self.n as f64|        (self.patterns.len() as f64).ln() * beta + 0.5 * self.n as f64|dense_memory::tests::the_omitted_constants_are_what_put_the_energy_floor_at_zero|the published constant multiplying by beta instead of dividing"
+  "src/dense_memory.rs|        (self.patterns.len() as f64).ln() / beta + 0.5 * self.n as f64|        (self.patterns.len() as f64).ln() / beta + self.n as f64|dense_memory::tests::the_omitted_constants_are_what_put_the_energy_floor_at_zero|the largest squared pattern norm not halved"
+  "src/dense_memory.rs|                    let moved = dist(&next, &cur);|                    let moved = 0.0;|dense_memory::tests::one_attention_step_is_the_minimiser_only_where_the_pattern_is_already_found|an iteration that stops after one step so the gap it measures is zero by construction"
+
 )
 
 bad=0
@@ -1370,7 +1389,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=277
+expected_rows=283
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

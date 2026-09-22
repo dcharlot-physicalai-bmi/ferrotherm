@@ -59,3 +59,4 @@ julia/*/Manifest.toml
 # restored. It exists precisely because a SIGKILL cannot be trapped, so it must outlive the
 # process -- and it must never be committed, since its presence means the tree is not trustworthy.
 .mutation-in-flight
+.mutation-hand-keep
