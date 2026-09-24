@@ -1,0 +1,37 @@
+# Examples too slow to run on every push, run weekly instead by .github/workflows/examples-slow.yml.
+#
+# Every one is a MEASUREMENT, not a gate: none asserts or exits non-zero on a physics check, so on
+# CI it proves only that it still runs to completion, and a week's delay costs nothing that a push
+# needed. Gate examples run on every push however long they take. The per-push step refuses a name
+# here that has no example, so this list cannot outlive what it names.
+#
+# Why this file exists: CI ran every example on every push, one after another, and its comment still
+# said "115 s for seventeen of them". There were 79. The step outran a hosted runner's six-hour job
+# limit on every push from at least 2026-09-20 and GitHub reported it CANCELLED.
+#
+# name                        seconds, measured locally on 2026-09-24 (Apple silicon, release)
+device_train_exact            >120
+entropy_production_exact      >120
+estimator_shootout            >120
+fabric_exact                  >120
+fabric_floor                  >120
+informed_scaling              >120
+informed_scaling_exact        >120
+kmix_certified                >120
+kmix_flagship                 >120
+penalty_mixing                >120
+penalty_ramp                  >120
+perceptron_capacity           >120
+pimi_exact                    >120
+scale                         >120
+sourlas_fabric                >120
+spread_exact                  >120
+stale_exact                   >120
+synchronous_exact             >120
+tau_exactness                 >120
+tick_random_exact             >120
+sca_exact                     104
+nearest_boltzmann             74
+encoding_probe                72
+syndrome_gibbs                66
+ptrit_train_exact             60

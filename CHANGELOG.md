@@ -48,6 +48,17 @@ is `k` mod `N`, and CI runs `k = 0..3` as a matrix — under two hours each at 3
 still checks the whole table's row count, filters and targets, so none can hide a lost row, and the
 job refuses to run if the matrix and its `SHARDS` variable disagree on how many shards there are.
 
+**The examples step now fits, and fails by name.** Every example was timed locally (release, Apple
+silicon, capped at two minutes): 45 run in under 20 s, and twenty ran past two minutes. The 25
+measurement examples at 60 s or more — none of them a gate — are listed with their times in
+`examples/SLOW` and run weekly by `examples-slow.yml`, four shards, each of which is shown to cover
+its share exactly once. Every push runs the rest, about eight minutes locally, each under a
+fifteen-minute limit, so an example that hangs or grows fails with its name instead of eating the job;
+a name in either skip list with no example behind it is refused. Exercising the step's own script
+against a stand-in `cargo` found one more silent exit: under `pipefail`, `grep -v '^#'` on a list
+holding only comments selects nothing, exits 1, and kills the step at the assignment with no message.
+It reads the list with `awk` alone.
+
 **The clippy failure, and twelve doc lines that carried their escapes.** `ledger::advantage_after_readout`
 (the Whitelam entry) and `dense_memory`'s attention fence were written through a script that escaped
 them, and read `Whitelam\'s`, `5\u{d7}10^{14}` and `\u{27e8}Q\u{27e9}` in place of an apostrophe,

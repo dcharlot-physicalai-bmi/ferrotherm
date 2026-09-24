@@ -1,0 +1,65 @@
+name: slow examples
+
+# The measurement examples in examples/SLOW: too slow to run on every push, still run to completion
+# once a week. None of them is a gate -- each exits non-zero only if it crashes -- so what this job
+# catches is an example that no longer runs at all, which is the defect running examples on CI was
+# introduced to catch (`dtm_scale` had panicked on a missing argument for as long as nothing ran it).
+#
+# Sharded for the same reason the mutation job is: a hosted runner stops a job at six hours and calls
+# it CANCELLED. Twenty of these took more than two minutes each locally.
+on:
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+jobs:
+  slow-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      SHARDS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Examples build
+        run: cargo build --release --examples
+      - name: This shard's slow examples run to completion
+        # The same override the per-push step uses: throughput examples refuse to print a rate on a
+        # busy machine, and this checks that they RUN, not what they measure.
+        env:
+          FERROTHERM_ALLOW_BUSY: "1"
+        run: |
+          set -euo pipefail
+          if [ "${{ strategy.job-total }}" != "$SHARDS" ]; then
+            echo "the matrix runs ${{ strategy.job-total }} shards and SHARDS says $SHARDS: examples would be skipped" >&2
+            exit 2
+          fi
+          i=0
+          ran=0
+          for n in $(awk '!/^#/ && NF {print $1}' examples/SLOW); do
+            if [ $((i % SHARDS)) -eq "${{ matrix.shard }}" ]; then
+              [ -f "examples/$n.rs" ] || { echo "examples/SLOW names $n, which does not exist" >&2; exit 2; }
+              start=$SECONDS
+              rc=0
+              timeout 7200 cargo run --release --quiet --example "$n" >/dev/null || rc=$?
+              if [ "$rc" -eq 124 ]; then
+                echo "$n ran past two hours" >&2
+                exit 1
+              elif [ "$rc" -ne 0 ]; then
+                echo "$n exited $rc" >&2
+                exit 1
+              fi
+              echo "  ran $n in $((SECONDS - start)) s"
+              ran=$((ran + 1))
+            fi
+            i=$((i + 1))
+          done
+          if [ "$ran" -eq 0 ]; then
+            echo "shard ${{ matrix.shard }} ran nothing; examples/SLOW is shorter than the shard count" >&2
+            exit 2
+          fi
+          echo "  shard ${{ matrix.shard }}/$SHARDS: $ran examples ran, all exit 0"

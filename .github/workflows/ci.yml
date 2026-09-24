@@ -230,12 +230,37 @@ jobs:
           # metric_calibration (3 s) RUN here -- both assert an ordering, so a run that exits 0 is
           # worth having on every commit.
           skip="depth_vs_dimension reach_on_z1 dtm_scale exact_reach sdp_in_tree maxcut_shootout planar_exact toroidal_bound icm_scaling hubo_vs_reduction hfs_reach mixing_expressivity"
+          # examples/SLOW: measurements too slow for every push, run weekly by examples-slow.yml.
+          # THIS STEP OUTRAN THE SIX-HOUR JOB LIMIT on every push from at least 2026-09-20 -- it ran
+          # all 79 examples in a row, twenty of them over two minutes each -- and GitHub reported the
+          # job CANCELLED, which read as a button press. Two guards now: a name in either list with
+          # no example is refused, so neither list can go stale silently; and every example gets
+          # fifteen minutes, so one that hangs or grows fails by NAME instead of eating the job.
+          # awk alone, not `grep -v '^#' | awk`: under pipefail a grep that selects nothing exits 1
+          # and kills the step silently at this assignment -- found by running this script against
+          # a list holding only comments.
+          slow=$(awk '!/^#/ && NF {print $1}' examples/SLOW | tr '\n' ' ')
+          for n in $skip $slow; do
+            [ -f "examples/$n.rs" ] || { echo "examples/$n.rs is listed to skip but does not exist" >&2; exit 2; }
+          done
           ran=0
           for f in examples/*.rs; do
             n=$(basename "$f" .rs)
             case " $skip " in *" $n "*) echo "  skipped $n"; continue;; esac
-            echo "  running $n"
-            cargo run --release --quiet --example "$n" >/dev/null
+            case " $slow " in *" $n "*) echo "  weekly  $n"; continue;; esac
+            start=$SECONDS
+            # `|| rc=$?`, not `if ! ...`: inside a negated condition $? is the NEGATED status, 0,
+            # so the timeout would never be named.
+            rc=0
+            timeout 900 cargo run --release --quiet --example "$n" >/dev/null || rc=$?
+            if [ "$rc" -eq 124 ]; then
+              echo "$n ran past fifteen minutes: make it faster, or add it to examples/SLOW with its measured time" >&2
+              exit 1
+            elif [ "$rc" -ne 0 ]; then
+              echo "$n exited $rc" >&2
+              exit 1
+            fi
+            echo "  ran     $n in $((SECONDS - start)) s"
             ran=$((ran + 1))
           done
           # A floor: if the glob ever stops matching, this passes over nothing.
