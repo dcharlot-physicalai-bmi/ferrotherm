@@ -1474,8 +1474,31 @@ if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   exit 2
 fi
 
+# SHARDING, because the whole table outruns a hosted runner. On CI a row costs about 87 s (242 rows in
+# 5 h 53 min on 2026-09-22), so 287 rows needed seven hours, and GitHub cuts a job off at six and calls
+# it CANCELLED. Every push from at least 2026-09-20 ended that way, and a cancelled job reads as
+# somebody pressing a button, not as a suite too long to finish. FERROTHERM_MUTATION_SHARD=k/N runs
+# the rows whose index is k mod N; CI runs every k as a matrix. The count above and every filter and
+# target are still checked over the WHOLE table in each shard, so no shard can hide a lost row.
+shard="${FERROTHERM_MUTATION_SHARD:-0/1}"
+shard_k="${shard%/*}"
+shard_n="${shard#*/}"
+if ! [[ "$shard_k" =~ ^[0-9]+$ && "$shard_n" =~ ^[0-9]+$ ]] || (( shard_n < 1 || shard_k >= shard_n )); then
+  echo "FERROTHERM_MUTATION_SHARD must be k/N with 0 <= k < N, got '$shard'." >&2
+  exit 2
+fi
+shard_note=""
+if (( shard_n > 1 )); then
+  shard_note=" (shard $shard_k/$shard_n)"
+  echo "shard $shard_k/$shard_n: rows i with i mod $shard_n = $shard_k, of ${#mutations[@]}"
+fi
+index=-1
 
 for row in "${mutations[@]}"; do
+  index=$((index + 1))
+  if (( index % shard_n != shard_k )); then
+    continue
+  fi
   IFS='|' read -r file old new filter label pkg <<<"$row"
   # `|` IS THE SEPARATOR, so a mutation whose code contains one shifts every field after it: the
   # replacement becomes half a pattern, the test filter becomes a fragment of code, and the row
@@ -1536,5 +1559,5 @@ fi
 if [[ $unevaluated -gt 0 ]]; then
   echo "  $((ran - unevaluated)) of $ran mutations caught; $unevaluated not evaluated here"
 else
-  echo "  all $ran mutations caught by the test named for each"
+  echo "  all $ran mutations caught by the test named for each$shard_note"
 fi

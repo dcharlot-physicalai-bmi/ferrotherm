@@ -247,13 +247,31 @@ jobs:
   # Do the tests have teeth? A green suite says the code runs, not that a wrong answer would be
   # noticed -- and the 0.12.0 release exists because 320 green tests could not tell an invented LP
   # bound from a correct one. This breaks the code on purpose and requires the named test to go red.
+  #
+  # SHARDED, because the whole table does not fit in one job. A row costs about 87 s here, 287 rows
+  # needed seven hours, and GitHub stops a job at six and reports it CANCELLED -- which is how every
+  # push from at least 2026-09-20 ended, looking like a button press rather than a suite too long to
+  # finish. Four shards is under two hours each at 313 rows. The shard count is written ONCE, in the
+  # matrix below and in the variable beside it; each shard still checks the whole table's row count,
+  # filters and targets, so a shard cannot hide a row that went missing.
   mutation:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      SHARDS: 4
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Every recorded mutation is caught by the test named for it
-        run: scripts/mutation-suite.sh
+        run: |
+          if [ "${{ strategy.job-total }}" != "$SHARDS" ]; then
+            echo "the matrix runs ${{ strategy.job-total }} shards and SHARDS says $SHARDS: rows would be skipped" >&2
+            exit 2
+          fi
+          FERROTHERM_MUTATION_SHARD="${{ matrix.shard }}/$SHARDS" scripts/mutation-suite.sh
 
   c-abi:
     runs-on: ubuntu-latest

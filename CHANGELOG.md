@@ -29,18 +29,33 @@ when the rule first passes. What its pass cannot see, exactly (16 chains per sup
   1784 lib tests, 2070 workspace, 454 verification-bearing
   313 mutation rows (+6, each applied, seen RED against its named test, restored)
 
-### Twelve doc lines shipped with their escapes showing, and CI's clippy step has been red since
+### CI has not completed since at least 2026-09-20: two jobs outrun GitHub's six-hour limit
 
-`ledger::advantage_after_readout` (the Whitelam entry) and `dense_memory`'s attention fence were
-written through a script that escaped them, and went out reading `Whitelam\'s`, `5\u{d7}10^{14}` and
-`\u{27e8}Q\u{27e9}` on docs.rs in place of an apostrophe, `×`, `⟨` and `⟩`. The verbatim quotation
-they carry was right; its rendering was not, and nothing that reads prose read them. Separately, two
-doc lines in `eqprop` and two in `ledger` tripped `clippy::doc_markdown`, which CI denies. CI's
-"Clippy, across the whole workspace" step has failed on all six pushes since `2f445d2`, and it was
-the only step that failed — but it stops the `test` job, so the suite after it never ran on CI for
-those commits, and the `mutation` job was cancelled each time. Everything else was green. The local
-push gate ran `cargo doc` and `cargo test` and neither sees either defect; it runs CI's own clippy
-command now.
+**The finding under the one this entry started as.** The `test` job's "Every unattended example runs"
+step and the whole `mutation` job each run longer than a hosted runner's six-hour cap, so on every
+push since at least `908bb13` (2026-09-20) both were cut off at exactly six hours and reported as
+*cancelled*. No CI run in the last sixty has succeeded. From `2f445d2` to `7553fdb` a clippy failure
+stopped the `test` job before it reached the examples, which made those six runs look like a lint
+problem rather than a timeout. On `cdd1b95`, with clippy fixed, the job ran every step after it — the
+GPU backend on a software Vulkan adapter, the power meter, the OMMX bridge, the examples build, the
+landscape check, the stated theorems and the documentation links all passed — and then sat in the
+unattended examples for more than five hours. That step runs every example not on a skip list, one
+after another; its comment still says "115 s for seventeen of them", and there are now far more, some
+of them minutes long.
+
+**The mutation job is now four shards.** `FERROTHERM_MUTATION_SHARD=k/N` runs the rows whose index
+is `k` mod `N`, and CI runs `k = 0..3` as a matrix — under two hours each at 313 rows. Every shard
+still checks the whole table's row count, filters and targets, so none can hide a lost row, and the
+job refuses to run if the matrix and its `SHARDS` variable disagree on how many shards there are.
+
+**The clippy failure, and twelve doc lines that carried their escapes.** `ledger::advantage_after_readout`
+(the Whitelam entry) and `dense_memory`'s attention fence were written through a script that escaped
+them, and read `Whitelam\'s`, `5\u{d7}10^{14}` and `\u{27e8}Q\u{27e9}` in place of an apostrophe,
+`×`, `⟨` and `⟩`. They never reached a release — 0.44.0 (2026-09-09) predates both. Four doc lines
+tripped `clippy::doc_markdown`, which CI denies, and "Clippy, across the whole workspace" failed on all
+six pushes from `2f445d2` to `7553fdb`; unit tests run before it and passed every time. `cdd1b95`
+fixed both; its message says the suite never ran on CI, which is wrong in the way this corrects. The
+local push gate did not run clippy and now runs CI's own command.
 
 ### `Kernel::Sca` — all spins at once buys ticks only where the law is coarse
 
