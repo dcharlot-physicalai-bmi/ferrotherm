@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### `Kernel::Sca` — all spins at once buys ticks only where the law is coarse
+
+Stochastic cellular automata (SCA), the rule inside the STATICA and Amorphica annealing processors,
+updates every spin on one tick, halves each field, and pins each spin toward its own value with a
+strength `q`. `autocorr::Kernel::Sca { q }` is that kernel and `autocorr::sca_law` its stationary
+law in closed form, `exp(β/2 h·x) ∏ 2cosh(β/2 fᵢ + q xᵢ)`. The law is held three ways that share
+nothing but the couplings: the marginal of Momentum Annealing's bipartite double, enumerated over
+`2n` spins (TV below `1e-13` in 18 cells); the factorised form `e^{−βE} ∏(1 + e^{−2q} φᵢ)` from the
+proof of Kamakura's Theorem 3; and `peretto` at `β/2` when `q = 0`. The kernel keeps it (one tick
+moves it by less than `1e-14`, and the kernel's solved law is it), and keeps it **reversibly** —
+entropy production below `1e-12`, where a tick-random mask produces entropy.
+
+The first-order rate, which this search did not locate stated anywhere: `TV(SCA, Boltzmann) e^{2q}`
+tends to `c = E_G|Φ − ⟨Φ⟩|/2` with `Φ = Σ e^{−β fᵢ xᵢ}`, so the pinning an accuracy needs is
+`q* = ln(c/ε)/2`. Held to `2e-5` at `q = 6`; the exact `q*` sits within 0.35% of it at `ε = 1e-2` in
+all nine cells of `examples/sca_exact.rs`.
+
+And a comparison this search did not locate anywhere — SCA against the coloured sweep a p-bit fabric
+already runs, at matched accuracy, `τ_int` of the energy in ticks:
+
+| | TV 1e-1 | TV 1e-2 | TV 1e-3 |
+|---|---|---|---|
+| SCA cost / coloured sweep, 9 cells | 0.12× to 2.80× | **4.1× to 29×** | **43× to 294×** |
+
+SCA wins only at TV 1e-1, and only where the coloured sweep is itself expensive — every
+fully-connected cell, and the sparse fixtures when cold. Every flip is suppressed by `e^{−2q} = ε/c`,
+so each factor of ten in accuracy costs ten in ticks (measured 10.0 to 11.9); the coloured sweep
+pays nothing for accuracy. STATICA and Amorphica are annealers, where a coarse law may serve; this is
+SCA as a sampler. WORKLOADS.md entry 10 has the table, the rate and what is not claimed — including
+a scaling argument that did not survive measurement: on SK the break-even accuracy is 0.049 to 0.062
+from `n = 6` to `12`, with no trend one instance per size can show.
+
+  1779 lib tests, 2065 workspace, 452 verification-bearing
+  307 mutation rows (+6, each applied, seen RED against its named test, restored)
+
 ### Both routes to a holding flip-flop on the Alchitry, measured and shut
 
 `capture` has recorded since 2026-09-19 that no captured bit had been compared against a value known

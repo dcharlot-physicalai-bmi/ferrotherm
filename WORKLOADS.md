@@ -635,6 +635,88 @@ free phase at exact equilibrium — which is what `x⋆^0(θ)` means in the infi
 measured the warm row flat at `8.6e-2`, no divergence at all. The residual only exists because the
 free reference is *also* short of equilibrium. That version is the first mutation in the suite.
 
+## 10. What does updating every spin at once buy? — `src/autocorr.rs`, `Kernel::Sca`
+
+A p-bit fabric that updates every node on the same clock edge samples the wrong law (entry 8 and
+`Kernel::Synchronous`), so this crate's fabric **colours**: one colour class per tick, exact Gibbs,
+`χ` ticks per sweep. Japan's annealing processors took the other road. **Stochastic cellular
+automata (SCA)** — the rule inside STATICA (ISSCC 2020, 512 spins, a *"Near-Memory All-Spin-Updates-at-Once Architecture"*)
+and Amorphica (ISSCC 2023) — updates every spin on one tick, halves each field, and pulls each spin
+toward its own current value with a **pinning** `q`. Its law tends to Boltzmann as `q → ∞`
+(Fukushima-Kimura, Handa, Kamakura, Kamijima, Kawamura & Sakai, *J. Stat. Phys.* 190:79, 2023;
+arXiv:2007.11287). Hitachi's Momentum Annealing (2019) is the same object seen from the other side:
+it rewrites a fully-connected problem onto a complete bipartite graph so that *"図1bの左側の変数は
+互いに繋がりを持たないため同時に更新することが可能"* — the left-hand variables share no couplings
+and so can be updated at the same time. SCA's law is the marginal of exactly that bipartite double,
+and the test checks it by enumerating the double.
+
+**This search did not locate a comparison of SCA with the coloured sweep at matched accuracy.** The
+published guarantees are sufficient conditions on either side: K. Kamakura's Hokkaido note
+*確率的セルラオートマタによる最適解の探索* (2020) proves more spin flips per step than Glauber when
+`2q ≤ ln|V| − βK` (its Theorem 1) and closeness to Gibbs when `2q ≥ ln|V| + βK − ln(ε√v/2K)` (its
+Theorem 3). Those windows overlap only when `ε√v ≥ 2K e^{2βK}`, and they do not overlap in any cell
+below. In six of the nine cells Theorem 1's window is empty (it asks for `q < 0`); in the other
+three it ends at `q ≤ 0.35`–`0.50`, where SCA's law is at least 19% of the mass away from
+Boltzmann, and up to 60% at `q = 0`.
+
+**The measurement.** Both kernels exact on 1,024 states: SCA's law from its closed form, the cost as
+`τ_int` of the energy by the fundamental matrix, **in ticks** (a coloured sweep is `χ` ticks, an SCA
+step one), with SCA's pinning set to the exact `q*` at which its law is within TV `ε` of Boltzmann.
+The entry is SCA's cost as a multiple of the coloured sweep's; below 1, SCA wins.
+
+| fixture (χ) | β | coloured `τ_E` (ticks) | TV 1e-1 | TV 1e-2 | TV 1e-3 |
+|---|---|---|---|---|---|
+| 5×2 ±J grid (2) | 0.5 | 1.39 | 2.80× | 29.0× | 292× |
+| 5×2 ±J grid | 1 | 3.54 | 2.25× | 28.6× | 294× |
+| 5×2 ±J grid | 2 | 46.7 | **0.61×** | 14.3× | 155× |
+| 10-ring + chords (3) | 0.5 | 2.52 | 1.88× | 20.5× | 208× |
+| 10-ring + chords | 1 | 10.0 | 1.54× | 18.9× | 194× |
+| 10-ring + chords | 2 | 1,092 | **0.12×** | 5.41× | 64.3× |
+| SK, n = 10 (10) | 0.5 | 6.01 | **0.38×** | 4.24× | 42.8× |
+| SK, n = 10 | 1 | 9.54 | **0.59×** | 6.17× | 62.1× |
+| SK, n = 10 | 2 | 197 | **0.23×** | 4.10× | 43.9× |
+
+**At TV 1e-2 SCA loses in all nine cells, by 4.1× to 29×; at 1e-3 by 43× to 294×.** It wins only at
+TV 1e-1, and only where the coloured sweep is itself expensive: every fully-connected cell, where
+`χ = n`, and the two sparse fixtures when cold. The magnetisation's `τ` tells the same story (4.3× to
+44× at 1e-2).
+
+### Why accuracy is so expensive, exactly
+
+Dividing SCA's weight by the Boltzmann weight leaves `∏ᵢ (1 + e^{−2q} φᵢ(x))`, `φᵢ = e^{−β fᵢ xᵢ}` —
+the identity inside Kamakura's proof of Theorem 3. Its first-order consequence, which this search did
+not locate stated anywhere, is the rate:
+
+```text
+  TV(SCA, Boltzmann) · e^{2q}  →  c = E_G|Φ − ⟨Φ⟩| / 2,     Φ = Σᵢ φᵢ,
+  so   q*(ε) = ln(c/ε) / 2   to first order.
+```
+
+`c` is a property of the Boltzmann law alone. The test holds `TV e^{2q}/c` to 1 within `1e-3` at
+`q = 4` and `2e-5` at `q = 6` on six cells, and `examples/sca_exact.rs` finds the exact `q*` within
+0.35% of `ln(c/ε)/2` at `ε = 1e-2` in all nine. And every flip is suppressed by the same `e^{−2q}`:
+`τ_SCA` grows by `e² = 7.39` per unit of `q` (measured 7.39–7.51 between `q = 3` and `4`). So
+**`τ_SCA(ε) ∝ c/ε` — each factor of ten in accuracy costs ten in ticks** (measured 10.0–11.9 from
+1e-2 to 1e-3 in every cell), while the coloured sweep pays nothing for accuracy at all.
+
+### What is not claimed
+
+**STATICA and Amorphica are annealers.** They search for ground states, where the stationary law is
+a means and a coarse one may serve; Amorphica's press release reports up to 58× the speed and about
+30,000× the power efficiency of a GPU on that task, and nothing here tests it. This entry is SCA as a
+**sampler** — the question a p-bit fabric that must hold a Boltzmann law has to answer before it
+trades its colouring for pinning. **A scaling argument did not survive measurement.** On a
+fully-connected graph the coloured sweep costs `n` ticks while `c` grows only through fluctuations of
+`Φ`, which suggests SCA's break-even accuracy should improve with `n`. Measured on SK at `β = 1`, one
+instance per size, the first-order break-even `ε = A c / τ_coloured` (`A = τ_SCA e^{−2q}` at `q = 4`)
+is 0.058, 0.060, 0.062 and 0.049 at `n = 6, 8, 10, 12`, and SCA's cost at TV 1e-2 is 5.8×, 6.0×, 6.2×
+and 4.9× — no trend these sizes can distinguish from one instance's spread. What happens at `n` in the
+thousands is not known from this. **Kemeny's
+constant is not the cost**, though `examples/fabric_exact.rs` uses it: it floors every one of the `2ⁿ − 1`
+modes at half a step, so multiplying a sweep's Kemeny by `χ` multiplies the floor, and the first run
+of this example reported SCA at `q = 0` as exactly `1/χ` of the coloured sweep in every cell for that
+reason alone.
+
 ---
 
 ## What we deliberately do not do

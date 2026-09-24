@@ -212,6 +212,40 @@ pub enum Kernel {
         /// invariant law.
         p: f64,
     },
+    /// STOCHASTIC CELLULAR AUTOMATA (SCA), the all-spins-at-once rule behind the STATICA (ISSCC
+    /// 2020) and Amorphica (ISSCC 2023) annealing processors, as defined by Handa, Kamakura,
+    /// Kamijima and Sakai (arXiv:1906.06645) and Fukushima-Kimura et al. (arXiv:2007.11287,
+    /// J. Stat. Phys. 190:79, 2023): every site resampled at once from the PREVIOUS state with
+    /// `P(s_x = +1 | x) = e^a / 2 cosh a`, `a = (beta / 2) f_x(x) + q x_x`. Two changes from
+    /// [`Kernel::Synchronous`]: the field is HALVED, and each spin feels a pull `q` toward its own
+    /// current value -- the "pinning" that makes a same-tick update rarely move two neighbours at
+    /// once. Its law is closed-form ([`sca_law`]), reversible, and tends to the Boltzmann law at
+    /// `beta` as `q -> inf`; `q = 0` is the synchronous sweep at `beta / 2`.
+    ///
+    /// It is also Momentum Annealing's construction (Hitachi, 2019): the pair weight
+    /// `exp(beta/2 sum J x_i y_j + beta/2 h.(x + y) + q x.y)` is a Boltzmann law on the bipartite
+    /// double of the graph, one tick of SCA is one half-sweep of block Gibbs on that double, and
+    /// [`sca_law`] is its marginal. The test holds the law to that marginal, computed by
+    /// enumeration over `2n` spins, and to the exact first-order rate at which it approaches
+    /// Boltzmann: `TV ~ e^{-2q} * E_G|Phi - <Phi>| / 2` with `Phi(x) = sum_i exp(-beta f_i x_i)`.
+    ///
+    /// # The question this kernel exists to settle
+    ///
+    /// Pinning trades accuracy for motion: a large `q` brings the law to Boltzmann and freezes the
+    /// chain, a small one moves many spins per tick and samples something else. The published
+    /// guarantees are sufficient conditions on the two sides. K. Kamakura's Hokkaido note
+    /// *確率的セルラオートマタによる最適解の探索* (Finding optimal solutions by stochastic cellular
+    /// automata, 2020) proves more flips per step than Glauber when `2q <= ln|V| - beta K`
+    /// (its Theorem 1, `K` the largest local field) and closeness to Gibbs, in its
+    /// order-preservation sense, when `2q >= ln|V| + beta K - ln(eps sqrt(v) / 2K)` (its
+    /// Theorem 3, `v` the sum of squared couplings and fields). Those two windows overlap only
+    /// when `eps sqrt(v) >= 2K e^{2 beta K}`. `examples/sca_exact.rs` measures the frontier
+    /// between them exactly, in ticks, against the coloured sweep a p-bit fabric already runs.
+    Sca {
+        /// The pinning (self-interaction) strength, in units of the exponent: dimensionless, and
+        /// NOT multiplied by `beta`. `q >= 0`.
+        q: f64,
+    },
     /// The chromatic sweep with every p-bit at its OWN temperature: site `i` samples its heat-bath
     /// conditional at `beta * exp(spread * z_i)`, `z_i` a standard normal drawn from `seed` -- the
     /// gain (MTJ 'alpha') spread of a fabric whose sigmoid slopes differ cell to cell. The sweep
@@ -365,6 +399,54 @@ pub fn peretto(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
     Ok(pi)
 }
 
+/// The stationary law of [`Kernel::Sca`] in closed form:
+///
+/// ```text
+///   pi(x) ∝ exp(beta/2 h·x) prod_i 2 cosh(beta/2 f_i(x) + q x_i),
+/// ```
+///
+/// `f_i` the local field at `x` with the bias included. It is the marginal over `y` of the pair
+/// weight `exp(beta/2 [y·J·x + h·(x + y)] + q x·y)`, and `pi(x) P(x, y)` equals that pair weight,
+/// which is symmetric in `x` and `y` -- so SCA is reversible with respect to it. At `q = 0` it is
+/// [`peretto`] at `beta / 2`. Dividing by the Boltzmann weight gives the form that shows the limit
+/// (Fukushima-Kimura et al., and the proof of Kamakura's Theorem 3):
+/// `pi(x) ∝ e^{-beta E(x)} prod_i (1 + e^{-2q} e^{-beta f_i(x) x_i})`.
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManySpins`] above [`MAX_SPINS`].
+///
+/// # Panics
+///
+/// If `q` is negative or not finite: a negative pinning pushes each spin AWAY from its own value
+/// and is not the kernel the hardware or the theorems describe.
+pub fn sca_law(g: &Graph, beta: f64, q: f64) -> Result<Vec<f64>, AutocorrError> {
+    assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
+    if g.n > MAX_SPINS {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+    }
+    let n = g.n;
+    let m = 1usize << n;
+    let mut lp = vec![0.0f64; m];
+    for (x, l) in lp.iter_mut().enumerate() {
+        let s = spins(x, n);
+        let hx: f64 = (0..n).map(|i| g.h[i] * f64::from(s[i])).sum();
+        let mut acc = 0.5 * beta * hx;
+        for i in 0..n {
+            let a = (0.5 * beta * g.field(i, &s) + q * f64::from(s[i])).abs();
+            acc += a + (-2.0 * a).exp().ln_1p();
+        }
+        *l = acc;
+    }
+    let max = lp.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut pi: Vec<f64> = lp.iter().map(|l| (l - max).exp()).collect();
+    let z: f64 = pi.iter().sum();
+    for p in &mut pi {
+        *p /= z;
+    }
+    Ok(pi)
+}
+
 /// The Boltzmann distribution over all `2^n` states, from the graph's own energy.
 ///
 /// # Errors
@@ -466,6 +548,12 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             assert!((0.0..=1.0).contains(&p), "TickRandom p is a probability, got {p}");
             let stay = if s[i] > 0 { 1.0 } else { 0.0 };
             (1.0 - p) * stay + p * p_up(g.field(i, s), beta)
+        }
+        // EXPLICIT for the same reason: the catch-all would run SCA as the synchronous sweep at
+        // the full field, with no pinning -- a different kernel with a different law.
+        Kernel::Sca { q } => {
+            assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
+            p_up(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)
         }
         _ => p_up(g.field(i, s), beta),
     }
@@ -588,7 +676,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             }
             cur
         }
-        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } => {
+        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
             // (P v)(x) = E[v(y)] under the product law y_i ~ Bernoulli(q_i(x)), every q_i from the
             // PREVIOUS state x. Per x, contract v one site at a time under that product, from the
             // top bit down, so the block that remains keeps its bit layout.
@@ -736,7 +824,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } => {
+        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
             // (mu P)(y) = sum_x mu(x) prod_i q_i^x(y_i): each source state lays its product law
             // over every target, built by doubling one site at a time (bit i set gets q_i).
             let mut out = vec![0.0f64; m];
@@ -1037,6 +1125,7 @@ pub fn tau_int_fundamental(
             stationary_solved(g, beta, kernel)?
         }
         Kernel::Synchronous => peretto(g, beta)?,
+        Kernel::Sca { q } => sca_law(g, beta, q)?,
         _ => boltzmann(g, beta)?,
     };
     let n = g.n;
@@ -1101,6 +1190,7 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
             stationary_solved(g, beta, kernel)?
         }
         Kernel::Synchronous => peretto(g, beta)?,
+        Kernel::Sca { q } => sca_law(g, beta, q)?,
         _ => boltzmann(g, beta)?,
     };
     let m = 1usize << g.n;
@@ -1124,8 +1214,9 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
 }
 
 /// The kernel's own stationary law: Boltzmann for the exact Gibbs and informed kernels, Peretto's
-/// closed form for the synchronous sweep, and a direct solve for everything whose law has no
-/// closed form (the fabric's arithmetic, PIMI, stale reads, a site temperature spread).
+/// closed form for the synchronous sweep, [`sca_law`] for SCA, and a direct solve for everything
+/// whose law has no closed form (the fabric's arithmetic, PIMI, stale reads, a site temperature
+/// spread, a tick-random mask).
 ///
 /// # Errors
 ///
@@ -1143,6 +1234,7 @@ pub fn own_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, Autocor
             stationary_solved(g, beta, kernel)
         }
         Kernel::Synchronous => peretto(g, beta),
+        Kernel::Sca { q } => sca_law(g, beta, q),
         _ => boltzmann(g, beta),
     }
 }
@@ -1237,6 +1329,7 @@ pub fn tau_int_exact(
             stationary(g, beta, kernel, 1e-14, 500_000)?.0
         }
         Kernel::Synchronous => peretto(g, beta)?,
+        Kernel::Sca { q } => sca_law(g, beta, q)?,
         _ => boltzmann(g, beta)?,
     };
     let n = g.n;
@@ -2106,5 +2199,262 @@ mod tests {
             assert!((0.13..0.16).contains(r), "TV/p must tend to a finite non-zero limit: p {p}, TV/p {r}");
         }
         assert!(ratios[3] > ratios[0], "and it approaches that limit from below: {ratios:?}");
+    }
+
+    /// A Sherrington-Kirkpatrick instance: every pair coupled, `J ~ N(0, 1/n)`, fields `N(0, 0.01)`.
+    /// The full connectivity SCA hardware is built for -- no two sites share a colour, so the
+    /// coloured sweep costs `n` ticks.
+    fn sk_fixture(n: usize, seed: u64) -> Graph {
+        use crate::graph::GraphBuilder;
+        use crate::rng::Pcg;
+        let mut rng = Pcg::new(seed, 0x6A);
+        let mut normal = || {
+            let u1 = rng.f64().max(1e-300);
+            let u2 = rng.f64();
+            (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+        };
+        let mut b = GraphBuilder::new(n);
+        let scale = 1.0 / (n as f64).sqrt();
+        for i in 0..n {
+            for j in i + 1..n {
+                b.couple(i, j, normal() * scale);
+            }
+        }
+        for i in 0..n {
+            b.bias(i, normal() * 0.1);
+        }
+        b.build()
+    }
+
+    /// The bipartite double of `g` whose Boltzmann law at `beta`, marginalised over the second copy,
+    /// is SCA's: `x_i -- y_j` at `J_ij / 2` both ways round, `x_i -- y_i` at `q / beta`, half of
+    /// every field on each copy. Momentum Annealing's construction, built from the graph's own
+    /// couplings and scored by [`boltzmann`], so it shares no arithmetic with [`sca_law`].
+    fn bipartite_double(g: &Graph, beta: f64, q: f64) -> Graph {
+        use crate::graph::GraphBuilder;
+        let n = g.n;
+        let mut b = GraphBuilder::new(2 * n);
+        for x in 0..n {
+            // CSR holds every undirected edge once from each end; each appearance lays one of the
+            // two cross couplings.
+            for k in g.offset[x]..g.offset[x + 1] {
+                b.couple(x, n + g.nbr[k] as usize, 0.5 * g.w[k]);
+            }
+            if q > 0.0 {
+                b.couple(x, n + x, q / beta);
+            }
+            b.bias(x, 0.5 * g.h[x]);
+            b.bias(n + x, 0.5 * g.h[x]);
+        }
+        b.build()
+    }
+
+    /// `c = E_G|Phi - <Phi>| / 2`, `Phi(x) = sum_i exp(-beta f_i(x) x_i)`, from the Boltzmann law.
+    fn sca_first_order_constant(g: &Graph, beta: f64) -> f64 {
+        let bolt = boltzmann(g, beta).expect("small");
+        let phi: Vec<f64> = (0..bolt.len())
+            .map(|x| {
+                let s = spins(x, g.n);
+                (0..g.n).map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp()).sum()
+            })
+            .collect();
+        let mean: f64 = bolt.iter().zip(&phi).map(|(p, f)| p * f).sum();
+        0.5 * bolt.iter().zip(&phi).map(|(p, f)| p * (f - mean).abs()).sum::<f64>()
+    }
+
+    /// **SCA's law, three ways, and the kernel keeps it.** [`sca_law`] is held to (1) the marginal
+    /// of the bipartite double, enumerated over `2n` spins -- Momentum Annealing's construction,
+    /// sharing nothing with the closed form but the couplings; (2) the factorised form
+    /// `e^{-beta E} prod_i (1 + e^{-2q} phi_i)` from the proof of Kamakura's Theorem 3; and (3)
+    /// [`peretto`] at `beta / 2` when `q = 0`. Then the KERNEL is held to it: one tick of
+    /// [`Kernel::Sca`] leaves it in place, and the kernel's own solved law is it -- the second
+    /// check is what a kernel with the full field instead of the half, or no pinning, cannot pass,
+    /// since each has its own fixed point.
+    #[test]
+    fn sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it() {
+        use crate::graph::GraphBuilder;
+        use crate::rng::Pcg;
+        // 8 spins, so the double fits under MAX_SPINS: a 4x2 glass on the tick fixtures' recipe.
+        let mut rng = Pcg::new(7, 0x6A);
+        let mut b = GraphBuilder::new(8);
+        for y in 0..2usize {
+            for x in 0..4usize {
+                let i = y * 4 + x;
+                if x + 1 < 4 {
+                    b.couple(i, i + 1, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+                }
+                if y + 1 < 2 {
+                    b.couple(i, i + 4, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+                }
+            }
+        }
+        for i in 0..8 {
+            b.bias(i, (rng.f64() - 0.5) * 0.4);
+        }
+        let grid8 = b.build();
+        let sk6 = sk_fixture(6, 11);
+
+        let mut worst_double = 0.0f64;
+        let mut cells = 0usize;
+        for g in [&grid8, &sk6] {
+            for &beta in &[0.5f64, 1.0, 2.0] {
+                for &q in &[0.0f64, 0.7, 2.0] {
+                    let law = sca_law(g, beta, q).expect("small");
+                    let joint = boltzmann(&bipartite_double(g, beta, q), beta).expect("2n <= 16");
+                    let mask = (1usize << g.n) - 1;
+                    let mut marginal = vec![0.0f64; 1 << g.n];
+                    for (z, p) in joint.iter().enumerate() {
+                        marginal[z & mask] += p;
+                    }
+                    let tv = total_variation(&law, &marginal);
+                    assert!(tv < 1e-13, "SCA law vs the double's marginal: n {}, beta {beta}, q {q}, TV {tv:e}", g.n);
+                    worst_double = worst_double.max(tv);
+                    cells += 1;
+                }
+            }
+        }
+        assert_eq!(cells, 18, "2 graphs x 3 betas x 3 pinnings");
+
+        let (grid, ring, _) = tick_fixtures();
+        for g in [&grid, &ring] {
+            for &beta in &[0.5f64, 1.0, 2.0] {
+                let tv0 = total_variation(&sca_law(g, beta, 0.0).expect("small"), &peretto(g, 0.5 * beta).expect("small"));
+                assert!(tv0 < 1e-14, "q = 0 is the synchronous sweep at beta / 2: beta {beta}, TV {tv0:e}");
+                let bolt = boltzmann(g, beta).expect("small");
+                for &q in &[0.5f64, 1.5, 3.0] {
+                    let law = sca_law(g, beta, q).expect("small");
+
+                    let delta = (-2.0 * q).exp();
+                    let mut factored: Vec<f64> = bolt
+                        .iter()
+                        .enumerate()
+                        .map(|(x, p)| {
+                            let s = spins(x, g.n);
+                            p * (0..g.n)
+                                .map(|i| 1.0 + delta * (-beta * g.field(i, &s) * f64::from(s[i])).exp())
+                                .product::<f64>()
+                        })
+                        .collect();
+                    let z: f64 = factored.iter().sum();
+                    factored.iter_mut().for_each(|v| *v /= z);
+                    let tvf = total_variation(&law, &factored);
+                    assert!(tvf < 1e-13, "factorised form: beta {beta}, q {q}, TV {tvf:e}");
+
+                    let pushed = apply_distribution(g, beta, Kernel::Sca { q }, &law);
+                    let drift = total_variation(&pushed, &law);
+                    assert!(drift < 1e-14, "one SCA tick must leave its law in place: beta {beta}, q {q}, TV {drift:e}");
+                    let solved = stationary_solved(g, beta, Kernel::Sca { q }).expect("solvable");
+                    let tvs = total_variation(&solved, &law);
+                    assert!(tvs < 1e-10, "the kernel's solved law is the closed form: beta {beta}, q {q}, TV {tvs:e}");
+                }
+            }
+        }
+
+        // REVERSIBLE, not merely invariant: pi(x) P(x, y) is the symmetric pair weight, so the
+        // entropy production against the kernel's own law is zero -- where the tick-random mask,
+        // which also updates many sites per tick, produces entropy. Scored against `own_law`, so
+        // this is also what fails if that dispatch hands SCA any law but its own.
+        for &q in &[0.5f64, 2.0] {
+            let sigma = entropy_production(&ring, 1.0, Kernel::Sca { q }).expect("dense");
+            assert!(sigma < 1e-12, "SCA is reversible w.r.t. its law: q {q}, Sigma {sigma:e}");
+        }
+        let masked = entropy_production(&ring, 1.0, Kernel::TickRandom { p: 0.5 }).expect("dense");
+        assert!(masked > 1e-4, "the control: a tick-random mask is not reversible: Sigma {masked:e}");
+    }
+
+    /// **SCA approaches the Boltzmann law at exactly its first-order rate.** From the factorised
+    /// form, `TV(SCA, Boltzmann) e^{2q}` must tend to `c = E_G|Phi - <Phi>| / 2`, a number the
+    /// Boltzmann law alone determines. So the pinning a target accuracy needs is
+    /// `q*(eps) = ln(c / eps) / 2` to first order, on any graph, and `examples/sca_exact.rs` finds
+    /// the exact `q*` within 0.35% of it at `eps = 1e-2` in all nine of its cells. Both the limit and
+    /// the approach are asserted: a law that never moved would have `TV e^{2q}` blow up, and one
+    /// with the wrong half-field would converge to a different Boltzmann law and leave TV finite.
+    #[test]
+    fn sca_approaches_boltzmann_at_exactly_its_first_order_rate() {
+        let (grid, ring, _) = tick_fixtures();
+        let sk = sk_fixture(10, 11);
+        let mut cells = 0usize;
+        for g in [&grid, &ring, &sk] {
+            for &beta in &[1.0f64, 2.0] {
+                let bolt = boltzmann(g, beta).expect("small");
+                let c = sca_first_order_constant(g, beta);
+                assert!(c > 0.1, "a coupled graph has a non-trivial first-order constant: {c}");
+                let ratio = |q: f64| total_variation(&sca_law(g, beta, q).expect("small"), &bolt) * (2.0 * q).exp() / c;
+                let (r4, r6) = (ratio(4.0), ratio(6.0));
+                assert!((r4 - 1.0).abs() < 1e-3, "TV e^2q / c at q = 4: beta {beta}, {r4}");
+                assert!((r6 - 1.0).abs() < 2e-5, "TV e^2q / c at q = 6: beta {beta}, {r6}");
+                assert!((r6 - 1.0).abs() < (r4 - 1.0).abs(), "and it converges: {r4} then {r6}");
+                cells += 1;
+            }
+        }
+        assert_eq!(cells, 6, "3 graphs x 2 betas");
+    }
+
+    /// **All spins at once buys ticks only where the law is coarse.** SCA's selling point is that
+    /// every spin updates on one tick; a coloured sweep updates one colour class per tick and is
+    /// exact. At matched accuracy -- SCA's pinning set to the exact `q*` at which its law is within
+    /// TV `eps` of Boltzmann -- the variance cost per tick is `2 tau_int` of the energy, in ticks:
+    ///
+    /// | fixture (colours) | beta | coloured | SCA at TV 1e-1 | at 1e-2 | at 1e-3 |
+    /// |---|---|---|---|---|---|
+    /// | 10-ring + chords (3) | 1 | 10.0 | 1.54x | 18.9x | 194x |
+    /// | SK, n = 10 (10) | 1 | 9.54 | 0.59x | 6.17x | 62.1x |
+    ///
+    /// At this temperature the sparse ring loses even at TV 1e-1, and the fully-connected graph,
+    /// where the coloured sweep has to spend a tick per spin, wins there and only there. Cold, the
+    /// sparse fixtures win at 1e-1 too (0.12x on this ring at `beta = 2`), because the coloured
+    /// sweep is itself slow; at 1e-2 SCA loses in every one of the example's nine cells. Each factor of ten in
+    /// accuracy costs ten in ticks, because `q* = ln(c / eps) / 2` and every flip is suppressed by
+    /// `e^{-2q} = eps / c`. The coloured sweep pays nothing for accuracy. The same measurement over
+    /// three temperatures and three fixtures is `examples/sca_exact.rs`.
+    ///
+    /// What this does NOT say: STATICA and Amorphica are annealers for ground states, where the
+    /// stationary law is a means and a coarse one may serve. This is SCA as a SAMPLER.
+    #[test]
+    fn sca_beats_the_coloured_sweep_only_where_its_law_is_coarse() {
+        let (_, ring, _) = tick_fixtures();
+        let sk = sk_fixture(10, 11);
+        let beta = 1.0;
+        let q_star = |g: &Graph, eps: f64| -> f64 {
+            let bolt = boltzmann(g, beta).expect("small");
+            let tv = |q: f64| total_variation(&sca_law(g, beta, q).expect("small"), &bolt);
+            // TV falls through eps once on [0, 10] on both fixtures (the example scans a 0.01 grid
+            // and checks it stays down); bisect that crossing.
+            let (mut lo, mut hi) = (0.0f64, 10.0f64);
+            assert!(tv(lo) > eps && tv(hi) < eps, "eps {eps} must be bracketed");
+            for _ in 0..60 {
+                let mid = 0.5 * (lo + hi);
+                if tv(mid) > eps {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            hi
+        };
+        let tau_e = |g: &Graph, kernel: Kernel| tau_int_fundamental(g, beta, kernel, |s| g.energy(s)).expect("dense").tau_int;
+
+        let mut ratios = Vec::new();
+        for g in [&ring, &sk] {
+            let chi = g.classes.len() as f64;
+            let coloured = tau_e(g, Kernel::ChromaticGibbs) * chi;
+            let row: Vec<f64> = [1e-1f64, 1e-2]
+                .iter()
+                .map(|&eps| tau_e(g, Kernel::Sca { q: q_star(g, eps) }) / coloured)
+                .collect();
+            ratios.push((chi, row));
+        }
+        let (ring_chi, ring) = &ratios[0];
+        let (sk_chi, sk) = &ratios[1];
+        assert_eq!((*ring_chi, *sk_chi), (3.0, 10.0), "the ring colours in three, SK in ten");
+        // Measured 1.54 and 18.86 (ring); 0.59 and 6.17 (SK).
+        assert!(ring[0] > 1.2, "sparse: SCA loses even at TV 1e-1: {ring:?}");
+        assert!(sk[0] < 0.8, "dense: SCA wins at TV 1e-1: {sk:?}");
+        assert!(ring[1] > 10.0 && sk[1] > 4.0, "and both lose by 4x or more at TV 1e-2: ring {ring:?}, SK {sk:?}");
+        // Each factor of ten in accuracy costs close to ten in ticks, on both.
+        for (name, r) in [("ring", ring), ("SK", sk)] {
+            let step = r[1] / r[0];
+            assert!((8.0..14.0).contains(&step), "{name}: tenfold accuracy costs {step}x");
+        }
     }
 }

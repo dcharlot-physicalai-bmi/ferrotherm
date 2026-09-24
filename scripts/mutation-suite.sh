@@ -1372,6 +1372,18 @@ mutations=(
   "src/ledger.rs|    e_sample: 1.914510e-11,|    e_sample: 1.914510e-10,|ledger::tests::the_metered_write_is_rederived_from_its_own_sensor_log|a writable flip energy that is not what its own sensor log says"
   "src/ledger.rs|                    assert!((sweeps / 2.5e7 - 1.0).abs() < 1e-4, \"{arm}: {sweeps} sweeps/s is not this fabric\");|                    assert!((sweeps / 5.0e7 - 1.0).abs() < 1e-4, \"{arm}: {sweeps} sweeps/s is not this fabric\");|ledger::tests::the_metered_write_is_rederived_from_its_own_sensor_log|two clocks a sweep where this fabric takes four"
 
+  # SCA: STATICA / Amorphica / Momentum Annealing's all-at-once rule. The law is held to the
+  # ENUMERATED marginal of the bipartite double, to its factorised form, and to the kernel's own
+  # solved law; the first four rows break the kernel or the closed form and must fail one of those.
+  # The fifth breaks the dispatch that scores reversibility. The sixth keeps the law's shape and
+  # halves the pinning, which only the first-order RATE test can see.
+  "src/autocorr.rs|p_up(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|p_up(beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|SCA kernel at the full field instead of the half"
+  "src/autocorr.rs|p_up(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|p_up(0.5 * beta * g.field(i, s), 1.0)|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|SCA kernel without its pinning"
+  "src/autocorr.rs|let mut acc = 0.5 * beta * hx;|let mut acc = 0.0 * beta * hx;|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|sca_law drops the exp(beta/2 h.x) prefactor"
+  "src/autocorr.rs|let a = (0.5 * beta * g.field(i, &s) + q * f64::from(s[i])).abs();|let a = (0.5 * beta * g.field(i, &s) + q).abs();|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|sca_law pinning that ignores the spin it pins"
+  "src/autocorr.rs|Kernel::Sca { q } => sca_law(g, beta, q),|Kernel::Sca { q } => boltzmann(g, beta),|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|own_law hands SCA the Boltzmann law, so its entropy production is scored against the wrong law"
+  "src/autocorr.rs|let a = (0.5 * beta * g.field(i, &s) + q * f64::from(s[i])).abs();|let a = (0.5 * beta * g.field(i, &s) + 0.5 * q * f64::from(s[i])).abs();|autocorr::tests::sca_approaches_boltzmann_at_exactly_its_first_order_rate|sca_law at half the pinning, so TV decays as e^{-q} and not e^{-2q}"
+
 )
 
 bad=0
@@ -1443,7 +1455,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=301
+expected_rows=307
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
