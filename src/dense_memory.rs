@@ -462,7 +462,7 @@ mod tests {
         assert!(worst < 1e-6, "worst coordinate error over 100 draws: {worst}");
     }
 
-    /// **One attention step is not the energy\'s minimiser**, except in one corner.
+    /// **One attention step is not the energy's minimiser**, except in one corner.
     ///
     /// The identity above says `T(ξ) = ξ − ∇E(ξ)`: one gradient step, step size exactly 1. It is
     /// commonly read one step further — "attention is an energy-based model, so a machine that
@@ -478,7 +478,7 @@ mod tests {
     /// (relative distance `‖T(ξ) − T^∞(ξ)‖ / ‖T^∞(ξ)‖`, mean over 20 draws each.)
     ///
     /// **One-step retrieval needs both conditions**, a query already on a pattern *and* a high β —
-    /// which is Ramsauer et al.\'s separation hypothesis, and is what their one-step theorem
+    /// which is Ramsauer et al.'s separation hypothesis, and is what their one-step theorem
     /// assumes. Drop either and the fixed point is somewhere else: at β = 0.25 a pattern query is
     /// still 82% away, and a diffuse query is 41–90% away at **every** β measured, never small.
     ///

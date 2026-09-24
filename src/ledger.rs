@@ -1047,23 +1047,23 @@ mod tests {
         assert!(read_budget_for_advantage(1.0, 0.4, 10, 2.0).is_some(), "0.5 > 0.4 leaves room");
     }
 
-    /// **Whitelam\'s ten orders of magnitude require a readout at the Landauer floor.**
+    /// **Whitelam's ten orders of magnitude require a readout at the Landauer floor.**
     ///
     /// arXiv:2506.15121 (v3) prices a generative Langevin computer against a digital denoiser. Both
-    /// figures are the paper\'s own, verbatim: the digital budget is *"not less than
-    /// 5\u{d7}10^{14} k_BT"* per denoising trajectory, and *"Over 1000 independent denoising
+    /// figures are the paper's own, verbatim: the digital budget is *"not less than
+    /// 5×10^{14} `k_BT`"* per denoising trajectory, and *"Over 1000 independent denoising
     /// trajectories of the trained computer we calculate a mean heat emission of
-    /// \u{27e8}Q\u{27e9}=2.9\u{d7}10^{3} k_BT"*. Their ratio is *"more than 10^{11}"*.
+    /// ⟨Q⟩=2.9×10^{3} `k_BT`"*. Their ratio is *"more than 10^{11}"*.
     ///
     /// **Both numbers are dynamics.** The heat is defined as
     /// `Q = V(x(0)) - V(x(t_f))` — the potential energy at the two ends of a trajectory — so
-    /// obtaining the paper\'s own reported quantity requires reading the full state twice, over
+    /// obtaining the paper's own reported quantity requires reading the full state twice, over
     /// `N_v + N_h = 784 + 512 = 1296` units. That is 2,592 values per trajectory and 2,592,000 over
     /// the 1000 trajectories the mean is taken over. The claim charges none of them.
     ///
     /// | per-value readout cost | advantage that survives |
     /// |---|---|
-    /// | free | 1.72e11 — the paper\'s own ratio, reproduced |
+    /// | free | 1.72e11 — the paper's own ratio, reproduced |
     /// | 1.18 x the Landauer floor | 1e11 — the last point the headline holds |
     /// | 10 x the floor | 2.4e10 |
     /// | 26.4 x the floor | 1e10 |
@@ -1076,11 +1076,11 @@ mod tests {
     /// particular one.
     ///
     /// The free-readout row is the control: with reads priced at zero this machinery returns the
-    /// paper\'s ratio exactly, so the collapse in the last row is attributable to the readout and
+    /// paper's ratio exactly, so the collapse in the last row is attributable to the readout and
     /// not to the arithmetic here.
     #[test]
     fn whitelams_ten_orders_of_magnitude_need_a_readout_at_the_landauer_floor() {
-        // The paper\'s OWN kT, from its own sentence: 1 pJ per MAC "or 2.4e8 k_BT".
+        // The paper's OWN kT, from its own sentence: 1 pJ per MAC "or 2.4e8 k_BT".
         let kt = 1e-12 / 2.4e8;
         let trajectories = 1000.0f64;
         let units = 784u64 + 512;
@@ -1090,7 +1090,7 @@ mod tests {
         let baseline = 5e14 * kt * trajectories;
         let dynamics = 2.9e3 * kt * trajectories;
 
-        // CONTROL: with a free readout this reproduces the paper\'s own ratio, which is a closed
+        // CONTROL: with a free readout this reproduces the paper's own ratio, which is a closed
         // form in its two published numbers and carries no physical constant at all.
         let free = advantage_after_readout(baseline, dynamics, reads, 0.0);
         let paper = 5e14 / 2.9e3;
@@ -1100,7 +1100,7 @@ mod tests {
         // THE FINDING, in units nobody has to agree on a device to check.
         let budget = read_budget_for_advantage(baseline, dynamics, reads, 1e11).expect("attainable");
         for &t in &[300.0f64, 301.8] {
-            // 300 K is this crate\'s constant; 301.8 K is what the paper\'s own kT implies. The
+            // 300 K is this crate's constant; 301.8 K is what the paper's own kT implies. The
             // conclusion must not turn on which is used, so both are asserted.
             let floor = crate::floors::readout_floor(1.0, t);
             let in_floors = budget / floor;

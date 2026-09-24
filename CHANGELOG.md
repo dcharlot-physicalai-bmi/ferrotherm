@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Twelve doc lines shipped with their escapes showing, and CI's clippy step has been red since
+
+`ledger::advantage_after_readout` (the Whitelam entry) and `dense_memory`'s attention fence were
+written through a script that escaped them, and went out reading `Whitelam\'s`, `5\u{d7}10^{14}` and
+`\u{27e8}Q\u{27e9}` on docs.rs in place of an apostrophe, `×`, `⟨` and `⟩`. The verbatim quotation
+they carry was right; its rendering was not, and nothing that reads prose read them. Separately, two
+doc lines in `eqprop` and two in `ledger` tripped `clippy::doc_markdown`, which CI denies. CI's
+"Clippy, across the whole workspace" step has failed on all six pushes since `2f445d2`, and it was
+the only step that failed — but it stops the `test` job, so the suite after it never ran on CI for
+those commits, and the `mutation` job was cancelled each time. Everything else was green. The local
+push gate ran `cargo doc` and `cargo test` and neither sees either defect; it runs CI's own clippy
+command now.
+
 ### `Kernel::Sca` — all spins at once buys ticks only where the law is coarse
 
 Stochastic cellular automata (SCA), the rule inside the STATICA and Amorphica annealing processors,

@@ -230,7 +230,7 @@ pub fn eqprop_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f6
     }
 }
 
-/// Where each phase of a two-phase EqProp run starts relaxing from.
+/// Where each phase of a two-phase equilibrium-propagation run starts relaxing from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Relaxation {
     /// Every phase relaxes for the same budget from the uniform law over clamp-consistent states —
@@ -527,7 +527,7 @@ mod tests {
     /// **It is protocol-dependent, and this crate's own protocol does not show it.**
     /// [`Relaxation::Cold`] — both phases from their own fresh chain, which is what
     /// [`eqprop_gradient`] samples — is flat at every `β` here. The divergence is a property of the
-    /// warm start, not of one-sided EqProp.
+    /// warm start, not of one-sided equilibrium propagation.
     ///
     /// **At a finite budget with a warm start, `β → 0` is not the limit to chase.** The error has
     /// an interior minimum near `β = 0.2`; below it the residual term `R/β` wins. The infinite-
