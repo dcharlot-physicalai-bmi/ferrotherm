@@ -1384,6 +1384,18 @@ mutations=(
   "src/autocorr.rs|Kernel::Sca { q } => sca_law(g, beta, q),|Kernel::Sca { q } => boltzmann(g, beta),|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|own_law hands SCA the Boltzmann law, so its entropy production is scored against the wrong law"
   "src/autocorr.rs|let a = (0.5 * beta * g.field(i, &s) + q * f64::from(s[i])).abs();|let a = (0.5 * beta * g.field(i, &s) + 0.5 * q * f64::from(s[i])).abs();|autocorr::tests::sca_approaches_boltzmann_at_exactly_its_first_order_rate|sca_law at half the pinning, so TV decays as e^{-q} and not e^{-2q}"
 
+  # NESTED R-HAT. The statistic is held to a hand-worked case and to footnote 3's identity, the
+  # population oracle to a mean squared error summed by pushing laws FORWARD (a route sharing no code
+  # with it) and to Corollary 3.5's exact floor. The fifth row is the bookkeeping slip the first
+  # draft of the incremental curve actually made: the law at the first draw advanced per tick rather
+  # than per report, which only shows with more than one draw.
+  "src/rhat.rs|let between_chain = if per > 1 { variance(&means) } else { 0.0 };|let between_chain = 0.0;|rhat::tests::nested_rhat_matches_a_hand_case_and_the_classical_identity|nested R-hat without the between-chain variance"
+  "src/rhat.rs|    (1.0 + b / w).sqrt()|    (b / w).sqrt()|rhat::tests::nested_rhat_matches_a_hand_case_and_the_classical_identity|nested R-hat not bounded below by one"
+  "src/autocorr.rs|let persistent = e_chain_var / chains as f64;|let persistent = e_chain_var;|autocorr::tests::nested_population_reads_exactly_its_persistent_floor_on_independent_draws|persistent variance not divided by the chain count"
+  "src/autocorr.rs|for s in windows[1 + d].iter().take(draws - d) {|for s in windows[1 + d].iter().take(draws) {|autocorr::tests::nested_population_decomposes_the_error_exactly_by_an_independent_route|cross terms summed past the last draw"
+  "src/autocorr.rs|        law = apply_distribution(g, beta, kernel, &law);|        law = apply_distribution(g, beta, kernel, &apply_distribution(g, beta, kernel, &law));|autocorr::tests::nested_population_decomposes_the_error_exactly_by_an_independent_route|first-draw law advanced twice per report"
+  "src/autocorr.rs|let within = within_chain + if chains > 1 { e_chain_var } else { 0.0 };|let within = within_chain + e_chain_var;|autocorr::tests::nested_population_reads_exactly_its_persistent_floor_on_independent_draws|between-chain variance counted with one chain per superchain"
+
 )
 
 bad=0
@@ -1455,12 +1467,13 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=307
+expected_rows=313
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
   exit 2
 fi
+
 
 for row in "${mutations[@]}"; do
   IFS='|' read -r file old new filter label pkg <<<"$row"

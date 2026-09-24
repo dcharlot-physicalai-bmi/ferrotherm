@@ -1299,6 +1299,178 @@ pub fn entropy_production(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, A
     Ok(sigma.max(0.0))
 }
 
+/// What a superchain design's error is made of, and the nested R-hat it would read, EXACTLY.
+///
+/// Margossian et al. (Bayesian Analysis 2024, their Eq. 27) split the expected squared error of
+/// one superchain's mean -- `M` chains from one shared start `θ0 ~ p0`, each run `warmup` steps and
+/// then read `draws` times -- into three parts,
+///
+/// ```text
+///   E (f̄_k − E_pi f)²  =  bias²  +  Var_p0 E(f̄ | θ0)  +  E_p0 Var(f̄_k | θ0)
+///                                    nonstationary         persistent
+/// ```
+///
+/// and set nested R-hat to watch the middle one, "and so, by proxy, the squared bias". Every field
+/// here is computed from the kernel, not from chains: `E(f(X_t) | x0)` is `P^t f` and
+/// `E(f(X_s) f(X_t) | x0)` is `P^s (f · P^(t−s) f)`, both applied to all `2^n` starts at once.
+/// [`crate::rhat::nested_rhat`] on `K` superchains tends to `rhat` as `K` grows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NestedPopulation {
+    /// The population nested R-hat, `sqrt(1 + B / W)`.
+    pub rhat: f64,
+    /// `(E f̄ − E_pi f)²`, against the kernel's OWN law ([`own_law`]).
+    pub squared_bias: f64,
+    /// `Var_p0 E(f̄ | θ0)`: how much the answer still depends on where a superchain started.
+    pub nonstationary: f64,
+    /// `E_p0 Var(f̄_k | θ0)` for one superchain of `M` chains: the variance that would remain at
+    /// stationarity.
+    pub persistent: f64,
+    /// `W`, the within-superchain variance nested R-hat scales by.
+    pub within: f64,
+    /// `Var_pi f` under the kernel's own law, the scale a tolerance is usually stated in.
+    pub stationary_variance: f64,
+    /// `E f̄ − E_Boltzmann f`, signed: the distance nested R-hat cannot see when the kernel's own
+    /// law is not the Boltzmann law.
+    pub boltzmann_bias: f64,
+    /// Total variation between the chains' law at their first draw and the kernel's own law.
+    pub tv_first_draw: f64,
+}
+
+/// The exact [`NestedPopulation`] of observable `f` for superchains started from `start` (a law
+/// over the `2^n` states, bit `i` set meaning spin `i` is `+1`), `chains` chains per superchain,
+/// `warmup` kernel steps before the first of `draws` draws. The last point of
+/// [`nested_population_curve`].
+///
+/// # Errors
+///
+/// As [`nested_population_curve`].
+///
+/// # Panics
+///
+/// As [`nested_population_curve`].
+#[allow(clippy::too_many_arguments)]
+pub fn nested_population(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    f: impl Fn(&[i8]) -> f64,
+    start: &[f64],
+    warmup: usize,
+    draws: usize,
+    chains: usize,
+) -> Result<NestedPopulation, AutocorrError> {
+    let mut curve = nested_population_curve(g, beta, kernel, f, start, warmup, draws, chains)?;
+    Ok(curve.pop().expect("the curve holds warmup + 1 points"))
+}
+
+/// [`nested_population`] at every warmup from `0` to `max_warmup`, in one pass: the kernel's own
+/// law is solved once and each extra step of warmup costs a fixed number of kernel applications,
+/// so a whole convergence curve costs what one late point would.
+///
+/// # Errors
+///
+/// As [`own_law`], and [`AutocorrError::TooManySpins`] above [`MAX_SPINS`].
+///
+/// # Panics
+///
+/// If `start` does not have `2^n` entries, or `draws` or `chains` is zero.
+#[allow(clippy::too_many_arguments)]
+pub fn nested_population_curve(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    f: impl Fn(&[i8]) -> f64,
+    start: &[f64],
+    max_warmup: usize,
+    draws: usize,
+    chains: usize,
+) -> Result<Vec<NestedPopulation>, AutocorrError> {
+    use std::collections::VecDeque;
+    if g.n > MAX_SPINS {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+    }
+    let n = g.n;
+    let m = 1usize << n;
+    assert_eq!(start.len(), m, "a start law over states has 2^n entries");
+    assert!(draws > 0 && chains > 0, "at least one draw of one chain");
+    let fv: Vec<f64> = (0..m).map(|x| f(&spins(x, n))).collect();
+    let step = |v: &[f64]| apply(g, beta, kernel, v);
+
+    let pi = own_law(g, beta, kernel)?;
+    let mu_pi: f64 = pi.iter().zip(&fv).map(|(p, v)| p * v).sum();
+    let var_pi: f64 = pi.iter().zip(&fv).map(|(p, v)| p * (v - mu_pi).powi(2)).sum();
+    let bolt = boltzmann(g, beta)?;
+    let mu_b: f64 = bolt.iter().zip(&fv).map(|(p, v)| p * v).sum();
+
+    // Tracked functions, each advanced one kernel step per tick t: P^t f, P^t f^2, and for every
+    // lag d in 1..draws, P^t (f * P^d f) -- whose sum over s gives E(f(X_s) f(X_(s+d)) | x0).
+    let mut tracked: Vec<Vec<f64>> = vec![fv.clone(), fv.iter().map(|v| v * v).collect()];
+    let mut lag = fv.clone();
+    for _ in 1..draws {
+        lag = step(&lag);
+        tracked.push(fv.iter().zip(&lag).map(|(a, b)| a * b).collect());
+    }
+    // The last `draws` values of each, at ticks t - draws + 1 ..= t.
+    let mut windows: Vec<VecDeque<Vec<f64>>> = vec![VecDeque::with_capacity(draws); tracked.len()];
+    let mut law = start.to_vec();
+    let nd = draws as f64;
+    let expect = |v: &[f64]| -> f64 { start.iter().zip(v).map(|(p, a)| p * a).sum() };
+    let mut out = Vec::with_capacity(max_warmup + 1);
+    for tick in 1..=max_warmup + draws {
+        for (v, win) in tracked.iter_mut().zip(windows.iter_mut()) {
+            *v = step(v);
+            if win.len() == draws {
+                win.pop_front();
+            }
+            win.push_back(v.clone());
+        }
+        if tick < draws {
+            continue;
+        }
+        // One report per warmup w = tick - draws, whose first draw is at time w + 1: advancing the
+        // law once per REPORT, not per tick, keeps it at start P^(w + 1).
+        law = apply_distribution(g, beta, kernel, &law);
+        // The window now covers draws at ticks w + 1 ..= w + draws, with w = tick - draws.
+        let (mut sum_f, mut sum_f2, mut cross) = (vec![0.0f64; m], vec![0.0f64; m], vec![0.0f64; m]);
+        for s in &windows[0] {
+            sum_f.iter_mut().zip(s).for_each(|(a, b)| *a += b);
+        }
+        for s in &windows[1] {
+            sum_f2.iter_mut().zip(s).for_each(|(a, b)| *a += b);
+        }
+        // Lag d pairs a draw at s with one at s + d, so s runs over the first draws - d ticks.
+        for d in 1..draws {
+            for s in windows[1 + d].iter().take(draws - d) {
+                cross.iter_mut().zip(s).for_each(|(a, b)| *a += b);
+            }
+        }
+        let mean_path: Vec<f64> = sum_f.iter().map(|s| s / nd).collect();
+        let second: Vec<f64> = sum_f2.iter().zip(&cross).map(|(a, c)| (a + 2.0 * c) / (nd * nd)).collect();
+        let chain_var: Vec<f64> = second.iter().zip(&mean_path).map(|(s, mu)| s - mu * mu).collect();
+        let within_chain = if draws > 1 {
+            expect(&sum_f2.iter().zip(&second).map(|(a, s)| (a - nd * s) / (nd - 1.0)).collect::<Vec<_>>())
+        } else {
+            0.0
+        };
+        let mean_all = expect(&mean_path);
+        let nonstationary = expect(&mean_path.iter().map(|v| v * v).collect::<Vec<_>>()) - mean_all * mean_all;
+        let e_chain_var = expect(&chain_var);
+        let persistent = e_chain_var / chains as f64;
+        let within = within_chain + if chains > 1 { e_chain_var } else { 0.0 };
+        out.push(NestedPopulation {
+            rhat: (1.0 + (nonstationary + persistent) / within).sqrt(),
+            squared_bias: (mean_all - mu_pi).powi(2),
+            nonstationary,
+            persistent,
+            within,
+            stationary_variance: var_pi,
+            boltzmann_bias: mean_all - mu_b,
+            tv_first_draw: total_variation(&law, &pi),
+        });
+    }
+    Ok(out)
+}
+
 /// The exact integrated autocorrelation time of `observable` under `kernel` at `beta`.
 ///
 /// `tol` is the tail cut: lags are summed until `|rho(k)| < tol`, or until `max_lags`. Both are
@@ -2456,5 +2628,207 @@ mod tests {
             let step = r[1] / r[0];
             assert!((8.0..14.0).contains(&step), "{name}: tenfold accuracy costs {step}x");
         }
+    }
+
+    /// **The error decomposition is an identity, checked by a route that shares no code with it.**
+    /// [`nested_population`] pulls functions BACKWARD through [`apply`]; here the chains' laws are
+    /// pushed FORWARD through [`apply_distribution`] and the mean squared error of a one-chain
+    /// superchain is summed directly -- `E(f(X) − mu)^2` for one draw, and the two-draw version from
+    /// the marginal at the first draw and `E f(X1) f(X2) = sum_x q(x) f(x) (P f)(x)`. Margossian's
+    /// Eq. 27 says those equal `bias^2 + nonstationary + persistent`, and they must, to rounding.
+    #[test]
+    fn nested_population_decomposes_the_error_exactly_by_an_independent_route() {
+        let g = grid_glass(3, 3, 11);
+        let m = 1usize << g.n;
+        let mut rng = Pcg::new(9, 1);
+        let mut start: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
+        let z: f64 = start.iter().sum();
+        start.iter_mut().for_each(|v| *v /= z);
+        let energy = |s: &[i8]| g.energy(s);
+        let fv: Vec<f64> = (0..m).map(|x| g.energy(&spins(x, g.n))).collect();
+        let mut cells = 0usize;
+        for kernel in [Kernel::ChromaticGibbs, Kernel::FixedFabric, Kernel::Sca { q: 1.0 }] {
+            for &(beta, warmup) in &[(0.7f64, 0usize), (1.5, 3)] {
+                let pi = own_law(&g, beta, kernel).expect("small");
+                let mu: f64 = pi.iter().zip(&fv).map(|(p, v)| p * v).sum();
+                let mut q = start.clone();
+                for _ in 0..=warmup {
+                    q = apply_distribution(&g, beta, kernel, &q);
+                }
+                // One draw.
+                let one = nested_population(&g, beta, kernel, energy, &start, warmup, 1, 1).expect("small");
+                let mse1: f64 = q.iter().zip(&fv).map(|(p, v)| p * (v - mu).powi(2)).sum();
+                let sum1 = one.squared_bias + one.nonstationary + one.persistent;
+                assert!((sum1 - mse1).abs() < 1e-10 * mse1.max(1.0), "{kernel:?} beta {beta}: {sum1} vs {mse1}");
+                // Two draws.
+                let two = nested_population(&g, beta, kernel, energy, &start, warmup, 2, 1).expect("small");
+                let q2 = apply_distribution(&g, beta, kernel, &q);
+                let pf = apply(&g, beta, kernel, &fv);
+                let e1: f64 = q.iter().zip(&fv).map(|(p, v)| p * v).sum();
+                let e2: f64 = q2.iter().zip(&fv).map(|(p, v)| p * v).sum();
+                let s1: f64 = q.iter().zip(&fv).map(|(p, v)| p * v * v).sum();
+                let s2: f64 = q2.iter().zip(&fv).map(|(p, v)| p * v * v).sum();
+                let c12: f64 = (0..m).map(|x| q[x] * fv[x] * pf[x]).sum();
+                let mse2 = 0.25 * (s1 + s2 + 2.0 * c12) - mu * (e1 + e2) + mu * mu;
+                let sum2 = two.squared_bias + two.nonstationary + two.persistent;
+                assert!((sum2 - mse2).abs() < 1e-10 * mse2.max(1.0), "{kernel:?} beta {beta}: {sum2} vs {mse2}");
+                // The law at the FIRST draw is start P^(warmup + 1) however many draws follow it.
+                let tv = total_variation(&q, &pi);
+                for p in [&one, &two] {
+                    assert!((p.tv_first_draw - tv).abs() < 1e-14, "{kernel:?} beta {beta}: {} vs {tv}", p.tv_first_draw);
+                }
+                cells += 1;
+            }
+        }
+        assert_eq!(cells, 6, "3 kernels x 2 settings");
+    }
+
+    /// **The floor is exact, as the paper's Corollary 3.5 says.** On uncoupled spins one chromatic
+    /// sweep is an independent draw from the stationary law, whatever the start, so nothing is
+    /// nonstationary and nested R-hat reads only its persistent floor: `R^2 = 1 + 1/M` for one draw
+    /// per chain -- the reason their threshold is `sqrt(1 + 1/M + tau)` -- and `1 + 1/(M (N + 1))`
+    /// for `N` draws. Both are asserted exactly, on a start law that is nowhere near stationary.
+    #[test]
+    fn nested_population_reads_exactly_its_persistent_floor_on_independent_draws() {
+        let mut b = GraphBuilder::new(6);
+        for i in 0..6 {
+            b.bias(i, 0.3 * i as f64 - 0.7);
+        }
+        let g = b.build();
+        let m = 1usize << g.n;
+        let mut start = vec![0.0f64; m];
+        start[0] = 1.0; // every superchain from all spins down
+        let mag = |s: &[i8]| s.iter().map(|&v| f64::from(v)).sum::<f64>();
+        for &chains in &[1usize, 4, 16] {
+            for &draws in &[1usize, 3] {
+                let p = nested_population(&g, 1.3, Kernel::ChromaticGibbs, mag, &start, 0, draws, chains).expect("small");
+                assert!(p.nonstationary.abs() < 1e-13, "independent draws carry no memory of the start: {}", p.nonstationary);
+                // Persistent variance over W: sigma^2/(M N) over sigma^2 (N > 1) plus sigma^2/N (M > 1).
+                let (mm, nn) = (chains as f64, draws as f64);
+                let floor = match (chains, draws) {
+                    (1, _) => 1.0 / nn,
+                    (_, 1) => 1.0 / mm,
+                    _ => 1.0 / (mm * (nn + 1.0)),
+                };
+                let got = p.rhat * p.rhat - 1.0;
+                if chains == 1 && draws == 1 {
+                    // W has neither a within-chain nor a between-chain part: nothing to scale by.
+                    assert!(got.is_infinite() || got.is_nan(), "one draw of one chain has W = 0: {got}");
+                    continue;
+                }
+                assert!((got - floor).abs() < 1e-12, "M {chains}, N {draws}: R^2 - 1 = {got}, floor {floor}");
+            }
+        }
+    }
+
+    /// **The population value is what the statistic converges to.** 4,000 superchains of four
+    /// chains, each started from a uniformly drawn state shared within its superchain, run by
+    /// [`crate::gibbs::Sampler`] itself -- no warmup, two draws -- and scored by
+    /// [`crate::rhat::nested_rhat`]. Its `R^2 − 1` must agree with [`nested_population`]'s to within
+    /// the estimator's own noise, on a glass cold enough that the answer is far above the floor.
+    #[test]
+    fn nested_rhat_on_sampled_superchains_converges_to_the_population_value() {
+        use crate::gibbs::Sampler;
+        use crate::rhat::nested_rhat;
+        let g = grid_glass(3, 3, 11);
+        let beta = 1.2;
+        let (superchains, per, warmup, draws) = (4000usize, 4usize, 0usize, 2usize);
+        let m = 1usize << g.n;
+        let uniform = vec![1.0 / m as f64; m];
+        let pop = nested_population(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s), &uniform, warmup, draws, per)
+            .expect("small");
+        let floor = 1.0 / (per as f64 * (draws as f64 + 1.0));
+        assert!(pop.rhat * pop.rhat - 1.0 > 3.0 * floor, "the fixture must be far from its floor: {pop:?}");
+
+        let mut chains = Vec::with_capacity(superchains * per);
+        let mut ids = Vec::with_capacity(superchains * per);
+        for k in 0..superchains {
+            let x0 = Sampler::new(&g, beta, 10_000 + k as u64).s;
+            for c in 0..per {
+                let mut s = Sampler::new(&g, beta, 1_000_000 + (k * per + c) as u64);
+                s.s.clone_from(&x0);
+                s.sweeps(warmup, None);
+                let mut draw = Vec::with_capacity(draws);
+                for _ in 0..draws {
+                    s.sweep(None);
+                    draw.push(g.energy(&s.s));
+                }
+                chains.push(draw);
+                ids.push(k);
+            }
+        }
+        let sampled = nested_rhat(&chains, &ids);
+        let (got, want) = (sampled * sampled - 1.0, pop.rhat * pop.rhat - 1.0);
+        // Measured 0.3196 sampled against 0.3205 in the population, over a floor of 0.0833.
+        assert!((got / want - 1.0).abs() < 0.1, "sampled R^2 - 1 = {got}, population {want}");
+    }
+
+    /// **What nested R-hat's pass does and does not certify, on a p-bit array's regime** -- one
+    /// draw per chain, sixteen chains per superchain, the paper's own threshold
+    /// `sqrt(1 + 1/M + tau)` at `tau = 0.01` (Margossian et al. 2024, Eq. 29). Exact throughout;
+    /// `examples/nested_exact.rs` has the full table. Three things it cannot see:
+    ///
+    /// 1. **A start every superchain shares.** From one reset state -- a cleared register array --
+    ///    the nonstationary variance is zero by construction, so `R_nu^2 = 1 + 1/M` EXACTLY at every
+    ///    warmup and the rule passes at warmup 0, here with the energy's squared bias 4.5 times its
+    ///    variance.
+    /// 2. **A bias every start shares.** From uniform starts on a cold ferromagnet the energy passes
+    ///    at warmup 101 with squared bias 3.0 tau; the tolerance is not met until 117. The nine
+    ///    glass cells of the example pass with the proxy holding (at most 0.53 tau).
+    /// 3. **The wrong law, reached.** A synchronous sweep converges to Peretto's law and passes at
+    ///    warmup 23; its energy then sits 1.19 standard deviations from the Boltzmann value.
+    #[test]
+    fn nested_rhat_passes_on_a_shared_start_a_shared_bias_and_the_wrong_law() {
+        const M: usize = 16;
+        let threshold = (1.0 + 1.0 / M as f64 + 0.01).sqrt();
+        let glass = grid_glass(5, 2, 7);
+        let states = 1usize << glass.n;
+        let uniform = vec![1.0 / states as f64; states];
+        let mut reset = vec![0.0f64; states];
+        reset[0] = 1.0;
+
+        // 1. A shared start: exactly the floor, at every warmup.
+        let curve = nested_population_curve(&glass, 2.0, Kernel::ChromaticGibbs, |s| glass.energy(s), &reset, 30, 1, M)
+            .expect("small");
+        for (w, p) in curve.iter().enumerate() {
+            assert!(p.nonstationary.abs() < 1e-12, "w {w}: nothing can differ between identical starts");
+            assert!((p.rhat * p.rhat - 1.0 - 1.0 / M as f64).abs() < 1e-12, "w {w}: R^2 - 1 = {}", p.rhat * p.rhat - 1.0);
+        }
+        assert!(curve[0].rhat <= threshold, "and so it passes at warmup 0");
+        let bias0 = curve[0].squared_bias / curve[0].stationary_variance;
+        assert!(bias0 > 3.0, "while the energy is far from its law: bias^2/Var {bias0} (measured 4.455)");
+
+        // 2. A shared bias: the ferromagnet's energy passes before its bias is within tolerance.
+        let mut b = GraphBuilder::new(10);
+        for y in 0..2usize {
+            for x in 0..5usize {
+                let i = y * 5 + x;
+                if x + 1 < 5 {
+                    b.couple(i, i + 1, 1.0);
+                }
+                if y + 1 < 2 {
+                    b.couple(i, i + 5, 1.0);
+                }
+            }
+        }
+        let ferro = b.build();
+        let curve = nested_population_curve(&ferro, 2.0, Kernel::ChromaticGibbs, |s| ferro.energy(s), &uniform, 150, 1, M)
+            .expect("small");
+        let pass = curve.iter().position(|p| p.rhat <= threshold).expect("it passes");
+        let honest = curve.iter().position(|p| p.squared_bias / p.stationary_variance <= 0.01).expect("it gets there");
+        let at_pass = curve[pass].squared_bias / curve[pass].stationary_variance;
+        // Measured: pass at 101 with bias^2/Var 3.04e-2; within tolerance from 117.
+        assert!((95..=110).contains(&pass), "pass at {pass}");
+        assert!(at_pass > 0.02, "the bias at the pass is several tau: {at_pass}");
+        assert!(honest > pass + 10, "the tolerance is met well after the pass: {honest} vs {pass}");
+
+        // 3. The wrong law, reached: synchronous passes, and the energy is off Boltzmann by a lot.
+        let curve = nested_population_curve(&glass, 1.0, Kernel::Synchronous, |s| glass.energy(s), &uniform, 60, 1, M)
+            .expect("small");
+        let pass = curve.iter().position(|p| p.rhat <= threshold).expect("it passes");
+        assert!((18..=28).contains(&pass), "synchronous passes at {pass} (measured 23)");
+        assert!(curve[pass].squared_bias / curve[pass].stationary_variance < 0.01, "against its OWN law it is converged");
+        let off = curve[60].boltzmann_bias.powi(2) / curve[60].stationary_variance;
+        assert!(off > 1.2, "against Boltzmann the energy is > 1 sd off: bias^2/Var {off} (measured 1.411)");
     }
 }

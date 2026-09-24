@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Nested R-hat, and the three things its pass cannot see
+
+A p-bit array runs thousands of chains for a handful of sweeps, the regime split R-hat was not built
+for. `rhat::nested_rhat` is Margossian et al.'s nested R-hat (*Bayesian Analysis* 2024), computed as
+`posterior::rhat_nested` computes it, held to a hand-worked case and to the paper's footnote-3
+identity: with one chain per superchain, `R_ν²` is the unsplit classical `R²` plus exactly `1/N`.
+`autocorr::nested_population` and `nested_population_curve` compute, from the kernel and not from
+chains, the value it converges to and all three terms of the paper's error decomposition (squared
+bias, nonstationary and persistent variance). The decomposition is held to a mean squared error
+summed by pushing laws forward, a route that shares no code with it; the i.i.d. floor to the paper's
+Corollary 3.5 exactly (`1/M` for one draw, `1/(M(N + 1))` for `N`); and 4,000 superchains run by
+`gibbs::Sampler` read `R² − 1 = 0.3196` against the population's `0.3205`.
+
+From dispersed starts the proxy mostly holds: in nine glass cells the squared bias is at most 0.53 τ
+when the rule first passes. What its pass cannot see, exactly (16 chains per superchain, τ = 0.01):
+
+| | passes at warmup | squared bias / variance there |
+|---|---|---|
+| **a start every superchain shares** (a cleared register array) | **0** — `R_ν² = 1 + 1/M` at every warmup | 4.46 |
+| **a bias every start shares** (ferromagnet energy, β = 2) | 101 | 0.030 = 3 τ |
+| **the wrong law, reached** (synchronous sweep, β = 1) | 23 | 1.41 against Boltzmann |
+
+`examples/nested_exact.rs` has every cell; WORKLOADS.md entry 11 has the readings.
+
+  1784 lib tests, 2070 workspace, 454 verification-bearing
+  313 mutation rows (+6, each applied, seen RED against its named test, restored)
+
 ### Twelve doc lines shipped with their escapes showing, and CI's clippy step has been red since
 
 `ledger::advantage_after_readout` (the Whitelam entry) and `dense_memory`'s attention fence were

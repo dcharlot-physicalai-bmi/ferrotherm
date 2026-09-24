@@ -717,6 +717,46 @@ modes at half a step, so multiplying a sweep's Kemeny by `χ` multiplies the flo
 of this example reported SCA at `q = 0` as exactly `1/χ` of the coloured sweep in every cell for that
 reason alone.
 
+## 11. When may a p-bit array stop? — `src/rhat.rs`, `src/autocorr.rs`, nested R-hat
+
+A p-bit array runs thousands of chains for a handful of sweeps. Split R-hat was built for a few long
+chains and cannot certify that; **nested R-hat** (Margossian, Hoffman, Sountsov, Riou-Durand, Vehtari
+& Gelman, *Bayesian Analysis* 2024) was built for it. Chains are grouped into superchains that share
+a start, and the statistic watches the variance of the superchain means — the *nonstationary
+variance* — *"and so, by proxy, the squared bias"*. With one draw per chain the paper's threshold is
+`R_ν ≤ √(1 + 1/M + τ)`. `rhat::nested_rhat` computes it as `posterior::rhat_nested` does, and
+`autocorr::nested_population` computes, **from the kernel rather than from chains**, the value it
+converges to and all three terms of the paper's error decomposition (its Eq. 27). 4,000 sampled
+superchains read `R² − 1 = 0.3196` against the population's `0.3205`.
+
+**The proxy mostly holds, from dispersed starts.** Sixteen chains per superchain, one draw each,
+`τ = 0.01`, uniform starts, chromatic Gibbs: in all nine cells of a 5×2 ±J glass (β = 0.5, 1, 2 ×
+energy, magnetisation, one spin) the squared bias is at most **0.53 τ** when the rule first passes.
+Three things it cannot see, each exact:
+
+| what it cannot see | case | passes at warmup | squared bias / variance there |
+|---|---|---|---|
+| **a start every superchain shares** | glass, β = 2, energy, all from a cleared register | **0** | **4.46** |
+| **a bias every start shares** | 5×2 ferromagnet, β = 2, energy | 101 | **0.030** (3 τ; met from 117) |
+| **the wrong law, reached** | glass, β = 1, energy, synchronous sweep | 23 | **1.41 against Boltzmann** (5e-3 against its own law) |
+
+The first is exact rather than numerical: from one shared state nothing can differ between
+superchains, so `R_ν² = 1 + 1/M` **at every warmup** and the rule passes before a single sweep. That
+is a hardware case, not a contrived one — an array whose registers clear to one state and whose
+chains start there. Randomise the starts, or the diagnostic certifies nothing. The second is
+between-superchain variance being blind to a bias all superchains carry: the ferromagnet's energy
+relaxes the same way from either sign. The third is the general limit of every convergence
+diagnostic, made concrete: passing certifies convergence to the kernel's **own** law, and a
+synchronous sweep converges quickly to Peretto's law, whose energy is 1.19 standard deviations
+from Boltzmann's. SCA at `q = 1` passes with its energy's squared Boltzmann bias at `0.10` of a
+variance; the shipped fabric's arithmetic is harmless at this scale (at most `1.1e-4` at β ≤ 2).
+
+**And one place it is stricter than it needs to be.** Where the observable is odd under a symmetry
+the start respects — the ferromagnet's magnetisation from uniform starts — the bias is zero at every
+warmup, and nested R-hat still refuses to pass until warmup 236–248 at β = 1 and not within 400 at
+β = 2, because superchains that started on opposite sides still disagree. That is the rule working as
+designed: an unbiased mean made of halves that disagree is not a converged estimate.
+
 ---
 
 ## What we deliberately do not do
