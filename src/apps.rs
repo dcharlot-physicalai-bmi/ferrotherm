@@ -1065,7 +1065,7 @@ mod tests {
     #[test]
     fn the_restored_image_comes_out_of_emitted_hardware() {
         if std::process::Command::new("iverilog").arg("-V").output().is_err() {
-            eprintln!("SKIP: iverilog not installed; the emitted-hardware gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the emitted-hardware gate did not run, skipping");
             return;
         }
         // 5x5 keeps the emitted Verilog small enough to simulate in a unit test; the fabric this

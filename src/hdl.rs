@@ -764,7 +764,7 @@ mod tests {
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed; the AXI shell gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the AXI shell gate did not run, skipping");
             return;
         }
         let sweeps = 25usize;
@@ -906,7 +906,7 @@ endmodule
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed; the RTL bit-exactness gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the RTL bit-exactness gate did not run, skipping");
             return;
         }
         let mut g = lattice2d(6, 0.9);

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### The first run that finished, and twelve rows that were never simulated
+
+With the mutation job sharded and the examples step bounded (`a03d9ae`), CI finished for the first
+time since at least 2026-09-20. The `test` job passed in 38 minutes. All four mutation shards
+completed, in 2 h 4 min to 2 h 32 min, and all four failed on the same twelve rows: RTL and
+fabric-shell mutations — a p-trit whose draws are all its first draw, a threshold one bit wide, a
+sweep counted twice, a second weight landing four bits low in its bus word, a configuration write
+that resets the chain — reported STILL GREEN. They were not blind. The RTL gates simulate the
+emitted Verilog with iverilog and return early without it; the `test` job installs iverilog and the
+`mutation` job did not, so every one of those rows mutated code its test never ran. Locally, where
+iverilog is installed, each goes red.
+
+Two changes. The mutation job installs iverilog, so the rows are evaluated. And the nine RTL skip
+messages now end in "skipping", the word the mutation harness keys on to tell a test that could not
+run from one that ran and saw nothing: a machine without the simulator now reports NOT EVALUATED
+HERE, as a machine without a GPU adapter already did, instead of calling a correct test blind.
+
 ### Nested R-hat, and the three things its pass cannot see
 
 A p-bit array runs thousands of chains for a handful of sweeps, the regime split R-hat was not built

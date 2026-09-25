@@ -290,6 +290,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The RTL gates simulate the emitted Verilog and RETURN EARLY without a simulator. The `test`
+      # job installs iverilog and this job did not, so on the first run that finished (a03d9ae,
+      # 2026-09-25) twelve RTL and fabric-shell rows -- a q draw repeated, a threshold one bit
+      # wide, a sweep counted twice, a word landing four bits low -- mutated code their test never
+      # simulated and read as blind tests. A row needs the tool its test needs.
+      - name: Install icarus-verilog (the RTL rows need it as much as the RTL gates do)
+        run: sudo apt-get update && sudo apt-get install -y iverilog
       - name: Every recorded mutation is caught by the test named for it
         run: |
           if [ "${{ strategy.job-total }}" != "$SHARDS" ]; then

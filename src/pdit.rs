@@ -2130,7 +2130,7 @@ mod tests {
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed; the p-dit AXI shell gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the p-dit AXI shell gate did not run, skipping");
             return;
         }
         let mut b = PottsBuilder::new(3, 6, Interaction::Potts);
@@ -2271,7 +2271,7 @@ endmodule
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed; the cumulative p-dit RTL gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the cumulative p-dit RTL gate did not run, skipping");
             return;
         }
         let mut b = PottsBuilder::new(3, 6, Interaction::Potts);
@@ -2334,7 +2334,7 @@ endmodule
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed; the p-dit RTL bit-exactness gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the p-dit RTL bit-exactness gate did not run, skipping");
             return;
         }
         let mut b = PottsBuilder::new(3, 6, Interaction::Potts);

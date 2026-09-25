@@ -1006,7 +1006,7 @@ mod tests {
     #[test]
     fn rtl_reprogrammed_mid_run_without_a_reset_carries_its_state() {
         if !have_iverilog() {
-            eprintln!("SKIP: iverilog not installed; the carry gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the carry gate did not run, skipping");
             return;
         }
         // SHORT after the reprogram, and COLD. The first version ran eleven hot sweeps after it,
@@ -1246,7 +1246,7 @@ endmodule
     #[test]
     fn neither_shell_deadlocks_under_a_badly_behaved_master() {
         if !have_iverilog() {
-            eprintln!("SKIP: iverilog not installed; the bus stress gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the bus stress gate did not run, skipping");
             return;
         }
         let g = lattice2d(4, 0.9);
@@ -1265,7 +1265,7 @@ endmodule
     #[test]
     fn rtl_written_over_axi_matches_the_fixed_fabric_of_what_was_written() {
         if !have_iverilog() {
-            eprintln!("SKIP: iverilog not installed; the writable-fabric gate did not run");
+            eprintln!("SKIP: iverilog not installed on this machine; the writable-fabric gate did not run, skipping");
             return;
         }
         let sweeps = 20usize;
