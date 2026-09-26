@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### `kwsample`: exact planar samples by Kac–Ward determinants, held to a sampler that shares nothing
+
+Liu et al.'s autoregressive sampler (arXiv:2608.24382) on `pfaffian`'s determinant: breadth-first
+fixing keeps the fixed set connected, so one planarity-preserving apex spin carries every boundary
+field, and each conditional is a ratio of two field-free determinants. Dense, `O(N (2E)³)` per draw,
+not the paper's `O(N^{5/2})`. Held to enumeration on every prefix and every state of a 4×3 glass, and
+past enumeration to `exact`'s backward sampler, which shares no code with it: the two agree at 6×6,
+8×8, 10×10 and 14×14 (|z| ≤ 1.24), and every draw's likelihood equals `−βE − ln Z` to `7.7e-13` at
+196 spins. WORKLOADS.md entry 16.
+
+  1798 lib tests, 2084 workspace, 457 verification-bearing
+  325 mutation rows (+8 for this entry and the next, each applied, seen RED against its named test,
+  restored; one equivalent mutant written down in the suite rather than rowed)
+
+### `delay`, `pointproc`, `Kernel::RandomScan`: three hardware questions, answered exactly
+
+**Late reads (`delay`, WORKLOADS entry 13).** Zhang, Gibeault et al. (arXiv:2607.15215) report that
+long interaction delays drive coupled stochastic spins toward uniform occupation. `delay` computes the
+stationary law exactly on the chain over the last `d` frames, for two rules. Under their own-state
+Arrhenius rule, two spins at `βJ = 1` agree 0.78 of the time at one tick of delay and 0.51 at six,
+toward the uniform 1/2, and a field holds them at 0.86 — their effect, reproduced. Under a heat-bath
+p-bit, which ignores its own value, the delay changes nothing: the chain splits into `d` interleaved
+synchronous chains and the current frame follows Peretto's law at every delay, held to
+`autocorr::peretto` to `1e-10`. Latency adds no error on top of synchronous updating in a heat-bath
+fabric; colouring is still the fix.
+
+**A spike that lives a fixed time (`pointproc`, entry 14).** Stewart & Sahani (arXiv:2603.09089)
+sample with a point process whose spikes live exactly `m`; with exponential lifetimes of the same
+mean it is a birth–death chain with the same law. Both are simulated event by event, held to the
+exact renewal on-fraction of a single unit and to enumeration on a coupled triangle. On
+Sherrington–Kirkpatrick instances at equal birth rate, the fixed lifetime buys 1.32 to 1.77 times
+the effective samples per unit time in all twelve cells: the paper's claim, holding here.
+
+**Scan order (`Kernel::RandomScan`, entry 15).** A random-scan Gibbs kernel beside the fixed-order
+sweep, both exact. At equal site updates, a random scan needs 1.85 to 1.97 times the updates for the
+magnetisation at every temperature on two fixtures, and 1.01 to 1.89 for the energy. The uncoupled
+limit is exactly `2 − 1/n`, which the test holds to `1e-9`.
+
 ### `mpemba`: the "negligible" digital preprocessing costs what the whole answer costs
 
 Moroder, Binder & Goold (arXiv:2603.24183) start a thermodynamic inversion device from the `K`

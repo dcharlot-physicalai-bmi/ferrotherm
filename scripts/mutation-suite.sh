@@ -1404,6 +1404,21 @@ mutations=(
   "src/mpemba.rs|        if sturm_below(alpha, beta, mid) > j {|        if sturm_below(alpha, beta, mid) >= j {|mpemba::tests::lanczos_finds_the_smallest_eigenpairs_the_ensemble_was_built_with|a Sturm bisection one eigenvalue off"
   "src/mpemba.rs|    Some((inv, 2 * madds))|    Some((inv, madds))|mpemba::tests::the_cholesky_inverse_inverts_and_counts_its_work|a Cholesky count of multiply-adds, not flops"
 
+  # DELAY, THE POINT PROCESS, THE KAC-WARD SAMPLER, THE RANDOM SCAN. One row per mechanism each
+  # finding rests on. NOT a row, and why: negating the boundary field the fixed spins put on the apex
+  # (`field[index[i]] -= ...`) survives, and must: the apex is a free spin summed over +-1, and
+  # substituting it by its negative negates every apex coupling at once, so the conditional partition
+  # function is IDENTICAL. An equivalent mutant, by that one-line argument and the hand run
+  # (2026-09-26), not a blind test.
+  "src/delay.rs|        Rule::HeatBath => 1.0 / (1.0 + (-2.0 * beta * f).exp()),|        Rule::HeatBath => 1.0 / (1.0 + (-beta * f).exp()),|delay::tests::a_heat_bath_fabric_samples_the_same_law_at_every_delay|a heat-bath p-bit at half the field"
+  "src/delay.rs|            let delayed = (s >> (n * (frames - 1))) & mask;|            let delayed = s & mask;|delay::tests::an_arrhenius_network_forgets_its_coupling_as_the_delay_grows|a delayed read that reads the current frame"
+  "src/pointproc.rs|(2.0 * self.beta * self.g.field(i, &self.s)).exp() / self.m|(self.beta * self.g.field(i, &self.s)).exp() / self.m|pointproc::tests::a_single_unit_is_on_for_exactly_its_boltzmann_fraction|a birth rate at half the field"
+  "src/pointproc.rs|                Lifetime::Fixed => self.m,|                Lifetime::Fixed => 2.0 * self.m,|pointproc::tests::a_single_unit_is_on_for_exactly_its_boltzmann_fraction|a spike that lives twice its stated lifetime"
+  "src/kwsample.rs|        log_z += if has_apex { lz - std::f64::consts::LN_2 } else { lz };|        log_z += lz;|kwsample::tests::conditional_partition_functions_match_enumeration|an apex whose flip symmetry is not divided out"
+  "src/kwsample.rs|constant += w * f64::from(a) * f64::from(b),|constant -= w * f64::from(a) * f64::from(b),|kwsample::tests::conditional_partition_functions_match_enumeration|fixed-fixed couplings entering with the wrong sign"
+  "src/autocorr.rs|                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };|                    acc += if y & bit != 0 { (1.0 - p) * pooled } else { p * pooled };|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan mass landing on the other value"
+  "src/autocorr.rs|                out[x] = acc / n as f64;|                out[x] = acc;|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan functions not averaged over sites"
+
 )
 
 bad=0
@@ -1475,7 +1490,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=317
+expected_rows=325
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

@@ -803,6 +803,107 @@ preprocessing falls below the inverse's cost (0.58× at 2000), and there the que
 leaves open becomes the right one — whether the device finishes the remaining 6% of the answer in
 less than the rest of a digital inverse — and it needs a device model this crate has not got.
 
+## 13. Interactions that arrive late — `src/delay.rs`
+
+Zhang, Gibeault et al. (arXiv:2607.15215, 2026), from coupled superparamagnetic tunnel junctions:
+*"sufficiently long delays drive the steady-state probabilities toward equal state occupations even
+in strongly coupled systems"*. Their spins flip at a rate that depends on the spin's OWN current
+state and its neighbours' states one delay ago. A heat-bath p-bit draws its next value from its
+field and ignores the value it holds. `delay` computes both exactly, as a chain on the last `d`
+frames, for two coupled spins at `βJ = 1` (the Boltzmann law has them agreeing 0.8808 of the time):
+
+| delay (ticks) | heat-bath: agree | Arrhenius `p₀ = 0.05` | `p₀ = 0.2` | `p₀ = 0.2`, field `h = 0.5` |
+|---|---|---|---|---|
+| 1 | 0.5000 | 0.8667 | 0.7845 | 0.8770 |
+| 2 | 0.5000 | 0.8396 | 0.6609 | 0.8641 |
+| 4 | 0.5000 | 0.7867 | 0.5463 | 0.8621 |
+| 6 | 0.5000 | 0.7383 | 0.5130 | 0.8621 |
+
+**The paper's effect is real for its rule and absent for a heat-bath fabric.** Under the Arrhenius
+rule, agreement falls toward the uniform `1/2` as the delay grows, faster the more often a spin
+flips per tick, and a field holds it away from `1/2`, as the paper reports. Under the heat-bath rule
+the delay changes nothing at all: a new value that ignores the old one splits the chain into `d`
+interleaved synchronous chains that never meet, so the current frame follows Peretto's synchronous
+law at EVERY delay, held to `autocorr::peretto` to `1e-10`. That law is already wrong — for this pair
+the two spins decorrelate completely, `0.5000`, because a synchronous update never lets them see each
+other on the same tick (entry 8 and `Kernel::Synchronous`) — but it is wrong by the same amount at
+one tick of delay as at six. **For a fabric the engineering answer is the one it already has: colour
+the graph.** Interconnect latency does not add a second error on top of synchronous updating; it
+only matters when updates depend on a spin's own state.
+
+## 14. A spike that lives a fixed time — `src/pointproc.rs`
+
+Stewart & Sahani (arXiv:2603.09089, 2026) sample a discrete law with a temporal point process: for
+a p-bit target, a unit fires at rate `(1/m) e^{2β f_i}` when silent, and its spike stays live for a
+FIXED time `m`. Replace the fixed lifetime by an exponential one of the same mean and it is a
+birth–death chain with the same limiting law; the paper reports the point process *"always
+outperforms these birth-death processes"* on 63 targets. `pointproc` simulates both event by event,
+with no time step. One unit is an alternating renewal process, so its on-fraction is exactly
+`e^{2βh}/(1 + e^{2βh})` for either lifetime; both are held to that, and a coupled triangle to
+enumeration.
+
+On Sherrington–Kirkpatrick instances at equal birth rate — the same number of random draws per
+unit time — the integrated autocorrelation time, in units of `m`:
+
+| n | β | energy: fixed | exponential | **ratio** | magnetisation ratio |
+|---|---|---|---|---|---|
+| 8 | 0.5 | 0.263 | 0.363 | **1.38** | 1.77 |
+| 8 | 1.5 | 0.439 | 0.748 | **1.71** | 1.32 |
+| 16 | 1.0 | 0.491 | 0.751 | **1.53** | 1.71 |
+| 16 | 1.5 | 1.294 | 1.995 | **1.54** | 1.35 |
+
+**The claim holds here: a fixed lifetime buys 1.32 to 1.77 times the effective samples per unit time
+and per random draw**, in all twelve cells of `examples/pointproc_exact.rs`. The `τ` values come from
+this crate's windowed estimator on traces `4e4 m` long, which can under-report a slow mode (the
+`autocorr` module header measures by how much); both processes are measured the same way, so the RATIOS are the quotable
+part. For a spiking substrate the reading is concrete: a refractory period of fixed length is not
+a constraint to engineer around, it is the momentum.
+
+## 15. Does the order a fabric visits its p-bits in matter? — `Kernel::RandomScan`
+
+A fabric updates in a fixed order; the mixing theory was built for a random one, and has only
+recently reached the systematic scan (Blanca and Rafid, arXiv:2609.05750, `O(log n)` mixing
+under approximate tensorisation). At equal work, `τ_int` per SITE update, exact on 5×2 fixtures:
+**a random scan needs 1.85 to 1.97 times the updates of a fixed-order sweep for the magnetisation, at
+every temperature on both fixtures, and 1.01 to 1.89 times for the energy**, the gap growing as the
+temperature falls. The magnetisation figure has a closed form in the uncoupled limit — a random scan
+leaves a site untouched with probability `1 − 1/n` per step, so `τ = n − 1/2` updates against
+`n/2` for a sweep that refreshes every site, a ratio of exactly `2 − 1/n` — and the test holds it
+there to `1e-9`. Coupling barely moves it (1.89 at `β = 1` on the ferromagnet, where `τ` is 1,259
+updates). The random scan is reversible and the fixed order is not, which is what the theory prefers
+and what the measurement does not reward.
+
+## 16. Two exact samplers that share nothing — `src/kwsample.rs`
+
+Liu, Chen, Che, Wang, Deng and Zhang (arXiv:2608.24382, 2026) sample planar spin glasses exactly by
+the chain rule: fixing spins induces boundary fields, *"By encoding these fields with a
+planarity-preserving auxiliary spin construction, the conditional partition functions are mapped to
+an extended zero-field Ising model and exactly evaluated using the Kac–Ward determinant formula."*
+`kwsample` is that algorithm on `pfaffian`'s Kac–Ward determinant. Spins are fixed in breadth-first
+order, so the fixed set is connected and all the spins it touches share one face; one apex spin in
+that face carries every boundary field, and its flip symmetry halves the result. Every conditional
+partition function is held to enumeration on all 127 prefixes of a 4×3 glass, and the chain-rule
+likelihood to `−βE − ln Z` on all 4,096 of its states.
+
+**It is the paper's algorithm with a dense determinant, `O(N (2E)³)` per draw, not its
+`O(N^{5/2})`**, which needs a nested-dissection sparse factorisation this crate does not have. At the
+sizes a dense determinant reaches, `exact`'s backward sampler already draws exact samples. What this
+adds is a second exact sampler that shares nothing with the first — planar determinants against
+variable elimination — and on lattices past enumeration the two agree:
+
+| lattice | draws | Kac–Ward sampler | elimination sampler | determinant, no sampling | z | worst likelihood error | s/draw |
+|---|---|---|---|---|---|---|---|
+| 6×6 | 1,000 | −1.2132 ± 0.0030 | −1.2136 ± 0.0029 | −1.2097 | 0.08 | 5.7e-14 | 0.005 |
+| 8×8 | 600 | −1.2292 ± 0.0029 | −1.2299 ± 0.0029 | −1.2275 | 0.17 | 2.0e-13 | 0.025 |
+| 10×10 | 1,500 | −1.1487 ± 0.0016 | −1.1513 ± 0.0014 | −1.1495 | 1.24 | 5.0e-13 | 0.156 |
+| **14×14** | 100 | −1.2320 ± 0.0041 | −1.2284 ± 0.0034 | −1.2265 | −0.69 | **7.7e-13** | 1.78 |
+
+The likelihood column is the one that needs no statistics: every draw carries the probability its
+conditionals assigned it, and it equals `−βE − ln Z` to rounding at 196 spins. An earlier run with 400
+draws at 10×10 read z = 2.48; that column is what said to rerun rather than to go looking for a bug,
+and at 1,500 draws it is 1.24. One mutation survives and is equivalent: negating every boundary field
+on the apex is undone by flipping the apex spin, which is summed over.
+
 ---
 
 ## What we deliberately do not do

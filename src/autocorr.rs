@@ -119,6 +119,13 @@ pub enum Kernel {
     /// conditional given the current state of all the others -- what [`crate::dtm::Ebm::gibbs`]
     /// runs, and what a plain single-site Gibbs sampler is.
     SequentialGibbs,
+    /// One RANDOM-SCAN step: a site chosen uniformly at random, resampled from its heat-bath
+    /// conditional -- the Glauber dynamics the mixing-time literature analyses, and what a fabric
+    /// would run if it chose where to update with a random number instead of a fixed order. `n`
+    /// steps do as many site updates as one [`Kernel::SequentialGibbs`] sweep, which is the
+    /// comparison `examples/scan_order_exact.rs` makes. Reversible with respect to the Boltzmann
+    /// law, where the fixed-order sweep is only invariant.
+    RandomScan,
     /// One fully SYNCHRONOUS sweep: every site resampled at once from its heat-bath conditional
     /// given the PREVIOUS state -- Little's (1974) dynamics, what a p-bit array does when all its
     /// nodes update on the same clock edge with no colouring. Its stationary law is not the
@@ -676,6 +683,21 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             }
             cur
         }
+        Kernel::RandomScan => {
+            // (P v)(x) = (1/n) sum_i [ p_i v(x with i up) + (1 - p_i) v(x with i down) ].
+            let mut out = vec![0.0f64; m];
+            for x in 0..m {
+                let s = spins(x, n);
+                let mut acc = 0.0;
+                for i in 0..n {
+                    let bit = 1usize << i;
+                    let p = p_up(g.field(i, &s), beta);
+                    acc += p * v[x | bit] + (1.0 - p) * v[x & !bit];
+                }
+                out[x] = acc / n as f64;
+            }
+            out
+        }
         Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
             // (P v)(x) = E[v(y)] under the product law y_i ~ Bernoulli(q_i(x)), every q_i from the
             // PREVIOUS state x. Per x, contract v one site at a time under that product, from the
@@ -823,6 +845,23 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                 cur = next;
             }
             cur
+        }
+        Kernel::RandomScan => {
+            // (mu P)(y) = (1/n) sum_i [mu(y with i up) + mu(y with i down)] q_i(y_i | the rest):
+            // mass from both values of site i lands on y with site i's own conditional probability.
+            let mut out = vec![0.0f64; m];
+            for y in 0..m {
+                let s = spins(y, n);
+                let mut acc = 0.0;
+                for i in 0..n {
+                    let bit = 1usize << i;
+                    let p = p_up(g.field(i, &s), beta);
+                    let pooled = mu[y | bit] + mu[y & !bit];
+                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };
+                }
+                out[y] = acc / n as f64;
+            }
+            out
         }
         Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
             // (mu P)(y) = sum_x mu(x) prod_i q_i^x(y_i): each source state lays its product law
@@ -2830,5 +2869,62 @@ mod tests {
         assert!(curve[pass].squared_bias / curve[pass].stationary_variance < 0.01, "against its OWN law it is converged");
         let off = curve[60].boltzmann_bias.powi(2) / curve[60].stationary_variance;
         assert!(off > 1.2, "against Boltzmann the energy is > 1 sd off: bias^2/Var {off} (measured 1.411)");
+    }
+
+    /// **A fixed visiting order costs about half the site updates of a random one.** First the
+    /// random-scan kernel itself: its two directions are adjoint, its solved law is the Boltzmann
+    /// law, and it is REVERSIBLE (zero entropy production) where the fixed-order sweep only keeps the
+    /// law invariant. Then the comparison at equal work, `tau_int` per site update, with a closed
+    /// form as the control: for uncoupled spins a random scan leaves each site untouched with
+    /// probability `1 − 1/n` per step, so the magnetisation's `tau` is `n − 1/2` steps, while one
+    /// fixed-order sweep refreshes every site and its `tau` is `1/2` sweep, `n/2` updates -- a ratio
+    /// of exactly `2 − 1/n`. Coupled, `examples/scan_order_exact.rs` measures 1.85 to 1.97 for the
+    /// magnetisation at every temperature on both 5x2 fixtures, and 1.01 to 1.89 for the energy.
+    #[test]
+    fn a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan() {
+        let (grid, _, uncoupled) = tick_fixtures();
+        let beta = 1.0;
+        let m = 1usize << grid.n;
+        let mut rng = Pcg::new(17, 2);
+        let mu: Vec<f64> = {
+            let raw: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
+            let z: f64 = raw.iter().sum();
+            raw.iter().map(|v| v / z).collect()
+        };
+        let v: Vec<f64> = (0..m).map(|_| rng.f64() - 0.5).collect();
+        let left: f64 = apply_distribution(&grid, beta, Kernel::RandomScan, &mu).iter().zip(&v).map(|(a, b)| a * b).sum();
+        let right: f64 = mu.iter().zip(&apply(&grid, beta, Kernel::RandomScan, &v)).map(|(a, b)| a * b).sum();
+        assert!((left - right).abs() < 1e-14, "adjoint: {left} vs {right}");
+        let solved = stationary_solved(&grid, beta, Kernel::RandomScan).expect("solvable");
+        assert!(total_variation(&solved, &boltzmann(&grid, beta).expect("small")) < 1e-12);
+        assert!(entropy_production(&grid, beta, Kernel::RandomScan).expect("dense") < 1e-12, "random scan is reversible");
+        assert!(entropy_production(&grid, beta, Kernel::SequentialGibbs).expect("dense") > 1e-3, "a fixed order is not");
+
+        let n = uncoupled.n as f64;
+        let mag = |s: &[i8]| s.iter().map(|&x| f64::from(x)).sum::<f64>();
+        let per_update = |g: &Graph, k: Kernel, sweeps_are_n: bool| {
+            let t = tau_int_fundamental(g, beta, k, mag).expect("dense").tau_int;
+            if sweeps_are_n { t * g.n as f64 } else { t }
+        };
+        let ratio = per_update(&uncoupled, Kernel::RandomScan, false) / per_update(&uncoupled, Kernel::SequentialGibbs, true);
+        assert!((ratio - (2.0 - 1.0 / n)).abs() < 1e-9, "uncoupled: ratio {ratio}, closed form {}", 2.0 - 1.0 / n);
+
+        // Coupled, the ferromagnet: every site pulls on its neighbours and the factor survives.
+        let mut b = GraphBuilder::new(10);
+        for y in 0..2usize {
+            for x in 0..5usize {
+                let i = y * 5 + x;
+                if x + 1 < 5 {
+                    b.couple(i, i + 1, 1.0);
+                }
+                if y + 1 < 2 {
+                    b.couple(i, i + 5, 1.0);
+                }
+            }
+        }
+        let ferro = b.build();
+        let coupled = per_update(&ferro, Kernel::RandomScan, false) / per_update(&ferro, Kernel::SequentialGibbs, true);
+        // Measured 1.89 at beta = 1.
+        assert!((1.8..2.0).contains(&coupled), "coupled ferromagnet, magnetisation: ratio {coupled}");
     }
 }
