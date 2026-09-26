@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### `mpemba`: the "negligible" digital preprocessing costs what the whole answer costs
+
+Moroder, Binder & Goold (arXiv:2603.24183) start a thermodynamic inversion device from the `K`
+slowest modes of the answer, found by Lanczos, and call that preprocessing negligible against the
+thermalization time — flops against device seconds. `mpemba` compares flops with flops. Lanczos
+(counted as performed) against a counted Cholesky inverse of the same matrix, `K = 10`, residual
+`1e-8`: **1.48× the whole inverse at the paper's own `d = 500` on its linear-spectrum ensemble, and
+5.15× on its Wishart ensemble** (4.66× and 6.18× at `d = 100`; the linear case drops below one only
+from `d = 1000`). The initialisation alone holds 94% of `‖A⁻¹‖²_F`. Everything is held to oracles
+that share no code with it: the ensemble's eigenpairs are known by construction, the closed-form
+relaxation is held to an RK4 integration of the paper's Lyapunov equation in the physical basis, and
+the Cholesky inverse to `A A⁻¹ = I`. The thermalization speedup the paper plots against `λ_{K+1}/λ₁`
+approaches it from above — 18.09 at `ε = 1e-2` against a limit of 11. WORKLOADS.md entry 12.
+
+  1790 lib tests, 2076 workspace, 455 verification-bearing
+  317 mutation rows (+4, each applied, seen RED against its named test, restored)
+
 ### The first run that finished, and twelve rows that were never simulated
 
 With the mutation job sharded and the examples step bounded (`a03d9ae`), CI finished for the first

@@ -1396,6 +1396,14 @@ mutations=(
   "src/autocorr.rs|        law = apply_distribution(g, beta, kernel, &law);|        law = apply_distribution(g, beta, kernel, &apply_distribution(g, beta, kernel, &law));|autocorr::tests::nested_population_decomposes_the_error_exactly_by_an_independent_route|first-draw law advanced twice per report"
   "src/autocorr.rs|let within = within_chain + if chains > 1 { e_chain_var } else { 0.0 };|let within = within_chain + e_chain_var;|autocorr::tests::nested_population_reads_exactly_its_persistent_floor_on_independent_draws|between-chain variance counted with one chain per superchain"
 
+  # MPEMBA. The closed-form relaxation is held to an RK4 integration of the Lyapunov equation, the
+  # speedup to its measured approach from above, Lanczos to eigenpairs known by construction, and the
+  # Cholesky count to the textbook n^3 -- which is the denominator of the whole finding.
+  "src/mpemba.rs|(-4.0 * l * t).exp()|(-2.0 * l * t).exp()|mpemba::tests::the_closed_form_relaxation_is_the_lyapunov_equations|a covariance mode relaxing at lambda, not 2 lambda"
+  "src/mpemba.rs|    eigenvalues[k.min(eigenvalues.len())..]|    eigenvalues[0.min(k)..]|mpemba::tests::the_speedup_tends_to_the_spectral_ratio_from_above|an initialisation that prethermalises nothing"
+  "src/mpemba.rs|        if sturm_below(alpha, beta, mid) > j {|        if sturm_below(alpha, beta, mid) >= j {|mpemba::tests::lanczos_finds_the_smallest_eigenpairs_the_ensemble_was_built_with|a Sturm bisection one eigenvalue off"
+  "src/mpemba.rs|    Some((inv, 2 * madds))|    Some((inv, madds))|mpemba::tests::the_cholesky_inverse_inverts_and_counts_its_work|a Cholesky count of multiply-adds, not flops"
+
 )
 
 bad=0
@@ -1467,7 +1475,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=313
+expected_rows=317
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

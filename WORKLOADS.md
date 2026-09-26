@@ -757,6 +757,52 @@ warmup, and nested R-hat still refuses to pass until warmup 236–248 at β = 1 
 β = 2, because superchains that started on opposite sides still disagree. That is the rule working as
 designed: an unbiased mean made of halves that disagree is not a converged estimate.
 
+## 12. The digital half of a hybrid protocol — `src/mpemba.rs`
+
+Moroder, Binder & Goold (arXiv:2603.24183, 2026) speed up thermodynamic matrix inversion by starting
+the Ornstein–Uhlenbeck device from a digitally computed covariance that already holds the `K`
+slowest modes of the answer — their Eq. 21, `Σ₀ = Σ_{k≤K} (k_BT/λ_k) u_k u_kᵀ` from the `K`
+smallest eigenpairs, found by Lanczos — and write that *"the classical preprocessing cost of the
+Lanczos algorithm is negligible compared to the thermalization time across all matrix dimensions
+considered here"*. The thermalization speedup is real, and this crate reproduces it exactly (the
+closed-form relaxation is held to a Runge–Kutta integration of their Lyapunov equation). What the
+sentence compares is floating-point operations against device seconds, which share no unit.
+
+**Flops against flops.** `examples/mpemba_exact.rs` counts the Lanczos work as performed (the
+products, full reorthogonalisation, the Ritz vectors) and the work of computing the ENTIRE inverse
+digitally by Cholesky, also counted as performed, on both of the paper's ensembles at `K = 10`,
+Lanczos to a Ritz residual of `1e-8 ‖A‖`:
+
+| ensemble | d = 100 | 200 | **500** | 1000 | 2000 |
+|---|---|---|---|---|---|
+| linear spectrum, Haar basis (their Eqs. 27–28) | 4.66× | 2.91× | **1.48×** | 0.91× | 0.58× |
+| positive Wishart, `m = 1.1 d` (their Eq. 29) | 6.18× | 6.09× | **5.15×** | 3.71× | — |
+
+**At the paper's own dimension, the preprocessing costs 1.48 and 5.15 times what computing the
+whole inverse digitally costs.** At a coarser `1e-4` the linear case is 1.13× and the Wishart 4.22×.
+A lean Lanczos with one reorthogonalisation pass would take about a quarter off, which leaves the
+paper's `d = 500` near one and the Wishart case several times over. The digital processor has spent
+what the entire answer costs before the device starts, so the device cannot make the protocol cheaper
+than not using it — at any device speed.
+
+**And the start is most of the answer.** The initialisation alone holds 94.2–94.8% of `‖A⁻¹‖²_F` on
+the linear ensemble (the paper reports the complementary normalised residual itself, as `E₀(K)`). The
+device's contribution is the remaining modes, which are the fast ones.
+
+**The speedup it buys approaches the paper's formula from above, slowly.** Their Eq. 26 gives the
+asymptote `λ_{K+1}/λ₁` (11 on this spectrum). Measured: 18.09 at `ε = 1e-2`, 14.29 at `1e-4`, still
+6.8% over at `1e-16`. At any tolerance a solver would use, the thermalization speedup is larger than
+the formula it is plotted against, which is a point in the protocol's favour and changes nothing
+above.
+
+**What is not claimed.** Flops are not joules or seconds: Lanczos is bound by matrix–vector
+products and Cholesky runs as dense BLAS-3, so on real hardware the digital inverse is faster still
+than the flop ratio says. Both ensembles are dense; a sparse `A` changes both sides (products get
+cheap, Cholesky fills in) and is not measured. Above `d = 1000` on the linear spectrum the
+preprocessing falls below the inverse's cost (0.58× at 2000), and there the question the paper
+leaves open becomes the right one — whether the device finishes the remaining 6% of the answer in
+less than the rest of a digital inverse — and it needs a device model this crate has not got.
+
 ---
 
 ## What we deliberately do not do

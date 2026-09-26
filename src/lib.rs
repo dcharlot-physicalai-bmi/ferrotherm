@@ -171,6 +171,7 @@ pub mod tempering;
 pub mod wanglandau;
 pub mod wgsl;
 pub mod tla;
+pub mod mpemba;
 pub mod linalg;
 pub mod het;
 pub mod lrw;
