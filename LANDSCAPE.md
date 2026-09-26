@@ -234,6 +234,20 @@ Honesty about a reference includes where it is thin:
   distributional oracles. `ledger::PEGASUS_28NM_ASIC` carries the ASIC's figure with its grade, and
   `the_best_measured_update_sits_between_the_projection_and_our_fabric` pins the ratios.
 
+  **Three more figures, read 2026-09-26 and deliberately not in that column.** Each is a real number
+  about a different quantity, and converting any of them into joules per update would take an
+  assumption their papers do not supply:
+
+  | source | figure | what it is | grade |
+  |---|---|---|---|
+  | arXiv:2603.27402, 64-spin all-to-all Ising machine, 65 nm | 2.28 nJ per edge-bit | energy to a **solution**, per problem coefficient bit | fabricated |
+  | arXiv:2609.09559, 2,048-spin DSSA annealer, TSMC 28 nm | 0.86 mJ to solution at 316 mW | energy to a **solution** on 2,000-spin problems | **post-layout simulation** |
+  | arXiv:2606.10822, FeFET Bayesian inference engine | 640 aJ per Gaussian sample | a random-number **primitive**, one part of an update | not stated in the abstract |
+
+  An energy-to-solution folds in a schedule, a success probability and a problem size, and a random
+  number is one input to an update rather than the update. A column that mixed them would rank
+  machines by what their authors chose to measure.
+
   **And the vendor tool was caught under-predicting.** Vivado's own estimator put the PL at
   **0.100 W**; the board drew **0.5554 W** — **5.6x** low. Without a switching-activity file it
   assumes a toggle rate near 12.5%, while this fabric IS a randomness engine. Every projected p-bit
