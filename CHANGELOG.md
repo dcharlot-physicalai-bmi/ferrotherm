@@ -2,7 +2,28 @@
 
 ## Unreleased
 
-### Corrected: entry 15 said more about the systematic scan than the records or the run support
+### Corrected: two entries said more than their evidence — the point process's estimator and the scan order's history
+
+**The point process (`pointproc`, WORKLOADS entry 14) was measured with a biased estimator, and its
+table overstated what it knew.** The SK table of `τ_int` ratios came from `certify::tau_int`, Sokal's
+window, on traces read every `0.1 m`, and the entry called the ratios "the quotable part" because both
+lifetimes were measured the same way. The window is not built for an autocorrelation that changes
+sign, and the fixed lifetime's does: at zero field it is `2e^{−t/m} − 1` out to `t = m`. Now exact for
+one unit: by the renewal-reward CLT the long-run variance of the on-indicator is
+`(μ₀²σ₁² + μ₁²σ₀²)/(μ₀ + μ₁)³`, so **an exponential lifetime has exactly twice the asymptotic variance
+of a fixed one at every field** (a lifetime with coefficient of variation `c` costs `1 + c²`).
+`unit_variance`, `unit_tau` and `unit_autocorrelation` give one unit exactly; `PointProcess::batch_means`
+and `long_run_variance` estimate `σ²` with no window, by batch means over exact path integrals, and
+the test holds that estimate to the exact variance (ratio 2.010 ± 0.028 and 1.962 ± 0.028 at two
+fields). `certify::sokal_window` is the window taken out of `tau_int` unchanged, so its error can be
+measured on an exact autocorrelation: it reads the fixed lifetime's `τ` 8.1% low at zero field and
+13.3% high at `βh = 0.7`, reporting the exact 2 as 2.17 and 1.80, and a test pins both. Re-measured
+window-free with standard errors from 16 independent seeds, the SK ratios are 1.38 to 1.86 (they were
+1.32 to 1.77); the twelve cells moved by −11% to +11%, and the window had read the cold cells' `τ` up to
+53% low. The verdict — the fixed lifetime wins in every cell, by at least eight standard errors — holds.
+For the exponential lifetime at `n = 8` the example also solves the 256-state chain exactly, and the
+six estimates are within 2.1 standard errors of it. `examples/pointproc_exact.rs` now spends about
+380 s of CPU over 16 threads (114 s wall on a loaded machine) and moves to `examples/SLOW`.
 
 **Scan order (`Kernel::RandomScan`, WORKLOADS entry 15).** Three sentences were wrong or wider than
 their evidence, and a review that fetched the records found all three. The entry said the mixing
@@ -82,7 +103,9 @@ sample with a point process whose spikes live exactly `m`; with exponential life
 mean it is a birth–death chain with the same law. Both are simulated event by event, held to the
 exact renewal on-fraction of a single unit and to enumeration on a coupled triangle. On
 Sherrington–Kirkpatrick instances at equal birth rate, the fixed lifetime buys 1.32 to 1.77 times
-the effective samples per unit time in all twelve cells: the paper's claim, holding here.
+the effective samples per unit time in all twelve cells: the paper's claim, holding here. *Measured
+with a windowed estimator that is biased on this process; see the correction at the top of this
+section.*
 
 **Scan order (`Kernel::RandomScan`, entry 15).** A random-scan Gibbs kernel beside the fixed-order
 sweep, both exact. At equal site updates, a random scan needs 1.85 to 1.97 times the updates for the

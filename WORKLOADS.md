@@ -911,26 +911,70 @@ a p-bit target, a unit fires at rate `(1/m) e^{2β f_i}` when silent, and its sp
 FIXED time `m`. Replace the fixed lifetime by an exponential one of the same mean and it is a
 birth–death chain with the same limiting law; the paper reports the point process *"always
 outperforms these birth-death processes"* on 63 targets. `pointproc` simulates both event by event,
-with no time step. One unit is an alternating renewal process, so its on-fraction is exactly
-`e^{2βh}/(1 + e^{2βh})` for either lifetime; both are held to that, and a coupled triangle to
-enumeration.
+with no time step, held to the exact on-fraction of one unit and to enumeration on a coupled triangle.
 
-On Sherrington–Kirkpatrick instances at equal birth rate — the same number of random draws per
-unit time — the integrated autocorrelation time, in units of `m`:
+**For one unit the answer is exact, and it is a factor of exactly two.** One unit is an alternating
+renewal process: off for an exponential wait of mean `μ₀ = m e^{−2βh}`, on for a lifetime of mean
+`μ₁ = m` and standard deviation `σ₁`. By the renewal-reward central limit theorem the long-run
+variance of its time-averaged on-indicator, `lim T Var(A_T)`, is
 
-| n | β | energy: fixed | exponential | **ratio** | magnetisation ratio |
-|---|---|---|---|---|---|
-| 8 | 0.5 | 0.263 | 0.363 | **1.38** | 1.77 |
-| 8 | 1.5 | 0.439 | 0.748 | **1.71** | 1.32 |
-| 16 | 1.0 | 0.491 | 0.751 | **1.53** | 1.71 |
-| 16 | 1.5 | 1.294 | 1.995 | **1.54** | 1.35 |
+```text
+  σ² = (μ₀² σ₁² + μ₁² σ₀²) / (μ₀ + μ₁)³,        σ₀ = μ₀ for the exponential wait,
+```
 
-**The claim holds here: a fixed lifetime buys 1.32 to 1.77 times the effective samples per unit time
-and per random draw**, in all twelve cells of `examples/pointproc_exact.rs`. The `τ` values come from
-this crate's windowed estimator on traces `4e4 m` long, which can under-report a slow mode (the
-`autocorr` module header measures by how much); both processes are measured the same way, so the RATIOS are the quotable
-part. For a spiking substrate the reading is concrete: a refractory period of fixed length is not
-a constraint to engineer around, it is the momentum.
+so a lifetime with coefficient of variation `c` has `σ² = μ₀² μ₁² (1 + c²) / (μ₀ + μ₁)³`. **The
+exponential lifetime (`c = 1`) has exactly twice the asymptotic variance of the fixed one (`c = 0`),
+at every field**, and so exactly twice the integrated autocorrelation time: `τ = m (1 − p)` against
+`m (1 − p) / 2`, for `p` the on-fraction. Any lifetime costs `1 + c²` against a fixed one; uniform on
+`[0, 2m]` costs 4/3 (checked by a numpy simulation outside the tree, not by a test here).
+`pointproc::unit_variance` and `unit_tau` are the formula. The test holds a window-free estimate from
+a simulated unit to it, batch means over 20,000 batches of `200 m` — exponential over fixed
+**2.010 ± 0.028** at zero field and **1.962 ± 0.028** at `βh = 0.7` — and the exact autocorrelation,
+`unit_autocorrelation`, integrates to it.
+
+**Coupling pulls the factor below two.** On Sherrington–Kirkpatrick instances at equal birth rate,
+the integrated autocorrelation time in units of `m`, window-free: batch means over exact path
+integrals, 16 independent seeds per lifetime, batches of 100, 500 and 1,500 `m` at `β` = 0.5, 1 and
+1.5, each error the standard error across seeds (`examples/pointproc_exact.rs`):
+
+| n | β | energy: fixed | exponential | **ratio** | magnetisation: fixed | exponential | **ratio** |
+|---|---|---|---|---|---|---|---|
+| 8 | 0.5 | 0.267 ± 0.003 | 0.368 ± 0.007 | **1.38 ± 0.03** | 0.479 ± 0.008 | 0.890 ± 0.018 | **1.86 ± 0.05** |
+| 8 | 1.0 | 0.449 ± 0.010 | 0.679 ± 0.013 | **1.51 ± 0.05** | 2.211 ± 0.039 | 3.268 ± 0.052 | **1.48 ± 0.04** |
+| 8 | 1.5 | 0.931 ± 0.019 | 1.495 ± 0.024 | **1.61 ± 0.04** | 9.82 ± 0.24 | 14.03 ± 0.34 | **1.43 ± 0.05** |
+| 16 | 0.5 | 0.278 ± 0.004 | 0.393 ± 0.008 | **1.41 ± 0.04** | 0.489 ± 0.011 | 0.860 ± 0.019 | **1.76 ± 0.06** |
+| 16 | 1.0 | 0.703 ± 0.015 | 1.080 ± 0.020 | **1.54 ± 0.04** | 1.231 ± 0.028 | 1.899 ± 0.036 | **1.54 ± 0.05** |
+| 16 | 1.5 | 2.540 ± 0.047 | 3.840 ± 0.068 | **1.51 ± 0.04** | 2.508 ± 0.044 | 3.811 ± 0.060 | **1.52 ± 0.04** |
+
+**The claim holds here: a fixed lifetime buys 1.38 to 1.86 times the effective samples per unit
+time**, in all twelve cells, each ratio at least eight standard errors above one, at the same birth
+rate for both lifetimes (4.0 and 8.1–8.2 births per `m`). The magnetisation, a sum of units, is
+nearest the one-unit two when hot (1.86 and 1.76) and falls to 1.43–1.54 as the coupling binds the
+units; the energy, built from products of pairs, sits at 1.38 to 1.61 at every temperature. Two checks
+on the estimator. For the exponential lifetime at `n = 8` the process is a 256-state Markov chain, and
+a dense solve gives its `τ` exactly: the six estimates are within 2.1 standard errors of it (worst,
+the energy at `β = 0.5`: 0.368 ± 0.007 against 0.383). And batches a quarter as long, pooled from the
+same runs, read `σ²` within 8% of the reported value in every cell; for a bias falling as `1/b` that
+puts the reported values within about 2.5% of their limit, at worst 1.4 standard errors (the
+exponential's energy at `n = 16`, `β = 1.5`). One SK instance per size, nothing larger than 16 spins
+or colder than `β = 1.5`.
+
+**Corrected 2026-09-27: the first version of this table came from a biased estimator.** It used this
+crate's windowed `τ_int` — Sokal's window, `τ = ½ + Σρ` closing at the first `W ≥ 5τ` — on traces
+read every `0.1 m`, and that window is not built for an autocorrelation that changes sign. The fixed
+lifetime's does: at zero field it is `2e^{−t/m} − 1` out to `t = m`, negative past `m ln 2`. Applied to
+the EXACT one-unit autocorrelation, the window reads the fixed lifetime's `τ` **8.1% low at zero field
+and 13.3% high at `βh = 0.7`**, and so reports the exact ratio 2 as 2.17 and 1.80
+(`certify::sokal_window`, pinned by `sokal_window_misreads_a_fixed_lifetime`; the unwindowed sum of
+the same reads is exact). On SK the same estimator read the cold cells' `τ` up to 53% low (energy,
+fixed lifetime, `n = 8`, `β = 1.5`: 0.439 against 0.931, a slow mode the window closed on, as the
+`autocorr` module header warns), and its twelve ratios, 1.32 to 1.77, differ from the ones above by
+−11% to +11%. The entry defended them as "the quotable part" because both lifetimes were measured the
+same way; an estimator that errs in opposite directions on the two lifetimes is exactly where that
+defence fails. The verdict survived and the numbers did not.
+
+For a spiking substrate the reading is concrete: a refractory period of fixed length is not a
+constraint to engineer around, it is the momentum.
 
 ## 15. Does the order a fabric visits its p-bits in matter? — `Kernel::RandomScan`
 

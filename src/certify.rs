@@ -306,6 +306,13 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 /// cannot be excluded, and a joules-per-independent-sample built on it a lower bound. On a model
 /// small enough to enumerate, use the exact operator instead; on one that is not, a batch-means
 /// estimate over batches much longer than the suspected slow mode is the check.
+///
+/// # And it is biased either way on an autocorrelation that changes sign
+///
+/// The window stops wherever `k >= 5 tau` first holds, and an autocorrelation with a negative lobe
+/// is cut mid-oscillation: 8.1% low and 13.3% high on the two exact cases in [`sokal_window`]'s
+/// documentation, a fixed-lifetime point process, where the effect is momentum. Do not use it
+/// where momentum is the thing being measured.
 #[must_use]
 pub fn tau_int(trace: &[f64]) -> f64 {
     tau_int_by(trace, trace.len() >= FFT_FROM)
@@ -330,9 +337,8 @@ fn tau_int_by(trace: &[f64], fft: bool) -> f64 {
     }
     let max_lag = (n / 4).max(1);
     let cov = if fft { Some(crate::fft::autocovariance(trace, max_lag)) } else { None };
-    let mut tau = 0.5;
-    for k in 1..=max_lag {
-        let c = match &cov {
+    sokal_window(max_lag, |k| {
+        match &cov {
             Some(cov) => cov[k] / var,
             None => {
                 let mut c = 0.0;
@@ -341,8 +347,30 @@ fn tau_int_by(trace: &[f64], fft: bool) -> f64 {
                 }
                 c / ((n - k) as f64 * var)
             }
-        };
-        tau += c;
+        }
+    })
+}
+
+/// Sokal's automatic window over an autocorrelation given lag by lag: `1/2 + sum_k rho(k)` for
+/// `k = 1, 2, ...`, stopping at the first `k >= 5 tau` or at `max_lag`, and never below `1/2`. The
+/// same window [`tau_int`] closes over a trace's empirical autocorrelation, taken out so that the
+/// WINDOW's own error can be measured on an autocorrelation that is known exactly, with no sampling
+/// noise in it.
+///
+/// # A negative lobe is summed wherever the window happens to close, and that can be either way
+///
+/// The window was designed for autocorrelations that decay without changing sign. One that dips
+/// below zero and comes back is truncated mid-oscillation. [`crate::pointproc`] measures it on the
+/// exact autocorrelation of one unit of a fixed-lifetime point process, `rho(t) = 2 e^{-t/m} - 1`
+/// out to `t = m` at zero field: at a spacing of `0.1 m` the window closes at lag 12, inside the
+/// negative lobe, and reads the integrated time **8.1% low**; in a field `beta h = 0.7` it closes
+/// at lag 7, before the lobe, and reads it **13.3% high** (`sokal_window_misreads_a_fixed_lifetime`).
+/// The unwindowed sum of the same values is exact there to `1e-9`.
+#[must_use]
+pub fn sokal_window(max_lag: usize, mut rho: impl FnMut(usize) -> f64) -> f64 {
+    let mut tau = 0.5;
+    for k in 1..=max_lag {
+        tau += rho(k);
         if (k as f64) >= 5.0 * tau.max(0.5) {
             break;
         }
