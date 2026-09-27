@@ -1450,6 +1450,18 @@ mutations=(
   "src/pointproc.rs|        sum += (-mu + j as f64 * mu.ln() - log_fact).exp();|        sum += (-mu + j as f64 * mu.ln()).exp();|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a Poisson sum without its factorials"
   "src/certify.rs|        if (k as f64) >= 5.0 * tau.max(0.5) {|        if (k as f64) >= 10.0 * tau.max(0.5) {|pointproc::tests::sokal_window_misreads_a_fixed_lifetime|a Sokal window twice as wide"
 
+  # A COLOURED FABRIC READ LATE (`delay::stationary_coloured`). The first row is the finding's mechanism:
+  # read the frame the fabric holds instead of the one d ticks back and the schedule is Gibbs at every
+  # delay, so the pair's product law and its 1/2 vanish. The next is the schedule's other half -- held
+  # spins must HOLD, and resetting them breaks exactness even read fresh. The last three are its
+  # bookkeeping: a sweep that never advances, a phase law filed under the wrong class (only the
+  # triangle's per-phase figures, which the simulation checks, can see it), held spins counted as moves.
+  "src/delay.rs|            let read = frame_spins((hist >> (n * (d - 1))) & mask, n);|            let read = frame_spins(hist & mask, n);|delay::tests::a_coloured_pair_read_late_is_the_product_of_its_marginals|a coloured fabric that reads the frame it holds"
+  "src/delay.rs|                if y & !moving != held & !moving {|                if y & !moving != 0 {|delay::tests::a_coloured_fabric_read_fresh_samples_boltzmann|held spins reset instead of held"
+  "src/delay.rs|        let next_phase = (c + 1) % k;|        let next_phase = c;|delay::tests::a_coloured_fabric_read_fresh_samples_boltzmann|a sweep that never leaves the class it starts on"
+  "src/delay.rs|        after[(phase + k - 1) % k][hist & mask] += w;|        after[phase][hist & mask] += w;|delay::tests::a_coloured_triangle_read_late_leaves_boltzmann|the law after class c filed under class c + 1"
+  "src/delay.rs|flips[st] = class.iter().map(|flips[st] = (0..n).collect::<Vec<usize>>().iter().map(|delay::tests::a_coloured_fabric_read_fresh_samples_boltzmann|held spins counted as moves"
+
 )
 
 bad=0
@@ -1521,7 +1533,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=343
+expected_rows=348
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
