@@ -145,8 +145,10 @@ fn erlang_excess(k: usize, rate: f64, x: f64) -> f64 {
 
 /// The exact autocorrelation of one unit's on-indicator at lag `t`, stationary, in field `h`.
 ///
-/// Exponential lifetime: a two-state Markov chain, `rho(t) = e^{-|t| / tau}` with `tau` from
-/// [`unit_tau`]. Fixed lifetime: given on at time 0 the spike's remaining life `R` is uniform on
+/// Exponential lifetime: a two-state Markov chain switching on at rate `1/mu0` and off at `1/m`, so
+/// `rho(t) = e^{-|t| (1/mu0 + 1/m)}` -- computed from the rates, not from [`unit_tau`], so that the
+/// test integrating it to [`unit_tau`] checks two derivations against each other. Fixed lifetime:
+/// given on at time 0 the spike's remaining life `R` is uniform on
 /// `[0, m]`, and the `k`-th spike after it lives on `[R + (k-1) m + S_k, R + k m + S_k)` for `S_k` the
 /// sum of `k` exponential waits, so
 ///
@@ -159,10 +161,10 @@ fn erlang_excess(k: usize, rate: f64, x: f64) -> f64 {
 #[must_use]
 pub fn unit_autocorrelation(beta: f64, h: f64, m: f64, lifetime: Lifetime, t: f64) -> f64 {
     let t = t.abs();
+    let wait = unit_wait(beta, h, m);
     match lifetime {
-        Lifetime::Exponential => (-t / unit_tau(beta, h, m, lifetime)).exp(),
+        Lifetime::Exponential => (-t * (1.0 / wait + 1.0 / m)).exp(),
         Lifetime::Fixed => {
-            let wait = unit_wait(beta, h, m);
             let (rate, p) = (1.0 / wait, m / (wait + m));
             let mut on = (1.0 - t / m).max(0.0);
             let mut k = 1usize;

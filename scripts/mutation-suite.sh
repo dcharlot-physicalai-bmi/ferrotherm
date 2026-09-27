@@ -1433,6 +1433,23 @@ mutations=(
   "src/delay.rs|                    window += 4.0 * phi[i] * phi[j] * (1.0 - u);|                    window += 2.0 * phi[i] * phi[j] * (1.0 - u);|delay::tests::the_delayed_automaton_approaches_boltzmann_at_its_first_order_rate|the delay window's source at half weight"
   "src/delay.rs|            changes += if cur[i] > 0 { 1.0 - ps[i] } else { ps[i] };|            changes += if del[i] > 0 { 1.0 - ps[i] } else { ps[i] };|delay::tests::pinning_beats_waiting_on_a_biased_pair_and_loses_on_a_frustrated_triangle|a move counted against the delayed value"
 
+  # THE POINT PROCESS, MEASURED WITHOUT A WINDOW (entry 14's correction). One unit's efficiency is exact:
+  # the renewal-reward variance, whose lifetime term is the whole factor of two, and the autocorrelation
+  # whose integral must equal it. The batch-means estimator that replaced Sokal's window is held to that
+  # exact variance, including a row that widens its standard error a hundredfold -- the way a tolerance
+  # built from the estimator's own error bar could pass anything. The last row is the window's width:
+  # the test pins what the window reads on the exact autocorrelation, so the window cannot move silently.
+  "src/pointproc.rs|    (mu_off * mu_off * sd_on * sd_on + mu_on * mu_on * sd_off * sd_off) / (cycle * cycle * cycle)|    (mu_on * mu_on * sd_off * sd_off) / (cycle * cycle * cycle)|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|a lifetime whose spread costs nothing"
+  "src/pointproc.rs|            Lifetime::Exponential => 1.0,|            Lifetime::Exponential => 0.5,|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|an exponential lifetime at half its spread"
+  "src/pointproc.rs|    (batch * s2, batch * (spread / kf).sqrt() * kf / (kf - 1.0))|    (s2, batch * (spread / kf).sqrt() * kf / (kf - 1.0))|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|a long-run variance not scaled by the batch length"
+  "src/pointproc.rs|    (batch * s2, batch * (spread / kf).sqrt() * kf / (kf - 1.0))|    (batch * s2, 100.0 * batch * (spread / kf).sqrt() * kf / (kf - 1.0))|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|a standard error wide enough to pass anything"
+  "src/pointproc.rs|                row.push(v / batch);|                row.push(*v);|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|batch integrals never divided by the batch length"
+  "src/pointproc.rs|    unit_variance(beta, h, m, lifetime) / (2.0 * p * (1.0 - p))|    unit_variance(beta, h, m, lifetime) / (p * (1.0 - p))|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a tau without the two between variance and autocorrelation"
+  "src/pointproc.rs|            let mut on = (1.0 - t / m).max(0.0);|            let mut on = if t < m { 1.0 } else { 0.0 };|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a live spike's remaining life taken as its whole life"
+  "src/pointproc.rs| - 2.0 * erlang_excess(k, rate, a - m) + | - erlang_excess(k, rate, a - m) + |pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a renewal term missing half its second difference"
+  "src/pointproc.rs|        sum += (-mu + j as f64 * mu.ln() - log_fact).exp();|        sum += (-mu + j as f64 * mu.ln()).exp();|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a Poisson sum without its factorials"
+  "src/certify.rs|        if (k as f64) >= 5.0 * tau.max(0.5) {|        if (k as f64) >= 10.0 * tau.max(0.5) {|pointproc::tests::sokal_window_misreads_a_fixed_lifetime|a Sokal window twice as wide"
+
 )
 
 bad=0
@@ -1504,7 +1521,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=333
+expected_rows=343
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
