@@ -22,6 +22,19 @@ Scope: four small fixtures, `β = 1`, one integer delay on every read. `examples
 the table beside the every-tick heat bath; `stationary_solved` and the new function share one GTH
 elimination. Rust only, like the rest of `delay`.
 
+### Corrected: what `kwsample`'s likelihood column certifies (WORKLOADS entry 16)
+
+The entry said the likelihood column, `|ln P − (−βE − ln Z)|` over every draw, "is what said to rerun
+rather than to go looking for a bug" when an early z read 2.48. It could not have said that. Its
+`ln Z` is the same `pfaffian::log_partition` call the chain makes for the empty prefix, and the full
+prefix is `−βE(s)` by construction, so the column is the sum along the drawn path of each step's
+mismatch between `Z(prefix)` and `Z(prefix, +) + Z(prefix, −)`: it certifies that the conditionals
+compose to the Boltzmann probability of whatever was drawn. It cannot see whether the draws follow
+those probabilities (the log-probability is exact for any state, however chosen), nor an error the
+sampler and the reference share, such as a mis-entered coupling, since both read the same instance.
+The elimination sampler, which shares no code with the determinant, and its z are what check the
+draws. Entry 16 and the example's documentation now say so.
+
 ### Corrected: two entries said more than their evidence — the point process's estimator and the scan order's history
 
 **The point process (`pointproc`, WORKLOADS entry 14) was measured with a biased estimator, and its

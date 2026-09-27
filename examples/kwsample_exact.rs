@@ -8,8 +8,13 @@
 //!
 //! And one check that needs no statistics: every Kac–Ward draw carries the log-likelihood its chain of
 //! conditionals assigned it, which must equal `−βE(s) − ln Z` EXACTLY, `ln Z` from the determinant.
-//! The largest disagreement over every draw is printed, so a sampling-error z-score that looks large
-//! can be told apart from a sampler that is actually wrong.
+//! The largest disagreement over every draw is printed. It certifies CONSISTENCY: `ln Z` is the same
+//! `pfaffian::log_partition` call the chain makes for the empty prefix and the full prefix is
+//! `−βE(s)` by construction, so the disagreement is the sum of each step's mismatch between
+//! `Z(prefix)` and `Z(prefix, +) + Z(prefix, −)` along the drawn path. A large z-score next to a zero
+//! there rules out a broken conditional, not a broken draw: the log-probability is exact for any
+//! state however it was chosen, and the sampler and the reference read the same instance. Whether the
+//! draws follow the law is what the elimination sampler's z checks.
 //!
 //! ```text
 //! cargo run --release --example kwsample_exact

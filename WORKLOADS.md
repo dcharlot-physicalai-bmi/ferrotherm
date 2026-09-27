@@ -1085,10 +1085,22 @@ variable elimination — and on lattices past enumeration the two agree:
 | **14×14** | 100 | −1.2320 ± 0.0041 | −1.2284 ± 0.0034 | −1.2265 | −0.69 | **7.7e-13** | 1.78 |
 
 The likelihood column is the one that needs no statistics: every draw carries the probability its
-conditionals assigned it, and it equals `−βE − ln Z` to rounding at 196 spins. An earlier run with 400
-draws at 10×10 read z = 2.48; that column is what said to rerun rather than to go looking for a bug,
-and at 1,500 draws it is 1.24. One mutation survives and is equivalent: negating every boundary field
-on the apex is undone by flipping the apex spin, which is summed over.
+conditionals assigned it, and it equals `−βE − ln Z` to rounding at 196 spins. **What it certifies is
+consistency, not the law of the draws.** Its `ln Z` is `pfaffian::log_partition` on the whole glass —
+the same call the chain makes for the empty prefix — and the full prefix gives `−βE(s)` by
+construction, so the column is, to rounding, the sum along the drawn path of each step's mismatch
+between `Z(prefix)` and `Z(prefix, +) + Z(prefix, −)`. It shows that the conditionals compose to the
+Boltzmann probability of whatever was drawn. It cannot see an error the sampler and that reference
+share: both read the same instance, so a mis-entered coupling would give exact likelihoods for the
+wrong glass. Nor can it see whether the draws follow those probabilities, because the log-probability
+is exact for any state however it was chosen (the test forces all 4,096 states of a 4×3 glass): a
+biased coin would leave the column at zero. The elimination sampler, which shares no code with the
+determinant, and its mean-energy z are what check the draws; the instance itself is read by every
+column. An earlier run with 400 draws at 10×10 read z = 2.48. The column ruled out a broken conditional
+there, not a broken draw; the rerun at 1,500 draws, z = 1.24, is what settled it. (This paragraph first
+said the column "is what said to rerun rather than to go looking for a bug"; corrected 2026-09-27.) One
+mutation survives and is equivalent: negating every boundary field on the apex is undone by flipping
+the apex spin, which is summed over.
 
 ---
 
