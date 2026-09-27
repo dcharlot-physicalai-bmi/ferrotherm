@@ -1,4 +1,5 @@
 # Examples too slow to run on every push, run weekly instead by .github/workflows/examples-slow.yml.
+# Examples too slow even for that are in examples/LOCAL.
 #
 # Every one is a MEASUREMENT, not a gate: none asserts or exits non-zero on a physics check, so on
 # CI it proves only that it still runs to completion, and a week's delay costs nothing that a push
@@ -9,30 +10,37 @@
 # said "115 s for seventeen of them". There were 79. The step outran a hosted runner's six-hour job
 # limit on every push from at least 2026-09-20 and GitHub reported it CANCELLED.
 #
-# name                        seconds, measured locally on 2026-09-24 (Apple silicon, release)
-device_train_exact            >120
-entropy_production_exact      >120
-estimator_shootout            >120
-fabric_exact                  >120
-fabric_floor                  >120
-informed_scaling              >120
-informed_scaling_exact        >120
-kmix_certified                >120
-kmix_flagship                 >120
-penalty_mixing                >120
-penalty_ramp                  >120
-perceptron_capacity           >120
-pimi_exact                    >120
-scale                         >120
-sourlas_fabric                >120
-spread_exact                  >120
-stale_exact                   >120
-synchronous_exact             >120
-tau_exactness                 >120
-tick_random_exact             >120
-pointproc_exact               114   (2026-09-27, load average ~50; 39 at lighter load; 300-380 s CPU on 16 threads)
-sca_exact                     104
-nearest_boltzmann             74
-encoding_probe                72
-syndrome_gibbs                66
-ptrit_train_exact             60
+#
+# THE SECOND COLUMN IS SECONDS ON A HOSTED RUNNER, and the weekly job packs its shards by it, longest
+# first, so no shard is handed two of the longest by accident. It is the time the runner took on
+# 2026-09-27 where that run reached the example, and a local measurement times 1.5 where it did not:
+# the examples it timed ran 1.22 to 1.42 times slower there than on this Mac (sca_exact 127 against
+# 104 s, ptrit_train_exact 76 against 60, syndrome_gibbs 94 against 66). The first version of this
+# list said ">120" for twenty entries, measured nothing past two minutes, and dealt examples to
+# shards by position: two shards ran past their two-hour limit on the first weekly run.
+#
+# name                        runner s   source
+spread_exact                    4057   runner, the weekly run of 2026-09-27
+device_train_exact              3066   runner, the weekly run of 2026-09-27
+fabric_exact                    2978   runner, the weekly run of 2026-09-27
+stale_exact                     2601   runner, the weekly run of 2026-09-27
+fabric_floor                    1423   runner, the weekly run of 2026-09-27
+pimi_exact                      1230   runner, the weekly run of 2026-09-27
+kmix_certified                  1144   runner, the weekly run of 2026-09-27
+kmix_flagship                   1133   runner, the weekly run of 2026-09-27
+tick_random_exact               1129   runner, the weekly run of 2026-09-27
+tau_exactness                   1026   684 s local, one core, 2026-09-27, x1.5
+synchronous_exact                944   629 s local, one core, 2026-09-27, x1.5
+estimator_shootout               892   runner, the weekly run of 2026-09-27
+entropy_production_exact         813   runner, the weekly run of 2026-09-27
+perceptron_capacity              524   runner, the weekly run of 2026-09-27
+penalty_ramp                     420   280 s local, one core, 2026-09-27, x1.5
+informed_scaling                 219   runner, the weekly run of 2026-09-27
+sourlas_fabric                   210   140 s local, one core, 2026-09-27, x1.5
+scale                            182   121 s local, one core, 2026-09-27, x1.5
+nearest_boltzmann                159   106 s local, one core, 2026-09-27, x1.5
+pointproc_exact                  150   300-380 s CPU on 16 threads locally, 2026-09-27; /4 cores x1.5, rounded up
+sca_exact                        127   runner, the weekly run of 2026-09-27
+syndrome_gibbs                    94   runner, the weekly run of 2026-09-27
+ptrit_train_exact                 76   runner, the weekly run of 2026-09-27
+encoding_probe                    66   44 s local, one core, 2026-09-27, x1.5

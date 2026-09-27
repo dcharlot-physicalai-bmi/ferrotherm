@@ -20,6 +20,12 @@
 //
 // Count-based throughout; valid on a busy machine.
 //
+// TIME. The full run is more than three hours of one core (killed at 10,800 s on 2026-09-27 with two
+// of its twelve instances done): each tau is up to 40,000 applications of a kernel on 65,536 states.
+// It is too long for a hosted CI job, so it is listed in examples/LOCAL and run by hand; the weekly
+// job runs it with FERROTHERM_EXAMPLE_SMOKE=1 -- one instance, caps of 400 lags and 30 sweeps --
+// which proves every line still runs and measures nothing.
+//
 // run: cargo run --release --example penalty_mixing
 
 use ferrotherm::autocorr::{apply_distribution, boltzmann, spins, tau_int_exact, Kernel};
@@ -88,9 +94,14 @@ fn sweeps_to_mass(g: &Graph, beta: f64, optimal: &[bool], rel: f64, cap: usize) 
 
 fn main() {
     let n = 4usize;
-    let instances = 12u64;
+    let smoke = std::env::var_os("FERROTHERM_EXAMPLE_SMOKE").is_some();
+    let instances = if smoke { 1u64 } else { 12 };
     let beta = 1.0;
-    let (rel, cap) = (0.01, 3_000usize);
+    let (rel, cap) = (0.01, if smoke { 30 } else { 3_000usize });
+    let lag_cap = if smoke { 400 } else { 40_000 };
+    if smoke {
+        println!("SMOKE RUN (FERROTHERM_EXAMPLE_SMOKE): one instance and small caps; these numbers are not the measurement\n");
+    }
     println!("WHAT A PENALTY COSTS IN SWEEPS -- exact, sequential Gibbs on all 2^16 states of four-city TSPs\n");
     println!("  penalties  just above A_crit; Lucas's max(W); the provable threshold; four times it");
     println!("  columns    P_GS at equilibrium; exact tau_int of the energy (sweeps); sweeps from uniform to within {}% of P_GS (cap {cap})\n", rel * 100.0);
@@ -118,7 +129,7 @@ fn main() {
         for (i, &a) in penalties.iter().enumerate() {
             let model = Tsp::with_weights(n, &w, 1.0, a).expect("valid");
             let g = model.graph();
-            let tau = tau_int_exact(g, beta, Kernel::SequentialGibbs, |s| g.energy(s), 1e-10, 40_000)
+            let tau = tau_int_exact(g, beta, Kernel::SequentialGibbs, |s| g.energy(s), 1e-10, lag_cap)
                 .expect("small");
             let (k, p_gs) = sweeps_to_mass(g, beta, &inst.optimal, rel, cap);
             cells.push(format!("{p_gs:>6.3} {:>7.1} {k:>6}", tau.tau_int));

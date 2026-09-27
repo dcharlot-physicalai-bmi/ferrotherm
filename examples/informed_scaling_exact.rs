@@ -15,6 +15,11 @@
 // Gibbs; deg+1 reweighs plus the choice for the informed chain -- n weight reads under the linear
 // scan that shipped until 2026-09-13, log2(n) under the Fenwick tree it has now.
 //
+// TIME. The full run is more than three hours of one core (killed at 10,800 s on 2026-09-27, inside
+// n = 14, where the lag sum takes the place of the dense solve). It is listed in examples/LOCAL and
+// run by hand; the weekly job runs it with FERROTHERM_EXAMPLE_SMOKE=1 -- one seed and lag caps a
+// thousand times smaller, n = 14 included -- which proves every line still runs and measures nothing.
+//
 // run: cargo run --release --example informed_scaling_exact
 
 use ferrotherm::autocorr::{tau_int_exact, tau_int_fundamental, Kernel, MAX_DENSE_SPINS};
@@ -43,7 +48,12 @@ fn frustrated(n: usize, seed: u64) -> Graph {
 
 fn main() {
     let beta = 2.0;
-    let seeds = 4u64;
+    let smoke = std::env::var_os("FERROTHERM_EXAMPLE_SMOKE").is_some();
+    let seeds = if smoke { 1u64 } else { 4 };
+    let (cap_g, cap_b) = if smoke { (2_000, 20_000) } else { (2_000_000, 20_000_000) };
+    if smoke {
+        println!("SMOKE RUN (FERROTHERM_EXAMPLE_SMOKE): one seed and lag caps a thousand times smaller; these numbers are not the measurement\n");
+    }
     println!("EXACT tau_int: BARKER-INFORMED AGAINST CHROMATIC GIBBS, IN FLIPS, ON ALL 2^n STATES\n");
     println!("  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}");
     println!("  oracle    autocorr::tau_int_fundamental (one dense solve, no lags) up to {MAX_DENSE_SPINS} spins; the lag sum of");
@@ -65,8 +75,8 @@ fn main() {
         for seed in 0..seeds {
             let g = frustrated(n, seed);
             deg += 2.0 * g.n_edges as f64 / n as f64;
-            let a = tau(&g, Kernel::ChromaticGibbs, 2_000_000);
-            let b = tau(&g, Kernel::Informed(Balance::Barker), 20_000_000);
+            let a = tau(&g, Kernel::ChromaticGibbs, cap_g);
+            let b = tau(&g, Kernel::Informed(Balance::Barker), cap_b);
             tg += a.tau_int * n as f64;
             tb += b.tau_int;
             lg = lg.max(a.lags);

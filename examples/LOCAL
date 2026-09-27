@@ -1,0 +1,13 @@
+# Examples too slow for a hosted CI job: run them by hand. Every one is a MEASUREMENT, not a gate.
+#
+# A hosted runner stops a job at six hours, and these take longer than that on one core, so neither
+# the per-push step nor the weekly one can run them in full. Dropping them from CI entirely would
+# bring back the defect running examples on CI was introduced to catch -- an example nobody runs
+# stops running, and nobody notices (`dtm_scale` panicked on a missing argument for as long as that
+# was true). So the weekly job runs each of these with FERROTHERM_EXAMPLE_SMOKE=1, which every
+# example listed here must honour: the same code at sizes that finish in minutes, with a banner
+# saying its numbers are not the measurement. The full run, and the numbers worth quoting, are by hand.
+#
+# name                        full run, one core
+penalty_mixing              > 10800 s locally (killed at three hours on 2026-09-27, two of twelve instances done)
+informed_scaling_exact      > 10800 s locally (killed at three hours on 2026-09-27, inside n = 14)

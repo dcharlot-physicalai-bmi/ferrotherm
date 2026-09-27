@@ -6,7 +6,13 @@ name: slow examples
 # introduced to catch (`dtm_scale` had panicked on a missing argument for as long as nothing ran it).
 #
 # Sharded for the same reason the mutation job is: a hosted runner stops a job at six hours and calls
-# it CANCELLED. Twenty of these took more than two minutes each locally.
+# it CANCELLED. examples/SLOW records each example's seconds on a runner, and the shards are packed by
+# it, longest first onto the least-loaded shard. The first version dealt examples out by position and
+# gave every one two hours: on its first run, 2026-09-27, two shards each met an example that needed
+# far more than that (both now in examples/LOCAL) and stopped there, so seven examples behind them
+# never ran. Now every example in a shard runs whatever happens to the one before it, each gets three
+# times its recorded seconds plus fifteen minutes, and the failures are named together at the end.
+# examples/LOCAL, too long for any hosted job, runs here in smoke mode.
 on:
   schedule:
     - cron: '0 6 * * 0'
@@ -38,28 +44,76 @@ jobs:
             echo "the matrix runs ${{ strategy.job-total }} shards and SHARDS says $SHARDS: examples would be skipped" >&2
             exit 2
           fi
-          i=0
-          ran=0
+          # Every name must be an example, checked for the whole list before anything runs, so a
+          # stale row fails every shard at once rather than whichever shard it was packed into.
           for n in $(awk '!/^#/ && NF {print $1}' examples/SLOW); do
-            if [ $((i % SHARDS)) -eq "${{ matrix.shard }}" ]; then
-              [ -f "examples/$n.rs" ] || { echo "examples/SLOW names $n, which does not exist" >&2; exit 2; }
-              start=$SECONDS
-              rc=0
-              timeout 7200 cargo run --release --quiet --example "$n" >/dev/null || rc=$?
-              if [ "$rc" -eq 124 ]; then
-                echo "$n ran past two hours" >&2
-                exit 1
-              elif [ "$rc" -ne 0 ]; then
-                echo "$n exited $rc" >&2
-                exit 1
-              fi
-              echo "  ran $n in $((SECONDS - start)) s"
-              ran=$((ran + 1))
-            fi
-            i=$((i + 1))
+            [ -f "examples/$n.rs" ] || { echo "examples/SLOW names $n, which does not exist" >&2; exit 2; }
           done
+          # Every row needs a whole number of seconds, or it cannot be packed.
+          bad=$(awk '!/^#/ && NF && $2 !~ /^[0-9]+$/ {print $1}' examples/SLOW)
+          if [ -n "$bad" ]; then
+            echo "examples/SLOW rows with no seconds on a runner: $bad" >&2
+            exit 2
+          fi
+          # Longest first, each onto the least-loaded shard; ties broken by name so every shard
+          # computes the same packing.
+          packing=$(awk '!/^#/ && NF {print $2, $1}' examples/SLOW | sort -k1,1nr -k2,2 |
+            awk -v S="$SHARDS" '{
+              b = 0; for (i = 1; i < S; i++) if (load[i] < load[b]) b = i
+              load[b] += $1; print b, $2, $1
+            }')
+          echo "$packing" | awk '{ load[$1] += $3; k[$1]++ } END { for (i in load) printf "  shard %s packs %d examples, %d s\n", i, k[i], load[i] }' | sort
+          mine=$(echo "$packing" | awk -v me="${{ matrix.shard }}" '$1 == me { print $2, $3 }')
+          ran=0
+          failed=""
+          while read -r n secs; do
+            [ -n "$n" ] || continue
+            limit=$((3 * secs + 900))
+            start=$SECONDS
+            rc=0
+            timeout "$limit" cargo run --release --quiet --example "$n" >/dev/null </dev/null || rc=$?
+            if [ "$rc" -eq 124 ]; then
+              echo "::error::$n ran past $limit s, three times its recorded $secs s: measure it again and update examples/SLOW, or move it to examples/LOCAL"
+              failed="$failed $n"
+            elif [ "$rc" -ne 0 ]; then
+              echo "::error::$n exited $rc"
+              failed="$failed $n"
+            else
+              echo "  ran $n in $((SECONDS - start)) s (recorded $secs)"
+            fi
+            ran=$((ran + 1))
+          done <<< "$mine"
           if [ "$ran" -eq 0 ]; then
             echo "shard ${{ matrix.shard }} ran nothing; examples/SLOW is shorter than the shard count" >&2
             exit 2
           fi
+          if [ -n "$failed" ]; then
+            echo "shard ${{ matrix.shard }}/$SHARDS: $ran examples, failed:$failed" >&2
+            exit 1
+          fi
           echo "  shard ${{ matrix.shard }}/$SHARDS: $ran examples ran, all exit 0"
+      - name: examples/LOCAL still run, in smoke mode
+        if: matrix.shard == 0
+        env:
+          FERROTHERM_ALLOW_BUSY: "1"
+          FERROTHERM_EXAMPLE_SMOKE: "1"
+        run: |
+          set -euo pipefail
+          ran=0
+          failed=""
+          for n in $(awk '!/^#/ && NF {print $1}' examples/LOCAL); do
+            [ -f "examples/$n.rs" ] || { echo "examples/LOCAL names $n, which does not exist" >&2; exit 2; }
+            grep -q FERROTHERM_EXAMPLE_SMOKE "examples/$n.rs" || { echo "examples/$n.rs is in examples/LOCAL but has no smoke mode" >&2; exit 2; }
+            start=$SECONDS
+            rc=0
+            timeout 1800 cargo run --release --quiet --example "$n" >/dev/null || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::$n in smoke mode exited $rc"
+              failed="$failed $n"
+            else
+              echo "  smoke $n in $((SECONDS - start)) s"
+            fi
+            ran=$((ran + 1))
+          done
+          [ "$ran" -gt 0 ] || { echo "examples/LOCAL ran nothing" >&2; exit 2; }
+          [ -z "$failed" ] || { echo "failed in smoke mode:$failed" >&2; exit 1; }

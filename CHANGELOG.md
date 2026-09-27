@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### The weekly slow-examples job, fixed after its first run
+
+`examples-slow.yml` ran for the first time on 2026-09-27 and two of its four shards failed. Neither
+example crashed: `penalty_mixing` and `informed_scaling_exact` each ran past the two hours every
+example was given, and each shard stopped at its first failure, so the seven examples dealt to the
+same shards after them never ran. Measured since: both are over three hours of one core locally
+(killed at 10,800 s, the first with two of its twelve instances done, the second inside `n = 14`),
+too long for any hosted job. And `examples/SLOW` had said `>120` for twenty of its entries -- nothing
+past two minutes was measured -- while the job dealt examples to shards by position.
+
+- `examples/SLOW` now records seconds ON A RUNNER: the first run's time for the sixteen it reached,
+  and a local measurement times 1.5 for the rest (the runner ran 1.22 to 1.42 times slower on the
+  examples both timed). The job packs its shards by those seconds, longest first onto the least
+  loaded, 6,149 to 6,186 s each. Every example in a shard runs whatever happens to the one before it,
+  each gets three times its recorded seconds plus fifteen minutes, and the failures are named
+  together at the end, a timeout with what to do about it. A stale name fails every shard before
+  anything runs.
+- `examples/LOCAL` holds the two that no hosted job can finish, with what was measured. Neither CI
+  step runs them in full; the weekly job runs each with `FERROTHERM_EXAMPLE_SMOKE=1`, which both now
+  honour -- the same code at sizes that finish in minutes (61 s and 352 s of CPU locally), under a
+  banner saying the numbers are not the measurement -- so an example nobody runs in full still
+  cannot stop running unnoticed. The job refuses a LOCAL example with no smoke mode.
+- Checked the way the previous version was: both steps extracted from the workflow and run against a
+  stand-in `cargo`, for every example run once across four shards, a failure and a timeout in one
+  shard with the rest still running, a row with no seconds, a stale name, a LOCAL example with no
+  smoke mode, and a shard-count mismatch.
+
 ### `delay::stationary_coloured`: a coloured fabric is exact only while its reads are fresh
 
 WORKLOADS entry 13 said a heat-bath fabric's answer to late reads was "the one it already has: colour

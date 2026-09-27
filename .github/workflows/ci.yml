@@ -239,7 +239,8 @@ jobs:
           # awk alone, not `grep -v '^#' | awk`: under pipefail a grep that selects nothing exits 1
           # and kills the step silently at this assignment -- found by running this script against
           # a list holding only comments.
-          slow=$(awk '!/^#/ && NF {print $1}' examples/SLOW | tr '\n' ' ')
+          # examples/LOCAL: too slow for any hosted job; the weekly job runs them in smoke mode.
+          slow=$(awk '!/^#/ && NF {print $1}' examples/SLOW examples/LOCAL | tr '\n' ' ')
           for n in $skip $slow; do
             [ -f "examples/$n.rs" ] || { echo "examples/$n.rs is listed to skip but does not exist" >&2; exit 2; }
           done
