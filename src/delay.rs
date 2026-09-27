@@ -31,6 +31,39 @@
 //! The chain holds the last `d` frames (the update reads the oldest), `n d` bits, so it is exact
 //! only for small networks: 12 bits, `2^12` augmented states, is the cap used here.
 //!
+//! # The rule that holds for a uniform delay, and the half of it that is proved
+//!
+//! Let every wire carry the same delay `d` and let every spin redraw on every tick by one rule whose
+//! law for the new frame depends on the past only through the frame read:
+//! `P(x_{t+1} | x_t, ..., x_{t-d+1}) = K(x_{t+1} | x_{t-d+1})`. Then `x_{t+1}` is a function of
+//! `x_{t+1-d}` and that tick's fresh randomness alone, so by induction the ticks of each residue class
+//! mod `d`, `x_r, x_{r+d}, x_{r+2d}, ...`, form a Markov chain with kernel `K`, driven by random draws
+//! no other class touches: `d` interleaved copies of the one-tick chain that never meet. The current
+//! frame has `K`'s stationary law at every `d`. **No dependence on the value a spin holds, no effect
+//! of a uniform delay** -- that direction is this paragraph's proof, and [`Rule::HeatBath`] is its
+//! instance. The converse, that dependence on the held value lets the delay in, is NOT proved, and it
+//! is not true in general (spins with no neighbours hold and redraw with nothing to read late). It is
+//! measured: [`Rule::Arrhenius`], [`Rule::Sca`] and the coloured schedule below, each on a few small
+//! fixtures at `β = 1` with a clean integer delay on every read.
+//!
+//! # A coloured fabric read late: [`stationary_coloured`]
+//!
+//! Colouring is the other repair for a shared clock: on tick `t` class `t mod K` redraws from the
+//! heat-bath conditional and every other spin holds. Read fresh (`d = 1`, the frame read is the frame
+//! held) it is chromatic Gibbs, exact. But a held spin's next value IS the value it holds, so the
+//! schedule has exactly the own-state dependence the rule above says nothing protects, and a late read
+//! reaches it. For two coupled spins with classes `{0}, {1}`, at `d >= 2` each draw reads the other
+//! spin's value from before that spin's last update -- the draw `L` ticks earlier, `L = 3` for
+//! `d = 2, 3` and `5` for `d = 4, 5`, always odd and at least 3. Each draw's dependence runs back
+//! along `t, t - L, t - 2L, ...`, alternating between the spins just as the fresh sweep alternates,
+//! and the two values in any frame were drawn on consecutive ticks, which lie on different chains
+//! unless `L = 1`. So the spins are independent, each with its Boltzmann marginal: at zero field and
+//! `β J = 1` the pair agrees 0.8808 of the time read fresh and exactly `1/2` read two or more ticks
+//! late. For a pair that product of the marginals is also the synchronous (Peretto) law, by the same
+//! interleaving. On PAI-310's frustrated triangle a two-tick read puts the law 0.1616 from Boltzmann
+//! (the synchronous law is 0.8139 from it), and the laws after each class differ: 0.1952, 0.1750,
+//! 0.1891.
+//!
 //! # A pinned automaton read late: the law, and what it costs
 //!
 //! Every flip of the pinned automaton costs `e^{-2q}`, so at large `q` its law is Boltzmann plus a
@@ -273,6 +306,21 @@ pub fn stationary_solved(g: &Graph, beta: f64, rule: Rule, d: usize) -> Settled 
             a[st * m + (shifted | y)] += w;
         }
     }
+    let mu = gth(&mut a, m);
+    let total: f64 = mu.iter().sum();
+    let mut law = vec![0.0f64; 1usize << n];
+    let mut moves = 0.0;
+    for (st, w) in mu.iter().enumerate() {
+        law[st & mask] += w / total;
+        moves += w / total * flips[st];
+    }
+    Settled { law, moves }
+}
+
+/// The stationary vector of the dense row-stochastic matrix `a` (`m x m`, row `i` the law of the
+/// next state from `i`), unnormalised, by GTH elimination; `a` is consumed. State 0 must be
+/// recurrent. Transient states come back with zero mass, since nothing flows into them.
+fn gth(a: &mut [f64], m: usize) -> Vec<f64> {
     // GTH: censor the chain onto {0..k-1} one state at a time. Only OFF-diagonal mass is ever read,
     // so no step subtracts; the diagonal is left holding whatever it holds.
     for k in (1..m).rev() {
@@ -296,14 +344,96 @@ pub fn stationary_solved(g: &Graph, beta: f64, rule: Rule, d: usize) -> Settled 
     for k in 1..m {
         mu[k] = (0..k).map(|i| mu[i] * a[i * m + k]).sum();
     }
+    mu
+}
+
+/// A coloured fabric, settled: see [`stationary_coloured`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColouredSettled {
+    /// Law of the current frame at a tick chosen uniformly at random -- the average over the `K`
+    /// phases of the sweep -- over its `2^n` states, bit `i` set meaning spin `i` up.
+    pub law: Vec<f64>,
+    /// `after[c]`: the law of the current frame just after colour class `c` has moved. At `d = 1`,
+    /// with every class an independent set, each is the Boltzmann law; late, they differ.
+    pub after: Vec<Vec<f64>>,
+    /// Expected number of spins whose value changes on one tick, averaged over the phases. Held
+    /// spins never change.
+    pub moves: f64,
+}
+
+/// The stationary law of a COLOURED heat-bath fabric whose reads are `d >= 1` ticks old: on tick
+/// `t` the spins of colour class `t mod K` redraw from the heat-bath conditional `σ(2β f_i)` at the
+/// field of the frame `d` ticks back, and every other spin HOLDS the value it has. At `d = 1` the
+/// frame read is the frame held, and with every class an independent set of the graph this is
+/// chromatic Gibbs, exact. A schedule, not a [`Rule`]: the moving spins are heat-bath p-bits, which
+/// ignore the value they hold, but a held spin's next value IS the value it holds -- the own-state
+/// dependence by which the delay reaches [`Rule::Arrhenius`] and [`Rule::Sca`].
+///
+/// Exact, as a chain on (the class to move next, the last `d` frames), `K 2^{n d}` states, solved
+/// by GTH elimination like [`stationary_solved`]. `classes` must partition the spins; a class that
+/// contains a coupled pair is allowed (one class holding every spin is the every-tick heat bath)
+/// but is then not Gibbs even when read fresh.
+///
+/// # Panics
+///
+/// If `d` is zero, `classes` is not a partition of `0..n` into non-empty classes, or `K 2^{n d}`
+/// exceeds `2^`[`MAX_BITS`].
+#[must_use]
+pub fn stationary_coloured(g: &Graph, beta: f64, classes: &[Vec<usize>], d: usize) -> ColouredSettled {
+    let n = g.n;
+    let k = classes.len();
+    assert!(d >= 1 && n >= 1, "a delay is at least one tick");
+    let mut seen = vec![0usize; n];
+    for class in classes {
+        assert!(!class.is_empty(), "a colour class is empty");
+        for &i in class {
+            assert!(i < n, "spin {i} is not in a graph of {n}");
+            seen[i] += 1;
+        }
+    }
+    assert!(seen.iter().all(|&c| c == 1), "the classes must partition the spins, each exactly once: {seen:?}");
+    let frames = 1usize << (n * d);
+    assert!(k * frames <= 1usize << MAX_BITS, "{k} phases x 2^({n} x {d}) states is more than 2^{MAX_BITS}");
+    let m = k * frames;
+    let mask = (1usize << n) - 1;
+    let mut a = vec![0.0f64; m * m];
+    let mut flips = vec![0.0f64; m];
+    for (c, class) in classes.iter().enumerate() {
+        let moving: usize = class.iter().map(|&i| 1usize << i).sum();
+        let next_phase = (c + 1) % k;
+        for hist in 0..frames {
+            let st = c * frames + hist;
+            let held = hist & mask;
+            let read = frame_spins((hist >> (n * (d - 1))) & mask, n);
+            let up: Vec<f64> = (0..n).map(|i| p_plus(g, beta, Rule::HeatBath, i, spin(held, i), &read)).collect();
+            flips[st] = class.iter().map(|&i| if spin(held, i) > 0 { 1.0 - up[i] } else { up[i] }).sum();
+            let older = if d > 1 { (hist << n) & (frames - 1) } else { 0 };
+            for y in 0..=mask {
+                if y & !moving != held & !moving {
+                    continue;
+                }
+                let w: f64 = class.iter().map(|&i| if spin(y, i) > 0 { up[i] } else { 1.0 - up[i] }).product();
+                a[st * m + next_phase * frames + (older | y)] += w;
+            }
+        }
+    }
+    let mu = gth(&mut a, m);
     let total: f64 = mu.iter().sum();
     let mut law = vec![0.0f64; 1usize << n];
+    let mut after = vec![vec![0.0f64; 1usize << n]; k];
     let mut moves = 0.0;
     for (st, w) in mu.iter().enumerate() {
-        law[st & mask] += w / total;
-        moves += w / total * flips[st];
+        let (phase, hist) = (st / frames, st % frames);
+        law[hist & mask] += w / total;
+        // Phase `p` is the class to move NEXT, so the frame it holds is the one class `p - 1` left.
+        after[(phase + k - 1) % k][hist & mask] += w;
+        moves += flips[st] * w / total;
     }
-    Settled { law, moves }
+    for l in &mut after {
+        let mass: f64 = l.iter().sum();
+        l.iter_mut().for_each(|v| *v /= mass);
+    }
+    ColouredSettled { law, after, moves }
 }
 
 /// The first-order constant of the delayed automaton's distance from Boltzmann:
@@ -618,5 +748,151 @@ mod tests {
         assert!(tri < 0.97, "on the frustrated triangle waiting must move more: {tri} (measured 0.944)");
         let predicted = 3.0 * sca_rate_constant(&g, 1.0, 1) / sca_rate_constant(&g, 1.0, 3);
         assert!((tri - predicted).abs() < 0.01, "first order predicts {predicted}, exact {tri}");
+    }
+
+    fn singletons(n: usize) -> Vec<Vec<usize>> {
+        (0..n).map(|i| vec![i]).collect()
+    }
+
+    /// **Read fresh, a coloured fabric is exact Gibbs.** One class per spin -- every class an
+    /// independent set -- on the zero-field pair, a biased pair, both triangles and the 4-spin SK
+    /// instance: at `d = 1` the phase-averaged law and the law after every class are Boltzmann to
+    /// `1e-12`. And the moves per tick are the Boltzmann average of each class's flip probability,
+    /// divided by the number of classes, written out here from the heat-bath rule.
+    #[test]
+    fn a_coloured_fabric_read_fresh_samples_boltzmann() {
+        for g in [pair(1.0, 0.0), pair(1.0, 0.3), triangle(), frustrated(), sk4()] {
+            let n = g.n;
+            let bolt = boltzmann(&g, 1.0).expect("small");
+            let s = stationary_coloured(&g, 1.0, &singletons(n), 1);
+            let tv = total_variation(&s.law, &bolt);
+            assert!(tv < 1e-12, "n {n}: TV {tv:e} from Boltzmann");
+            for (c, law) in s.after.iter().enumerate() {
+                let tv = total_variation(law, &bolt);
+                assert!(tv < 1e-12, "n {n}: after class {c}, TV {tv:e}");
+            }
+            let moves: f64 = bolt
+                .iter()
+                .enumerate()
+                .map(|(x, p)| {
+                    let sp = frame_spins(x, n);
+                    p * (0..n)
+                        .map(|i| {
+                            let up = 1.0 / (1.0 + (-2.0 * g.field(i, &sp)).exp());
+                            if sp[i] > 0 { 1.0 - up } else { up }
+                        })
+                        .sum::<f64>()
+                })
+                .sum::<f64>()
+                / n as f64;
+            assert!((s.moves - moves).abs() < 1e-12, "n {n}: moves {} vs {moves}", s.moves);
+        }
+    }
+
+    /// **Read late, a coloured pair keeps each spin's marginal and loses the correlation.** With
+    /// classes `{0}, {1}` the spins move on alternate ticks, and at `d >= 2` each draw reads the other
+    /// spin's value from before that spin's last update: from the draw `L` ticks earlier, `L = 3` at
+    /// `d = 2, 3` and `L = 5` at `d = 4, 5` (always odd, at least 3). Every draw's dependence runs back
+    /// along the ticks `t, t - L, t - 2L, ...`, alternating between the spins exactly as the `d = 1`
+    /// sweep alternates, and the two values in any frame were drawn on CONSECUTIVE ticks, which lie on
+    /// different chains unless `L = 1`. So the two spins are independent, each with its Boltzmann
+    /// marginal: the law is the product of the marginals, and at zero field the pair agrees exactly
+    /// half the time. Held here at zero field (0.8808 at `d = 1`, `1/2` from `d = 2` to 5) and on a
+    /// biased pair, whose law, and each phase's, must be the product of its Boltzmann marginals to
+    /// `1e-12`, which is `0.28` from the Boltzmann law itself -- and which is also Peretto's
+    /// synchronous law for a pair, by the same interleaving.
+    #[test]
+    fn a_coloured_pair_read_late_is_the_product_of_its_marginals() {
+        let g = pair(1.0, 0.0);
+        let fresh = aligned(&g, &stationary_coloured(&g, 1.0, &singletons(2), 1).law);
+        assert!((fresh - 0.880_797_077_977_882).abs() < 1e-12, "fresh: agree {fresh}");
+        for d in 2..=5 {
+            let late = aligned(&g, &stationary_coloured(&g, 1.0, &singletons(2), d).law);
+            assert!((late - 0.5).abs() < 1e-12, "d {d}: agree {late}, not 1/2");
+        }
+        let g = pair(1.0, 0.3);
+        let bolt = boltzmann(&g, 1.0).expect("small");
+        let (m0, m1) = (bolt[1] + bolt[3], bolt[2] + bolt[3]);
+        let product = [(1.0 - m0) * (1.0 - m1), m0 * (1.0 - m1), (1.0 - m0) * m1, m0 * m1];
+        assert!(total_variation(&product, &bolt) > 0.25, "the product is far from the joint law");
+        // The synchronous pair interleaves the same way, so its law is the same product.
+        let sync = peretto(&g, 1.0).expect("small");
+        assert!(total_variation(&product, &sync) < 1e-12, "Peretto's law for a pair is the product too");
+        for d in 2..=5 {
+            let s = stationary_coloured(&g, 1.0, &singletons(2), d);
+            for law in std::iter::once(&s.law).chain(&s.after) {
+                let tv = total_variation(law, &product);
+                assert!(tv < 1e-12, "d {d}: TV {tv:e} from the product of the marginals");
+            }
+        }
+    }
+
+    /// **On PAI-310's frustrated triangle a two-tick read moves the coloured law 0.1616 from
+    /// Boltzmann**, and the three phases differ (0.1952, 0.1750, 0.1891 after classes 0, 1, 2). The
+    /// figures were first computed by the PAI-310 lesson bench and by a numpy build of the same chain
+    /// outside this tree; here they are held to a direct simulation of the fabric, which shares only
+    /// the heat-bath formula: a ring of the last `d` frames, class `t mod 3` redrawn from the oldest,
+    /// the rest copied, `1e6` ticks. Its per-phase laws are within `0.01` in total variation (the
+    /// noise is a few thousandths).
+    #[test]
+    fn a_coloured_triangle_read_late_leaves_boltzmann() {
+        let g = frustrated();
+        let bolt = boltzmann(&g, 1.0).expect("small");
+        let s = stationary_coloured(&g, 1.0, &singletons(3), 2);
+        let tv = total_variation(&s.law, &bolt);
+        assert!((tv - 0.161_573).abs() < 1e-5, "d 2: TV {tv} from Boltzmann (measured 0.161573)");
+        let phases: Vec<f64> = s.after.iter().map(|l| total_variation(l, &bolt)).collect();
+        for (got, want) in phases.iter().zip([0.195_177, 0.174_953, 0.189_097]) {
+            assert!((got - want).abs() < 1e-5, "d 2: per-phase TVs {phases:?}");
+        }
+
+        let (d, ticks) = (2usize, 1_000_000usize);
+        let mut rng = crate::rng::Pcg::new(29, 3);
+        let mut ring: Vec<Vec<i8>> = vec![vec![-1; 3]; d];
+        let mut seen = vec![vec![0.0f64; 8]; 3];
+        for t in 0..ticks + 1000 {
+            let c = t % 3;
+            let read = ring[d - 1].clone();
+            let mut next = ring[0].clone();
+            let up = 1.0 / (1.0 + (-2.0 * g.field(c, &read)).exp());
+            next[c] = if rng.f64() < up { 1 } else { -1 };
+            ring.rotate_right(1);
+            ring[0] = next;
+            if t >= 1000 {
+                let x = (0..3).filter(|&i| ring[0][i] > 0).map(|i| 1usize << i).sum::<usize>();
+                seen[c][x] += 1.0;
+            }
+        }
+        for (c, counts) in seen.iter().enumerate() {
+            let total: f64 = counts.iter().sum();
+            let sim: Vec<f64> = counts.iter().map(|v| v / total).collect();
+            let gap = total_variation(&sim, &s.after[c]);
+            assert!(gap < 0.01, "after class {c}: simulation vs chain TV {gap}");
+        }
+    }
+
+    /// **The control: an every-tick heat-bath fabric is delay-blind, a coloured one is not.** On a
+    /// biased pair and the frustrated triangle, the every-tick law (`stationary_solved`) is the same at
+    /// `d = 1, 2, 3` to `1e-10`, and a coloured schedule with ONE class holding every spin is that
+    /// fabric, delay for delay. Split into one class per spin, the same p-bits read two ticks late move
+    /// more than `0.1` from where they sat read fresh.
+    #[test]
+    fn a_coloured_fabric_feels_the_delay_that_an_every_tick_one_does_not() {
+        for g in [pair(1.0, 0.3), frustrated()] {
+            let n = g.n;
+            let every: Vec<Vec<f64>> = (1..=3).map(|d| stationary_solved(&g, 1.0, Rule::HeatBath, d).law).collect();
+            let all: Vec<usize> = (0..n).collect();
+            for d in 1..=3 {
+                let blind = total_variation(&every[d - 1], &every[0]);
+                assert!(blind < 1e-10, "n {n}, d {d}: the every-tick law moved {blind:e}");
+                let one = stationary_coloured(&g, 1.0, std::slice::from_ref(&all), d).law;
+                let same = total_variation(&one, &every[d - 1]);
+                assert!(same < 1e-10, "n {n}, d {d}: one class vs every tick, TV {same:e}");
+            }
+            let fresh = stationary_coloured(&g, 1.0, &singletons(n), 1).law;
+            let late = stationary_coloured(&g, 1.0, &singletons(n), 2).law;
+            let moved = total_variation(&fresh, &late);
+            assert!(moved > 0.1, "n {n}: the coloured law moved only {moved} with a two-tick read");
+        }
     }
 }

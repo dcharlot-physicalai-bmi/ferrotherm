@@ -16,11 +16,17 @@
 //! fresh reads on every `d`-th tick. Cost is spins moved per tick, exactly, as PAI-310's
 //! `every-spin-at-once` counts it.
 //!
+//! The third table is the other repair for a shared clock, COLOURING: class `t mod K` redraws on tick
+//! `t` from the frame `d` ticks back and every other spin holds (`delay::stationary_coloured`). Read
+//! fresh it is exact Gibbs; holding is own-state dependence, so a late read reaches it too.
+//!
 //! ```text
 //! cargo run --release --example delay_exact
 //! ```
 use ferrotherm::autocorr::{boltzmann, total_variation};
-use ferrotherm::delay::{aligned, sca_rate_constant, stationary_current, stationary_solved, Rule, MAX_BITS};
+use ferrotherm::delay::{
+    aligned, sca_rate_constant, stationary_coloured, stationary_current, stationary_solved, Rule, MAX_BITS,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 
 fn pair(h: f64) -> Graph {
@@ -113,6 +119,27 @@ fn main() {
     println!("\nBoltzmann: agree {:.4}", aligned(&g, &bolt));
 
     let fixtures = [("pair h=0", pair(0.0)), ("pair h=0.3", pair(0.3)), ("triangle", frustrated()), ("SK4", sk4())];
+
+    println!("\na coloured fabric, one class per spin: class t mod K redraws from the frame d ticks back, the rest");
+    println!("hold. TV from Boltzmann of the law at a random tick, and after each class moves; the every-tick");
+    println!("heat bath beside it is the same at every d (Peretto's law)");
+    println!("  fixture       d   agree    TV      after class 0, 1, ...          moves/tick   every-tick TV");
+    for (name, g) in &fixtures {
+        let bolt = boltzmann(g, beta).expect("small");
+        let classes: Vec<Vec<usize>> = (0..g.n).map(|i| vec![i]).collect();
+        for d in (1..).take_while(|&d| g.n << (g.n * d) <= 1 << MAX_BITS) {
+            let s = stationary_coloured(g, beta, &classes, d);
+            let phases: Vec<String> = s.after.iter().map(|l| format!("{:.4}", total_variation(l, &bolt))).collect();
+            let every = total_variation(&stationary_solved(g, beta, Rule::HeatBath, d).law, &bolt);
+            let agree = if g.n == 2 { format!("{:.4}", aligned(g, &s.law)) } else { "  -   ".to_string() };
+            println!(
+                "  {name:11} {d:3}   {agree}   {:.4}   {:30}   {:10.4}   {every:.4}",
+                total_variation(&s.law, &bolt),
+                phases.join(", "),
+                s.moves
+            );
+        }
+    }
     println!("\nthe pinned automaton read late: TV e^2q -> c_d as q grows. Exact chain at q = 6 against the");
     println!("first-order constant from 2^n states (sca_rate_constant), both divided by c_1; pinning beats");
     println!("waiting, to first order, where c_d/c_1 < d");

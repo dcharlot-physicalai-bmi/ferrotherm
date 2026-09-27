@@ -827,9 +827,54 @@ interleaved synchronous chains that never meet, so the current frame follows Per
 law at EVERY delay, held to `autocorr::peretto` to `1e-10`. That law is already wrong — for this pair
 the two spins decorrelate completely, `0.5000`, because a synchronous update never lets them see each
 other on the same tick (entry 8 and `Kernel::Synchronous`) — but it is wrong by the same amount at
-one tick of delay as at six. **For a fabric the engineering answer is the one it already has: colour
-the graph.** Interconnect latency does not add a second error on top of synchronous updating; it
-only matters when updates depend on a spin's own state.
+one tick of delay as at six. Interconnect latency does not add a second error on top of synchronous
+updating; it only matters when updates depend on a spin's own state. **For a fabric the engineering
+answer is the one it already has — colour the graph — but only while its reads are fresh**, as the
+next section shows. (This paragraph first said "colour the graph" with no condition; corrected
+2026-09-27.)
+
+### Colouring read late — `stationary_coloured`
+
+Colouring, PAI-310 lesson 16's other repair for the shared clock, redraws colour class `t mod K` on tick `t`
+and HOLDS every other spin. Read fresh (`d = 1`, the frame read is the frame held) it is chromatic
+Gibbs, exact: every fixture below is Boltzmann to `1e-12`. But holding is own-state dependence — a
+held spin's next value is the value it holds — and a late read reaches it. **At zero field, with a
+two-tick read, a coloured pair samples the uniform law.** Classes `{0}, {1}` move on alternate ticks, and at `d ≥ 2`
+each draw reads the other spin's value from before that spin's last update, the draw `L` ticks
+earlier (`L = 3` at `d = 2, 3`, `5` at `d = 4, 5`). Each draw's dependence runs back along
+`t, t − L, t − 2L, …`, alternating between the spins just as the fresh sweep does, and the two values
+in any frame were drawn on consecutive ticks, which lie on different chains unless `L = 1`. So the
+spins are independent, each keeping its Boltzmann marginal: the law is the product of the marginals,
+exactly — for a pair, the same law the synchronous update gives. `delay::stationary_coloured` builds
+the chain on (the class to move next, the last `d` frames) and solves it; one class per spin, `β = 1`
+(`examples/delay_exact.rs`):
+
+| fixture | TV from Boltzmann, d = 1 | d = 2 | d = 3 | every-tick heat bath, any d |
+|---|---|---|---|---|
+| pair, `J = 1`, `h = 0` (agree) | 0.0000 (0.8808) | 0.3808 (0.5000) | 0.3808 (0.5000) | 0.3808 |
+| pair, `h = 0.3` | 0.0000 | 0.2814 | 0.2814 | 0.2814 |
+| frustrated triangle | 0.0000 | 0.1616 | 0.5000 | 0.8139 |
+| SK, n = 4 | 0.0000 | 0.1738 | | 0.2825 |
+
+The pair's figures are held to that product law to `1e-12` from `d = 2` to 5; the triangle's
+`d = 2` law, and its law after each class moves (0.1952, 0.1750, 0.1891 from Boltzmann), to a direct
+simulation of the fabric over `1e6` ticks that shares only the heat-bath formula. The lesson's bench
+computed the pair's and the triangle's figures independently and gets the same digits. A coloured schedule with one class holding every spin is
+the every-tick heat bath, delay for delay. **Scope:** four small fixtures, `β = 1`, one clean integer
+delay on every read. On each of them a late coloured read is still no farther from Boltzmann than the
+synchronous update (the pair ties it), so there colouring read late is no worse than not colouring;
+it has lost the exactness that was the reason to do it.
+
+**The rule that holds.** When every wire has the same delay, the law can change only through the
+update's dependence on the value a spin holds now. One direction is a short proof: if every spin
+redraws every tick by one rule whose new frame depends on the past only through the frame read,
+`P(x_{t+1} | x_t, …, x_{t−d+1}) = K(x_{t+1} | x_{t−d+1})`, then `x_{t+1}` is a function of
+`x_{t+1−d}` and that tick's fresh randomness, so by induction the ticks of each residue class mod
+`d` form a Markov chain with kernel `K` on random draws no other class touches — `d` interleaved
+copies of the one-tick chain that never meet — and the current frame has `K`'s law at every `d`. The
+converse is not proved, and not true in general (spins with no neighbours hold and redraw with
+nothing to read late); it is measured, on the Arrhenius rule, the pinned automaton (next section)
+and the coloured schedule, on these fixtures.
 
 ### The pinned automaton, read late — `Rule::Sca`
 

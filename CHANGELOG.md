@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### `delay::stationary_coloured`: a coloured fabric is exact only while its reads are fresh
+
+WORKLOADS entry 13 said a heat-bath fabric's answer to late reads was "the one it already has: colour
+the graph". Colouring redraws class `t mod K` on tick `t` and HOLDS every other spin, and holding is
+own-state dependence, the path by which a delay reaches the Arrhenius rule and the pinned automaton.
+`stationary_coloured` solves the chain on (the class to move next, the last `d` frames) exactly. Read
+fresh it is chromatic Gibbs, Boltzmann to `1e-12` on five fixtures. Read two ticks late it is not: a
+pair with classes `{0}, {1}` agrees 0.8808 of the time fresh and exactly `1/2` from `d = 2` to 5, and
+the frustrated triangle sits 0.1616 from Boltzmann at `d = 2` and 0.5000 at `d = 3`. The pair's figure
+is derived, not only measured: each draw reads the other spin's draw from `L` ticks earlier, `L` odd
+and at least 3 once `d >= 2`, so the two values in any frame lie on different interleaved chains and
+the law is the product of the Boltzmann marginals, held to `1e-12` (for a pair, also the synchronous
+law). The triangle's is held to a direct simulation of the fabric over `1e6` ticks, per phase, and
+matches the PAI-310 lesson bench. The entry now states the rule that holds for a uniform delay, with
+the half that is proved: an every-tick rule with no dependence on the held value splits into `d`
+interleaved copies of the one-tick chain and cannot feel the delay. The converse is only measured.
+Scope: four small fixtures, `β = 1`, one integer delay on every read. `examples/delay_exact.rs` prints
+the table beside the every-tick heat bath; `stationary_solved` and the new function share one GTH
+elimination. Rust only, like the rest of `delay`.
+
 ### Corrected: two entries said more than their evidence — the point process's estimator and the scan order's history
 
 **The point process (`pointproc`, WORKLOADS entry 14) was measured with a biased estimator, and its
@@ -100,7 +120,8 @@ toward the uniform 1/2, and a field holds them at 0.86 — their effect, reprodu
 p-bit, which ignores its own value, the delay changes nothing: the chain splits into `d` interleaved
 synchronous chains and the current frame follows Peretto's law at every delay, held to
 `autocorr::peretto` to `1e-10`. Latency adds no error on top of synchronous updating in a heat-bath
-fabric; colouring is still the fix.
+fabric; colouring is still the fix. *Only with fresh reads: a coloured fabric
+read two ticks late is not exact either (see `stationary_coloured` at the top of this section).*
 
 **A spike that lives a fixed time (`pointproc`, entry 14).** Stewart & Sahani (arXiv:2603.09089)
 sample with a point process whose spikes live exactly `m`; with exponential lifetimes of the same
