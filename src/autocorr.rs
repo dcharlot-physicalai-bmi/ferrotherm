@@ -124,7 +124,8 @@ pub enum Kernel {
     /// would run if it chose where to update with a random number instead of a fixed order. `n`
     /// steps do as many site updates as one [`Kernel::SequentialGibbs`] sweep, which is the
     /// comparison `examples/scan_order_exact.rs` makes. Reversible with respect to the Boltzmann
-    /// law, where the fixed-order sweep is only invariant.
+    /// law, where the fixed-order sweep on a coupled graph is only invariant (uncoupled, a sweep
+    /// draws a fresh sample and is reversible too).
     RandomScan,
     /// One fully SYNCHRONOUS sweep: every site resampled at once from its heat-bath conditional
     /// given the PREVIOUS state -- Little's (1974) dynamics, what a p-bit array does when all its
@@ -2873,13 +2874,17 @@ mod tests {
 
     /// **A fixed visiting order costs about half the site updates of a random one.** First the
     /// random-scan kernel itself: its two directions are adjoint, its solved law is the Boltzmann
-    /// law, and it is REVERSIBLE (zero entropy production) where the fixed-order sweep only keeps the
-    /// law invariant. Then the comparison at equal work, `tau_int` per site update, with a closed
-    /// form as the control: for uncoupled spins a random scan leaves each site untouched with
-    /// probability `1 − 1/n` per step, so the magnetisation's `tau` is `n − 1/2` steps, while one
-    /// fixed-order sweep refreshes every site and its `tau` is `1/2` sweep, `n/2` updates -- a ratio
-    /// of exactly `2 − 1/n`. Coupled, `examples/scan_order_exact.rs` measures 1.85 to 1.97 for the
-    /// magnetisation at every temperature on both 5x2 fixtures, and 1.01 to 1.89 for the energy.
+    /// law, and it is REVERSIBLE (zero entropy production) where the fixed-order sweep on a coupled
+    /// grid only keeps the law invariant. Then the comparison at equal work, `tau_int` per site
+    /// update, with a closed form as the control: for uncoupled spins a random scan leaves each site
+    /// untouched with probability `1 − 1/n` per step, so the magnetisation's `tau` is `n − 1/2`
+    /// steps, while one fixed-order sweep refreshes every site and its `tau` is `1/2` sweep, `n/2`
+    /// updates -- a ratio of exactly `2 − 1/n`. Uncoupled, that sweep is REVERSIBLE (it draws a
+    /// fresh sample, `P = 1 pi^T`), so the factor does not come from reversibility; it is `1 + c²`
+    /// for the squared coefficient of variation `c² = 1 − 1/n` of the geometric wait between a
+    /// random scan's visits to one site. Coupled, `examples/scan_order_exact.rs` measures 1.824 to
+    /// 1.974 for the magnetisation on both 5x2 fixtures from `beta` 0.2 to 3, falling to 1.737 on a
+    /// 4x2 ferromagnet at `beta = 3`, and 1.008 to 1.887 for the energy.
     #[test]
     fn a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan() {
         let (grid, _, uncoupled) = tick_fixtures();
@@ -2908,6 +2913,8 @@ mod tests {
         };
         let ratio = per_update(&uncoupled, Kernel::RandomScan, false) / per_update(&uncoupled, Kernel::SequentialGibbs, true);
         assert!((ratio - (2.0 - 1.0 / n)).abs() < 1e-9, "uncoupled: ratio {ratio}, closed form {}", 2.0 - 1.0 / n);
+        let sweep_ep = entropy_production(&uncoupled, beta, Kernel::SequentialGibbs).expect("dense");
+        assert!(sweep_ep < 1e-12, "uncoupled, a sweep is a fresh draw and reversible, yet the ratio is 2 - 1/n: {sweep_ep:.3e}");
 
         // Coupled, the ferromagnet: every site pulls on its neighbours and the factor survives.
         let mut b = GraphBuilder::new(10);
@@ -2924,7 +2931,12 @@ mod tests {
         }
         let ferro = b.build();
         let coupled = per_update(&ferro, Kernel::RandomScan, false) / per_update(&ferro, Kernel::SequentialGibbs, true);
-        // Measured 1.89 at beta = 1.
+        // Measured 1.888 at beta = 1.
         assert!((1.8..2.0).contains(&coupled), "coupled ferromagnet, magnetisation: ratio {coupled}");
+        // Colder it keeps falling, which "at every temperature" (first measured over beta 0.2 to 1.5)
+        // did not say: 1.824 at beta = 3.
+        let cold = |k: Kernel| tau_int_fundamental(&ferro, 3.0, k, mag).expect("dense").tau_int;
+        let cold_ratio = cold(Kernel::RandomScan) / (cold(Kernel::SequentialGibbs) * ferro.n as f64);
+        assert!((1.80..1.85).contains(&cold_ratio) && cold_ratio < coupled, "ferromagnet at beta 3: ratio {cold_ratio}");
     }
 }

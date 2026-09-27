@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Corrected: entry 15 said more about the systematic scan than the records or the run support
+
+**Scan order (`Kernel::RandomScan`, WORKLOADS entry 15).** Three sentences were wrong or wider than
+their evidence, and a review that fetched the records found all three. The entry said the mixing
+theory "has only recently reached the systematic scan", citing Blanca and Rafid (arXiv:2609.05750)
+alone. Systematic-scan results go back at least to Dyer, Goldberg and Jerrum (arXiv:math/0603323,
+2006); Blanca, Caputo, Sinclair and Vigoda proved that strong spatial mixing implies `O(log n)`
+mixing of systematic scan on cubes of `Z^d` in 2016 (arXiv:1612.01576); Blanca and Rafid's two 2026
+papers (with arXiv:2607.09841) extend it. What is true is that most of the theory was written for
+the random scan. The entry said a random scan needs 1.85 to 1.97 times the updates for the
+magnetisation "at every temperature" and that coupling "barely moves it": that was the window
+measured, `β = 0.2` to `1.5` on two 5×2 fixtures. `examples/scan_order_exact.rs` now runs to `β = 3`
+and adds a 4×2 ferromagnet, and colder the ratio falls — to 1.824 on the 5×2 ferromagnet and to
+1.737 on the 4×2, reproducing the review's recomputation (1.793, 1.758, 1.737 at `β = 1.5`, 2, 3) —
+so the measured range is 1.74 to 1.97. The energy's 1.01 to 1.89 stands, but on the ferromagnets it
+peaks and falls rather than growing with `β`. And the entry offered "the random scan is reversible
+and the fixed order is not" as the contrast. Uncoupled, a sweep draws a fresh sample, its kernel is
+`1 πᵀ` and reversible, and the ratio is still exactly `2 − 1/n` — which is `1 + c²` for the
+geometric wait between a random scan's visits to a site — so the factor of two does not come from
+reversibility. The test now checks that reversibility and holds the 5×2 ferromagnet at `β = 3`
+(1.824) below its `β = 1` value (1.888).
+
 ### `delay`: the pinned automaton, read late — pin harder or wait, and a law that says which
 
 `Rule::Sca` is entry 10's stochastic cellular automaton (STATICA, Amorphica) with its field read `d`
@@ -65,7 +87,8 @@ the effective samples per unit time in all twelve cells: the paper's claim, hold
 **Scan order (`Kernel::RandomScan`, entry 15).** A random-scan Gibbs kernel beside the fixed-order
 sweep, both exact. At equal site updates, a random scan needs 1.85 to 1.97 times the updates for the
 magnetisation at every temperature on two fixtures, and 1.01 to 1.89 for the energy. The uncoupled
-limit is exactly `2 − 1/n`, which the test holds to `1e-9`.
+limit is exactly `2 − 1/n`, which the test holds to `1e-9`. *Overstated: "at every temperature" was
+`β` 0.2 to 1.5 only; see the correction at the top of this section.*
 
 ### `mpemba`: the "negligible" digital preprocessing costs what the whole answer costs
 

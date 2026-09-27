@@ -934,17 +934,41 @@ a constraint to engineer around, it is the momentum.
 
 ## 15. Does the order a fabric visits its p-bits in matter? — `Kernel::RandomScan`
 
-A fabric updates in a fixed order; the mixing theory was built for a random one, and has only
-recently reached the systematic scan (Blanca and Rafid, arXiv:2609.05750, `O(log n)` mixing
-under approximate tensorisation). At equal work, `τ_int` per SITE update, exact on 5×2 fixtures:
-**a random scan needs 1.85 to 1.97 times the updates of a fixed-order sweep for the magnetisation, at
-every temperature on both fixtures, and 1.01 to 1.89 times for the energy**, the gap growing as the
-temperature falls. The magnetisation figure has a closed form in the uncoupled limit — a random scan
-leaves a site untouched with probability `1 − 1/n` per step, so `τ = n − 1/2` updates against
-`n/2` for a sweep that refreshes every site, a ratio of exactly `2 − 1/n` — and the test holds it
-there to `1e-9`. Coupling barely moves it (1.89 at `β = 1` on the ferromagnet, where `τ` is 1,259
-updates). The random scan is reversible and the fixed order is not, which is what the theory prefers
-and what the measurement does not reward.
+A fabric updates in a fixed order, a systematic scan. Most of the mixing theory was written for a
+random one, but the systematic scan has results of its own going back at least to Dyer, Goldberg and
+Jerrum (arXiv:math/0603323, 2006), and Blanca, Caputo, Sinclair and Vigoda (arXiv:1612.01576, 2016)
+proved that strong spatial mixing implies `O(log n)` mixing of systematic scan, under mild
+conditions, on cubes of `Z^d`. Blanca and Rafid extend it in 2026: the mean-field Potts model
+(arXiv:2607.09841), and `O(log n)` mixing for every scan order from approximate tensorisation of
+entropy, under standard marginal, connectivity and bounded-degree assumptions (arXiv:2609.05750),
+where they still call its theory *"far less developed than that of Glauber dynamics"*. At equal
+work, `τ_int` per SITE update, exact on a 5×2 ferromagnet, a 5×2 ±J glass and a 4×2 ferromagnet from
+`β = 0.2` to `3` (`examples/scan_order_exact.rs`): **a random scan needs 1.74 to 1.97 times the
+updates of a fixed-order sweep for the magnetisation, and 1.01 to 1.89 times for the energy.**
+
+The magnetisation figure has a closed form in the uncoupled limit — a random scan leaves a site
+untouched with probability `1 − 1/n` per step, so `τ = n − 1/2` updates against `n/2` for a sweep
+that refreshes every site, a ratio of exactly `2 − 1/n` — and the test holds it there to `1e-9`.
+That ratio is `1 + c²`, for `c² = 1 − 1/n` the squared coefficient of variation of the geometric
+wait between a random scan's visits to one site: the same law entry 14 derives for a spike's
+lifetime. Coupling moves it both ways. It rises above the uncoupled 1.9 on the 5×2 fixtures (1.974
+on the ferromagnet at `β = 0.4`, 1.955 on the glass at `β = 3`) and falls as the ferromagnets
+freeze: 1.853, 1.836 and 1.824 on the 5×2 at `β = 1.5`, `2` and `3`, and 1.793, 1.758 and 1.737
+on the 4×2, whose uncoupled value is 1.875. The energy ratio rises with `β` on the glass to 1.736
+at `β = 3`, and on the ferromagnets peaks (1.887 at `β = 1` on the 5×2, 1.869 at `1.5` on the 4×2)
+and falls to 1.744 and 1.753 at `β = 3`. Nothing colder than `β = 3` or larger than ten spins is
+measured.
+
+**Corrected 2026-09-27, after a review that fetched the records.** This entry first said the mixing
+theory had "only recently reached the systematic scan", citing Blanca and Rafid alone; the
+systematic-scan results above go back to 2006. It said the magnetisation ratio held 1.85 to 1.97 "at
+every temperature" and that coupling "barely moves it": both held only over the window first
+measured, `β = 0.2` to `1.5` on the two 5×2 fixtures. The review's own recomputation on a 4×2
+ladder, 1.793, 1.758 and 1.737 at `β = 1.5`, `2` and `3`, is what the 4×2 rows above reproduce. And it
+said "the random scan is reversible and the fixed order is not" as the contrast with what the
+measurement rewards. That holds only with coupling: uncoupled, a sweep draws a fresh sample, its
+kernel is `1 πᵀ` and reversible (the test checks it), and the ratio is still `2 − 1/n`. **The factor
+of two does not come from reversibility.**
 
 ## 16. Two exact samplers that share nothing — `src/kwsample.rs`
 
