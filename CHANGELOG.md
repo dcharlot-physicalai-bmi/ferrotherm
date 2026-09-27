@@ -22,8 +22,9 @@ window-free with standard errors from 16 independent seeds, the SK ratios are 1.
 1.32 to 1.77); the twelve cells moved by −11% to +11%, and the window had read the cold cells' `τ` up to
 53% low. The verdict — the fixed lifetime wins in every cell, by at least eight standard errors — holds.
 For the exponential lifetime at `n = 8` the example also solves the 256-state chain exactly, and the
-six estimates are within 2.1 standard errors of it. `examples/pointproc_exact.rs` now spends about
-380 s of CPU over 16 threads (114 s wall on a loaded machine) and moves to `examples/SLOW`.
+six estimates are within 2.1 standard errors of it. `examples/pointproc_exact.rs` now spends 300 to
+380 s of CPU over 16 threads (39 s wall here, 114 s on a loaded machine, over a minute on a four-core
+runner) and moves to `examples/SLOW`.
 
 **Scan order (`Kernel::RandomScan`, WORKLOADS entry 15).** Three sentences were wrong or wider than
 their evidence, and a review that fetched the records found all three. The entry said the mixing

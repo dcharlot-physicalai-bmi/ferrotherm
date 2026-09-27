@@ -30,7 +30,7 @@ stale_exact                   >120
 synchronous_exact             >120
 tau_exactness                 >120
 tick_random_exact             >120
-pointproc_exact               114   (2026-09-27: 378 s CPU on 16 threads, load average ~50)
+pointproc_exact               114   (2026-09-27, load average ~50; 39 at lighter load; 300-380 s CPU on 16 threads)
 sca_exact                     104
 nearest_boltzmann             74
 encoding_probe                72

@@ -21,7 +21,7 @@
 //! mode the batches were too short for shows as a ratio below one; and for the exponential lifetime at
 //! `n = 8`, a 256-state Markov chain, the exact `tau` by a dense solve.
 //!
-//! A MEASUREMENT, not a gate, and in `examples/SLOW`: about 380 s of CPU over 16 threads.
+//! A MEASUREMENT, not a gate, and in `examples/SLOW`: 300 to 380 s of CPU over 16 threads.
 //!
 //! ```text
 //! cargo run --release --example pointproc_exact
