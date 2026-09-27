@@ -45,6 +45,9 @@ geometric wait between a random scan's visits to a site — so the factor of two
 reversibility. The test now checks that reversibility and holds the 5×2 ferromagnet at `β = 3`
 (1.824) below its `β = 1` value (1.888).
 
+  1806 lib tests, 2092 workspace, 460 verification-bearing
+  343 mutation rows (+10, each applied, seen RED against its named test, restored)
+
 ### `delay`: the pinned automaton, read late — pin harder or wait, and a law that says which
 
 `Rule::Sca` is entry 10's stochastic cellular automaton (STATICA, Amorphica) with its field read `d`

@@ -182,11 +182,12 @@ pub fn unit_autocorrelation(beta: f64, h: f64, m: f64, lifetime: Lifetime, t: f6
 /// `batch` time units: `batch` times their sample variance, with its standard error from the spread
 /// of the squared deviations (so it does not assume the batch means are Gaussian).
 ///
-/// No window and no autocorrelation function. It reads LOW by about `kappa / batch`, relative, where
+/// No window and no autocorrelation function. Its relative bias is about `-kappa / batch`, where
 /// `kappa = int t rho(t) dt / int rho(t) dt` is the correlation's mean time — `tau` itself for an
-/// exponential autocorrelation — because a batch average forgives the correlation near its edges;
-/// batches much longer than the slowest mode make that small, and comparing two batch lengths
-/// measures it. Returns `(sigma^2, standard error)`.
+/// exponential autocorrelation, so it reads low there, and negative for the fixed lifetime at
+/// `beta h = 0.7`, where it reads very slightly high — because a batch average forgives the
+/// correlation near its edges. Batches much longer than the slowest mode make that small, and
+/// comparing two batch lengths measures it. Returns `(sigma^2, standard error)`.
 ///
 /// # Panics
 ///
