@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### `delay`: the pinned automaton, read late — pin harder or wait, and a law that says which
+
+`Rule::Sca` is entry 10's stochastic cellular automaton (STATICA, Amorphica) with its field read `d`
+ticks back and its pinning on the spin's CURRENT value; at `d = 1` it is `Kernel::Sca`, held to
+`sca_law` to `1e-10`. The pinning is own-state dependence, so the delay reaches it, and it does so by
+a law: to first order in `e^{−2q}` the distance from Boltzmann is `c_d e^{−2q}` with
+`c_d = E_G|g_A + (d − ½) g_S| / 2`, one Poisson equation over the graph's `2ⁿ` states
+(`delay::sca_rate_constant`). The `d = 1` term is the proved closed form; the delay term is DERIVED,
+not proved, and held to the exact chain, which matches it to `1e-6` extrapolated on four fixtures at
+every delay up to `n d = 12`. **For two spins at zero field `c_d = d c_1` exactly** (algebra: the
+delay's source is twice the automaton's own there); on a biased pair, PAI-310's frustrated triangle
+and a 4-spin SK instance it is near `d`, not at it (`c_3/c_1` = 2.65, 3.18, 2.81).
+
+The engineering answer: to hold the law within `ε` with late reads, pinning harder moves `d c_1/c_d`
+times as many spins per tick as waiting (the one-tick automaton on every `d`-th tick), so **pinning
+wins iff `c_d < d c_1`**. Measured exactly at `ε = 1e-2` and `1e-3`, `d` up to 5: pinning wins on the
+biased pair (up to 1.18×) and SK (1.05–1.08×), waiting on the triangle from `d = 3` (to 0.92×), and
+the zero-field pair ties (1.002–1.003 at `1e-3`). Either way a `d`-tick read costs about `d` in
+motion, and the sign is not fixed for a graph: to first order the biased pair's advantage reverses
+at `d = 7`. `stationary_solved` is the direct solve that makes large `q` reachable: GTH elimination,
+entrywise relative accuracy however nearly decomposable the chain, with moves per tick. Rust only,
+like `autocorr`'s kernels. WORKLOADS.md entry 13; `examples/delay_exact.rs` prints the constants and
+the pin-or-wait table.
+
+  1803 lib tests, 2089 workspace, 458 verification-bearing
+  333 mutation rows (+8, each applied, seen RED against its named test, restored)
+
 ### `kwsample`: exact planar samples by Kac–Ward determinants, held to a sampler that shares nothing
 
 Liu et al.'s autoregressive sampler (arXiv:2608.24382) on `pfaffian`'s determinant: breadth-first

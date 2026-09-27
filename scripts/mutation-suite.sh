@@ -1419,6 +1419,20 @@ mutations=(
   "src/autocorr.rs|                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };|                    acc += if y & bit != 0 { (1.0 - p) * pooled } else { p * pooled };|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan mass landing on the other value"
   "src/autocorr.rs|                out[x] = acc / n as f64;|                out[x] = acc;|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan functions not averaged over sites"
 
+  # THE PINNED AUTOMATON, READ LATE (`delay`, Rule::Sca). The first row is the finding's mechanism: pin
+  # the DELAYED own value and the new frame depends on the delayed frame alone, the chain splits like
+  # the heat bath's, and the delay stops reaching the rule. The rate-constant rows split the delay
+  # term's weight (one agrees at d = 1 and nowhere else) from the window source's scale (wrong at
+  # d = 1 already). The last is invisible at one tick of delay and only the pin-or-wait test sees it.
+  "src/delay.rs|            crate::kernel::p_up(0.5 * beta * f + q * f64::from(current), 1.0)|            crate::kernel::p_up(0.5 * beta * f + q * f64::from(delayed[i]), 1.0)|delay::tests::a_late_read_costs_a_pinned_pair_d_times_the_distance|a pinning that holds the DELAYED own value"
+  "src/delay.rs|            crate::kernel::p_up(0.5 * beta * f + q * f64::from(current), 1.0)|            crate::kernel::p_up(beta * f + q * f64::from(current), 1.0)|delay::tests::a_pinned_automaton_read_one_tick_late_has_the_sca_closed_form|a pinned automaton at the full field"
+  "src/delay.rs|        let del = frame_spins((st >> (n * (d - 1))) & mask, n);|        let del = frame_spins(st & mask, n);|delay::tests::the_direct_solve_is_the_iterated_law_for_every_rule|a direct solve that reads the current frame"
+  "src/delay.rs|        let out: f64 = a[k * m..k * m + k].iter().sum();|        let out: f64 = a[k * m..=k * m + k].iter().sum();|delay::tests::the_direct_solve_is_the_iterated_law_for_every_rule|GTH counting the self-loop as outflow"
+  "src/delay.rs|        moves += w / total * flips[st];|        moves += w / total * (n as f64 - flips[st]);|delay::tests::a_pinned_automaton_read_one_tick_late_has_the_sca_closed_form|moves per tick counting the spins that stay"
+  "src/delay.rs|        r[x] = self_term + (d as f64 - 0.5) * window;|        r[x] = self_term + (0.5 * d as f64) * window;|delay::tests::the_delayed_automaton_approaches_boltzmann_at_its_first_order_rate|a delay term right at one tick and wrong at every other"
+  "src/delay.rs|                    window += 4.0 * phi[i] * phi[j] * (1.0 - u);|                    window += 2.0 * phi[i] * phi[j] * (1.0 - u);|delay::tests::the_delayed_automaton_approaches_boltzmann_at_its_first_order_rate|the delay window's source at half weight"
+  "src/delay.rs|            changes += if cur[i] > 0 { 1.0 - ps[i] } else { ps[i] };|            changes += if del[i] > 0 { 1.0 - ps[i] } else { ps[i] };|delay::tests::pinning_beats_waiting_on_a_biased_pair_and_loses_on_a_frustrated_triangle|a move counted against the delayed value"
+
 )
 
 bad=0
@@ -1490,7 +1504,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=325
+expected_rows=333
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

@@ -831,6 +831,79 @@ one tick of delay as at six. **For a fabric the engineering answer is the one it
 the graph.** Interconnect latency does not add a second error on top of synchronous updating; it
 only matters when updates depend on a spin's own state.
 
+### The pinned automaton, read late — `Rule::Sca`
+
+The one own-state rule a p-bit fabric might actually build is entry 10's stochastic cellular
+automaton: every spin redrawn at once, half its field, pinned toward its own current value by `q`.
+The pinning is exactly the own-state dependence that lets a delay in, so `Rule::Sca` reads the field
+`d` ticks back and the spin's own value now; at `d = 1` it is `Kernel::Sca`, held to `sca_law` to
+`1e-10`. Every flip costs `e^{−2q}`, and to first order in that the delayed law is
+
+```text
+  π_d = π_G (1 + e^{−2q} [g_A + (d − ½) g_S]),   TV · e^{2q}  →  c_d = E_G|g_A + (d − ½) g_S| / 2,
+  L g_A = Σᵢ (φᵢ² − 1),   L g_S = 4 Σ_{i<j} φᵢ φⱼ (1 − e^{2βJᵢⱼ xᵢ xⱼ}),   (L g)(x) = Σᵢ φᵢ(x) [g(x) − g(xⁱ)],
+```
+
+`φᵢ = e^{−β fᵢ xᵢ}` as in entry 10 — one Poisson equation over the `2ⁿ` states of the graph for every
+`d`, which `delay::sca_rate_constant` solves. The `g_S` term is the delay: for `d − 1` ticks after a
+spin flips, its neighbours still flip at their old rates. **What is proved and what is not:** the
+`d = 1` term is the proved closed form (the identity `L Φ = Σᵢ(φᵢ² − 1) + S/2` makes
+`g_A + g_S/2 = Φ − ⟨Φ⟩`, entry 10's constant), and so is the zero-field-pair algebra below; the window
+term `(d − 1) g_S` is DERIVED by a first-order expansion, not proved. It is held to the exact chain
+instead: on the zero-field pair, a pair at `h = 0.3`, PAI-310's frustrated triangle and a 4-spin SK
+instance, at every delay up to `n d = 12`, the chain's `e^{2q} TV` extrapolated to `q → ∞` (numpy,
+Richardson in `e^{−2q}` from `q = 3` to `10`) matches `c_d` to a relative `1e-6`, and already at
+`q = 6` to `9.2e-6` on the zero-field pair, `6.0e-5` on the biased pair, `7.0e-5` on the triangle and
+`4.8e-6` on SK (`examples/delay_exact.rs`).
+
+| `c_d / c_1` | d = 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|
+| pair, `h = 0` | 2.0000 | 3.0000 | 4.0000 | 5.0000 | 6.0000 |
+| pair, `h = 0.3` | 1.8234 | 2.6468 | 3.6108 | 4.7887 | 5.9667 |
+| frustrated triangle | 2.0616 | 3.1772 | 4.3431 | | |
+| SK, n = 4 | 1.9042 | 2.8083 | | | |
+
+**For two spins at zero field it is exactly `d`**, and that part is algebra: `φ₀ = φ₁` there, so the
+window source is pointwise twice the self source, `g_S = 2g_A`, and `c_d = d c_1` at first order —
+a `d`-tick read multiplies a pinned pair's distance from Boltzmann by `d`. Elsewhere it is only near
+`d`, and piecewise linear in `d` with a kink wherever some `g_d(x)` changes sign (at `d = 3.60` on the
+biased pair, `2.48` on the triangle).
+
+**The engineering consequence: pin harder, or wait?** To hold the law within `ε` of Boltzmann with
+reads `d` ticks old, a fabric can PIN harder — run the delayed automaton every tick at
+`q*(ε, d) ≈ ln(c_d/ε)/2` — or WAIT, running the one-tick automaton with fresh reads on every `d`-th
+tick at `q*(ε, 1)`. Motion goes as `e^{−2q}`, so to first order pinning moves `d c_1/c_d` times as many
+spins per tick as waiting: **pinning wins iff `c_d < d c_1`.** Measured exactly, spins changed per
+tick as PAI-310's `every-spin-at-once` counts them, PIN/WAIT at `ε = 1e-2` / `1e-3` (above 1,
+pinning wins):
+
+| fixture | d = 2 | 3 | 4 | 5 |
+|---|---|---|---|---|
+| pair, `h = 0` | 1.0153 / 1.0016 | 1.0204 / 1.0021 | 1.0230 / 1.0023 | 1.0245 / 1.0025 |
+| pair, `h = 0.3` | 1.1132 / 1.0985 | 1.1590 / 1.1361 | 1.1839 / 1.1155 | 1.1151 / 1.0509 |
+| frustrated triangle | 1.0078 / 0.9728 | 0.9667 / 0.9441 | 0.9389 / 0.9213 † | |
+| SK, n = 4 | 1.0611 / 1.0514 | 1.0836 / 1.0697 † | | |
+
+† `n d = 12`, run once — in numpy and in an uncapped build of the example, which agree to the digits
+shown — and left out of the per-push example, whose search would take most of a minute there. Every
+other cell is `examples/delay_exact.rs`. At `ε = 1e-3` the first-order prediction `d c_1/c_d` is
+within `0.008` of every cell (triangle `d = 3`: `0.9442` against `0.9441`).
+
+**Neither choice escapes the delay: a `d`-tick read costs a factor of about `d` in motion either
+way**, and which way is cheaper is a graph property worth at most 18% here (the biased pair at
+`d = 4`, `ε = 1e-2`). The zero-field pair ties at first order, with a finite-`ε` residue of 0.2–0.3%
+at `1e-3`; the biased pair and SK favour pinning, the frustrated triangle waiting. Nor is the sign
+fixed for a graph: `sca_rate_constant` at long delays puts the biased pair's first-order ratio below
+1 from `d = 7` (0.980), tending to 0.85, the triangle's tending to 0.86 and SK's to 1.08.
+
+**What is not claimed.** Moves per tick is the lesson's proxy for speed, not a variance cost. An exact
+check of the energy's `τ_int` by the fundamental matrix on the same augmented chains (numpy, outside
+the tree; not reproduced by any example) agrees at `ε = 1e-3` to within 0.5% in every cell, and at
+`1e-2` in direction everywhere except two near-ties: the zero-field pair (moves favour pinning by
+1.5–2.6%, `τ` favours waiting by 0.1–0.3%) and the triangle at `d = 2`. The four fixtures have at most
+four spins, the constant `c_d` is first order and the finite-`ε` tables are what bound the claim, and
+no hardware was measured: `d` is a clean integer delay on every read, which no interconnect is.
+
 ## 14. A spike that lives a fixed time — `src/pointproc.rs`
 
 Stewart & Sahani (arXiv:2603.09089, 2026) sample a discrete law with a temporal point process: for

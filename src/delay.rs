@@ -21,9 +21,48 @@
 //!   ticks back and `s_i` its own current value: the paper's rule, clocked. Here the copies DO meet,
 //!   through each spin's own state, and delay moves the law — toward uniform at zero field, as the
 //!   paper says.
+//! * [`Rule::Sca`] — the stochastic cellular automaton of [`crate::autocorr::Kernel::Sca`] (STATICA,
+//!   Amorphica): every spin redrawn each tick from `P(+1) = σ(2(β f_i / 2 + q s_i))`, the half field
+//!   read `d` ticks back and the pinning `q` pulling toward the spin's own CURRENT value. At `d = 1`
+//!   it is that kernel, held to [`crate::autocorr::sca_law`] to rounding. The pinning is own-state
+//!   dependence, so the delay reaches this rule too -- and the question it answers is an engineering
+//!   one: a fabric whose reads arrive late can pin harder or update less often.
 //!
 //! The chain holds the last `d` frames (the update reads the oldest), `n d` bits, so it is exact
 //! only for small networks: 12 bits, `2^12` augmented states, is the cap used here.
+//!
+//! # A pinned automaton read late: the law, and what it costs
+//!
+//! Every flip of the pinned automaton costs `e^{-2q}`, so at large `q` its law is Boltzmann plus a
+//! first-order term. Writing `φ_i(x) = e^{-β f_i(x) x_i}`, `Φ = Σ_i φ_i`, and `L` for the generator
+//! `(L g)(x) = Σ_i φ_i(x) [g(x) − g(x^i)]` (Boltzmann is its reversible law), the law of the current
+//! frame at delay `d` is
+//!
+//! ```text
+//!   π_d = π_G (1 + e^{-2q} g_d) + O(e^{-4q}),   g_d = g_A + (d − ½) g_S,   <g_A> = <g_S> = 0,
+//!   L g_A = Σ_i (φ_i² − 1),     L g_S = 4 Σ_{i<j} φ_i φ_j (1 − e^{2β J_ij x_i x_j}),
+//! ```
+//!
+//! so `TV(π_d, π_G) e^{2q} → c_d = E_G|g_d| / 2`, which [`sca_rate_constant`] computes from `2^n`
+//! states rather than `2^{n d}`. The `g_S` term is the delay: for `d − 1` ticks after spin `i` flips,
+//! each neighbour `j` still flips at its old rate `φ_j(x)` rather than `φ_j(x^i)`, and summing that
+//! window's excess flux gives the source `(d − 1) S`. At `d = 1` the algebraic identity
+//! `L Φ = Σ_i (φ_i² − 1) + S / 2` makes `g_1 = Φ − <Φ>`, the first-order term of `sca_law`'s proved
+//! closed form, so the one-tick automaton already carries half a tick's worth of the delay term.
+//! PROVED: the `d = 1` term and that identity. DERIVED, by a first-order expansion that is not a
+//! rigorous proof: the `(d − 1) g_S` window term. MEASURED: the exact chain's `e^{2q} TV` at `q = 6`
+//! is within `5.1e-5` of `c_d`, relative, on a biased pair, a frustrated triangle and a 4-spin SK
+//! instance at every delay the tests build, and within `1e-6` once extrapolated in `e^{-2q}` at every
+//! delay up to `n d = 12` (WORKLOADS entry 13).
+//!
+//! For two spins at zero field, `φ_0 = φ_1`, so `S = 2 Σ_i (φ_i² − 1)` pointwise, `g_S = 2 g_A`, and
+//! `c_d = d c_1` exactly at first order: a `d`-tick read costs a pinned pair exactly `d` times the
+//! distance. Elsewhere `c_d` is only close to `d c_1` -- piecewise linear in `d`, kinked wherever
+//! some `g_d(x)` changes sign -- and the gap decides the engineering choice. To hold the law within
+//! `ε` a fabric can PIN harder (`q*(ε, d) ≈ ln(c_d / ε) / 2`) or WAIT, running the one-tick automaton
+//! on every `d`-th tick with fresh reads. Moves per tick go as `e^{-2q}`, so pinning moves
+//! `d c_1 / c_d` times as many spins per tick as waiting: pinning wins iff `c_d < d c_1`. Either way a
+//! `d`-tick read costs about a factor of `d` in rate; see [`stationary_solved`] for the exact count.
 
 use crate::graph::Graph;
 
@@ -36,6 +75,13 @@ pub enum Rule {
     Arrhenius {
         /// Attempt probability per tick at zero field: the clocked `λ Δt`.
         p0: f64,
+    },
+    /// The stochastic cellular automaton of [`crate::autocorr::Kernel::Sca`]: redraw from
+    /// `P(+1) = 1 / (1 + exp(−2 (β f_i / 2 + q s_i)))`, `f_i` delayed and `s_i` current. At `d = 1`
+    /// it is exactly that kernel.
+    Sca {
+        /// The pinning, in units of the exponent: dimensionless, NOT multiplied by `beta`. `q >= 0`.
+        q: f64,
     },
 }
 
@@ -66,6 +112,14 @@ fn p_plus(g: &Graph, beta: f64, rule: Rule, i: usize, current: i8, delayed: &[i8
             } else {
                 flip
             }
+        }
+        // `autocorr::p_site`'s arm for `Kernel::Sca`, argument for argument, so that `d = 1` is that
+        // kernel to the last bit: the half field (delayed here) plus the pinning times the spin's
+        // CURRENT value. Pinning the delayed value instead would make the new value a function of
+        // the delayed frame alone, and the chain would split like the heat bath's.
+        Rule::Sca { q } => {
+            assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
+            crate::kernel::p_up(0.5 * beta * f + q * f64::from(current), 1.0)
         }
     }
 }
@@ -154,10 +208,158 @@ pub fn aligned(g: &Graph, law: &[f64]) -> f64 {
         .sum()
 }
 
+/// The settled network, by a direct solve: the law of its current frame, and how much it moves.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settled {
+    /// Stationary law of the current frame over its `2^n` states, bit `i` set meaning spin `i` up.
+    pub law: Vec<f64>,
+    /// Expected number of spins whose value CHANGES on one tick, `Σ_s μ(s) Σ_i P(s_i' ≠ s_i | s)`
+    /// under the stationary law `μ` of the whole last-`d`-frames chain: the motion a fabric buys per
+    /// clock edge. At `d = 1` it is the sum over the kernel's own law of every site's flip
+    /// probability.
+    pub moves: f64,
+}
+
+/// The stationary law of the last-`d`-frames chain by the Grassmann-Taksar-Heyman elimination
+/// (Grassmann, Taksar and Heyman 1985), marginalised to the current frame, with the moves per tick.
+///
+/// Where [`stationary_current`] iterates until the law stops moving -- and a pinned automaton at
+/// large `q`, whose every flip costs `e^{-2q}`, needs a number of steps that grows as `e^{2q}` -- this
+/// costs the same at every `q`. And it is exact where a plain elimination is not: GTH never subtracts,
+/// so every entry of the law comes back to a RELATIVE accuracy of a few ulps however nearly
+/// decomposable the chain, which is what a distance of `1e-8` from Boltzmann needs when the chain's
+/// slow modes are `e^{-2q}` from one. The price is a dense matrix over `2^{n d}` states: at the cap
+/// of [`MAX_BITS`] it is 134 MB, and the elimination took 0.3 s for a pair, 0.6 s for a triangle and
+/// 1.2 s for four spins (Apple silicon, release), its fill-in growing with each state's `2^n`
+/// successors. At `n d = 9` it is milliseconds.
+///
+/// # Panics
+///
+/// If `d` is zero, `n d` exceeds [`MAX_BITS`], the graph has no nodes, or the chain is reducible (a
+/// rule whose flip probability is exactly 0 or 1 can make it so).
+#[must_use]
+pub fn stationary_solved(g: &Graph, beta: f64, rule: Rule, d: usize) -> Settled {
+    let n = g.n;
+    assert!(d >= 1 && n >= 1, "a delay is at least one tick");
+    assert!(n * d <= MAX_BITS, "{n} spins x {d} frames is more than {MAX_BITS} bits");
+    let m = 1usize << (n * d);
+    let mask = (1usize << n) - 1;
+    let mut a = vec![0.0f64; m * m];
+    let mut flips = vec![0.0f64; m];
+    let mut row = vec![0.0f64; 1usize << n];
+    for st in 0..m {
+        let cur = frame_spins(st & mask, n);
+        let del = frame_spins((st >> (n * (d - 1))) & mask, n);
+        let ps: Vec<f64> = (0..n).map(|i| p_plus(g, beta, rule, i, cur[i], &del)).collect();
+        // A change is measured against the CURRENT value. Against the delayed one, a spin that has just
+        // flipped would count as moving on every tick of the window, and at d = 1 the two agree.
+        let mut changes = 0.0;
+        for i in 0..n {
+            changes += if cur[i] > 0 { 1.0 - ps[i] } else { ps[i] };
+        }
+        flips[st] = changes;
+        row[0] = 1.0;
+        let mut len = 1usize;
+        for p in &ps {
+            for y in 0..len {
+                let w = row[y];
+                row[y] = w * (1.0 - p);
+                row[y | len] = w * p;
+            }
+            len <<= 1;
+        }
+        let shifted = if d > 1 { (st << n) & (m - 1) } else { 0 };
+        for (y, &w) in row.iter().enumerate() {
+            a[st * m + (shifted | y)] += w;
+        }
+    }
+    // GTH: censor the chain onto {0..k-1} one state at a time. Only OFF-diagonal mass is ever read,
+    // so no step subtracts; the diagonal is left holding whatever it holds.
+    for k in (1..m).rev() {
+        let out: f64 = a[k * m..k * m + k].iter().sum();
+        assert!(out > 0.0, "the chain is reducible: state {k} cannot reach any lower state");
+        let (top, rest) = a.split_at_mut(k * m);
+        let row_k = &rest[..k];
+        for i in 0..k {
+            let aik = top[i * m + k] / out;
+            top[i * m + k] = aik;
+            if aik == 0.0 {
+                continue;
+            }
+            for (x, &y) in top[i * m..i * m + k].iter_mut().zip(row_k) {
+                *x += aik * y;
+            }
+        }
+    }
+    let mut mu = vec![0.0f64; m];
+    mu[0] = 1.0;
+    for k in 1..m {
+        mu[k] = (0..k).map(|i| mu[i] * a[i * m + k]).sum();
+    }
+    let total: f64 = mu.iter().sum();
+    let mut law = vec![0.0f64; 1usize << n];
+    let mut moves = 0.0;
+    for (st, w) in mu.iter().enumerate() {
+        law[st & mask] += w / total;
+        moves += w / total * flips[st];
+    }
+    Settled { law, moves }
+}
+
+/// The first-order constant of the delayed automaton's distance from Boltzmann:
+/// `TV(π_d, π_G) e^{2q} → c_d = E_G|g_A + (d − ½) g_S| / 2` as `q → ∞` (the module docs give `g_A`
+/// and `g_S`). At `d = 1` it is `E_G|Φ − <Φ>| / 2`, the constant `examples/sca_exact.rs` and
+/// WORKLOADS entry 10 use for [`crate::autocorr::Kernel::Sca`]. One Poisson equation over the `2^n`
+/// states of the graph, whatever the delay, so it prices delays whose chain could never be built.
+///
+/// The `d = 1` value follows from the proved closed form; the delay term is DERIVED by a
+/// first-order expansion and held to the exact chain by this module's tests, not proved.
+///
+/// # Panics
+///
+/// If `d` is zero or the graph has more than [`crate::autocorr::MAX_DENSE_SPINS`] spins, or if the
+/// Poisson system is singular to floating point, which at finite `beta` it is not.
+#[must_use]
+pub fn sca_rate_constant(g: &Graph, beta: f64, d: usize) -> f64 {
+    use crate::autocorr::{boltzmann, lu_solve, MAX_DENSE_SPINS};
+    let n = g.n;
+    assert!(d >= 1, "a delay is at least one tick");
+    assert!(n <= MAX_DENSE_SPINS, "{n} spins is more than the {MAX_DENSE_SPINS} a dense solve takes");
+    let m = 1usize << n;
+    let pi = boltzmann(g, beta).expect("n is under MAX_DENSE_SPINS, which is under MAX_SPINS");
+    // Solve (L + 1 pi^T) g = r: pi^T L = 0 (Boltzmann is L's reversible law), so the added rank one
+    // pins <g> = <r> = 0 and makes the system nonsingular.
+    let mut a = vec![0.0f64; m * m];
+    let mut r = vec![0.0f64; m];
+    for x in 0..m {
+        let s = frame_spins(x, n);
+        let phi: Vec<f64> = (0..n).map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp()).collect();
+        a[x * m..(x + 1) * m].copy_from_slice(&pi);
+        for i in 0..n {
+            a[x * m + x] += phi[i];
+            a[x * m + (x ^ (1 << i))] -= phi[i];
+        }
+        let self_term: f64 = phi.iter().map(|p| p * p - 1.0).sum();
+        let mut window = 0.0;
+        for i in 0..n {
+            for k in g.offset[i]..g.offset[i + 1] {
+                let j = g.nbr[k] as usize;
+                if j > i {
+                    let u = (2.0 * beta * g.w[k] * f64::from(s[i]) * f64::from(s[j])).exp();
+                    window += 4.0 * phi[i] * phi[j] * (1.0 - u);
+                }
+            }
+        }
+        r[x] = self_term + (d as f64 - 0.5) * window;
+    }
+    assert!(lu_solve(&mut a, m, &mut r, 1), "the Poisson system is singular");
+    0.5 * pi.iter().zip(&r).map(|(p, v)| p * v.abs()).sum::<f64>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::autocorr::{boltzmann, peretto, total_variation};
+    use crate::autocorr::{boltzmann, peretto, sca_law, total_variation};
     use crate::graph::GraphBuilder;
 
     fn pair(j: f64, h: f64) -> Graph {
@@ -176,6 +378,61 @@ mod tests {
         b.bias(0, 0.2);
         b.bias(2, -0.1);
         b.build()
+    }
+
+    /// PAI-310's triangle (lesson `every-spin-at-once`): frustrated, three colours.
+    fn frustrated() -> Graph {
+        let mut b = GraphBuilder::new(3);
+        b.couple(0, 1, 1.0);
+        b.couple(1, 2, 1.0);
+        b.couple(0, 2, -1.0);
+        b.bias(0, 0.2);
+        b.bias(1, -0.1);
+        b.bias(2, 0.05);
+        b.build()
+    }
+
+    /// Four spins, every pair coupled: `J ~ N(0, 1/4)`, `h ~ N(0, 0.01)` from numpy's
+    /// `default_rng(7)`, rounded to three decimals so the literals ARE the instance.
+    fn sk4() -> Graph {
+        let mut b = GraphBuilder::new(4);
+        for &(i, j, w) in &[
+            (0, 1, 0.001),
+            (0, 2, 0.149),
+            (0, 3, -0.137),
+            (1, 2, -0.445),
+            (1, 3, -0.227),
+            (2, 3, -0.496),
+        ] {
+            b.couple(i, j, w);
+        }
+        for (i, h) in [0.006, 0.134, -0.049, -0.062].into_iter().enumerate() {
+            b.bias(i, h);
+        }
+        b.build()
+    }
+
+    fn distance(g: &Graph, q: f64, d: usize) -> f64 {
+        let bolt = boltzmann(g, 1.0).expect("small");
+        total_variation(&stationary_solved(g, 1.0, Rule::Sca { q }, d).law, &bolt)
+    }
+
+    /// The pinning at which the delayed automaton's law comes within `eps` of Boltzmann, bisected in
+    /// a bracket of half a unit either side of the first-order `ln(c_d / eps) / 2`. The bracket is
+    /// asserted, so a first-order estimate that has drifted from the exact law fails here by name.
+    fn pinning_for(g: &Graph, d: usize, eps: f64) -> f64 {
+        let guess = 0.5 * (sca_rate_constant(g, 1.0, d) / eps).ln();
+        let (mut lo, mut hi) = (guess - 0.5, guess + 0.5);
+        assert!(distance(g, lo, d) > eps && distance(g, hi, d) <= eps, "q* is not within 0.5 of {guess}");
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if distance(g, mid, d) > eps {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        hi
     }
 
     /// **A heat-bath fabric does not feel a uniform delay.** Its new value ignores the old one, so a
@@ -228,5 +485,138 @@ mod tests {
         let (hb1, _) = stationary_current(&g, 1.0, Rule::HeatBath, 1, 1e-15, 20_000);
         let (hb6, _) = stationary_current(&g, 1.0, Rule::HeatBath, 6, 1e-15, 20_000);
         assert!(total_variation(&hb1, &hb6) < 1e-10);
+    }
+
+    /// **The direct solve is the iterated law, for every rule.** Two methods that share only the
+    /// transition rule -- power iteration from the uniform law, and GTH elimination -- on a biased pair
+    /// out to four ticks of delay and a triangle out to two. The pinned automaton is included at a
+    /// `q` where power iteration still settles, which is the regime the direct solve is not needed in.
+    #[test]
+    fn the_direct_solve_is_the_iterated_law_for_every_rule() {
+        let rules = [Rule::HeatBath, Rule::Arrhenius { p0: 0.2 }, Rule::Sca { q: 1.0 }];
+        for (g, dmax) in [(pair(1.0, 0.3), 4), (triangle(), 2)] {
+            for rule in rules {
+                for d in 1..=dmax {
+                    let (iterated, steps) = stationary_current(&g, 1.0, rule, d, 1e-15, 500_000);
+                    assert!(steps < 500_000, "{rule:?} d {d}: power iteration must settle");
+                    let solved = stationary_solved(&g, 1.0, rule, d);
+                    let gap = total_variation(&iterated, &solved.law);
+                    assert!(gap < 1e-10, "{rule:?} n {} d {d}: iterated vs solved TV {gap:e}", g.n);
+                }
+            }
+        }
+    }
+
+    /// **Read one tick late, the pinned automaton IS `Kernel::Sca`.** Its law is held to
+    /// `autocorr::sca_law`'s closed form by both solvers, and its moves per tick to the sum over that
+    /// law of every site's flip probability, written out here from the rule rather than read from the
+    /// module. At `q = 0` the law is far from Boltzmann, so the comparison can tell a half field from
+    /// a full one.
+    #[test]
+    fn a_pinned_automaton_read_one_tick_late_has_the_sca_closed_form() {
+        for g in [pair(1.0, 0.3), frustrated()] {
+            let n = g.n;
+            for q in [0.0, 0.5, 2.0] {
+                let want = sca_law(&g, 1.0, q).expect("small");
+                let (iterated, steps) = stationary_current(&g, 1.0, Rule::Sca { q }, 1, 1e-15, 200_000);
+                assert!(steps < 200_000, "q {q}: power iteration must settle");
+                let solved = stationary_solved(&g, 1.0, Rule::Sca { q }, 1);
+                let (a, b) = (total_variation(&iterated, &want), total_variation(&solved.law, &want));
+                assert!(a < 1e-10 && b < 1e-10, "n {n} q {q}: iterated {a:e}, solved {b:e} from sca_law");
+                let moves: f64 = want
+                    .iter()
+                    .enumerate()
+                    .map(|(x, p)| {
+                        let s = frame_spins(x, n);
+                        p * (0..n)
+                            .map(|i| {
+                                let arg = 0.5 * g.field(i, &s) * f64::from(s[i]) + q;
+                                1.0 / (1.0 + (2.0 * arg).exp())
+                            })
+                            .sum::<f64>()
+                    })
+                    .sum();
+                assert!((solved.moves - moves).abs() < 1e-12, "q {q}: moves {} vs {moves}", solved.moves);
+            }
+            let bolt = boltzmann(&g, 1.0).expect("small");
+            assert!(total_variation(&sca_law(&g, 1.0, 0.0).expect("small"), &bolt) > 0.1, "unpinned is far off");
+        }
+    }
+
+    /// **A late read costs a pinned pair `d` times the distance.** Two spins at zero field, `βJ = 1`:
+    /// to first order in `e^{-2q}` the delayed automaton's distance from Boltzmann is EXACTLY `d` times
+    /// the one-tick automaton's (at zero field `g_S = 2 g_A`; module docs). The exact ratio is held to
+    /// `d` at `q = 5` within `1e-3`, and its deviation must shrink between `q = 3` and `q = 5` by less
+    /// than `0.05`, the `e^{-4} = 0.018` a first-order law predicts. Measured: deviations `1.2e-3`,
+    /// `3.4e-3`, `6.7e-3` at `q = 3` and `2.2e-5`, `6.1e-5`, `1.3e-4` at `q = 5` for `d = 2, 3, 4`,
+    /// so the bound has eight times headroom -- and a rule the delay cannot reach, which pins the
+    /// DELAYED own value or reads the field from the current frame, has ratio 1 and misses by `d − 1`.
+    #[test]
+    fn a_late_read_costs_a_pinned_pair_d_times_the_distance() {
+        let g = pair(1.0, 0.0);
+        let (one3, one5) = (distance(&g, 3.0, 1), distance(&g, 5.0, 1));
+        for d in 2..=4 {
+            let dev3 = (distance(&g, 3.0, d) / one3 - d as f64).abs();
+            let dev5 = (distance(&g, 5.0, d) / one5 - d as f64).abs();
+            assert!(dev5 < 1e-3, "d {d}: TV ratio misses {d} by {dev5:e} at q = 5");
+            assert!(dev5 < 0.05 * dev3, "d {d}: the miss must shrink as e^-2q: {dev3:e} -> {dev5:e}");
+        }
+    }
+
+    /// **The distance follows its first-order law on graphs where it is not `d` times.** At `q = 6`
+    /// the exact `e^{2q} TV` is held to `sca_rate_constant` within `5e-4` relative (measured at most
+    /// `5.1e-5`, the triangle at `d = 3`; the residual is `O(e^{-2q})` and falls by `e^2` per unit of
+    /// `q`) on a biased pair, PAI-310's frustrated triangle and a 4-spin SK instance. At `d = 1` the
+    /// constant must equal `E_G|Φ − <Φ>| / 2`, the proved one-tick constant, to rounding: a wrong
+    /// weight on the delay term, anything but `d − 1/2`, fails there first. And the law is not `d c_1`
+    /// here -- the triangle's is above it and the biased pair's below -- which is what decides the
+    /// next test.
+    #[test]
+    fn the_delayed_automaton_approaches_boltzmann_at_its_first_order_rate() {
+        for (g, dmax) in [(pair(1.0, 0.3), 4), (frustrated(), 3), (sk4(), 2)] {
+            let n = g.n;
+            let bolt = boltzmann(&g, 1.0).expect("small");
+            let phi: Vec<f64> = (0..bolt.len())
+                .map(|x| {
+                    let s = frame_spins(x, n);
+                    (0..n).map(|i| (-g.field(i, &s) * f64::from(s[i])).exp()).sum()
+                })
+                .collect();
+            let mean: f64 = bolt.iter().zip(&phi).map(|(p, f)| p * f).sum();
+            let c1: f64 = 0.5 * bolt.iter().zip(&phi).map(|(p, f)| p * (f - mean).abs()).sum::<f64>();
+            let got = sca_rate_constant(&g, 1.0, 1);
+            assert!((got - c1).abs() < 1e-12 * c1, "n {n}: c_1 {got} vs E|Phi - <Phi>|/2 = {c1}");
+            for d in 1..=dmax {
+                let c = sca_rate_constant(&g, 1.0, d);
+                let scaled = distance(&g, 6.0, d) * 12f64.exp();
+                assert!((scaled / c - 1.0).abs() < 5e-4, "n {n} d {d}: e^2q TV {scaled} vs c_d {c}");
+            }
+        }
+        let ratio = |g: &Graph, d: usize| sca_rate_constant(g, 1.0, d) / sca_rate_constant(g, 1.0, 1);
+        let (tri, biased) = (ratio(&frustrated(), 3), ratio(&pair(1.0, 0.3), 3));
+        assert!(tri > 3.1 && biased < 2.7, "c_3/c_1: triangle {tri} (measured 3.177), biased pair {biased} (2.647)");
+    }
+
+    /// **Pin harder, or wait? It depends on the graph, and by a few percent.** A fabric whose reads
+    /// are `d` ticks old can hold the law within `ε` of Boltzmann two ways: PIN harder, running the
+    /// delayed automaton every tick at `q*(ε, d)`, or WAIT, running the one-tick automaton with fresh
+    /// reads on every `d`-th tick at `q*(ε, 1)`. Counted in spins moved per tick, measured exactly:
+    /// on the biased pair at `d = 2`, `ε = 1e-2`, pinning moves `1.113` times as many as waiting; on
+    /// the frustrated triangle at `d = 3`, `ε = 1e-3`, `0.944` times, and the first-order prediction
+    /// `d c_1 / c_d` is `0.9442` there. Either way the delay costs about a factor `d`.
+    #[test]
+    fn pinning_beats_waiting_on_a_biased_pair_and_loses_on_a_frustrated_triangle() {
+        let pin_over_wait = |g: &Graph, d: usize, eps: f64| {
+            let pin = stationary_solved(g, 1.0, Rule::Sca { q: pinning_for(g, d, eps) }, d).moves;
+            let wait = stationary_solved(g, 1.0, Rule::Sca { q: pinning_for(g, 1, eps) }, 1).moves / d as f64;
+            pin / wait
+        };
+        let biased = pin_over_wait(&pair(1.0, 0.3), 2, 1e-2);
+        assert!(biased > 1.05, "on the biased pair pinning must move more: {biased} (measured 1.113)");
+        let g = frustrated();
+        let tri = pin_over_wait(&g, 3, 1e-3);
+        assert!(tri < 0.97, "on the frustrated triangle waiting must move more: {tri} (measured 0.944)");
+        let predicted = 3.0 * sca_rate_constant(&g, 1.0, 1) / sca_rate_constant(&g, 1.0, 3);
+        assert!((tri - predicted).abs() < 0.01, "first order predicts {predicted}, exact {tri}");
     }
 }
