@@ -22,6 +22,9 @@ Scope: four small fixtures, `β = 1`, one integer delay on every read. `examples
 the table beside the every-tick heat bath; `stationary_solved` and the new function share one GTH
 elimination. Rust only, like the rest of `delay`.
 
+  1810 lib tests, 2096 workspace, 460 verification-bearing
+  348 mutation rows (+5, each applied, seen RED against its named test, restored)
+
 ### Corrected: what `kwsample`'s likelihood column certifies (WORKLOADS entry 16)
 
 The entry said the likelihood column, `|ln P − (−βE − ln Z)|` over every draw, "is what said to rerun
