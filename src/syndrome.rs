@@ -486,9 +486,12 @@ pub fn relaxed_sweep_kernel(g: &HetGraph) -> Result<Vec<f64>, Invalid> {
                 let e_up = g.energy(&s);
                 s[i] = 0;
                 let e_down = g.energy(&s);
+                // Both tails from the energy gap directly: `1 - p_up` is exactly zero once `p_up`
+                // rounds to 1, which forbids the flip whose reverse is still allowed.
                 let p_up = 1.0 / (1.0 + (e_up - e_down).exp());
+                let p_down = 1.0 / (1.0 + (e_down - e_up).exp());
                 next[y | bit] += p * p_up;
-                next[y & !bit] += p * (1.0 - p_up);
+                next[y & !bit] += p * p_down;
             }
             core::mem::swap(&mut dist, &mut next);
         }
@@ -601,11 +604,22 @@ mod tests {
             let kernel = relaxed_sweep_kernel(&g).expect("small");
             let pi = stationary_of(&kernel, 256).expect("irreducible");
             let law = exact_boltzmann(&g, 1.0);
-            // A stiff chain (large gamma) conditions the direct solve; a few parts in ten
-            // million is the solve's accuracy, not a different law.
+            // The law the kernel keeps, with no solve in the way: one push of the Boltzmann law.
+            let mut pushed = vec![0.0f64; 256];
+            for (x, &lx) in law.iter().enumerate() {
+                for (y, p) in pushed.iter_mut().enumerate() {
+                    *p += lx * kernel[x * 256 + y];
+                }
+            }
+            let drift = crate::autocorr::total_variation(&pushed, &law);
+            assert!(drift < 1e-14, "gamma {gamma}: the kernel moves the Boltzmann law by TV {drift}");
+            // A stiff chain (large gamma) conditions the direct solve, and its answer carries the
+            // conditioning times the rounding: at gamma 6 it was 1.7e-7 from Boltzmann, and 1.3e-6
+            // once the sweep's down-flips were computed without `1 - p_up` (2026-09-28), while the
+            // push above held both kernels to 2e-16. So this bound is the SOLVE's floor, with room.
             let tv = crate::autocorr::total_variation(&pi, &law);
             assert!(
-                tv < 1e-6,
+                tv < 1e-5,
                 "gamma {gamma}: stationary law vs Boltzmann, TV {tv}"
             );
             let first: Vec<f64> = (0..256).map(|x| spin_of(x, 8, 0)).collect();

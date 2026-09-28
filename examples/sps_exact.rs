@@ -96,10 +96,12 @@ fn update(rule: Rule, beta: f64, f: (f64, f64)) -> [f64; 3] {
     let (lo, hi) = (seg, (seg + 1) % 3);
     let x = theta - (TAU * seg as f64 / 3.0 + PI / 3.0);
     let mut p = [0.0f64; 3];
-    let up = match rule {
-        Rule::PairExact => sigmoid(beta * 3.0_f64.sqrt() * mag * x.sin()),
-        Rule::PairLinear => sigmoid(beta * 3.0_f64.sqrt() * mag * x),
-        Rule::AngleOnly(sharp) => sigmoid(sharp * x),
+    // The ARGUMENT of the sigmoid, so both tails can be taken from it directly: `1 - sigmoid(a)` is
+    // exactly zero once `sigmoid(a)` rounds to 1, and `sigmoid(-a)` is not.
+    let arg = match rule {
+        Rule::PairExact => beta * 3.0_f64.sqrt() * mag * x.sin(),
+        Rule::PairLinear => beta * 3.0_f64.sqrt() * mag * x,
+        Rule::AngleOnly(sharp) => sharp * x,
         Rule::AngleOnlyOrdinal(sharp) => {
             if seg == 2 {
                 // The interval between `on` (4pi/3) and `off` (0) does not exist on the device. A
@@ -107,7 +109,7 @@ fn update(rule: Rule, beta: f64, f: (f64, f64)) -> [f64; 3] {
                 p[2] = 1.0;
                 return p;
             }
-            sigmoid(sharp * x)
+            sharp * x
         }
         Rule::AngleOnlyNearest(sharp) => {
             if seg == 2 {
@@ -115,12 +117,12 @@ fn update(rule: Rule, beta: f64, f: (f64, f64)) -> [f64; 3] {
                 p[if x < 0.0 { 2 } else { 0 }] = 1.0;
                 return p;
             }
-            sigmoid(sharp * x)
+            sharp * x
         }
         Rule::HeatBath => unreachable!("handled above"),
     };
-    p[hi] = up;
-    p[lo] = 1.0 - up;
+    p[hi] = sigmoid(arg);
+    p[lo] = sigmoid(-arg);
     p
 }
 

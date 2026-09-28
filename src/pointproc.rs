@@ -110,8 +110,10 @@ pub fn unit_variance(beta: f64, h: f64, m: f64, lifetime: Lifetime) -> f64 {
 #[must_use]
 pub fn unit_tau(beta: f64, h: f64, m: f64, lifetime: Lifetime) -> f64 {
     let wait = unit_wait(beta, h, m);
-    let p = m / (wait + m);
-    unit_variance(beta, h, m, lifetime) / (2.0 * p * (1.0 - p))
+    // The on-fraction and its complement, each as its own ratio: `1 - p` keeps only the absolute
+    // accuracy of `p` and is exactly zero once `p` rounds to 1, in a strong field.
+    let (p, q) = (m / (wait + m), wait / (wait + m));
+    unit_variance(beta, h, m, lifetime) / (2.0 * p * q)
 }
 
 /// `P(N <= k - 1)` for `N` Poisson with mean `mu`, summed in logs so a large mean cannot underflow
@@ -165,7 +167,7 @@ pub fn unit_autocorrelation(beta: f64, h: f64, m: f64, lifetime: Lifetime, t: f6
     match lifetime {
         Lifetime::Exponential => (-t * (1.0 / wait + 1.0 / m)).exp(),
         Lifetime::Fixed => {
-            let (rate, p) = (1.0 / wait, m / (wait + m));
+            let (rate, p, q) = (1.0 / wait, m / (wait + m), wait / (wait + m));
             let mut on = (1.0 - t / m).max(0.0);
             let mut k = 1usize;
             while (k - 1) as f64 * m <= t {
@@ -173,7 +175,7 @@ pub fn unit_autocorrelation(beta: f64, h: f64, m: f64, lifetime: Lifetime, t: f6
                 on += (erlang_excess(k, rate, a) - 2.0 * erlang_excess(k, rate, a - m) + erlang_excess(k, rate, a - 2.0 * m)) / m;
                 k += 1;
             }
-            (on - p) / (1.0 - p)
+            (on - p) / q
         }
     }
 }

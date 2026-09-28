@@ -102,7 +102,7 @@
 
 use crate::graph::Graph;
 use crate::informed::Balance;
-use crate::kernel::p_up;
+use crate::kernel::{p_pair, p_up};
 use std::fmt;
 
 /// The most spins an exact operator will be built over. Above this a single application of the
@@ -489,16 +489,25 @@ pub fn site_factor(seed: u64, spread: f64, i: usize) -> f64 {
     (spread * z).exp()
 }
 
-/// Exact heat bath for the Gibbs kernels. For [`Kernel::FixedFabric`] it reproduces
-/// [`crate::hdl::FixedFabric`] step by step: couplings and fields rounded to Q.8 (`FRAC` bits),
-/// the integer field clamped to `[-2048, 2047]`, the ROM address `(field + 2048) >> 2`, the ROM
-/// entry `p_up` at the address's centre in 16 bits, and the comparison against a 16-bit uniform,
-/// so the probability is `entry / 65536` exactly. Kept beside the emulator's constants rather
-/// than importing its private ones; `fabric_kernel_matches_the_emulator_in_distribution` is what
-/// keeps the two from drifting apart.
-fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
+/// Exact heat bath for the Gibbs kernels: `(P(s_i = +1), P(s_i = -1))` at site `i` in state `s`,
+/// BOTH computed directly, never one as `1 - ` the other. `1 - p` keeps only the absolute accuracy
+/// of `p`, so it is exactly zero once `p` rounds to 1 -- from `2 beta f = 36.74` for the heat bath
+/// -- and a chain built from it cannot make the down-flip whose reverse it still makes: see
+/// [`crate::kernel::p_down`] for what that did to `examples/penalty_mixing.rs`. Every kernel below
+/// therefore states its two tails separately, each from a form with no cancellation.
+///
+/// For [`Kernel::FixedFabric`] it reproduces [`crate::hdl::FixedFabric`] step by step: couplings
+/// and fields rounded to Q.8 (`FRAC` bits), the integer field clamped to `[-2048, 2047]`, the ROM
+/// address `(field + 2048) >> 2`, the ROM entry `p_up` at the address's centre in 16 bits, and the
+/// comparison against a 16-bit uniform, so the probability is `entry / 65536` exactly -- and the
+/// complement `(65536 - entry) / 65536`, which `1 - p` computes EXACTLY in `f64` because both are
+/// multiples of `2^-prob_bits`. That is the one arm where the subtraction is the right form: it is
+/// what the comparator does. Kept beside the emulator's constants rather than importing its
+/// private ones; `fabric_kernel_matches_the_emulator_in_distribution` is what keeps the two from
+/// drifting apart.
+fn site_pair(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> (f64, f64) {
     match kernel {
-        Kernel::FixedFabric => p_site(
+        Kernel::FixedFabric => site_pair(
             g,
             beta,
             Kernel::Quantised { frac_bits: crate::hdl::FRAC, lut_bits: crate::hdl::LUT_BITS, prob_bits: 16 },
@@ -541,12 +550,14 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
             // The entry held to `prob_bits`: the RTL's `round(p * 65535) / 65536` at 16 bits.
             let levels = 2f64.powi(prob_bits as i32);
             let entry = (p_up(arg, beta) * (levels - 1.0)).round().min(levels - 1.0);
-            entry / levels
+            // Both exact: `entry` and `levels - entry` are integers below 2^53, and dividing by a
+            // power of two is exact. The comparator's complement is `1 - entry / levels` exactly.
+            (entry / levels, (levels - entry) / levels)
         }
-        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, spread, i)),
+        Kernel::SiteSpread { seed, spread } => p_pair(g.field(i, s), beta * site_factor(seed, spread, i)),
         Kernel::Pimi { xi, eta } => {
             let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;
-            0.5 * (1.0 + crate::hopfield::erf(z / std::f64::consts::SQRT_2))
+            normal_tails(z)
         }
         // EXPLICIT, not folded into the catch-all: the arm below is the plain heat bath, which is
         // exactly `TickRandom { p: 1.0 }`, so a missing arm here would run every p as Synchronous
@@ -555,16 +566,75 @@ fn p_site(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> f64 {
         Kernel::TickRandom { p } => {
             assert!((0.0..=1.0).contains(&p), "TickRandom p is a probability, got {p}");
             let stay = if s[i] > 0 { 1.0 } else { 0.0 };
-            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)
+            let (up, down) = p_pair(g.field(i, s), beta);
+            ((1.0 - p) * stay + p * up, (1.0 - p) * (1.0 - stay) + p * down)
         }
         // EXPLICIT for the same reason: the catch-all would run SCA as the synchronous sweep at
         // the full field, with no pinning -- a different kernel with a different law.
         Kernel::Sca { q } => {
             assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
-            p_up(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)
+            p_pair(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)
         }
-        _ => p_up(g.field(i, s), beta),
+        _ => p_pair(g.field(i, s), beta),
     }
+}
+
+/// `(Phi(z), Phi(-z))`, the standard normal distribution function at `z` and its complement, each
+/// accurate in relative terms: the smaller tail directly, from `erfc`, and the larger as one minus
+/// it, where the subtraction loses nothing that matters because the result is near 1. Where
+/// `|z| / sqrt 2 < 1` both come from [`crate::hopfield::erf`] exactly as [`Kernel::Pimi`] always
+/// computed them (`0.5 (1 + erf(z / sqrt 2))`, bit for bit), since the smaller tail is then above
+/// `0.079` and `1 - erf` is accurate. Above that, `erfc` by its continued fraction: `erf` itself
+/// returns exactly 1 past 5, so `1 - erf` was a tail of exactly zero from `|z| = 7.07`.
+fn normal_tails(z: f64) -> (f64, f64) {
+    let x = z.abs() / std::f64::consts::SQRT_2;
+    let (small, large) = if x < 1.0 {
+        let e = crate::hopfield::erf(x);
+        (0.5 * (1.0 - e), 0.5 * (1.0 + e))
+    } else {
+        let small = 0.5 * erfc_tail(z.abs());
+        (small, 1.0 - small)
+    };
+    if z >= 0.0 {
+        (large, small)
+    } else {
+        (small, large)
+    }
+}
+
+/// `erfc(z / sqrt 2)` for `z >= sqrt 2`, as `e^{-z^2/2} / sqrt(pi) * K(x)` with `x = z / sqrt 2`
+/// and `K(x) = 1 / (x + (1/2) / (x + 1 / (x + (3/2) / (x + ...))))` the classical continued
+/// fraction, evaluated by the modified Lentz method. `z^2 / 2` is formed with its rounding error
+/// carried separately (a fused multiply-add gives it exactly), because `e^{-z^2/2}` amplifies a
+/// relative error in its argument by `z^2 / 2`: 700 at `z = 37`.
+fn erfc_tail(z: f64) -> f64 {
+    let x = z / std::f64::consts::SQRT_2;
+    let zz = z * z;
+    let zz_err = z.mul_add(z, -zz);
+    let gauss = (-0.5 * zz).exp() * (-0.5 * zz_err).exp();
+    // K(x) = 1 / (x + a_1 / (x + a_2 / (x + ...))), a_k = k / 2, by modified Lentz.
+    let tiny = 1e-300;
+    let mut f = x;
+    let mut c = x;
+    let mut d = 0.0;
+    for k in 1..=500 {
+        let a = 0.5 * f64::from(k);
+        d = x + a * d;
+        if d.abs() < tiny {
+            d = tiny;
+        }
+        c = x + a / c;
+        if c.abs() < tiny {
+            c = tiny;
+        }
+        d = 1.0 / d;
+        let delta = c * d;
+        f *= delta;
+        if (delta - 1.0).abs() <= f64::EPSILON {
+            break;
+        }
+    }
+    gauss / (std::f64::consts::PI.sqrt() * f)
 }
 
 fn log_g(balance: Balance, log_r: f64) -> f64 {
@@ -576,11 +646,36 @@ fn log_g(balance: Balance, log_r: f64) -> f64 {
     }
 }
 
-/// The heat-bath probability of `+1` at site `i` under [`Kernel::Stale`]: the pre-sweep state
-/// `x` supplies every not-yet-updated neighbour, and each already-updated neighbour `j < i` is
-/// read from `y` (fresh) or from `x` (stale, probability `p`), independently, so the conditional
-/// is the mixture over the `2^d` stale patterns of the `d` already-updated neighbours.
-fn stale_q(g: &Graph, beta: f64, p: f64, i: usize, x: &[i8], y: &[i8]) -> f64 {
+/// Every state `0..2^n` in order, with its spins held in ONE buffer that is updated incrementally:
+/// from `x - 1` to `x` only the bits that carried change, two writes on average. The matrix-free
+/// operators used to call [`spins`] -- an allocation of `n` bytes -- once per state per site.
+fn for_each_state(n: usize, mut visit: impl FnMut(usize, &[i8])) {
+    let mut s = vec![-1i8; n];
+    for x in 0..1usize << n {
+        if x > 0 {
+            let changed = x ^ (x - 1);
+            let mut b = 0;
+            while b < n && (changed >> b) != 0 {
+                s[b] = if (x >> b) & 1 == 1 { 1 } else { -1 };
+                b += 1;
+            }
+        }
+        visit(x, &s);
+    }
+}
+
+/// `s` set to the spins of state `x`, in place.
+fn set_spins(s: &mut [i8], x: usize) {
+    for (i, v) in s.iter_mut().enumerate() {
+        *v = if (x >> i) & 1 == 1 { 1 } else { -1 };
+    }
+}
+
+/// The heat-bath probabilities `(P(+1), P(-1))` at site `i` under [`Kernel::Stale`]: the pre-sweep
+/// state `x` supplies every not-yet-updated neighbour, and each already-updated neighbour `j < i`
+/// is read from `y` (fresh) or from `x` (stale, probability `p`), independently, so each tail is
+/// the mixture over the `2^d` stale patterns of the `d` already-updated neighbours of that tail.
+fn stale_pair(g: &Graph, beta: f64, p: f64, i: usize, x: &[i8], y: &[i8]) -> (f64, f64) {
     let mut base = g.h[i];
     let mut prev: Vec<(f64, i8, i8)> = Vec::new();
     for k in g.offset[i]..g.offset[i + 1] {
@@ -592,7 +687,7 @@ fn stale_q(g: &Graph, beta: f64, p: f64, i: usize, x: &[i8], y: &[i8]) -> f64 {
         }
     }
     let d = prev.len();
-    let mut q = 0.0;
+    let (mut q, mut q_down) = (0.0, 0.0);
     for mask in 0..(1usize << d) {
         let mut field = base;
         let mut weight = 1.0;
@@ -603,23 +698,32 @@ fn stale_q(g: &Graph, beta: f64, p: f64, i: usize, x: &[i8], y: &[i8]) -> f64 {
             weight *= if stale { p } else { 1.0 - p };
         }
         if weight > 0.0 {
-            q += weight * p_up(field, beta);
+            let (up, down) = p_pair(field, beta);
+            q += weight * up;
+            q_down += weight * down;
         }
     }
-    q
+    (q, q_down)
 }
 
 /// Apply the kernel once: `v <- P v`, matrix-free.
 ///
 /// For the chromatic sweep `P = P_{c_last} ... P_{c_1}`, so the classes are applied to `v` in
 /// REVERSE order (operators compose right to left). Within a class the sites are pairwise
-/// non-adjacent, so the class update factorises into independent heat-bath draws from the fields
-/// at the pre-class state.
+/// non-adjacent, so no site's conditional reads another class site: the class update is a product
+/// of commuting single-site heat-bath updates from the fields at the pre-class state, and it is
+/// contracted one site at a time -- `2^n` work per site, where expanding each state over the
+/// class's `2^|c|` joint outcomes cost `2^n 2^|c|` (17 s against 0.4 s per application at 20
+/// spins). The two are the same operator; `the_matrix_free_sweep_matches_a_dense_operator_built_class_by_class`
+/// holds this one to the class-by-class expansion.
 ///
 /// For the informed kernel `(P v)(x) = sum_k P(x -> y_k) v(y_k) + P(x -> x) v(x)` with
 /// `P(x -> y_k) = w_k(x) / Z(x) * min(1, Z(x) / Z(y_k))`, exactly the acceptance
 /// [`crate::informed`] derives; the shift that module carries cancels in every ratio and is
 /// omitted.
+///
+/// Every site's two outcomes are weighted by the two tails [`site_pair`] states separately, never by
+/// `p` and `1 - p`.
 ///
 /// # Panics
 ///
@@ -633,37 +737,17 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
     match kernel {
         Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
             let mut cur = v.to_vec();
+            let mut next = vec![0.0f64; m];
             for class in g.classes.iter().rev() {
-                let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
-                let k = sites.len();
-                let mut next = vec![0.0f64; m];
-                let mut p = vec![0.0f64; k];
-                for x in 0..m {
-                    let s = spins(x, n);
-                    for (j, &i) in sites.iter().enumerate() {
-                        p[j] = p_site(g, beta, kernel, i, &s);
-                    }
-                    let mut base = x;
-                    for &i in &sites {
-                        base &= !(1usize << i);
-                    }
-                    let mut acc = 0.0;
-                    for a in 0..(1usize << k) {
-                        let mut y = base;
-                        let mut w = 1.0;
-                        for (j, &i) in sites.iter().enumerate() {
-                            if (a >> j) & 1 == 1 {
-                                y |= 1usize << i;
-                                w *= p[j];
-                            } else {
-                                w *= 1.0 - p[j];
-                            }
-                        }
-                        acc += w * cur[y];
-                    }
-                    next[x] = acc;
+                for &i in class {
+                    let i = i as usize;
+                    let bit = 1usize << i;
+                    for_each_state(n, |x, s| {
+                        let (p, q) = site_pair(g, beta, kernel, i, s);
+                        next[x] = p * cur[x | bit] + q * cur[x & !bit];
+                    });
+                    std::mem::swap(&mut cur, &mut next);
                 }
-                cur = next;
             }
             cur
         }
@@ -672,31 +756,29 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             // applied first: (P v) = P_0 (P_1 (... (P_{n-1} v))). Each P_i is rank two per state --
             // the heat-bath conditional at site i given the current others.
             let mut cur = v.to_vec();
+            let mut next = vec![0.0f64; m];
             for i in (0..g.n).rev() {
                 let bit = 1usize << i;
-                let mut next = vec![0.0f64; m];
-                for x in 0..m {
-                    let s = spins(x, n);
-                    let p = p_up(g.field(i, &s), beta);
-                    next[x] = p * cur[x | bit] + (1.0 - p) * cur[x & !bit];
-                }
-                cur = next;
+                for_each_state(n, |x, s| {
+                    let (p, q) = p_pair(g.field(i, s), beta);
+                    next[x] = p * cur[x | bit] + q * cur[x & !bit];
+                });
+                std::mem::swap(&mut cur, &mut next);
             }
             cur
         }
         Kernel::RandomScan => {
-            // (P v)(x) = (1/n) sum_i [ p_i v(x with i up) + (1 - p_i) v(x with i down) ].
+            // (P v)(x) = (1/n) sum_i [ p_i v(x with i up) + q_i v(x with i down) ].
             let mut out = vec![0.0f64; m];
-            for x in 0..m {
-                let s = spins(x, n);
+            for_each_state(n, |x, s| {
                 let mut acc = 0.0;
                 for i in 0..n {
                     let bit = 1usize << i;
-                    let p = p_up(g.field(i, &s), beta);
-                    acc += p * v[x | bit] + (1.0 - p) * v[x & !bit];
+                    let (p, q) = p_pair(g.field(i, s), beta);
+                    acc += p * v[x | bit] + q * v[x & !bit];
                 }
                 out[x] = acc / n as f64;
-            }
+            });
             out
         }
         Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
@@ -705,20 +787,19 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             // top bit down, so the block that remains keeps its bit layout.
             let mut out = vec![0.0f64; m];
             let mut w = vec![0.0f64; m];
-            for x in 0..m {
-                let s = spins(x, n);
+            for_each_state(n, |x, s| {
                 w.copy_from_slice(v);
                 let mut len = m;
                 for i in (0..n).rev() {
-                    let q = p_site(g, beta, kernel, i, &s);
+                    let (q, q_down) = site_pair(g, beta, kernel, i, s);
                     let half = len / 2;
                     for y in 0..half {
-                        w[y] = (1.0 - q) * w[y] + q * w[y | half];
+                        w[y] = q_down * w[y] + q * w[y | half];
                     }
                     len = half;
                 }
                 out[x] = w[0];
-            }
+            });
             out
         }
         Kernel::Stale { p } => {
@@ -727,51 +808,45 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             // on them -- which is exactly the already-updated neighbours it reads.
             let mut out = vec![0.0f64; m];
             let mut w = vec![0.0f64; m];
-            for x in 0..m {
-                let sx = spins(x, n);
+            let mut sy = vec![-1i8; n];
+            for_each_state(n, |x, sx| {
                 w.copy_from_slice(v);
                 let mut len = m;
                 for i in (0..n).rev() {
                     let half = len / 2;
                     for y in 0..half {
-                        let sy = spins(y, n);
-                        let q = stale_q(g, beta, p, i, &sx, &sy);
-                        w[y] = (1.0 - q) * w[y] + q * w[y | half];
+                        set_spins(&mut sy, y);
+                        let (q, q_down) = stale_pair(g, beta, p, i, sx, &sy);
+                        w[y] = q_down * w[y] + q * w[y | half];
                     }
                     len = half;
                 }
                 out[x] = w[0];
-            }
+            });
             out
         }
         Kernel::Informed(balance) => {
+            // The weight of flipping k at a state with spin s_k and field f_k there. The field at k
+            // does not read s_k, so the state across flip k has the same f_k and spin -s_k.
+            let weight = |s_k: f64, f_k: f64| log_g(balance, -2.0 * beta * s_k * f_k).exp();
             // Z(x) for every state first, since the acceptance needs Z at the neighbour too.
-            let weights = |x: usize| -> Vec<f64> {
-                let s = spins(x, n);
-                (0..n)
-                    .map(|k| {
-                        let log_r = -2.0 * beta * f64::from(s[k]) * g.field(k, &s);
-                        log_g(balance, log_r).exp()
-                    })
-                    .collect()
-            };
-            let z: Vec<f64> = (0..m).map(|x| weights(x).iter().sum()).collect();
+            let mut z = vec![0.0f64; m];
+            for_each_state(n, |x, s| z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum());
             let mut next = vec![0.0f64; m];
-            for x in 0..m {
-                let w = weights(x);
+            for_each_state(n, |x, s| {
                 let mut stay = 1.0;
                 let mut acc = 0.0;
                 if z[x] > 0.0 {
                     for k in 0..n {
                         let y = x ^ (1usize << k);
                         let alpha = if z[y] > 0.0 { (z[x] / z[y]).min(1.0) } else { 1.0 };
-                        let p = w[k] / z[x] * alpha;
+                        let p = weight(f64::from(s[k]), g.field(k, s)) / z[x] * alpha;
                         stay -= p;
                         acc += p * v[y];
                     }
                 }
                 next[x] = acc + stay.max(0.0) * v[x];
-            }
+            });
             next
         }
     }
@@ -798,52 +873,35 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
     match kernel {
         Kernel::SequentialGibbs => {
             let mut cur = mu.to_vec();
+            let mut next = vec![0.0f64; m];
             for i in 0..n {
                 let bit = 1usize << i;
-                let mut next = vec![0.0f64; m];
-                for x in 0..m {
-                    let s = spins(x, n);
-                    let p = p_up(g.field(i, &s), beta);
+                for_each_state(n, |x, s| {
+                    let (p, q) = p_pair(g.field(i, s), beta);
                     // Mass from both values of site i lands on x with x_i's own probability.
                     let pooled = cur[x | bit] + cur[x & !bit];
-                    next[x] = if x & bit != 0 { p * pooled } else { (1.0 - p) * pooled };
-                }
-                cur = next;
+                    next[x] = if x & bit != 0 { p * pooled } else { q * pooled };
+                });
+                std::mem::swap(&mut cur, &mut next);
             }
             cur
         }
         Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
+            // One site at a time within a class, as in `apply`: the class sites' conditionals
+            // depend only on the OTHER sites, so their updates commute.
             let mut cur = mu.to_vec();
+            let mut next = vec![0.0f64; m];
             for class in &g.classes {
-                let sites: Vec<usize> = class.iter().map(|&i| i as usize).collect();
-                let k = sites.len();
-                let mut next = vec![0.0f64; m];
-                for x in 0..m {
-                    let s = spins(x, n);
-                    // The class sites' conditionals depend only on the OTHER sites, so they are
-                    // the same for every state that differs from x only on the class.
-                    let mut w = 1.0;
-                    for &i in &sites {
-                        let p = p_site(g, beta, kernel, i, &s);
-                        w *= if x & (1usize << i) != 0 { p } else { 1.0 - p };
-                    }
-                    let mut base = x;
-                    for &i in &sites {
-                        base &= !(1usize << i);
-                    }
-                    let mut pooled = 0.0;
-                    for a in 0..(1usize << k) {
-                        let mut y = base;
-                        for (j, &i) in sites.iter().enumerate() {
-                            if (a >> j) & 1 == 1 {
-                                y |= 1usize << i;
-                            }
-                        }
-                        pooled += cur[y];
-                    }
-                    next[x] = w * pooled;
+                for &i in class {
+                    let i = i as usize;
+                    let bit = 1usize << i;
+                    for_each_state(n, |x, s| {
+                        let (p, q) = site_pair(g, beta, kernel, i, s);
+                        let pooled = cur[x | bit] + cur[x & !bit];
+                        next[x] = if x & bit != 0 { p * pooled } else { q * pooled };
+                    });
+                    std::mem::swap(&mut cur, &mut next);
                 }
-                cur = next;
             }
             cur
         }
@@ -851,17 +909,16 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             // (mu P)(y) = (1/n) sum_i [mu(y with i up) + mu(y with i down)] q_i(y_i | the rest):
             // mass from both values of site i lands on y with site i's own conditional probability.
             let mut out = vec![0.0f64; m];
-            for y in 0..m {
-                let s = spins(y, n);
+            for_each_state(n, |y, s| {
                 let mut acc = 0.0;
                 for i in 0..n {
                     let bit = 1usize << i;
-                    let p = p_up(g.field(i, &s), beta);
+                    let (p, p_down) = p_pair(g.field(i, s), beta);
                     let pooled = mu[y | bit] + mu[y & !bit];
-                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };
+                    acc += if y & bit != 0 { p * pooled } else { p_down * pooled };
                 }
                 out[y] = acc / n as f64;
-            }
+            });
             out
         }
         Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
@@ -869,19 +926,18 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             // over every target, built by doubling one site at a time (bit i set gets q_i).
             let mut out = vec![0.0f64; m];
             let mut prod = vec![0.0f64; m];
-            for x in 0..m {
+            for_each_state(n, |x, s| {
                 let mass = mu[x];
                 if mass == 0.0 {
-                    continue;
+                    return;
                 }
-                let s = spins(x, n);
                 prod[0] = 1.0;
                 let mut len = 1usize;
                 for i in 0..n {
-                    let q_prev = p_site(g, beta, kernel, i, &s);
+                    let (q_prev, q_down) = site_pair(g, beta, kernel, i, s);
                     for y in 0..len {
                         let w = prod[y];
-                        prod[y] = w * (1.0 - q_prev);
+                        prod[y] = w * q_down;
                         prod[y | len] = w * q_prev;
                     }
                     len <<= 1;
@@ -889,7 +945,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                 for (o, pr) in out.iter_mut().zip(&prod) {
                     *o += mass * pr;
                 }
-            }
+            });
             out
         }
         Kernel::Stale { p } => {
@@ -898,20 +954,20 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             // already placed below it.
             let mut out = vec![0.0f64; m];
             let mut prod = vec![0.0f64; m];
-            for x in 0..m {
+            let mut sy = vec![-1i8; n];
+            for_each_state(n, |x, sx| {
                 let mass = mu[x];
                 if mass == 0.0 {
-                    continue;
+                    return;
                 }
-                let sx = spins(x, n);
                 prod[0] = 1.0;
                 let mut len = 1usize;
                 for i in 0..n {
                     for y in 0..len {
-                        let sy = spins(y, n);
-                        let q = stale_q(g, beta, p, i, &sx, &sy);
+                        set_spins(&mut sy, y);
+                        let (q, q_down) = stale_pair(g, beta, p, i, sx, &sy);
                         let wgt = prod[y];
-                        prod[y] = wgt * (1.0 - q);
+                        prod[y] = wgt * q_down;
                         prod[y | len] = wgt * q;
                     }
                     len <<= 1;
@@ -919,39 +975,34 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                 for (o, pr) in out.iter_mut().zip(&prod) {
                     *o += mass * pr;
                 }
-            }
+            });
             out
         }
         Kernel::Informed(balance) => {
-            let weights = |x: usize| -> Vec<f64> {
-                let s = spins(x, n);
-                (0..n)
-                    .map(|k| {
-                        let log_r = -2.0 * beta * f64::from(s[k]) * g.field(k, &s);
-                        log_g(balance, log_r).exp()
-                    })
-                    .collect()
-            };
-            let w: Vec<Vec<f64>> = (0..m).map(weights).collect();
-            let z: Vec<f64> = w.iter().map(|wx| wx.iter().sum()).collect();
+            // As in `apply`: the weight of flipping k at x, and at the state across that flip (same
+            // field at k, opposite spin), both from x's own spins.
+            let weight = |s_k: f64, f_k: f64| log_g(balance, -2.0 * beta * s_k * f_k).exp();
+            let mut z = vec![0.0f64; m];
+            for_each_state(n, |x, s| z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum());
             let mut next = vec![0.0f64; m];
-            for x in 0..m {
+            for_each_state(n, |x, s| {
                 // Mass arriving from each neighbour y_k, plus what stays.
                 let mut stay = 1.0;
                 let mut acc = 0.0;
                 for k in 0..n {
                     let y = x ^ (1usize << k);
+                    let (s_k, f_k) = (f64::from(s[k]), g.field(k, s));
                     if z[x] > 0.0 {
                         let alpha = if z[y] > 0.0 { (z[x] / z[y]).min(1.0) } else { 1.0 };
-                        stay -= w[x][k] / z[x] * alpha;
+                        stay -= weight(s_k, f_k) / z[x] * alpha;
                     }
                     if z[y] > 0.0 {
                         let alpha = if z[x] > 0.0 { (z[y] / z[x]).min(1.0) } else { 1.0 };
-                        acc += mu[y] * w[y][k] / z[y] * alpha;
+                        acc += mu[y] * weight(-s_k, f_k) / z[y] * alpha;
                     }
                 }
                 next[x] = acc + stay.max(0.0) * mu[x];
-            }
+            });
             next
         }
     }
@@ -1614,6 +1665,88 @@ mod tests {
         }
     }
 
+    /// THE COMPLEMENT, KERNEL BY KERNEL. One spin in a field so strong that `1 - p_up` is exactly
+    /// zero (`2 beta h = 40`), or so strong that the tail is near the bottom of the normal range
+    /// (`700`): the probability of leaving `+1` must be the exact tail, and nonzero, to 1e-14 --
+    /// through `apply` and through `apply_distribution`, for every kernel whose update is a heat
+    /// bath or is built on one. Until 2026-09-28 every one of them formed it as `1 - p` and returned
+    /// exactly zero, which on the TSP chains of `examples/penalty_mixing.rs` made every tour a trap
+    /// with no exit and the exact `tau_int` millions of times too long. The fabric's kernels are
+    /// absent on purpose: their comparator's complement is exact by construction and is `0` below
+    /// `2^-16`, which is the hardware, not a rounding.
+    #[test]
+    fn a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel() {
+        // 1 / (1 + e^x) and e^-x, each to 20 digits by mpmath at 40 digits: independent of this
+        // file. The informed chain's move probability is `min(1, e^-x)` under every balance.
+        let cases = [
+            (40.0, 4.2483542552915889773e-18, 4.2483542552915889953e-18),
+            (700.0, 9.8596765437597708567e-305, 9.8596765437597708567e-305),
+        ];
+        // PIMI at xi 0.5, eta 0.1: tanh(beta h) is 1 in f64 at both fields, so the tail is
+        // Phi(-(1 + 0.5) / 0.1) = Phi(-15).
+        let pimi_tail = 3.6709661993127508858e-51;
+        for &(x, heat, informed) in &cases {
+            let mut b = GraphBuilder::new(1);
+            b.bias(0, x / 2.0);
+            let g = b.build();
+            let kernels = [
+                (Kernel::ChromaticGibbs, 1.0, heat),
+                (Kernel::SequentialGibbs, 1.0, heat),
+                (Kernel::RandomScan, 1.0, heat),
+                (Kernel::Synchronous, 1.0, heat),
+                (Kernel::Stale { p: 0.3 }, 1.0, heat),
+                (Kernel::SiteSpread { seed: 3, spread: 0.0 }, 1.0, heat),
+                (Kernel::TickRandom { p: 0.5 }, 1.0, 0.5 * heat),
+                // SCA reads half the field: at beta 2 its tail is the heat bath's at beta 1.
+                (Kernel::Sca { q: 0.0 }, 2.0, heat),
+                (Kernel::Pimi { xi: 0.5, eta: 0.1 }, 1.0, pimi_tail),
+                (Kernel::Informed(Balance::Barker), 1.0, informed),
+                (Kernel::Informed(Balance::Sqrt), 1.0, informed),
+                (Kernel::Informed(Balance::Metropolis), 1.0, informed),
+            ];
+            for (kernel, beta, want) in kernels {
+                // Mass from +1 (state 1) that lands on -1 (state 0), and the expectation from +1 of
+                // the indicator of -1: the same transition probability by the two operators.
+                let pushed = apply_distribution(&g, beta, kernel, &[0.0, 1.0])[0];
+                let pulled = apply(&g, beta, kernel, &[1.0, 0.0])[1];
+                for (route, got) in [("apply_distribution", pushed), ("apply", pulled)] {
+                    assert!(got > 0.0, "{kernel:?} at 2 beta h = {x}: {route} gives {got}, a down-flip made impossible");
+                    let rel = (got - want).abs() / want;
+                    assert!(rel < 1e-14, "{kernel:?} at 2 beta h = {x}: {route} {got:e} against {want:e}, rel {rel:e}");
+                }
+            }
+        }
+    }
+
+    /// The normal tails PIMI's kernel is built from, against mpmath at 40 digits, on both sides of
+    /// the switch from `erf` to the continued fraction (`|z| = sqrt 2`) and past the point where
+    /// `erf` returns exactly one (`|z| = 7.07`), and the two tails must sum to one.
+    #[test]
+    fn the_normal_tails_are_accurate_on_both_sides_and_far_out() {
+        let exact = [
+            (0.3, 0.38208857781104736693),
+            (1.0, 0.15865525393145705141),
+            (1.5, 0.066807201268858066004),
+            (2.0, 0.0227501319481792072),
+            (3.0, 0.0013498980316300945267),
+            (5.0, 2.8665157187919391167e-7),
+            (7.5, 3.1908916729108962278e-14),
+            (10.0, 7.619853024160526066e-24),
+            (15.0, 3.6709661993127508858e-51),
+            (20.0, 2.7536241186062336951e-89),
+            (37.0, 5.7255712225245768227e-300),
+        ];
+        for &(z, lower) in &exact {
+            let (up, down) = normal_tails(z);
+            let rel = (down - lower).abs() / lower;
+            assert!(rel < 4e-15, "Phi(-{z}) = {down:e} against {lower:e}, rel {rel:e}");
+            let (up_neg, down_neg) = normal_tails(-z);
+            assert_eq!(up_neg.to_bits(), down.to_bits(), "Phi(-z) must be the same number from either side at {z}");
+            assert_eq!(down_neg.to_bits(), up.to_bits());
+            assert!((up + down - 1.0).abs() <= f64::EPSILON, "tails at {z} sum to {}", up + down);
+        }
+    }
+
     /// THE OPERATOR IS A STOCHASTIC MATRIX WITH pi AS ITS STATIONARY DISTRIBUTION -- for both
     /// kernels. `pi P = pi` is the one property an exact kernel cannot fake, and it is checked to
     /// floating point against a `pi` computed from the energy alone. Row sums are checked through
@@ -1670,12 +1803,12 @@ mod tests {
                     let mut y = base;
                     let mut w = 1.0;
                     for (j, &i) in sites.iter().enumerate() {
-                        let p = p_up(g.field(i, &s), beta);
+                        let f = g.field(i, &s);
                         if (a >> j) & 1 == 1 {
                             y |= 1usize << i;
-                            w *= p;
+                            w *= p_up(f, beta);
                         } else {
-                            w *= 1.0 - p;
+                            w *= p_up(-f, beta);
                         }
                     }
                     pc[x][y] += w;
@@ -1956,7 +2089,14 @@ mod tests {
         let pi = boltzmann(&g, beta).unwrap();
         let solved = stationary_solved(&g, beta, Kernel::ChromaticGibbs).unwrap();
         let gap = total_variation(&solved, &pi);
-        assert!(gap < 1e-12, "direct solve vs Boltzmann: {gap}");
+        // The elimination is accurate to about u times the chain's conditioning, and Kemeny's
+        // constant -- the sum of every mode's relaxation time -- measures that: u K is 1.6e-13,
+        // 2.8e-12 and 1.4e-10 at beta 1, 1.5 and 2 on this grid, and the measured gaps were 6.6e-14,
+        // 2.5e-12 and 2.0e-10. A fixed 1e-12 here held until the sweep's arithmetic changed in its
+        // last bits (2026-09-28, the complement and the site-by-site class contraction), when the
+        // same solve landed at 2.5e-12: the bound was below the solve's own floor, not the kernel's.
+        let floor = f64::EPSILON * kemeny_constant(&g, beta, Kernel::ChromaticGibbs).unwrap();
+        assert!(gap < 16.0 * floor, "direct solve vs Boltzmann: {gap}, attainable about {floor:e}");
         let solved = stationary_solved(&g, beta, Kernel::FixedFabric).unwrap();
         // A stationary law is one the kernel leaves where it is: the test that needs no reference.
         let pushed = apply_distribution(&g, beta, Kernel::FixedFabric, &solved);
@@ -2055,8 +2195,8 @@ mod tests {
             let s = spins(x, g.n);
             for i in 0..g.n {
                 let exact = p_up(g.field(i, &s), beta);
-                worst_full = worst_full.max((p_site(&g, beta, full, i, &s) - exact).abs());
-                worst_wide = worst_wide.max((p_site(&g, beta, p32, i, &s) - p_site(&g, beta, p24, i, &s)).abs());
+                worst_full = worst_full.max((site_pair(&g, beta, full, i, &s).0 - exact).abs());
+                worst_wide = worst_wide.max((site_pair(&g, beta, p32, i, &s).0 - site_pair(&g, beta, p24, i, &s).0).abs());
             }
         }
         assert!(worst_full < 1e-9, "full precision vs the exact heat bath: {worst_full:.3e}");
@@ -2175,8 +2315,8 @@ mod tests {
             let s = spins(x, 4);
             let want: f64 = (0..4)
                 .map(|i| {
-                    let p = p_up(free.h[i], beta * site_factor(7, 0.3, i));
-                    if s[i] > 0 { p } else { 1.0 - p }
+                    let b = beta * site_factor(7, 0.3, i);
+                    if s[i] > 0 { p_up(free.h[i], b) } else { p_up(-free.h[i], b) }
                 })
                 .product();
             assert!((lx - want).abs() < 1e-12, "state {x}: solved {lx} vs product {want}");
@@ -2245,7 +2385,7 @@ mod tests {
         b.bias(0, 0.5);
         let g = b.build();
         let k = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 52 };
-        let got = p_site(&g, 1.0, k, 0, &[-1]);
+        let got = site_pair(&g, 1.0, k, 0, &[-1]).0;
         let centre = p_up(0.5 + 1.0 / 128.0, 1.0);
         let edge = p_up(0.5, 1.0);
         assert!((got - centre).abs() < 1e-12, "ROM read {got} vs centre {centre}");
