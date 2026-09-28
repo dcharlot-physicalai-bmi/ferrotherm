@@ -327,6 +327,54 @@ pub enum AutocorrError {
     /// The linear system was singular to floating point: the kernel has no unique invariant
     /// law, which is what more than one closed class of states produces.
     Reducible,
+    /// A Krylov solve ran out of applications before its estimate met `rtol`. `tau` is the last
+    /// iterate, NOT a value.
+    NotConverged {
+        /// The last iterate's tau.
+        tau: f64,
+        /// Its estimated absolute error.
+        err_est: f64,
+        /// Applications of the kernel made.
+        matvecs: usize,
+    },
+    /// The TRUE residual of a Krylov solve stopped falling before its estimate met `rtol`: f64
+    /// cannot certify `rtol` for this chain, whose attainable accuracy is about `u ||A^-1||`. `tau`
+    /// is the iterate there, to be read as an estimate whose error may exceed `err_est` (by 14x on
+    /// the fabric at beta 2), never as a bound. [`tau_int_censored`] is the route past it.
+    AtFloor {
+        /// The iterate's tau.
+        tau: f64,
+        /// Its estimated absolute error, a lower estimate.
+        err_est: f64,
+        /// Applications of the kernel made.
+        matvecs: usize,
+    },
+    /// `||A^-1||` is past `1 / u`: the chain's slowest `1 - lambda` is below f64's resolution, and no
+    /// normwise-stable f64 solve of the fundamental system has a digit to give. Plain GMRES on the
+    /// TSP threshold chain returned a NEGATIVE tau here (scout, 2026-09-28). [`tau_int_censored`].
+    BeyondF64 {
+        /// The lower estimate of `||A^-1||` that crossed `1 / u`.
+        inv_norm: f64,
+        /// Applications of the kernel made.
+        matvecs: usize,
+    },
+    /// The law handed to a solve is not the kernel's: one push moved it by `residual` in L1, past
+    /// [`LAW_TOLERANCE`].
+    LawNotInvariant {
+        /// `||pi P - pi||_1`.
+        residual: f64,
+    },
+    /// A metastable set that is empty or names a state outside `0..2^n`.
+    BadMetastableSet,
+    /// An inner solve of [`tau_int_censored`] missed its tolerance within its budget, or left a
+    /// censored rate negative by more than rounding. `residual` is the relative residual (or the
+    /// negative rate relative to its row).
+    InnerSolve {
+        /// What was missed.
+        residual: f64,
+        /// Pushes of the kernel made.
+        pushes: usize,
+    },
 }
 
 impl fmt::Display for AutocorrError {
@@ -343,6 +391,27 @@ impl fmt::Display for AutocorrError {
             }
             AutocorrError::Reducible => {
                 write!(f, "the kernel has no unique invariant law: its linear system is singular")
+            }
+            AutocorrError::NotConverged { tau, err_est, matvecs } => write!(
+                f,
+                "the Krylov solve used {matvecs} applications without meeting its tolerance: last iterate {tau:e}, estimated error {err_est:e}"
+            ),
+            AutocorrError::AtFloor { tau, err_est, matvecs } => write!(
+                f,
+                "the Krylov solve reached the f64 floor after {matvecs} applications: {tau:e} with estimated error {err_est:e} (a lower estimate); use tau_int_censored"
+            ),
+            AutocorrError::BeyondF64 { inv_norm, matvecs } => write!(
+                f,
+                "||A^-1|| >= {inv_norm:e} is past 1/u after {matvecs} applications: the slowest mode is below f64's resolution; use tau_int_censored"
+            ),
+            AutocorrError::LawNotInvariant { residual } => {
+                write!(f, "the law is not the kernel's: one push moves it by {residual:e} in L1")
+            }
+            AutocorrError::BadMetastableSet => {
+                write!(f, "the metastable set is empty or names a state outside 0..2^n")
+            }
+            AutocorrError::InnerSolve { residual, pushes } => {
+                write!(f, "an inner solve of the censored chain missed its tolerance: {residual:e} after {pushes} pushes")
             }
         }
     }
@@ -362,6 +431,14 @@ pub struct Autocorrelation {
     pub rho: Vec<f64>,
     /// Variance of the observable under `pi`.
     pub variance: f64,
+    /// Which route produced `tau_int`, which fixes what its error is.
+    pub route: Route,
+    /// Applications of the kernel the route made (`apply` or `apply_distribution`), including the
+    /// ones that filled `rho` and, for the Krylov and censored solves, the one that checked the law.
+    pub matvecs: usize,
+    /// The route's own estimate of `|error|` in `tau_int`, absolute. `None` where the route has
+    /// none (the lag sum, the dense solve, the censored solve). Not a bound: see [`tau_int_krylov`].
+    pub err_est: Option<f64>,
 }
 
 /// State `x` as spins: bit `i` set means `s_i = +1`.
@@ -464,15 +541,20 @@ pub fn boltzmann(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
     if g.n > MAX_SPINS {
         return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
     }
-    let m = 1usize << g.n;
-    let energy: Vec<f64> = (0..m).map(|x| g.energy(&spins(x, g.n))).collect();
+    Ok(boltzmann_law(g, beta))
+}
+
+/// [`boltzmann`] without its cap, for the solves that go past [`MAX_SPINS`]: the same arithmetic.
+fn boltzmann_law(g: &Graph, beta: f64) -> Vec<f64> {
+    let mut energy = vec![0.0f64; 1usize << g.n];
+    for_each_state(g.n, |x, s| energy[x] = g.energy(s));
     let emin = energy.iter().copied().fold(f64::INFINITY, f64::min);
     let mut pi: Vec<f64> = energy.iter().map(|e| (-beta * (e - emin)).exp()).collect();
     let z: f64 = pi.iter().sum();
     for p in &mut pi {
         *p /= z;
     }
-    Ok(pi)
+    pi
 }
 
 /// The probability site `i` comes up `+1` when resampled, under the kernel's arithmetic.
@@ -1249,7 +1331,7 @@ pub fn tau_int_fundamental(
         let ck: f64 = pi.iter().zip(&e).zip(&v).map(|((p, x), y)| p * x * y).sum();
         rho.push(ck / c0);
     }
-    Ok(Autocorrelation { tau_int: tau, lags: 0, rho, variance: c0 })
+    Ok(Autocorrelation { tau_int: tau, lags: 0, rho, variance: c0, route: Route::Dense, matvecs: m + 64, err_est: None })
 }
 
 /// Kemeny's constant of the kernel: `K = sum_{i >= 2} 1 / (1 - lambda_i)` over the non-unit
@@ -1562,10 +1644,22 @@ pub fn nested_population_curve(
     Ok(out)
 }
 
+/// Consecutive lags with `|rho(k)| < tol` that [`tau_int_exact`] needs before it stops. ONE was the
+/// rule until 2026-09-28, and an autocorrelation that crosses zero stops that rule at the crossing:
+/// the synchronous sweep of two coupled spins at zero field has `rho(k) = 0` at every odd lag and
+/// `tanh(beta J)^k` at every even one, so the first quiet lag is lag 1 and the sum returned `1/2`
+/// for a chain whose `tau` is `1.88` at `beta J = 1`
+/// (`the_lag_sum_does_not_stop_where_the_autocorrelation_crosses_zero`). A non-reversible sweep's
+/// complex eigenvalues can put a crossing at any lag.
+pub const QUIET_LAGS: usize = 16;
+
 /// The exact integrated autocorrelation time of `observable` under `kernel` at `beta`.
 ///
-/// `tol` is the tail cut: lags are summed until `|rho(k)| < tol`, or until `max_lags`. Both are
-/// reported back so a reader can see whether the sum converged or was stopped.
+/// `tol` is the tail cut: lags are summed until [`QUIET_LAGS`] CONSECUTIVE lags have
+/// `|rho(k)| < tol`, or until `max_lags`. Both are reported back so a reader can see whether the
+/// sum converged or was stopped. It needs about `tau ln(1/tol)` applications of the kernel, so at
+/// low temperature it is a mixing-time computation; [`tau_int_krylov`] needs a number that grows
+/// with `ln tau` instead, and [`tau_int_censored`] reaches chains past floating point.
 ///
 /// # Errors
 ///
@@ -1608,6 +1702,7 @@ pub fn tau_int_exact(
     let mut tau = 0.5;
     let mut rho = Vec::new();
     let mut lags = 0;
+    let mut quiet = 0;
     while lags < max_lags {
         v = apply(g, beta, kernel, &v);
         lags += 1;
@@ -1618,10 +1713,887 @@ pub fn tau_int_exact(
             rho.push(r);
         }
         if r.abs() < tol {
+            quiet += 1;
+            if quiet >= QUIET_LAGS {
+                break;
+            }
+        } else {
+            quiet = 0;
+        }
+    }
+    Ok(Autocorrelation { tau_int: tau, lags, rho, variance: c0, route: Route::LagSum, matvecs: lags, err_est: None })
+}
+
+// ------------------------------------------------------------------------------------------------
+// Exact tau above the dense cap, and past floating point.
+//
+// `tau_int_fundamental` solves `(I - P + 1 pi^T) z = e` densely and stops at 12 spins. The same
+// system solves matrix-free: `A v = v - P v + <pi, v>` is one application of the kernel, and in the
+// `pi`-weighted inner product any `pi`-invariant `P` is a contraction, so `A` has its field of
+// values in the right half-plane -- and a REVERSIBLE `P` makes it self-adjoint positive definite.
+// So: conjugate gradients where the kernel is reversible, restarted GMRES otherwise, both in
+// `L^2(pi)`, `tau = <e, z>_pi / C0 - 1/2`. The applications needed grow with `ln tau`, not `tau`:
+// 43 at `tau = 1.6e6` on the 4x3 grid at beta 2 (scout, 2026-09-28).
+//
+// A chain whose slowest `1 - lambda` is below f64's resolution has no digit to give any
+// normwise-stable f64 solve of that system. `tau_int_censored` reaches it by an exact block
+// elimination onto a small metastable set, with the elimination done so that no probability is ever
+// formed as `1 -` another.
+// ------------------------------------------------------------------------------------------------
+
+/// The most spins [`tau_int_krylov`] and [`tau_int_censored`] build vectors over: a vector of `2^22`
+/// `f64` is 32 MiB and GMRES keeps [`GMRES_RESTART`]` + 1` of them. [`max_krylov_spins`] is tighter
+/// for kernels whose one application costs more than `n 2^n`.
+pub const MAX_KRYLOV_SPINS: usize = 22;
+
+/// The Krylov basis [`tau_int_krylov`]'s GMRES keeps before it restarts. Measured by the scout of
+/// 2026-09-28 on the 4x3 grid at beta 2 and a 14-spin frustrated ring: GMRES(5) stagnated,
+/// GMRES(10) needed 300 to 1,400 applications, 20 sufficed for the sweeps and 100 for the informed
+/// chain (which takes CG here anyway).
+pub const GMRES_RESTART: usize = 50;
+
+/// The largest `||pi P - pi||_1` the Krylov and censored solves accept for the law they are handed.
+/// The kernel's own law passes at `1e-14` on every fixture measured; the fabric's kernel handed the
+/// Boltzmann law is `8.6e-4` from invariant on the 4x3 grid at beta 1.
+pub const LAW_TOLERANCE: f64 = 1e-10;
+
+/// How a tau was computed. The route fixes what the number's error is and whether there is an
+/// estimate of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Route {
+    /// The lag-by-lag sum of [`tau_int_exact`], cut at a tail tolerance: truncated, by the tail
+    /// below the cut.
+    LagSum,
+    /// The dense fundamental matrix of [`tau_int_fundamental`]: one LU with partial pivoting, whose
+    /// error is about `u ||A^-1||` -- measured against a double-double reference it is the LEAST
+    /// accurate route on a cold heat bath (`3.2e-9` at `tau = 1.6e6`, where GMRES was `1.2e-10` and
+    /// the censored solve `3.3e-12`).
+    Dense,
+    /// Conjugate gradients in the `pi` inner product ([`tau_int_krylov`] on a reversible kernel).
+    Cg,
+    /// Restarted GMRES in the `pi` inner product ([`tau_int_krylov`] on any other kernel).
+    Gmres,
+    /// The censored (Schur-complement) solve of [`tau_int_censored`], eliminated GTH-style.
+    Censored,
+}
+
+/// Which states [`tau_int_censored`] keeps: the metastable set `F` the chain is censored onto.
+/// The answer does not depend on it -- the elimination is exact for any non-empty `F` -- but the
+/// cost and the conditioning of the inner solves do: they are well conditioned when `F` holds
+/// every trap, so that the chain leaves the rest of the space quickly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Metastable<'a> {
+    /// Every state no single flip lowers the energy of (`s_i f_i(x) >= 0` for every `i`): 36 states
+    /// of the 65,536 on the four-city TSP chains.
+    LocalMinima,
+    /// [`Metastable::LocalMinima`] and every state one flip from one of them (612 on the TSP
+    /// chains): a second set, with entirely different inner systems, for the check that two sets
+    /// give the same tau.
+    LocalMinimaAndNeighbours,
+    /// Exactly these states (bit `i` set is spin `i` at `+1`).
+    States(&'a [usize]),
+}
+
+/// The most spins the Krylov and censored solves take for `kernel`: [`MAX_KRYLOV_SPINS`] where one
+/// application is `O(n 2^n)`, 14 for the synchronous family, whose application builds a product law
+/// per source state (`O(4^n)`), and [`MAX_DENSE_SPINS`] for stale reads (`O(4^n 2^d)`). A kernel
+/// whose law is only available by the dense solve stops at [`MAX_DENSE_SPINS`] whatever this says,
+/// because its law does.
+#[must_use]
+pub fn max_krylov_spins(kernel: Kernel) -> usize {
+    match kernel {
+        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => 14,
+        Kernel::Stale { .. } => MAX_DENSE_SPINS,
+        Kernel::ChromaticGibbs
+        | Kernel::SequentialGibbs
+        | Kernel::RandomScan
+        | Kernel::Informed(_)
+        | Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::SiteSpread { .. } => MAX_KRYLOV_SPINS,
+    }
+}
+
+/// Whether `kernel` is REVERSIBLE with respect to its own law on `g`, which makes `I - P + 1 pi^T`
+/// self-adjoint and positive definite in the `pi` inner product, so conjugate gradients apply. The
+/// random scan and the informed chain are reversible with respect to Boltzmann, the synchronous
+/// sweep with respect to Peretto's law, SCA with respect to [`sca_law`]. A fixed-order or chromatic
+/// sweep is only INVARIANT unless the graph has no edges, when every sweep draws a fresh sample. CG
+/// on a non-reversible sweep does not fail loudly: on the 4x3 grid it ran out of budget holding the
+/// chromatic sweep's tau `9.7e-6` off and the sequential sweep's `66%` off (scout, 2026-09-28).
+#[must_use]
+pub fn reversible(kernel: Kernel, g: &Graph) -> bool {
+    match kernel {
+        Kernel::RandomScan | Kernel::Informed(_) | Kernel::Synchronous | Kernel::Sca { .. } => true,
+        Kernel::ChromaticGibbs | Kernel::SequentialGibbs => g.n_edges == 0,
+        Kernel::Pimi { .. }
+        | Kernel::Stale { .. }
+        | Kernel::TickRandom { .. }
+        | Kernel::SiteSpread { .. }
+        | Kernel::FixedFabric
+        | Kernel::Quantised { .. } => false,
+    }
+}
+
+/// The kernel's own invariant law for the Krylov and censored solves: a closed form where there is
+/// one, at any size up to the cap; the direct solve otherwise, which stops at [`MAX_DENSE_SPINS`]
+/// and REFUSES above it. Never the Boltzmann law by default: every arm is written out, so a kernel
+/// added to [`Kernel`] does not compile here until someone states its law, and the one-push check
+/// in [`checked_law`] catches an arm that states it wrong. The verifier of 2026-09-28 met exactly
+/// that: GMRES handed the Boltzmann law converged on the fabric and on tick-random at `p = 0.5`, to
+/// a tau `6.2e-4` and `13.7%` off.
+fn solve_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
+    match kernel {
+        Kernel::ChromaticGibbs | Kernel::SequentialGibbs | Kernel::RandomScan | Kernel::Informed(_) => {
+            Ok(boltzmann_law(g, beta))
+        }
+        Kernel::Synchronous | Kernel::Sca { .. } => own_law(g, beta, kernel),
+        Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::Pimi { .. }
+        | Kernel::Stale { .. }
+        | Kernel::SiteSpread { .. }
+        | Kernel::TickRandom { .. } => own_law(g, beta, kernel),
+    }
+}
+
+/// [`solve_law`], held to invariance by one push ([`check_law`]).
+fn checked_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
+    check_law(g, beta, kernel, solve_law(g, beta, kernel)?)
+}
+
+/// `pi` if one push moves it by at most [`LAW_TOLERANCE`] in L1, [`AutocorrError::LawNotInvariant`]
+/// otherwise.
+fn check_law(g: &Graph, beta: f64, kernel: Kernel, pi: Vec<f64>) -> Result<Vec<f64>, AutocorrError> {
+    let pushed = apply_distribution(g, beta, kernel, &pi);
+    let residual: f64 = pushed.iter().zip(&pi).map(|(a, b)| (a - b).abs()).sum();
+    if residual <= LAW_TOLERANCE {
+        Ok(pi)
+    } else {
+        Err(AutocorrError::LawNotInvariant { residual })
+    }
+}
+
+/// `<u, v>_pi`, summed in four lanes to cut the rounding of a `2^n`-term sum.
+fn dot_pi(pi: &[f64], u: &[f64], v: &[f64]) -> f64 {
+    let mut acc = [0.0f64; 4];
+    for (k, ((p, a), b)) in pi.iter().zip(u).zip(v).enumerate() {
+        acc[k & 3] += p * a * b;
+    }
+    (acc[0] + acc[1]) + (acc[2] + acc[3])
+}
+
+/// `||u||_pi`.
+fn norm_pi(pi: &[f64], u: &[f64]) -> f64 {
+    dot_pi(pi, u, u).max(0.0).sqrt()
+}
+
+/// `<pi, v>`, the mean of `v` under `pi`, in four lanes.
+fn mean_pi(pi: &[f64], v: &[f64]) -> f64 {
+    let mut acc = [0.0f64; 4];
+    for (k, (p, a)) in pi.iter().zip(v).enumerate() {
+        acc[k & 3] += p * a;
+    }
+    (acc[0] + acc[1]) + (acc[2] + acc[3])
+}
+
+fn axpy(y: &mut [f64], a: f64, x: &[f64]) {
+    for (u, v) in y.iter_mut().zip(x) {
+        *u += a * v;
+    }
+}
+
+/// The centred observable `e = f - <f>_pi` and `C0 = <e, e>_pi`, the mean removed twice: the first
+/// pass leaves the rounding of a `2^n`-term mean in `e`, and a residual mean of `1e-6` in `e` sent
+/// GMRES without the rank-one term to `1.3e21` (scout, `failures.txt` (c)).
+fn centred(n: usize, pi: &[f64], observable: impl Fn(&[i8]) -> f64) -> Result<(Vec<f64>, f64), AutocorrError> {
+    let mut e = vec![0.0f64; 1usize << n];
+    for_each_state(n, |x, s| e[x] = observable(s));
+    let mean = mean_pi(pi, &e);
+    e.iter_mut().for_each(|v| *v -= mean);
+    let again = mean_pi(pi, &e);
+    e.iter_mut().for_each(|v| *v -= again);
+    let c0 = dot_pi(pi, &e, &e);
+    if c0 > 0.0 {
+        Ok((e, c0))
+    } else {
+        Err(AutocorrError::NoVariance)
+    }
+}
+
+/// Smallest singular value of the `k x k` upper-triangular `R` (row-major, stride `ld`), by inverse
+/// iteration on `R^T R`. Zero when a diagonal entry is: `R` is then singular.
+fn sigma_min_upper(r: &[f64], ld: usize, k: usize) -> f64 {
+    if k == 0 {
+        return f64::INFINITY;
+    }
+    if (0..k).any(|i| r[i * ld + i] == 0.0) {
+        return 0.0;
+    }
+    let mut x = vec![1.0 / (k as f64).sqrt(); k];
+    let mut sigma = 0.0;
+    for _ in 0..60 {
+        // R^T y = x (forward), then R w = y (back).
+        let mut y = x.clone();
+        for i in 0..k {
+            let mut s = y[i];
+            for j in 0..i {
+                s -= r[j * ld + i] * y[j];
+            }
+            y[i] = s / r[i * ld + i];
+        }
+        let mut w = y;
+        for i in (0..k).rev() {
+            let mut s = w[i];
+            for j in i + 1..k {
+                s -= r[i * ld + j] * w[j];
+            }
+            w[i] = s / r[i * ld + i];
+        }
+        let nw = w.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if !(nw > 0.0 && nw.is_finite()) {
+            return 0.0;
+        }
+        let next = 1.0 / nw.sqrt();
+        for (a, b) in x.iter_mut().zip(&w) {
+            *a = b / nw;
+        }
+        let settled = (next - sigma).abs() <= 1e-10 * next;
+        sigma = next;
+        if settled {
             break;
         }
     }
-    Ok(Autocorrelation { tau_int: tau, lags, rho, variance: c0 })
+    sigma
+}
+
+/// Smallest eigenvalue of the Lanczos tridiagonal that CG's coefficients assemble (diagonal
+/// `1/alpha_j + beta_{j-1}/alpha_{j-1}`, off-diagonal `sqrt(beta_j)/alpha_j`), by bisection on the
+/// Sturm count. It is a Ritz value, so it lies ABOVE the operator's smallest eigenvalue and its
+/// reciprocal is a lower estimate of `||A^-1||`.
+fn lanczos_min(alphas: &[f64], betas: &[f64]) -> f64 {
+    let k = alphas.len();
+    let mut d = vec![0.0f64; k];
+    let mut o = vec![0.0f64; k.saturating_sub(1)];
+    for j in 0..k {
+        d[j] = 1.0 / alphas[j] + if j > 0 { betas[j - 1] / alphas[j - 1] } else { 0.0 };
+        if j + 1 < k {
+            o[j] = betas[j].sqrt() / alphas[j];
+        }
+    }
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for j in 0..k {
+        let rad = if j > 0 { o[j - 1].abs() } else { 0.0 } + if j + 1 < k { o[j].abs() } else { 0.0 };
+        lo = lo.min(d[j] - rad);
+        hi = hi.max(d[j] + rad);
+    }
+    lo = lo.min(0.0);
+    let below = |x: f64| -> usize {
+        let mut c = 0usize;
+        let mut q = d[0] - x;
+        if q < 0.0 {
+            c += 1;
+        }
+        for j in 1..k {
+            let qq = if q == 0.0 { 1e-300 } else { q };
+            q = d[j] - x - o[j - 1] * o[j - 1] / qq;
+            if q < 0.0 {
+                c += 1;
+            }
+        }
+        c
+    };
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if below(mid) >= 1 {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+        if hi - lo <= 1e-15 * hi.abs().max(1e-300) {
+            break;
+        }
+    }
+    hi.max(1e-300)
+}
+
+/// `y` with `R y = g` for the leading `k x k` of the rotated Hessenberg.
+fn back_substitute(h: &[f64], ld: usize, g: &[f64], k: usize) -> Vec<f64> {
+    let mut y = g[..k].to_vec();
+    for i in (0..k).rev() {
+        let mut s = y[i];
+        for l in i + 1..k {
+            s -= h[i * ld + l] * y[l];
+        }
+        y[i] = s / h[i * ld + i];
+    }
+    y
+}
+
+/// What a Krylov solve returns: tau, its absolute error estimate.
+type Solved = Result<(f64, f64), AutocorrError>;
+
+/// Conjugate gradients on `A z = e` in `L^2(pi)`, for a reversible kernel. The error of the tau of
+/// an iterate is `<r, A^-1 r> / C0`, QUADRATIC in the residual, estimated as
+/// `max(||r||^2 / C0, u ||z|| / ||e||) / theta_min` with `theta_min` the smallest Ritz value so far
+/// -- the second term is the rounding floor, below which a computed residual is noise. Accepted
+/// only on a TRUE residual, recomputed with one extra application.
+fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, count: &std::cell::Cell<usize>, rtol: f64, max_matvecs: usize) -> Solved {
+    let enorm = c0.sqrt();
+    let mut z = vec![0.0f64; e.len()];
+    let mut r = e.to_vec();
+    let mut inv_norm = 1.0f64;
+    let mut prev_true: Option<f64> = None;
+    loop {
+        let mut p = r.clone();
+        let mut rr = dot_pi(pi, &r, &r);
+        let (mut alphas, mut betas) = (Vec::new(), Vec::new());
+        while rr > 0.0 && count.get() < max_matvecs {
+            let ap = a_op(&p);
+            let pap = dot_pi(pi, &p, &ap);
+            if !(pap > 0.0) {
+                break;
+            }
+            let alpha = rr / pap;
+            axpy(&mut z, alpha, &p);
+            axpy(&mut r, -alpha, &ap);
+            let rr_next = dot_pi(pi, &r, &r);
+            let beta_k = rr_next / rr;
+            alphas.push(alpha);
+            betas.push(beta_k);
+            for (pv, rv) in p.iter_mut().zip(&r) {
+                *pv = rv + beta_k * *pv;
+            }
+            rr = rr_next;
+            inv_norm = inv_norm.max(1.0 / lanczos_min(&alphas, &betas));
+            if inv_norm * f64::EPSILON > 1.0 {
+                return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
+            }
+            let tau = dot_pi(pi, e, &z) / c0 - 0.5;
+            let floor = f64::EPSILON * norm_pi(pi, &z) / enorm;
+            // Below a tenth of the floor the recursive residual no longer describes the true one,
+            // and iterating on regardless fed the Lanczos estimate rounding: on the 3x3 grid at
+            // beta 2 the random scan ran 1,326 applications to a spurious ||A^-1|| of 5e15.
+            let rel2 = rr / c0;
+            if inv_norm * rel2.max(floor) <= rtol * (tau + 0.5) || rel2 <= 0.01 * floor * floor {
+                break;
+            }
+        }
+        // The TRUE residual: the recursive one keeps falling after the true one has stopped.
+        let az = a_op(&z);
+        let rt: Vec<f64> = e.iter().zip(&az).map(|(a, b)| a - b).collect();
+        let true_rel = norm_pi(pi, &rt) / enorm;
+        let floor = f64::EPSILON * norm_pi(pi, &z) / enorm;
+        let tau = dot_pi(pi, e, &z) / c0 - 0.5;
+        let est = inv_norm * (true_rel * true_rel).max(floor);
+        if est <= rtol * (tau + 0.5) {
+            return Ok((tau, est));
+        }
+        if count.get() >= max_matvecs {
+            return Err(AutocorrError::NotConverged { tau, err_est: est, matvecs: count.get() });
+        }
+        if true_rel <= floor || prev_true.is_some_and(|q| true_rel > 0.5 * q) {
+            return Err(AutocorrError::AtFloor { tau, err_est: est, matvecs: count.get() });
+        }
+        prev_true = Some(true_rel);
+        r = rt;
+    }
+}
+
+/// Restarted GMRES([`GMRES_RESTART`]) on `A z = e` in `L^2(pi)`, classical Gram-Schmidt run twice,
+/// Givens rotations. The error of the tau of an iterate is `<e, A^-1 r> / C0`, bounded by
+/// `||A^-1|| ||r|| / ||e||`, and estimated as `max(||r||, u ||z||) / (sigma_min(R) ||e||)`:
+/// `1 / sigma_min` of the rotated Hessenberg is a lower estimate of `||A^-1||` that only rises, and
+/// `u ||z||` is what the f64 product `A z` can resolve -- without that floor term the first rule
+/// accepted a residual of `4.1e-11` under a floor of `2.0e-10` and reported `5.3e-11` for a realised
+/// `4.7e-10` (scout, `failures.txt` (g)). Accepted only on a TRUE residual at the end of a cycle.
+fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, count: &std::cell::Cell<usize>, rtol: f64, max_matvecs: usize) -> Solved {
+    let enorm = c0.sqrt();
+    let restart = GMRES_RESTART;
+    let ld = restart + 1;
+    let mut z = vec![0.0f64; e.len()];
+    let mut r = e.to_vec();
+    let mut inv_norm = 1.0f64;
+    let mut prev_true: Option<f64> = None;
+    loop {
+        let beta0 = norm_pi(pi, &r);
+        let (ez, zn0) = (dot_pi(pi, e, &z), norm_pi(pi, &z));
+        let mut k = 0;
+        if beta0 > 0.0 {
+            let mut v: Vec<Vec<f64>> = vec![r.iter().map(|x| x / beta0).collect()];
+            let mut ev = vec![dot_pi(pi, e, &v[0])];
+            let mut h = vec![0.0f64; ld * ld];
+            let (mut cs, mut sn) = (vec![0.0f64; restart], vec![0.0f64; restart]);
+            let mut gv = vec![0.0f64; ld];
+            gv[0] = beta0;
+            for j in 0..restart {
+                if count.get() >= max_matvecs {
+                    break;
+                }
+                let mut w = a_op(&v[j]);
+                for _ in 0..2 {
+                    let c: Vec<f64> = v.iter().map(|vi| dot_pi(pi, vi, &w)).collect();
+                    for (i, ci) in c.iter().enumerate() {
+                        h[i * ld + j] += ci;
+                        axpy(&mut w, -ci, &v[i]);
+                    }
+                }
+                let hn = norm_pi(pi, &w);
+                h[(j + 1) * ld + j] = hn;
+                for i in 0..j {
+                    let (a, b) = (h[i * ld + j], h[(i + 1) * ld + j]);
+                    h[i * ld + j] = cs[i] * a + sn[i] * b;
+                    h[(i + 1) * ld + j] = -sn[i] * a + cs[i] * b;
+                }
+                let (a, b) = (h[j * ld + j], h[(j + 1) * ld + j]);
+                let rho = a.hypot(b);
+                cs[j] = a / rho;
+                sn[j] = b / rho;
+                h[j * ld + j] = rho;
+                h[(j + 1) * ld + j] = 0.0;
+                gv[j + 1] = -sn[j] * gv[j];
+                gv[j] *= cs[j];
+                k = j + 1;
+                let breakdown = !(hn > 1e-300);
+                if !breakdown {
+                    v.push(w.iter().map(|x| x / hn).collect());
+                    ev.push(dot_pi(pi, e, &v[j + 1]));
+                }
+                if k % 5 == 0 || breakdown {
+                    inv_norm = inv_norm.max(1.0 / sigma_min_upper(&h, ld, k));
+                    if inv_norm * f64::EPSILON > 1.0 {
+                        return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
+                    }
+                    let y = back_substitute(&h, ld, &gv, k);
+                    let tau = (ez + y.iter().zip(&ev).map(|(a, b)| a * b).sum::<f64>()) / c0 - 0.5;
+                    let rel = gv[k].abs() / enorm;
+                    // ||z + V y|| <= ||z|| + ||y||, V orthonormal.
+                    let floor = f64::EPSILON * (zn0 + y.iter().map(|a| a * a).sum::<f64>().sqrt()) / enorm;
+                    // Below a tenth of the floor the recursive residual no longer describes the true
+                    // one: end the cycle and look.
+                    if inv_norm * rel.max(floor) <= rtol * (tau + 0.5) || rel <= 0.1 * floor || breakdown {
+                        break;
+                    }
+                }
+            }
+            if k > 0 {
+                inv_norm = inv_norm.max(1.0 / sigma_min_upper(&h, ld, k));
+                if inv_norm * f64::EPSILON > 1.0 {
+                    return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
+                }
+                let y = back_substitute(&h, ld, &gv, k);
+                for (i, yi) in y.iter().enumerate() {
+                    axpy(&mut z, *yi, &v[i]);
+                }
+            }
+        }
+        let az = a_op(&z);
+        r = e.iter().zip(&az).map(|(a, b)| a - b).collect();
+        let true_rel = norm_pi(pi, &r) / enorm;
+        let floor = f64::EPSILON * norm_pi(pi, &z) / enorm;
+        let tau = dot_pi(pi, e, &z) / c0 - 0.5;
+        let est = inv_norm * true_rel.max(floor);
+        if est <= rtol * (tau + 0.5) {
+            return Ok((tau, est));
+        }
+        if count.get() >= max_matvecs {
+            return Err(AutocorrError::NotConverged { tau, err_est: est, matvecs: count.get() });
+        }
+        // A cycle that does not halve the TRUE residual, or a true residual at `u ||z|| / ||e||`,
+        // is the f64 floor: the tolerance asked for is not reachable for this chain.
+        if true_rel <= floor || prev_true.is_some_and(|q| true_rel > 0.5 * q) || k == 0 {
+            return Err(AutocorrError::AtFloor { tau, err_est: est, matvecs: count.get() });
+        }
+        prev_true = Some(true_rel);
+    }
+}
+
+/// The exact integrated autocorrelation time by a MATRIX-FREE solve of the fundamental-matrix system
+/// `(I - P + 1 pi^T) z = e` in the `pi`-weighted inner product, `tau = <e, z>_pi / C0 - 1/2`: the
+/// number [`tau_int_fundamental`] computes, without its dense `2^n x 2^n` matrix, so up to
+/// [`MAX_KRYLOV_SPINS`] where that stops at [`MAX_DENSE_SPINS`].
+///
+/// Conjugate gradients where the kernel is [`reversible`], GMRES otherwise. The law is the kernel's
+/// OWN, never Boltzmann by default: closed forms at any size, the direct solve up to
+/// [`MAX_DENSE_SPINS`] for the kernels whose law has no closed form (fabric, quantised, PIMI,
+/// stale reads, site spread, tick-random), which are REFUSED above it; and every law is held to
+/// invariance by one push first ([`LAW_TOLERANCE`]).
+///
+/// Stops when its error estimate is at most `rtol (tau + 1/2)`, confirmed on the true residual.
+/// **The estimate is not a bound.** `||A^-1||` is estimated from below by the Krylov space, so it
+/// can be optimistic: it covered the realised error in 8 of 8 heat-bath cases against a
+/// double-double reference, and fell short by up to 14x on the fabric at `beta = 2` -- where the
+/// solve had stopped at the floor and returned [`AutocorrError::AtFloor`], not a value. The
+/// attainable accuracy is about `u ||A^-1||`: `1e-10` relative at `tau = 1.6e6`, `5e-7` at `3.6e8`.
+/// `rho` is left empty (filling it costs 64 more applications); `lags` is 0.
+///
+/// Measured (scout and verifier, 2026-09-28): 12 to 133 applications at `n <= 12`, 32 to 102 at 14,
+/// 37 to 314 at 18 and 20, growing with `ln tau`; against [`tau_int_fundamental`] to `1e-11`
+/// relative wherever `tau < 3e4`.
+///
+/// # Errors
+///
+/// [`AutocorrError::TooManySpins`] above [`max_krylov_spins`]; [`AutocorrError::TooManyForDense`]
+/// for a kernel whose law needs the dense solve, above [`MAX_DENSE_SPINS`];
+/// [`AutocorrError::Reducible`] where that solve is singular; [`AutocorrError::LawNotInvariant`];
+/// [`AutocorrError::NoVariance`]; and, of the solve, [`AutocorrError::NotConverged`] (budget),
+/// [`AutocorrError::AtFloor`] (`rtol` is below what f64 can certify for this chain) and
+/// [`AutocorrError::BeyondF64`] (its slowest mode is below f64's resolution): for those two,
+/// [`tau_int_censored`].
+pub fn tau_int_krylov(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    observable: impl Fn(&[i8]) -> f64,
+    rtol: f64,
+    max_matvecs: usize,
+) -> Result<Autocorrelation, AutocorrError> {
+    let cap = max_krylov_spins(kernel);
+    if g.n > cap {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: cap });
+    }
+    let pi = checked_law(g, beta, kernel)?;
+    let (e, c0) = centred(g.n, &pi, observable)?;
+    // The invariance push is an application of the kernel too.
+    let count = std::cell::Cell::new(1usize);
+    let a_op = |v: &[f64]| -> Vec<f64> {
+        count.set(count.get() + 1);
+        let pv = apply(g, beta, kernel, v);
+        // The rank-one term `1 <pi, v>`: without it `A` is singular, and on the 4x3 grid at beta 2
+        // GMRES ran to its budget at a tau of 5.1e15 (scout, `failures.txt` (c)).
+        let s = mean_pi(&pi, v);
+        v.iter().zip(&pv).map(|(x, y)| x - y + s).collect()
+    };
+    let (route, solved) = if reversible(kernel, g) {
+        (Route::Cg, solve_cg(&pi, &e, c0, &a_op, &count, rtol, max_matvecs))
+    } else {
+        (Route::Gmres, solve_gmres(&pi, &e, c0, &a_op, &count, rtol, max_matvecs))
+    };
+    let (tau, est) = solved?;
+    Ok(Autocorrelation { tau_int: tau, lags: 0, rho: Vec::new(), variance: c0, route, matvecs: count.get(), err_est: Some(est) })
+}
+
+/// The states of `set`, sorted and distinct, checked to be states of `g`.
+fn metastable_states(g: &Graph, set: Metastable<'_>) -> Result<Vec<usize>, AutocorrError> {
+    let n = g.n;
+    let m = 1usize << n;
+    let minima = || {
+        let mut out = Vec::new();
+        for_each_state(n, |x, s| {
+            if (0..n).all(|i| f64::from(s[i]) * g.field(i, s) >= 0.0) {
+                out.push(x);
+            }
+        });
+        out
+    };
+    let mut f = match set {
+        Metastable::LocalMinima => minima(),
+        Metastable::LocalMinimaAndNeighbours => {
+            let lm = minima();
+            let mut all = lm.clone();
+            for &x in &lm {
+                all.extend((0..n).map(|i| x ^ (1usize << i)));
+            }
+            all
+        }
+        Metastable::States(states) => states.to_vec(),
+    };
+    f.sort_unstable();
+    f.dedup();
+    match f.last() {
+        Some(&last) if last < m => Ok(f),
+        _ => Err(AutocorrError::BadMetastableSet),
+    }
+}
+
+/// Restarted GMRES with classical Gram-Schmidt twice, EUCLIDEAN inner product, on `op x = b`, to a
+/// relative TRUE residual `rtol` or `max_iter` applications. Returns `x` and its true relative
+/// residual. The inner solve of [`tau_int_censored`].
+fn gmres_euclid(op: &dyn Fn(&[f64]) -> Vec<f64>, b: &[f64], rtol: f64, max_iter: usize) -> (Vec<f64>, f64) {
+    let dot = |u: &[f64], v: &[f64]| -> f64 {
+        let mut acc = [0.0f64; 4];
+        for (k, (a, c)) in u.iter().zip(v).enumerate() {
+            acc[k & 3] += a * c;
+        }
+        (acc[0] + acc[1]) + (acc[2] + acc[3])
+    };
+    let restart = GMRES_RESTART;
+    let ld = restart + 1;
+    let bnorm = dot(b, b).sqrt();
+    let mut x = vec![0.0f64; b.len()];
+    if bnorm == 0.0 {
+        return (x, 0.0);
+    }
+    let mut r = b.to_vec();
+    let mut iters = 0;
+    loop {
+        let beta0 = dot(&r, &r).sqrt();
+        let rel = beta0 / bnorm;
+        if rel <= rtol || iters >= max_iter {
+            return (x, rel);
+        }
+        let mut v: Vec<Vec<f64>> = vec![r.iter().map(|a| a / beta0).collect()];
+        let mut h = vec![0.0f64; ld * ld];
+        let (mut cs, mut sn) = (vec![0.0f64; restart], vec![0.0f64; restart]);
+        let mut gv = vec![0.0f64; ld];
+        gv[0] = beta0;
+        let mut k = 0;
+        for j in 0..restart {
+            if iters >= max_iter {
+                break;
+            }
+            let mut w = op(&v[j]);
+            iters += 1;
+            for _ in 0..2 {
+                let c: Vec<f64> = v.iter().map(|vi| dot(vi, &w)).collect();
+                for (i, ci) in c.iter().enumerate() {
+                    h[i * ld + j] += ci;
+                    axpy(&mut w, -ci, &v[i]);
+                }
+            }
+            let hn = dot(&w, &w).sqrt();
+            h[(j + 1) * ld + j] = hn;
+            for i in 0..j {
+                let (a, c) = (h[i * ld + j], h[(i + 1) * ld + j]);
+                h[i * ld + j] = cs[i] * a + sn[i] * c;
+                h[(i + 1) * ld + j] = -sn[i] * a + cs[i] * c;
+            }
+            let (a, c) = (h[j * ld + j], h[(j + 1) * ld + j]);
+            let rho = a.hypot(c);
+            cs[j] = a / rho;
+            sn[j] = c / rho;
+            h[j * ld + j] = rho;
+            h[(j + 1) * ld + j] = 0.0;
+            gv[j + 1] = -sn[j] * gv[j];
+            gv[j] *= cs[j];
+            k = j + 1;
+            if gv[j + 1].abs() / bnorm <= 0.5 * rtol || !(hn > 1e-300) {
+                break;
+            }
+            v.push(w.iter().map(|a| a / hn).collect());
+        }
+        if k == 0 {
+            return (x, rel);
+        }
+        let y = back_substitute(&h, ld, &gv, k);
+        for (i, yi) in y.iter().enumerate() {
+            axpy(&mut x, *yi, &v[i]);
+        }
+        let ax = op(&x);
+        iters += 1;
+        r = b.iter().zip(&ax).map(|(p, q)| p - q).collect();
+    }
+}
+
+/// Solve `S z = b`, `S = I - P_c` the generator of a censored chain whose OFF-DIAGONAL transition
+/// probabilities are `rate[a * nf + c]`, with `z(keep) = 0` (the system is singular with null vector
+/// `1`, and consistent). Gaussian elimination of every state but `keep`, in which each pivot -- the
+/// total rate out of the state being eliminated, to the states still in play -- is recomputed as a
+/// SUM of off-diagonal rates, never as `1 - P_c(f, f)`: the rule of Grassmann, Taksar and Heyman
+/// (1985). Every quantity the matrix side touches is then a sum of products of nonnegative numbers,
+/// accurate componentwise however small; the rates here reach `2.3e-245`. With `1 - P_c(f, f)` in
+/// its place the four-city TSP's threshold tau moved from `1.64e24` to `4.5e34`, and to NaN at four
+/// times the threshold (scout, `gthcheck.txt`). `None` when a state has no rate out: the censored
+/// chain is reducible.
+fn gth_poisson(rate: &[f64], b: &[f64], nf: usize, keep: usize) -> Option<Vec<f64>> {
+    let mut rate = rate.to_vec();
+    let mut b = b.to_vec();
+    let mut alive = vec![true; nf];
+    let order: Vec<usize> = (0..nf).filter(|&a| a != keep).collect();
+    let mut out = vec![0.0f64; nf];
+    for &k in &order {
+        alive[k] = false;
+        let total: f64 = (0..nf).filter(|&j| alive[j]).map(|j| rate[k * nf + j]).sum();
+        if !(total > 0.0) {
+            return None;
+        }
+        out[k] = total;
+        for i in 0..nf {
+            let rik = rate[i * nf + k];
+            if !alive[i] || rik == 0.0 {
+                continue;
+            }
+            // Row i absorbs row k: every flow i -> k is continued along k's rates out.
+            let factor = rik / total;
+            for j in 0..nf {
+                if alive[j] && j != i {
+                    rate[i * nf + j] += factor * rate[k * nf + j];
+                }
+            }
+            b[i] += factor * b[k];
+            rate[i * nf + k] = 0.0;
+        }
+    }
+    // Back substitution in reverse elimination order; row k still holds its rates at the time it was
+    // eliminated, to exactly the states eliminated after it and `keep`.
+    let mut z = vec![0.0f64; nf];
+    for &k in order.iter().rev() {
+        let mut acc = b[k];
+        for j in 0..nf {
+            if j != k {
+                acc += rate[k * nf + j] * z[j];
+            }
+        }
+        z[k] = acc / out[k];
+    }
+    Some(z)
+}
+
+/// The exact tau of a chain whose slowest modes sit below f64's resolution of `1 - lambda`, where
+/// [`tau_int_krylov`] and [`tau_int_fundamental`] have no digit to give, by CENSORING it onto a
+/// metastable set `F`. With `T` the rest, `(I - P) z = e` eliminates exactly to
+///
+/// ```text
+///   S z_F = b_F,   S = I - P_FF - P_FT (I - P_TT)^-1 P_TF      (the censored chain's generator)
+///   b_F = e_F + P_FT (I - P_TT)^-1 e_T
+///   sum_T pi e z_T = <w, e_T> + sum_f z_F(f) (w P)(f),     w (I - P_TT) = (pi e)_T
+/// ```
+///
+/// and `sum_x pi(x) e(x) z(x)` does not depend on which solution of the singular system is taken.
+/// The `|F| + 1` inner solves with `I - P_TT` are GMRES on pushes of the kernel restricted to `T`
+/// (to relative residual `inner_rtol`), and are well conditioned when `F` holds every trap: 5 to 24
+/// iterations each on the TSP chains. `S` is `|F| x |F|` and is eliminated GTH-style (every
+/// pivot a sum of rates, never `1 - P(f, f)`).
+///
+/// Exact for ANY non-empty `F`: the set changes the cost and the conditioning, not the answer. That
+/// is also the check this route has in place of an error estimate: two sets with entirely different
+/// inner systems ([`Metastable::LocalMinima`] and [`Metastable::LocalMinimaAndNeighbours`]) agreed to
+/// `3e-14` on 23 of the 24 frozen TSP cells and `8.6e-11` on the other (scout, 2026-09-28), and on
+/// the cold 12-spin grid this route was `3.3e-12` from a double-double reference where the dense
+/// solve was `3.2e-9`. `rho` is left empty and `err_est` is `None`; `matvecs` counts pushes.
+///
+/// # Errors
+///
+/// As [`tau_int_krylov`] for the size, the law and the observable; [`AutocorrError::BadMetastableSet`]
+/// for an empty set or a state outside `0..2^n`; [`AutocorrError::InnerSolve`] when an inner solve
+/// misses `inner_rtol` within its budget; [`AutocorrError::Reducible`] when the censored chain has a
+/// state with no way out.
+pub fn tau_int_censored(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    observable: impl Fn(&[i8]) -> f64,
+    set: Metastable<'_>,
+    inner_rtol: f64,
+) -> Result<Autocorrelation, AutocorrError> {
+    let cap = max_krylov_spins(kernel);
+    if g.n > cap {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: cap });
+    }
+    let pi = checked_law(g, beta, kernel)?;
+    let (e, c0) = centred(g.n, &pi, observable)?;
+    let fset = metastable_states(g, set)?;
+    let m = 1usize << g.n;
+    let nf = fset.len();
+    let mut in_f = vec![usize::MAX; m];
+    for (k, &f) in fset.iter().enumerate() {
+        in_f[f] = k;
+    }
+    let pushes = std::cell::Cell::new(1usize);
+    let push = |mu: &[f64]| {
+        pushes.set(pushes.get() + 1);
+        apply_distribution(g, beta, kernel, mu)
+    };
+    // u -> u - (u P)|_T, on vectors supported on T: the row-vector operator u (I - P_TT).
+    let b_op = |u: &[f64]| -> Vec<f64> {
+        let up = push(u);
+        (0..m).map(|x| if in_f[x] == usize::MAX { u[x] - up[x] } else { 0.0 }).collect()
+    };
+    let max_inner = 4_000;
+    let solve = |rhs: &[f64]| -> Result<Vec<f64>, AutocorrError> {
+        let (u, res) = gmres_euclid(&b_op, rhs, inner_rtol, max_inner);
+        if res <= inner_rtol {
+            Ok(u)
+        } else {
+            Err(AutocorrError::InnerSolve { residual: res, pushes: pushes.get() })
+        }
+    };
+    let mut rate = vec![0.0f64; nf * nf];
+    let mut bf = vec![0.0f64; nf];
+    for (k, &f) in fset.iter().enumerate() {
+        let mut delta = vec![0.0f64; m];
+        delta[f] = 1.0;
+        let row = push(&delta);
+        let mut rhs = vec![0.0f64; m];
+        for x in 0..m {
+            if in_f[x] == usize::MAX {
+                rhs[x] = row[x];
+            } else {
+                rate[k * nf + in_f[x]] += row[x];
+            }
+        }
+        // u_f = P(f, T) (I - P_TT)^-1: the expected visits to each state of T between leaving f and
+        // the next return to F.
+        let u = solve(&rhs)?;
+        let up = push(&u);
+        for (c, &g2) in fset.iter().enumerate() {
+            rate[k * nf + c] += up[g2];
+        }
+        bf[k] = e[f] + (0..m).filter(|&x| in_f[x] == usize::MAX).map(|x| u[x] * e[x]).sum::<f64>();
+    }
+    let rhs: Vec<f64> = (0..m).map(|x| if in_f[x] == usize::MAX { pi[x] * e[x] } else { 0.0 }).collect();
+    let w = solve(&rhs)?;
+    let wp = push(&w);
+    let we: f64 = (0..m).filter(|&x| in_f[x] == usize::MAX).map(|x| w[x] * e[x]).sum();
+    // The diagonal is never read: GTH recomputes it. A negative rate is an inner solve's rounding
+    // around a true zero; one that is not negligible against its row is an error, not a zero.
+    for a in 0..nf {
+        rate[a * nf + a] = 0.0;
+        let top = (0..nf).map(|c| rate[a * nf + c]).fold(0.0f64, f64::max);
+        for c in 0..nf {
+            let v = rate[a * nf + c];
+            if v < 0.0 {
+                if -v > 1e-12 * top {
+                    return Err(AutocorrError::InnerSolve { residual: -v / top, pushes: pushes.get() });
+                }
+                rate[a * nf + c] = 0.0;
+            }
+        }
+    }
+    let keep = (0..nf).max_by(|&a, &c| pi[fset[a]].total_cmp(&pi[fset[c]])).expect("F is not empty");
+    let zf = gth_poisson(&rate, &bf, nf, keep).ok_or(AutocorrError::Reducible)?;
+    let mut total = we;
+    for (k, &f) in fset.iter().enumerate() {
+        total += pi[f] * e[f] * zf[k] + zf[k] * wp[f];
+    }
+    Ok(Autocorrelation {
+        tau_int: total / c0 - 0.5,
+        lags: 0,
+        rho: Vec::new(),
+        variance: c0,
+        route: Route::Censored,
+        matvecs: pushes.get(),
+        err_est: None,
+    })
+}
+
+/// The exact tau by the route that can deliver it: [`tau_int_krylov`] first, and
+/// [`tau_int_censored`] on [`Metastable::LocalMinima`] (inner residual `1e-13`) where Krylov
+/// returns [`AutocorrError::AtFloor`] or [`AutocorrError::BeyondF64`] -- a chain too cold for f64 to
+/// certify `rtol` -- with [`Autocorrelation::route`] saying which answered.
+///
+/// It does not try [`tau_int_fundamental`] first below [`MAX_DENSE_SPINS`], though it could: at 12
+/// spins the dense solve takes 8 to 250 s of one core against under a second for Krylov, and on a
+/// cold heat bath it is the least accurate of the three routes (see [`Route::Dense`]). The dense
+/// solve stays what it was, the independent cross-check.
+///
+/// # Errors
+///
+/// As [`tau_int_krylov`] and, on the fallback, [`tau_int_censored`].
+pub fn tau_int_solved(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    observable: impl Fn(&[i8]) -> f64,
+    rtol: f64,
+    max_matvecs: usize,
+) -> Result<Autocorrelation, AutocorrError> {
+    match tau_int_krylov(g, beta, kernel, &observable, rtol, max_matvecs) {
+        Err(AutocorrError::AtFloor { .. } | AutocorrError::BeyondF64 { .. }) => {
+            tau_int_censored(g, beta, kernel, &observable, Metastable::LocalMinima, 1e-13)
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -1661,7 +2633,8 @@ mod tests {
             let a = tau_int_exact(&g, beta, Kernel::ChromaticGibbs, |s| f64::from(s[0]), 1e-15, 100)
                 .unwrap();
             assert_eq!(a.tau_int, 0.5, "h={h} beta={beta}: {:?}", a.rho);
-            assert_eq!(a.lags, 1);
+            // Every lag is zero, and the sum stops after QUIET_LAGS of them in a row.
+            assert_eq!(a.lags, QUIET_LAGS);
         }
     }
 
@@ -3078,5 +4051,185 @@ mod tests {
         let cold = |k: Kernel| tau_int_fundamental(&ferro, 3.0, k, mag).expect("dense").tau_int;
         let cold_ratio = cold(Kernel::RandomScan) / (cold(Kernel::SequentialGibbs) * ferro.n as f64);
         assert!((1.80..1.85).contains(&cold_ratio) && cold_ratio < coupled, "ferromagnet at beta 3: ratio {cold_ratio}");
+    }
+
+    /// THE LAG SUM MUST NOT STOP AT A ZERO CROSSING. Two spins coupled at `beta J = 1`, zero field,
+    /// the synchronous sweep: each new spin copies the other old one with `E[s_0' | x] = tanh(beta J)
+    /// s_1`, so `s_0 + s_1` and `s_0 - s_1` are eigenfunctions with eigenvalues `t` and `-t`
+    /// (`t = tanh(beta J)`), Peretto's law is uniform, and `s_0`, their average, has
+    /// `rho(k) = 0` at every odd lag and `t^k` at every even one: `tau = 1/2 + t^2 / (1 - t^2)`.
+    /// A sum that stopped at its first quiet lag stopped at lag 1 and returned `1/2`.
+    #[test]
+    fn the_lag_sum_does_not_stop_where_the_autocorrelation_crosses_zero() {
+        let mut b = GraphBuilder::new(2);
+        b.couple(0, 1, 1.0);
+        let g = b.build();
+        // 0.5 + t^2 / (1 - t^2) at t = tanh(1), mpmath at 40 digits.
+        let want = 1.8810978455418157298;
+        let a = tau_int_exact(&g, 1.0, Kernel::Synchronous, |s| f64::from(s[0]), 1e-12, 10_000).unwrap();
+        assert!(a.rho[0].abs() < 1e-15, "rho(1) is zero: {}", a.rho[0]);
+        assert!((a.rho[1] - 1.0f64.tanh().powi(2)).abs() < 1e-14, "rho(2) = t^2: {}", a.rho[1]);
+        assert!((a.tau_int - want).abs() < 1e-12, "tau {} against the closed form {want}", a.tau_int);
+        assert!(a.lags > QUIET_LAGS && a.lags < 10_000, "lags {}", a.lags);
+    }
+
+    /// Two spins with `E = -J s_0 s_1` under the sequential sweep: `s_1` alone is a Markov chain
+    /// that keeps its value with probability `a^2 + c^2` (`a = sigma(2 beta J)`, `c = sigma(-2 beta J)`:
+    /// site 0 copies the old `s_1` with probability `a`, then site 1 copies the new `s_0`), so
+    /// `rho(k) = (a - c)^{2k}` and `tau = (1 - 2ac) / (4ac)` in closed form. The escape is `c`: a
+    /// flip AGAINST a field of `J`, exactly the transition `1 - p_up` rounded to zero.
+    fn cold_pair(two_beta_j: f64) -> Graph {
+        let mut b = GraphBuilder::new(2);
+        b.couple(0, 1, 0.5 * two_beta_j);
+        b.build()
+    }
+
+    /// THE COLD CHAIN, EXACTLY, by the censored solve on two metastable sets that share nothing but
+    /// the answer -- the two energy minima with the other two states eliminated by inner solves, and
+    /// all four states with no inner solve at all -- at `2 beta J = 16, 30, 40, 100`, against the
+    /// closed form evaluated by mpmath. At 40 and 100 the Krylov solve must REFUSE
+    /// ([`AutocorrError::BeyondF64`], `tau = 5.9e16` and `6.7e42`), and [`tau_int_solved`] must fall
+    /// through to the censored route. Under the old `1 - p_up` kernel the escape at 40 and 100 was
+    /// exactly zero and the chain reducible; at 30 it was `1e-3` off.
+    #[test]
+    fn a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it() {
+        let exact = [
+            (16.0, 2221527.630126996293),
+            (30.0, 2671618645381.1155367),
+            (40.0, 58846316709254996.352),
+            (100.0, 6.720292854540338621e42),
+        ];
+        let s1 = |s: &[i8]| f64::from(s[1]);
+        for &(x, want) in &exact {
+            let g = cold_pair(x);
+            for set in [Metastable::LocalMinima, Metastable::LocalMinimaAndNeighbours] {
+                let a = tau_int_censored(&g, 1.0, Kernel::SequentialGibbs, s1, set, 1e-13).unwrap();
+                assert_eq!(a.route, Route::Censored);
+                let rel = (a.tau_int - want).abs() / want;
+                assert!(rel < 1e-13, "2 beta J = {x}, {set:?}: {:e} against {want:e}, rel {rel:e}", a.tau_int);
+            }
+            let krylov = tau_int_krylov(&g, 1.0, Kernel::SequentialGibbs, s1, 1e-8, 1_000);
+            let solved = tau_int_solved(&g, 1.0, Kernel::SequentialGibbs, s1, 1e-8, 1_000).unwrap();
+            assert!((solved.tau_int - want).abs() <= 1e-8 * want, "2 beta J = {x}: tau_int_solved {:e}", solved.tau_int);
+            if x >= 40.0 {
+                assert!(
+                    matches!(krylov, Err(AutocorrError::BeyondF64 { inv_norm, .. }) if inv_norm * f64::EPSILON > 1.0),
+                    "2 beta J = {x}: Krylov must refuse a chain past f64, got {krylov:?}"
+                );
+                assert_eq!(solved.route, Route::Censored);
+            }
+            if x == 16.0 {
+                let k = krylov.expect("tau 2.2e6 is inside what f64 can certify at 1e-8");
+                assert!((k.tau_int - want).abs() <= 1e-8 * want, "Krylov at 16: {:e}", k.tau_int);
+            }
+        }
+    }
+
+    /// THE KRYLOV TAU IS THE DENSE TAU FOR EVERY KERNEL, at `n = 9`, warm and cold, CG where the
+    /// kernel is reversible and GMRES elsewhere -- and each under its OWN law: the verifier of
+    /// 2026-09-28 found GMRES handed the Boltzmann law converging on the fabric and on tick-random to a
+    /// tau `6.2e-4` and `13.7%` off. The tolerance is what each route can attain: the Krylov estimate
+    /// plus `16 u K (tau + 1/2)`, `K` Kemeny's constant, for the dense LU, which at beta 2 is the
+    /// LESS accurate of the two (the random scan: dense `3.65e-9` from Krylov, estimate `6.5e-9`).
+    #[test]
+    fn the_krylov_tau_is_the_dense_tau_for_every_kernel() {
+        let g = grid_glass(3, 3, 5);
+        let every = [
+            Kernel::ChromaticGibbs,
+            Kernel::SequentialGibbs,
+            Kernel::RandomScan,
+            Kernel::Synchronous,
+            Kernel::Pimi { xi: 0.25, eta: 0.8 },
+            Kernel::Stale { p: 0.1 },
+            Kernel::TickRandom { p: 0.5 },
+            Kernel::Sca { q: 1.0 },
+            Kernel::SiteSpread { seed: 3, spread: 0.2 },
+            Kernel::FixedFabric,
+            Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 20 },
+            Kernel::Informed(Balance::Barker),
+            Kernel::Informed(Balance::Sqrt),
+            Kernel::Informed(Balance::Metropolis),
+        ];
+        for (beta, rtol) in [(1.0, 1e-10), (2.0, 1e-8)] {
+            for kernel in every {
+                let dense = tau_int_fundamental(&g, beta, kernel, |s| g.energy(s)).unwrap();
+                let k = tau_int_krylov(&g, beta, kernel, |s| g.energy(s), rtol, 5_000)
+                    .unwrap_or_else(|e| panic!("{kernel:?} at beta {beta}: {e}"));
+                let want = if reversible(kernel, &g) { Route::Cg } else { Route::Gmres };
+                assert_eq!(k.route, want, "{kernel:?}");
+                let kemeny = kemeny_constant(&g, beta, kernel).unwrap();
+                let tol = k.err_est.unwrap() + 16.0 * f64::EPSILON * kemeny * (dense.tau_int + 0.5);
+                let diff = (k.tau_int - dense.tau_int).abs();
+                assert!(
+                    diff <= tol,
+                    "{kernel:?} at beta {beta}: Krylov {:.12e} dense {:.12e}, diff {diff:.2e} past {tol:.2e}",
+                    k.tau_int,
+                    dense.tau_int
+                );
+                assert!(k.matvecs < 200, "{kernel:?} at beta {beta}: {} applications", k.matvecs);
+            }
+        }
+    }
+
+    /// Above the dense cap the Krylov tau is the lag sum's, on a warm 14-spin grid where the lag sum
+    /// converges -- two independent routes, one of them summing nothing but `apply`. And the kernels
+    /// whose law needs the dense solve are REFUSED there rather than handed the Boltzmann law.
+    #[test]
+    fn above_the_dense_cap_the_krylov_tau_is_the_lag_sum_and_a_dense_law_is_refused() {
+        let g = grid_glass(7, 2, 11);
+        let beta = 0.5;
+        assert!(tau_int_fundamental(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).is_err());
+        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs, Kernel::RandomScan, Kernel::Informed(Balance::Barker)] {
+            let k = tau_int_krylov(&g, beta, kernel, |s| g.energy(s), 1e-12, 2_000).unwrap();
+            let lag = tau_int_exact(&g, beta, kernel, |s| g.energy(s), 1e-15, 100_000).unwrap();
+            assert!(lag.lags < 100_000, "{kernel:?}: the lag sum must converge to be a reference");
+            let rel = (k.tau_int - lag.tau_int).abs() / lag.tau_int;
+            assert!(rel < 1e-11, "{kernel:?}: Krylov {} lag sum {} ({} lags), rel {rel:e}", k.tau_int, lag.tau_int, lag.lags);
+        }
+        for kernel in [Kernel::FixedFabric, Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 20 }, Kernel::SiteSpread { seed: 1, spread: 0.1 }] {
+            assert_eq!(
+                tau_int_krylov(&g, beta, kernel, |s| g.energy(s), 1e-10, 100),
+                Err(AutocorrError::TooManyForDense { n: 14, max: MAX_DENSE_SPINS }),
+                "{kernel:?}"
+            );
+        }
+        let big = grid_glass(5, 3, 11);
+        for kernel in [Kernel::Synchronous, Kernel::TickRandom { p: 0.5 }] {
+            assert_eq!(
+                tau_int_krylov(&big, beta, kernel, |s| big.energy(s), 1e-10, 100),
+                Err(AutocorrError::TooManySpins { n: 15, max: 14 }),
+                "{kernel:?}"
+            );
+        }
+    }
+
+    /// The law check: the fabric's own law is invariant under the fabric's kernel to rounding, and
+    /// the Boltzmann law is not -- by more than [`LAW_TOLERANCE`] -- so a law arm that said
+    /// "Boltzmann" for the fabric would be refused before any solve.
+    #[test]
+    fn a_law_that_is_not_the_kernels_is_refused() {
+        let g = grid_glass(3, 3, 5);
+        for kernel in [Kernel::FixedFabric, Kernel::TickRandom { p: 0.5 }] {
+            let own = stationary_solved(&g, 1.0, kernel).unwrap();
+            assert!(check_law(&g, 1.0, kernel, own).is_ok(), "{kernel:?}'s own law");
+            match check_law(&g, 1.0, kernel, boltzmann(&g, 1.0).unwrap()) {
+                Err(AutocorrError::LawNotInvariant { residual }) => assert!(residual > 1e-6, "{kernel:?}: {residual:e}"),
+                other => panic!("{kernel:?} handed Boltzmann: {other:?}"),
+            }
+        }
+    }
+
+    /// The stopping rule refuses to return a number it cannot certify: a tolerance below f64's floor
+    /// for a cold chain is [`AutocorrError::AtFloor`], not `Ok`, and a budget too small is
+    /// [`AutocorrError::NotConverged`] -- each carrying its iterate for the record.
+    #[test]
+    fn a_tolerance_f64_cannot_certify_is_refused_not_returned() {
+        let g = grid_glass(3, 3, 5);
+        for kernel in [Kernel::ChromaticGibbs, Kernel::RandomScan] {
+            let floor = tau_int_krylov(&g, 2.0, kernel, |s| g.energy(s), 1e-14, 5_000);
+            assert!(matches!(floor, Err(AutocorrError::AtFloor { .. })), "{kernel:?} at rtol 1e-14: {floor:?}");
+            let short = tau_int_krylov(&g, 2.0, kernel, |s| g.energy(s), 1e-8, 4);
+            assert!(matches!(short, Err(AutocorrError::NotConverged { .. })), "{kernel:?} with 4 applications: {short:?}");
+        }
     }
 }
