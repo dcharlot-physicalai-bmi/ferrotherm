@@ -3,8 +3,12 @@
 //
 // Every "joules per independent sample", every "flips per independent sample", every
 // `Finding::Undermixed`, and both tables in `informed.rs` divide by an effective sample size that
-// comes from `certify::tau_int`: Sokal's automatic windowing over an empirical autocorrelation,
-// truncated at the first window W >= 5 tau. That estimator has a known bias -- it truncates a tail
+// came from `certify::tau_int`: until 2026-09-28 that was Sokal's automatic windowing over an
+// empirical autocorrelation, truncated at the first window W >= 5 tau (now `certify::tau_int_sokal`,
+// column S). This example is what found it wanting, and since 2026-09-28 it also scores what
+// replaced it on the same traces: Geyer's initial monotone sequence (`certify::tau_int`, column G)
+// and the value every error bar now carries, the larger of that and long-batch means
+// (`certify::tau_estimate`, column C). That estimator has a known bias -- it truncates a tail
 // that is positive, and on a trace not much longer than tau it sees the slow mode only partly --
 // and nothing here has ever measured the bias against a value that does not itself come from a
 // trace.
@@ -18,7 +22,7 @@
 //
 // and tau_exact = 1/2 + sum_{k>=1} C(k)/C(0), summed until the tail is below floating point. No
 // sampling, no windowing, no trace: linear algebra on pi and P. Then the SAME kernel is run as a
-// chain, its energy trace handed to `certify::tau_int`, and the ratio tau_sokal / tau_exact
+// chain, its energy trace handed to each estimator, and the ratio estimate / tau_exact
 // reported as a function of the trace length in units of tau. The question with an answer:
 //
 //     at how many tau of trace does Sokal's estimate land within 10% of the truth, and on which
@@ -32,7 +36,7 @@
 // run: cargo run --release --example tau_exactness
 
 use ferrotherm::autocorr::{tau_int_fundamental, Kernel};
-use ferrotherm::certify::tau_int;
+use ferrotherm::certify::{tau_estimate, tau_int, tau_int_sokal};
 use ferrotherm::fft::autocovariance;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
@@ -128,6 +132,8 @@ fn tau_batch(trace: &[f64], b: usize) -> f64 {
 
 struct Estimates {
     sokal: (f64, f64),
+    geyer: (f64, f64),
+    carried: (f64, f64),
     extended: (f64, f64),
     batch: (f64, f64),
 }
@@ -142,6 +148,7 @@ fn mean_sd(v: &[f64]) -> (f64, f64) {
 /// a burn-in of `burn` sweeps. Means and standard deviations over the reps.
 fn tau_sampled(g: &Graph, beta: f64, len: usize, burn: usize, reps: u64) -> Estimates {
     let (mut s_v, mut e_v, mut b_v) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut g_v, mut c_v) = (Vec::new(), Vec::new());
     for r in 0..reps {
         let mut s = Sampler::new(g, beta, 1000 + r);
         s.sweeps(burn, None);
@@ -150,11 +157,19 @@ fn tau_sampled(g: &Graph, beta: f64, len: usize, burn: usize, reps: u64) -> Esti
             s.sweep(None);
             trace.push(g.energy(&s.s));
         }
-        s_v.push(tau_int(&trace));
+        s_v.push(tau_int_sokal(&trace));
+        g_v.push(tau_int(&trace));
+        c_v.push(tau_estimate(&[&trace]).tau);
         e_v.push(tau_extended(&trace));
         b_v.push(tau_batch(&trace, 20));
     }
-    Estimates { sokal: mean_sd(&s_v), extended: mean_sd(&e_v), batch: mean_sd(&b_v) }
+    Estimates {
+        sokal: mean_sd(&s_v),
+        geyer: mean_sd(&g_v),
+        carried: mean_sd(&c_v),
+        extended: mean_sd(&e_v),
+        batch: mean_sd(&b_v),
+    }
 }
 
 fn main() {
@@ -168,8 +183,11 @@ fn main() {
     );
     println!("  oracle   autocorr::tau_int_fundamental on all 2^{n} states: one dense solve per temperature, no lags");
     println!("  chain    gibbs::Sampler, the same sweep, traces of L sweeps after a burn-in of 20 tau, 16 reps\n");
-    println!("  estimators   S = certify::tau_int (Sokal, window at 5 tau); X = the same sum extended past the");
-    println!("               window while rho stays above twice its noise; B = batch means, 20 batches.");
+    println!("  estimators   S = certify::tau_int_sokal (Sokal, window at 5 tau, the crate's tau_int until");
+    println!("               2026-09-28); G = certify::tau_int (Geyer's initial monotone sequence, now);");
+    println!("               C = certify::tau_estimate (the larger of G and batch means at N/20, what every");
+    println!("               error bar carries); X = Sokal's sum extended past the window while rho stays");
+    println!("               above twice its noise; B = batch means, 20 batches.");
     println!("               Each cell is estimate / exact, mean over 16 reps, with sd/mean in brackets.\n");
     let mults = [30.0f64, 100.0, 1_000.0, 10_000.0];
     // The longest trace this run will draw, per rep: 2^26 sweeps (a 2^27-point transform, 2 GB).
@@ -180,7 +198,7 @@ fn main() {
         "  {:>5} {:>12}   {}",
         "beta",
         "tau exact",
-        mults.iter().map(|m| format!("{:>26}", format!("L = {m:.0} tau: S / X / B"))).collect::<Vec<_>>().join("  ")
+        mults.iter().map(|m| format!("{:>44}", format!("L = {m:.0} tau: S / G / C / X / B"))).collect::<Vec<_>>().join("  ")
     );
     let mut worst: Vec<(f64, &str, f64)> = Vec::new(); // (mult, estimator, worst |ratio - 1|)
     for &beta in &[0.5f64, 1.0, 1.5, 2.0] {
@@ -189,14 +207,23 @@ fn main() {
         for &mlt in &mults {
             let len = ((mlt * te).ceil() as usize).max(64);
             if len > cap {
-                cells.push(format!("{:>8} {:>8} {:>8}", "-", "-", "-"));
+                cells.push(format!("{:>8} {:>8} {:>8} {:>8} {:>8}", "-", "-", "-", "-", "-"));
                 continue;
             }
             let burn = ((20.0 * te).ceil() as usize).max(16);
             let e = tau_sampled(&g, beta, len, burn, 16);
             let f = |(m, sd): (f64, f64)| format!("{:.2}({:.0}%)", m / te, 100.0 * sd / m.max(1e-300));
-            cells.push(format!("{:>8} {:>8} {:>8}", f(e.sokal), f(e.extended), f(e.batch)));
-            for (name, (m, _)) in [("S", e.sokal), ("X", e.extended), ("B", e.batch)] {
+            cells.push(format!(
+                "{:>8} {:>8} {:>8} {:>8} {:>8}",
+                f(e.sokal),
+                f(e.geyer),
+                f(e.carried),
+                f(e.extended),
+                f(e.batch)
+            ));
+            for (name, (m, _)) in
+                [("S", e.sokal), ("G", e.geyer), ("C", e.carried), ("X", e.extended), ("B", e.batch)]
+            {
                 worst.push((mlt, name, (m / te - 1.0).abs()));
             }
         }
@@ -210,7 +237,7 @@ fn main() {
     println!("  closing on a fast mode and never summing a slow one, and no trace length repairs it.");
     println!("\n  Worst |estimate/exact - 1| over the five temperatures:");
     for &mlt in &mults {
-        let row: Vec<String> = ["S", "X", "B"]
+        let row: Vec<String> = ["S", "G", "C", "X", "B"]
             .iter()
             .map(|name| {
                 let w = worst
