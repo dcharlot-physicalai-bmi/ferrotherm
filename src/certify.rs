@@ -1672,7 +1672,7 @@ mod tests {
     /// short (no batch means) and long, through the entry point, the certificate and a sample set.
     #[test]
     fn ess_never_exceeds_the_draws_and_a_failed_sum_is_a_finding() {
-        let sign = |t: usize| if t % 2 == 0 { 1.0 } else { -1.0 };
+        let sign = |t: usize| if t.is_multiple_of(2) { 1.0 } else { -1.0 };
         let mut rng = Pcg::new(19, 3);
         let mut gauss = || {
             (-2.0 * rng.f64().max(1e-12).ln()).sqrt() * (core::f64::consts::TAU * rng.f64()).cos()
