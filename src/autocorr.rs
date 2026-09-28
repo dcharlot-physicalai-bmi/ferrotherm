@@ -47,6 +47,31 @@
 //! relaxation time: a mixing measure of the kernel alone, where `tau_int` is of one observable
 //! under one law and can fall when the law moves mass out of a slow valley.
 //!
+//! # Above twelve spins, and past floating point
+//!
+//! The dense solve stops at [`MAX_DENSE_SPINS`]. [`tau_int_krylov`] solves the same system
+//! matrix-free -- conjugate gradients where the kernel is [`reversible`], GMRES otherwise, both in the
+//! `pi`-weighted inner product -- in a number of applications of the kernel that grows with
+//! `ln tau`, to [`MAX_KRYLOV_SPINS`]: the informed-against-Gibbs table of
+//! `examples/informed_scaling_exact.rs` runs to 20 spins in under seven minutes of one core, where
+//! the lag sum had not finished 14 in three hours. A chain frozen past `||A^-1|| = 1/u` has no digit
+//! for any normwise-stable f64 solve; [`tau_int_censored`] eliminates it exactly onto its metastable
+//! states with GTH arithmetic and returns taus of `1e13` to `1e100` sweeps on the four-city TSP
+//! chains. [`tau_int_solved`] runs the first and falls to the second, and each result names its
+//! [`Route`]. [`time_to_mass`] answers the other question a frozen chain poses -- how long until a
+//! pushed law holds its stationary mass -- exactly by pushing, and on the slow scale past that.
+//! Accuracy, measured against a double-double reference on the 4x3 grid at `beta = 2`
+//! (`tau = 1.6e6`, scout of 2026-09-28): censored `3.3e-12`, GMRES `1.2e-10`, dense LU `3.2e-9` --
+//! so a test that compares routes uses a tolerance scaled by the attainable accuracy
+//! `u ||A^-1||`, never a fixed one.
+//!
+//! # The complement
+//!
+//! Every exact operator here states a site's two outcomes separately ([`crate::kernel::p_pair`], and
+//! per kernel `site_pair`), never one as `1 -` the other. Until 2026-09-28 the down-flip was
+//! `1 - p_up`, which is exactly zero once `2 beta f > 36.74`: the TSP chains at penalty `A >= 26`
+//! could not leave a tour, and their exact tau was 2.2 million to 15 million times the heat bath's.
+//!
 //! # What the fabric's law is
 //!
 //! `examples/nearest_boltzmann.rs` projects the fabric's exact law onto the Boltzmann family by
@@ -2456,6 +2481,76 @@ fn gth_poisson(rate: &[f64], b: &[f64], nf: usize, keep: usize) -> Option<Vec<f6
     Some(z)
 }
 
+/// The largest spin count [`SweepTable`] tables: two `f64` per site per state is 84 MB at 18 spins.
+const MAX_TABLED_SPINS: usize = 18;
+
+/// A sweep kernel's site probabilities, tabled once for a route that pushes the same kernel hundreds
+/// or thousands of times -- the censored solves and [`time_to_mass`]. The sites in the order
+/// [`apply_distribution`] updates them, and for each the two tails [`site_pair`] gives at every
+/// state; a push is then the same products and sums [`apply_distribution`] forms, in the same
+/// order, bit for bit (`a_tabled_push_is_apply_distribution_to_the_bit`), at a fifteenth of the cost
+/// on the TSP chains.
+struct SweepTable {
+    order: Vec<usize>,
+    up: Vec<Vec<f64>>,
+    down: Vec<Vec<f64>>,
+}
+
+impl SweepTable {
+    /// `None` for a kernel that is not a site-by-site sweep, or above [`MAX_TABLED_SPINS`].
+    fn new(g: &Graph, beta: f64, kernel: Kernel) -> Option<SweepTable> {
+        if g.n > MAX_TABLED_SPINS {
+            return None;
+        }
+        let order: Vec<usize> = match kernel {
+            Kernel::SequentialGibbs => (0..g.n).collect(),
+            Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
+                g.classes.iter().flat_map(|c| c.iter().map(|&i| i as usize)).collect()
+            }
+            _ => return None,
+        };
+        let m = 1usize << g.n;
+        let (mut up, mut down) = (Vec::with_capacity(g.n), Vec::with_capacity(g.n));
+        for &i in &order {
+            let (mut u, mut d) = (vec![0.0f64; m], vec![0.0f64; m]);
+            for_each_state(g.n, |x, s| {
+                // The sequential arm of `apply_distribution` calls `p_pair` directly, which is what
+                // `site_pair` does for it: the same two numbers.
+                let (p, q) = site_pair(g, beta, kernel, i, s);
+                u[x] = p;
+                d[x] = q;
+            });
+            up.push(u);
+            down.push(d);
+        }
+        Some(SweepTable { order, up, down })
+    }
+
+    /// `mu P`, as [`apply_distribution`] computes it.
+    fn push(&self, mu: &[f64]) -> Vec<f64> {
+        let mut cur = mu.to_vec();
+        let mut next = vec![0.0f64; mu.len()];
+        for (k, &i) in self.order.iter().enumerate() {
+            let bit = 1usize << i;
+            let (up, down) = (&self.up[k], &self.down[k]);
+            for x in 0..mu.len() {
+                let pooled = cur[x | bit] + cur[x & !bit];
+                next[x] = if x & bit != 0 { up[x] * pooled } else { down[x] * pooled };
+            }
+            std::mem::swap(&mut cur, &mut next);
+        }
+        cur
+    }
+}
+
+/// `mu P` through the table when there is one, [`apply_distribution`] otherwise.
+fn push_with(table: Option<&SweepTable>, g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> Vec<f64> {
+    match table {
+        Some(t) => t.push(mu),
+        None => apply_distribution(g, beta, kernel, mu),
+    }
+}
+
 /// What both censored routes build: a metastable set `F`, the rest `T`, pushes of the kernel, and
 /// the row-vector solve `v (I - P_TT) = r` on `T`.
 struct Censor<'a> {
@@ -2466,6 +2561,7 @@ struct Censor<'a> {
     in_f: Vec<usize>,
     inner_rtol: f64,
     pushes: std::cell::Cell<usize>,
+    table: Option<SweepTable>,
 }
 
 impl<'a> Censor<'a> {
@@ -2475,7 +2571,8 @@ impl<'a> Censor<'a> {
         for (k, &f) in fset.iter().enumerate() {
             in_f[f] = k;
         }
-        Ok(Censor { g, beta, kernel, fset, in_f, inner_rtol, pushes: std::cell::Cell::new(0) })
+        let table = SweepTable::new(g, beta, kernel);
+        Ok(Censor { g, beta, kernel, fset, in_f, inner_rtol, pushes: std::cell::Cell::new(0), table })
     }
 
     fn in_t(&self, x: usize) -> bool {
@@ -2484,7 +2581,7 @@ impl<'a> Censor<'a> {
 
     fn push(&self, mu: &[f64]) -> Vec<f64> {
         self.pushes.set(self.pushes.get() + 1);
-        apply_distribution(self.g, self.beta, self.kernel, mu)
+        push_with(self.table.as_ref(), self.g, self.beta, self.kernel, mu)
     }
 
     /// `v` with `v (I - P_TT) = r|_T`: restarted GMRES on pushes restricted to `T`, to a relative
@@ -2601,7 +2698,8 @@ pub fn tau_int_censored(
     let w = c.solve_t(&pe)?;
     let wp = c.push(&w);
     let we: f64 = (0..m).filter(|&x| c.in_t(x)).map(|x| w[x] * e[x]).sum();
-    let keep = (0..nf).max_by(|&a, &b| pi[c.fset[a]].total_cmp(&pi[c.fset[b]])).expect("F is not empty");
+    // F is never empty (`metastable_states` refuses an empty set), so the 0 is never read.
+    let keep = (0..nf).max_by(|&a, &b| pi[c.fset[a]].total_cmp(&pi[c.fset[b]])).unwrap_or(0);
     let zf = gth_poisson(&rate, &bf, nf, keep).ok_or(AutocorrError::Reducible)?;
     let mut total = we;
     for (k, &f) in c.fset.iter().enumerate() {
@@ -2780,9 +2878,10 @@ pub fn time_to_mass(
     let stationary: f64 = pi.iter().zip(&tgt).map(|(p, t)| p * t).sum();
     let holds = |mass: f64| (mass - stationary).abs() <= rel * stationary;
     let mass_of = |mu: &[f64]| mu.iter().zip(&tgt).map(|(p, t)| p * t).sum::<f64>();
+    let table = SweepTable::new(g, beta, kernel);
     let mut mu = start.to_vec();
     for k in 1..=max_pushes {
-        mu = apply_distribution(g, beta, kernel, &mu);
+        mu = push_with(table.as_ref(), g, beta, kernel, &mu);
         if holds(mass_of(&mu)) {
             return Ok(MassTime { steps: k as f64, stationary, route: MassRoute::Pushed, handover: 0.0, pushes: 1 + k });
         }
@@ -2932,15 +3031,16 @@ mod tests {
     /// `2^-16`, which is the hardware, not a rounding.
     #[test]
     fn a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel() {
-        // 1 / (1 + e^x) and e^-x, each to 20 digits by mpmath at 40 digits: independent of this
-        // file. The informed chain's move probability is `min(1, e^-x)` under every balance.
+        // 1 / (1 + e^x) and e^-x by mpmath at 40 digits, rounded to the nearest f64 (at these x they
+        // are the same f64): independent of this file. The informed chain's move probability is
+        // `min(1, e^-x)` under every balance.
         let cases = [
-            (40.0, 4.2483542552915889773e-18, 4.2483542552915889953e-18),
-            (700.0, 9.8596765437597708567e-305, 9.8596765437597708567e-305),
+            (40.0, 4.248354255291589e-18, 4.248354255291589e-18),
+            (700.0, 9.85967654375977e-305, 9.85967654375977e-305),
         ];
         // PIMI at xi 0.5, eta 0.1: tanh(beta h) is 1 in f64 at both fields, so the tail is
         // Phi(-(1 + 0.5) / 0.1) = Phi(-15).
-        let pimi_tail = 3.6709661993127508858e-51;
+        let pimi_tail = 3.670966199312751e-51;
         for &(x, heat, informed) in &cases {
             let mut b = GraphBuilder::new(1);
             b.bias(0, x / 2.0);
@@ -2980,17 +3080,17 @@ mod tests {
     #[test]
     fn the_normal_tails_are_accurate_on_both_sides_and_far_out() {
         let exact = [
-            (0.3, 0.38208857781104736693),
-            (1.0, 0.15865525393145705141),
-            (1.5, 0.066807201268858066004),
-            (2.0, 0.0227501319481792072),
-            (3.0, 0.0013498980316300945267),
-            (5.0, 2.8665157187919391167e-7),
-            (7.5, 3.1908916729108962278e-14),
-            (10.0, 7.619853024160526066e-24),
-            (15.0, 3.6709661993127508858e-51),
-            (20.0, 2.7536241186062336951e-89),
-            (37.0, 5.7255712225245768227e-300),
+            (0.3, 0.3820885778110474),
+            (1.0, 0.15865525393145705),
+            (1.5, 0.06680720126885807),
+            (2.0, 0.02275013194817921),
+            (3.0, 0.0013498980316300946),
+            (5.0, 2.866515718791939e-7),
+            (7.5, 3.1908916729108963e-14),
+            (10.0, 7.619853024160525e-24),
+            (15.0, 3.670966199312751e-51),
+            (20.0, 2.7536241186062337e-89),
+            (37.0, 5.725571222524577e-300),
         ];
         for &(z, lower) in &exact {
             let (up, down) = normal_tails(z);
@@ -4348,7 +4448,7 @@ mod tests {
         b.couple(0, 1, 1.0);
         let g = b.build();
         // 0.5 + t^2 / (1 - t^2) at t = tanh(1), mpmath at 40 digits.
-        let want = 1.8810978455418157298;
+        let want = 1.8810978455418157;
         let a = tau_int_exact(&g, 1.0, Kernel::Synchronous, |s| f64::from(s[0]), 1e-12, 10_000).unwrap();
         assert!(a.rho[0].abs() < 1e-15, "rho(1) is zero: {}", a.rho[0]);
         assert!((a.rho[1] - 1.0f64.tanh().powi(2)).abs() < 1e-14, "rho(2) = t^2: {}", a.rho[1]);
@@ -4377,10 +4477,10 @@ mod tests {
     #[test]
     fn a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it() {
         let exact = [
-            (16.0, 2221527.630126996293),
-            (30.0, 2671618645381.1155367),
-            (40.0, 58846316709254996.352),
-            (100.0, 6.720292854540338621e42),
+            (16.0, 2221527.6301269964),
+            (30.0, 2671618645381.1157),
+            (40.0, 5.8846316709255e16),
+            (100.0, 6.720292854540339e42),
         ];
         let s1 = |s: &[i8]| f64::from(s[1]);
         for &(x, want) in &exact {
@@ -4560,5 +4660,26 @@ mod tests {
         let a = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, Metastable::LocalMinima).unwrap();
         let b = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, Metastable::LocalMinimaAndNeighbours).unwrap();
         assert!(a.steps > 1e17 && (a.steps - b.steps).abs() < 1e-9 * a.steps, "J 20: {} and {}", a.steps, b.steps);
+    }
+    /// The tabled push the censored routes use is `apply_distribution` to the bit, for every sweep
+    /// kernel it tables, and there is no table for a kernel that is not a sweep.
+    #[test]
+    fn a_tabled_push_is_apply_distribution_to_the_bit() {
+        let g = grid_glass(3, 3, 5);
+        let mut rng = Pcg::new(9, 1);
+        let mu: Vec<f64> = (0..512).map(|_| rng.f64()).collect();
+        for kernel in [
+            Kernel::SequentialGibbs,
+            Kernel::ChromaticGibbs,
+            Kernel::FixedFabric,
+            Kernel::SiteSpread { seed: 3, spread: 0.2 },
+        ] {
+            let t = SweepTable::new(&g, 1.3, kernel).expect("a sweep kernel is tabled");
+            let (a, b) = (t.push(&mu), apply_distribution(&g, 1.3, kernel, &mu));
+            assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()), "{kernel:?}");
+        }
+        for kernel in [Kernel::RandomScan, Kernel::Synchronous, Kernel::Informed(Balance::Barker), Kernel::Stale { p: 0.1 }] {
+            assert!(SweepTable::new(&g, 1.3, kernel).is_none(), "{kernel:?}");
+        }
     }
 }

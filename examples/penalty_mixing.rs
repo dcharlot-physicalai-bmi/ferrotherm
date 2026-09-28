@@ -128,9 +128,13 @@ fn main() {
     let instances = 12u64;
     let beta = 1.0;
     let rel = 0.01;
-    // Pushes before the slow scale takes over: a chain whose tau needed the censored solve is
-    // frozen, and its fast relaxation is long over by then (the hand-over column says by how much).
-    let (push_warm, push_frozen) = (100_000usize, 200usize);
+    // Pushes before the slow scale takes over. Where tau is under a million sweeps the law is pushed
+    // all the way (a budget of 20 tau + 10,000 sweeps), so the answer is exact; above that the chain
+    // is frozen, its fast relaxation is long over after 200 sweeps (the hand-over line below says by
+    // how much), and the slow scale answers. The ROUTE of tau is no guide: instance 2's max(W) chain
+    // (tau 354) is too ill-conditioned for GMRES to certify 1e-10 and goes to the censored solve.
+    let push_frozen = 200usize;
+    let budget_for = |tau: f64| if tau < 1e6 { (20.0 * tau) as usize + 10_000 } else { push_frozen };
     println!("WHAT A PENALTY COSTS IN SWEEPS -- exact, sequential Gibbs on all 2^16 states of four-city TSPs, beta = {beta}\n");
     println!("  penalties  just above A_crit; Lucas's max(W); the provable threshold; four times it");
     println!("  columns    P_GS at equilibrium; tau_int of the energy (sweeps); sweeps from uniform to within {}% of P_GS", rel * 100.0);
@@ -145,6 +149,7 @@ fn main() {
     let mut wins = [0usize; 4];
     let mut worst_handover = 0.0f64;
     let mut frozen_route = [0usize; 4];
+    let mut slow_route = [0usize; 4];
     for seed in 0..instances {
         let w = weights(n, seed);
         let inst = analyse(n, &w);
@@ -156,7 +161,7 @@ fn main() {
             let g = model.graph();
             let tau = tau_int_solved(g, beta, Kernel::SequentialGibbs, |s| g.energy(s), 1e-10, 3_000)
                 .unwrap_or_else(|e| panic!("instance {seed}, A = {a}: {e}"));
-            let budget = if tau.route == Route::Censored { push_frozen } else { push_warm };
+            let budget = budget_for(tau.tau_int);
             let start = vec![1.0 / (1usize << g.n) as f64; 1usize << g.n];
             let k: MassTime = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, budget, Metastable::LocalMinima)
                 .unwrap_or_else(|e| panic!("instance {seed}, A = {a}: {e}"));
@@ -165,6 +170,9 @@ fn main() {
             }
             if tau.route == Route::Censored {
                 frozen_route[i] += 1;
+            }
+            if k.route == MassRoute::SlowScale {
+                slow_route[i] += 1;
             }
             cells.push(format!(
                 "{:>5.3} {:>9}{} {:>9}{}",
@@ -197,15 +205,16 @@ fn main() {
     let names = ["just above A_crit", "max(W)", "provable threshold", "4x threshold"];
     for (i, name) in names.iter().enumerate() {
         println!(
-            "    {name:<20} P_GS {:.3}   tau_int {:>10} sweeps   sweeps to 1% of P_GS {:>10}   fastest on {:>2}   censored route on {:>2}",
+            "    {name:<20} P_GS {:.3}   tau_int {:>10} sweeps   sweeps to 1% of P_GS {:>10}   fastest on {:>2}   routes: censored {:>2}, slow scale {:>2}",
             mass[i] / f,
             sweeps((log_tau[i] / f).exp()),
             sweeps((log_k[i] / f).exp()),
             wins[i],
-            frozen_route[i]
+            frozen_route[i],
+            slow_route[i]
         );
     }
-    println!("    slow-scale hand-over: the pushed mass and the reduction's differed by at most {:.1e} of the 1% band", worst_handover);
+    println!("    slow-scale hand-over: the pushed mass and the reduction's differed by at most {worst_handover:.1e} of the 1% band");
 
     // THE CHECKS THE TWO NEW ROUTES CARRY IN PLACE OF AN ERROR BAR.
     println!("\n  CHECKS");
@@ -235,7 +244,7 @@ fn main() {
         let model = Tsp::with_weights(n, &w, 1.0, inst.max_w).expect("valid");
         let g = model.graph();
         let start = vec![1.0 / (1usize << g.n) as f64; 1usize << g.n];
-        let pushed = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, push_warm, Metastable::LocalMinima)
+        let pushed = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, 200_000, Metastable::LocalMinima)
             .expect("pushed");
         let reduced = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, push_frozen, Metastable::LocalMinima)
             .expect("reduced");

@@ -580,9 +580,9 @@ mod tests {
     #[test]
     fn every_rule_keeps_its_down_flip_against_a_strong_field() {
         let cases = [
-            (Rule::HeatBath, 20.0, 4.2483542552915889773e-18),
-            (Rule::Arrhenius { p0: 0.5 }, 40.0, 2.1241771276457944932e-18),
-            (Rule::Sca { q: 3.0 }, 40.0, 1.0530617357553830427e-20),
+            (Rule::HeatBath, 20.0, 4.248354255291589e-18),
+            (Rule::Arrhenius { p0: 0.5 }, 40.0, 2.1241771276457944e-18),
+            (Rule::Sca { q: 3.0 }, 40.0, 1.053061735755383e-20),
         ];
         for (rule, h, want) in cases {
             let mut b = GraphBuilder::new(1);

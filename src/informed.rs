@@ -117,11 +117,13 @@
 //! literature's "order of magnitude" (Zanella 2020, Grathwohl 2021) is reached on this fixture
 //! only past a thousand spins, and was never true of the implementation that shipped, in any
 //! direction. The exact small-model version of the same comparison, with no estimator in it, is
-//! `examples/informed_scaling_exact.rs`: 2.0x, 2.0x, 2.7x, 3.3x, 2.9x per flip at
-//! `n = 6, 8, 10, 12, 14` (the last two by the fundamental matrix and by a converged lag sum of
-//! 480,209 lags, 2026-09-13), a work loss under the scan at every size (0.57x to 0.72x) and a win
-//! under the tree that grows from 1.06x to 1.59x at `n = 12` -- the exact version of the sampled
-//! table's direction, at sizes where nothing is estimated.
+//! `examples/informed_scaling_exact.rs`: 2.0x, 2.0x, 2.7x, 3.3x, 2.9x, 3.7x, 3.3x, 4.3x per flip at
+//! `n = 6, 8, ..., 20`, each tau a matrix-free solve of the fundamental-matrix system
+//! (`autocorr::tau_int_solved`, 2026-09-28; the dense solve agrees to `2.4e-10` where it runs), a
+//! work loss under the scan at every size (0.53x to 0.72x) and a win under the tree at every size
+//! (1.06x to 1.89x, the largest at `n = 20`) -- the exact version of the sampled table's direction,
+//! at sizes where nothing is estimated. Not smooth in `n`: four seeds a row, and one glassy seed can carry a row
+//! (seed 3 at `n = 18`, seed 0 at `n = 20`).
 
 use crate::graph::Graph;
 use crate::rng::Pcg;

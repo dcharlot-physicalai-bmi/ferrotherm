@@ -99,9 +99,17 @@ jobs:
           FERROTHERM_EXAMPLE_SMOKE: "1"
         run: |
           set -euo pipefail
+          # Empty is a state, not a failure: since 2026-09-28 every example finishes in some hosted job
+          # (the two that were here now run in full in the weekly shards). A LISTED example that does
+          # not run is still a failure below.
+          listed=$(awk '!/^#/ && NF {print $1}' examples/LOCAL)
+          if [ -z "$listed" ]; then
+            echo "  examples/LOCAL is empty: every example runs in full on a hosted runner"
+            exit 0
+          fi
           ran=0
           failed=""
-          for n in $(awk '!/^#/ && NF {print $1}' examples/LOCAL); do
+          for n in $listed; do
             [ -f "examples/$n.rs" ] || { echo "examples/LOCAL names $n, which does not exist" >&2; exit 2; }
             grep -q FERROTHERM_EXAMPLE_SMOKE "examples/$n.rs" || { echo "examples/$n.rs is in examples/LOCAL but has no smoke mode" >&2; exit 2; }
             start=$SECONDS

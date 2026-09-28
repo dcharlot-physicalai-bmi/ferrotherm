@@ -173,14 +173,14 @@ mod tests {
 
     #[test]
     fn the_down_probability_is_exact_where_one_minus_p_up_rounds_to_zero() {
-        // 1 / (1 + e^x) at x = 2 beta f, to 20 digits by mpmath at 40 (and bc at 60, which agrees
-        // on every digit printed): an independent computation, not this file's arithmetic.
+        // 1 / (1 + e^x) at x = 2 beta f by mpmath at 40 digits (and bc at 60, which agrees), rounded
+        // to the nearest f64: an independent computation, not this file's arithmetic.
         let exact = [
-            (12.0, 6.1441746022147178256e-6),
-            (16.0, 1.1253516205509499058e-7),
-            (36.8, 1.0422287905595889498e-16),
-            (40.0, 4.2483542552915889773e-18),
-            (700.0, 9.8596765437597708567e-305),
+            (12.0, 6.144174602214718e-6),
+            (16.0, 1.12535162055095e-7),
+            (36.8, 1.042228790559589e-16),
+            (40.0, 4.248354255291589e-18),
+            (700.0, 9.85967654375977e-305),
         ];
         for &(x, want) in &exact {
             // beta = 1 and beta = 2 at the same product: the complement depends on 2 beta f only.
