@@ -29,7 +29,8 @@
 //! with a standard deviation of 45: the published 100.85 was seed 17, at about the 17th
 //! percentile. So now every `tau` is [`ferrotherm::certify::tau_estimate`] -- Geyer's initial
 //! monotone sequence with long-batch means beside it, the larger carried -- over five seeds at
-//! `200 L^2` draws, which is at least 1,000 autocorrelation times at every size here, and every
+//! `400 L^2` draws, which is at least 1,000 autocorrelation times at every size here (asserted: a
+//! first run at `200 L^2` put one seed at `L = 24` at 771), and every
 //! cell prints the median with the range over seeds and its own `draws / tau`. Geyer's value alone
 //! and Sokal's window are printed beside the carried one, so the change of estimator is visible
 //! in the output rather than asserted in a comment. `z` is fitted per seed as well as to the
@@ -55,10 +56,11 @@ const SIZES: [usize; 5] = [8, 12, 16, 24, 32];
 /// Burn-in sweeps before recording.
 const BURN: usize = 4_000;
 
-/// Draws at size `l`: `200 L^2`, and never fewer than the 40,000 the first table used. At
-/// `z` near 2.1 and `tau(8)` near 6.5 sweeps that is at least 1,000 `tau` at every size.
+/// Draws at size `l`: `400 L^2`, and never fewer than the 40,000 the first table used. At
+/// `z` near 2.1 and `tau(8)` near 7 sweeps that is at least 1,000 `tau` at every size -- which
+/// `main` asserts rather than trusts.
 fn draws(l: usize) -> usize {
-    (200 * l * l).max(40_000)
+    (400 * l * l).max(40_000)
 }
 
 /// Absolute magnetisation per spin, the observable whose autocorrelation defines `z`.
@@ -148,7 +150,7 @@ fn main() {
     println!("critical slowing down at beta_c = {BETA_C:.6}");
     println!(
         "tau_int of |m| by certify::tau_estimate (Geyer's sequence, long-batch means beside it, the\n\
-         larger carried), {} seeds, 200 L^2 draws (at least 40,000) after {BURN} burn-in sweeps\n",
+         larger carried), {} seeds, 400 L^2 draws (at least 40,000) after {BURN} burn-in sweeps\n",
         SEEDS.len()
     );
 
@@ -183,6 +185,7 @@ fn main() {
     // Medians of the carried tau, per sweep and per spin visited, for the fits and the ratios.
     let mut med_sweep = [[0.0f64; SIZES.len()]; 3];
     let mut med_visit = [[0.0f64; SIZES.len()]; 3];
+    let mut med_geyer = [[0.0f64; SIZES.len()]; 3];
     for (k, name) in NAMES.iter().enumerate() {
         println!("{name}");
         println!(
@@ -198,7 +201,14 @@ fn main() {
             let (vm, _, _) = spread(&rs.iter().map(|r| r.tau * r.visits).collect::<Vec<_>>());
             let (mm, _, _) = spread(&rs.iter().map(|r| r.m).collect::<Vec<_>>());
             let min_ratio = rs.iter().map(|r| r.draws as f64 / r.tau).fold(f64::INFINITY, f64::min);
+            assert!(
+                min_ratio >= ferrotherm::certify::RESOLVED_TAUS,
+                "{name}, L = {l}: a seed's chain is only {min_ratio:.0} of its own tau long; this table \
+                 claims at least {:.0} at every size, so raise `draws`",
+                ferrotherm::certify::RESOLVED_TAUS
+            );
             med_sweep[k][si] = tm;
+            med_geyer[k][si] = gm;
             med_visit[k][si] = vm;
             println!(
                 "{l:>4} {:>8}  {:>8.2} [{tlo:>7.2}..{thi:>7.2}]  {gm:>8.2}  {sm:>8.2}  {min_ratio:>9.0}  {vm:>10.0}  {mm:>6.3}",
@@ -210,8 +220,10 @@ fn main() {
             .collect();
         let (zm, zlo, zhi) = spread(&per_seed_z);
         println!(
-            "     z = {:.2} per sweep from the medians ({zm:.2} median of per-seed fits, range {zlo:.2}..{zhi:.2}),  {:.2} per spin visited\n",
+            "     z = {:.2} per sweep from the medians ({zm:.2} median of per-seed fits, range {zlo:.2}..{zhi:.2};\n       \
+             {:.2} from Geyer's medians alone),  {:.2} per spin visited\n",
             exponent(&SIZES, &med_sweep[k]),
+            exponent(&SIZES, &med_geyer[k]),
             exponent(&SIZES, &med_visit[k])
         );
     }
