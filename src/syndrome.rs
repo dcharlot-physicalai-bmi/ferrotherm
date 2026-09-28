@@ -591,6 +591,32 @@ mod tests {
         assert!(hard.iter().all(|m| m.abs() <= 1.0 + 1e-12));
     }
 
+    /// At a check strength where a flip against its field has probability below `1e-16`, the sweep
+    /// kernel still keeps the Boltzmann law state by state in RELATIVE terms: every state's inflow is
+    /// a sum of positive products, including the rare down-flips into the unlikely states. Built with
+    /// `1 - p_up` those down-flips were exactly zero, and the unlikely states' inflow with them --
+    /// invisible in total variation, a relative error of one state by state.
+    #[test]
+    fn a_stiff_relaxed_chain_keeps_every_states_boltzmann_mass_in_relative_terms() {
+        let code = Code::regular(8, 2, 4, 3).expect("a (2,4) code on 8 bits");
+        let noise = bsc(&[0u8; 8], 0.15, 6);
+        let syndrome = code.syndrome(&noise).expect("length");
+        let g = relaxed_graph(&code, &syndrome, 0.1, 30.0);
+        let kernel = relaxed_sweep_kernel(&g).expect("small");
+        let law = exact_boltzmann(&g, 1.0);
+        let mut worst = 0.0f64;
+        for y in 0..256 {
+            if law[y] < 1e-280 {
+                continue;
+            }
+            let inflow: f64 = (0..256).map(|x| law[x] * kernel[x * 256 + y]).sum();
+            worst = worst.max((inflow - law[y]).abs() / law[y]);
+        }
+        let smallest = law.iter().copied().filter(|&v| v >= 1e-280).fold(1.0f64, f64::min);
+        assert!(smallest < 1e-16, "the fixture must reach masses below 1e-16 to test anything: {smallest:e}");
+        assert!(worst < 1e-12, "the kernel moves some state's Boltzmann mass by {worst:e} of itself");
+    }
+
     /// The sequential chain over the relaxed model has its Boltzmann law as stationary law, and
     /// its autocorrelation time grows with the check strength: the relaxation's price.
     #[test]

@@ -1924,6 +1924,12 @@ fn centred(n: usize, pi: &[f64], observable: impl Fn(&[i8]) -> f64) -> Result<(V
     }
 }
 
+/// Whether an estimate of `||A^-1||` is past `1 / u`, where no normwise-stable f64 solve of the
+/// fundamental system has a digit to give ([`AutocorrError::BeyondF64`]).
+fn past_f64(inv_norm: f64) -> bool {
+    inv_norm * f64::EPSILON > 1.0
+}
+
 /// Smallest singular value of the `k x k` upper-triangular `R` (row-major, stride `ld`), by inverse
 /// iteration on `R^T R`. Zero when a diagonal entry is: `R` is then singular.
 fn sigma_min_upper(r: &[f64], ld: usize, k: usize) -> f64 {
@@ -2069,7 +2075,7 @@ fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, c
             }
             rr = rr_next;
             inv_norm = inv_norm.max(1.0 / lanczos_min(&alphas, &betas));
-            if inv_norm * f64::EPSILON > 1.0 {
+            if past_f64(inv_norm) {
                 return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
             }
             let tau = dot_pi(pi, e, &z) / c0 - 0.5;
@@ -2164,7 +2170,7 @@ fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>
                 }
                 if k % 5 == 0 || breakdown {
                     inv_norm = inv_norm.max(1.0 / sigma_min_upper(&h, ld, k));
-                    if inv_norm * f64::EPSILON > 1.0 {
+                    if past_f64(inv_norm) {
                         return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
                     }
                     let y = back_substitute(&h, ld, &gv, k);
@@ -2181,7 +2187,7 @@ fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>
             }
             if k > 0 {
                 inv_norm = inv_norm.max(1.0 / sigma_min_upper(&h, ld, k));
-                if inv_norm * f64::EPSILON > 1.0 {
+                if past_f64(inv_norm) {
                     return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
                 }
                 let y = back_substitute(&h, ld, &gv, k);
