@@ -832,7 +832,7 @@ fn stale_pair(g: &Graph, beta: f64, p: f64, i: usize, x: &[i8], y: &[i8]) -> (f6
 /// [`crate::informed`] derives; the shift that module carries cancels in every ratio and is
 /// omitted.
 ///
-/// Every site's two outcomes are weighted by the two tails [`site_pair`] states separately, never by
+/// Every site's two outcomes are weighted by the two tails `site_pair` states separately, never by
 /// `p` and `1 - p`.
 ///
 /// # Panics
@@ -2426,8 +2426,11 @@ fn gmres_euclid(op: &dyn Fn(&[f64]) -> Vec<f64>, b: &[f64], rtol: f64, max_iter:
 /// probabilities are `rate[a * nf + c]`, with `z(keep) = 0` (the system is singular with null vector
 /// `1`, and consistent). Gaussian elimination of every state but `keep`, in which each pivot -- the
 /// total rate out of the state being eliminated, to the states still in play -- is recomputed as a
-/// SUM of off-diagonal rates, never as `1 - P_c(f, f)`: the rule of Grassmann, Taksar and Heyman
-/// (1985). Every quantity the matrix side touches is then a sum of products of nonnegative numbers,
+/// SUM of off-diagonal rates, never as `1 - P_c(f, f)`: the GTH algorithm, which Bu and Zhao
+/// (arXiv:2604.14347) introduce as "In 1985, Grassmann, Taksar, and Heyman published their
+/// celebrated paper, in which they introduced a numerically stable algorithm for computing the
+/// stationary probabilities of a finite-state Markov chain", and of which Zhao (arXiv:2101.11657)
+/// writes "each elimination in the GTH algorithm leads to a censored Markov chain". Every quantity the matrix side touches is then a sum of products of nonnegative numbers,
 /// accurate componentwise however small; the rates here reach `2.3e-245`. With `1 - P_c(f, f)` in
 /// its place the four-city TSP's threshold tau moved from `1.64e24` to `4.5e34`, and to NaN at four
 /// times the threshold (scout, `gthcheck.txt`). `None` when a state has no rate out: the censored
