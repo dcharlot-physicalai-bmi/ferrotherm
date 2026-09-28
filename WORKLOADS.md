@@ -1018,6 +1018,15 @@ fixed lifetime, `n = 8`, `β = 1.5`: 0.439 against 0.931, a slow mode the window
 same way; an estimator that errs in opposite directions on the two lifetimes is exactly where that
 defence fails. The verdict survived and the numbers did not.
 
+**The 8.1% and 13.3% are specific to reads every `0.1 m`** (added 2026-09-28). Applied to the same
+exact autocorrelation read every `0.02 m` to `m`, across five fields, the window's error runs from
+`−23.8%` (every `0.2 m`, `βh = 0.35`) to `+406%` (every `m`, `βh = 0.7`, where the unwindowed sum is
+negative and the window reports its own `½` floor). And the crate's `tau_int` since 2026-09-28,
+Geyer's initial monotone sequence, is not this process's estimator either: a renewal process is not
+reversible, its pair sums go negative, and on simulated reads Geyer's sum came out 23% and 53% high.
+Window-free batch means, which this entry now uses, read the same simulated traces within `−6.3%` to
+`+1.0%`.
+
 For a spiking substrate the reading is concrete: a refractory period of fixed length is not a
 constraint to engineer around, it is the momentum.
 
@@ -1198,6 +1207,30 @@ quote — as it does in entries 1 and 5 above, and in entry 3, where the workloa
 
   So: quote the latency claim as a latency claim. Any joules-per-detection derived from
   "100 iterations" is low by `R`.
+
+**Added 2026-09-28: our own, from one estimator.** Until that day every autocorrelation time in this
+crate came from Sokal's window, which stops summing at the first lag `W >= 5 tau(W)` and, on a chain
+with a small slow mode, stops before it. Measured on EXACT autocorrelation sequences of enumerable
+kernels, counted the way the certificate carries them, it read more than 10% low in 26 of 151 cells
+(worst `−92%`); an energy-only reading of a 12-spin glass was `−94%`. `certify::tau_int` is now
+Geyer's initial monotone sequence, and every error bar goes through `certify::tau_estimate`, which
+carries the larger of that and long-batch means and reports `TauLowerBound` below a thousand
+autocorrelation times. Re-measured, these do not survive and are not to be quoted:
+
+- **"Forty-one times faster per flip", and "`Barker` beats `√x` 2.4-fold"** (`informed_mixing`,
+  `beta = 2`). Every chain run to a thousand of its own `tau`: sixteen times, with `√x` fastest and
+  `Barker` slowest, 2.9-fold apart. The `beta = 4` row resolves on no arm.
+- **"`z = 2.06`", "76×", "`L^1.84`"** (`critical_slowdown`, one seed, about 300 `tau` at `L = 32`).
+  Five seeds at a thousand-plus `tau`: `z` about 2.1 (per-seed fits 1.73 to 2.24), 99×, `L^1.90`.
+- **"`tau_int = 1.13`, near the ideal value of one"** (`burnin`). Independent draws read `½`, not
+  one; the current estimator reads 1.48.
+- **"Spearman `+0.81` / `−0.17`"** (`trained_tradeoff`). `+0.93` / `−0.10`; the verdict holds and
+  strengthens.
+- **"2,000 draws are worth 4 independent ones"** (the workbench, `β_c`, 16×16). From a session
+  whose state was not recorded; a fresh run gives at most 7, and the certificate calls that an upper
+  bound.
+- **Joules per independent sample, "PT 1.9× better", "≥604×"** (`joules_per_sample`). Not
+  re-stated: the ESS was Sokal's, and the joules need a quiet metered machine to re-measure.
 
 ### The general form: an advantage that does not charge readout is bounded by readout
 
