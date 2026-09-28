@@ -37,7 +37,11 @@
 //   -6.238 = -9 ln 2   a model that has learned nothing, uniform over 2^9 images
 //   -2.639 = -ln 14    a model that has learned everything, uniform over the 14 real ones
 //
-// Mixing is tau_int by Sokal windowing at the FITTED weights. There is no temperature knob here and
+// Mixing is tau_int at the FITTED weights, as `certify::tau_estimate` carries it: Geyer's initial
+// monotone sequence with long-batch means beside it, the larger carried. Until 2026-09-28 it was
+// Sokal's window, which read these chains 1.2 to 4.3 times lower -- at twelve latents 1.5 and 1.7
+// where the current estimator reads 5.9 and 7.3 -- and every sentence below that quoted a number
+// from it went stale with it; they are interpolated from the rows now. There is no temperature knob here and
 // that is deliberate: `mixing_expressivity` had to sweep beta because its couplings were arbitrary,
 // and the sweep is what revealed the U shape. A trained model sets its own scale. Whatever
 // ruggedness it has, it acquired by learning, which is the regime the claim is about.
@@ -72,7 +76,7 @@ fn mixing(g: &Graph, seed: u64) -> f64 {
         smp.sweep(None);
         trace.push(g.energy(&smp.s));
     }
-    certify::tau_int(&trace)
+    certify::tau_estimate(&[&trace]).tau
 }
 
 /// The three wirings of `latents` hidden units. `None` when the count does not divide.
@@ -202,26 +206,32 @@ fn main() {
          (A) LATENTS WITHOUT CONNECTIVITY BUY LESS EXPRESSIVITY -- CONFIRMED, and not marginally.\n\
          At every latent count, more layers learn strictly less: {}. Monotone in depth every time,\n\
          spreads under a point. That half of the sentence is right.\n\n\
-         (B) THEY THEREFORE COST MORE MIXING TIME -- NOT AS STATED. The deep arms mix FASTER, not\n\
-         slower. The slowest model in the table is the {} arm at tau {:.1}, and the fastest is the\n\
-         {} arm at {:.1}. Depth does not independently make this sampler's life harder; on this data\n\
-         it makes it easier.",
+         (B) THEY THEREFORE COST MORE MIXING TIME -- NOT AS STATED. Where the deep arms learned\n\
+         little they mix FASTER, not slower. The slowest model in the table is the {} arm at {}\n\
+         latents, tau {:.1}, and the fastest is the {} arm at {} latents, {:.1}. Depth does not\n\
+         independently make this sampler's life harder; what the model learned does.",
         learned_summary(&rows),
-        slowest.1, slowest.4, fastest.1, fastest.4
+        slowest.1, slowest.0, slowest.4, fastest.1, fastest.0, fastest.4
     );
+    // The arm pair where learning is nearly equal: twelve latents, wide against deep.
+    let at12 = |arm: &str| rows.iter().find(|r| r.0 == 12 && r.1 == arm).copied().expect("row");
+    let (w12, d12) = (at12("wide"), at12("deep"));
+    let least = rows.iter().copied().min_by(|a, b| a.3.total_cmp(&b.3)).expect("rows");
     println!(
-        "\nBECAUSE A MODEL THAT HAS NOT LEARNED HAS NOTHING TO GET STUCK IN. tau_int = 0.5 is not a\n\
-         small number, it is the FLOOR -- the value for perfectly independent draws -- and the deep\n\
-         arms sit essentially on it. They are fast because they failed, and their landscape stayed\n\
-         nearly flat. The rank correlations say the same thing without the story: tau tracks what\n\
-         was LEARNED, not how it was WIRED.\n\n\
+        "\nBECAUSE A MODEL THAT HAS NOT LEARNED HAS NOTHING TO GET STUCK IN. tau_int = 0.5 is the\n\
+         FLOOR -- the value for perfectly independent draws -- and the model that learned least,\n\
+         the {} arm at {} latents ({:.1}%), mixes at {:.1}. It is fast because it failed, and its\n\
+         landscape stayed nearly flat. The rank correlations say the same thing without the story:\n\
+         tau tracks what was LEARNED, not how it was WIRED.\n\n\
          So the tradeoff is real and its mechanism runs the other way round from the sentence.\n\
          Depth does not make sampling harder. Depth makes LEARNING harder, and what a model has\n\
          learned is what makes sampling harder. The one place the two are separated is twelve\n\
-         latents, where wide and deep land within three points of each other at 96.3% and 93.1% --\n\
-         and there the deep model is slower, 1.7 against 1.5. That is the effect the sentence\n\
-         describes, it is in the direction claimed, and it is a tenth the size of the effect that\n\
-         expressivity alone accounts for."
+         latents, where wide and deep land within a few points of each other at {:.1}% and {:.1}%\n\
+         -- and there the deep model is {}, {:.1} against {:.1}. That comparison is the one the\n\
+         sentence is about; it is one pair, with spreads printed in the table above.",
+        least.1, least.0, least.3, least.4,
+        w12.3, d12.3,
+        if d12.4 > w12.4 { "slower" } else { "faster" }, d12.4, w12.4
     );
 
     // TEETH. Every sentence above is now interpolated from `rows`, but interpolation only stops the
@@ -250,12 +260,16 @@ fn main() {
         "claim (B): tau must NOT track DEPTH (rho = {:+.2}, expected near zero or negative)",
         spearman(&depths, &taus)
     );
+    let (lo, hi) = (fastest.4, slowest.4);
     println!(
         "\nTHE DYNAMIC RANGE IS SMALL AND SAYING SO IS PART OF THE RESULT. Every tau here is between\n\
-         0.5 and 2.0, so the hardest model in the table decorrelates in four sweeps. Nine visible\n\
-         units on bars-and-stripes is an easy distribution and nothing in it is glacial. The\n\
-         validity gate never fires, which is itself the check working: it is there for the cold\n\
-         regime `mixing_expressivity` found, and nothing here is cold."
+         {lo:.1} and {hi:.1}, so the hardest model in the table decorrelates in about {:.0} sweeps.\n\
+         Nine visible units on bars-and-stripes is an easy distribution and nothing in it is\n\
+         glacial. The validity gate never fires -- {DRAWS} draws are {:.0} of the slowest model's tau\n\
+         -- which is itself the check working: it is there for the cold regime\n\
+         `mixing_expressivity` found, and nothing here is cold.",
+        2.0 * hi,
+        DRAWS as f64 / hi
     );
     println!(
         "HOW TO READ IT. Two columns, and the claim needs BOTH to move the same way. `learned` is\n\
