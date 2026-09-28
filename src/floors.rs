@@ -787,9 +787,10 @@ mod tests {
     /// A chain that never leaves its starting basin fluctuates only inside it, so its measured
     /// autocorrelation is SMALL — which bought it MANY effective samples and a LOW cost per
     /// sample. `examples/burnin` measures the whole thing: at `beta = 0.6` on an 8x8 ferromagnet,
-    /// a chain started all-up reports `<m> = +0.974 +- 0.0009` against a truth of exactly zero —
-    /// 1060 standard errors out — with `tau_int = 1.13` under the Sokal window the crate used then,
-    /// which is 2.26 times the value of independent draws (`1/2`) and nothing like a warning.
+    /// a chain started all-up reports `<m> = +0.974 +- 0.0011` against a truth of exactly zero —
+    /// 927 standard errors out — with `tau_int = 1.48` (1.13 under the Sokal window the crate used
+    /// until 2026-09-28, which this doc used to call "near the ideal value of one": independent
+    /// draws read `1/2`, so neither is anything like a warning).
     /// R-hat over dispersed chains is 27.2 and coupling from the past puts the required burn-in
     /// between `2^19` and `2^20` sweeps against the 200 that were used.
     ///

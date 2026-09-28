@@ -274,9 +274,9 @@ PASS frustration          ground energy -3, exact -3 (one bond must break)
 PASS planted optimum      2.08% above a planted optimum of -192
 PASS exact agreement      -59 against variable elimination's exact -59
 PASS determinism          same seed reproduces: true
-PASS rejects a bad run    caught it: 300 draws are worth about 3 independent samples
-PASS sampling fidelity    beta_eff 0.4978 (asked 0.5), ess 2734,
-                          tv 0.1523 against a 0.3060 noise floor
+PASS rejects a bad run    caught it: 300 draws are worth about 4 independent samples
+PASS sampling fidelity    beta_eff 0.4978 (asked 0.5), ess 2534,
+                          tv 0.1523 against a 0.3178 noise floor
 7/7 cases
 ```
 

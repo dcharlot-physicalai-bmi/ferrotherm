@@ -122,7 +122,10 @@ Not "does better" — does *at all*, as far as this review could determine:
   winners on the same run**: at β = 0.5 parallel tempering is 2.6× worse per flip and 1.9× better
   per independent sample; at β = 1.0 it is ≥604× better, because plain Gibbs did not decorrelate
   once in the budget. This review did not locate an ESS-corrected energy figure anywhere else in
-  the field.
+  the field. **Pending re-measurement:** the ESS in those figures came from Sokal's window, which
+  `certify::tau_int` replaced on 2026-09-28 because it truncates slow modes; the joules need a quiet
+  metered machine, and the one available that day ran at a load average of 40 to 200, so they are
+  withdrawn from re-statement until measured there rather than re-published under load.
 - **Joules.** A device energy ledger, and the arithmetic that says what a joules headline is
   *bounded* by. See below: the field's newest efficiency claim reproduces here in eight lines,
   and so do the three things it does not contain.
@@ -318,9 +321,13 @@ coverage on draws taken directly from the exact Boltzmann distribution by invers
 certifies the interval machinery and no chain at all; and `calibration` checks a real chain's bars
 on a 12-spin ring with a field, which mixes freely. Both are sound. Neither says anything about a
 chain that has not converged — and `examples/burnin` shows what that costs: an 8x8 ferromagnet
-below its critical temperature, started all-up, reports `<m> = +0.974 +- 0.0009` against a truth of
-exactly zero, **1060 standard errors out**, with an integrated autocorrelation time of 1.13 — near
-the ideal value of one. The diagnostic returns its best possible score.
+below its critical temperature, started all-up, reports `<m> = +0.974 +- 0.0011` against a truth of
+exactly zero, **927 standard errors out**, with an integrated autocorrelation time of 1.48 — each draw
+worth a third of an independent one, which reads as a well-mixed chain. (This said 1060 standard
+errors and a time of 1.13, "near the ideal value of one", until 2026-09-28: 1.13 was Sokal's window,
+and independent draws read 1/2 in this crate's convention, not one — so 1.13 was 2.26 times the
+independent value, never near it.) The diagnostic returns a good score on a chain that sampled the
+wrong distribution.
 
 A bar is calibrated conditional on convergence, and `tau_int` cannot check that condition: it
 summarises the timescales a trace contains, and a barrier never crossed contributes none. So

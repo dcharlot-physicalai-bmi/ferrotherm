@@ -85,8 +85,9 @@ into telling you a signature that no longer exists.
   both halves. Structural half: the claim holds weakly coupled and goes U-SHAPED strongly coupled,
   and past beta 2 the standard estimator stops being one (so every row carries draws/tau and prints
   `unusable`). Fitted half: latents without connectivity buy less expressivity (confirmed), but they
-  do NOT cost more mixing -- the deep arms mix FASTER. Spearman of tau against what a model LEARNED
-  is +0.81; against how DEEP it is, -0.17. A model that has not learned has nothing to get stuck in
+  do NOT cost more mixing -- where the deep arms learned little they mix FASTER. Spearman of tau
+  against what a model LEARNED is +0.93; against how DEEP it is, -0.10 (2026-09-28, the certificate's
+  current estimator). A model that has not learned has nothing to get stuck in
 
 ## Servers, for an agent
 

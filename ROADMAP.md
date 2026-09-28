@@ -452,6 +452,12 @@ chromatic Gibbs against parallel tempering at an **iso-flip** budget on a ladder
 | 0.5 | Gibbs cheaper by **2.6×** | **PT cheaper by 1.9×** (ESS 252 / 1252) |
 | 1.0 | Gibbs cheaper by 1.9× | **PT cheaper by ≥604×** — Gibbs never decorrelated once |
 
+**Pending re-measurement (2026-09-28).** The ESS column was Sokal's window on both arms, and the
+window truncates a slow mode on exactly the kind of chain PT's cold slot is; `certify::tau_int` is
+now Geyer's sequence with a long-batch cross-check. The joules have to be re-measured on a quiet
+metered machine — the one available on 2026-09-28 ran at a load average of 40 to 200, and this
+project does not publish energy measured under foreign load (AGENTS.md, invariant 4).
+
 **The two metrics name different winners on the same run**, and only one of them is about the cost
 of getting an answer. Below β = 1.5 tempering's own ESS falls under 25 and those rows print
 `unresolved` rather than an estimate. A sampler that produced less than one independent draw is
@@ -596,7 +602,8 @@ the ACTUAL error is unchanged (0.047 either way) — the ladder got better condi
 estimate did not get better.
 
 And having the traces immediately caught a defect: `bar_ladder`'s quadrature error bar understates
-the true spread by ~30% (`sd(z) = 1.28`), because adjacent steps share the samples at their common
+the true spread by ~30% (`sd(z) = 1.28`; 1.50 at 200 runs, and 1.41 once each step's own
+autocorrelation stopped being truncated, 2026-09-28), because adjacent steps share the samples at their common
 rung. `LadderTraces::log_z_total` block-jackknifes the total instead and comes out conservative
 (`0.81`). Open: calibration is not established across scales (900 samples → 1.5, 9,000 → 1.4) and
 per-rung `tau_int` is only 1.4, so the residual is the ladder's ROUND-TRIP time, which no current
