@@ -827,7 +827,9 @@ mod tests {
         }
         let cov = hit as f64 / total as f64;
         let naive = naive_hit as f64 / total as f64;
-        // Measured 99.2% and 47.6% over these 312 intervals. The corrected bound is deliberately
+        // Measured 99.0% and 50.0% over these 312 intervals (2026-09-28, the same under the current
+        // estimator and under Sokal's window; this said 99.2% and 47.6%, from an earlier tree that
+        // the tree before the estimator change no longer reproduced). The corrected bound is deliberately
         // one-sided and loose: the correction is conservative by construction (it takes the
         // SLOWEST observed autocorrelation, see `chain_tau`), so over-coverage is the expected
         // direction and is not a failure.
