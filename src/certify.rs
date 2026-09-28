@@ -1672,6 +1672,22 @@ mod tests {
         let mut gauss = || {
             (-2.0 * rng.f64().max(1e-12).ln()).sqrt() * (core::f64::consts::TAU * rng.f64()).cos()
         };
+        // Mildly antithetic and too short for batch means (b = 10 < 16): Geyer's sum is positive
+        // and below 1/2 -- the exact value is (1 - 0.5) / (2 * 1.5) = 1/6 -- so the floor is the
+        // only thing between it and an ess three times the draws, in both places it is applied.
+        let mut x = 0.0f64;
+        let mild: Vec<f64> = (0..200)
+            .map(|_| {
+                x = -0.5 * x + 0.75f64.sqrt() * gauss();
+                x
+            })
+            .collect();
+        let raw = tau_int_geyer_raw(&mild);
+        assert!(raw > 0.0 && raw < 0.5, "the case must reach the floor: Geyer's raw sum {raw}");
+        assert_eq!(tau_int(&mild), 0.5, "tau_int floors it");
+        let est = tau_estimate(&[&mild]);
+        assert!(est.batch.is_nan(), "200 draws are too few for batch means: {est:?}");
+        assert!(est.tau == 0.5 && est.ess() == 200.0, "and so does the entry point: {est:?}");
         for n in [200usize, 20_000] {
             let mut x = 0.0f64;
             let anti: Vec<f64> = (0..n)
