@@ -719,12 +719,15 @@ fn erfc_tail(z: f64) -> f64 {
     gauss / (std::f64::consts::PI.sqrt() * f)
 }
 
-fn log_g(balance: Balance, log_r: f64) -> f64 {
-    let softplus = |x: f64| if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() };
+/// The balancing function `g(r)` from `ln r`, with one exponential for every balance: Barker's
+/// `r / (1 + r)` is the logistic of `ln r`, which the first version reached as `exp(-softplus(-ln r))`
+/// -- two exponentials and a logarithm per weight, three times the transcendental work of the whole
+/// informed operator at 20 spins, for the same number to rounding.
+fn balance_weight(balance: Balance, log_r: f64) -> f64 {
     match balance {
-        Balance::Sqrt => 0.5 * log_r,
-        Balance::Metropolis => log_r.min(0.0),
-        Balance::Barker => -softplus(-log_r),
+        Balance::Sqrt => (0.5 * log_r).exp(),
+        Balance::Metropolis => log_r.min(0.0).exp(),
+        Balance::Barker => 1.0 / (1.0 + (-log_r).exp()),
     }
 }
 
@@ -910,7 +913,7 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
         Kernel::Informed(balance) => {
             // The weight of flipping k at a state with spin s_k and field f_k there. The field at k
             // does not read s_k, so the state across flip k has the same f_k and spin -s_k.
-            let weight = |s_k: f64, f_k: f64| log_g(balance, -2.0 * beta * s_k * f_k).exp();
+            let weight = |s_k: f64, f_k: f64| balance_weight(balance, -2.0 * beta * s_k * f_k);
             // Z(x) for every state first, since the acceptance needs Z at the neighbour too.
             let mut z = vec![0.0f64; m];
             for_each_state(n, |x, s| z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum());
@@ -1063,7 +1066,7 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
         Kernel::Informed(balance) => {
             // As in `apply`: the weight of flipping k at x, and at the state across that flip (same
             // field at k, opposite spin), both from x's own spins.
-            let weight = |s_k: f64, f_k: f64| log_g(balance, -2.0 * beta * s_k * f_k).exp();
+            let weight = |s_k: f64, f_k: f64| balance_weight(balance, -2.0 * beta * s_k * f_k);
             let mut z = vec![0.0f64; m];
             for_each_state(n, |x, s| z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum());
             let mut next = vec![0.0f64; m];
@@ -2439,6 +2442,97 @@ fn gth_poisson(rate: &[f64], b: &[f64], nf: usize, keep: usize) -> Option<Vec<f6
     Some(z)
 }
 
+/// What both censored routes build: a metastable set `F`, the rest `T`, pushes of the kernel, and
+/// the row-vector solve `v (I - P_TT) = r` on `T`.
+struct Censor<'a> {
+    g: &'a Graph,
+    beta: f64,
+    kernel: Kernel,
+    fset: Vec<usize>,
+    in_f: Vec<usize>,
+    inner_rtol: f64,
+    pushes: std::cell::Cell<usize>,
+}
+
+impl<'a> Censor<'a> {
+    fn new(g: &'a Graph, beta: f64, kernel: Kernel, set: Metastable<'_>, inner_rtol: f64) -> Result<Self, AutocorrError> {
+        let fset = metastable_states(g, set)?;
+        let mut in_f = vec![usize::MAX; 1usize << g.n];
+        for (k, &f) in fset.iter().enumerate() {
+            in_f[f] = k;
+        }
+        Ok(Censor { g, beta, kernel, fset, in_f, inner_rtol, pushes: std::cell::Cell::new(0) })
+    }
+
+    fn in_t(&self, x: usize) -> bool {
+        self.in_f[x] == usize::MAX
+    }
+
+    fn push(&self, mu: &[f64]) -> Vec<f64> {
+        self.pushes.set(self.pushes.get() + 1);
+        apply_distribution(self.g, self.beta, self.kernel, mu)
+    }
+
+    /// `v` with `v (I - P_TT) = r|_T`: restarted GMRES on pushes restricted to `T`, to a relative
+    /// true residual `inner_rtol`.
+    fn solve_t(&self, r: &[f64]) -> Result<Vec<f64>, AutocorrError> {
+        let rhs: Vec<f64> = r.iter().enumerate().map(|(x, &v)| if self.in_t(x) { v } else { 0.0 }).collect();
+        let op = |u: &[f64]| -> Vec<f64> {
+            let up = self.push(u);
+            u.iter().zip(&up).enumerate().map(|(x, (a, b))| if self.in_t(x) { a - b } else { 0.0 }).collect()
+        };
+        let (v, res) = gmres_euclid(&op, &rhs, self.inner_rtol, 4_000);
+        if res <= self.inner_rtol {
+            Ok(v)
+        } else {
+            Err(AutocorrError::InnerSolve { residual: res, pushes: self.pushes.get() })
+        }
+    }
+
+    /// The censored chain's OFF-DIAGONAL transition probabilities (row-major over `F`, diagonal
+    /// zero), and for each `f` the sums `<u_f, v>` over `T` for each `v` in `against`, where
+    /// `u_f = P(f, T) (I - P_TT)^-1` is the expected number of visits to each state of `T` between
+    /// leaving `f` and the next return to `F`.
+    fn rows(&self, against: &[&[f64]]) -> Result<(Vec<f64>, Vec<Vec<f64>>), AutocorrError> {
+        let m = 1usize << self.g.n;
+        let nf = self.fset.len();
+        let mut rate = vec![0.0f64; nf * nf];
+        let mut proj = vec![vec![0.0f64; against.len()]; nf];
+        for (k, &f) in self.fset.iter().enumerate() {
+            let mut delta = vec![0.0f64; m];
+            delta[f] = 1.0;
+            let row = self.push(&delta);
+            for (c, &g2) in self.fset.iter().enumerate() {
+                rate[k * nf + c] += row[g2];
+            }
+            let u = self.solve_t(&row)?;
+            let up = self.push(&u);
+            for (c, &g2) in self.fset.iter().enumerate() {
+                rate[k * nf + c] += up[g2];
+            }
+            for (j, v) in against.iter().enumerate() {
+                proj[k][j] = (0..m).filter(|&x| self.in_t(x)).map(|x| u[x] * v[x]).sum();
+            }
+        }
+        // The diagonal is never read: GTH recomputes it. A negative rate is an inner solve's rounding
+        // around a true zero; one that is not negligible against its row is an error, not a zero.
+        for a in 0..nf {
+            rate[a * nf + a] = 0.0;
+            let top = (0..nf).map(|c| rate[a * nf + c]).fold(0.0f64, f64::max);
+            for c in 0..nf {
+                let v = rate[a * nf + c];
+                if v < 0.0 {
+                    if -v > 1e-12 * top {
+                        return Err(AutocorrError::InnerSolve { residual: -v / top, pushes: self.pushes.get() });
+                    }
+                    rate[a * nf + c] = 0.0;
+                }
+            }
+        }
+        Ok((rate, proj))
+    }
+}
+
 /// The exact tau of a chain whose slowest modes sit below f64's resolution of `1 - lambda`, where
 /// [`tau_int_krylov`] and [`tau_int_fundamental`] have no digit to give, by CENSORING it onto a
 /// metastable set `F`. With `T` the rest, `(I - P) z = e` eliminates exactly to
@@ -2460,7 +2554,10 @@ fn gth_poisson(rate: &[f64], b: &[f64], nf: usize, keep: usize) -> Option<Vec<f6
 /// inner systems ([`Metastable::LocalMinima`] and [`Metastable::LocalMinimaAndNeighbours`]) agreed to
 /// `3e-14` on 23 of the 24 frozen TSP cells and `8.6e-11` on the other (scout, 2026-09-28), and on
 /// the cold 12-spin grid this route was `3.3e-12` from a double-double reference where the dense
-/// solve was `3.2e-9`. `rho` is left empty and `err_est` is `None`; `matvecs` counts pushes.
+/// solve was `3.2e-9`. Where `F` misses the kernel's traps the inner solves are ill-conditioned and
+/// the route REFUSES ([`AutocorrError::InnerSolve`]): the synchronous sweep's traps are not the
+/// energy's local minima, and on the 3x3 grid at beta 2 it stops there. `rho` is left empty and
+/// `err_est` is `None`; `matvecs` counts pushes.
 ///
 /// # Errors
 ///
@@ -2482,78 +2579,18 @@ pub fn tau_int_censored(
     }
     let pi = checked_law(g, beta, kernel)?;
     let (e, c0) = centred(g.n, &pi, observable)?;
-    let fset = metastable_states(g, set)?;
-    let m = 1usize << g.n;
-    let nf = fset.len();
-    let mut in_f = vec![usize::MAX; m];
-    for (k, &f) in fset.iter().enumerate() {
-        in_f[f] = k;
-    }
-    let pushes = std::cell::Cell::new(1usize);
-    let push = |mu: &[f64]| {
-        pushes.set(pushes.get() + 1);
-        apply_distribution(g, beta, kernel, mu)
-    };
-    // u -> u - (u P)|_T, on vectors supported on T: the row-vector operator u (I - P_TT).
-    let b_op = |u: &[f64]| -> Vec<f64> {
-        let up = push(u);
-        (0..m).map(|x| if in_f[x] == usize::MAX { u[x] - up[x] } else { 0.0 }).collect()
-    };
-    let max_inner = 4_000;
-    let solve = |rhs: &[f64]| -> Result<Vec<f64>, AutocorrError> {
-        let (u, res) = gmres_euclid(&b_op, rhs, inner_rtol, max_inner);
-        if res <= inner_rtol {
-            Ok(u)
-        } else {
-            Err(AutocorrError::InnerSolve { residual: res, pushes: pushes.get() })
-        }
-    };
-    let mut rate = vec![0.0f64; nf * nf];
-    let mut bf = vec![0.0f64; nf];
-    for (k, &f) in fset.iter().enumerate() {
-        let mut delta = vec![0.0f64; m];
-        delta[f] = 1.0;
-        let row = push(&delta);
-        let mut rhs = vec![0.0f64; m];
-        for x in 0..m {
-            if in_f[x] == usize::MAX {
-                rhs[x] = row[x];
-            } else {
-                rate[k * nf + in_f[x]] += row[x];
-            }
-        }
-        // u_f = P(f, T) (I - P_TT)^-1: the expected visits to each state of T between leaving f and
-        // the next return to F.
-        let u = solve(&rhs)?;
-        let up = push(&u);
-        for (c, &g2) in fset.iter().enumerate() {
-            rate[k * nf + c] += up[g2];
-        }
-        bf[k] = e[f] + (0..m).filter(|&x| in_f[x] == usize::MAX).map(|x| u[x] * e[x]).sum::<f64>();
-    }
-    let rhs: Vec<f64> = (0..m).map(|x| if in_f[x] == usize::MAX { pi[x] * e[x] } else { 0.0 }).collect();
-    let w = solve(&rhs)?;
-    let wp = push(&w);
-    let we: f64 = (0..m).filter(|&x| in_f[x] == usize::MAX).map(|x| w[x] * e[x]).sum();
-    // The diagonal is never read: GTH recomputes it. A negative rate is an inner solve's rounding
-    // around a true zero; one that is not negligible against its row is an error, not a zero.
-    for a in 0..nf {
-        rate[a * nf + a] = 0.0;
-        let top = (0..nf).map(|c| rate[a * nf + c]).fold(0.0f64, f64::max);
-        for c in 0..nf {
-            let v = rate[a * nf + c];
-            if v < 0.0 {
-                if -v > 1e-12 * top {
-                    return Err(AutocorrError::InnerSolve { residual: -v / top, pushes: pushes.get() });
-                }
-                rate[a * nf + c] = 0.0;
-            }
-        }
-    }
-    let keep = (0..nf).max_by(|&a, &c| pi[fset[a]].total_cmp(&pi[fset[c]])).expect("F is not empty");
+    let c = Censor::new(g, beta, kernel, set, inner_rtol)?;
+    let (m, nf) = (1usize << g.n, c.fset.len());
+    let (rate, proj) = c.rows(&[&e])?;
+    let bf: Vec<f64> = c.fset.iter().enumerate().map(|(k, &f)| e[f] + proj[k][0]).collect();
+    let pe: Vec<f64> = pi.iter().zip(&e).map(|(p, x)| p * x).collect();
+    let w = c.solve_t(&pe)?;
+    let wp = c.push(&w);
+    let we: f64 = (0..m).filter(|&x| c.in_t(x)).map(|x| w[x] * e[x]).sum();
+    let keep = (0..nf).max_by(|&a, &b| pi[c.fset[a]].total_cmp(&pi[c.fset[b]])).expect("F is not empty");
     let zf = gth_poisson(&rate, &bf, nf, keep).ok_or(AutocorrError::Reducible)?;
     let mut total = we;
-    for (k, &f) in fset.iter().enumerate() {
+    for (k, &f) in c.fset.iter().enumerate() {
         total += pi[f] * e[f] * zf[k] + zf[k] * wp[f];
     }
     Ok(Autocorrelation {
@@ -2562,9 +2599,241 @@ pub fn tau_int_censored(
         rho: Vec::new(),
         variance: c0,
         route: Route::Censored,
-        matvecs: pushes.get(),
+        // The law's invariance push and the censored solve's own.
+        matvecs: 1 + c.pushes.get(),
         err_est: None,
     })
+}
+
+/// How [`time_to_mass`] found its answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MassRoute {
+    /// The law pushed through the kernel one step at a time until it held: exact, an integer.
+    Pushed,
+    /// Past the push budget, on the chain censored onto a metastable set and run in REAL time: a
+    /// reduction, not an identity -- see [`time_to_mass`] for what it assumes and how far to trust it.
+    SlowScale,
+}
+
+/// When a law pushed through a kernel first holds its stationary mass on a set of states.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MassTime {
+    /// Kernel steps (sweeps, for a sweep kernel) from the start law until
+    /// `|m(t) - m_inf| <= rel m_inf` first holds, `m(t)` the law's mass on the set after `t` steps.
+    pub steps: f64,
+    /// `m_inf`, the stationary mass on the set under the kernel's own law.
+    pub stationary: f64,
+    /// How `steps` was found.
+    pub route: MassRoute,
+    /// For [`MassRoute::SlowScale`], `|m(K) - m_slow(K)|` at the hand-over step `K`: the pushed
+    /// mass against the reduction's, which is how far the fast transient still was from dead when
+    /// the reduction took over. Zero for [`MassRoute::Pushed`].
+    pub handover: f64,
+    /// Pushes of the kernel made, the law's invariance check included.
+    pub pushes: usize,
+}
+
+/// `a b` for two `nf x nf` row-stochastic matrices, with every diagonal recomputed as one minus its
+/// row's off-diagonals -- the GTH rule for a product. Squaring a matrix whose diagonal has rounded to
+/// exactly 1 while a rate of `1e-18` sits beside it otherwise gains that rate as MASS every time, and
+/// `2^60` squarings later the rows sum to `e`: the first version of [`time_to_mass`] ran its doubling
+/// grid to infinity on a cold pair censored onto all four of its states that way.
+fn stochastic_product(a: &[f64], b: &[f64], nf: usize) -> Vec<f64> {
+    let mut c = vec![0.0f64; nf * nf];
+    for i in 0..nf {
+        for k in 0..nf {
+            let aik = a[i * nf + k];
+            if aik == 0.0 {
+                continue;
+            }
+            for j in 0..nf {
+                if j != i {
+                    c[i * nf + j] += aik * b[k * nf + j];
+                }
+            }
+        }
+    }
+    set_stochastic_diagonal(&mut c, nf);
+    c
+}
+
+/// Every diagonal entry as one minus its row's off-diagonals, never below zero.
+fn set_stochastic_diagonal(c: &mut [f64], nf: usize) {
+    for i in 0..nf {
+        let off: f64 = (0..nf).filter(|&j| j != i).map(|j| c[i * nf + j]).sum();
+        c[i * nf + i] = (1.0 - off).max(0.0);
+    }
+}
+
+/// `exp(h R)` for a generator `R` given by its off-diagonal RATES (`rate[f * nf + g]`, `f != g`) and
+/// its uniformisation constant `lambda >= max_f sum_g rate`, by uniformisation: `e^{-h lambda}
+/// sum_j (h lambda)^j / j! M^j`, `M = I + R / lambda` nonnegative, truncated at `j = 5` when
+/// `h lambda <= 1e-4` (error below `1e-22`), then squared back up to `h`. Off the diagonal every
+/// entry is a sum of products of nonnegative numbers, and every diagonal is recomputed from its row
+/// ([`stochastic_product`]), so the rows sum to one however many squarings there are.
+fn generator_exp(rate: &[f64], nf: usize, lambda: f64, h: f64) -> Vec<f64> {
+    let mut squarings = 0;
+    let mut step = h;
+    while step * lambda > 1e-4 {
+        step *= 0.5;
+        squarings += 1;
+    }
+    let mut mm = vec![0.0f64; nf * nf];
+    for f in 0..nf {
+        for g in 0..nf {
+            if g != f {
+                mm[f * nf + g] = rate[f * nf + g] / lambda;
+            }
+        }
+    }
+    set_stochastic_diagonal(&mut mm, nf);
+    let x = step * lambda;
+    let mut e = vec![0.0f64; nf * nf];
+    let mut term = vec![0.0f64; nf * nf];
+    for f in 0..nf {
+        term[f * nf + f] = 1.0;
+    }
+    let mut coef = 1.0;
+    for j in 0..=5 {
+        if j > 0 {
+            term = stochastic_product(&term, &mm, nf);
+            coef *= x / f64::from(j);
+        }
+        for (a, b) in e.iter_mut().zip(&term) {
+            *a += coef * b;
+        }
+    }
+    let scale = (-x).exp();
+    e.iter_mut().for_each(|v| *v *= scale);
+    set_stochastic_diagonal(&mut e, nf);
+    for _ in 0..squarings {
+        e = stochastic_product(&e, &e, nf);
+    }
+    e
+}
+
+/// The kernel steps until a law pushed from `start` first holds its stationary mass on the states
+/// `target` picks, to a relative `rel`: the first `t` with `|m(t) - m_inf| <= rel m_inf`.
+///
+/// Up to `max_pushes` it pushes the law one step at a time with [`apply_distribution`] and the
+/// answer is EXACT ([`MassRoute::Pushed`]). A chain frozen by barriers needs far more steps than
+/// any budget -- the four-city TSP at its provable penalty relaxes over `1e17` sweeps and more --
+/// and past the budget this answers on the SLOW SCALE ([`MassRoute::SlowScale`]): the chain is
+/// censored onto the metastable set `set` exactly as [`tau_int_censored`] censors it, and each
+/// state `f` of the set becomes a LABEL, "the last metastable state visited", which moves to `g`
+/// at the real-time rate `P_c(f, g) / L_f` -- `P_c` the censored chain, `L_f = 1 + sum_T u_f` the
+/// expected steps per visit to `f` -- and carries the mass `(1_S(f) + sum_T u_f 1_S) / L_f` on the
+/// set `S`. The law pushed to the budget `K` is handed to the labels by where it will next enter
+/// the set; `exp(t R)` is taken by uniformisation and squaring with nonnegative arithmetic
+/// throughout; the crossing is bracketed on a doubling grid and bisected.
+///
+/// **What that assumes.** That by step `K` every mode faster than the barrier crossings has died,
+/// and that a label's occupants are then distributed as its return cycle says. Both errors are of
+/// order `t_fast / t_slow` -- the relaxation inside a basin over the time to leave it -- which is
+/// below `1e-12` on a chain frozen at `tau = 1e17` and is `1e-3`-ish where the barrier is low
+/// enough to push through. `handover` reports the first directly: the pushed mass at `K` against
+/// the reduction's. The route is a reduction, validated where both routes run
+/// (`the_slow_scale_mass_time_is_the_pushed_one_where_both_run`), not an identity.
+///
+/// # Errors
+///
+/// As [`tau_int_censored`]; [`AutocorrError::Reducible`] when the censored chain has no rate out
+/// of anywhere; [`AutocorrError::NotConverged`] (with `tau` the last time tried) when the doubling
+/// grid runs out before the mass holds.
+///
+/// # Panics
+///
+/// If `start` does not have `2^n` entries.
+#[allow(clippy::too_many_arguments)]
+pub fn time_to_mass(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    start: &[f64],
+    target: impl Fn(usize) -> bool,
+    rel: f64,
+    max_pushes: usize,
+    set: Metastable<'_>,
+) -> Result<MassTime, AutocorrError> {
+    let cap = max_krylov_spins(kernel);
+    if g.n > cap {
+        return Err(AutocorrError::TooManySpins { n: g.n, max: cap });
+    }
+    let m = 1usize << g.n;
+    assert_eq!(start.len(), m, "a start law over states has 2^n entries");
+    let pi = checked_law(g, beta, kernel)?;
+    let tgt: Vec<f64> = (0..m).map(|x| if target(x) { 1.0 } else { 0.0 }).collect();
+    let stationary: f64 = pi.iter().zip(&tgt).map(|(p, t)| p * t).sum();
+    let holds = |mass: f64| (mass - stationary).abs() <= rel * stationary;
+    let mass_of = |mu: &[f64]| mu.iter().zip(&tgt).map(|(p, t)| p * t).sum::<f64>();
+    let mut mu = start.to_vec();
+    for k in 1..=max_pushes {
+        mu = apply_distribution(g, beta, kernel, &mu);
+        if holds(mass_of(&mu)) {
+            return Ok(MassTime { steps: k as f64, stationary, route: MassRoute::Pushed, handover: 0.0, pushes: 1 + k });
+        }
+    }
+    // The slow scale: labels on the metastable set, run in real time.
+    let c = Censor::new(g, beta, kernel, set, 1e-13)?;
+    let nf = c.fset.len();
+    let ones = vec![1.0f64; m];
+    let (rate, proj) = c.rows(&[&ones, &tgt])?;
+    let cycle: Vec<f64> = (0..nf).map(|k| 1.0 + proj[k][0]).collect();
+    let obs: Vec<f64> = c.fset.iter().enumerate().map(|(k, &f)| (tgt[f] + proj[k][1]) / cycle[k]).collect();
+    let arrive = c.solve_t(&mu)?;
+    let into = c.push(&arrive);
+    let a0: Vec<f64> = c.fset.iter().map(|&f| mu[f] + into[f]).collect();
+    let slow_mass = |a: &[f64]| a.iter().zip(&obs).map(|(x, o)| x * o).sum::<f64>();
+    let handover = (mass_of(&mu) - slow_mass(&a0)).abs();
+    let real: Vec<f64> = (0..nf * nf).map(|i| rate[i] / cycle[i / nf]).collect();
+    let lambda = (0..nf).map(|f| (0..nf).map(|g2| real[f * nf + g2]).sum::<f64>()).fold(0.0f64, f64::max);
+    if !(lambda > 0.0) {
+        return Err(AutocorrError::Reducible);
+    }
+    let advance = |a: &[f64], e: &[f64]| -> Vec<f64> {
+        let mut out = vec![0.0f64; nf];
+        for (f, &af) in a.iter().enumerate() {
+            for (g2, o) in out.iter_mut().enumerate() {
+                *o += af * e[f * nf + g2];
+            }
+        }
+        out
+    };
+    // Doubling grid from 1e-4 / lambda: a(2^j h0) = a0 E(h0)^(2^j).
+    let h0 = 1e-4 / lambda;
+    let mut e = generator_exp(&real, nf, lambda, h0);
+    let (mut lo, mut a_lo, mut hi) = (0.0f64, a0.clone(), h0);
+    let mut found = false;
+    for _ in 0..4_000 {
+        let a_hi = advance(&a0, &e);
+        if holds(slow_mass(&a_hi)) {
+            found = true;
+            break;
+        }
+        lo = hi;
+        a_lo = a_hi;
+        hi *= 2.0;
+        e = stochastic_product(&e, &e, nf);
+    }
+    let pushes = 1 + max_pushes + c.pushes.get();
+    if !found {
+        return Err(AutocorrError::NotConverged { tau: max_pushes as f64 + hi, err_est: f64::INFINITY, matvecs: pushes });
+    }
+    // Bisect (lo, hi]: the mass holds at hi and not at lo.
+    for _ in 0..200 {
+        if hi - lo <= 1e-13 * hi {
+            break;
+        }
+        let mid = 0.5 * (lo + hi);
+        let a_mid = advance(&a_lo, &generator_exp(&real, nf, lambda, mid - lo));
+        if holds(slow_mass(&a_mid)) {
+            hi = mid;
+        } else {
+            lo = mid;
+            a_lo = a_mid;
+        }
+    }
+    Ok(MassTime { steps: max_pushes as f64 + hi, stationary, route: MassRoute::SlowScale, handover, pushes })
 }
 
 /// The exact tau by the route that can deliver it: [`tau_int_krylov`] first, and
@@ -4231,5 +4500,43 @@ mod tests {
             let short = tau_int_krylov(&g, 2.0, kernel, |s| g.energy(s), 1e-8, 4);
             assert!(matches!(short, Err(AutocorrError::NotConverged { .. })), "{kernel:?} with 4 applications: {short:?}");
         }
+    }
+    /// THE SLOW-SCALE MASS TIME IS THE PUSHED ONE WHERE BOTH RUN, and closes on it as the barrier
+    /// grows. Two spins, `J` coupling and a field of `0.3` on each, the sequential sweep from the
+    /// uniform law: the sweeps until the mass on `++` holds its stationary value to 1%. Pushed step by
+    /// step it is exact; censored onto the two minima (and onto all four states, a set with no inner
+    /// solve) and run in real time it is a reduction whose error goes as the fast relaxation over the
+    /// barrier crossing -- measured `1.7e-4, 1.8e-5, 2.4e-6` at `J = 5, 6, 7` -- and at `J = 20`, where
+    /// no push could reach it (`1.8e17` sweeps), the two sets agree.
+    #[test]
+    fn the_slow_scale_mass_time_is_the_pushed_one_where_both_run() {
+        let pair = |j: f64| {
+            let mut b = GraphBuilder::new(2);
+            b.couple(0, 1, j);
+            b.bias(0, 0.3);
+            b.bias(1, 0.3);
+            b.build()
+        };
+        let start = [0.25; 4];
+        let mut last = f64::INFINITY;
+        for (j, tol) in [(5.0, 1e-3), (6.0, 1e-4), (7.0, 1e-5)] {
+            let g = pair(j);
+            let pushed = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 10_000_000, Metastable::LocalMinima).unwrap();
+            assert_eq!(pushed.route, MassRoute::Pushed);
+            for set in [Metastable::LocalMinima, Metastable::LocalMinimaAndNeighbours] {
+                let slow = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, set).unwrap();
+                assert_eq!(slow.route, MassRoute::SlowScale);
+                let rel = (slow.steps - pushed.steps).abs() / pushed.steps;
+                assert!(rel < tol, "J {j}, {set:?}: slow {} against pushed {}, rel {rel:e}", slow.steps, pushed.steps);
+                if set == Metastable::LocalMinima {
+                    assert!(rel < last, "J {j}: the reduction must close on the pushed time as the barrier grows");
+                    last = rel;
+                }
+            }
+        }
+        let g = pair(20.0);
+        let a = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, Metastable::LocalMinima).unwrap();
+        let b = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, Metastable::LocalMinimaAndNeighbours).unwrap();
+        assert!(a.steps > 1e17 && (a.steps - b.steps).abs() < 1e-9 * a.steps, "J 20: {} and {}", a.steps, b.steps);
     }
 }
