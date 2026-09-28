@@ -392,7 +392,11 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 ///
 /// Over 16 seeds on five slow-mode cells, this estimator's median read 0.41 to 0.68 of the exact
 /// value at 100 `tau` of trace and 0.74 to 0.99 at 1,000. [`certify`] says so with
-/// [`Finding::TauLowerBound`] below [`RESOLVED_TAUS`].
+/// [`Finding::TauLowerBound`] below [`RESOLVED_TAUS`]. A thousand is where the certificate stops
+/// CALLING `tau` a lower bound, not where it stops being one: on the 12-spin glass of
+/// `examples/tau_exactness.rs` at `beta = 1`, whose energy carries a small slow mode, this read
+/// 0.54 of the exact value at 1,000 `tau` of trace and 0.82 at 10,000 (mean of 16 chains; the value
+/// [`tau_estimate`] carries, 0.70 and 1.00), against Sokal's window at 0.06 at every length.
 #[must_use]
 pub fn tau_int(trace: &[f64]) -> f64 {
     let raw = tau_int_geyer_raw(trace);
@@ -640,7 +644,8 @@ pub const CROSS_CHECK_BATCHES: usize = 20;
 /// Autocorrelation times of trace, below which a chain's `tau_int` is reported as a lower bound
 /// ([`Finding::TauLowerBound`]). Chosen from a measurement, not for roundness: at 100 `tau` of
 /// trace the median read on five slow-mode cells was 0.41 to 0.68 of the exact value, and at
-/// 1,000 it was 0.74 to 0.99.
+/// 1,000 it was 0.74 to 0.99. Necessary, not sufficient: see [`tau_int`] for a fixture that still
+/// reads 0.54 (0.70 carried) at a thousand.
 pub const RESOLVED_TAUS: f64 = 1000.0;
 
 /// What the crate divides a chain's draws by, and how far to believe it. Built by [`tau_estimate`].
