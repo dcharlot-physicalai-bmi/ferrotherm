@@ -26,8 +26,14 @@
 // THE THIRD COLUMN IS THE POINT. `certify` reports a finding called `Undermixed` when tau is large
 // relative to the run. The question worth answering is not "is the corrected interval always
 // right" -- no interval built from an estimated tau can be -- but "does the certificate know when
-// to stop believing it". That is what the last two columns test, and the answer at the bottom of
+// to stop believing it". That is what the last four columns test, and the answer at the bottom of
 // the table is a qualified yes with one honest exception.
+//
+// SINCE 2026-09-28 THE CERTIFICATE HAS A SECOND WAY TO SAY IT. `tau` is now Geyer's sequence with
+// long-batch means beside it (it was Sokal's window, which read a 3x3 glass's tau at about half
+// its exact value on every seed tried), and below `certify::RESOLVED_TAUS` autocorrelation times
+// the certificate reports `TauLowerBound`: the tau is a lower bound and the ess an upper one. The
+// last two columns count the seeds that clear BOTH findings, and the coverage among those.
 
 use ferrotherm::certify::Finding;
 use ferrotherm::gibbs::Sampler;
@@ -64,8 +70,8 @@ fn main() {
         "{SEEDS} chains of {DRAWS} draws after {BURN} burn-in, every site, against exact enumeration\n"
     );
     println!(
-        "{:>8} {:>5} {:>9} {:>10} {:>8} {:>12} {:>14}",
-        "model", "beta", "tau_int", "corrected", "naive", "mixed ok", "corrected|ok"
+        "{:>8} {:>5} {:>9} {:>10} {:>8} {:>12} {:>14} {:>10} {:>16}",
+        "model", "beta", "tau_int", "corrected", "naive", "mixed ok", "corrected|ok", "resolved", "corrected|res"
     );
 
     for (name, g) in &models {
@@ -76,6 +82,7 @@ fn main() {
 
             let (mut hit, mut naive_hit, mut total) = (0usize, 0usize, 0usize);
             let (mut mixed, mut hit_mixed, mut total_mixed) = (0usize, 0usize, 0usize);
+            let (mut resolved, mut hit_resolved, mut total_resolved) = (0usize, 0usize, 0usize);
             let mut taus = Vec::new();
 
             for seed in 0..SEEDS {
@@ -90,6 +97,11 @@ fn main() {
                 if mixed_ok {
                     mixed += 1;
                 }
+                let resolved_ok = mixed_ok
+                    && !cert.findings.iter().any(|f| matches!(f, Finding::TauLowerBound { .. }));
+                if resolved_ok {
+                    resolved += 1;
+                }
                 taus.push(set.chain_tau());
 
                 for i in 0..g.n {
@@ -101,12 +113,18 @@ fn main() {
                         if mixed_ok {
                             hit_mixed += 1;
                         }
+                        if resolved_ok {
+                            hit_resolved += 1;
+                        }
                     }
                     if (e.value - truth[i]).abs() <= 1.96 * naive_se {
                         naive_hit += 1;
                     }
                     if mixed_ok {
                         total_mixed += 1;
+                    }
+                    if resolved_ok {
+                        total_resolved += 1;
                     }
                     total += 1;
                 }
@@ -120,12 +138,14 @@ fn main() {
                 }
             };
             println!(
-                "{name:>8} {beta:>5.1} {:>9.1} {:>10} {:>8} {:>12} {:>14}",
+                "{name:>8} {beta:>5.1} {:>9.1} {:>10} {:>8} {:>12} {:>14} {:>10} {:>16}",
                 taus.iter().sum::<f64>() / taus.len() as f64,
                 pct(hit, total),
                 pct(naive_hit, total),
                 format!("{mixed}/{SEEDS}"),
-                pct(hit_mixed, total_mixed)
+                pct(hit_mixed, total_mixed),
+                format!("{resolved}/{SEEDS}"),
+                pct(hit_resolved, total_resolved)
             );
         }
     }

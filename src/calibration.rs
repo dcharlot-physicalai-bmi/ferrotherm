@@ -24,19 +24,27 @@
 //!
 //! Applied across the crate (the tests in this module), with `sd(z) ≤ 1` meaning honest:
 //!
-//! **200 runs each, seeds scrambled**, `±` being [`sd_z_uncertainty`]:
+//! **200 runs each, seeds scrambled**, `±` being [`sd_z_uncertainty`]. Re-measured 2026-09-28 after
+//! [`crate::certify::tau_int`] became Geyer's sequence with a long-batch cross-check (it was
+//! Sokal's window); the previous value is in brackets where it moved, re-measured on the tree
+//! before the change by the same harness:
 //!
 //! | estimator | mean z | sd(z) | verdict |
 //! |---|---|---|---|
-//! | `SampleSet::mean_energy` | −0.01 | 0.72 ± 0.04 | honest, conservative |
-//! | `SampleSet::magnetization` | +0.04 | 0.97 ± 0.05 | honest, right on |
-//! | `SampleSet::correlation` | −0.07 | 0.55 ± 0.03 | honest, very conservative |
-//! | `SampleSet::marginals` | −0.01 | 0.80 ± 0.04 | honest, conservative |
-//! | `popanneal::Outcome::ln_z_stderr` | −0.05 | 1.03 ± 0.05 | honest |
-//! | `LadderTraces::log_z_total` jackknife | −0.06 | 1.05 ± 0.05 | honest |
-//! | `bar_ladder` quadrature stderr | −0.15 | **1.50 ± 0.08** | **too small by ~50%** |
-//! | `free_energy::thermodynamic_integration` | — | covers 200/200 | honest |
+//! | `SampleSet::mean_energy` | −0.01 | 0.70 ± 0.03 (0.72) | honest, conservative |
+//! | `SampleSet::magnetization` | +0.04 | 0.95 ± 0.05 (0.97) | honest, right on |
+//! | `SampleSet::correlation` | −0.06 | 0.53 ± 0.03 (0.55) | honest, very conservative |
+//! | `SampleSet::marginals` | −0.01 | 0.78 ± 0.04 (0.80) | honest, conservative |
+//! | `popanneal::Outcome::ln_z_stderr` | −0.05 | 1.03 ± 0.05 | honest (no `tau_int` in it) |
+//! | `LadderTraces::log_z_total` jackknife | −0.06 | 1.04 ± 0.05 | honest (no `tau_int` in it) |
+//! | `bar_ladder` quadrature stderr | −0.13 | **1.41 ± 0.07** (1.50) | **too small by ~40%** |
+//! | `free_energy::thermodynamic_integration` | — | covers 200/200, bracket 3% wider | honest |
 //! | `free_energy::Ais::lower_bound` | — | 0 violations in 200 at δ=0.1 | honest |
+//!
+//! The quadrature bar moved most because each BAR step's effective sample size now comes from an
+//! estimator that sums the slow mode: part of what was blamed on the ignored covariance between
+//! steps was the window truncating each step's own autocorrelation. Most of it was not -- 1.41 is
+//! still a bar 40% too small, and the jackknife is still the one to use.
 //!
 //! **These numbers replace a table measured over 24–40 runs, and one of its verdicts was wrong.**
 //! The jackknife was reported as *conservative* at `0.81`; at 200 runs it is `1.05`, which is

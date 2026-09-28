@@ -24,10 +24,11 @@
 // instrument the original claim did not use, on shapes the original claim did not run, by someone
 // with no stake in the answer.
 //
-// THE INSTRUMENT. `crate::certify` computes the integrated autocorrelation time by SOKAL'S
-// AUTOMATIC WINDOWING, not by fitting an exponential to the large-lag tail -- which is what the
-// source measurement does, and which is the more fragile of the two, because the tail is where the
-// estimator has the fewest samples. Where the model is small enough to enumerate, the same
+// THE INSTRUMENT. `crate::certify` computes the integrated autocorrelation time by GEYER'S INITIAL
+// MONOTONE SEQUENCE with long-batch means beside it, the larger carried (until 2026-09-28 it was
+// Sokal's automatic window, which truncates a slow mode -- see `certify::tau_int`), not by fitting
+// an exponential to the large-lag tail -- which is what the source measurement does, and which is
+// the more fragile of the two, because the tail is where the estimator has the fewest samples. Where the model is small enough to enumerate, the same
 // certificate also reports TOTAL VARIATION FROM THE EXACT BOLTZMANN DISTRIBUTION beside the noise
 // floor that finite sampling alone produces. So a row is not only "how correlated were the draws"
 // but "how wrong was the answer, against truth, above what sampling noise explains".
@@ -68,13 +69,16 @@
 // than reported. That column is the contribution as much as the table is: the standard way to
 // measure a mixing time -- fitting an exponential to the autocorrelation's large-lag tail, which
 // is what the source measurement does -- returns a number in exactly that regime and says nothing
-// about whether it earned one. Sokal's windowing at least answers `inf`.
+// about whether it earned one. The certificate at least answers `inf`. And a row between MIN_RATIO
+// and `certify::RESOLVED_TAUS` is printed with `>=`: the certificate reports its tau as a LOWER
+// bound there (`Finding::TauLowerBound`), because below a thousand autocorrelation times every
+// single-chain estimator here reads low on a slow mode.
 //
 // NOT run in CI: the largest rows take minutes.
 //
 // run: cargo run --release --example mixing_expressivity
 
-use ferrotherm::certify::Certificate;
+use ferrotherm::certify::{Certificate, RESOLVED_TAUS};
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ledger::{Ledger, Z1_SPICE};
@@ -142,6 +146,8 @@ fn cell(m: f64, sd: f64, ratio: f64) -> String {
         "frozen".into()
     } else if ratio < MIN_RATIO {
         format!("unusable {ratio:.0}x")
+    } else if ratio < RESOLVED_TAUS {
+        format!(">={m:.2}+-{sd:.2}")
     } else {
         format!("{m:.2}+-{sd:.2}")
     }
@@ -150,11 +156,13 @@ fn cell(m: f64, sd: f64, ratio: f64) -> String {
 fn main() {
     println!("The mixing-expressivity tradeoff: the structural half, measured independently\n");
     println!(
-        "tau_int by Sokal's automatic windowing, mean +/- sd over {SEEDS} seeds, {DRAWS} draws each.\n\
+        "tau_int as the certificate carries it (Geyer's sequence, long-batch means beside it, the\n\
+         larger carried), mean +/- sd over {SEEDS} seeds, {DRAWS} draws each.\n\
          Couplings are +/-1/sqrt(fan-in) throughout, so every shape has the same local-field\n\
          variance and a difference between shapes is a difference of SHAPE.\n\
          A cell reads `unusable` when the chain is under {MIN_RATIO:.0}x tau long -- the estimator's\n\
-         validity condition, which is not optional and is not usually printed.\n"
+         validity condition, which is not optional and is not usually printed -- and carries `>=`\n\
+         under {RESOLVED_TAUS:.0}x, where the certificate reports tau as a lower bound.\n"
     );
 
     // ---- 1. depth at a fixed spin count ---------------------------------------------------------
@@ -202,7 +210,7 @@ fn main() {
         let rj = readback.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
         println!(
             "{layers:>7} {width:>6} {edges:>7} {:>13} {per:>14.0} {mj:>11.4} {rj:>11.4} {:>10.1}%",
-            format!("{m:.2}+-{sd:.2}"),
+            if (DRAWS as f64) < RESOLVED_TAUS * m { format!(">={m:.2}+-{sd:.2}") } else { format!("{m:.2}+-{sd:.2}") },
             100.0 * rj / (mj + rj)
         );
     }
@@ -249,11 +257,13 @@ fn main() {
     println!("{:>6} {:>18} {:>18}  note", "beta", "2 layers", "12 layers");
     let shallow = layered(2, 72, 7);
     let deep = layered(12, 12, 7);
+    let mut beyond: Vec<f64> = Vec::new();
     for beta in [2.5f64, 3.0, 4.0, 8.0] {
         let a = measure(&shallow, beta, DRAWS, 1, 11).0.tau_int;
         let b = measure(&deep, beta, DRAWS, 1, 11).0.tau_int;
         let ratio = |t: f64| if t.is_finite() { DRAWS as f64 / t.max(1e-9) } else { 0.0 };
         let worst = ratio(a).min(ratio(b));
+        beyond.push(a);
         println!(
             "{beta:>6.1} {:>18} {:>18}  {}",
             format!("{a:.1}"),
@@ -262,37 +272,47 @@ fn main() {
                 "frozen: not slow mixing, a chain that stopped moving"
             } else if worst < MIN_RATIO {
                 "estimator invalid: the chain is not long enough to say"
+            } else if worst < RESOLVED_TAUS {
+                "a lower bound: under a thousand tau"
             } else {
                 "inside the window"
             }
         );
     }
 
+    // The numbers in the prose are read off the rows above, so the sentence cannot outlive them:
+    // it used to say 26.30 and 65.95 while the table printed 48.91 and 65.95.
+    let (first, last) = (cold_row[0], cold_row[cold_row.len() - 1]);
+    let middle: Vec<f64> = cold_row[1..cold_row.len() - 1].iter().map(|r| r.3).collect();
+    let mid_lo = middle.iter().copied().fold(f64::INFINITY, f64::min);
+    let mid_hi = middle.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     println!(
         "\nWHAT THE TABLE SHOWS, AND IT IS NOT A CONFIRMATION.\n\n\
-         WEAKLY COUPLED (beta 0.5, beta 1) the claim holds cleanly and monotonically: at a fixed\n\
-         144 spins, reshaping 2 layers into 12 raises tau_int at every step, with spreads of a few\n\
-         percent. Depth costs mixing, exactly as stated.\n\n\
-         STRONGLY COUPLED (beta 2) it does not. The column is U-SHAPED. The shallowest shape --\n\
-         2 layers of 72, a dense restricted Boltzmann machine -- is SLOW at 26.30, the middle\n\
-         shapes are fast at around 5, and only the deepest is slower still at 65.95. A monotone\n\
+         WEAKLY COUPLED (beta 0.5, beta 1) the claim mostly holds: at a fixed 144 spins, deeper\n\
+         shapes generally mix more slowly, with spreads of a few percent. Read the columns rather\n\
+         than this sentence for where the ordering is not strict.\n\n\
+         STRONGLY COUPLED (beta {cold}) it does not. The column is U-SHAPED. The shallowest shape --\n\
+         {} layers of {}, a dense restricted Boltzmann machine -- is SLOW at {:.2}, the middle\n\
+         shapes run {mid_lo:.2} to {mid_hi:.2}, and the deepest, {} layers of {}, is at {:.2}. A monotone\n\
          reading of `depth makes sampling harder` does not survive into the regime where the\n\
          tradeoff is supposed to bite.\n\n\
          A plausible reading, offered as a reading and not a result: the two slow ends are slow for\n\
          DIFFERENT reasons. A dense bipartite layer has strong collective modes that a single-site\n\
          sweep moves through slowly; a deep narrow stack has the barriers the original claim is\n\
          about. Nothing here separates those two mechanisms, and doing so would need a cluster move\n\
-         or a mode-resolved statistic rather than a scalar autocorrelation."
+         or a mode-resolved statistic rather than a scalar autocorrelation.",
+        first.0, first.1, first.3, last.0, last.1, last.3
     );
     println!(
         "\nAND THE REGIME THAT MATTERS IS THE ONE THAT CANNOT BE MEASURED THIS WAY. Past beta 2 at\n\
-         40,000 draws the estimator stops being one: the rows above swing from 285.6 to 18.7 to\n\
-         42.6 on the same shape, and at beta 8 return small numbers from a chain that has stopped\n\
+         {DRAWS} draws the estimator stops being one: the 2-layer rows above read {:.1}, {:.1}, {:.1}\n\
+         and {:.1} on the same shape, and at beta 8 a small number is a chain that has stopped\n\
          moving rather than one that mixes fast. The tradeoff is a claim about rugged landscapes,\n\
          ruggedness needs cold, and cold is where the standard measurement dissolves. That is a\n\
          result about the instrument, and it applies to any table of mixing times taken cold --\n\
          including one produced by fitting an exponential to an autocorrelation tail, which returns\n\
-         a number in this regime without a validity condition to fail."
+         a number in this regime without a validity condition to fail.",
+        beyond[0], beyond[1], beyond[2], beyond[3]
     );
     println!(
         "\nWHAT IT DOES NOT SHOW. Expressivity. That is a property of a model FITTED TO DATA and\n\

@@ -1036,19 +1036,29 @@ mod tests {
     /// MECHANISM rather than of coverage. Coverage cannot pin this factor, and the reason is worth
     /// recording rather than discovering twice.
     ///
-    /// On `ring(10, 1.0, 0.2)` at `beta = 0.6`, 500 draws, over 300 seeds:
+    /// On `ring(10, 1.0, 0.2)` at `beta = 0.6`, 500 draws after 400 sweeps of burn-in, seeds 0 to
+    /// 299, re-measured 2026-09-28 with the certificate's `tau_int` as it now is (Geyer's sequence
+    /// and long-batch means over energy AND magnetisation, the larger carried):
     ///
     /// ```text
-    ///   thin   tau_int   with inflation   without
-    ///      1      1.51        0.0% miss    2.3% miss      (target 5.0%)
-    ///      2      0.86        0.7%         4.7%
-    ///      5      0.57        2.3%         3.0%
+    ///   thin   cert tau_int   exact E / m     with inflation   without
+    ///      1        2.88      1.517 / 2.698      0.0% miss     8.3% miss      (target 5.0%)
+    ///      2        1.47      0.872 / 1.377      0.0%          7.3%
+    ///      5        0.74      0.563 / 0.666      1.7%          5.0%
     /// ```
     ///
-    /// The inflation OVER-widens: removing it moves coverage toward the nominal rate rather than
-    /// away from it. The cause is that it scales by the autocorrelation of the energy trace as a
-    /// proxy for the autocorrelation of the estimator's SCORE, and those are different quantities —
-    /// a Newey-West estimate on the score itself asks for 1.05x where the proxy asks for 1.74x.
+    /// This table used to read `tau_int` 1.51 / 0.86 / 0.57 and 2.3 / 4.7 / 3.0% without the
+    /// inflation. The `tau_int` column was the ENERGY's autocorrelation time, from before the
+    /// certificate carried the larger of energy and magnetisation -- the magnetisation is the slower
+    /// one here -- and the without-inflation column does not reproduce: the same protocol on the
+    /// tree before 2026-09-28 gives 2.79 / 1.38 / 0.67 and 8.3 / 7.3 / 5.0% (and reproduces the
+    /// with-inflation column, 0.0 / 0.7 / 2.3%, exactly). So the claim this paragraph made, that
+    /// removing the inflation moves coverage toward the nominal rate, is not what it measures:
+    /// with it the interval is too wide, without it too narrow, by comparable amounts. The
+    /// mechanism is still the one stated here: the inflation scales by the autocorrelation of the
+    /// traces as a proxy for the autocorrelation of the estimator's SCORE, and those are different
+    /// quantities — a Newey-West estimate on the score itself asked for 1.05x where the energy's
+    /// proxy asked for 1.74x.
     ///
     /// The inflation is kept anyway, because over-wide is the conservative direction for an
     /// instrument whose job is to accuse, and because one fixture is not enough evidence to swap a

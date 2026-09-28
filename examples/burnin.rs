@@ -67,7 +67,9 @@ fn main() {
 
     let up = trace(&g, beta, 0xB0_1CE, 1, burn_in, draws);
     let mean = up.iter().sum::<f64>() / up.len() as f64;
-    let tau = certify::tau_int(&up);
+    // The value every error bar in the crate divides by: Geyer's sequence with long-batch means
+    // beside it, the larger carried (until 2026-09-28, Sokal's window, which read 1.129 here).
+    let tau = certify::tau_estimate(&[&up]).tau;
     let var = up.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (up.len() - 1) as f64;
     let ess = up.len() as f64 / (2.0 * tau).max(1.0);
     let stderr = (var / ess).sqrt();
@@ -125,9 +127,9 @@ fn main() {
     }
     println!();
     println!("WHAT IT COSTS US.");
-    println!("  tau_int here is {tau:.2} -- not merely unalarming, but close to the ideal 1.0 that");
-    println!("  says every draw is independent. The diagnostic returns its BEST score on a chain");
-    println!("  that sampled the wrong distribution.");
+    println!("  tau_int here is {tau:.2} -- not merely unalarming: independent draws read 0.5, so this");
+    println!("  says each draw is worth about {:.2} of an independent one. The diagnostic returns a", 0.5 / tau);
+    println!("  GOOD score on a chain that sampled the wrong distribution.");
     println!();
     println!("  `floors::cost_per_effective_sample` used to consume that and nothing else, so it");
     println!("  priced this run at {ess:.0} independent samples. The chain drew none: every draw");
