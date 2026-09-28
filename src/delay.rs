@@ -570,6 +570,30 @@ mod tests {
         hi
     }
 
+    /// **Every rule keeps its down-flip against a field no `1 - p` survives.** One spin, no
+    /// neighbours, read fresh: its law is two numbers, and the small one is the exact probability of
+    /// the flip against the field over the sum of both directions -- `1 / (1 + e^{2 beta h})` for the
+    /// heat bath at `2 beta h = 40`, `f / (1 + f)` with `f = p0 e^{-beta h}` for the Arrhenius rule at
+    /// `beta h = 40`, and `sigma(-46) / (sigma(-46) + sigma(34))` for the pinned automaton at
+    /// `beta h = 40, q = 3`, each by mpmath at 40 digits. Built as `1 - p` every one of them was
+    /// exactly zero: the spin could never leave `+1`.
+    #[test]
+    fn every_rule_keeps_its_down_flip_against_a_strong_field() {
+        let cases = [
+            (Rule::HeatBath, 20.0, 4.2483542552915889773e-18),
+            (Rule::Arrhenius { p0: 0.5 }, 40.0, 2.1241771276457944932e-18),
+            (Rule::Sca { q: 3.0 }, 40.0, 1.0530617357553830427e-20),
+        ];
+        for (rule, h, want) in cases {
+            let mut b = GraphBuilder::new(1);
+            b.bias(0, h);
+            let g = b.build();
+            let law = stationary_solved(&g, 1.0, rule, 1).law;
+            let rel = (law[0] - want).abs() / want;
+            assert!(law[0] > 0.0 && rel < 1e-13, "{rule:?}: P(-1) = {:e} against {want:e}, rel {rel:e}", law[0]);
+        }
+    }
+
     /// **A heat-bath fabric does not feel a uniform delay.** Its new value ignores the old one, so a
     /// `d`-tick read splits the chain into `d` interleaved synchronous chains that never meet, and the
     /// current frame follows Peretto's synchronous law at every `d` -- held to `autocorr::peretto`,
