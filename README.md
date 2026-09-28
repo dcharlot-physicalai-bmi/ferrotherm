@@ -512,14 +512,19 @@ nothing could show it was missing. `Sampler::collect` reads.
 
 ```text
  layers  width   edges       tau_int   updates/draw   nJ mixing nJ readback  read share
-      2     72    5184   26.30+-1.18           3787      0.0268      0.2436       90.1%
-      3     48    4608    4.91+-0.31            707      0.0050      0.2436       98.0%
-     12     12    1584  65.95+-20.75           9497      0.0673      0.2436       78.3%
+      2     72    5184 >=56.05+-5.00           8071      0.0572      0.2436       81.0%
+      3     48    4608    9.48+-3.15           1365      0.0097      0.2436       96.2%
+     12     12    1584 unusable 199x          20948      0.1485      0.2436       62.1%
 ```
 
+(Re-measured 2026-09-28 with the certificate's current estimator. `>=` marks a chain under a thousand
+of its own autocorrelation times, whose τ is a lower bound; the 12-layer chains at β = 2 are under
+200, past the estimator's validity condition. The rows this replaced, 26.30, 4.91 and 65.95, did not
+match the tree they shipped with either, which printed 48.91, 7.62 and 65.95 under Sokal's window.)
+
 A Z1-class read is 1.692 pJ per node against 7.09 fJ per Gibbs cycle: **one read is worth 239
-updates.** The mixing column spans 13× across these shapes and the total spans 1.25×, because
-readback depends on the spin count and these shapes hold it fixed. The tradeoff the field argues
+updates.** The mixing column spans at least 5.9× across the two measurable shapes and the total
+1.19×, because readback depends on the spin count and these shapes hold it fixed. The tradeoff the field argues
 about is real, is measured below, and is the minority of the bill at these sizes — which is what it
 means to say a machine of this class is an I/O machine.
 
@@ -531,12 +536,15 @@ latent variables increases the depth of the Boltzmann machine, making sampling m
 This review did not locate an independent, cross-topology measurement of it. There are now two.
 
 `examples/mixing_expressivity` is the **structural** half: shapes of a fixed spin count, random
-couplings, τ_int by Sokal windowing rather than an exponential fit. The claim **holds weakly coupled
-and goes U-shaped strongly coupled** — at β = 2 the shallowest shape is slow (26.30), the middle
-shapes are fast (~5), the deepest slower still (65.95). And past β = 2 the estimator stops being
-one: the same shape returns 285.6, 18.7, 42.6, and at β = 8 returns *small* numbers from a chain
+couplings, τ_int by the certificate's estimator (Geyer's sequence with long-batch means beside it;
+Sokal's window until 2026-09-28) rather than an exponential fit. The claim **mostly holds weakly
+coupled and goes U-shaped strongly coupled** — at β = 2 the shallowest shape is slow (at least
+56.05), the middle shapes run 7.85 to 44.18, and the deepest is past the estimator's validity
+condition at 40,000 draws. Weakly coupled the ordering is not strict: at β = 1 the 12-layer shape
+mixes faster than the 6-layer one (3.68 against 5.07). And past β = 2 the estimator stops being one:
+the same shape returns 343.1, 32.7, 70.5, and at β = 8 returns *small* numbers (6.2) from a chain
 that has stopped moving. Ruggedness needs cold; cold is where the measurement dissolves. Every row
-carries `draws/τ` and prints `unusable` below 200×.
+carries `draws/τ`, prints `unusable` below 200× and `>=` below 1,000×.
 
 `examples/trained_tradeoff` is the **fitted** half, and it splits the sentence in two. Same latent
 count wired one, two or three layers deep; both axes exact.

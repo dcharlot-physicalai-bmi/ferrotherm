@@ -183,7 +183,7 @@ fn main() {
     let scan_wins = resolved.iter().filter(|r| r.2 > 1.0).count();
     let tree_wins = resolved.iter().filter(|r| r.3 > 1.0).count();
     println!(
-        "\n  Over the {} resolved sizes: under the SCAN model the informed chain beat Gibbs in work at {} of them;\n  under the TREE model at {} of them.",
+        "\n  Over the {} sizes that reached ESS >= 25 (see the LB counts for which arms are lower bounds): under the SCAN model the informed chain beat Gibbs in work at {} of them;\n  under the TREE model at {} of them.",
         resolved.len(),
         scan_wins,
         tree_wins

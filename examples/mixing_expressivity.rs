@@ -176,7 +176,7 @@ fn main() {
     }
     println!();
     let shapes = [2usize, 3, 4, 6, 12];
-    let mut cold_row: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
+    let mut cold_row: Vec<(usize, usize, usize, f64, f64, f64)> = Vec::new();
     for layers in shapes {
         let width = 144 / layers;
         let g = layered(layers, width, 7);
@@ -185,7 +185,7 @@ fn main() {
             let (m, sd, r) = tau_over_seeds(&g, b);
             print!("{:>16}", cell(m, sd, r));
             if b == *BETAS.last().unwrap() {
-                cold_row.push((layers, width, g.n_edges, m, sd));
+                cold_row.push((layers, width, g.n_edges, m, sd, r));
             }
         }
         println!();
@@ -198,7 +198,7 @@ fn main() {
         "{:>7} {:>6} {:>7} {:>13} {:>14} {:>11} {:>11} {:>11}",
         "layers", "width", "edges", "tau_int", "updates/draw", "nJ mixing", "nJ readback", "read share"
     );
-    for (layers, width, edges, m, sd) in &cold_row {
+    for (layers, width, edges, m, sd, ratio) in &cold_row {
         let n = layers * width;
         let per = m * n as f64;
         // An independent draw is the sweeps that separate it from the last one AND the readback
@@ -210,7 +210,7 @@ fn main() {
         let rj = readback.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
         println!(
             "{layers:>7} {width:>6} {edges:>7} {:>13} {per:>14.0} {mj:>11.4} {rj:>11.4} {:>10.1}%",
-            if (DRAWS as f64) < RESOLVED_TAUS * m { format!(">={m:.2}+-{sd:.2}") } else { format!("{m:.2}+-{sd:.2}") },
+            cell(*m, *sd, *ratio),
             100.0 * rj / (mj + rj)
         );
     }
@@ -293,7 +293,7 @@ fn main() {
          than this sentence for where the ordering is not strict.\n\n\
          STRONGLY COUPLED (beta {cold}) it does not. The column is U-SHAPED. The shallowest shape --\n\
          {} layers of {}, a dense restricted Boltzmann machine -- is SLOW at {:.2}, the middle\n\
-         shapes run {mid_lo:.2} to {mid_hi:.2}, and the deepest, {} layers of {}, is at {:.2}. A monotone\n\
+         shapes run {mid_lo:.2} to {mid_hi:.2}, and the deepest, {} layers of {}, reads {:.2}{}. A monotone\n\
          reading of `depth makes sampling harder` does not survive into the regime where the\n\
          tradeoff is supposed to bite.\n\n\
          A plausible reading, offered as a reading and not a result: the two slow ends are slow for\n\
@@ -301,7 +301,14 @@ fn main() {
          sweep moves through slowly; a deep narrow stack has the barriers the original claim is\n\
          about. Nothing here separates those two mechanisms, and doing so would need a cluster move\n\
          or a mode-resolved statistic rather than a scalar autocorrelation.",
-        first.0, first.1, first.3, last.0, last.1, last.3
+        first.0, first.1, first.3, last.0, last.1, last.3,
+        if last.5 < MIN_RATIO {
+            format!(" -- from chains only {:.0} of their tau long, past the validity condition", last.5)
+        } else if last.5 < RESOLVED_TAUS {
+            " -- a lower bound".to_string()
+        } else {
+            String::new()
+        }
     );
     println!(
         "\nAND THE REGIME THAT MATTERS IS THE ONE THAT CANNOT BE MEASURED THIS WAY. Past beta 2 at\n\

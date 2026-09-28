@@ -91,33 +91,40 @@
 //!
 //! `examples/informed_scaling.rs`, the same fixture at `beta = 2`, Barker against Gibbs, four
 //! seeds, every row's budget doubled until BOTH chains hold at least 25 effective samples, and
-//! every `tau` cross-checked by batch means as [`crate::certify::certify`] does it: where batch
-//! means exceed twice Sokal's window the larger is carried and the arm is marked TRUNCATED. The
-//! table this replaced (2026-09-13, earlier the same day) used Sokal's window alone and reported
-//! a per-flip advantage of 81x at `n = 2048`; the informed arm's window had closed on a fast mode
-//! at four sizes out of six, and the true ratio is a quarter of that:
+//! every `tau` from [`crate::certify::tau_estimate`], the certificate's estimator: Geyer's sequence
+//! with long-batch means beside it, the larger carried. `trunc` counts seeds where batch means
+//! exceeded twice Geyer's value; `LB` counts seeds whose chain was under
+//! [`crate::certify::RESOLVED_TAUS`] of its own `tau`, where that `tau` is a LOWER bound.
+//! Re-measured 2026-09-28:
 //!
 //! ```text
-//!      n   flips/spin   tau G (flips)  tau B (flips)  per flip   work, scan   work, tree   truncated
-//!     64        4000            974            446      2.2x        0.11x        0.80x    B 1 of 4
-//!    128        4000           8569           1888      4.5x        0.12x         1.5x    none
-//!    256        8000          18922           2836      6.7x        0.09x         2.0x    B 4 of 4
-//!    512        8000          36458           5689      6.4x        0.04x         1.8x    B 3 of 4
-//!   1024       32000         495165          35538     13.9x        0.05x         3.6x    B 4 of 4
-//!   2048       32000         903234          46114     19.6x        0.03x         4.7x    G 1, B 4 of 4
+//!      n   flips/spin   tau G (flips)  tau B (flips)  per flip   work, scan   work, tree   lower bounds
+//!     64        4000           1149            789      1.5x        0.08x        0.53x    G 4, B 3 of 4
+//!    128        4000           7879           2599      3.0x        0.08x         1.0x    G 4, B 4 of 4
+//!    256        8000          19339           3506      5.5x        0.07x         1.7x    G 4, B 2 of 4
+//!    512        8000          35137           6354      5.5x        0.04x         1.6x    G 4, B 3 of 4
+//!   1024       32000         506820          40793     12.4x        0.04x         3.2x    G 4, B 2 of 4
+//!   2048       32000        1002864          47747     21.0x        0.04x         5.1x    G 4, B 0 of 4
 //! ```
+//!
+//! No seed's Gibbs chain reaches a thousand of its own autocorrelation times at this budget, so
+//! every Gibbs `tau` here is a lower bound; where the informed arm is resolved too (only `n = 2048`,
+//! all four seeds) the per-flip ratio is then a lower bound as well, and elsewhere neither side of
+//! it is pinned. The table before this one (2026-09-13 to 2026-09-28) read Sokal's window with
+//! batch means over twenty batches beside it and printed 2.2x, 4.5x, 6.7x, 6.4x, 13.9x and 19.6x per
+//! flip, and 0.80x to 4.7x in work under the tree; the one before that, Sokal alone, said 81x at
+//! `n = 2048`.
 //!
 //! "Per flip" is the ratio the table above reports. "Work" prices each arm's flips at what they
 //! cost: `deg + 1` field terms for Gibbs; `deg + 1` reweighs plus the choice for the informed
 //! chain — `n` weight reads under the linear scan this module shipped with, `log2 n` under the
-//! tree it has now. A TRUNCATED arm's `tau` is a batch-means LOWER bound, so from `n = 256` up the
-//! informed `tau` is a lower bound and every per-flip ratio there is an UPPER bound.
+//! tree it has now.
 //!
 //! **Three things this says.** (1) Under the scan, the informed chain never beat Gibbs in work at
-//! any size — 0 of 6 — so every per-flip advantage this module advertised was a work LOSS of 8x
-//! to 30x. (2) Under the tree it wins at 5 of 6, from 0.80x at `n = 64` to at most 4.7x at
-//! `n = 2048`. (3) The per-flip advantage grows with `n`, about 9x across a 32x range — well
-//! short of linear, and an upper bound on the growth given which arms were truncated. The
+//! any size — 0 of 6 — so every per-flip advantage this module advertised was a work LOSS of 12x
+//! to 25x. (2) Under the tree it wins at 5 of 6, from 0.53x at `n = 64` (a loss) through 1.0x at
+//! `n = 128` to 5.1x at `n = 2048`. (3) The per-flip advantage grows with `n`, about 14x across a
+//! 32x range — short of linear, and measured against Gibbs chains that are all lower bounds. The
 //! literature's "order of magnitude" (Zanella 2020, Grathwohl 2021) is reached on this fixture
 //! only past a thousand spins, and was never true of the implementation that shipped, in any
 //! direction. The exact small-model version of the same comparison, with no estimator in it, is
