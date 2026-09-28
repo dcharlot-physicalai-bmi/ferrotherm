@@ -1462,6 +1462,37 @@ mutations=(
   "src/delay.rs|        after[(phase + k - 1) % k][hist & mask] += w;|        after[phase][hist & mask] += w;|delay::tests::a_coloured_triangle_read_late_leaves_boltzmann|the law after class c filed under class c + 1"
   "src/delay.rs|flips[st] = class.iter().map(|flips[st] = (0..n).collect::<Vec<usize>>().iter().map(|delay::tests::a_coloured_fabric_read_fresh_samples_boltzmann|held spins counted as moves"
 
+  # THE HEAT BATH'S COMPLEMENT (2026-09-28). Every exact operator formed a down-flip as 1 - p_up, which
+  # is exactly zero from 2 beta f = 36.74 and cut every exit from every TSP tour at A >= 26. Each row
+  # puts the subtraction back in one place and names the test that holds that place to mpmath or to a
+  # relative invariance the subtraction cannot keep.
+  "src/kernel.rs|    (up, t / (1.0 + t))|    (up, 1.0 - up)|kernel::tests::the_down_probability_is_exact_where_one_minus_p_up_rounds_to_zero|p_pair's down tail as 1 - p_up"
+  "src/kernel.rs|    p_up(-field, beta)|    1.0 - p_up(field, beta)|kernel::tests::the_down_probability_is_exact_where_one_minus_p_up_rounds_to_zero|p_down as 1 - p_up"
+  "src/autocorr.rs|        _ => p_pair(g.field(i, s), beta),|        _ => (p_up(g.field(i, s), beta), 1.0 - p_up(g.field(i, s), beta)),|autocorr::tests::a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel|the exact kernels' heat-bath complement as 1 - p_up"
+  "src/autocorr.rs|        let small = 0.5 * erfc_tail(z.abs());|        let small = 0.5 * (1.0 - crate::hopfield::erf(x));|autocorr::tests::the_normal_tails_are_accurate_on_both_sides_and_far_out|PIMI's normal tail as 1 - erf, exactly zero past z = 7.07"
+  "src/autocorr.rs|            ((1.0 - p) * stay + p * up, (1.0 - p) * (1.0 - stay) + p * down)|            ((1.0 - p) * stay + p * up, 1.0 - ((1.0 - p) * stay + p * up))|autocorr::tests::a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel|tick-random's down tail as 1 - its up tail"
+  "src/autocorr.rs|                    acc += if y & bit != 0 { p * pooled } else { p_down * pooled };|                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };|autocorr::tests::a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel|the random scan's pushed complement as 1 - p"
+  "src/delay.rs|        Rule::HeatBath => crate::kernel::p_pair(f, beta),|        Rule::HeatBath => (crate::kernel::p_up(f, beta), 1.0 - crate::kernel::p_up(f, beta)),|delay::tests::every_rule_keeps_its_down_flip_against_a_strong_field|the delayed heat bath's complement as 1 - p_up"
+  "src/delay.rs|                (stay, flip)|                (stay, 1.0 - stay)|delay::tests::every_rule_keeps_its_down_flip_against_a_strong_field|the Arrhenius flip as 1 - its stay"
+  "src/syndrome.rs|                let p_down = 1.0 / (1.0 + (e_down - e_up).exp());|                let p_down = 1.0 - p_up;|syndrome::tests::a_stiff_relaxed_chain_keeps_every_states_boltzmann_mass_in_relative_terms|the relaxed sweep's complement as 1 - p_up"
+
+  # EXACT TAU ABOVE TWELVE SPINS AND PAST f64 (tau_int_krylov, tau_int_censored, time_to_mass). The
+  # rank-one term, the reversible dispatch, the kernel's own law and its check, the estimate's rounding
+  # floor, the CG stop at the floor, the f64 limit, the GTH pivot, the censored functional's T term,
+  # the lag sum's quiet run, and the slow scale's stochastic diagonal -- each is a line the scout or
+  # the verifier measured failing without it.
+  "src/autocorr.rs|        let s = mean_pi(&pi, v);|        let s = 0.0 * mean_pi(&pi, v);|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|a fundamental system without its rank-one term, singular"
+  "src/autocorr.rs|        Kernel::ChromaticGibbs => g.n_edges == 0,|        Kernel::ChromaticGibbs => true,|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|CG dispatched to the chromatic sweep, which is not reversible"
+  "src/autocorr.rs|    if residual <= LAW_TOLERANCE {|    if residual <= f64::INFINITY {|autocorr::tests::a_law_that_is_not_the_kernels_is_refused|a law check that accepts any law"
+  "src/autocorr.rs|Kernel::TickRandom { .. } => stationary_solved(g, beta, kernel),|Kernel::TickRandom { .. } => Ok(boltzmann_law(g, beta)),|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|the fabric-family kernels handed the Boltzmann law"
+  "src/autocorr.rs|        let est = inv_norm * true_rel.max(floor);|        let est = inv_norm * true_rel;|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|a GMRES estimate without its rounding floor, which accepts a residual that is rounding"
+  "src/autocorr.rs|            let below_floor = rel2 <= 0.01 * floor * floor;|            let below_floor = false;|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|CG iterating past the floor into a spurious norm estimate"
+  "src/autocorr.rs|    inv_norm * f64::EPSILON > 1.0|    inv_norm * f64::EPSILON > f64::INFINITY|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|a Krylov solve that never admits a chain is past f64"
+  "src/autocorr.rs|                total += rate[k * nf + j];|                total += rate[k * nf + j] + 1.0 - 1.0;|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|a GTH pivot formed through 1 minus a probability"
+  "src/autocorr.rs|        total += pi[f] * e[f] * zf[k] + zf[k] * wp[f];|        total += pi[f] * e[f] * zf[k];|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|the censored functional without its sum over the rest"
+  "src/autocorr.rs|            if quiet >= QUIET_LAGS {|            if quiet >= 1 {|autocorr::tests::the_lag_sum_does_not_stop_where_the_autocorrelation_crosses_zero|a lag sum that stops at its first quiet lag"
+  "src/autocorr.rs|        c[i * nf + i] = (1.0 - off).max(0.0);|        c[i * nf + i] += 0.0 * off;|autocorr::tests::the_slow_scale_mass_time_is_the_pushed_one_where_both_run|a slow-scale product that never restores its diagonal"
+
 )
 
 bad=0
@@ -1533,7 +1564,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=348
+expected_rows=368
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

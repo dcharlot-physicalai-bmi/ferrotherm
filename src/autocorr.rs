@@ -1828,7 +1828,8 @@ pub fn max_krylov_spins(kernel: Kernel) -> usize {
 pub fn reversible(kernel: Kernel, g: &Graph) -> bool {
     match kernel {
         Kernel::RandomScan | Kernel::Informed(_) | Kernel::Synchronous | Kernel::Sca { .. } => true,
-        Kernel::ChromaticGibbs | Kernel::SequentialGibbs => g.n_edges == 0,
+        Kernel::ChromaticGibbs => g.n_edges == 0,
+        Kernel::SequentialGibbs => g.n_edges == 0,
         Kernel::Pimi { .. }
         | Kernel::Stale { .. }
         | Kernel::TickRandom { .. }
@@ -1856,7 +1857,7 @@ fn solve_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrE
         | Kernel::Pimi { .. }
         | Kernel::Stale { .. }
         | Kernel::SiteSpread { .. }
-        | Kernel::TickRandom { .. } => own_law(g, beta, kernel),
+        | Kernel::TickRandom { .. } => stationary_solved(g, beta, kernel),
     }
 }
 
@@ -2084,7 +2085,9 @@ fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, c
             // and iterating on regardless fed the Lanczos estimate rounding: on the 3x3 grid at
             // beta 2 the random scan ran 1,326 applications to a spurious ||A^-1|| of 5e15.
             let rel2 = rr / c0;
-            if inv_norm * rel2.max(floor) <= rtol * (tau + 0.5) || rel2 <= 0.01 * floor * floor {
+            let resolved = inv_norm * rel2.max(floor) <= rtol * (tau + 0.5);
+            let below_floor = rel2 <= 0.01 * floor * floor;
+            if resolved || below_floor {
                 break;
             }
         }
@@ -2412,7 +2415,12 @@ fn gth_poisson(rate: &[f64], b: &[f64], nf: usize, keep: usize) -> Option<Vec<f6
     let mut out = vec![0.0f64; nf];
     for &k in &order {
         alive[k] = false;
-        let total: f64 = (0..nf).filter(|&j| alive[j]).map(|j| rate[k * nf + j]).sum();
+        let mut total = 0.0f64;
+        for j in 0..nf {
+            if alive[j] {
+                total += rate[k * nf + j];
+            }
+        }
         if !(total > 0.0) {
             return None;
         }
@@ -4396,6 +4404,14 @@ mod tests {
             if x == 16.0 {
                 let k = krylov.expect("tau 2.2e6 is inside what f64 can certify at 1e-8");
                 assert!((k.tau_int - want).abs() <= 1e-8 * want, "Krylov at 16: {:e}", k.tau_int);
+                // A tolerance below what f64 can certify here (u ||A^-1|| is about 5e-10) is met or
+                // refused, never claimed: the estimate's `u ||z||` term is what stops a residual
+                // that is only rounding from reading as convergence.
+                match tau_int_krylov(&g, 1.0, Kernel::SequentialGibbs, s1, 1e-12, 1_000) {
+                    Ok(k) => assert!((k.tau_int - want).abs() <= 2e-12 * want, "claimed 1e-12, realised {:e}", (k.tau_int - want).abs() / want),
+                    Err(AutocorrError::AtFloor { .. }) => {}
+                    other => panic!("2 beta J = 16 at rtol 1e-12: {other:?}"),
+                }
             }
         }
     }
