@@ -717,11 +717,35 @@ mutations=(
 
 
   # THE CROSS-CHECK MUST BE ABLE TO FIRE. A threshold of 200x is a check that is wired, compiles,
-  # and never speaks: every certificate keeps Sokal's tau and the ESS it inflates. The cold 3x3
-  # chain, whose exact tau the oracle puts in the tens against a single-digit window, is what
-  # requires the finding to appear -- and the hot half of the same test is what stops the fix from
-  # being "always fire".
-  "src/certify.rs|    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 2.0 * t_sokal;|    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 200.0 * t_sokal;|certify::tests::the_certificate_reports_a_truncated_window_and_carries_the_larger_tau|a truncation cross-check whose threshold nothing real can reach"
+  # and never speaks: every certificate keeps Geyer's tau and the ESS it inflates on a chain whose
+  # autocorrelation rotates. The rotating observable the test hands the certificate reads 3.5% of
+  # its exact tau under Geyer and about 28 times that under long-batch means, which is what requires
+  # the finding to appear -- and the hot half of the same test is what stops the fix from being
+  # "always fire". (Until 2026-09-28 this row mutated the Sokal-versus-batch threshold.)
+  "src/certify.rs|        self.geyer.is_finite() && self.batch.is_finite() && self.batch > 2.0 * self.geyer|        self.geyer.is_finite() && self.batch.is_finite() && self.batch > 200.0 * self.geyer|certify::tests::the_certificate_reports_a_truncated_sum_and_carries_the_larger_tau|a truncation cross-check whose threshold nothing real can reach"
+
+  # THE ESTIMATOR ITSELF, 2026-09-28. Sokal's window read exact autocorrelation sequences more than
+  # 10% low in 26 of 151 cells the way the certificate counts them; `tau_int` is Geyer's initial
+  # monotone sequence now, and `tau_estimate` carries the larger of it and long-batch means. Each
+  # row below puts back one piece of what was wrong, and a test built on an exact sequence, a closed
+  # form, or a count must notice.
+  # tau_int quietly back to Sokal: the two-mode AR(1) test requires Geyer near the closed form.
+  "src/certify.rs|    let raw = tau_int_geyer_raw(trace);|    let raw = tau_int_sokal(trace);|certify::tests::a_small_slow_mode_closes_sokal_early_and_geyer_and_batch_means_see_it|tau_int quietly back to Sokal's window"
+  # Geyer in Stan's convention (1 + 2 sum rho) rather than this crate's (1/2 + sum rho): every tau
+  # doubles and an independent draw reads 1. The exact-sequence test holds Geyer to 1e-4.
+  "src/certify.rs|    -0.5 + sum|    -1.0 + 2.0 * sum|certify::tests::geyer_reads_on_exact_sequences_what_the_window_truncates|Geyer's sum in the wrong convention, independent draws at 1"
+  # The entry point carrying Geyer alone: on a rotating autocorrelation it reads 3.5% of the truth.
+  "src/certify.rs|        tau = tau.max(obm);|        tau = tau.max(f64::NAN);|certify::tests::geyer_alone_under_reads_a_non_reversible_chain_and_the_batch_cross_check_is_carried|the batch cross-check computed and never carried"
+  # The 1/2 floor removed where batch means cannot stand in for it: an ess of three times the draws.
+  "src/certify.rs|            let g = if raw.is_finite() { raw.max(0.5) } else { raw };|            let g = raw;|certify::tests::ess_never_exceeds_the_draws_and_a_failed_sum_is_a_finding|an effective sample size larger than the chain"
+  # A non-positive Geyer sum taken as a value rather than reported as a failure.
+  "src/certify.rs|        if !raw.is_nan() && raw <= 0.0 {|        if false {|certify::tests::ess_never_exceeds_the_draws_and_a_failed_sum_is_a_finding|a failed Geyer sum read as a value"
+  # The lower-bound finding at ten tau instead of a thousand: 300 draws of a near-independent chain
+  # would pass as resolved.
+  "src/certify.rs|        self.tau.is_finite() && (self.draws as f64) < RESOLVED_TAUS * self.tau|        self.tau.is_finite() && (self.draws as f64) < 10.0 * self.tau|certify::tests::a_chain_under_a_thousand_taus_is_reported_as_a_lower_bound|a lower-bound finding that needs ten tau, not a thousand"
+  # rhat::ess dividing by a non-positive sum again, which the old `tau.max(1e-300)` turned into
+  # Stan's cap -- the most optimistic ESS there is -- for exactly the chains it cannot read.
+  "src/rhat.rs|    if !(tau > 0.0) {|    if false {|rhat::tests::a_non_positive_geyer_sum_is_nan_rather_than_the_cap|a failed Geyer sum reported as an effective sample size"
 
 
   # A SWEEP ON FUNCTIONS RUNS THE SITES BACKWARDS. P = P_0 P_1 ... P_{n-1} on distributions, so
@@ -1533,7 +1557,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=348
+expected_rows=355
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2
