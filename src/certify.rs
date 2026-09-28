@@ -1153,18 +1153,29 @@ mod tests {
         // Break mode 3. A 24x24 lattice below its critical temperature, sampled from the first
         // sweeps of a randomly initialised chain: it is still coarsening out domains and its
         // magnetization is travelling, so the draws describe where it started rather than the
-        // model. Measured tau ~ 20 against tau ~ 0.8 once burned in.
+        // model. Measured (2026-09-28, 2,000 draws, seed 4) tau 44.7 against 0.87 once burned in.
         //
         // Note the 1D ring will NOT do for this test, and an earlier version of it wrongly used
         // one: 1D Ising has no ordered phase, so a ring equilibrates fast at every temperature and
         // certifying it clean is correct behaviour, not a missed detection.
+        //
+        // 2,000 draws on both halves, so burn-in is the only difference. It was 600, and 600 draws
+        // of this chain burned in are about 800 autocorrelation times -- too few for its `tau` to be
+        // more than a lower bound, which the certificate now reports (`TauLowerBound`), so the
+        // clean half could not pass on those draws. And the unburned half must be caught for being
+        // UNDERMIXED, not merely for being short: a `!passed()` alone would now be satisfied by the
+        // lower-bound finding whether or not the drift was seen.
         let g = crate::ising::lattice2d(24, 1.0);
-        let (s, t) = run(&g, 0.7, 1, 0, 600, 4);
+        let (s, t) = run(&g, 0.7, 1, 0, 2_000, 4);
         let c = certify(&g, 0.7, &s, &t);
-        assert!(!c.passed(), "an unburned coarsening chain must not certify clean:\n{c}");
+        assert!(
+            c.findings.iter().any(|f| matches!(f, Finding::Undermixed { .. })),
+            "an unburned coarsening chain must be reported undermixed, not just short:\n{c}"
+        );
 
-        let (s2, t2) = run(&g, 0.7, 1, 500, 600, 4);
-        assert!(certify(&g, 0.7, &s2, &t2).passed(), "burning in should clear it");
+        let (s2, t2) = run(&g, 0.7, 1, 500, 2_000, 4);
+        let c2 = certify(&g, 0.7, &s2, &t2);
+        assert!(c2.passed(), "burning in should clear it:\n{c2}");
     }
 
     #[test]
@@ -1659,7 +1670,10 @@ mod tests {
                     x
                 })
                 .collect();
-            assert_eq!(tau_int(&anti), 0.5, "n {n}: Geyer is floored at the independent value");
+            // The exact value is 0.026, so Geyer's sum is either floored or -- on 200 draws, where
+            // its noise is as large as the value -- zero or less, which is a failure and no value.
+            let g = tau_int(&anti);
+            assert!(g == 0.5 || g.is_nan(), "n {n}: never below the independent value: {g}");
             let est = tau_estimate(&[&anti]);
             assert!(est.tau >= 0.5 && est.ess() <= n as f64, "n {n}: {est:?}");
 

@@ -788,7 +788,8 @@ mod tests {
     /// autocorrelation is SMALL — which bought it MANY effective samples and a LOW cost per
     /// sample. `examples/burnin` measures the whole thing: at `beta = 0.6` on an 8x8 ferromagnet,
     /// a chain started all-up reports `<m> = +0.974 +- 0.0009` against a truth of exactly zero —
-    /// 1060 standard errors out — with `tau_int = 1.13`, which is near the ideal value of one.
+    /// 1060 standard errors out — with `tau_int = 1.13` under the Sokal window the crate used then,
+    /// which is 2.26 times the value of independent draws (`1/2`) and nothing like a warning.
     /// R-hat over dispersed chains is 27.2 and coupling from the past puts the required burn-in
     /// between `2^19` and `2^20` sweeps against the 200 that were used.
     ///

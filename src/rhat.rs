@@ -432,6 +432,37 @@ mod tests {
         assert!((e / want - 1.0).abs() < 0.25, "ESS {e} vs closed form {want}");
     }
 
+    /// A GEYER SUM OF ZERO OR LESS IS A FAILURE, NOT THE CAP. Chains that alternate sign every
+    /// draw under a little noise have a lag-one autocorrelation near `-1`: the first pair sum is
+    /// about `0.02`, the next is noise, and the total comes out non-positive. This divided by
+    /// `tau.max(1e-300)` and so reported `M N log10(M N)` -- the most optimistic effective sample
+    /// size the function can return -- for exactly the chains its estimator could not read. The
+    /// control: a mildly antithetic AR(1) at `-0.5`, whose sum is positive, still gets its closed
+    /// form `(1 - rho) / (1 + rho) = 3` times the draws, under the cap.
+    #[test]
+    fn a_non_positive_geyer_sum_is_nan_rather_than_the_cap() {
+        let chains: Vec<Vec<f64>> = (0..4)
+            .map(|c| {
+                let mut rng = Pcg::new(40 + c, 0x4C);
+                (0..4_000).map(|t| if t % 2 == 0 { 1.0 } else { -1.0 }).map(|s: f64| s + 0.1 * normal(&mut rng)).collect()
+            })
+            .collect();
+        let e = ess(&chains);
+        assert!(e.is_nan(), "an alternating chain has no Geyer value; got ESS {e}");
+
+        let rho = -0.5f64;
+        let chains: Vec<Vec<f64>> = (0..4)
+            .map(|c| {
+                let mut rng = Pcg::new(50 + c, 0x4D);
+                let mut x = 0.0f64;
+                (0..20_000).map(|_| { x = rho * x + (1.0 - rho * rho).sqrt() * normal(&mut rng); x }).collect()
+            })
+            .collect();
+        let e = ess(&chains);
+        let want = 80_000.0 * (1.0 - rho) / (1.0 + rho);
+        assert!((e / want - 1.0).abs() < 0.25, "ESS {e} vs closed form {want}");
+    }
+
     /// A trend inside every chain -- the first half around 0, the second around 3 -- leaves the
     /// chains identical to each other, so the unsplit statistic reads 1; the split one must not.
     #[test]

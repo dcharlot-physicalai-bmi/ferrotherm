@@ -2716,10 +2716,10 @@ test "a solved problem certifies its own sampling" {
 
     const cert = try p.certify(1.0, 512, 1);
     try std.testing.expect(cert.ess > 0);
-    // Not `tau >= 1`: tau_int here measures 0.58, and an integrated autocorrelation time below one
-    // is real for a chromatic sweep that decorrelates faster than one pass. Asserting the textbook
-    // floor would have been asserting a convention this sampler does not obey.
-    try std.testing.expect(cert.tau_int > 0);
+    // Not `tau >= 1`: this crate's convention is `1/2 + sum rho`, so independent draws have
+    // `tau_int = 1/2` and the certificate never reports less -- its effective sample size is at
+    // most the draw count, which the next line holds it to. One is not a floor of anything here.
+    try std.testing.expect(cert.tau_int >= 0.5);
     try std.testing.expect(cert.ess <= 512);
     try std.testing.expect(cert.beta_eff > 0);
     // A FINDING THAT IS STRUCTURALLY GUARANTEED, rather than one this model happens to produce.

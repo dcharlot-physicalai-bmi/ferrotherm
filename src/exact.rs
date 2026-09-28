@@ -1388,10 +1388,21 @@ mod tests {
         }
         let cert = crate::certify::certify(&g, beta, &samples, &trace);
         crate::certify::assert_boltzmann(&cert, beta, "exact backward sampling");
-        // Independent by construction: a chain of these has no autocorrelation to integrate.
+        // Independent by construction: a chain of these has no autocorrelation to integrate, and in
+        // this crate's convention (`1/2 + sum rho`) that is `tau_int = 1/2`, an effective sample
+        // size equal to the draws. This asserted `< 1.5` with the message "near 1" -- three times
+        // the independent value, a bound that a factor-of-two convention error (`1 + 2 sum rho`)
+        // passed easily. Geyer's sequence alone must sit at its floor within its noise, and the
+        // certificate, which also carries long-batch means (about 26% noise at 20 batch lengths),
+        // must stay well under the value that convention error would read.
+        let geyer = crate::certify::tau_int(&trace);
         assert!(
-            cert.tau_int < 1.5,
-            "independent draws must have tau_int near 1, got {}",
+            (0.5..0.55).contains(&geyer),
+            "independent draws must have Geyer's tau_int at 1/2, got {geyer}"
+        );
+        assert!(
+            (0.5..0.75).contains(&cert.tau_int),
+            "independent draws must certify at tau_int near 1/2, got {}",
             cert.tau_int
         );
     }
@@ -2086,7 +2097,7 @@ pub const MAX_DRAW_STATE: usize = 512 << 20;
 /// Every other sampler in this crate produces a CHAIN: correlated draws whose distance from the
 /// Boltzmann distribution is a question you answer with [`crate::certify`]. This produces
 /// INDEPENDENT draws that are exactly Boltzmann, with no burn-in, no autocorrelation and nothing to
-/// certify — `tau_int` is 1 by construction. It is the forward-filter/backward-sample construction
+/// certify — `tau_int` is `1/2` by construction, the crate's value for independent draws. It is the forward-filter/backward-sample construction
 /// (Hamze & de Freitas, UAI 2004; the backward pass is standard bucket-elimination sampling,
 /// Dechter 1999): run the sum-product elimination forward keeping each variable's conditional, then
 /// draw in REVERSE elimination order, where every variable's conditional scope is already assigned.
