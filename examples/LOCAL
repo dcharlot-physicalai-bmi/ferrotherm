@@ -8,6 +8,10 @@
 # example listed here must honour: the same code at sizes that finish in minutes, with a banner
 # saying its numbers are not the measurement. The full run, and the numbers worth quoting, are by hand.
 #
+# EMPTY SINCE 2026-09-28. The two examples that were here, penalty_mixing and informed_scaling_exact,
+# each spent their three hours summing a lag series one application of the kernel at a time. Both now
+# solve the fundamental-matrix system matrix-free (autocorr::tau_int_solved) and finish in under seven
+# minutes of CPU, so they run in full in the weekly job (examples/SLOW) and their smoke modes are gone.
+# An empty list is a state the weekly job accepts; a listed example still needs a smoke mode.
+#
 # name                        full run, one core
-penalty_mixing              > 10800 s locally (killed at three hours on 2026-09-27, two of twelve instances done)
-informed_scaling_exact      > 10800 s locally (killed at three hours on 2026-09-27, inside n = 14)
