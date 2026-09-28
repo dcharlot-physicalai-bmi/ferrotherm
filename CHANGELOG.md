@@ -2,6 +2,163 @@
 
 ## Unreleased
 
+### `certify::tau_int` overstated effective samples; it is Geyer's sequence now, cross-checked by long-batch means
+
+Every effective sample size in this crate — the certificate's `ess`, every `SampleSet` error bar on
+every surface, the free-energy TI widening and BAR errors, `potts::estimate`, `sse` — divided by
+`certify::tau_int`, and `tau_int` was Sokal's automatic window: `1/2 + Σρ`, closing at the first
+`W ≥ 5τ`. On a chain whose autocorrelation is a large fast mode beside a small slow one the window
+closes before the slow mode is summed, **with no sampling noise involved**, so the effective sample
+size it implies is too large. How much, measured two ways and scoped the way the certificate uses it:
+
+- **On exact autocorrelation sequences** (`autocorr::apply` on seven enumerable fixtures, ten kernels,
+  two or three temperatures; exact values from `tau_int_fundamental`, agreeing with an independent
+  numpy oracle to 8 digits), counted as the certificate carries it — the larger of energy and
+  magnetisation — the window read **more than 10% low in 26 of 151 cells**: `−92%` on the 3x3 glass
+  at `β = 1.6` under SCA, `−60%` under the chromatic sweep there, `−45%` at `β = 1` (2.978 against an
+  exact 5.4205). Consumers that read energy alone fared worse: the 12-spin glass reads 1.94 against
+  33.24, `−94%` — and energy alone is what `free_energy`'s TI and BAR, `tau_exactness`,
+  `informed_mixing`, `trained_tradeoff` and `joules_per_sample` read. (The audit behind this first
+  counted 97 of 453 cells, every observable separately; 26 of 151 is the certificate's view.)
+- **End to end**, `SampleSet::collect` on the 3x3 glass at `β = 1`, 20,000 draws, 16 seeds:
+  `chain_tau` read **0.50–0.59 of the exact value on all 16**, and the certificate passed clean on 12
+  of them with its `ess` **1.72–1.99 times** the exact 1,845; the batch cross-check it had caught
+  4 of 16. Every error bar on every surface was 1.3–1.4 times too narrow there. On the same seeds
+  now: 0.69–1.49 of exact, 16 of 16 clean, `ess` 1,240–2,676.
+- On 224 simulated traces at least 2,000 exact `τ` long (8 seeds; chromatic, sequential and
+  informed samplers), readings below 0.8 of the exact value: **Sokal 103, what the certificate
+  carried 57, Geyer 23, what it carries now 19.**
+
+**The rule, and which chains it is for** (documented on `certify::tau_int` and `tau_estimate`):
+
+- `tau_int` is **Geyer's initial monotone sequence** over the trace's own autocorrelation (the FFT
+  autocovariance, in the divided-by-`N` form Stan uses), summing pairs `ρ(2m) + ρ(2m+1)` while they
+  are positive and clipping each to the one before. The loop is `rhat::ess`'s, now shared as
+  `certify::geyer_initial_monotone`. For a **reversible** kernel every pair sum is
+  `Σ a_i λ_i^{2m}(1 + λ_i) ≥ 0`, and on the exact sequences of reversible kernels it read within
+  `1e-4` in all 312 converged cells.
+- It is **not** valid for a **non-reversible** chain — every fixed-order sweep here, the chromatic
+  sweep `gibbs::Sampler` runs included, lifted chains, renewal processes. It usually over-reads
+  there, but not always: on closed forms `a r^k cos(wk) + (1 − a) λ^k` it reads `−94.6%` to `−99.4%`,
+  and on an in-tree sequential sweep of `ring(8, −1, 0)` at `β = 2`, `−7.7%`. So
+  **`certify::tau_estimate`**, the one entry point every error bar and certificate now goes through,
+  carries **the larger of Geyer and overlapping batch means at `b = N / 20`** (`tau_int_obm`, which
+  needs no reversibility), never below `1/2`, and `Finding::TauTruncated` reports batch means above
+  twice Geyer (about four of their own standard deviations). The certificate is computed from
+  samples alone and cannot know the kernel, so the cross-check applies to every chain. Its cost on
+  the 224 traces: readings above 1.25 of exact went from 13 to 59, a geometric-mean ratio of 1.10
+  against 0.98 — error bars about 5% wider on average, the direction a certificate may err in.
+- **The `1/2` floor stays**, so `ess ≤ draws` everywhere: Geyer reads an antithetic trace below `1/2`,
+  and without the floor that pulled the TV noise floor below the independent one — false
+  `AboveNoiseFloor` findings. **A Geyer sum of zero or less is a failure, not a value**:
+  `tau_int` returns `NaN`, the certificate reports `Finding::TauUnresolved` and carries batch
+  means, and `rhat::ess` returns `NaN` where it used to divide by `tau.max(1e-300)` and report Stan's
+  `N log10 N` cap — its most optimistic answer, for exactly the chains it could not read.
+- **`Finding::TauLowerBound`** below `certify::RESOLVED_TAUS` = 1,000 autocorrelation times: `tau` is
+  a lower bound there and `ess` an upper one. Over 16 seeds on five slow-mode cells Geyer's median
+  read 0.41–0.68 of exact at 100 `τ` and 0.74–0.99 at 1,000; `Undermixed` alone passed chains at 100.
+  A certificate on such a chain no longer passes. `interval_calibration` shows what it closes: on
+  glass16 at `β = 1.2`, 10 of 24 seeds clear `Undermixed` with 78.8% coverage among them, and none
+  clears `TauLowerBound`; every seed that clears both sits in a row covering at least 98.2%.
+- Sokal's window is kept as **`tau_int_sokal`**, and every test that pins it pins it under that name
+  (`certify`, `fft`, `pointproc`, `autocorr`).
+
+**Routed through `tau_estimate`**: `certify::certify`; `SampleSet::chain_tau` and every estimate's own
+`tau` (`samples.rs`), so `ft_samples_*`, Python, Julia, Zig, HTTP, MCP and the workbench with no ABI
+signature changed; `free_energy::estimate` (TI rungs and `hopfield::retrieval_overlap`) and
+`bar_pair`; `potts::estimate`; `sse`'s estimate; `multiflip`'s `tau_flips` gate, which Sokal decided on
+both arms; `cftp`'s chi-square variance; and the per-site check in `samples`' own tests.
+`conform.rs` reaches it through `SampleSet::certificate`. `docs/ferrotherm.wasm` is rebuilt, because
+`check-browser-certificate.sh` holds the native and browser certificates to `1e-9`: both now read
+`tau` 0.5665 and `ess` 2,647.8 on `ring(10, 1, 0.3)` (0.5523 and 2,716.1 before). **Any merge that
+touches the estimator must rebuild it again.**
+
+**The convention, stated wrongly in five places: independent draws have `tau_int = 1/2`, not 1.**
+`Certificate::tau_int`'s doc said "`1.0` means consecutive draws are independent"; `floors.rs` and
+LANDSCAPE called a stuck chain's 1.13 "near the ideal value of one", which is 2.26 times the
+independent value; the Zig test called 1 the "textbook floor"; README said `tau_int = 1` by
+construction for `Elimination::draws`. **Correction to an earlier entry below**, "The crate's notion
+of truth was capped at 2^n, and now is not": its "`tau_int = 1` by construction" is `1/2`. And
+`exact.rs`'s test of exactly independent draws asserted `tau_int < 1.5` "near 1" — three times the
+value it should find, so a factor-of-two convention error passed it. It now holds Geyer to
+`[0.5, 0.55)` and the certificate to `[0.5, 0.75)`.
+
+**Re-measured** (deterministic seeds; counts and ratios, no wall-clock; the machine ran at load 40 to
+200). Before → after:
+
+- `critical_slowdown`: one seed at 40,000 draws, Sokal → **five seeds at `400 L^2` draws, at least
+  1,767 `τ` per cell (asserted)**. Gibbs `τ(32)` 100.85 → 137.81 median (128.0–146.0); `z` 2.06 →
+  2.11 from the medians, per-seed fits 1.73–2.24 (Geyer's medians alone 2.08) — about 2.1, and the
+  second decimal not resolved; SW 0.29 → 0.18, per-seed 0.06–0.37, not resolved; Wolff 0.46 → 0.46.
+  Gibbs-over-Wolff per spin visited at `L = 32`: 76× → 99×, `L^1.84` → `L^1.90`; per-visit exponents
+  2.22 / 2.29 → 2.18 / 2.21. The verifier's 24 seeds at 40,000 draws had read `τ(32)` median 122.8,
+  sd 45: the published value was one seed near the 17th percentile.
+- `informed_mixing`: 4,000-draw chains, Sokal → every chain run to 1,000 of its own `τ` (cap `2^20`
+  draws). At `β = 2`, **41× → 16×** per flip, and the ordering reverses: `√x` 1,873 is fastest and
+  `Barker` 5,356 slowest, where the old table had `Barker` 2.4-fold ahead of `√x` and an eightfold
+  spread (now 2.9-fold). `β = 1`: 3.3× → 5.5×. `β = 4` resolves on no arm — four lower bounds. The
+  old table's informed columns **did not reproduce on the tree before this change either** (it
+  printed 644 / 2,254 / 768 at `β = 2` against 1,598 / 671 / 5,135), and its Gibbs mean at `β = 2`
+  was one seed's 101,903 averaged with three between 1,870 and 3,978. The example's header called those numbers
+  "correct as a statement about the chain's law"; it no longer does.
+- `informed_scaling` (`β = 2`, ESS ≥ 25 budget kept): per flip 2.2 / 4.5 / 6.7 / 6.4 / 13.9 / 19.6×
+  → 1.5 / 3.0 / 5.5 / 5.5 / 12.4 / 21.0× at `n = 64 … 2048`; in work under the tree 0.80–4.7× →
+  0.53–5.1×. It now counts arms under 1,000 `τ`: every Gibbs arm at every size is a lower bound.
+- `trained_tradeoff`: `τ` at twelve latents 1.5 / 1.7 → 8.5 / 10.2 (Geyer alone 5.9 / 7.3);
+  Spearman against what was learned **+0.81 → +0.93**, against depth **−0.17 → −0.10**. The verdict
+  stands and strengthens; the prose sentences that quoted numbers are interpolated from the rows now.
+- `mixing_expressivity`: `β = 2` priced rows 26.30 / 4.91 / 65.95 → ≥56.05 / 9.48 / unusable (199×);
+  the old rows did not match the tree they shipped with either (48.91 / 7.62 / 65.95). The weakly
+  coupled ordering is not strict (`β = 1`: 12 layers 3.68 below 6 layers 5.07); cells under 1,000 `τ`
+  print `>=`, and the prose reads its numbers off the rows.
+- `interval_calibration`: `τ` 2.1 / 6.5 / 31.6 / 68.1 / 23.6 → 2.3 / 6.8 / 34.0 / 70.7 / 26.7 on the
+  quoted rows, coverage unchanged or up; glass16 at `β = 1.2`: 11 of 24 seeds clearing `Undermixed`
+  at 80.7% → 10 at 78.8%, and the new resolved columns above.
+- `calibration.rs` at 200 scrambled runs: `SampleSet` rows 0.72 / 0.97 / 0.55 / 0.80 → 0.70 / 0.95
+  / 0.53 / 0.78; `bar_ladder` quadrature **1.50 → 1.41** (still 40% too small; the jackknife, with no
+  `τ` in it, stays at 1.04); TI covers 200/200 with a 3% wider bracket. The base tree reproduced the
+  published table to 0.01 under the same harness.
+- `burnin`: `τ` 1.129 → 1.477, `<m> = +0.974 ± 0.0009` → `± 0.0011`, 1060 → **927** standard errors
+  from the truth.
+- `certify.rs`'s thinning table (`ring(10, 1, 0.2)`, 300 seeds): its `τ` column 1.51 / 0.86 / 0.57
+  was the ENERGY's, from before the certificate carried magnetisation (exact `m` 2.698 / 1.377 /
+  0.666); now 2.88 / 1.47 / 0.74. Its without-inflation column (2.3 / 4.7 / 3.0%) does not reproduce
+  on the tree before the change either (8.3 / 7.3 / 5.0%), so its claim that removing the inflation
+  moves coverage toward nominal is withdrawn.
+- `conform` / ECOSYSTEM: `ess` 2,734 → 2,534, noise floor 0.3060 → 0.3178, the bad run "worth about
+  3" → 4. `free_energy` and `learning_theory`: error bars and the TI bracket 1–4% wider, not quoted
+  anywhere. `certify_probe`: the burned-in 24×24 run at 600 draws now reports `TauLowerBound` instead
+  of passing (it is about 750 of its own `τ`), and the lattice at `β_c` reads `τ` 42.0 where the
+  window read 62.5 — a 3,000-draw chain some 70 `τ` long, flagged `Undermixed` either way.
+- The workbench reading in README and ROADMAP ("2,000 draws worth **4**, `τ` 245, `0.103 ± 0.71`")
+  came from a session whose state was not recorded and does not reproduce from a fresh seed-1 run
+  (124 and 8 before; 140 and 7 now, natively through the same C ABI calls); replaced.
+- `tau_exactness` keeps its Sokal column (now `tau_int_sokal`) and adds Geyer and the carried value on
+  the same traces: on the 12-spin glass at `β = 1` the window reads 0.05–0.06 of the exact
+  33.24 at every length from 30 to 10,000 `τ`; Geyer's sequence reads 0.54 at 1,000 `τ` and 0.82 at
+  10,000, and the carried value 0.70 and 1.00 (means of 16 chains). Worst error over the four
+  temperatures at 10,000 `τ`: Sokal 94%, Geyer 18%, carried 13%. So a thousand `τ` is where
+  `TauLowerBound` stops, not where `τ` is exact, and the docs say so.
+- `examples/SLOW` gains `critical_slowdown` and `informed_mixing`, which now take minutes.
+
+**Pending, not re-stated: joules per independent sample** (`meter/examples/joules_per_sample`,
+`fabric_vs_cpu`; LANDSCAPE, ROADMAP 2.2: "PT 1.9× better", "≥604×"). Their ESS was Sokal's on both
+arms, and the joules need a quiet metered machine; the one available ran at a load average of 40 to
+200, so they are marked pending in place rather than re-published under load (AGENTS.md invariant 4).
+
+**What this does not fix.** No single-chain estimator sees a mode the chain never visited
+(`examples/burnin`); Potts, SSE and cluster-move traces have no exact reference to score against;
+and the percentages above are from 8- to 12-spin fixtures. Three API changes: `Finding::TauTruncated`
+carries `{ geyer, batch }` where it carried `{ sokal, batch }`; `Finding::TauUnresolved` and
+`Finding::TauLowerBound` are new; `rhat::ess` returns `NaN` for a non-positive Geyer sum.
+
+Tests on exact sequences that fail on the bug they name: the glass3x3 chromatic energy (window
+2.978, Geyer exact), the `ring(8, −1, 0.3)` sequential-sweep magnetisation (window `−19%`, Geyer
+within 1%), a non-reversible sequence where Geyer alone reads `−7.7%` in-tree and `−96.5%` in closed
+form while the entry point carries batch means, `ess` never above `draws` (including a failed sum and
+a trace too short for batch means), the lower-bound finding, and `rhat::ess`'s failed sum. Seven
+mutation rows, and the truncation row moved to the new threshold; 355 rows.
+
 ### The weekly slow-examples job, fixed after its first run
 
 `examples-slow.yml` ran for the first time on 2026-09-27 and two of its four shards failed. Neither

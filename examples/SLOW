@@ -29,7 +29,7 @@ pimi_exact                      1230   runner, the weekly run of 2026-09-27
 kmix_certified                  1144   runner, the weekly run of 2026-09-27
 kmix_flagship                   1133   runner, the weekly run of 2026-09-27
 tick_random_exact               1129   runner, the weekly run of 2026-09-27
-tau_exactness                   1026   684 s local, one core, 2026-09-27, x1.5
+tau_exactness                   2277   1518 s CPU local, 2026-09-28, x1.5 (Geyer and carried columns added; 3.4 GB peak)
 informed_mixing                  700   467 s CPU local, 2026-09-28, x1.5 (chains now run to 1,000 tau)
 critical_slowdown                362   241 s CPU local, 2026-09-28, x1.5 (five seeds, 400 L^2 draws)
 synchronous_exact                944   629 s local, one core, 2026-09-27, x1.5
