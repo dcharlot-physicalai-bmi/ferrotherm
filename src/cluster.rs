@@ -10,9 +10,12 @@
 //! autocorrelation time grows as `L^z` with `z ≈ 2.17` in two dimensions — critical slowing down —
 //! because flipping a domain of linear size `ξ` one spin at a time is a random walk against the
 //! surface tension holding it together. A cluster update builds the correlated region and flips it
-//! whole. `examples/critical_slowdown.rs` measures both at `beta_c` rather than citing them: `z` of
-//! 2.06 for single-spin Gibbs against 0.29 for Swendsen–Wang and 0.46 for Wolff, and at `L = 32` an
-//! independent sample costs 103,274 spin visits under Gibbs and 1,352 under Wolff.
+//! whole. `examples/critical_slowdown.rs` measures both at `beta_c` rather than citing them, over
+//! five seeds at a thousand-plus autocorrelation times per cell: `z` of about 2.1 for single-spin
+//! Gibbs (2.11 from the medians, per-seed fits 1.73 to 2.24) against 0.46 for Wolff, with
+//! Swendsen–Wang's too small to resolve at these sizes, and at `L = 32` an independent sample costs
+//! 141,121 spin visits under Gibbs and 1,425 under Wolff. (Until 2026-09-28 this quoted one seed read
+//! by Sokal's window: 2.06, 0.29, 0.46, and 103,274 against 1,352.)
 //!
 //! # When these algorithms are valid, and it is not "no negative couplings"
 //!

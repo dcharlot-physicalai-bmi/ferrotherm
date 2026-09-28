@@ -479,11 +479,14 @@ from the same estimate, differing only by `sqrt(2τ)`:
 
 | model | β | τ_int | corrected `sqrt(var/ess)` | naive `sqrt(var/N)` |
 |---|---|---|---|---|
-| ring12 | 0.5 | 2.1 | 99.7% | 83.3% |
-| ring12 | 0.8 | 6.5 | 100.0% | 67.0% |
-| ring12 | 1.2 | 31.6 | 100.0% | **24.0%** |
-| glass14 | 0.8 | 68.1 | 94.6% | 27.7% |
-| glass16 | 0.8 | 23.6 | 97.9% | 30.7% |
+| ring12 | 0.5 | 2.3 | 99.7% | 83.3% |
+| ring12 | 0.8 | 6.8 | 100.0% | 67.0% |
+| ring12 | 1.2 | 34.0 | 100.0% | **24.0%** |
+| glass14 | 0.8 | 70.7 | 94.9% | 27.7% |
+| glass16 | 0.8 | 26.7 | 97.9% | 30.7% |
+
+(Re-measured 2026-09-28 with the certificate's current estimator, Geyer's sequence with long-batch
+means beside it; the τ column read 2.1, 6.5, 31.6, 68.1 and 23.6 under Sokal's window.)
 
 An interval announcing 95% and containing the truth for one site in four is not conservative; it is
 a wrong number with a decoration. The corrected one over-covers on several rows and that is the
@@ -492,9 +495,13 @@ the site's own, because a site sitting in a metastable mode reports a fast-looki
 mode that decides the answer never moves.
 
 **And the limit is printed with the result.** Where τ runs to hundreds, τ is itself an estimate from
-a chain barely long enough to make it. On glass16 at β = 1.2, 11 of 24 seeds clear `certify`'s
-`Undermixed` finding and coverage among exactly those seeds is 80.7%. The correction is a large
-improvement and not a guarantee; past that point the answer is a longer chain, not a wider bar.
+a chain barely long enough to make it. On glass16 at β = 1.2, 10 of 24 seeds clear `certify`'s
+`Undermixed` finding and coverage among exactly those seeds is 78.8% (11 and 80.7% under Sokal's
+window). The correction is a large improvement and not a guarantee; past that point the answer is a
+longer chain, not a wider bar. **And the certificate now says so itself:** below a thousand of its
+own autocorrelation times it reports `TauLowerBound` — τ a lower bound, ess an upper one — and at
+20,000 draws no seed of any row with τ above 20 clears it. Among every seed that clears both
+findings, coverage is at least 98.2%.
 
 ### Readback is 78–98% of what an independent draw costs
 
@@ -536,13 +543,17 @@ count wired one, two or three layers deep; both axes exact.
 
 - **Latents without connectivity buy less expressivity — confirmed**, monotone in depth at every
   latent count.
-- **They therefore cost more mixing — not as stated.** The deep arms mix *faster*; at six latents
-  the *wide* model is the slowest thing in the table.
+- **They therefore cost more mixing — not as stated.** Where the deep arms learned little they mix
+  *faster*; at four and six latents the *wide* model is the slowest of its row.
 
-Spearman of τ_int against **what the model learned: ρ = +0.81**; against **how deep it is: −0.17**.
-τ_int = 0.5 is the floor — independent draws — and the deep arms sit on it. **They are fast because
-they failed.** Depth does not make sampling harder; depth makes *learning* harder, and what a model
-learned is what makes sampling harder.
+Spearman of τ_int against **what the model learned: ρ = +0.93**; against **how deep it is: −0.10**
+(re-measured 2026-09-28 with the certificate's current estimator; Sokal's window, used before, read
+these chains 1.25 to 6 times lower and gave +0.81 and −0.17). τ_int = 0.5 is the floor — independent
+draws — and the models that learned least sit nearest it: the deep arm at four latents, 27.4%
+learned, mixes at 0.8. **They are fast because they failed.** Depth does not make sampling harder;
+depth makes *learning* harder, and what a model learned is what makes sampling harder. The one pair
+where learning is nearly equal, twelve latents wide against deep (96.3% and 93.1%), has the deep
+model slower, 10.2 against 8.5.
 
 ### Structured cliques, written down instead of searched
 
@@ -1240,7 +1251,8 @@ worse than none.
 
 Every sampler here produces a *chain*: correlated draws whose distance from Boltzmann is a question
 you answer with `certify`. `exact::Elimination::draws` produces **independent draws that are exactly
-Boltzmann** — no burn-in, no autocorrelation, `tau_int = 1` by construction. Run the sum-product
+Boltzmann** — no burn-in, no autocorrelation, `tau_int = 1/2` by construction (the crate's
+convention is `1/2 + Σρ`, so independent draws read `1/2` and are worth one draw each). Run the sum-product
 elimination forward keeping each variable's conditional, then draw in **reverse** elimination order,
 where every variable's conditional scope is already assigned.
 
@@ -1324,28 +1336,41 @@ Propose `k` with probability `∝ g(π(flip k)/π(s))` for any **balancing funct
 That condition is what makes the energy cancel out of the Metropolis–Hastings ratio, leaving
 `α = min(1, Z_i/Z_j)` — only the two normalisers, for every `g`.
 
-Measured on a 256-spin frustrated ring with chords, four seeds, both arms given the same number of
-spin flips. Integrated autocorrelation time of the energy **in flips**, so lower is better:
+Measured on a 256-spin frustrated ring with chords, four seeds, both arms given one draw per `n`
+flips. Integrated autocorrelation time of the energy **in flips**, so lower is better, from the
+certificate's estimator (Geyer's sequence with long-batch means beside it, the larger carried), with
+every chain run until it is **a thousand of its own autocorrelation times long** or `2^20` draws
+(`>=`: it got there first, and the cell is a lower bound). The last four columns are the shortest
+chain behind each cell, in its own `tau`:
 
 ```text
-   beta        gibbs         sqrt       barker   metropolis   sqrt acc
-    0.2          134          131          137          144      0.998
-    1.0         1246          406          378          414      0.966
-    2.0        27638         1598          671         5135      0.856
-    4.0        95593        56463        24627        40391      0.927
+   beta        gibbs         sqrt       barker   metropolis   sqrt acc     shortest chain, in its tau
+    0.2          150          137          146          160      0.998     5137   6907   6805   5438
+    0.5          267          184          187          218      0.993     3085   4672   4617   3593
+    1.0         3045          558          688          700      0.966     1059   1462   1043   1317
+    2.0        30108         1873         5356         3742      0.859     1494   1123   1014   1233
+    4.0    >=7055668    >=1978745   >=21937478    >=2457300      0.904       38    107      7     95
 ```
 
-**Forty-one times faster per flip at `beta = 2`**, and *not faster at all* at `beta = 0.2` — which is
-the prediction, not a disappointment: a flat landscape makes every weight equal and this becomes
-Gibbs with extra arithmetic.
+**Sixteen times faster per flip at `beta = 2`** (`√x`, 1,873 flips against Gibbs's 30,108), 5.5
+times at `beta = 1`, and *not faster at all* at `beta = 0.2` — which is the prediction, not a
+disappointment: a flat landscape makes every weight equal and this becomes Gibbs with extra
+arithmetic. At `beta = 4` no arm reaches a thousand of its own autocorrelation times in `2^20` draws,
+so that row is four lower bounds and ranks nothing.
 
-Two things worth taking from the table. **The balancing function matters more than the literature
-suggests, and in the other direction**: Zanella recommends `√x` as the most concentrated choice, and
-`Barker` beats it 2.4-fold at `beta = 2`. The spread across the three is eightfold there — larger
-than the gap between the worst informed chain and Gibbs one rung up, so choosing without measuring
-forfeits most of the speedup. And **the acceptance rate reads backwards here**: `α = Z_i/Z_j`, so a
-high rate means the proposal landscape barely moved, which is exactly the regime where the method
-has nothing to offer.
+**This table replaced one that said forty-one times, and `Barker` first.** That table read `tau` with Sokal's window from 4,000-draw chains -- at `beta = 2` the Gibbs arm was about 37 of
+its own autocorrelation times long, at `beta = 4` about 11 -- and the window truncates a slow mode by
+an amount that differs between kernels, so its cold cells were lower bounds by unknown and
+arm-dependent factors. Its informed columns did not reproduce on the tree before the estimator
+changed either: that tree printed 644 / 2,254 / 768 at `beta = 2` where the table said 1,598 / 671 /
+5,135. Its Gibbs mean at `beta = 2`, 27,638, was one seed's 101,903 averaged with three between
+1,870 and 3,978.
+
+**The balancing function matters**: at `beta = 2`, `√x` — Zanella's recommendation, as the most
+concentrated choice — is the fastest of the three and `Barker` the slowest, 2.9-fold apart; the
+previous table's claim that `Barker` beat `√x` 2.4-fold ran the other way. And **the acceptance rate
+reads backwards here**: `α = Z_i/Z_j`, so a high rate means the proposal landscape barely moved,
+which is exactly the regime where the method has nothing to offer.
 
 The load-bearing check is not the speed. A proposal weighted by energy is precisely the change that
 improves mixing and silently shifts the target — a chain that goes downhill more eagerly than it
@@ -1809,28 +1834,40 @@ isoenergetic and restricted to zero-field glasses. So the failure mode single-sp
 at was, until now, unaddressed and unmeasured: at a critical point the correlation length diverges
 with the lattice and a single-spin sampler has to move a domain of size `L` one spin at a time.
 
-`cargo run --release --example critical_slowdown` — `tau_int` of `|m|` by Sokal windowing at
-`beta_c = ln(1+sqrt2)/2`, 40,000 draws after 4,000 burn-in sweeps:
+`cargo run --release --example critical_slowdown` — `tau_int` of `|m|` at
+`beta_c = ln(1+sqrt2)/2` by the certificate's estimator (Geyer's sequence with long-batch means
+beside it, the larger carried), medians over **five seeds** at `400 L^2` draws after 4,000 burn-in
+sweeps — at least 1,767 autocorrelation times in every cell, which the example asserts:
 
-| L | Gibbs τ/sweep | Gibbs τ/visit | SW τ/sweep | SW τ/visit | Wolff τ/sweep | Wolff τ/visit |
+| L | Gibbs τ/sweep [seed range] | Gibbs τ/visit | SW τ/sweep | SW τ/visit | Wolff τ/sweep | Wolff τ/visit |
 |---|---|---|---|---|---|---|
-| 8 | 6.48 | 415 | 2.43 | 156 | 1.48 | **61** |
-| 12 | 15.13 | 2,178 | 2.64 | 380 | 1.96 | **166** |
-| 16 | 32.39 | 8,292 | 2.93 | 749 | 2.10 | **297** |
-| 24 | 78.41 | 45,166 | 3.13 | 1,803 | 2.56 | **732** |
-| 32 | 100.85 | 103,274 | 3.73 | 3,823 | 2.87 | **1,352** |
+| 8 | 7.96 [6.70–12.52] | 509 | 3.13 | 200 | 1.59 | **66** |
+| 12 | 18.94 [18.37–21.35] | 2,727 | 2.72 | 392 | 2.01 | **170** |
+| 16 | 35.39 [29.22–39.12] | 9,061 | 3.18 | 813 | 2.22 | **310** |
+| 24 | 93.23 [75.44–130.42] | 53,700 | 4.01 | 2,308 | 2.71 | **771** |
+| 32 | 137.81 [128.03–145.99] | 141,121 | 3.53 | 3,617 | 3.03 | **1,425** |
 
 ```text
-  Gibbs  z = 2.06 per sweep (literature 2.17)     SW  z = 0.29 (literature ~0.25)     Wolff  z = 0.46
+  Gibbs  z = 2.11 per sweep from the medians; per-seed fits 1.73 to 2.24; Geyer's medians alone 2.08
+  SW     z = 0.18 from the medians; per-seed fits 0.06 to 0.37             Wolff  z = 0.46 (0.25 to 0.50)
 ```
 
-At L = 32 an independent sample costs 103,274 spin visits under Gibbs and 1,352 under Wolff — **76×**,
-widening as `L^1.84`. `<|m|>` agrees across all three methods at every size, which is what makes the
-comparison a speedup rather than a different answer arrived at faster.
+**`z` is about 2.1 and these data do not resolve the second decimal.** The table this replaced was
+one seed (17) at 40,000 draws read by Sokal's window, and gave `z = 2.06` with `τ(32) = 100.85`. At
+that length a seed is about 300 autocorrelation times long, and across 24 seeds the window read
+`τ(32)` with a median of 122.8 and a standard deviation of 45: seed 17 sat near the 17th percentile.
+The published 2.06 lies inside the per-seed spread above, and so does the literature's 2.17. For
+Swendsen–Wang the spread of per-seed fits is larger than the exponent; that `z` is not resolved at
+these sizes.
+
+At L = 32 an independent sample costs 141,121 spin visits under Gibbs and 1,425 under Wolff (medians)
+— **99×**, widening as `L^1.90` (the single-seed table said 76× and `L^1.84`). `<|m|>` agrees across
+all three methods at every size, which is what makes the comparison a speedup rather than a different
+answer arrived at faster.
 
 Two cost columns, because a sweep is a convention and the two moves do not mean the same thing by it.
 The per-visit column comes from the ledger, and it is the one that survives contact with hardware:
-per sweep Wolff beats SW, per spin visited their exponents are the same (2.22 vs 2.29) and Wolff wins
+per sweep Wolff beats SW, per spin visited their exponents are the same (2.18 vs 2.21) and Wolff wins
 on the prefactor alone.
 
 ### Validity is balance, not the sign of the couplings
@@ -1921,8 +1958,13 @@ IEEE-754, so the trajectory is **bit-identical** and the energy scales by exactl
    from and *refuses* an expectation value where there is none — averaging over a tabu search's
    trajectory produces a number the same shape as `⟨s_i⟩` and estimates nothing. Every estimate
    carries an error bar deflated by the chain's slowest autocorrelation, checked against exact
-   enumeration above. The workbench shows it: at `β_c` on a 16×16 lattice, 2,000 draws are worth
-   **4** independent ones, so `⟨M⟩ = 0.103 ± 0.71` — and that width is the answer, not a defect.
+   enumeration above. The workbench shows it: at `β = 0.44` on a 16×16 lattice, the sample panel's
+   2,000 draws (seed 1, 500 burn-in, thinned by two) are worth at most **7** independent ones, so
+   `⟨M⟩ = 0.15 ± 0.52` — and that width is the answer, not a defect. At 14 autocorrelation times the
+   certificate also reports the 7 as an upper bound. (This read "4, `0.103 ± 0.71`, `tau_int` 245"
+   until 2026-09-28, from a workbench session whose state was not recorded: a fresh seed-1 run gives
+   `tau_int` 124 and 8 draws under the Sokal window of the time, and 140 and 7 under the current
+   estimator, through the same C ABI calls natively.)
 1. **The ledger is not an appendix.** Every simulation carries joules: samples, reads, writes,
    priced by a swappable `Prices` device model. Re-price the same workload on GPU-measured
    watts×time and you have the impedance-tax comparison that decides whether standalone sampling

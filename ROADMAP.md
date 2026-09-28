@@ -284,18 +284,22 @@ exhaustive enumeration by nothing at all, because nothing was sampled.
 
 | | independent draws | measured coverage of a 95% interval |
 |---|---|---|
-| corrected `sqrt(var/ess)` | `N / (2·τ_int)` | 94.6%–100% where the chain is long against its own τ |
-| naive `sqrt(var/N)` | `N` | **24.0%** at τ = 32 |
+| corrected `sqrt(var/ess)` | `N / (2·τ_int)` | 94.9%–100% where the chain is long against its own τ |
+| naive `sqrt(var/N)` | `N` | **24.0%** at τ = 34 |
 
 `examples/interval_calibration.rs`, 24 chains × 20,000 draws × every site × three models × four
 temperatures, against exactly enumerated marginals. The limit is printed with the result: where τ
-runs to hundreds, τ is itself an estimate from a chain barely long enough to make it, and 11 of 24
-seeds clear the `Undermixed` finding with 80.7% coverage among exactly those.
+runs to hundreds, τ is itself an estimate from a chain barely long enough to make it, and 10 of 24
+seeds clear the `Undermixed` finding with 78.8% coverage among exactly those — and none of them clears
+the `TauLowerBound` finding added 2026-09-28; among seeds that clear both, coverage is at least 98.2%.
 
 Reaches Rust, C, Python, Zig, Julia, HTTP, MCP and the browser workbench, which is where the
-interval stops being an argument and becomes a reading: at `β_c` on a 16×16 lattice the workbench
-reports 2,000 draws, 2,000 distinct, `tau_int` 245 and an effective sample size of **4**, so
-`⟨M⟩ = 0.103 ± 0.71`.
+interval stops being an argument and becomes a reading: at `β = 0.44` on a 16×16 lattice the
+workbench's sample panel (seed 1, 500 burn-in, 2,000 draws thinned by two) reports 2,000 distinct,
+`tau_int` 140 and an effective sample size of at most **7**, so `⟨M⟩ = 0.15 ± 0.52` — measured
+natively through the same C ABI calls, 2026-09-28. The figure first quoted here (245, **4**,
+`0.103 ± 0.71`) came from a session whose state was not recorded and does not reproduce from a fresh
+run (124 and 8 under the Sokal window of the time).
 
 **1.3 The same gap one layer up.** ✅ **DONE** — `model::distinct_optima`.
 

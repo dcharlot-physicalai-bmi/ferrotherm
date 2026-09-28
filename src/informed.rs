@@ -47,41 +47,45 @@
 //! by a linear scan of all `n` weights, and every rejected proposal recomputed the total over all
 //! `n` as well — so on the 256-spin fixture below, where a reweigh touches about 3.5 sites, every
 //! "flip" did some seventy times the work the paragraph charged it, which is more than the 41x
-//! the table reports at `beta = 2`. The table itself is unchanged by the fix: `tau_int` in flips is
-//! a property of the chain's law, and the law did not move. What changed is that a flip now costs
-//! what this says it costs. `examples/informed_scaling.rs` measures how the per-flip advantage
+//! the table then reported at `beta = 2`. The table was left as it was after the fix, on the grounds
+//! that `tau_int` in flips is a property of the chain's law and the law did not move -- but each
+//! cell was one Sokal-window reading of one short chain per seed, not the law, and the tree after
+//! the fix printed different informed columns (644 / 2,254 / 768 at `beta = 2` against the table's
+//! 1,598 / 671 / 5,135). The table below is re-measured. What the fix changed is that a flip now
+//! costs what this says it costs. `examples/informed_scaling.rs` measures how the per-flip advantage
 //! moves with `n`, which is the number that decides whether it survives either cost model.
 //!
 //! # What it is worth here, measured
 //!
-//! `examples/informed_mixing.rs`, 256-spin frustrated ring with chords, four seeds, both arms given
-//! the same number of spin flips. Integrated autocorrelation time of the energy, **in flips**, so
-//! lower is better:
+//! `examples/informed_mixing.rs`, 256-spin frustrated ring with chords, four seeds, one draw per `n`
+//! flips on both arms. Integrated autocorrelation time of the energy, **in flips**, so lower is
+//! better, as [`crate::certify::tau_estimate`] carries it, every chain run until it is a thousand
+//! of its own autocorrelation times long or `2^20` draws (`>=`, a lower bound). Re-measured
+//! 2026-09-28; the last four columns are the shortest chain behind each cell, in its own `tau`:
 //!
 //! ```text
-//!    beta        gibbs         sqrt       barker   metropolis   sqrt acc
-//!     0.2          134          131          137          144      0.998
-//!     0.5          223          164          172          187      0.993
-//!     1.0         1246          406          378          414      0.966
-//!     2.0        27638         1598          671         5135      0.856
-//!     4.0        95593        56463        24627        40391      0.927
+//!    beta        gibbs         sqrt       barker   metropolis   sqrt acc     shortest chain, in its tau
+//!     0.2          150          137          146          160      0.998     5137   6907   6805   5438
+//!     0.5          267          184          187          218      0.993     3085   4672   4617   3593
+//!     1.0         3045          558          688          700      0.966     1059   1462   1043   1317
+//!     2.0        30108         1873         5356         3742      0.859     1494   1123   1014   1233
+//!     4.0    >=7055668    >=1978745   >=21937478    >=2457300      0.904       38    107      7     95
 //! ```
 //!
-//! **At `beta = 2` the informed chain is forty-one times faster per flip.** At `beta = 0.2` it is
-//! not faster at all, which is the prediction stated above rather than a disappointment: a flat
-//! landscape makes every weight equal, and this is then Gibbs with extra arithmetic. The
-//! `sqrt acc` column is what says which regime you are in.
+//! **At `beta = 2` the best informed chain is sixteen times faster per flip** (`√x`, 1,873 flips
+//! against 30,108), and 5.5 times at `beta = 1`. At `beta = 0.2` it is not faster at all, which is
+//! the prediction stated above rather than a disappointment: a flat landscape makes every weight
+//! equal, and this is then Gibbs with extra arithmetic. The `sqrt acc` column is what says which
+//! regime you are in. At `beta = 4` no arm reaches a thousand of its own autocorrelation times in
+//! `2^20` draws, so that row is four lower bounds and orders nothing.
 //!
-//! **The balancing function matters more than the literature suggests, and not in the direction it
-//! suggests.** Zanella recommends `√x` as the most concentrated choice for multimodal targets. Here
-//! `Barker` wins at both cold rungs and by a wide margin — 671 against 1598 at `beta = 2`, a factor
-//! of 2.4, and 24627 against 56463 at `beta = 4`. The spread across the three functions at
-//! `beta = 2` is eightfold, which is larger than the gap between the worst informed chain and Gibbs
-//! at `beta = 1`. Picking one without measuring is picking most of the available speedup.
-//!
-//! The `beta = 4` row is the least reliable of the five and is reported with that caveat: at
-//! `tau_int` around 24,000 flips a 4,000-draw trace holds only about ten independent points, which
-//! is thin for Sokal windowing. The ordering there is worth less than the ordering at `beta = 2`.
+//! **The balancing function matters, and `√x` wins where it can be measured.** Zanella recommends
+//! `√x` as the most concentrated choice for multimodal targets, and here it is the fastest of the
+//! three at `beta = 1` and `beta = 2` -- at `beta = 2` 2.9 times faster than `Barker`, which is the
+//! slowest. The table this replaced said the opposite (`Barker` first, 2.4-fold ahead of `√x`, an
+//! eightfold spread, forty-one times Gibbs): it was Sokal's window on 4,000-draw chains, 11 to 37
+//! autocorrelation times long at the cold rungs, where the window truncates a slow mode by a factor
+//! that differs between kernels.
 //!
 //! # And what it was worth in WORK, which is the number that matters
 //!
