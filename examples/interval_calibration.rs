@@ -74,6 +74,8 @@ fn main() {
         "model", "beta", "tau_int", "corrected", "naive", "mixed ok", "corrected|ok", "resolved", "corrected|res"
     );
 
+    // (model, beta, tau, seeds that cleared both findings, coverage among them) for the summary.
+    let mut summary: Vec<(&str, f64, f64, usize, f64)> = Vec::new();
     for (name, g) in &models {
         for beta in [0.3f64, 0.5, 0.8, 1.2] {
             let exact = enumerate(g, beta).expect("every model here enumerates");
@@ -137,6 +139,13 @@ fn main() {
                     format!("{:.1}%", 100.0 * a as f64 / b as f64)
                 }
             };
+            summary.push((
+                name,
+                beta,
+                taus.iter().sum::<f64>() / taus.len() as f64,
+                resolved,
+                if total_resolved > 0 { hit_resolved as f64 / total_resolved as f64 } else { f64::NAN },
+            ));
             println!(
                 "{name:>8} {beta:>5.1} {:>9.1} {:>10} {:>8} {:>12} {:>14} {:>10} {:>16}",
                 taus.iter().sum::<f64>() / taus.len() as f64,
@@ -173,5 +182,25 @@ fn main() {
          the certificate's Undermixed finding is a good but not sufficient test of that. Where tau\n\
          runs to hundreds, no interval computed from an estimated tau is trustworthy, and the\n\
          answer is a longer chain or a better move -- not a wider bar."
+    );
+    // The second finding, and whether it closes the exception: every row where some seed cleared
+    // both, and the worst coverage among such seeds; and the slowest row any seed cleared both in.
+    let cleared: Vec<&(&str, f64, f64, usize, f64)> = summary.iter().filter(|r| r.3 > 0).collect();
+    let worst = cleared.iter().map(|r| r.4).fold(f64::INFINITY, f64::min);
+    let slowest = cleared.iter().map(|r| r.2).fold(0.0f64, f64::max);
+    let blocked = summary.iter().filter(|r| r.3 == 0).count();
+    println!(
+        "\nAND THE SECOND FINDING, since 2026-09-28. The certificate also reports TauLowerBound when a\n\
+         chain is under {:.0} of its own autocorrelation times, which at {DRAWS} draws is any tau above\n\
+         {:.0}. The last two columns count the seeds that clear BOTH findings: {} of the {} rows have\n\
+         none, the slowest row any seed cleared both in has tau {slowest:.1}, and among every seed\n\
+         that did, coverage is at least {:.1}%. Where the certificate is silent on both counts, the\n\
+         interval held; the seeds that cleared Undermixed with an interval too narrow are exactly the\n\
+         ones the second finding now names.",
+        ferrotherm::certify::RESOLVED_TAUS,
+        DRAWS as f64 / ferrotherm::certify::RESOLVED_TAUS,
+        blocked,
+        summary.len(),
+        100.0 * worst
     );
 }

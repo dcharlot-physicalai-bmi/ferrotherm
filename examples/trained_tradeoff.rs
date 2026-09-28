@@ -39,9 +39,10 @@
 //
 // Mixing is tau_int at the FITTED weights, as `certify::tau_estimate` carries it: Geyer's initial
 // monotone sequence with long-batch means beside it, the larger carried. Until 2026-09-28 it was
-// Sokal's window, which read these chains 1.2 to 4.3 times lower -- at twelve latents 1.5 and 1.7
-// where the current estimator reads 5.9 and 7.3 -- and every sentence below that quoted a number
-// from it went stale with it; they are interpolated from the rows now. There is no temperature knob here and
+// Sokal's window, which read these chains 1.25 to 6 times lower -- at twelve latents 1.5 and 1.7
+// where the current estimator carries 8.5 and 10.2 (Geyer's sequence alone reads 5.9 and 7.3;
+// batch means read higher still, and the larger is what is carried) -- and every sentence below
+// that quoted a number from it went stale with it; they are interpolated from the rows now. There is no temperature knob here and
 // that is deliberate: `mixing_expressivity` had to sweep beta because its couplings were arbitrary,
 // and the sweep is what revealed the U shape. A trained model sets its own scale. Whatever
 // ruggedness it has, it acquired by learning, which is the regime the claim is about.
