@@ -46,10 +46,14 @@
 //! [`unit_variance`], [`unit_tau`] and [`unit_autocorrelation`] give one unit exactly.
 //!
 //! The fixed lifetime's autocorrelation has a NEGATIVE lobe — at zero field it is `2 e^{-t/m} - 1` out
-//! to `t = m`, crossing zero at `m ln 2` — and that is exactly what Sokal's window, which
-//! [`crate::certify::tau_int`] uses, is not built for: on the exact autocorrelation it misreads the
-//! fixed lifetime's `tau` by `-8.1%` at zero field and `+13.3%` at `beta h = 0.7`. The comparison is
-//! therefore measured WITHOUT a window: [`PointProcess::batch_means`] integrates observables exactly
+//! to `t = m`, crossing zero at `m ln 2` — and that is exactly what Sokal's window
+//! ([`crate::certify::tau_int_sokal`], the crate's `tau_int` until 2026-09-28) is not built for: on
+//! the exact autocorrelation read every `0.1 m` it misreads the fixed lifetime's `tau` by `-8.1%` at
+//! zero field and `+13.3%` at `beta h = 0.7`, and across spacings from `0.02 m` to `m` by `-23.8%`
+//! to `+406%` (the last is the window's `1/2` floor, where the unwindowed sum is negative). Geyer's
+//! sequence, the crate's `tau_int` now, is not built for it either: a renewal process is not
+//! reversible, and on simulated reads it came out `23%` and `53%` high. The comparison is therefore
+//! measured WITHOUT a window: [`PointProcess::batch_means`] integrates observables exactly
 //! along the path over consecutive batches, and [`long_run_variance`] turns the batch means into
 //! `sigma^2` and its standard error, the estimator the one-unit tests hold to the exact variance. For
 //! coupled units the law is held to enumeration statistically, from long runs, and the comparison the
@@ -503,7 +507,7 @@ mod tests {
     }
 
     /// **Sokal's window misreads a fixed lifetime, and this is by how much.** The crate's window
-    /// ([`crate::certify::sokal_window`], what [`crate::certify::tau_int`] closes over a trace) applied
+    /// ([`crate::certify::sokal_window`], what [`crate::certify::tau_int_sokal`] closes over a trace) applied
     /// to the EXACT autocorrelation read every `0.1 m`, the spacing `examples/pointproc_exact.rs`
     /// used when it measured with the window. At zero field it closes at lag 12, inside the negative
     /// lobe, and reads `tau` **8.10% low**; at `beta h = 0.7` it closes at lag 7, before the lobe, and
@@ -534,7 +538,7 @@ mod tests {
         let g = one_unit(0.0);
         let mut pp = PointProcess::new(&g, beta, m, Lifetime::Fixed, 41);
         let x = pp.trace(50.0, spacing, 1_000_000, |s| if s[0] > 0 { 1.0 } else { 0.0 });
-        let read = crate::certify::tau_int(&x) * spacing / unit_tau(beta, 0.0, m, Lifetime::Fixed) - 1.0;
+        let read = crate::certify::tau_int_sokal(&x) * spacing / unit_tau(beta, 0.0, m, Lifetime::Fixed) - 1.0;
         assert!((read + 0.081).abs() < 0.02, "tau_int on a simulated trace reads {read:+.4}");
     }
 }

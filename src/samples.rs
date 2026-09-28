@@ -63,7 +63,7 @@
 //! only thing `tau_int` can be computed from. Order is kept; [`SampleSet::distinct`] aggregates on
 //! demand.
 
-use crate::certify::{tau_int, Certificate};
+use crate::certify::{tau_estimate, Certificate};
 use crate::graph::Graph;
 use crate::ledger::Ledger;
 use std::collections::BTreeMap;
@@ -356,14 +356,12 @@ impl SampleSet {
                     .iter()
                     .map(|s| s.iter().map(|&v| v as f64).sum::<f64>() / n.max(1) as f64)
                     .collect();
-                let a = tau_int(&energies);
-                let b = tau_int(&mag);
-                match (a.is_nan(), b.is_nan()) {
-                    (false, false) => a.max(b),
-                    (true, false) => b,
-                    (false, true) => a,
-                    (true, true) => f64::NAN,
-                }
+                // The certificate's estimator, cross-check and all: Geyer's sequence on each
+                // trace, long-batch means beside it, the larger carried and never below 1/2. This
+                // used to be Sokal's window with NO cross-check, and on a 3x3 glass at beta = 1 it
+                // read 0.50 to 0.59 of the exact tau on 16 of 16 seeds, so every error bar on every
+                // surface below was 1.3 to 1.4 times too narrow there.
+                tau_estimate(&[&energies, &mag]).tau
             }
             _ => f64::NAN,
         };
@@ -371,21 +369,32 @@ impl SampleSet {
     }
 
     /// The slowest integrated autocorrelation time seen on this chain, over energy and
-    /// magnetization; `NaN` for a set that is not a chain.
+    /// magnetization; `NaN` for a set that is not a chain. Measured by
+    /// [`crate::certify::tau_estimate`], the certificate's own estimator: Geyer's initial monotone
+    /// sequence on each trace, overlapping batch means at `N / 20` beside it, the larger carried and
+    /// never below `1/2`, so an estimate's `ess` never exceeds its draws. Below
+    /// [`crate::certify::RESOLVED_TAUS`] autocorrelation times it is a LOWER bound, and the
+    /// certificate reports [`crate::certify::Finding::TauLowerBound`].
+    ///
+    /// Until 2026-09-28 this was Sokal's window with no cross-check at all. On a 3x3 glass at
+    /// `beta = 1` and 20,000 draws it read 0.50 to 0.59 of the exact value on all 16 seeds tried,
+    /// so every error bar on every surface that reads this -- the C ABI's `ft_samples_*`, Python,
+    /// Julia, Zig, HTTP, MCP, the workbench -- was 1.3 to 1.4 times too narrow there.
     ///
     /// # Why every estimate is corrected by this and not only by its own trace
     ///
     /// A per-observable `tau_int` is the textbook correction and it is what an estimate uses --
     /// but only as a LOWER bound on the correction, because it can be fooled in one specific and
-    /// common way. Sokal's windowing measures how fast the trace it is given decorrelates. A single
-    /// site sitting in a metastable mode produces a trace that is `+1` with small fast jitter, and
-    /// the windowing correctly reports that the JITTER decorrelates in a few sweeps -- while the
-    /// mode itself, the thing that decides whether the estimate is right at all, has a lifetime
-    /// thousands of sweeps long and never appears in that trace.
+    /// common way. An autocorrelation estimate measures how fast the trace it is given
+    /// decorrelates. A single site sitting in a metastable mode produces a trace that is `+1` with
+    /// small fast jitter, and the estimate correctly reports that the JITTER decorrelates in a few
+    /// sweeps -- while the mode itself, the thing that decides whether the estimate is right at
+    /// all, has a lifetime thousands of sweeps long and never appears in that trace.
     ///
-    /// Measured on a 14-spin glass at `beta = 1.2`: per-site tau reads about 15, the chain's own
-    /// reads about 306, and the interval built from the per-site number covers the exact marginal
-    /// 44% of the time while claiming 95%. Taking the larger of the two is what closes that gap.
+    /// Measured on a 14-spin glass at `beta = 1.2`, with the Sokal window the crate used then:
+    /// per-site tau read about 15, the chain's own about 306, and the interval built from the
+    /// per-site number covered the exact marginal 44% of the time while claiming 95%. Taking the
+    /// larger of the two is what closes that gap.
     /// Energy and magnetization are used because they fail in opposite directions -- an ordered
     /// system's energy jitters quickly around a fixed value while its magnetization does not move
     /// at all -- which is the same pair, for the same reason, that [`crate::certify`] takes the
@@ -573,7 +582,7 @@ impl SampleSet {
             Provenance::Chain { .. } => {
                 // The larger of this observable's own tau and the chain's slowest. See `chain_tau`
                 // for the measurement that forces it.
-                let own = tau_int(vals);
+                let own = tau_estimate(&[vals]).tau;
                 let t = match (own.is_nan(), self.chain_tau.is_nan()) {
                     (false, false) => own.max(self.chain_tau),
                     (true, false) => self.chain_tau,
@@ -847,7 +856,7 @@ mod tests {
                 e.tau_int,
                 set.chain_tau()
             );
-            let own = tau_int(&set.states().iter().map(|s| s[i] as f64).collect::<Vec<_>>());
+            let own = tau_estimate(&[&set.states().iter().map(|s| s[i] as f64).collect::<Vec<_>>()]).tau;
             if own < set.chain_tau() - 1e-9 {
                 lifted += 1;
             }

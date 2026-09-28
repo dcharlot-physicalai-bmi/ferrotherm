@@ -16,9 +16,13 @@
 //!   pseudolikelihood maximum-likelihood estimate. If a site is +1 with frequency `sigma(2 beta f)`
 //!   given its local field `f`, then fitting one parameter to every (field, spin) pair observed
 //!   recovers `beta`. A sampler running at the wrong temperature cannot hide from this.
-//! - **`tau_int` and `ess`** — integrated autocorrelation time by Sokal's automatic windowing, and
-//!   the resulting count of genuinely independent samples. Ten thousand correlated draws are not
-//!   ten thousand samples, and reporting them as such is the most common quiet lie in MCMC.
+//! - **`tau_int` and `ess`** — integrated autocorrelation time (Geyer's initial monotone sequence,
+//!   cross-checked by long-batch means, the larger carried; see [`tau_estimate`]), and the
+//!   resulting count of genuinely independent samples, never more than the draws. Ten thousand
+//!   correlated draws are not ten thousand samples, and reporting them as such is the most common
+//!   quiet lie in MCMC. Until 2026-09-28 this was Sokal's automatic window, which read the time
+//!   more than 10% low in 26 of 151 exactly-known cells and passed a 3x3 glass at `beta = 1` clean
+//!   in 12 of 16 seeds with its effective sample size overstated 1.72 to 1.99 times.
 //! - **`tv_exact`** — where the model is small enough to enumerate, total variation distance from
 //!   the true Boltzmann distribution, always alongside
 //! - **`noise_floor`** — the TV that finite sampling alone produces. A distance below the floor is
@@ -70,15 +74,41 @@ pub enum Finding {
         /// Draws taken, which is too few to estimate anything here.
         draws: usize,
     },
-    /// Sokal's window closed on a fast mode while a slower one was still correlated: a windowless
-    /// batch-means estimate came out more than twice as large. The larger value is the one the
-    /// certificate's `tau_int` and `ess` carry, and even that is a lower bound on the truth --
-    /// see [`tau_int`] for the measurement behind this.
+    /// Geyer's initial sequence stopped before a slow mode that long-batch means still see: the
+    /// overlapping-batch-means estimate at `N / 20` came out more than twice as large. The larger
+    /// value is the one the certificate's `tau_int` and `ess` carry, and even that is a lower bound
+    /// on the truth -- see [`tau_int`] for the measurement behind this, and for why a
+    /// non-reversible chain (every fixed-order sweep in this crate) can do this and a reversible
+    /// one cannot.
     TauTruncated {
-        /// What Sokal's automatic window returned, in draws.
-        sokal: f64,
-        /// What batch means over twenty batches returned, in draws.
+        /// What Geyer's initial monotone sequence returned, in draws (the larger over the traces).
+        geyer: f64,
+        /// What overlapping batch means at batch length `N / 20` returned, in draws.
         batch: f64,
+    },
+    /// Geyer's initial sequence summed to zero or less on a trace, so it has NO value there: the
+    /// draws are strongly antithetic (a lag-one autocorrelation near `-1`) or the chain is not
+    /// reversible. Such a sum is a failure of the estimator, not an effective sample size of
+    /// `N log10 N`, which is what capping it would report. The certificate carries the long-batch
+    /// value for that trace instead, never below `1/2`, so `ess` stays at or below `draws`.
+    TauUnresolved {
+        /// Geyer's sum on the trace where it failed, in draws: zero or negative.
+        geyer: f64,
+        /// The overlapping-batch-means value carried in its place (before the `1/2` floor).
+        batch: f64,
+    },
+    /// The chain is too short, measured in its own autocorrelation times, for `tau_int` to be more
+    /// than a LOWER bound -- and `ess` therefore more than an UPPER bound. Below
+    /// [`RESOLVED_TAUS`] autocorrelation times every single-chain estimator in this crate reads low
+    /// on a chain with a slow mode: measured over 16 seeds on five slow-mode cells, Geyer's median
+    /// read 0.41 to 0.68 of the exact value at 100 `tau` and 0.74 to 0.99 at 1,000.
+    TauLowerBound {
+        /// Integrated autocorrelation time carried, in draws: a lower bound.
+        tau_int: f64,
+        /// Effective sample size these draws are worth at most.
+        ess: f64,
+        /// Draws taken.
+        draws: usize,
     },
 }
 
@@ -114,12 +144,27 @@ impl core::fmt::Display for Finding {
                      good sampler from pure noise. Draw more, or certify a smaller model"
                 )
             }
-            Finding::TauTruncated { sokal, batch } => write!(
+            Finding::TauTruncated { geyer, batch } => write!(
                 f,
-                "the autocorrelation window closed early: Sokal's tau_int {sokal:.1} against a \
-                 batch-means {batch:.1}, so a slow mode is being missed; the larger value is used \
-                 and is itself a lower bound. Run much longer, or compute tau exactly on a model \
-                 small enough to enumerate"
+                "the autocorrelation sum stopped early: Geyer's tau_int {geyer:.1} against a \
+                 long-batch-means {batch:.1}, so a slow mode is being missed; the larger value is \
+                 used and is itself a lower bound. Run much longer, or compute tau exactly on a \
+                 model small enough to enumerate"
+            ),
+            Finding::TauUnresolved { geyer, batch } => write!(
+                f,
+                "Geyer's autocorrelation sum came to {geyer:.3}, zero or less, so it has no value \
+                 on this trace (strongly antithetic draws, or a chain that is not reversible); the \
+                 long-batch-means {batch:.3} is carried instead, never below 1/2. Thinning by an \
+                 even number of sweeps turns an alternating chain into a positively correlated one"
+            ),
+            Finding::TauLowerBound { tau_int, ess, draws } => write!(
+                f,
+                "{draws} draws are only {:.0} autocorrelation times, too few for tau_int \
+                 {tau_int:.2} to be more than a lower bound or ess {ess:.0} more than an upper \
+                 one: below {RESOLVED_TAUS:.0} single-chain estimators read low on a slow mode. \
+                 Run longer",
+                *draws as f64 / tau_int
             ),
         }
     }
@@ -136,9 +181,12 @@ pub struct Certificate {
     pub beta_eff: f64,
     /// 95% interval for `beta_eff`, widened for autocorrelation.
     pub beta_ci: (f64, f64),
-    /// Integrated autocorrelation time, in draws. `1.0` means consecutive draws are independent.
+    /// Integrated autocorrelation time, in draws, in the convention `1/2 + sum_k rho(k)`: `0.5`
+    /// means consecutive draws are independent, and it is never reported below that. See
+    /// [`tau_estimate`] for how it is measured.
     pub tau_int: f64,
     /// Effective sample size, `draws / (2 tau_int)` -- how many independent draws these are worth.
+    /// Never more than `draws`.
     pub ess: f64,
     /// TV from the exact Boltzmann distribution, where enumeration was possible.
     pub tv_exact: Option<f64>,
@@ -288,11 +336,137 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
     (beta, var)
 }
 
-/// Integrated autocorrelation time of a scalar trace, by Sokal's automatic windowing.
+/// Integrated autocorrelation time of a scalar trace: Geyer's initial monotone sequence over the
+/// trace's own autocorrelation.
+///
+/// `tau_int = 1/2 + sum_k rho(k)` in this crate's convention, so INDEPENDENT DRAWS HAVE
+/// `tau_int = 1/2` and an effective sample size of `N / (2 tau_int) = N`. The empirical
+/// autocorrelation, from [`crate::fft::autocovariance`] in the divided-by-`N` form Stan uses, is
+/// summed in adjacent pairs `rho(2m) + rho(2m + 1)` while the pair sums stay positive, each pair
+/// clipped to the one before it so the sequence is non-increasing ([`geyer_initial_monotone`], the
+/// loop [`crate::rhat::ess`] runs over several chains, run here over one; Geyer, "Practical Markov
+/// Chain Monte Carlo", Statistical Science 7(4), 1992).
+///
+/// Returns `NaN` under sixteen draws, `+inf` for a constant trace (a chain that never moved), and
+/// `NaN` when the pair sums total zero or less: that is a FAILURE of the estimator, not a value,
+/// and an effective sample size read off it would be infinite. Otherwise the value is never
+/// below `1/2`, so an effective sample size built on it never exceeds the draws.
+///
+/// # Why Geyer and not Sokal's window, which this was until 2026-09-28
+///
+/// Sokal's window ([`tau_int_sokal`]) stops summing at the first lag `W >= 5 tau(W)`, and on a
+/// chain whose autocorrelation is a large fast mode beside a small slow one it stops before the
+/// slow mode is summed -- with NO sampling noise involved. Applied to EXACT autocorrelation
+/// sequences from [`crate::autocorr::apply`] on seven enumerable fixtures, ten kernels and two or
+/// three temperatures each, and counted the way [`certify`] carries it (the larger of energy and
+/// magnetisation), the window read more than 10% low in 26 of 151 cells: `-92%` on the 3x3 glass at
+/// `beta = 1.6` under SCA, `-60%` under the chromatic sweep at the same temperature, `-45%` at
+/// `beta = 1` (2.98 against an exact 5.42 for the energy). A consumer that reads energy alone had it
+/// worse: the 12-spin glass of `examples/tau_exactness.rs` reads 1.94 against 33.24, `-94%`.
+///
+/// Geyer's sequence is the right estimator for a REVERSIBLE kernel: its autocorrelation is
+/// `sum_i a_i lambda_i^k` over real eigenvalues, so every pair sum is
+/// `sum_i a_i lambda_i^(2m) (1 + lambda_i) >= 0` and the sequence is summed until the noise, not
+/// until a window rule, ends it. On the exact sequences of reversible kernels it read within
+/// `1e-4` on all 312 converged cells, including every synchronous and SCA cell with negative
+/// eigenvalues. On 224 simulated traces at least 2,000 exact `tau` long (8 seeds; the chromatic
+/// sweep, a sequential sweep and informed samplers), the count reading below 0.8 of the exact value
+/// was 103 for Sokal's window, 57 for what the certificate used to carry, and 23 for this.
+///
+/// # And why it is not the whole certificate: NON-REVERSIBLE chains
+///
+/// A fixed-order sweep -- the chromatic sweep [`crate::gibbs::Sampler`] runs, the sequential sweep,
+/// a lifted chain, a renewal process -- is a PRODUCT of reversible updates and is not itself
+/// reversible. Its autocorrelation can rotate, pair sums can go negative, and then Geyer stops
+/// early. It usually over-reads (the chromatic sweep's antithetic magnetisation on an
+/// antiferromagnetic ring, `+29%` to `+99.8%`), but not always: on closed forms
+/// `rho(k) = a r^k cos(w k) + (1 - a) lambda^k`, a fast rotation beside a slow real mode, it reads
+/// `-94.6%` to `-99.4%`, and on an in-tree sequential sweep of `ring(8, -1, 0)` at `beta = 2`, with
+/// `f = m + 0.001 m_stag`, `-7.7%`. So [`tau_estimate`] -- the one entry point every error bar and
+/// certificate in the crate goes through -- carries this value beside a long-batch-means value
+/// ([`tau_int_obm`] at `N / 20`), which needs no reversibility, and takes the LARGER. A certificate
+/// is computed from samples alone and cannot know which kernel drew them, so the cross-check
+/// applies to every chain, reversible or not.
+///
+/// # Every estimate here is a LOWER bound on a chain too short for it
+///
+/// Over 16 seeds on five slow-mode cells, this estimator's median read 0.41 to 0.68 of the exact
+/// value at 100 `tau` of trace and 0.74 to 0.99 at 1,000. [`certify`] says so with
+/// [`Finding::TauLowerBound`] below [`RESOLVED_TAUS`].
+#[must_use]
+pub fn tau_int(trace: &[f64]) -> f64 {
+    let raw = tau_int_geyer_raw(trace);
+    if raw.is_nan() || raw.is_infinite() {
+        raw
+    } else if raw > 0.0 {
+        raw.max(0.5)
+    } else {
+        f64::NAN // a failure of the estimator, not a value -- see `TauUnresolved`
+    }
+}
+
+/// Geyer's sum over a trace, unfloored: `NaN` under sixteen draws, `+inf` for a constant trace,
+/// and otherwise whatever the initial monotone sequence totals -- which can be below `1/2` on an
+/// antithetic trace and zero or less where the estimator has failed.
+fn tau_int_geyer_raw(trace: &[f64]) -> f64 {
+    let n = trace.len();
+    if n < 16 {
+        return f64::NAN;
+    }
+    let mean = trace.iter().sum::<f64>() / n as f64;
+    let var = trace.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    if var <= 0.0 {
+        return f64::INFINITY; // a constant trace never decorrelates
+    }
+    // Per-lag autocovariances divided by the pairs that formed them, taken to Stan's biased form
+    // (divided by N), as `rhat::ess` does, so the far lags are shrunk rather than amplified.
+    let cov = crate::fft::autocovariance(trace, n - 1);
+    let c0 = cov[0];
+    if !(c0 > 0.0) {
+        return f64::INFINITY;
+    }
+    let nf = n as f64;
+    geyer_initial_monotone(n - 2, |k| cov[k] * (nf - k as f64) / nf / c0)
+}
+
+/// Geyer's initial monotone sequence over an autocorrelation given lag by lag, UNFLOORED, in this
+/// crate's convention: `-1/2 + sum_m G_m` with `G_m = rho(2m) + rho(2m + 1)`, `rho(0) = 1`, summed
+/// while `G_m > 0` and with each `G_m` clipped to the one before it, reading no lag past `max_lag`.
+///
+/// The same loop [`crate::rhat::ess`] runs over the multi-chain autocorrelation, taken out so it can
+/// be measured on an autocorrelation known EXACTLY -- the way [`sokal_window`] is -- and so the two
+/// cannot drift apart. A reversible kernel has `G_m >= 0` at every `m` and this is its exact
+/// integrated time; a non-reversible one can have a negative pair before its slow mode, and there
+/// this stops early (see [`tau_int`]). The result can be below `1/2` (an antithetic sequence) and
+/// can be zero or negative, which no chain's integrated time is: callers treat that as a failure.
+#[must_use]
+pub fn geyer_initial_monotone(max_lag: usize, mut rho: impl FnMut(usize) -> f64) -> f64 {
+    let mut sum = 0.0;
+    let mut prev = f64::INFINITY;
+    let mut t = 0;
+    while t < max_lag {
+        let mut p = rho(t) + rho(t + 1);
+        if !(p > 0.0) {
+            break;
+        }
+        if p > prev {
+            p = prev;
+        }
+        prev = p;
+        sum += p;
+        t += 2;
+    }
+    -0.5 + sum
+}
+
+/// Integrated autocorrelation time of a scalar trace by Sokal's automatic window -- what
+/// [`tau_int`] was until 2026-09-28, kept by name as a second opinion and as the object the
+/// measurements of its failure are made on.
 ///
 /// `tau_int = 1/2 + sum_k rho(k)`, truncated at the smallest window `W` satisfying `W >= 5 tau`.
-/// Truncation is not optional: the tail of an empirical autocorrelation is noise, and summing all
-/// of it produces a number that grows with the length of the run rather than describing it.
+/// Truncation is not optional for a window: the tail of an empirical autocorrelation is noise, and
+/// summing all of it produces a number that grows with the length of the run rather than
+/// describing it.
 ///
 /// # This is a LOWER bound on a chain with a slow mode of small amplitude, and no trace length fixes it
 ///
@@ -303,25 +477,26 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 /// is still about 1.8 when the window closes at lag 9, and the slow mode — most of the truth — is
 /// never summed. On a hot, single-mode chain the same estimator lands within its noise of the
 /// exact value. So an effective sample size from this is an UPPER bound wherever a slow mode
-/// cannot be excluded, and a joules-per-independent-sample built on it a lower bound. On a model
-/// small enough to enumerate, use the exact operator instead; on one that is not, a batch-means
-/// estimate over batches much longer than the suspected slow mode is the check.
+/// cannot be excluded, and a joules-per-independent-sample built on it a lower bound. This is why
+/// [`tau_int`] is now Geyer's sequence.
 ///
 /// # And it is biased either way on an autocorrelation that changes sign
 ///
 /// The window stops wherever `k >= 5 tau` first holds, and an autocorrelation with a negative lobe
 /// is cut mid-oscillation: 8.1% low and 13.3% high on the two exact cases in [`sokal_window`]'s
-/// documentation, a fixed-lifetime point process, where the effect is momentum. Do not use it
-/// where momentum is the thing being measured.
+/// documentation, a fixed-lifetime point process read every `0.1 m`, where the effect is momentum.
+/// Do not use it where momentum is the thing being measured.
 #[must_use]
-pub fn tau_int(trace: &[f64]) -> f64 {
+pub fn tau_int_sokal(trace: &[f64]) -> f64 {
     tau_int_by(trace, trace.len() >= FFT_FROM)
 }
 
-/// Above this many draws [`tau_int`] takes every lag at once from [`crate::fft::autocovariance`],
-/// `O(L log L)`, instead of the direct sum, which is `O(L)` per lag and on a long trace costs the
-/// window's width times the length (a `1e7`-draw trace with a window of `1e4` lags is `1e11`
-/// operations). The two are the same estimator to `1e-12`; the threshold is a clock, not a value.
+/// Above this many draws [`tau_int_sokal`] takes every lag at once from
+/// [`crate::fft::autocovariance`], `O(L log L)`, instead of the direct sum, which is `O(L)` per lag
+/// and on a long trace costs the window's width times the length (a `1e7`-draw trace with a window
+/// of `1e4` lags is `1e11` operations). The two are the same estimator to `1e-12`; the threshold is
+/// a clock, not a value. [`tau_int`] always takes the transform, because Geyer's sum is not
+/// confined to a few `tau` of lags.
 pub const FFT_FROM: usize = 4096;
 
 /// Sokal's window over the autocorrelation, computed lag by lag or all at once.
@@ -353,7 +528,7 @@ fn tau_int_by(trace: &[f64], fft: bool) -> f64 {
 
 /// Sokal's automatic window over an autocorrelation given lag by lag: `1/2 + sum_k rho(k)` for
 /// `k = 1, 2, ...`, stopping at the first `k >= 5 tau` or at `max_lag`, and never below `1/2`. The
-/// same window [`tau_int`] closes over a trace's empirical autocorrelation, taken out so that the
+/// same window [`tau_int_sokal`] closes over a trace's empirical autocorrelation, taken out so that the
 /// WINDOW's own error can be measured on an autocorrelation that is known exactly, with no sampling
 /// noise in it.
 ///
@@ -383,10 +558,11 @@ pub fn sokal_window(max_lag: usize, mut rho: impl FnMut(usize) -> f64) -> f64 {
 /// Split the trace into `batches` consecutive batches of length `b`. For a stationary sequence
 /// `Var(batch mean) ~ Var(x) * 2 tau / b`, so `tau = b * Var(batch means) / (2 Var(x))`. This is
 /// unbiased only when `b` is much longer than the slowest mode, so on a short trace it reads LOW
-/// like Sokal's window does -- but for a different reason and by a different amount, which is
-/// what makes it a cross-check: where the two disagree by more than batch means' own noise (about
-/// `sqrt(2 / batches)` relative), a slow mode is present that the window closed on. Twenty batches
-/// is `+-32%`, which is why [`certify`] flags a factor of two and not less.
+/// -- but for a different reason and by a different amount from an autocorrelation sum, which is
+/// what makes it a cross-check: its own noise is about `sqrt(2 / batches)` relative, `+-32%` at
+/// twenty. [`certify`] now cross-checks with the OVERLAPPING form, [`tau_int_obm`], which at the
+/// same batch length has two thirds of this variance; this one is kept because examples measure
+/// with it.
 ///
 /// `NaN` under sixteen draws per batch; `+inf` for a constant trace.
 #[must_use]
@@ -406,6 +582,157 @@ pub fn tau_int_batch(trace: &[f64], batches: usize) -> f64 {
         (0..k).map(|i| trace[i * b..(i + 1) * b].iter().sum::<f64>() / b as f64).collect();
     let vb = means.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / (k as f64 - 1.0);
     (b as f64 * vb / (2.0 * var)).max(0.5)
+}
+
+/// Integrated autocorrelation time by OVERLAPPING batch means at batch length `b`: no window, no
+/// autocorrelation function, and no reversibility assumed.
+///
+/// Every window of `b` consecutive draws, `N - b + 1` of them, contributes its mean; the long-run
+/// variance is `sigma^2 = N b / ((N - b)(N - b + 1)) * sum_j (mean_j - mean)^2`, and
+/// `tau = sigma^2 / (2 Var(x))` in this crate's convention. Overlapping batch means is one of the
+/// estimators Flegal and Jones give conditions for strong consistency of ("Batch means and spectral
+/// variance estimators in Markov chain Monte Carlo", Annals of Statistics 38(2), 2010,
+/// arXiv:0811.1729), and like every lag-window estimator it reads LOW unless `b` is much longer than
+/// the slowest mode -- "estimators of this matrix almost always exhibit significant negative bias"
+/// under positive correlation (Vats and Flegal, arXiv:1809.04541). That is why it is a cross-check
+/// and not the estimator: on 224 simulated traces at least 2,000 exact `tau` long, `b = N / 20`
+/// read below 0.8 of the exact value on 59 and above 1.25 on 51, against Geyer's 23 and 13 -- and
+/// `b = sqrt(N)`, the textbook choice, read below 0.8 on 86. What it does not need is a reversible
+/// kernel, which is where [`tau_int`] can fail.
+///
+/// `NaN` for `b < 16` or `b >= N`; `+inf` for a constant trace; never below `1/2`.
+#[must_use]
+pub fn tau_int_obm(trace: &[f64], b: usize) -> f64 {
+    let n = trace.len();
+    if b < 16 || b >= n {
+        return f64::NAN;
+    }
+    let mean = trace.iter().sum::<f64>() / n as f64;
+    let var = trace.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    if var <= 0.0 {
+        return f64::INFINITY;
+    }
+    // Prefix sums of the CENTRED trace, so a batch mean is a difference of two sums whose size is
+    // the walk's excursion and not N times the mean.
+    let mut prefix = Vec::with_capacity(n + 1);
+    let mut acc = 0.0f64;
+    prefix.push(0.0);
+    for x in trace {
+        acc += x - mean;
+        prefix.push(acc);
+    }
+    let bf = b as f64;
+    let mut ss = 0.0f64;
+    for j in 0..=(n - b) {
+        let m = (prefix[j + b] - prefix[j]) / bf;
+        ss += m * m;
+    }
+    let nf = n as f64;
+    let sigma2 = nf * bf / ((nf - bf) * (nf - bf + 1.0)) * ss;
+    (sigma2 / (2.0 * var)).max(0.5)
+}
+
+/// Batches per trace in the certificate's long-batch cross-check: [`tau_int_obm`] at `b = N / 20`.
+/// Twenty batch lengths put its own noise near `+-26%`, so a disagreement of a factor of two is
+/// about four of its standard deviations -- the threshold [`Finding::TauTruncated`] reports at.
+pub const CROSS_CHECK_BATCHES: usize = 20;
+
+/// Autocorrelation times of trace, below which a chain's `tau_int` is reported as a lower bound
+/// ([`Finding::TauLowerBound`]). Chosen from a measurement, not for roundness: at 100 `tau` of
+/// trace the median read on five slow-mode cells was 0.41 to 0.68 of the exact value, and at
+/// 1,000 it was 0.74 to 0.99.
+pub const RESOLVED_TAUS: f64 = 1000.0;
+
+/// What the crate divides a chain's draws by, and how far to believe it. Built by [`tau_estimate`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TauEstimate {
+    /// The integrated autocorrelation time carried: over every trace given, the larger of Geyer's
+    /// sequence and long-batch means, never below `1/2`. `NaN` under sixteen draws; `+inf` when a
+    /// trace is constant.
+    pub tau: f64,
+    /// Geyer's initial monotone sequence ([`tau_int`]), the largest over the traces where it has a
+    /// value; `NaN` where it has none on any.
+    pub geyer: f64,
+    /// Overlapping batch means at `b = N / 20` ([`tau_int_obm`]), the largest over the traces;
+    /// `NaN` under 320 draws, where the batches would be too short to mean anything.
+    pub batch: f64,
+    /// Draws per trace (the shortest, if they differ).
+    pub draws: usize,
+    /// Where Geyer's sum came to zero or less on a trace, that sum -- a failure, not a value, and
+    /// the batch value is carried for that trace instead. `None` where it never failed.
+    pub unresolved: Option<f64>,
+}
+
+impl TauEstimate {
+    /// Effective sample size, `draws / (2 tau)`, which the `1/2` floor keeps at or below `draws`.
+    /// `1` where `tau` is not finite: a frozen chain is worth one draw, and the infinite `tau` is
+    /// left in [`Self::tau`] so a caller reading it still sees why.
+    #[must_use]
+    pub fn ess(&self) -> f64 {
+        if self.tau.is_finite() && self.tau > 0.0 {
+            self.draws as f64 / (2.0 * self.tau)
+        } else {
+            1.0
+        }
+    }
+
+    /// Whether long-batch means came out more than twice Geyer's value: a slow mode Geyer's
+    /// sequence stopped short of. See [`Finding::TauTruncated`].
+    #[must_use]
+    pub fn truncated(&self) -> bool {
+        self.geyer.is_finite() && self.batch.is_finite() && self.batch > 2.0 * self.geyer
+    }
+
+    /// Whether the chain is under [`RESOLVED_TAUS`] autocorrelation times long, so that `tau` is a
+    /// lower bound and [`Self::ess`] an upper one. See [`Finding::TauLowerBound`].
+    #[must_use]
+    pub fn lower_bound(&self) -> bool {
+        self.tau.is_finite() && (self.draws as f64) < RESOLVED_TAUS * self.tau
+    }
+}
+
+/// THE ONE ESTIMATOR ENTRY POINT: the autocorrelation time of a chain seen through one or more
+/// scalar traces of it, each in chain order and of the same length.
+///
+/// Per trace, Geyer's initial monotone sequence ([`tau_int`]) and overlapping batch means at
+/// `N / 20` ([`tau_int_obm`]); carried, the largest of all of them, never below `1/2`. Geyer's
+/// sequence is exact on a reversible kernel's autocorrelation; batch means need no reversibility
+/// and catch the non-reversible chain Geyer stops short on. Taking the larger rather than choosing
+/// cost this much on 224 simulated traces at least 2,000 exact `tau` long: reads below 0.8 of the
+/// exact value went from 23 to 19, the worst from 0.566 to 0.618, and reads above 1.25 from 13 to
+/// 59, a geometric-mean ratio of 1.10 against 0.98 -- error bars about 5% wider on average, which is
+/// the direction a certificate may err in. [`certify`], [`crate::samples::SampleSet`],
+/// [`crate::free_energy`], [`crate::potts::estimate`], [`crate::sse`] and every other error bar in
+/// the crate divide by `tau` from here.
+///
+/// Where Geyer's sum is zero or less on a trace, it has no value there: that trace contributes its
+/// batch value and [`TauEstimate::unresolved`] says so. An empty slice gives `NaN`.
+#[must_use]
+pub fn tau_estimate(traces: &[&[f64]]) -> TauEstimate {
+    let draws = traces.iter().map(|t| t.len()).min().unwrap_or(0);
+    let (mut tau, mut geyer, mut batch) = (f64::NAN, f64::NAN, f64::NAN);
+    let mut unresolved = None;
+    // `f64::max` ignores a NaN operand, so a trace too short for one estimator leaves the others
+    // standing -- and an infinite (constant) trace dominates, as a chain that never moved should.
+    for t in traces {
+        let raw = tau_int_geyer_raw(t);
+        let obm = tau_int_obm(t, t.len() / CROSS_CHECK_BATCHES);
+        if !raw.is_nan() && raw <= 0.0 {
+            unresolved = Some(raw);
+        } else {
+            let g = if raw.is_finite() { raw.max(0.5) } else { raw };
+            geyer = geyer.max(g);
+            tau = tau.max(g);
+        }
+        batch = batch.max(obm);
+        tau = tau.max(obm);
+    }
+    if unresolved.is_some() && tau.is_nan() && draws >= 16 {
+        // Geyer failed and the trace is too short for batch means: carry the independent value,
+        // which is the most a trace this short can claim, rather than no value at all.
+        tau = 0.5;
+    }
+    TauEstimate { tau, geyer, batch, draws, unresolved }
 }
 
 /// Certify a set of samples against the model and temperature they claim to come from.
@@ -440,36 +767,15 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
         .iter()
         .map(|s| s.iter().map(|&x| x as f64).sum::<f64>() / g.n as f64)
         .collect();
-    let t = {
-        let a = tau_int(trace);
-        let b = tau_int(&mag);
-        match (a.is_nan(), b.is_nan()) {
-            (false, false) => a.max(b),
-            (true, false) => b,
-            (false, true) => a,
-            (true, true) => f64::NAN,
-        }
-    };
-    // THE WINDOW CAN CLOSE ON A FAST MODE AND MISS A SLOW ONE -- measured against the exact
-    // operator at a twentieth of the truth, unchanged by trace length (see `tau_int`). Batch means
-    // read low on a short trace for a different reason and by a different amount, so where they
-    // come out more than twice Sokal's value a slow mode is present, the larger value is carried,
-    // and the certificate says so. Where they agree, nothing here has detected a slow mode -- which
-    // is not the same as there being none.
-    let t_sokal = t;
-    let t_batch = {
-        let a = tau_int_batch(trace, 20);
-        let b = tau_int_batch(&mag, 20);
-        match (a.is_nan(), b.is_nan()) {
-            (false, false) => a.max(b),
-            (true, false) => b,
-            (false, true) => a,
-            (true, true) => f64::NAN,
-        }
-    };
-    let truncated = t_sokal.is_finite() && t_batch.is_finite() && t_batch > 2.0 * t_sokal;
-    let t = if truncated { t_batch } else { t };
-    let ess = if t.is_finite() && t > 0.0 { draws as f64 / (2.0 * t) } else { 1.0 };
+    // THE AUTOCORRELATION TIME, from the one entry point every error bar in the crate uses: Geyer's
+    // initial monotone sequence on each trace, overlapping batch means at N/20 beside it, the
+    // larger carried and never below 1/2 -- see `tau_int` for why each, measured. Geyer's sequence
+    // is exact for a reversible kernel and can stop short on a non-reversible one; this function
+    // sees only samples and cannot know which drew them, so the cross-check is applied to every
+    // chain. Where the two disagree by more than batch means' own noise, the certificate says so.
+    let est = tau_estimate(&[trace, &mag]);
+    let t = est.tau;
+    let ess = est.ess();
 
     // Two dependences, two corrections. WITHIN a configuration the pseudolikelihood's conditionals
     // share spins, which `fit_beta`'s sandwich handles; BETWEEN configurations a chain is
@@ -490,7 +796,7 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     }
     // Two ways a draw count can be misleading, and both are worth saying out loud. Fewer than 50
     // independent samples estimates nothing reliably whatever the raw count claims; and a tau
-    // exceeding a fiftieth of the run means the windowing had too little to work with, so tau
+    // exceeding a fiftieth of the run means the estimate had too little to work with, so tau
     // itself is not to be trusted. The thresholds are round numbers, but they are round numbers
     // chosen against measured chains rather than picked to make the suite pass -- a run measuring
     // tau 43 with ess 35 out of 3,000 draws is undermixed by any reading, and an earlier ess < 30
@@ -498,8 +804,17 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     if !t.is_finite() || ess < 50.0 || t > draws as f64 / 50.0 {
         findings.push(Finding::Undermixed { tau_int: t, ess, draws });
     }
-    if truncated {
-        findings.push(Finding::TauTruncated { sokal: t_sokal, batch: t_batch });
+    if est.truncated() {
+        findings.push(Finding::TauTruncated { geyer: est.geyer, batch: est.batch });
+    }
+    if let Some(geyer) = est.unresolved {
+        findings.push(Finding::TauUnresolved { geyer, batch: est.batch });
+    }
+    // Resolved or not is a statement about the MEASUREMENT, separate from Undermixed's statement
+    // about the chain: at fewer than RESOLVED_TAUS autocorrelation times, the tau above is a lower
+    // bound and the ess an upper one, whatever the draw count looks like.
+    if est.lower_bound() {
+        findings.push(Finding::TauLowerBound { tau_int: t, ess, draws });
     }
 
     // A Geweke-style check. beta_eff cannot do this job: pseudolikelihood is a LOCAL statistic, and
@@ -1049,14 +1364,15 @@ mod tests {
     /// on a frustrated grid, and it is exactly the shape that closes Sokal's window early: `tau(W)`
     /// is about 1.8 when `W = 9 >= 5 tau(W)`, and the slow mode -- 33 of the 34 -- is never summed.
     ///
-    /// Asserted in both directions on the SAME two-million-draw trace: Sokal must land far below
-    /// the truth (the defect, pinned, so a change to the window that quietly fixes one fixture
-    /// and breaks the certificate's cross-check is visible), and batch means over twenty batches
-    /// of six thousand slow-mode times must land near it. And the single-mode control: on the
-    /// fast process alone both estimators agree with `(1+p)/(2(1-p))`, so the disagreement is
-    /// the slow mode and not the estimator pair.
+    /// Asserted three ways on the SAME two-million-draw trace. Sokal's window ([`tau_int_sokal`],
+    /// the crate's `tau_int` until 2026-09-28) must land far below the truth -- the defect, pinned,
+    /// so it stays measured. Geyer's sequence ([`tau_int`], the crate's estimator now) must land
+    /// near it: two AR(1)s are a reversible spectrum, every pair sum is positive, and nothing stops
+    /// the sum before the slow mode. Batch means must land near it too, and the entry point must
+    /// NOT report a disagreement, because on a reversible spectrum there is none. And the
+    /// single-mode control: on the fast process alone all three agree with `(1+p)/(2(1-p))`.
     #[test]
-    fn a_small_slow_mode_closes_sokal_early_and_batch_means_see_it() {
+    fn a_small_slow_mode_closes_sokal_early_and_geyer_and_batch_means_see_it() {
         let (a_f, p_f, a_s, p_s) = (0.9f64, 0.3f64, 0.1f64, 0.997f64);
         let exact = 0.5 + a_f * p_f / (1.0 - p_f) + a_s * p_s / (1.0 - p_s);
         assert!((exact - 34.13).abs() < 0.05, "closed form {exact}");
@@ -1078,7 +1394,7 @@ mod tests {
         let trace = &trace[20_000..];
         let fast_only = &fast_only[20_000..];
 
-        let sokal = tau_int(trace);
+        let sokal = tau_int_sokal(trace);
         let batch = tau_int_batch(trace, 20);
         assert!(
             sokal < 0.3 * exact,
@@ -1089,25 +1405,30 @@ mod tests {
             "batch means over 20 batches of {} draws should sit near {exact:.1}: {batch:.1}",
             trace.len() / 20
         );
-        assert!(batch > 2.0 * sokal, "the certificate's cross-check must fire on this trace");
+        assert!(batch > 2.0 * sokal, "the window and batch means must resolvably disagree here");
+        let geyer = tau_int(trace);
+        assert!(
+            geyer > 0.7 * exact && geyer < 1.4 * exact,
+            "Geyer's sequence must sum the slow mode the window cut off: {geyer:.2} against {exact:.2}"
+        );
+        let est = tau_estimate(&[trace]);
+        assert!(
+            !est.truncated() && est.unresolved.is_none(),
+            "on a reversible spectrum Geyer and batch means agree, and nothing may be reported: {est:?}"
+        );
+        assert!(est.tau >= geyer && est.tau > 0.7 * exact, "the carried value is the larger: {est:?}");
 
-        // The control: one mode, both estimators agree with the closed form.
+        // The control: one mode, every estimator agrees with the closed form.
         let want_f = (1.0 + p_f) / (2.0 * (1.0 - p_f));
-        let (s1, b1) = (tau_int(fast_only), tau_int_batch(fast_only, 20));
+        let (s1, b1, g1) = (tau_int_sokal(fast_only), tau_int_batch(fast_only, 20), tau_int(fast_only));
         assert!((s1 - want_f).abs() / want_f < 0.1, "single mode, Sokal {s1} vs {want_f}");
         assert!((b1 - want_f).abs() / want_f < 0.4, "single mode, batch {b1} vs {want_f}");
+        assert!((g1 - want_f).abs() / want_f < 0.1, "single mode, Geyer {g1} vs {want_f}");
     }
 
-    /// THE CERTIFICATE CARRIES THE LARGER tau AND SAYS WHY, on a real chain: a 3x3 frustrated grid
-    /// at a temperature where `autocorr::tau_int_exact` puts the sweep's tau in the tens and
-    /// Sokal's window closes in single digits. The certificate must report `TauTruncated`, its
-    /// `tau_int` must be the batch-means value, and its `ess` must be the smaller number -- the
-    /// conservative direction. Hot, the same model must NOT trigger it: one mode, both estimators
-    /// agree, no finding. Both halves, so a cross-check that fired on everything would fail here.
-    #[test]
-    fn the_certificate_reports_a_truncated_window_and_carries_the_larger_tau() {
-        use crate::autocorr::{tau_int_exact, Kernel};
-        use crate::gibbs::Sampler;
+    /// The 3x3 +-J glass with small random fields that the audit's exact sequences were taken on,
+    /// built exactly as `autocorr`'s own `grid_glass(3, 3, 11)` builds it.
+    fn glass3x3() -> Graph {
         let mut b = crate::graph::GraphBuilder::new(9);
         let mut rng = Pcg::new(11, 0x6A);
         for y in 0..3 {
@@ -1124,43 +1445,289 @@ mod tests {
         for i in 0..9 {
             b.bias(i, (rng.f64() - 0.5) * 0.4);
         }
-        let g = b.build();
-        let run = |beta: f64, draws: usize| -> Certificate {
-            let mut s = Sampler::new(&g, beta, 21);
-            s.sweeps(2_000, None);
-            let mut samples = Vec::with_capacity(draws);
-            let mut trace = Vec::with_capacity(draws);
-            for _ in 0..draws {
-                s.sweep(None);
-                samples.push(s.s.clone());
-                trace.push(g.energy(&s.s));
-            }
-            certify(&g, beta, &samples, &trace)
+        b.build()
+    }
+
+    /// The EXACT autocorrelation `rho(0..=lags)` of `obs` under `kernel` at stationarity, by
+    /// repeated application of the kernel's operator to the centred observable: no sampling noise
+    /// anywhere, so what an estimator reads from it is the estimator's own error.
+    fn exact_rho(
+        g: &Graph,
+        beta: f64,
+        kernel: crate::autocorr::Kernel,
+        obs: impl Fn(&[i8]) -> f64,
+        lags: usize,
+    ) -> Vec<f64> {
+        use crate::autocorr::{apply, boltzmann, spins};
+        let pi = boltzmann(g, beta).expect("enumerable");
+        let f: Vec<f64> = (0..1usize << g.n).map(|x| obs(&spins(x, g.n))).collect();
+        let mean: f64 = pi.iter().zip(&f).map(|(p, v)| p * v).sum();
+        let e: Vec<f64> = f.iter().map(|v| v - mean).collect();
+        let c0: f64 = pi.iter().zip(&e).map(|(p, x)| p * x * x).sum();
+        let mut rho = Vec::with_capacity(lags + 1);
+        rho.push(1.0);
+        let mut v = e.clone();
+        for _ in 0..lags {
+            v = apply(g, beta, kernel, &v);
+            rho.push(pi.iter().zip(&e).zip(&v).map(|((p, x), y)| p * x * y).sum::<f64>() / c0);
+        }
+        rho
+    }
+
+    /// THE DEFECT, ON EXACT SEQUENCES, where no sampling noise can be blamed. Sokal's window reads
+    /// the 3x3 glass's chromatic-sweep energy at `beta = 1` as 2.978 against an exact 5.4205 --
+    /// 45% low, and the larger of energy and magnetisation, which is what a certificate carries,
+    /// is the energy here, so the certificate was 45% low too -- because the window closes at lag
+    /// 15 while a slow mode is still correlated. Geyer's sequence reads the same sequence exactly.
+    /// And a case where the window errs on a NEGATIVE lobe: a sequential sweep of the
+    /// antiferromagnetic 8-ring in a field, whose magnetisation is antithetic, exact 0.9199, which
+    /// the window reads 19% low and Geyer within 1%.
+    #[test]
+    fn geyer_reads_on_exact_sequences_what_the_window_truncates() {
+        use crate::autocorr::{tau_int_fundamental, Kernel};
+        let g = glass3x3();
+        let energy = |s: &[i8]| g.energy(s);
+        let exact = tau_int_fundamental(&g, 1.0, Kernel::ChromaticGibbs, energy).unwrap().tau_int;
+        assert!((exact - 5.4205).abs() < 1e-3, "the fixture's exact energy tau is 5.4205: {exact}");
+        let rho = exact_rho(&g, 1.0, Kernel::ChromaticGibbs, energy, 3_000);
+        assert!(rho[3_000].abs() < 1e-12, "3,000 lags must reach the tail: {}", rho[3_000]);
+        let sokal = sokal_window(3_000, |k| rho[k]);
+        assert!((sokal - 2.978).abs() < 2e-3, "the window reads 2.978 here, measured: {sokal}");
+        let geyer = geyer_initial_monotone(3_000, |k| rho[k]);
+        assert!(
+            (geyer / exact - 1.0).abs() < 1e-4,
+            "Geyer's sequence on the exact sequence must be the exact value: {geyer} vs {exact}"
+        );
+
+        let ring = crate::ising::ring(8, -1.0, 0.3);
+        let mag = |s: &[i8]| s.iter().map(|&v| f64::from(v)).sum::<f64>();
+        let exact = tau_int_fundamental(&ring, 1.5, Kernel::SequentialGibbs, mag).unwrap().tau_int;
+        assert!((exact - 0.9199).abs() < 1e-3, "exact magnetisation tau 0.9199: {exact}");
+        let rho = exact_rho(&ring, 1.5, Kernel::SequentialGibbs, mag, 2_000);
+        assert!(rho.iter().any(|&r| r < -0.01), "the fixture must actually have a negative lobe");
+        let sokal = sokal_window(2_000, |k| rho[k]);
+        assert!(sokal < 0.85 * exact, "the window must read the lobe low (-19%): {sokal} vs {exact}");
+        let geyer = geyer_initial_monotone(2_000, |k| rho[k]);
+        assert!((geyer / exact - 1.0).abs() < 0.02, "Geyer within 1% here: {geyer} vs {exact}");
+    }
+
+    /// GEYER ALONE IS NOT CONSERVATIVE ON A NON-REVERSIBLE CHAIN, and the long-batch cross-check
+    /// is what catches it -- the reason [`tau_estimate`] carries the larger of the two.
+    ///
+    /// In the tree: a sequential sweep of the antiferromagnetic 8-ring at `beta = 2`, observed
+    /// through `m + 0.001 m_stag`, where the uniform magnetisation's negative pair comes before the
+    /// staggered magnetisation's slow positive ones: Geyer's sequence reads the EXACT sequence 7.7%
+    /// low. In closed form, a fast rotation beside a slow real mode,
+    /// `rho(k) = 0.8 * 0.9^k cos(pi k / 2) + 0.2 * 0.99^k` with exact `tau` 19.94: the second pair
+    /// sum is negative and Geyer stops at lag 2, reading 0.698 -- 96.5% low. A process with exactly
+    /// that autocorrelation (the real part of a complex AR(1) plus an AR(1)) is simulated, and the
+    /// entry point must carry batch means' value, not Geyer's, and must say they disagree.
+    #[test]
+    fn geyer_alone_under_reads_a_non_reversible_chain_and_the_batch_cross_check_is_carried() {
+        use crate::autocorr::{tau_int_fundamental, Kernel};
+        let ring = crate::ising::ring(8, -1.0, 0.0);
+        let f = |s: &[i8]| {
+            let m: f64 = s.iter().map(|&v| f64::from(v)).sum();
+            let stag: f64 = s.iter().enumerate().map(|(i, &v)| if i % 2 == 0 { f64::from(v) } else { -f64::from(v) }).sum();
+            m + 0.001 * stag
         };
-        // Cold: the exact operator says the sweep is slow; the window says it is fast.
-        let exact = tau_int_exact(&g, 1.6, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 200_000)
-            .unwrap()
-            .tau_int;
-        let c = run(1.6, (300.0 * exact) as usize);
+        let exact = tau_int_fundamental(&ring, 2.0, Kernel::SequentialGibbs, f).unwrap().tau_int;
+        assert!((exact - 2.46501).abs() < 1e-3, "exact tau 2.46501: {exact}");
+        let rho = exact_rho(&ring, 2.0, Kernel::SequentialGibbs, f, 60_000);
+        let geyer = geyer_initial_monotone(60_000, |k| rho[k]);
+        assert!(
+            geyer < 0.95 * exact && geyer > 0.85 * exact,
+            "Geyer alone must read this in-tree non-reversible sequence about 7.7% low: {geyer} vs {exact}"
+        );
+
+        let (a, r, w, lam) = (0.8f64, 0.9f64, core::f64::consts::FRAC_PI_2, 0.99f64);
+        // 1/2 + a Re(z / (1 - z)) + (1 - a) lam / (1 - lam), z = r e^{iw}.
+        let (zr, zi) = (r * w.cos(), r * w.sin());
+        let den = (1.0 - zr).powi(2) + zi * zi;
+        let exact = 0.5 + a * (zr * (1.0 - zr) - zi * zi) / den + (1.0 - a) * lam / (1.0 - lam);
+        assert!((exact - 19.942).abs() < 1e-3, "closed form {exact}");
+        let closed = |k: usize| a * r.powi(k as i32) * (w * k as f64).cos() + (1.0 - a) * lam.powi(k as i32);
+        let geyer = geyer_initial_monotone(20_000, closed);
+        assert!((geyer - 0.698).abs() < 1e-3, "Geyer stops at lag 2 and reads 0.698: {geyer}");
+
+        let n = 200_000usize;
+        let mut rng = Pcg::new(5, 0x2A);
+        let mut gauss = || {
+            (-2.0 * rng.f64().max(1e-12).ln()).sqrt() * (core::f64::consts::TAU * rng.f64()).cos()
+        };
+        let (cr, ci) = (r * w.cos(), r * w.sin());
+        let s = ((1.0 - r * r) / 2.0).sqrt();
+        let (mut zre, mut zim, mut y) = (0.0f64, 0.0f64, 0.0f64);
+        let mut x = Vec::with_capacity(n);
+        for t in 0..(n + 5_000) {
+            let (nr, ni) = (cr * zre - ci * zim + s * gauss(), cr * zim + ci * zre + s * gauss());
+            zre = nr;
+            zim = ni;
+            y = lam * y + (1.0 - lam * lam).sqrt() * gauss();
+            if t >= 5_000 {
+                x.push((2.0 * a).sqrt() * zre + (1.0 - a).sqrt() * y);
+            }
+        }
+        let alone = tau_int(&x);
+        assert!(alone < 0.1 * exact, "Geyer alone on the simulated trace: {alone} against {exact}");
+        let est = tau_estimate(&[&x]);
+        assert!(est.truncated(), "the entry point must report the disagreement: {est:?}");
+        assert!(
+            est.tau >= est.batch && est.tau > 0.4 * exact,
+            "and carry the batch value, not Geyer's: {est:?} against {exact}"
+        );
+    }
+
+    /// THE CERTIFICATE CARRIES THE LARGER tau AND SAYS WHY. Real draws from a hot 3x3 glass supply
+    /// the configurations (their magnetisation mixes in about a sweep), and the scalar observable
+    /// the caller hands in is the non-reversible closed form above -- Geyer's sequence reads it at
+    /// 3.5% of the truth and long-batch means near it. The certificate must report `TauTruncated`,
+    /// carry at least the batch value, and give the smaller `ess`. With the chain's own energy as
+    /// the observable, the same draws must NOT trigger it: one mode, both estimators agree. Both
+    /// halves, so a cross-check that fired on everything would fail here.
+    #[test]
+    fn the_certificate_reports_a_truncated_sum_and_carries_the_larger_tau() {
+        let g = glass3x3();
+        let draws = 200_000usize;
+        let mut s = Sampler::new(&g, 0.4, 21);
+        s.sweeps(2_000, None);
+        let mut samples = Vec::with_capacity(draws);
+        let mut energy = Vec::with_capacity(draws);
+        for _ in 0..draws {
+            s.sweep(None);
+            samples.push(s.s.clone());
+            energy.push(g.energy(&s.s));
+        }
+        let hot = certify(&g, 0.4, &samples, &energy);
+        assert!(
+            !hot.findings.iter().any(|f| matches!(f, Finding::TauTruncated { .. })),
+            "a single-mode chain must not trigger the cross-check: {hot}"
+        );
+
+        let (a, r, lam) = (0.8f64, 0.9f64, 0.99f64);
+        let exact = 19.942;
+        let mut rng = Pcg::new(6, 0x2B);
+        let mut gauss = || {
+            (-2.0 * rng.f64().max(1e-12).ln()).sqrt() * (core::f64::consts::TAU * rng.f64()).cos()
+        };
+        let sd = ((1.0 - r * r) / 2.0).sqrt();
+        let (mut zre, mut zim, mut y) = (0.0f64, 0.0f64, 0.0f64);
+        let mut obs = Vec::with_capacity(draws);
+        for t in 0..(draws + 5_000) {
+            // z <- r i z + noise: a quarter turn per draw.
+            let (nr, ni) = (-r * zim + sd * gauss(), r * zre + sd * gauss());
+            zre = nr;
+            zim = ni;
+            y = lam * y + (1.0 - lam * lam).sqrt() * gauss();
+            if t >= 5_000 {
+                obs.push((2.0 * a).sqrt() * zre + (1.0 - a).sqrt() * y);
+            }
+        }
+        let c = certify(&g, 0.4, &samples, &obs);
         let fired = c.findings.iter().find_map(|f| match f {
-            Finding::TauTruncated { sokal, batch } => Some((*sokal, *batch)),
+            Finding::TauTruncated { geyer, batch } => Some((*geyer, *batch)),
             _ => None,
         });
-        let (sokal, batch) = fired.expect("the cold chain must trigger TauTruncated");
-        assert!(batch > 2.0 * sokal);
-        assert!(
-            (c.tau_int - batch).abs() < 1e-12 || c.tau_int >= batch,
-            "the certificate must carry at least the batch-means tau: {} vs {batch}",
-            c.tau_int
-        );
+        let (geyer, batch) = fired.expect("the rotating observable must trigger TauTruncated");
+        assert!(batch > 2.0 * geyer);
+        assert!(geyer < 0.1 * exact, "and Geyer must sit far below the exact {exact}: {geyer}");
+        assert!(c.tau_int >= batch - 1e-12, "the certificate must carry the batch value: {c}");
+        assert!(c.tau_int > 0.4 * exact, "which is near the truth: {} vs {exact}", c.tau_int);
         assert!(c.ess <= c.draws as f64 / (2.0 * batch) + 1e-9, "ess must be the conservative one");
-        assert!(sokal < 0.5 * exact, "and Sokal must sit far below the exact {exact:.2}: {sokal:.2}");
-        // Hot: one mode, no finding.
-        let h = run(0.4, 20_000);
+    }
+
+    /// ESS NEVER EXCEEDS THE DRAWS, and a failed sum is a finding, not a number.
+    ///
+    /// Geyer's sequence reads an antithetic trace below `1/2` -- an AR(1) at `-0.9` has an exact
+    /// `tau` of `0.1 / 3.8 = 0.026`, "worth" 19 times its draws -- and a trace that alternates with
+    /// a little noise to zero or less. Without the floor the first becomes an effective sample
+    /// size larger than the chain and pulls the certificate's noise floor BELOW the independent
+    /// one, which accuses correct samplers; `rhat::ess` turned the second into `N log10 N`. Checked
+    /// short (no batch means) and long, through the entry point, the certificate and a sample set.
+    #[test]
+    fn ess_never_exceeds_the_draws_and_a_failed_sum_is_a_finding() {
+        let sign = |t: usize| if t % 2 == 0 { 1.0 } else { -1.0 };
+        let mut rng = Pcg::new(19, 3);
+        let mut gauss = || {
+            (-2.0 * rng.f64().max(1e-12).ln()).sqrt() * (core::f64::consts::TAU * rng.f64()).cos()
+        };
+        for n in [200usize, 20_000] {
+            let mut x = 0.0f64;
+            let anti: Vec<f64> = (0..n)
+                .map(|_| {
+                    x = -0.9 * x + (1.0 - 0.81f64).sqrt() * gauss();
+                    x
+                })
+                .collect();
+            assert_eq!(tau_int(&anti), 0.5, "n {n}: Geyer is floored at the independent value");
+            let est = tau_estimate(&[&anti]);
+            assert!(est.tau >= 0.5 && est.ess() <= n as f64, "n {n}: {est:?}");
+
+            let alternating: Vec<f64> = (0..n).map(|t| sign(t) + 0.5 * gauss()).collect();
+            assert!(tau_int(&alternating).is_nan(), "n {n}: a non-positive sum is no value");
+            let est = tau_estimate(&[&alternating]);
+            assert!(est.unresolved.is_some_and(|v| v <= 0.0), "n {n}: the failure is recorded: {est:?}");
+            assert!(est.tau >= 0.5 && est.ess() <= n as f64, "n {n}: and nothing optimistic carried: {est:?}");
+        }
+
+        // Through the certificate: exact independent draws for the configurations, the alternating
+        // trace as the observable.
+        let g = crate::ising::ring(8, 1.0, 0.2);
+        let p = crate::ising::exact_boltzmann(&g, 0.5);
+        let mut cdf = Vec::with_capacity(p.len());
+        let mut total = 0.0;
+        for &q in &p {
+            total += q;
+            cdf.push(total);
+        }
+        let draws = 20_000usize;
+        let mut samples = Vec::with_capacity(draws);
+        for _ in 0..draws {
+            let u = rng.f64() * total;
+            let k = cdf.partition_point(|&c| c < u).min(p.len() - 1);
+            samples.push((0..g.n).map(|i| if (k >> i) & 1 == 1 { 1i8 } else { -1 }).collect::<Vec<i8>>());
+        }
+        let alternating: Vec<f64> = (0..draws).map(|t| sign(t) + 0.5 * rng.f64()).collect();
+        let c = certify(&g, 0.5, &samples, &alternating);
         assert!(
-            !h.findings.iter().any(|f| matches!(f, Finding::TauTruncated { .. })),
-            "a single-mode chain must not trigger the cross-check: {:?}",
-            h.findings
+            c.findings.iter().any(|f| matches!(f, Finding::TauUnresolved { .. })),
+            "a failed sum must be reported: {c}"
+        );
+        assert!(c.tau_int >= 0.5 && c.ess <= draws as f64, "{c}");
+        let iid_floor = 0.5 * ((1usize << g.n) as f64 / draws as f64).sqrt();
+        assert!(c.noise_floor.unwrap() >= iid_floor - 1e-15, "the floor may not drop below the independent one: {c}");
+
+        // And through a sample set: every estimate's ess is at most its draws.
+        let energies: Vec<f64> = samples.iter().map(|s| g.energy(s)).collect();
+        let set = crate::samples::SampleSet::from_chain(samples, energies, 0.5, 0, 1);
+        assert!(set.chain_tau() >= 0.5);
+        for i in 0..g.n {
+            let e = set.mean_spin(i).unwrap();
+            assert!(e.ess <= draws as f64 && e.tau_int >= 0.5, "site {i}: {e}");
+        }
+    }
+
+    /// A CHAIN UNDER A THOUSAND AUTOCORRELATION TIMES IS REPORTED AS A LOWER BOUND. 300 draws of a
+    /// chain thinned to near independence is 600 `tau` at most, so its `tau` is a lower bound and
+    /// the certificate must say so, with the numbers it carries; 6,000 of the same are not.
+    #[test]
+    fn a_chain_under_a_thousand_taus_is_reported_as_a_lower_bound() {
+        let g = crate::ising::ring(10, 1.0, 0.2);
+        let (s, t) = run(&g, 0.6, 10, 500, 300, 1);
+        let c = certify(&g, 0.6, &s, &t);
+        let found = c.findings.iter().find_map(|f| match f {
+            Finding::TauLowerBound { tau_int, ess, draws } => Some((*tau_int, *ess, *draws)),
+            _ => None,
+        });
+        let (tau, ess, draws) = found.unwrap_or_else(|| panic!("300 draws must be reported short: {c}"));
+        assert!((tau - c.tau_int).abs() < 1e-12 && (ess - c.ess).abs() < 1e-9 && draws == 300);
+        assert!(format!("{c}").contains("lower bound"), "and say what it means: {c}");
+
+        let (s, t) = run(&g, 0.6, 10, 500, 6_000, 1);
+        let c = certify(&g, 0.6, &s, &t);
+        assert!(
+            !c.findings.iter().any(|f| matches!(f, Finding::TauLowerBound { .. })),
+            "6,000 draws at tau near 1/2 are thousands of tau: {c}"
         );
     }
 

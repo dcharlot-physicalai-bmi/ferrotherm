@@ -877,7 +877,7 @@ mod tests {
                 gstates.push(st);
             }
             let gm = marginals(&gstates);
-            let tau = crate::certify::tau_int(&mag).max(0.5);
+            let tau = crate::certify::tau_estimate(&[&mag]).tau.max(0.5);
 
             let mut chi2 = 0.0f64;
             for i in 0..n {

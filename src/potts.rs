@@ -922,9 +922,10 @@ pub fn enumerate(m: &Potts, beta: f64) -> Result<Enumerated, TooBig> {
 ///
 /// `sqrt(var / ess)`, **never** `sqrt(var / N)` — this crate's seventh invariant, measured in
 /// `examples/interval_calibration.rs`, where the naive interval covers 24% while announcing 95%. The
-/// effective sample size is `N / (2 tau)` with `tau` from [`crate::certify::tau_int`], the same
-/// estimator [`crate::samples::SampleSet`] uses, so an interval from this module and one from that
-/// module mean the same thing.
+/// effective sample size is `N / (2 tau)` with `tau` from [`crate::certify::tau_estimate`], the same
+/// estimator [`crate::samples::SampleSet`] and the certificate use (Geyer's sequence, long-batch
+/// means beside it, the larger carried and never below `1/2`), so an interval from this module and
+/// one from that module mean the same thing.
 ///
 /// A constant trace gets an infinite `tau` and an `ess` of one rather than a zero-width interval: a
 /// chain stuck in one state reports its one value, and pretending that has no error is exactly how a
@@ -941,7 +942,7 @@ pub fn estimate(trace: &[f64]) -> Estimate {
     } else {
         0.0
     };
-    let tau = crate::certify::tau_int(trace);
+    let tau = crate::certify::tau_estimate(&[trace]).tau;
     let ess = if tau.is_finite() && tau > 0.0 { n as f64 / (2.0 * tau) } else { 1.0 };
     Estimate { value, stderr: (var / ess).sqrt(), ess, tau_int: tau }
 }

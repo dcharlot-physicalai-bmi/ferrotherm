@@ -1712,7 +1712,7 @@ mod tests {
     /// module exists to record, asserted rather than described.
     #[test]
     fn sokal_agrees_on_a_hot_chain_and_truncates_a_cold_one() {
-        use crate::certify::tau_int;
+        use crate::certify::tau_int_sokal as tau_int;
         use crate::gibbs::Sampler;
         let g = grid_glass(3, 3, 11);
         let run = |beta: f64, len: usize| -> f64 {

@@ -12,9 +12,11 @@
 //! # Why this exists
 //!
 //! Everything in this crate that reports an effective sample size does it from ONE chain through
-//! [`crate::certify::tau_int`], and `examples/tau_exactness.rs` measured what that is worth: on a
-//! spectrum with a large fast mode beside a small slow one, Sokal's window closes early and no trace
-//! length repairs it. The field's answer is to run several chains from dispersed starts and ask
+//! [`crate::certify::tau_estimate`], and `examples/tau_exactness.rs` measured what the estimator
+//! that used to sit there was worth: on a spectrum with a large fast mode beside a small slow one,
+//! Sokal's window closes early and no trace length repairs it. The single-chain estimator is now
+//! the Geyer sequence this module runs over several chains; one chain still cannot see a mode it
+//! never visited. The field's answer is to run several chains from dispersed starts and ask
 //! whether they agree — Gelman and Rubin's R-hat — and its current form (Vehtari, Gelman, Simpson,
 //! Carpenter and Bürkner, *Bayesian Analysis* 2021) splits every chain in half so a trend inside one
 //! chain counts as disagreement, rank-normalises the draws so heavy tails and infinite variances
@@ -37,8 +39,12 @@
 //! # Conventions
 //!
 //! `ess` is `M N / tau` with `tau = 1 + 2 sum rho`, the same quantity [`crate::certify`] reports as
-//! `draws / (2 tau_int)`; the two agree on a single chain up to the window rule. `mcse_mean` is the
-//! pooled standard deviation over the square root of the plain (not rank-normalised) ESS.
+//! `draws / (2 tau_int)`. On one chain the two run the same Geyer loop and differ in the split, in
+//! Stan's `1/(n-1)` variance correction, in the cap, and in the certificate's `1/2` floor and
+//! long-batch cross-check. Under Sokal's window, which the certificate used until 2026-09-28, they
+//! did not agree: on the 12-spin glass's energy the window read 0.058 of the exact value and this
+//! 0.88. `mcse_mean` is the pooled standard deviation over the square root of the plain (not
+//! rank-normalised) ESS.
 
 use crate::fft::autocovariance;
 
@@ -252,8 +258,11 @@ pub fn fold(chains: &[Vec<f64>]) -> Vec<Vec<f64>> {
 
 /// Effective sample size of the pooled draws from `M` split chains of `N` draws: the multi-chain
 /// autocorrelation `rho_t = 1 - (W - mean_m acov_m(t)) / var_plus`, summed under Geyer's initial
-/// monotone positive sequence, `ESS = M N / (1 + 2 sum rho)`, capped at `M N log10(M N)` as Stan
-/// caps it, since antithetic chains can estimate more independent draws than they hold.
+/// monotone positive sequence ([`crate::certify::geyer_initial_monotone`]),
+/// `ESS = M N / (1 + 2 sum rho)`, capped at `M N log10(M N)` as Stan caps it, since antithetic
+/// chains can estimate more independent draws than they hold. `NaN` where the sequence sums to zero
+/// or less: that is the estimator failing, and reporting the cap there would be reporting its best
+/// possible score for it.
 #[must_use]
 pub fn ess(chains: &[Vec<f64>]) -> f64 {
     let s = split(chains);
@@ -276,26 +285,17 @@ pub fn ess(chains: &[Vec<f64>]) -> f64 {
     }
     let rho = |t: usize| -> f64 { 1.0 - (mean_var - acov.iter().map(|a| a[t]).sum::<f64>() / m as f64) / var_plus };
     // Geyer: sum autocorrelations in pairs while the pair sum is positive, then force the pair
-    // sums to be non-increasing.
-    let max_t = n - 1;
-    let mut sum = 0.0;
-    let mut prev = f64::INFINITY;
-    let mut t = 0;
-    while t + 1 < max_t {
-        let mut p = rho(t) + rho(t + 1);
-        if p <= 0.0 {
-            break;
-        }
-        if p > prev {
-            p = prev;
-        }
-        prev = p;
-        sum += p;
-        t += 2;
-    }
-    let tau = -1.0 + 2.0 * sum;
+    // sums to be non-increasing -- the loop `certify::tau_int` runs over one chain, shared so the
+    // two cannot drift apart. It returns `1/2 + sum rho`; Stan's `tau` is twice that.
+    let tau = 2.0 * crate::certify::geyer_initial_monotone(n - 2, rho);
     let total = (m * n) as f64;
-    let ess = total / tau.max(1e-300);
+    // A sum of zero or less is a FAILURE, not a value. This used to divide by `tau.max(1e-300)`,
+    // which turns the failure into the cap below -- the most optimistic effective sample size there
+    // is -- on exactly the strongly antithetic chains where the estimator has nothing to say.
+    if !(tau > 0.0) {
+        return f64::NAN;
+    }
+    let ess = total / tau;
     ess.min(total * total.log10())
 }
 

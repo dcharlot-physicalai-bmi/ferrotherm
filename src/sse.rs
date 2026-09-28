@@ -113,7 +113,7 @@ use crate::samples::Estimate;
 
 /// Measured sweeps below which no error bar can be computed, so no run is allowed.
 ///
-/// [`crate::certify::tau_int`] returns `NaN` under sixteen points, and an estimate whose
+/// [`crate::certify::tau_estimate`] returns `NaN` under sixteen points, and an estimate whose
 /// autocorrelation is unknown falls back to the naive `sqrt(var/N)` interval -- the one that
 /// understates the error by `sqrt(2 tau)` and is the number that gets published. Refusing is the
 /// honest answer.
@@ -336,7 +336,7 @@ fn estimate(trace: &[f64]) -> Estimate {
     } else {
         0.0
     };
-    let tau = crate::certify::tau_int(trace);
+    let tau = crate::certify::tau_estimate(&[trace]).tau;
     // An infinite tau is a frozen trace, and it is left in the estimate rather than sanitised so
     // that reading `tau_int.is_finite()` still catches one -- the choice `samples` documents.
     let ess = if tau.is_finite() && tau > 0.0 { n as f64 / (2.0 * tau) } else { 1.0 };

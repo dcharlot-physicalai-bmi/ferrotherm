@@ -73,7 +73,7 @@
 //! floating-point arithmetic that produced them cannot have narrowed the interval it reports. The
 //! `proofs` module proves those steps do what they say for every finite `f64`.
 
-use crate::certify::tau_int;
+use crate::certify::tau_estimate;
 use crate::graph::Graph;
 use crate::kernel::draw;
 use crate::rng::Pcg;
@@ -634,7 +634,12 @@ fn estimate(trace: &[f64]) -> Estimate {
     let n = trace.len() as f64;
     let mean = trace.iter().sum::<f64>() / n;
     let var = trace.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);
-    let tau = tau_int(trace);
+    // The crate's one estimator, cross-check included. This was Sokal's window alone, and on the
+    // palindromic sweep these rungs run it read the EXACT energy autocorrelation 43% to 61% low on
+    // the cold cells measured (-50% on the 3x3 glass at beta = 1, -61% at 1.6, -43% on an 8-spin SK
+    // instance at 1.5), where Geyer's sequence reads it exactly: TI widening and BAR error bars 1.3
+    // to 1.6 times too narrow there.
+    let tau = tau_estimate(&[trace]).tau;
     let ess = n / (2.0 * tau);
     Estimate { value: mean, stderr: (var / ess).sqrt(), ess, tau_int: tau }
 }
@@ -721,8 +726,8 @@ pub fn bar_pair(beta_a: f64, energies_a: &[f64], beta_b: f64, energies_b: &[f64]
         let mean2 = fs.iter().map(|f| f * f).sum::<f64>() / fs.len() as f64;
         mean2 / (mean * mean) - 1.0
     };
-    let ess_a = na / (2.0 * tau_int(&la));
-    let ess_b = nb / (2.0 * tau_int(&lb));
+    let ess_a = na / (2.0 * tau_estimate(&[&la]).tau);
+    let ess_b = nb / (2.0 * tau_estimate(&[&lb]).tau);
     let var = side(&la, 1.0) / ess_a + side(&lb, -1.0) / ess_b;
     BarPair { beta_a, beta_b, delta, stderr: var.max(0.0).sqrt(), ess_a, ess_b }
 }

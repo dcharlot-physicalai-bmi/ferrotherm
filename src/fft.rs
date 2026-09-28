@@ -1,13 +1,14 @@
 //! Radix-2 fast Fourier transform, and the autocovariance it makes cheap.
 //!
-//! [`crate::certify::tau_int`] computes each lag of the autocorrelation directly, `O(L)` per lag,
-//! which is right for Sokal's window — a few `tau` lags — and hopeless for the extended sums and
+//! [`crate::certify::tau_int_sokal`] computes each lag of the autocorrelation directly, `O(L)` per
+//! lag below [`crate::certify::FFT_FROM`] draws, which is right for Sokal's window — a few `tau` lags — and hopeless for the extended sums and
 //! long traces that MEASURING the window's failure needs: `examples/tau_exactness.rs` at `beta = 1.5`
 //! sat on a `1.3e8`-sweep trace for five hours (2026-09-13) and was stopped. The Wiener–Khinchin
 //! route — centre, zero-pad to at least twice the length, transform, square the magnitudes,
 //! transform back — is `O(L log L)` for every lag at once, and [`autocovariance`] returns exactly
-//! the per-lag-normalised sequence `certify::tau_int` sums, to rounding, so an estimator built on
-//! it is the same estimator with a different clock.
+//! the per-lag-normalised sequence `certify::tau_int_sokal` sums, to rounding, so an estimator built
+//! on it is the same estimator with a different clock. [`crate::certify::tau_int`], Geyer's
+//! sequence, sums as far as the pair sums stay positive and always takes every lag from here.
 //!
 //! Pure Rust, iterative, in place, power-of-two lengths; the caller pads. The twiddle recurrence is
 //! re-anchored to a direct `cos`/`sin` every 32 butterflies, so a `2^28`-point transform stays at
@@ -87,7 +88,7 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
 
 /// The autocovariance of `x` at lags `0..=max_lag`, each lag normalised by the number of pairs
 /// that formed it: `c(k) = sum_{t < n - k} (x_t - mean)(x_{t + k} - mean) / (n - k)`, which is the
-/// quantity [`crate::certify::tau_int`] divides by `c(0)` and sums. Computed for every lag at once
+/// quantity [`crate::certify::tau_int_sokal`] divides by `c(0)` and sums. Computed for every lag at once
 /// by one transform of the centred sequence zero-padded to at least twice its length, so nothing
 /// wraps. `max_lag` is clamped to `n - 1`; an empty `x` gives an empty result.
 #[must_use]
@@ -150,7 +151,7 @@ mod tests {
 
     /// Lag by lag, the transform route must reproduce the direct sum with the same `n - k`
     /// normalisation on a length that is not a power of two (so the padding is exercised), and
-    /// summing its ratios under Sokal's window must give `certify::tau_int` to rounding -- the
+    /// summing its ratios under Sokal's window must give `certify::tau_int_sokal` to rounding -- the
     /// same estimator with a different clock.
     #[test]
     fn the_autocovariance_matches_the_direct_sum_lag_by_lag_and_sokal_agrees() {
@@ -175,7 +176,7 @@ mod tests {
                 break;
             }
         }
-        let sokal = crate::certify::tau_int(&x);
-        assert!((tau - sokal).abs() < 1e-12, "windowed sum {tau} vs certify::tau_int {sokal}");
+        let sokal = crate::certify::tau_int_sokal(&x);
+        assert!((tau - sokal).abs() < 1e-12, "windowed sum {tau} vs certify::tau_int_sokal {sokal}");
     }
 }

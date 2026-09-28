@@ -1234,7 +1234,7 @@ mod tests {
     /// off: a chain frozen in one basin has a fast-jittering ENERGY, so an energy trace alone
     /// scores a stuck chain as perfectly mixed.
     fn tau_flips(n: usize, e: &[f64], m: &[f64]) -> f64 {
-        crate::certify::tau_int(e).max(crate::certify::tau_int(m)) * n as f64
+        crate::certify::tau_estimate(&[e, m]).tau * n as f64
     }
 
     /// THE MEASUREMENT THE MODULE EXISTS FOR: a path crosses a barrier a single flip cannot.
