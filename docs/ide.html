@@ -670,7 +670,8 @@ function buildMachine(v, beta, seed) {
 
     const f = v.fit || {};
     const [p1, n1] = pushRows(d);
-    const ok = W.ft_ebm_train(sim, d.width, p1, n1, f.epochs | 0, f.k | 0,
+    // f.method selects the trainer (0 CD-k, the default; see ft_ebm_train's docs for 1-6).
+    const ok = W.ft_ebm_train(sim, d.width, p1, n1, f.method | 0, f.epochs | 0, f.k | 0,
       f.positive_sweeps | 0, f.learning_rate === undefined ? 0 : +f.learning_rate,
       f.batch | 0, BigInt(f.seed === undefined ? seed : f.seed));
     if (!ok) throw new Error(ebmWhy() || "that dataset could not be fitted");

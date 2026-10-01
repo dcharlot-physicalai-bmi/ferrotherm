@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### The committed wasm was three weeks behind its own ABI, and two pages called the old one
+
+`ft_ebm_train` gained a `method` parameter on 2026-09-09 (`af6d066`): the C header and the Python,
+Julia and Zig bindings were updated, and `docs/ferrotherm.wasm` -- last rebuilt on 2026-09-08 -- kept
+the old ten parameters. `docs/graph.html`, `docs/ide.html` and `scripts/fit-wasm.mjs` kept calling it
+with ten, which matched the stale binary, so `check-fit.sh` agreed with itself and every gate stayed
+green. Rebuilding the wasm for the estimator change broke all three (CI run 36911304060: a BigInt seed
+landed in a `u32` slot). The calls now pass `method` (0, CD-k, the old behaviour; the IDE reads
+`fit.method`), the committed wasm is rebuilt from this tree, and `check-fit.sh` again finds the browser
+and the native library agreeing exactly.
+
+The gap was that `check-wasm-exports.sh` checks NAMES. `scripts/check-wasm-abi.sh` now compares every
+exported function's signature in the committed binary with a fresh build from the source, in the same
+CI job -- bytes differ across toolchains, signatures do not -- and fails on a changed signature or an
+export one side lacks. Its selftest uses `ft_ebm_train`'s two shapes; run against the 2026-09-08
+binary it names exactly that export.
+
 ### The heat-bath complement rounded to zero, and exact `tau` above twelve spins
 
 **A defect in every exact operator.** The exact kernels formed the heat bath's down-flip as

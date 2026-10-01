@@ -984,7 +984,8 @@ function runTrain(trainNode) {
     // the scale the fit is read against, derived rather than measured.
     const before = W.ft_ebm_log_likelihood(sim, visible, push(), rowCount);
     const t0 = performance.now();
-    const ok = W.ft_ebm_train(sim, visible, push(), rowCount,
+    // method 0 is CD-k; the ABI gained the selector on 2026-09-09 (af6d066).
+    const ok = W.ft_ebm_train(sim, visible, push(), rowCount, 0,
       t.epochs | 0, t.k | 0, 0, 0, 0, BigInt(t.seed | 0));
     const ms = performance.now() - t0;
     if (!ok) { $("out").textContent = ebmWhy() || "that dataset could not be fitted"; return; }

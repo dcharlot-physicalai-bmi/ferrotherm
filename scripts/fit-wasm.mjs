@@ -50,7 +50,8 @@ function fit(makeSim, label) {
   const sim = makeSim();
   if (!sim) die(label + ": " + ebmError());
   const before = W.ft_ebm_log_likelihood(sim, visible, push(), rowCount);
-  if (!W.ft_ebm_train(sim, visible, push(), rowCount, 400, 10, 0, 0, 0, seed)) {
+  // method 0 is CD-k, the trainer the native side of check-fit.sh runs.
+  if (!W.ft_ebm_train(sim, visible, push(), rowCount, 0, 400, 10, 0, 0, 0, seed)) {
     die(label + ": " + ebmError());
   }
   const after = W.ft_ebm_log_likelihood(sim, visible, push(), rowCount);

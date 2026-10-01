@@ -360,6 +360,13 @@ jobs:
       # in a click handler leaves the page looking fine and doing nothing.
       - name: the committed wasm exports everything the pages call
         run: scripts/check-wasm-exports.sh --selftest && scripts/check-wasm-exports.sh
+      # Names are not enough: ft_ebm_train gained a parameter on 2026-09-09 and the committed wasm,
+      # rebuilt the day before, kept the old ten for three weeks while two pages called it that way.
+      # Signatures are fixed by the source, not the toolchain, so the fresh build above is the oracle.
+      - name: the committed wasm has the source's ABI, export by export
+        run: |
+          scripts/check-wasm-abi.sh --selftest
+          scripts/check-wasm-abi.sh target/wasm32-unknown-unknown/release/ferrotherm.wasm
       # A page that loads is not a page that works. This instantiates the committed binary and
       # fits a model through it, then requires the answer to match the native library EXACTLY --
       # so a stale wasm, or a marshalling bug in the fitting path, fails here rather than in a
