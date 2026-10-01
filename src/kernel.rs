@@ -31,6 +31,41 @@ pub fn p_up(field: f64, beta: f64) -> f64 {
     1.0 / (1.0 + (-2.0 * beta * field).exp())
 }
 
+/// Probability that site `i` lands on -1: the complement of [`p_up`], computed as `p_up(-field)`
+/// and NEVER as `1.0 - p_up(field)`.
+///
+/// The two are equal in exact arithmetic and not in `f64`. `1 - p` subtracts two numbers near 1, so
+/// it keeps only the absolute accuracy of `p`, about `1.1e-16`: its relative error is `2e-10` at
+/// `2 beta f = 16`, and from `2 beta f = 53 ln 2 = 36.74` it is EXACTLY ZERO, because `p` has
+/// rounded to 1. A heat bath built that way cannot flip a spin down against a strong field while it
+/// can still flip it up with the exact `e^{-2 beta f}`: the transition loses its reverse and the
+/// chain its detailed balance. On the four-city TSP chains of `examples/penalty_mixing.rs` that
+/// removed every down-flip out of every tour at penalty `A >= 26` and made the exact `tau_int`
+/// 2.2 million to 15 million times too long (found 2026-09-28). This form is accurate to a few
+/// ulps in relative terms until `e^{-2 beta f}` leaves the normal range, near `2 beta f = 708`.
+#[inline]
+#[must_use]
+pub fn p_down(field: f64, beta: f64) -> f64 {
+    p_up(-field, beta)
+}
+
+/// Both tails of the heat bath from ONE exponential: `(p_up(field, beta), p_down(field, beta))`,
+/// the first bit-for-bit [`p_up`] and the second accurate in relative terms however small it is.
+///
+/// With `t = e^{-2 beta f}`, `p_up = 1 / (1 + t)` and `p_down = t / (1 + t)`: no difference of two
+/// numbers near 1 anywhere. The one case that needs care is `t = inf` (a field so negative that the
+/// exponential overflows), where `inf / inf` would be NaN and the answer is `(0, 1)`.
+#[inline]
+#[must_use]
+pub fn p_pair(field: f64, beta: f64) -> (f64, f64) {
+    let t = (-2.0 * beta * field).exp();
+    if t.is_infinite() {
+        return (0.0, 1.0);
+    }
+    let up = 1.0 / (1.0 + t);
+    (up, t / (1.0 + t))
+}
+
 /// Draw the new value of a site.
 #[inline]
 pub fn draw(field: f64, beta: f64, rng: &mut Pcg) -> i8 {
@@ -134,6 +169,42 @@ mod tests {
         // three sigma of a binomial at this n
         let tol = 3.0 * (want * (1.0 - want) / n as f64).sqrt();
         assert!((got - want).abs() < tol, "got {got}, want {want}, tol {tol}");
+    }
+
+    #[test]
+    fn the_down_probability_is_exact_where_one_minus_p_up_rounds_to_zero() {
+        // 1 / (1 + e^x) at x = 2 beta f by mpmath at 40 digits (and bc at 60, which agrees), rounded
+        // to the nearest f64: an independent computation, not this file's arithmetic.
+        let exact = [
+            (12.0, 6.144174602214718e-6),
+            (16.0, 1.12535162055095e-7),
+            (36.8, 1.042228790559589e-16),
+            (40.0, 4.248354255291589e-18),
+            (700.0, 9.85967654375977e-305),
+        ];
+        for &(x, want) in &exact {
+            // beta = 1 and beta = 2 at the same product: the complement depends on 2 beta f only.
+            for &beta in &[1.0, 2.0] {
+                let f = x / (2.0 * beta);
+                let (up, down) = p_pair(f, beta);
+                for (name, got) in [("p_down", p_down(f, beta)), ("p_pair", down)] {
+                    assert!(got > 0.0, "{name} at 2 beta f = {x} is {got}: a down-flip made impossible");
+                    let rel = (got - want).abs() / want;
+                    assert!(rel < 1e-14, "{name} at 2 beta f = {x}: {got:e} against {want:e}, rel {rel:e}");
+                }
+                assert_eq!(up.to_bits(), p_up(f, beta).to_bits(), "p_pair's up tail is p_up to the bit");
+                // Mirrored: the up tail at the negated field is the same small number.
+                let rel = (p_up(-f, beta) - want).abs() / want;
+                assert!(rel < 1e-14, "p_up(-f) at 2 beta f = {x}: rel {rel:e}");
+            }
+        }
+        // What the complement used to be, so the test above is known to separate the two forms:
+        // at 36.8 and beyond, 1 - p_up is exactly zero, and at 16 it is off in the tenth digit.
+        assert_eq!(1.0 - p_up(18.4, 1.0), 0.0);
+        assert!(((1.0 - p_up(8.0, 1.0)) - exact[1].1).abs() / exact[1].1 > 1e-11);
+        // The overflowing end: a field so negative that e^{-2 beta f} is infinite.
+        assert_eq!(p_pair(-400.0, 1.0), (0.0, 1.0));
+        assert_eq!(p_pair(400.0, 1.0).0, 1.0);
     }
 
     #[test]

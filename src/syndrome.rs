@@ -486,9 +486,12 @@ pub fn relaxed_sweep_kernel(g: &HetGraph) -> Result<Vec<f64>, Invalid> {
                 let e_up = g.energy(&s);
                 s[i] = 0;
                 let e_down = g.energy(&s);
+                // Both tails from the energy gap directly: `1 - p_up` is exactly zero once `p_up`
+                // rounds to 1, which forbids the flip whose reverse is still allowed.
                 let p_up = 1.0 / (1.0 + (e_up - e_down).exp());
+                let p_down = 1.0 / (1.0 + (e_down - e_up).exp());
                 next[y | bit] += p * p_up;
-                next[y & !bit] += p * (1.0 - p_up);
+                next[y & !bit] += p * p_down;
             }
             core::mem::swap(&mut dist, &mut next);
         }
@@ -588,6 +591,32 @@ mod tests {
         assert!(hard.iter().all(|m| m.abs() <= 1.0 + 1e-12));
     }
 
+    /// At a check strength where a flip against its field has probability below `1e-16`, the sweep
+    /// kernel still keeps the Boltzmann law state by state in RELATIVE terms: every state's inflow is
+    /// a sum of positive products, including the rare down-flips into the unlikely states. Built with
+    /// `1 - p_up` those down-flips were exactly zero, and the unlikely states' inflow with them --
+    /// invisible in total variation, a relative error of one state by state.
+    #[test]
+    fn a_stiff_relaxed_chain_keeps_every_states_boltzmann_mass_in_relative_terms() {
+        let code = Code::regular(8, 2, 4, 3).expect("a (2,4) code on 8 bits");
+        let noise = bsc(&[0u8; 8], 0.15, 6);
+        let syndrome = code.syndrome(&noise).expect("length");
+        let g = relaxed_graph(&code, &syndrome, 0.1, 30.0);
+        let kernel = relaxed_sweep_kernel(&g).expect("small");
+        let law = exact_boltzmann(&g, 1.0);
+        let mut worst = 0.0f64;
+        for y in 0..256 {
+            if law[y] < 1e-280 {
+                continue;
+            }
+            let inflow: f64 = (0..256).map(|x| law[x] * kernel[x * 256 + y]).sum();
+            worst = worst.max((inflow - law[y]).abs() / law[y]);
+        }
+        let smallest = law.iter().copied().filter(|&v| v >= 1e-280).fold(1.0f64, f64::min);
+        assert!(smallest < 1e-16, "the fixture must reach masses below 1e-16 to test anything: {smallest:e}");
+        assert!(worst < 1e-12, "the kernel moves some state's Boltzmann mass by {worst:e} of itself");
+    }
+
     /// The sequential chain over the relaxed model has its Boltzmann law as stationary law, and
     /// its autocorrelation time grows with the check strength: the relaxation's price.
     #[test]
@@ -601,11 +630,22 @@ mod tests {
             let kernel = relaxed_sweep_kernel(&g).expect("small");
             let pi = stationary_of(&kernel, 256).expect("irreducible");
             let law = exact_boltzmann(&g, 1.0);
-            // A stiff chain (large gamma) conditions the direct solve; a few parts in ten
-            // million is the solve's accuracy, not a different law.
+            // The law the kernel keeps, with no solve in the way: one push of the Boltzmann law.
+            let mut pushed = vec![0.0f64; 256];
+            for (x, &lx) in law.iter().enumerate() {
+                for (y, p) in pushed.iter_mut().enumerate() {
+                    *p += lx * kernel[x * 256 + y];
+                }
+            }
+            let drift = crate::autocorr::total_variation(&pushed, &law);
+            assert!(drift < 1e-14, "gamma {gamma}: the kernel moves the Boltzmann law by TV {drift}");
+            // A stiff chain (large gamma) conditions the direct solve, and its answer carries the
+            // conditioning times the rounding: at gamma 6 it was 1.7e-7 from Boltzmann, and 1.3e-6
+            // once the sweep's down-flips were computed without `1 - p_up` (2026-09-28), while the
+            // push above held both kernels to 2e-16. So this bound is the SOLVE's floor, with room.
             let tv = crate::autocorr::total_variation(&pi, &law);
             assert!(
-                tv < 1e-6,
+                tv < 1e-5,
                 "gamma {gamma}: stationary law vs Boltzmann, TV {tv}"
             );
             let first: Vec<f64> = (0..256).map(|x| spin_of(x, 8, 0)).collect();

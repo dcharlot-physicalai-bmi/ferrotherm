@@ -796,7 +796,7 @@ mutations=(
   "src/autocorr.rs|            a[x * m + y] = delta - p + pi[y];|            a[x * m + y] = delta - p;|autocorr::tests::the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags|a fundamental matrix without its rank-one term, which is singular"
   "src/autocorr.rs|    Ok(trace - 1.0)|    Ok(trace)|autocorr::tests::kemenys_constant_has_its_closed_forms_on_memoryless_kernels|a Kemeny constant that counts the stationary mode"
   "src/autocorr.rs|            let levels = 2f64.powi(prob_bits as i32);|            let levels = f64::from(1u32 << (prob_bits % 32));|autocorr::tests::the_quantised_kernel_at_full_precision_is_the_exact_kernel|a comparator width computed in 32-bit integers, which wraps at 32 bits"
-  "src/autocorr.rs|                    let q_prev = p_site(g, beta, kernel, i, &s);|                    let q_prev = p_site(g, 1.0, kernel, i, &s);|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a synchronous sweep that samples at unit temperature"
+  "src/autocorr.rs|                    let (q_prev, q_down) = site_pair(g, beta, kernel, i, s);|                    let (q_prev, q_down) = site_pair(g, 1.0, kernel, i, s);|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a synchronous sweep that samples at unit temperature"
   "src/autocorr.rs|        let mut acc = beta * hx;|        let mut acc = 0.0 * hx;|autocorr::tests::the_synchronous_kernel_leaves_perettos_law_invariant_and_it_is_not_boltzmann|a Peretto law without its field term"
   "src/autocorr.rs|            let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;|            let z = (beta * g.field(i, s)).tanh() / eta;|autocorr::tests::the_pimi_kernel_has_its_single_site_closed_form_and_its_inertia_matters|a PIMI rule without its inertia term"
   "src/autocorr.rs|            let s_j = if stale { x_j } else { y_j };|            let s_j = if stale { y_j } else { x_j };|autocorr::tests::the_stale_read_kernel_is_bracketed_by_its_two_closed_forms|a stale read that returns the fresh value"
@@ -805,7 +805,7 @@ mutations=(
   "src/fft.rs|        let ang = if inverse { TAU / len as f64 } else { -TAU / len as f64 };|        let ang = if inverse { TAU / len as f64 } else { TAU / len as f64 };|fft::tests::the_transform_matches_the_direct_dft_and_inverts|a forward transform with the inverse's twiddle sign"
   "src/fft.rs|    let m = (2 * n).next_power_of_two();|    let m = n.next_power_of_two();|fft::tests::the_autocovariance_matches_the_direct_sum_lag_by_lag_and_sokal_agrees|an autocovariance without zero padding, so the lags wrap"
   "src/certify.rs|            Some(cov) => cov[k] / var,|            Some(cov) => cov[k],|certify::tests::the_fft_path_and_the_direct_sum_agree|a transform-path autocorrelation left unnormalised"
-  "src/autocorr.rs|        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, spread, i)),|        Kernel::SiteSpread { seed, spread } => p_up(g.field(i, s), beta * site_factor(seed, 0.0 * spread, i)),|autocorr::tests::a_site_temperature_spread_reduces_to_the_sweep_at_zero_and_to_a_product_on_free_sites|a site temperature spread that is never applied"
+  "src/autocorr.rs|        Kernel::SiteSpread { seed, spread } => p_pair(g.field(i, s), beta * site_factor(seed, spread, i)),|        Kernel::SiteSpread { seed, spread } => p_pair(g.field(i, s), beta * site_factor(seed, 0.0 * spread, i)),|autocorr::tests::a_site_temperature_spread_reduces_to_the_sweep_at_zero_and_to_a_product_on_free_sites|a site temperature spread that is never applied"
   "src/autocorr.rs|            sigma += fwd * (fwd / bwd).ln();|            sigma += fwd * fwd.ln();|autocorr::tests::entropy_production_is_zero_for_reversible_kernels_and_positive_for_a_correct_fixed_order_sweep|an entropy production that never looks at the reverse transition"
   "src/autocorr.rs|    let refined = apply_distribution(g, beta, kernel, &clamped);|    let refined = clamped.clone();|autocorr::tests::the_solved_law_has_no_zero_entries_on_a_cold_grid_and_the_sweep_produces_finite_entropy|a solved law whose small entries are the solve's noise, clamped"
   "src/reduce.rs|        Some(v) if v.is_finite() && v > 0.0 => v,|        Some(v) if v.is_finite() && v > 0.0 => v.max(default),|reduce::tests::a_chosen_penalty_is_written_and_a_weak_one_lets_an_ancilla_break|a chosen penalty that is never allowed below the default"
@@ -1343,14 +1343,14 @@ mutations=(
   "src/dense_memory.rs|                    let moved = dist(&next, &cur);|                    let moved = 0.0;|dense_memory::tests::one_attention_step_is_the_minimiser_only_where_the_pattern_is_already_found|an iteration that stops after one step so the gap it measures is zero by construction"
 
   # TICK-RANDOM: THE KERNEL THAT SETTLES A PUBLISHED CLAIM, AND THE ARM THAT WOULD HAVE MADE IT
-  # AGREE. `p_site` ends in a catch-all `_ => p_up(...)`, which IS the synchronous conditional, so a
+  # AGREE. `site_pair` (`p_site` then) ends in a catch-all `_ => p_pair(...)`, the synchronous conditional, so a
   # `TickRandom` that never reached its own arm would run every reuse factor as Synchronous and the
   # sweep would report that the law does not move with c -- arXiv:2604.01564's claim, manufactured by
   # our own omission. T1 is exactly that omission and must be caught. The arm is written explicitly
   # for this reason and the mutation is what proves the reason is real.
-  "src/autocorr.rs|            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)|            p_up(g.field(i, s), beta)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|a mask never applied so every reuse factor runs as the synchronous kernel"
+  "src/autocorr.rs|            ((1.0 - p) * stay + p * up, (1.0 - p) * (1.0 - stay) + p * down)|            (up, down)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|a mask never applied so every reuse factor runs as the synchronous kernel"
   "src/autocorr.rs|            let stay = if s[i] > 0 { 1.0 } else { 0.0 };|            let stay = if s[i] > 0 { 0.0 } else { 1.0 };|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|an unselected spin that flips instead of holding its value"
-  "src/autocorr.rs|            (1.0 - p) * stay + p * p_up(g.field(i, s), beta)|            p * stay + (1.0 - p) * p_up(g.field(i, s), beta)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|the selection probability attached to the wrong one of the two terms"
+  "src/autocorr.rs|            ((1.0 - p) * stay + p * up, (1.0 - p) * (1.0 - stay) + p * down)|            (p * stay + (1.0 - p) * up, p * (1.0 - stay) + (1.0 - p) * down)|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|the selection probability attached to the wrong one of the two terms"
   "src/autocorr.rs|                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 1.0 }).expect(\"solvable\");|                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 0.99 }).expect(\"solvable\");|autocorr::tests::tick_random_moves_the_stationary_law_that_reuse_is_claimed_not_to_move|a p=1 reference that is not actually p=1 so the exact identity is no longer exact"
 
   # THE THIRD TERM. An energy-advantage claim is almost always a ratio of two DYNAMICS figures, and
@@ -1401,8 +1401,8 @@ mutations=(
   # solved law; the first four rows break the kernel or the closed form and must fail one of those.
   # The fifth breaks the dispatch that scores reversibility. The sixth keeps the law's shape and
   # halves the pinning, which only the first-order RATE test can see.
-  "src/autocorr.rs|p_up(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|p_up(beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|SCA kernel at the full field instead of the half"
-  "src/autocorr.rs|p_up(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|p_up(0.5 * beta * g.field(i, s), 1.0)|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|SCA kernel without its pinning"
+  "src/autocorr.rs|p_pair(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|p_pair(beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|SCA kernel at the full field instead of the half"
+  "src/autocorr.rs|p_pair(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)|p_pair(0.5 * beta * g.field(i, s), 1.0)|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|SCA kernel without its pinning"
   "src/autocorr.rs|let mut acc = 0.5 * beta * hx;|let mut acc = 0.0 * beta * hx;|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|sca_law drops the exp(beta/2 h.x) prefactor"
   "src/autocorr.rs|let a = (0.5 * beta * g.field(i, &s) + q * f64::from(s[i])).abs();|let a = (0.5 * beta * g.field(i, &s) + q).abs();|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|sca_law pinning that ignores the spin it pins"
   "src/autocorr.rs|Kernel::Sca { q } => sca_law(g, beta, q),|Kernel::Sca { q } => boltzmann(g, beta),|autocorr::tests::sca_law_is_the_enumerated_marginal_of_the_bipartite_double_and_the_kernel_keeps_it|own_law hands SCA the Boltzmann law, so its entropy production is scored against the wrong law"
@@ -1434,13 +1434,13 @@ mutations=(
   # substituting it by its negative negates every apex coupling at once, so the conditional partition
   # function is IDENTICAL. An equivalent mutant, by that one-line argument and the hand run
   # (2026-09-26), not a blind test.
-  "src/delay.rs|        Rule::HeatBath => 1.0 / (1.0 + (-2.0 * beta * f).exp()),|        Rule::HeatBath => 1.0 / (1.0 + (-beta * f).exp()),|delay::tests::a_heat_bath_fabric_samples_the_same_law_at_every_delay|a heat-bath p-bit at half the field"
+  "src/delay.rs|        Rule::HeatBath => crate::kernel::p_pair(f, beta),|        Rule::HeatBath => crate::kernel::p_pair(f, 0.5 * beta),|delay::tests::a_heat_bath_fabric_samples_the_same_law_at_every_delay|a heat-bath p-bit at half the field"
   "src/delay.rs|            let delayed = (s >> (n * (frames - 1))) & mask;|            let delayed = s & mask;|delay::tests::an_arrhenius_network_forgets_its_coupling_as_the_delay_grows|a delayed read that reads the current frame"
   "src/pointproc.rs|(2.0 * self.beta * self.g.field(i, &self.s)).exp() / self.m|(self.beta * self.g.field(i, &self.s)).exp() / self.m|pointproc::tests::a_single_unit_is_on_for_exactly_its_boltzmann_fraction|a birth rate at half the field"
   "src/pointproc.rs|                Lifetime::Fixed => self.m,|                Lifetime::Fixed => 2.0 * self.m,|pointproc::tests::a_single_unit_is_on_for_exactly_its_boltzmann_fraction|a spike that lives twice its stated lifetime"
   "src/kwsample.rs|        log_z += if has_apex { lz - std::f64::consts::LN_2 } else { lz };|        log_z += lz;|kwsample::tests::conditional_partition_functions_match_enumeration|an apex whose flip symmetry is not divided out"
   "src/kwsample.rs|constant += w * f64::from(a) * f64::from(b),|constant -= w * f64::from(a) * f64::from(b),|kwsample::tests::conditional_partition_functions_match_enumeration|fixed-fixed couplings entering with the wrong sign"
-  "src/autocorr.rs|                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };|                    acc += if y & bit != 0 { (1.0 - p) * pooled } else { p * pooled };|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan mass landing on the other value"
+  "src/autocorr.rs|                    acc += if y & bit != 0 { p * pooled } else { p_down * pooled };|                    acc += if y & bit != 0 { p_down * pooled } else { p * pooled };|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan mass landing on the other value"
   "src/autocorr.rs|                out[x] = acc / n as f64;|                out[x] = acc;|autocorr::tests::a_fixed_order_needs_about_half_the_site_updates_of_a_random_scan|random-scan functions not averaged over sites"
 
   # THE PINNED AUTOMATON, READ LATE (`delay`, Rule::Sca). The first row is the finding's mechanism: pin
@@ -1448,14 +1448,14 @@ mutations=(
   # the heat bath's, and the delay stops reaching the rule. The rate-constant rows split the delay
   # term's weight (one agrees at d = 1 and nowhere else) from the window source's scale (wrong at
   # d = 1 already). The last is invisible at one tick of delay and only the pin-or-wait test sees it.
-  "src/delay.rs|            crate::kernel::p_up(0.5 * beta * f + q * f64::from(current), 1.0)|            crate::kernel::p_up(0.5 * beta * f + q * f64::from(delayed[i]), 1.0)|delay::tests::a_late_read_costs_a_pinned_pair_d_times_the_distance|a pinning that holds the DELAYED own value"
-  "src/delay.rs|            crate::kernel::p_up(0.5 * beta * f + q * f64::from(current), 1.0)|            crate::kernel::p_up(beta * f + q * f64::from(current), 1.0)|delay::tests::a_pinned_automaton_read_one_tick_late_has_the_sca_closed_form|a pinned automaton at the full field"
+  "src/delay.rs|            crate::kernel::p_pair(0.5 * beta * f + q * f64::from(current), 1.0)|            crate::kernel::p_pair(0.5 * beta * f + q * f64::from(delayed[i]), 1.0)|delay::tests::a_late_read_costs_a_pinned_pair_d_times_the_distance|a pinning that holds the DELAYED own value"
+  "src/delay.rs|            crate::kernel::p_pair(0.5 * beta * f + q * f64::from(current), 1.0)|            crate::kernel::p_pair(beta * f + q * f64::from(current), 1.0)|delay::tests::a_pinned_automaton_read_one_tick_late_has_the_sca_closed_form|a pinned automaton at the full field"
   "src/delay.rs|        let del = frame_spins((st >> (n * (d - 1))) & mask, n);|        let del = frame_spins(st & mask, n);|delay::tests::the_direct_solve_is_the_iterated_law_for_every_rule|a direct solve that reads the current frame"
   "src/delay.rs|        let out: f64 = a[k * m..k * m + k].iter().sum();|        let out: f64 = a[k * m..=k * m + k].iter().sum();|delay::tests::the_direct_solve_is_the_iterated_law_for_every_rule|GTH counting the self-loop as outflow"
   "src/delay.rs|        moves += w / total * flips[st];|        moves += w / total * (n as f64 - flips[st]);|delay::tests::a_pinned_automaton_read_one_tick_late_has_the_sca_closed_form|moves per tick counting the spins that stay"
   "src/delay.rs|        r[x] = self_term + (d as f64 - 0.5) * window;|        r[x] = self_term + (0.5 * d as f64) * window;|delay::tests::the_delayed_automaton_approaches_boltzmann_at_its_first_order_rate|a delay term right at one tick and wrong at every other"
   "src/delay.rs|                    window += 4.0 * phi[i] * phi[j] * (1.0 - u);|                    window += 2.0 * phi[i] * phi[j] * (1.0 - u);|delay::tests::the_delayed_automaton_approaches_boltzmann_at_its_first_order_rate|the delay window's source at half weight"
-  "src/delay.rs|            changes += if cur[i] > 0 { 1.0 - ps[i] } else { ps[i] };|            changes += if del[i] > 0 { 1.0 - ps[i] } else { ps[i] };|delay::tests::pinning_beats_waiting_on_a_biased_pair_and_loses_on_a_frustrated_triangle|a move counted against the delayed value"
+  "src/delay.rs|            changes += if cur[i] > 0 { ps[i].1 } else { ps[i].0 };|            changes += if del[i] > 0 { ps[i].1 } else { ps[i].0 };|delay::tests::pinning_beats_waiting_on_a_biased_pair_and_loses_on_a_frustrated_triangle|a move counted against the delayed value"
 
   # THE POINT PROCESS, MEASURED WITHOUT A WINDOW (entry 14's correction). One unit's efficiency is exact:
   # the renewal-reward variance, whose lifetime term is the whole factor of two, and the autocorrelation
@@ -1468,7 +1468,7 @@ mutations=(
   "src/pointproc.rs|    (batch * s2, batch * (spread / kf).sqrt() * kf / (kf - 1.0))|    (s2, batch * (spread / kf).sqrt() * kf / (kf - 1.0))|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|a long-run variance not scaled by the batch length"
   "src/pointproc.rs|    (batch * s2, batch * (spread / kf).sqrt() * kf / (kf - 1.0))|    (batch * s2, 100.0 * batch * (spread / kf).sqrt() * kf / (kf - 1.0))|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|a standard error wide enough to pass anything"
   "src/pointproc.rs|                row.push(v / batch);|                row.push(*v);|pointproc::tests::the_exact_one_unit_variance_holds_to_a_window_free_estimate|batch integrals never divided by the batch length"
-  "src/pointproc.rs|    unit_variance(beta, h, m, lifetime) / (2.0 * p * (1.0 - p))|    unit_variance(beta, h, m, lifetime) / (p * (1.0 - p))|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a tau without the two between variance and autocorrelation"
+  "src/pointproc.rs|    unit_variance(beta, h, m, lifetime) / (2.0 * p * q)|    unit_variance(beta, h, m, lifetime) / (p * q)|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a tau without the two between variance and autocorrelation"
   "src/pointproc.rs|            let mut on = (1.0 - t / m).max(0.0);|            let mut on = if t < m { 1.0 } else { 0.0 };|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a live spike's remaining life taken as its whole life"
   "src/pointproc.rs| - 2.0 * erlang_excess(k, rate, a - m) + | - erlang_excess(k, rate, a - m) + |pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a renewal term missing half its second difference"
   "src/pointproc.rs|        sum += (-mu + j as f64 * mu.ln() - log_fact).exp();|        sum += (-mu + j as f64 * mu.ln()).exp();|pointproc::tests::the_exact_autocorrelation_integrates_to_the_exact_tau|a Poisson sum without its factorials"
@@ -1485,6 +1485,37 @@ mutations=(
   "src/delay.rs|        let next_phase = (c + 1) % k;|        let next_phase = c;|delay::tests::a_coloured_fabric_read_fresh_samples_boltzmann|a sweep that never leaves the class it starts on"
   "src/delay.rs|        after[(phase + k - 1) % k][hist & mask] += w;|        after[phase][hist & mask] += w;|delay::tests::a_coloured_triangle_read_late_leaves_boltzmann|the law after class c filed under class c + 1"
   "src/delay.rs|flips[st] = class.iter().map(|flips[st] = (0..n).collect::<Vec<usize>>().iter().map(|delay::tests::a_coloured_fabric_read_fresh_samples_boltzmann|held spins counted as moves"
+
+  # THE HEAT BATH'S COMPLEMENT (2026-09-28). Every exact operator formed a down-flip as 1 - p_up, which
+  # is exactly zero from 2 beta f = 36.74 and cut every exit from every TSP tour at A >= 26. Each row
+  # puts the subtraction back in one place and names the test that holds that place to mpmath or to a
+  # relative invariance the subtraction cannot keep.
+  "src/kernel.rs|    (up, t / (1.0 + t))|    (up, 1.0 - up)|kernel::tests::the_down_probability_is_exact_where_one_minus_p_up_rounds_to_zero|p_pair's down tail as 1 - p_up"
+  "src/kernel.rs|    p_up(-field, beta)|    1.0 - p_up(field, beta)|kernel::tests::the_down_probability_is_exact_where_one_minus_p_up_rounds_to_zero|p_down as 1 - p_up"
+  "src/autocorr.rs|        _ => p_pair(g.field(i, s), beta),|        _ => (p_up(g.field(i, s), beta), 1.0 - p_up(g.field(i, s), beta)),|autocorr::tests::a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel|the exact kernels' heat-bath complement as 1 - p_up"
+  "src/autocorr.rs|        let small = 0.5 * erfc_tail(z.abs());|        let small = 0.5 * (1.0 - crate::hopfield::erf(x));|autocorr::tests::the_normal_tails_are_accurate_on_both_sides_and_far_out|PIMI's normal tail as 1 - erf, exactly zero past z = 7.07"
+  "src/autocorr.rs|            ((1.0 - p) * stay + p * up, (1.0 - p) * (1.0 - stay) + p * down)|            ((1.0 - p) * stay + p * up, 1.0 - ((1.0 - p) * stay + p * up))|autocorr::tests::a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel|tick-random's down tail as 1 - its up tail"
+  "src/autocorr.rs|                    acc += if y & bit != 0 { p * pooled } else { p_down * pooled };|                    acc += if y & bit != 0 { p * pooled } else { (1.0 - p) * pooled };|autocorr::tests::a_down_flip_against_a_strong_field_has_its_exact_probability_in_every_kernel|the random scan's pushed complement as 1 - p"
+  "src/delay.rs|        Rule::HeatBath => crate::kernel::p_pair(f, beta),|        Rule::HeatBath => (crate::kernel::p_up(f, beta), 1.0 - crate::kernel::p_up(f, beta)),|delay::tests::every_rule_keeps_its_down_flip_against_a_strong_field|the delayed heat bath's complement as 1 - p_up"
+  "src/delay.rs|                (stay, flip)|                (stay, 1.0 - stay)|delay::tests::every_rule_keeps_its_down_flip_against_a_strong_field|the Arrhenius flip as 1 - its stay"
+  "src/syndrome.rs|                let p_down = 1.0 / (1.0 + (e_down - e_up).exp());|                let p_down = 1.0 - p_up;|syndrome::tests::a_stiff_relaxed_chain_keeps_every_states_boltzmann_mass_in_relative_terms|the relaxed sweep's complement as 1 - p_up"
+
+  # EXACT TAU ABOVE TWELVE SPINS AND PAST f64 (tau_int_krylov, tau_int_censored, time_to_mass). The
+  # rank-one term, the reversible dispatch, the kernel's own law and its check, the estimate's rounding
+  # floor, the CG stop at the floor, the f64 limit, the GTH pivot, the censored functional's T term,
+  # the lag sum's quiet run, and the slow scale's stochastic diagonal -- each is a line the scout or
+  # the verifier measured failing without it.
+  "src/autocorr.rs|        let s = mean_pi(&pi, v);|        let s = 0.0 * mean_pi(&pi, v);|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|a fundamental system without its rank-one term, singular"
+  "src/autocorr.rs|        Kernel::ChromaticGibbs => g.n_edges == 0,|        Kernel::ChromaticGibbs => true,|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|CG dispatched to the chromatic sweep, which is not reversible"
+  "src/autocorr.rs|    if residual <= LAW_TOLERANCE {|    if residual <= f64::INFINITY {|autocorr::tests::a_law_that_is_not_the_kernels_is_refused|a law check that accepts any law"
+  "src/autocorr.rs|Kernel::TickRandom { .. } => stationary_solved(g, beta, kernel),|Kernel::TickRandom { .. } => Ok(boltzmann_law(g, beta)),|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|the fabric-family kernels handed the Boltzmann law"
+  "src/autocorr.rs|        let est = inv_norm * true_rel.max(floor);|        let est = inv_norm * true_rel;|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|a GMRES estimate without its rounding floor, which accepts a residual that is rounding"
+  "src/autocorr.rs|            let below_floor = rel2 <= 0.01 * floor * floor;|            let below_floor = false;|autocorr::tests::the_krylov_tau_is_the_dense_tau_for_every_kernel|CG iterating past the floor into a spurious norm estimate"
+  "src/autocorr.rs|    inv_norm * f64::EPSILON > 1.0|    inv_norm * f64::EPSILON > f64::INFINITY|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|a Krylov solve that never admits a chain is past f64"
+  "src/autocorr.rs|                total += rate[k * nf + j];|                total += rate[k * nf + j] + 1.0 - 1.0;|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|a GTH pivot formed through 1 minus a probability"
+  "src/autocorr.rs|        total += pi[f] * e[f] * zf[k] + zf[k] * wp[f];|        total += pi[f] * e[f] * zf[k];|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|the censored functional without its sum over the rest"
+  "src/autocorr.rs|            if quiet >= QUIET_LAGS {|            if quiet >= 1 {|autocorr::tests::the_lag_sum_does_not_stop_where_the_autocorrelation_crosses_zero|a lag sum that stops at its first quiet lag"
+  "src/autocorr.rs|        c[i * nf + i] = (1.0 - off).max(0.0);|        c[i * nf + i] += 0.0 * off;|autocorr::tests::the_slow_scale_mass_time_is_the_pushed_one_where_both_run|a slow-scale product that never restores its diagonal"
 
 )
 
@@ -1557,7 +1588,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=355
+expected_rows=375
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

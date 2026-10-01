@@ -1397,19 +1397,28 @@ impl HamiltonianCycle {
 /// that has not equilibrated -- and that is a statement about sweeps, not about mass; the example
 /// says which one it measured.
 ///
-/// `examples/penalty_mixing.rs` (2026-09-14) measured the sweeps, exactly: twelve four-city
-/// instances, sequential Gibbs on all `2^16` states at `beta = 1`, the energy's integrated
-/// autocorrelation time and the sweeps from a uniform start to within 1% of the optimal-tour mass.
-/// Just above `A_crit`: mass 0.43, `tau_int` 15 sweeps, 153 sweeps to 1%, the fastest on 11 of 12.
-/// At `max(W)`: mass 0.82, `tau_int` 617, 2,011 sweeps. At the provable threshold and at four
-/// times it: mass 0.87 and `tau_int` above 40,000 sweeps, more than 3,000 to 1% -- both at their
-/// caps, so bounds, not values: the chain is frozen. Independent optimal tours per sweep, mass
-/// over `tau_int`, are about 0.029 just above `A_crit`, 0.0013 at `max(W)` and under 2e-5 at the
-/// threshold. So the two halves of the question have two exact answers: the mass rises with `A`,
-/// which is the theorem above, and the mixing collapses with `A` faster than the mass rises, by
-/// twenty times against `max(W)` and more than a thousand against the threshold. The smallest
-/// penalty that holds is the best one for a sampler with a sweep budget; the largest is the best
-/// one for a sampler that has already equilibrated, which on these instances no sampler has.
+/// `examples/penalty_mixing.rs` measures the sweeps, exactly: twelve four-city instances, sequential
+/// Gibbs on all `2^16` states at `beta = 1`, the energy's integrated autocorrelation time and the
+/// sweeps from a uniform start to within 1% of the optimal-tour mass (re-measured 2026-09-28; means
+/// arithmetic; the first row and the second's tau unchanged since the run of 2026-09-14). Just above
+/// `A_crit`: mass 0.43, `tau_int` 15 sweeps, 153 sweeps to 1%, the fastest on 11 of 12. At
+/// `max(W)`: mass 0.82, `tau_int` 617, 3,977 sweeps to 1% -- 2,011 was printed before, because six
+/// of the twelve cells stopped at a 3,000-sweep cap and were averaged in as 3,000. At the provable
+/// threshold, mass 0.87 and `tau_int` from `3.4e13` to `3.5e22` sweeps (geometric mean `4.0e17`); at
+/// four times it, `1.1e63` to `8.4e105`. The first version printed those 24 cells as `40000.5`
+/// "bounds", and the kernel it summed could not make a down-flip against a field stronger than
+/// `36.7 / (2 beta)`: it formed that probability as `1 - p_up`, exactly zero there, and its tau was
+/// millions of times the heat bath's. The values now come from a censored solve with GTH elimination
+/// (two metastable sets agree to `3e-13`), and the sweeps to 1% from the same censored chain run in
+/// real time -- a reduction whose error shrinks with the barrier: `1.2e-2` against exact pushing on
+/// the max(W) cells, where barriers are lowest, and a hand-over discrepancy of `9e-11` of the 1% band
+/// on the frozen ones. Independent optimal tours per sweep, mass over `tau_int`, are about 0.029 just
+/// above `A_crit`, 0.0013 at `max(W)` and between `3e-23` and `3e-14` at the threshold. So the two
+/// halves of the question have two exact answers: the mass rises with `A`, which is the theorem
+/// above, and the mixing collapses with `A` faster than the mass rises -- by twenty times against
+/// `max(W)` and by twelve to twenty-one decades against the threshold. The smallest penalty that
+/// holds is the best one for a sampler with a sweep budget; the largest is the best one for a sampler
+/// that has already equilibrated, which on these instances no sampler can.
 pub struct Tsp {
     n: usize,
     w: Vec<f64>,

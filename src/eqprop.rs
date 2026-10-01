@@ -343,16 +343,17 @@ fn relax_once(g: &Graph, clamp: &[Option<i8>], mu: &[f64]) -> Vec<f64> {
                 continue;
             }
             spins_of(n, xi, &mut s);
-            let qs: Vec<f64> = sites.iter().map(|&i| crate::kernel::p_up(g.field(i, &s), 1.0)).collect();
+            // Both tails directly (`crate::kernel::p_pair`), never `1 - p_up`.
+            let qs: Vec<(f64, f64)> = sites.iter().map(|&i| crate::kernel::p_pair(g.field(i, &s), 1.0)).collect();
             for combo in 0..(1usize << sites.len()) {
                 let (mut y, mut w) = (xi, mass);
                 for (k, &i) in sites.iter().enumerate() {
                     if combo >> k & 1 == 1 {
                         y |= 1 << i;
-                        w *= qs[k];
+                        w *= qs[k].0;
                     } else {
                         y &= !(1 << i);
-                        w *= 1.0 - qs[k];
+                        w *= qs[k].1;
                     }
                 }
                 next[y] += w;

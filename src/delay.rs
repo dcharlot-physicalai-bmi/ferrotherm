@@ -133,26 +133,31 @@ fn frame_spins(x: usize, n: usize) -> Vec<i8> {
     (0..n).map(|i| spin(x, i)).collect()
 }
 
-/// Probability that spin `i` is `+1` after one tick, given its current value and the delayed frame.
-fn p_plus(g: &Graph, beta: f64, rule: Rule, i: usize, current: i8, delayed: &[i8]) -> f64 {
+/// `(P(+1), P(-1))` for spin `i` after one tick, given its current value and the delayed frame:
+/// both tails stated directly, never one as `1 -` the other, which keeps only the absolute accuracy
+/// of the first and is exactly zero once it rounds to 1 (see [`crate::kernel::p_down`]). For the
+/// Arrhenius rule the flip probability is the small, exact number and the stay is `1 - flip`, near
+/// one, where the subtraction costs nothing.
+fn tails(g: &Graph, beta: f64, rule: Rule, i: usize, current: i8, delayed: &[i8]) -> (f64, f64) {
     let f = g.field(i, delayed);
     match rule {
-        Rule::HeatBath => 1.0 / (1.0 + (-2.0 * beta * f).exp()),
+        Rule::HeatBath => crate::kernel::p_pair(f, beta),
         Rule::Arrhenius { p0 } => {
             let flip = (p0 * (-beta * f * f64::from(current)).exp()).min(1.0);
+            let stay = 1.0 - flip;
             if current > 0 {
-                1.0 - flip
+                (stay, flip)
             } else {
-                flip
+                (flip, stay)
             }
         }
-        // `autocorr::p_site`'s arm for `Kernel::Sca`, argument for argument, so that `d = 1` is that
+        // `autocorr::site_pair`'s arm for `Kernel::Sca`, argument for argument, so that `d = 1` is that
         // kernel to the last bit: the half field (delayed here) plus the pinning times the spin's
         // CURRENT value. Pinning the delayed value instead would make the new value a function of
         // the delayed frame alone, and the chain would split like the heat bath's.
         Rule::Sca { q } => {
             assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
-            crate::kernel::p_up(0.5 * beta * f + q * f64::from(current), 1.0)
+            crate::kernel::p_pair(0.5 * beta * f + q * f64::from(current), 1.0)
         }
     }
 }
@@ -193,15 +198,15 @@ pub fn stationary_current(g: &Graph, beta: f64, rule: Rule, d: usize, tol: f64, 
             let delayed = (s >> (n * (frames - 1))) & mask;
             let cur = frame_spins(current, n);
             let del = frame_spins(delayed, n);
-            let ps: Vec<f64> = (0..n).map(|i| p_plus(g, beta, rule, i, cur[i], &del)).collect();
+            let ps: Vec<(f64, f64)> = (0..n).map(|i| tails(g, beta, rule, i, cur[i], &del)).collect();
             // Product law over the next frame, built by doubling.
             row[0] = 1.0;
             let mut len = 1usize;
-            for p in &ps {
+            for &(up, down) in &ps {
                 for y in 0..len {
                     let w = row[y];
-                    row[y] = w * (1.0 - p);
-                    row[y | len] = w * p;
+                    row[y] = w * down;
+                    row[y | len] = w * up;
                 }
                 len <<= 1;
             }
@@ -283,21 +288,21 @@ pub fn stationary_solved(g: &Graph, beta: f64, rule: Rule, d: usize) -> Settled 
     for st in 0..m {
         let cur = frame_spins(st & mask, n);
         let del = frame_spins((st >> (n * (d - 1))) & mask, n);
-        let ps: Vec<f64> = (0..n).map(|i| p_plus(g, beta, rule, i, cur[i], &del)).collect();
+        let ps: Vec<(f64, f64)> = (0..n).map(|i| tails(g, beta, rule, i, cur[i], &del)).collect();
         // A change is measured against the CURRENT value. Against the delayed one, a spin that has just
         // flipped would count as moving on every tick of the window, and at d = 1 the two agree.
         let mut changes = 0.0;
         for i in 0..n {
-            changes += if cur[i] > 0 { 1.0 - ps[i] } else { ps[i] };
+            changes += if cur[i] > 0 { ps[i].1 } else { ps[i].0 };
         }
         flips[st] = changes;
         row[0] = 1.0;
         let mut len = 1usize;
-        for p in &ps {
+        for &(up, down) in &ps {
             for y in 0..len {
                 let w = row[y];
-                row[y] = w * (1.0 - p);
-                row[y | len] = w * p;
+                row[y] = w * down;
+                row[y | len] = w * up;
             }
             len <<= 1;
         }
@@ -405,14 +410,14 @@ pub fn stationary_coloured(g: &Graph, beta: f64, classes: &[Vec<usize>], d: usiz
             let st = c * frames + hist;
             let held = hist & mask;
             let read = frame_spins((hist >> (n * (d - 1))) & mask, n);
-            let up: Vec<f64> = (0..n).map(|i| p_plus(g, beta, Rule::HeatBath, i, spin(held, i), &read)).collect();
-            flips[st] = class.iter().map(|&i| if spin(held, i) > 0 { 1.0 - up[i] } else { up[i] }).sum();
+            let t: Vec<(f64, f64)> = (0..n).map(|i| tails(g, beta, Rule::HeatBath, i, spin(held, i), &read)).collect();
+            flips[st] = class.iter().map(|&i| if spin(held, i) > 0 { t[i].1 } else { t[i].0 }).sum();
             let older = if d > 1 { (hist << n) & (frames - 1) } else { 0 };
             for y in 0..=mask {
                 if y & !moving != held & !moving {
                     continue;
                 }
-                let w: f64 = class.iter().map(|&i| if spin(y, i) > 0 { up[i] } else { 1.0 - up[i] }).product();
+                let w: f64 = class.iter().map(|&i| if spin(y, i) > 0 { t[i].0 } else { t[i].1 }).product();
                 a[st * m + next_phase * frames + (older | y)] += w;
             }
         }
@@ -563,6 +568,30 @@ mod tests {
             }
         }
         hi
+    }
+
+    /// **Every rule keeps its down-flip against a field no `1 - p` survives.** One spin, no
+    /// neighbours, read fresh: its law is two numbers, and the small one is the exact probability of
+    /// the flip against the field over the sum of both directions -- `1 / (1 + e^{2 beta h})` for the
+    /// heat bath at `2 beta h = 40`, `f / (1 + f)` with `f = p0 e^{-beta h}` for the Arrhenius rule at
+    /// `beta h = 40`, and `sigma(-46) / (sigma(-46) + sigma(34))` for the pinned automaton at
+    /// `beta h = 40, q = 3`, each by mpmath at 40 digits. Built as `1 - p` every one of them was
+    /// exactly zero: the spin could never leave `+1`.
+    #[test]
+    fn every_rule_keeps_its_down_flip_against_a_strong_field() {
+        let cases = [
+            (Rule::HeatBath, 20.0, 4.248354255291589e-18),
+            (Rule::Arrhenius { p0: 0.5 }, 40.0, 2.1241771276457944e-18),
+            (Rule::Sca { q: 3.0 }, 40.0, 1.053061735755383e-20),
+        ];
+        for (rule, h, want) in cases {
+            let mut b = GraphBuilder::new(1);
+            b.bias(0, h);
+            let g = b.build();
+            let law = stationary_solved(&g, 1.0, rule, 1).law;
+            let rel = (law[0] - want).abs() / want;
+            assert!(law[0] > 0.0 && rel < 1e-13, "{rule:?}: P(-1) = {:e} against {want:e}, rel {rel:e}", law[0]);
+        }
     }
 
     /// **A heat-bath fabric does not feel a uniform delay.** Its new value ignores the old one, so a
@@ -778,8 +807,8 @@ mod tests {
                     let sp = frame_spins(x, n);
                     p * (0..n)
                         .map(|i| {
-                            let up = 1.0 / (1.0 + (-2.0 * g.field(i, &sp)).exp());
-                            if sp[i] > 0 { 1.0 - up } else { up }
+                            let f = g.field(i, &sp);
+                            if sp[i] > 0 { 1.0 / (1.0 + (2.0 * f).exp()) } else { 1.0 / (1.0 + (-2.0 * f).exp()) }
                         })
                         .sum::<f64>()
                 })

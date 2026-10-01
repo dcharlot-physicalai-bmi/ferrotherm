@@ -609,19 +609,20 @@ mod tests {
             let mut k = vec![vec![0.0f64; m]; m];
             for x in 0..m {
                 let s: Vec<i8> = (0..g.n).map(|i| if x >> i & 1 == 1 { 1i8 } else { -1 }).collect();
-                let up: Vec<f64> = class
+                // Both tails directly (`crate::kernel::p_pair`), never `1 - p_up`.
+                let up: Vec<(f64, f64)> = class
                     .iter()
-                    .map(|&i| crate::kernel::p_up(g.field(i as usize, &s), beta))
+                    .map(|&i| crate::kernel::p_pair(g.field(i as usize, &s), beta))
                     .collect();
                 for pick in 0..1usize << class.len() {
                     let mut y = x;
                     let mut w = 1.0;
                     for (b, &i) in class.iter().enumerate() {
                         if pick >> b & 1 == 1 {
-                            w *= up[b];
+                            w *= up[b].0;
                             y |= 1 << i;
                         } else {
-                            w *= 1.0 - up[b];
+                            w *= up[b].1;
                             y &= !(1usize << i);
                         }
                     }
