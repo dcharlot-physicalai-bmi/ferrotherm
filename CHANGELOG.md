@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### The heat-bath complement rounded to zero, and exact `tau` above twelve spins
+
+**A defect in every exact operator.** The exact kernels formed the heat bath's down-flip as
+`1.0 - p_up(f)`. In f64 that keeps only `p_up`'s absolute accuracy -- relative error `2e-10` at
+`2 beta f = 16` -- and is EXACTLY ZERO from `2 beta f = 53 ln 2 = 36.74`, where a flip against a strong
+field becomes impossible while its reverse keeps `e^{-2 beta f}`. On `examples/penalty_mixing`'s TSP
+chains that closed every exit from every tour at penalty `A >= 26` and inflated `tau` 2.2e6 to 1.5e7
+times. `kernel::p_down` and `kernel::p_pair` now give both tails from one exponential, and every
+`apply` / `apply_distribution` arm, `delay`'s three rules and its coloured schedule, `syndrome`,
+`tempered_cd`, `eqprop`, `pointproc` and `sps_exact` use them. PIMI's normal tail had the same
+defect through `erf`, which returns exactly 1 past 5: its tail was zero from `|z| = 7.07`; it now uses
+`erfc` by continued fraction (held to mpmath to `4e-15` out to `z = 37`). The quantised comparator
+keeps `(levels - entry) / levels`, which is `1 - p` exactly and is what the hardware does.
+
+**Exact `tau` above the dense cap.** `autocorr::tau_int_krylov` solves the fundamental-matrix system
+`(I - P + 1 pi^T) z = e` matrix-free in the `pi` inner product -- CG where the kernel is reversible,
+GMRES(50) otherwise -- stopping on `max(||r||, u ||z||) / (sigma_min ||e||)` checked on the TRUE
+residual, with `AtFloor`, `BeyondF64` and `NotConverged` as refusals rather than numbers. The law is
+the kernel's OWN (closed forms at any size, the dense solve below 13 spins, a refusal above it), never
+Boltzmann by default: a scout's prototype that assumed Boltzmann was off by `6e-4` on the fixed fabric
+and 14% on tick-random. Past f64, `tau_int_censored` eliminates exactly onto a metastable set with GTH
+pivots (sums of rates, never `1 - P(f, f)`); `tau_int_solved` runs Krylov and falls back to it, and
+`time_to_mass` gives the sweeps a pushed law takes to hold its mass. Krylov needs 12 to 314
+applications of `P` up to 20 spins, growing with `log tau`, not `tau`. On cold heat-bath chains the
+DENSE solve is the less accurate route (`3.2e-9` against a double-double reference at `tau = 1.6e6`,
+GMRES `1e-10`), so tests between routes use the attainable accuracy, not a fixed `1e-9`.
+
+**Two more defects found on the way.** `tau_int_exact` stopped at the first lag below tolerance; the
+synchronous pair at `beta J = 1` has `rho = 0` at every odd lag, and it returned `1/2` for a `tau` of
+`1.8811`. It now needs 16 consecutive quiet lags. And CG iterated past its rounding floor into the
+Lanczos estimate (1,326 applications to a spurious `||A^-1||` of `5e15` on the random scan at
+`beta = 2`); it stops at a tenth of the floor, 51 applications.
+
+**What it changes.** `examples/informed_scaling_exact` runs `n = 6` to 20 in 394 s of CPU where the lag
+sum took more than three hours and never finished `n = 14`: `n = 14` is 4606.9 / 1571.8 flips (G/B
+2.93), `n = 20` is 3117661.4 / 725391.3 (4.30). `examples/penalty_mixing` prints every cell as a value
+with its route named: at the provable threshold `tau` is `3.4e13` to `3.5e22` sweeps and at four times
+it `1.1e63` to `8.4e105`, where `40000.5` "bounds" were printed from the defective kernel; the
+max(W) sweeps to 1% are 3,977 on average where 2,011 was printed, because six of twelve cells had
+stopped at a 3,000-sweep cap and were averaged in. The penalty question now has two exact answers
+(`npising::Tsp`'s docs): the mass rises with `A`, and mixing collapses faster than it rises. Both
+examples leave `examples/LOCAL`, which is now empty, for the weekly `examples/SLOW` job.
+
 ### `certify::tau_int` overstated effective samples; it is Geyer's sequence now, cross-checked by long-batch means
 
 Every effective sample size in this crate — the certificate's `ess`, every `SampleSet` error bar on
