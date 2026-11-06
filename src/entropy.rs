@@ -459,7 +459,7 @@ mod tests {
     // agrees or disagrees and settles nothing. Where two estimators ARE compared, the claim is
     // about their bias, and both biases are measured against an exact entropy first.
 
-    const GAMMA: f64 = 0.5772156649015329;
+    const GAMMA: f64 = core::f64::consts::EULER_GAMMA;
 
     /// Enumerate every way `n` draws can land in `k` ordered bins.
     fn each_composition(n: usize, k: usize, buf: &mut Vec<usize>, f: &mut dyn FnMut(&[usize])) {

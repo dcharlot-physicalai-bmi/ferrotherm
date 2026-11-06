@@ -968,6 +968,23 @@ mod tests {
         (samples, trace)
     }
 
+    /// `1/H`, recomputed from the logistic Hessian so `fit_beta`'s variance cannot agree with a
+    /// copy of its own return line. This is the textbook Fisher form the sandwich replaces.
+    fn naive_variance(g: &Graph, samples: &[Vec<i8>], beta: f64) -> f64 {
+        let mut h = 0.0;
+        for s in samples {
+            for i in 0..g.n {
+                let f = g.field(i, s);
+                if f != 0.0 {
+                    let x = 2.0 * f;
+                    let p = 1.0 / (1.0 + (-beta * x).exp());
+                    h += x * x * p * (1.0 - p);
+                }
+            }
+        }
+        1.0 / h
+    }
+
     /// The 95% interval covers 95% of the time, measured on draws that cannot be wrong.
     ///
     /// The calibration test this module did not have, and the one that would have caught a defect
@@ -994,6 +1011,49 @@ mod tests {
         let g = crate::ising::ring(10, 1.0, 0.0);
         let beta = 0.4;
         let (trials, draws) = (250usize, 500usize);
+
+        // THE SANDWICH, on one fixed exact sample, before the coverage count. Coverage on this
+        // ring at 500 draws misses the naive interval only sometimes inside the binomial band
+        // below (the naive standard error is ~0.74 of the sandwich here, and the band runs out
+        // to 10.8%), which is how a run with the Godambe term deleted stayed green. The variance
+        // itself is not a coin flip: on seed 0 and 200 draws it is 1.85 times `1/H`.
+        {
+            let p = crate::ising::exact_boltzmann(&g, beta);
+            let mut cdf = Vec::with_capacity(p.len());
+            let mut total = 0.0;
+            for &x in &p {
+                total += x;
+                cdf.push(total);
+            }
+            let mut rng = crate::rng::Pcg::new(0, 7);
+            let mut samples = Vec::with_capacity(200);
+            let mut trace = Vec::with_capacity(200);
+            for _ in 0..200 {
+                let u = rng.f64() * total;
+                let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
+                let st: Vec<i8> = (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect();
+                trace.push(g.energy(&st));
+                samples.push(st);
+            }
+            let (beta_hat, var) = fit_beta(&g, &samples);
+            let naive = naive_variance(&g, &samples, beta_hat);
+            assert!(
+                var > 1.5 * naive,
+                "pseudolikelihood variance {var:.6e} must be the sandwich, which on this sample \
+                 is 1.85 times the inverse Hessian {naive:.6e}; 1/H is what a composite \
+                 likelihood understates"
+            );
+            let c = certify(&g, beta, &samples, &trace);
+            let half = 0.5 * (c.beta_ci.1 - c.beta_ci.0);
+            let inflate = if c.tau_int.is_finite() { (2.0 * c.tau_int).sqrt().max(1.0) } else { 1.0 };
+            let from_var = 1.96 * var.sqrt() * inflate;
+            assert!(
+                (half - from_var).abs() <= 1e-12 * from_var.max(1.0),
+                "the certificate's half-width {half:.6e} is not the sandwich standard error \
+                 {from_var:.6e} (beta_hat {beta_hat:.4}, tau {})",
+                c.tau_int
+            );
+        }
 
         let p = crate::ising::exact_boltzmann(&g, beta);
         let mut cdf = Vec::with_capacity(p.len());

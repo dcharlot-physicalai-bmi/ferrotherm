@@ -4517,6 +4517,37 @@ mod tests {
                 }
             }
         }
+
+        // THE ACCEPTANCE FLOOR, where dropping `max(true_rel, floor)` changes the decision.
+        // On the cold pair above, the true residual and the floor land within 6% of each other
+        // (4.7e-10 against 4.9e-10), so the max does not move the estimate enough to accept a
+        // tolerance the floored one refuses. Both return AtFloor, and a test that allows either
+        // AtFloor or a very accurate Ok cannot see the defect.
+        //
+        // The chromatic sweep on the 3x3 glass at beta 2 does. At rtol 1e-10 the true residual
+        // is 1.2e-11 under a floor of 6.2e-11. With the floor the estimate is 4.0e-5, above
+        // rtol*(tau+1/2) = 1.2e-5, and the solve refuses. Without it the estimate is 8.0e-6,
+        // the solve returns Ok, and the tau is 2.4e-10 relative to the dense value — past the
+        // 1e-10 it just claimed. An Ok is therefore held to the tolerance it announced, against
+        // the dense tau; AtFloor is the other honest answer.
+        let glass = grid_glass(3, 3, 5);
+        let kernel = Kernel::ChromaticGibbs;
+        let dense = tau_int_fundamental(&glass, 2.0, kernel, |s| glass.energy(s)).unwrap();
+        let rtol = 1e-10;
+        match tau_int_krylov(&glass, 2.0, kernel, |s| glass.energy(s), rtol, 5_000) {
+            Err(AutocorrError::AtFloor { .. }) => {}
+            Ok(k) => {
+                let tol = rtol * (dense.tau_int + 0.5);
+                let diff = (k.tau_int - dense.tau_int).abs();
+                assert!(
+                    diff <= tol,
+                    "GMRES accepted a residual that is rounding: |tau - dense| = {diff:.3e} past \
+                     rtol*(tau+1/2) = {tol:.3e}, claimed error {:?}",
+                    k.err_est
+                );
+            }
+            other => panic!("chromatic sweep at beta 2, rtol {rtol}: {other:?}"),
+        }
     }
 
     /// THE KRYLOV TAU IS THE DENSE TAU FOR EVERY KERNEL, at `n = 9`, warm and cold, CG where the
@@ -4562,6 +4593,46 @@ mod tests {
                 );
                 assert!(k.matvecs < 200, "{kernel:?} at beta {beta}: {} applications", k.matvecs);
             }
+        }
+
+        // THE FLOOR STOP AND THE RANK-ONE TERM, on the chain where rtol 1e-8 already agrees with
+        // the dense tau (the random scan, above) and rtol 1e-10 is past what f64 can certify.
+        //
+        // Measured on this fixture: the rtol 1e-8 solve is 3.6e-9 relative to the dense tau in 51
+        // applications. Asking for 1e-10 must refuse with AtFloor, and the iterate it refuses on
+        // is still that tau. Two different defects both report BeyondF64 with ||A^-1|| past 1/u
+        // (~5e15) instead, which claims the slow mode itself is not representable:
+        //
+        // * CG that does not stop once the recursive residual is a tenth of the rounding floor
+        //   keeps feeding Lanczos noise. It ran 1,375 applications to BeyondF64. The stop is what
+        //   ends the solve at 72.
+        // * The fundamental system without its rank-one term `1 <pi, v>` is singular. The centred
+        //   right-hand side hides that at rtol 1e-8 (the tau above does not move), and it shows
+        //   the moment the residual is rounding: BeyondF64 at 124 applications. A warm chromatic
+        //   sweep (the 4x3 glass at this beta, tau ~ 15) does not: GMRES returns the same answer
+        //   with the term deleted. This cold chain is the one that does.
+        let kernel = Kernel::RandomScan;
+        let rtol = 1e-10;
+        match tau_int_krylov(&g, 2.0, kernel, |s| g.energy(s), rtol, 5_000) {
+            Err(AutocorrError::AtFloor { tau, matvecs, .. }) => {
+                assert!(
+                    matvecs < 200,
+                    "random scan at beta 2 stopped at the floor after {matvecs} applications; \
+                     iterating past it takes ~1,300 and reports a spurious norm"
+                );
+                let dense = tau_int_fundamental(&g, 2.0, kernel, |s| g.energy(s)).unwrap();
+                let rel = (tau - dense.tau_int).abs() / dense.tau_int;
+                assert!(
+                    rel < 1e-7,
+                    "the floor iterate {tau:.8e} is the chain's tau (dense {:.8e}, rel {rel:.2e}), \
+                     and 1e-10 is what cannot be certified",
+                    dense.tau_int
+                );
+            }
+            other => panic!(
+                "random scan at beta 2, rtol {rtol}: the mode is representable (rtol 1e-8 solved \
+                 it) and 1e-10 must be AtFloor, not a spurious BeyondF64. Got {other:?}"
+            ),
         }
     }
 

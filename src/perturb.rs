@@ -33,7 +33,10 @@ use crate::rng::Pcg;
 use crate::samples::{ENUMERATION_LIMIT, Refused};
 
 /// The Euler–Mascheroni constant, which is the mean of a standard Gumbel.
-pub const EULER_MASCHERONI: f64 = 0.5772156649015329;
+///
+/// `std::f64::consts::EULER_GAMMA`, not a hand-rounded literal: the two are the same `f64`, and a
+/// literal is what `clippy::approx_constant` exists to refuse.
+pub const EULER_MASCHERONI: f64 = std::f64::consts::EULER_GAMMA;
 
 /// The most spins [`map_ladder`] will sum over, since it costs `2^|S|` MAP solves.
 const LADDER_LIMIT: usize = 20;
