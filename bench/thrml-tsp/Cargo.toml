@@ -1,0 +1,16 @@
+[package]
+name = "ferrotherm-thrml-bench"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+description = "Head-to-head sampler benchmark of ferrotherm against a pinned THRML runner. Internal; not published."
+license = "Apache-2.0"
+repository = "https://github.com/dcharlot-physicalai-bmi/ferrotherm"
+
+[dependencies]
+ferrotherm = { version = "0.44", path = "../.." }
+ferrotherm-meter = { version = "0.4", path = "../../meter" }
+
+[lints]
+workspace = true
