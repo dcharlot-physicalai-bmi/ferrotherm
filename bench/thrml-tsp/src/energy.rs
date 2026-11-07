@@ -638,6 +638,9 @@ pub struct Probe {
     pub perf_note: String,
     pub nvml: Option<Nvml>,
     pub nvml_note: String,
+    /// Jetson `tegrastats` `VDD_IN`, only when no wall backend opened. Not a sum of rails.
+    pub tegra: Option<Tegra>,
+    pub tegra_note: String,
     pub hostname: String,
     pub macos_policy: &'static str,
 }
@@ -668,10 +671,22 @@ impl Probe {
         };
         let (nvml, nvml_note) = match Nvml::open() {
             Ok(n) => {
-                let note = format!("{} device(s): {}", n.devices.len(), n.names.join(", "));
+                let note = format!(
+                    "{} device(s): {} via nvmlDeviceGetTotalEnergyConsumption",
+                    n.devices.len(),
+                    n.names.join(", ")
+                );
                 (Some(n), note)
             }
             Err(e) => (None, e),
+        };
+        let (tegra, tegra_note) = if wall.is_some() {
+            (None, "not opened; a wall backend (macmon or INA3221) is already the board or whole-system reading".into())
+        } else {
+            match Tegra::open() {
+                Ok(t) => (Some(t), "tegrastats VDD_IN, rootless, other rails not summed".into()),
+                Err(e) => (None, e),
+            }
         };
         Probe {
             load1,
@@ -684,12 +699,90 @@ impl Probe {
             perf_note,
             nvml,
             nvml_note,
+            tegra,
+            tegra_note,
             hostname: read_hostname(),
             macos_policy: "macOS power, when that OS is the host, is ferrotherm_meter::Meter::macmon \
                            (rootless IOReport via the macmon binary). This harness has no other macOS path.",
         }
     }
 
+}
+
+/// One `tegrastats` line's `VDD_IN` rail, in watts.
+///
+/// The token is `1864/1864` or `1864mW/1864mW`. The first number is the instantaneous
+/// draw, in milliwatts. A line that only names `VDD_CPU_GPU_CV` or `VDD_SOC` is `None`:
+/// those rails are inside `VDD_IN`, and summing them would count the same current twice.
+pub fn parse_tegrastats_vdd_in_watts(line: &str) -> Option<f64> {
+    let mut tokens = line.split_whitespace();
+    while let Some(tok) = tokens.next() {
+        if tok == "VDD_IN" {
+            let raw = tokens.next()?;
+            let head = raw.split('/').next().unwrap_or(raw);
+            let digits: String = head.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let mw: f64 = digits.parse().ok()?;
+            if mw.is_finite() && mw >= 0.0 {
+                return Some(mw / 1000.0);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// A rootless `tegrastats` reader. The child is stopped when this value is dropped.
+pub struct Tegra {
+    child: std::process::Child,
+    samples: std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, f64)>>>,
+}
+
+impl Tegra {
+    pub fn open() -> Result<Tegra, String> {
+        let mut child = std::process::Command::new("tegrastats")
+            .args(["--interval", "200"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("tegrastats was not started: {e}"))?;
+        let stdout = child.stdout.take().ok_or("tegrastats has no stdout")?;
+        let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&samples);
+        std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = std::io::BufRead::read_line(&mut reader, &mut line).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                if let Some(w) = parse_tegrastats_vdd_in_watts(&line) {
+                    sink.lock().unwrap().push((std::time::Instant::now(), w));
+                }
+            }
+        });
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            if !samples.lock().unwrap().is_empty() {
+                return Ok(Tegra { child, samples });
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        Err("tegrastats produced no VDD_IN sample. Other rails were not summed.".into())
+    }
+
+    pub fn since(&self, from: std::time::Instant) -> Vec<f64> {
+        self.samples.lock().unwrap().iter().filter(|(t, _)| *t >= from).map(|(_, w)| *w).collect()
+    }
+}
+
+impl Drop for Tegra {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 fn read_hostname() -> String {
@@ -1366,5 +1459,18 @@ mod tests {
         assert_eq!(sums[1].scope, "whole-system");
         assert_eq!(sums[1].instrument, "macmon");
         assert_eq!(sums[2].workload, "ising_grid2d_open_3x3");
+        assert!(!scopes_may_share_a_table("gpu", "package"));
+        assert!(!scopes_may_share_a_table("board", "whole-system"));
+        assert!(!scopes_may_share_a_table("gpu", "board"));
+    }
+
+    #[test]
+    fn tegrastats_vdd_in_is_one_rail_and_other_rails_are_not_summed() {
+        let line = "RAM 1543/7772MB CPU [1%@102] VDD_IN 1864/1864 VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717";
+        assert!((parse_tegrastats_vdd_in_watts(line).unwrap() - 1.864).abs() < 1e-12);
+        let mw = "VDD_IN 2500mW/2500mW VDD_CPU_GPU_CV 100mW/100mW";
+        assert!((parse_tegrastats_vdd_in_watts(mw).unwrap() - 2.5).abs() < 1e-12);
+        assert!(parse_tegrastats_vdd_in_watts("VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717").is_none());
+        assert!(parse_tegrastats_vdd_in_watts("no power here").is_none());
     }
 }

@@ -35,6 +35,10 @@ pub struct Workload {
     pub edges: Vec<(usize, usize, f64)>,
     /// Three-body terms `(i, j, k, W)` with `i < j < k`. Empty for pairwise models.
     pub triples: Vec<(usize, usize, usize, f64)>,
+    /// `None` asks the scorer to enumerate the Boltzmann law.
+    /// `Some` is a mean energy the state space is too large to histogram:
+    /// a transfer-matrix mean, or Onsager's infinite-lattice energy times `n`.
+    pub exact_energy: Option<f64>,
     /// Gibbs blocks, outer index is the sweep order. Nodes inside a block share no edge
     /// (and, for a hypergraph, no term), so a block update is one conditional.
     pub blocks: Vec<Vec<usize>>,
@@ -101,6 +105,7 @@ fn ising_chain(trials: usize, warmup: usize, draws: usize) -> Workload {
         edges,
         triples: Vec::new(),
         blocks: classes_of(&g),
+        exact_energy: None,
     }
 }
 
@@ -139,6 +144,7 @@ fn ising_grid(trials: usize, warmup: usize, draws: usize) -> Workload {
         edges,
         triples: Vec::new(),
         blocks: classes_of(&g),
+        exact_energy: None,
     }
 }
 
@@ -175,6 +181,7 @@ fn potts_path(trials: usize, warmup: usize, draws: usize) -> Workload {
         edges,
         triples: Vec::new(),
         blocks,
+        exact_energy: None,
     }
 }
 
@@ -236,6 +243,223 @@ fn three_body(trials: usize, warmup: usize, draws: usize) -> Workload {
         edges,
         triples: trips,
         blocks,
+        exact_energy: None,
+    }
+}
+
+/// Scaled workloads. Not part of [`canonical`]: the pinned four stay the default comparison.
+///
+/// Ising sides 4, 8 and 16 carry a transfer-matrix mean (4 is also enumerable). Sides 32 and
+/// 64 carry Onsager's infinite-lattice energy times `n`, which is not the finite-lattice mean.
+/// Potts `q = 3` and `q = 4` carry a transfer-matrix mean. The three-body models are the
+/// paper's `d = 12` law and a larger `d = 16` draw, both enumerable.
+///
+/// Couplings: Ising `J = 1`, `beta = 0.3` (`K = 0.3`, below Onsager's `K_c ≈ 0.4407`).
+/// Potts `J = 1`, `beta = 0.5`, below [`ferrotherm::potts::critical_beta`].
+pub fn scaling(trials: usize, warmup: usize, draws: usize) -> Vec<Workload> {
+    let mut out = Vec::new();
+    for side in [4usize, 8, 16, 32, 64] {
+        out.push(ising_square(side, trials, warmup, draws));
+    }
+    out.push(potts_square(4, 3, trials, warmup, draws));
+    out.push(potts_square(8, 3, trials, warmup, draws));
+    out.push(potts_square(4, 4, trials, warmup, draws));
+    out.push(potts_square(8, 4, trials, warmup, draws));
+    out.push(three_body_sized(12, 18, 20, 0x5453_5032, trials, warmup, draws));
+    out.push(three_body_sized(16, 24, 24, 0x5453_5033, trials, warmup, draws));
+    out
+}
+
+fn ising_square(side: usize, trials: usize, warmup: usize, draws: usize) -> Workload {
+    let j = 1.0;
+    let beta = 0.3;
+    let g = grid2d(side, side, j);
+    let mut edges = Vec::new();
+    for i in 0..g.n {
+        for k in g.offset[i]..g.offset[i + 1] {
+            let jn = g.nbr[k] as usize;
+            if jn > i {
+                edges.push((i, jn, g.w[k]));
+            }
+        }
+    }
+    let computed = if side <= crate::oracle::ISING_TM_MAX_SIDE {
+        let tm = crate::oracle::ising_open_transfer(side, j, beta).expect("side is inside the transfer-matrix range");
+        assert!(tm.log_z.is_finite(), "transfer matrix log Z");
+        if side == 4 {
+            let enumerated = crate::oracle::ising_enumerated_mean(side, j, beta).expect("4x4 enumerates");
+            assert!((tm.mean_energy - enumerated).abs() < 1e-6, "4x4 transfer matrix left enumeration");
+        }
+        if side == 8 {
+            let kac = crate::oracle::ising_kac_ward_energy(side, j, beta).expect("8x8 Kac-Ward");
+            assert!((tm.mean_energy - kac).abs() < 1e-5, "8x8 transfer matrix left Kac-Ward");
+        }
+        tm.mean_energy
+    } else {
+        crate::oracle::onsager_total(side, j, beta)
+    };
+    // 4×4 is enumerable. Leave the mean unset so the scorer builds the full law.
+    let exact_energy = if side <= 4 { None } else { Some(computed) };
+    Workload {
+        id: match side {
+            4 => "ising_open_4x4",
+            8 => "ising_open_8x8",
+            16 => "ising_open_16x16",
+            32 => "ising_open_32x32",
+            64 => "ising_open_64x64",
+            _ => "ising_open_scaled",
+        },
+        kind: Kind::Ising,
+        beta,
+        warmup,
+        draws,
+        thin: THIN,
+        trials,
+        seed0: SEED0 + 1_000 * side as u64,
+        source: source_ising(side),
+        n: g.n,
+        q: 2,
+        biases: vec![0.0; g.n],
+        edges,
+        triples: Vec::new(),
+        blocks: classes_of(&g),
+        exact_energy,
+    }
+}
+
+fn source_ising(side: usize) -> &'static str {
+    match side {
+        4 => "Open 4x4 Ising, J=1, beta=0.3. Exact by enumeration (2^16) and by the transfer matrix. Checkerboard blocks are the two-colour Gibbs THRML's Ising quickstart uses (https://docs.thrml.ai/en/latest/).",
+        8 => "Open 8x8 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean, cross-checked against the Kac-Ward determinant. Checkerboard block Gibbs, as in THRML's Ising quickstart.",
+        16 => "Open 16x16 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean. A dense 2^32 transfer matrix is not this number. Checkerboard block Gibbs.",
+        32 => "Open 32x32 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is Onsager's infinite-lattice internal energy times N, not the finite-lattice mean. Checkerboard block Gibbs. The spin-model notebook (https://docs.thrml.ai/en/latest/02_spin_models.html) scales a Pegasus Ising model for throughput on GPUs; that graph is not an enumerable law.",
+        _ => "Open 64x64 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is Onsager's infinite-lattice internal energy times N, not the finite-lattice mean. A reference Gibbs chain is checked against that limit and against a second seed. Checkerboard block Gibbs.",
+    }
+}
+
+fn potts_square(side: usize, q: usize, trials: usize, warmup: usize, draws: usize) -> Workload {
+    let j = 1.0;
+    let beta = 0.5;
+    let n = side * side;
+    let mut edges = Vec::new();
+    for y in 0..side {
+        for x in 0..side {
+            let i = y * side + x;
+            if x + 1 < side {
+                edges.push((i, i + 1, j));
+            }
+            if y + 1 < side {
+                edges.push((i, i + side, j));
+            }
+        }
+    }
+    let tm = crate::oracle::potts_open_transfer(side, q, j, beta).expect("potts side is inside the transfer-matrix range");
+    assert!(tm.log_z.is_finite(), "potts transfer matrix log Z");
+    if q == 3 && side == 4 {
+        let small = crate::oracle::potts_open_transfer(3, 3, j, beta).expect("3x3 q=3");
+        let enumerated = crate::oracle::potts_enumerated_mean(3, 3, j, beta).expect("3x3 q=3 enumerates");
+        assert!((small.mean_energy - enumerated).abs() < 1e-6, "q=3 3x3 transfer matrix left enumeration");
+    }
+    let mut even = Vec::new();
+    let mut odd = Vec::new();
+    for i in 0..n {
+        let x = i % side;
+        let y = i / side;
+        if (x + y).is_multiple_of(2) { even.push(i); } else { odd.push(i); }
+    }
+    let id: &'static str = match (q, side) {
+        (3, 4) => "potts_open_q3_4x4",
+        (3, 8) => "potts_open_q3_8x8",
+        (4, 4) => "potts_open_q4_4x4",
+        (4, 8) => "potts_open_q4_8x8",
+        _ => "potts_open_scaled",
+    };
+    let source: &'static str = match (q, side) {
+        (3, 4) => "Open 4x4 q=3 Potts, J=1, beta=0.5, below potts::critical_beta. exact_energy is the row transfer matrix. Blocks are the checkerboard, which is THRML's parallel colouring; ferrotherm's Potts heat bath still scans sites in index order.",
+        (3, 8) => "Open 8x8 q=3 Potts, J=1, beta=0.5. exact_energy is the row transfer matrix (3^8 states per row). Not the codon-optimisation gene, which is not enumerable.",
+        (4, 4) => "Open 4x4 q=4 Potts, J=1, beta=0.5, below potts::critical_beta(4). exact_energy is the row transfer matrix.",
+        _ => "Open 8x8 q=4 Potts, J=1, beta=0.5. exact_energy is the row transfer matrix (4^8 states per row).",
+    };
+    Workload {
+        id,
+        kind: Kind::Potts,
+        beta,
+        warmup,
+        draws,
+        thin: THIN,
+        trials,
+        seed0: SEED0 + 4_000 + (q * 100 + side) as u64,
+        source,
+        n,
+        q,
+        biases: vec![0.0; n],
+        edges,
+        triples: Vec::new(),
+        blocks: vec![even, odd],
+        exact_energy: Some(tm.mean_energy),
+    }
+}
+
+fn three_body_sized(
+    d: usize,
+    n_pairs: usize,
+    n_triples: usize,
+    stream: u64,
+    trials: usize,
+    warmup: usize,
+    draws: usize,
+) -> Workload {
+    const SIGMA: f64 = 0.6;
+    let mut rng = Pcg::new(SEED0, stream);
+    let mut pairs = combinations(d, 2);
+    let mut triples = combinations(d, 3);
+    shuffle(&mut rng, &mut pairs);
+    shuffle(&mut rng, &mut triples);
+    pairs.truncate(n_pairs);
+    triples.truncate(n_triples);
+    let mut biases = Vec::with_capacity(d);
+    for _ in 0..d {
+        biases.push(SIGMA * standard_normal(&mut rng));
+    }
+    let mut edges = Vec::new();
+    for p in pairs {
+        edges.push((p[0], p[1], SIGMA * standard_normal(&mut rng)));
+    }
+    edges.sort_by_key(|e| (e.0, e.1));
+    let mut trips = Vec::new();
+    for t in triples {
+        trips.push((t[0], t[1], t[2], SIGMA * standard_normal(&mut rng)));
+    }
+    trips.sort_by_key(|t| (t.0, t.1, t.2));
+    let blocks = colour_hyper(d, &edges, &trips);
+    let (id, source): (&'static str, &'static str) = if d == 12 {
+        (
+            "tsp_iv4_three_body_d12",
+            "arXiv:2608.01615 §IV.4 at the paper's d=12 (4096 states), 18 pairs and 20 triples, N(0, 0.6^2), stream Pcg::new(260801615, 0x54535032). Enumerable. This is the native three-body energy, not Figure 12's compiled kernels. THRML's spin-model notebook is the same polynomial Gibbs conditional on a different graph.",
+        )
+    } else {
+        (
+            "tsp_iv4_three_body_d16",
+            "Larger three-body model, d=16 (65536 states), 24 pairs and 24 triples, N(0, 0.6^2), stream Pcg::new(260801615, 0x54535033). Enumerable, so the oracle is the Boltzmann mean, not a histogram resolution of every state.",
+        )
+    };
+    Workload {
+        id,
+        kind: Kind::Hubo,
+        beta: 1.0,
+        warmup,
+        draws,
+        thin: THIN,
+        trials,
+        seed0: SEED0 + d as u64 * 10,
+        source,
+        n: d,
+        q: 2,
+        biases,
+        edges,
+        triples: trips,
+        blocks,
+        exact_energy: None,
     }
 }
 
@@ -436,6 +660,47 @@ mod tests {
             assert_ne!(c[0], c[2]);
             assert_ne!(c[1], c[2]);
         }
+    }
+
+    #[test]
+    fn scaled_workloads_name_their_oracle() {
+        let scale = scaling(2, 40, 64);
+        let ids: Vec<&str> = scale.iter().map(|w| w.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "ising_open_4x4",
+                "ising_open_8x8",
+                "ising_open_16x16",
+                "ising_open_32x32",
+                "ising_open_64x64",
+                "potts_open_q3_4x4",
+                "potts_open_q3_8x8",
+                "potts_open_q4_4x4",
+                "potts_open_q4_8x8",
+                "tsp_iv4_three_body_d12",
+                "tsp_iv4_three_body_d16",
+            ]
+        );
+        let four = scale.iter().find(|w| w.id == "ising_open_4x4").unwrap();
+        assert_eq!(four.n, 16);
+        assert_eq!(four.edges.len(), 24, "open 4x4 has 24 edges");
+        assert!(four.exact_energy.is_none(), "4x4 is enumerated");
+        assert_eq!(four.blocks.len(), 2);
+        let eight = scale.iter().find(|w| w.id == "ising_open_8x8").unwrap();
+        assert!(eight.exact_energy.is_some());
+        let big = scale.iter().find(|w| w.id == "ising_open_64x64").unwrap();
+        assert_eq!(big.n, 4096);
+        assert_eq!(big.edges.len(), 2 * 64 * 63);
+        assert!(big.source.contains("Onsager"));
+        let d12 = scale.iter().find(|w| w.id == "tsp_iv4_three_body_d12").unwrap();
+        assert_eq!(d12.n, 12);
+        assert_eq!(d12.edges.len(), 18);
+        assert_eq!(d12.triples.len(), 20);
+        let q4 = scale.iter().find(|w| w.id == "potts_open_q4_8x8").unwrap();
+        assert_eq!(q4.q, 4);
+        assert_eq!(q4.n, 64);
+        assert!(q4.exact_energy.unwrap() < 0.0);
     }
 
     #[test]

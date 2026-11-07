@@ -61,11 +61,7 @@ fn run_ising(w: &Workload, seed: u64) -> Result<Chain, String> {
     let t0 = Instant::now();
     let set = smp.collect(&plan, Some(&mut led));
     let seconds = t0.elapsed().as_secs_f64();
-    let exact = exact_boltzmann(&g, w.beta);
-    let hist = score::histogram_spins(set.states());
-    let (e_mean, mag) = exact_spin_observables(&g, &exact);
-    let mae = score::mae(&score::empirical_magnetization(set.states()), &mag);
-    let sc = score::score_chain(&hist, &exact, set.energies(), e_mean, Some(mae), seconds);
+    let sc = score_ising(w, &g, set.states(), set.energies(), seconds)?;
     Ok(Chain {
         score: sc,
         updates: led.samples,
@@ -86,9 +82,7 @@ fn run_potts(w: &Workload, seed: u64) -> Result<Chain, String> {
     let t0 = Instant::now();
     let run = smp.collect(&plan, Local::HeatBath, Some(&mut led));
     let seconds = t0.elapsed().as_secs_f64();
-    let exact = potts::enumerate(&m, w.beta).map_err(|e| format!("{e:?}"))?;
-    let hist = score::histogram_potts(run.states(), w.q);
-    let sc = score::score_chain(&hist, &exact.p, run.energies(), exact.mean_energy, None, seconds);
+    let sc = score_potts(w, &m, run.states(), run.energies(), seconds)?;
     Ok(Chain {
         score: sc,
         updates: led.samples,
@@ -158,12 +152,8 @@ pub fn score_observed(
     match w.kind {
         Kind::Ising => {
             let g = ising_graph(w);
-            let exact = exact_boltzmann(&g, w.beta);
-            let hist = score::histogram_spins(spins);
             let energies: Vec<f64> = spins.iter().map(|s| g.energy(s)).collect();
-            let (e_mean, mag) = exact_spin_observables(&g, &exact);
-            let mae = score::mae(&score::empirical_magnetization(spins), &mag);
-            let sc = score::score_chain(&hist, &exact, &energies, e_mean, Some(mae), seconds);
+            let sc = score_ising(w, &g, spins, &energies, seconds)?;
             Ok(Chain {
                 score: sc,
                 updates,
@@ -176,13 +166,11 @@ pub fn score_observed(
         }
         Kind::Potts => {
             let m = potts_model(w);
-            let exact = potts::enumerate(&m, w.beta).map_err(|e| format!("{e:?}"))?;
-            let hist = score::histogram_potts(potts_states, w.q);
             let energies: Vec<f64> = potts_states
                 .iter()
                 .map(|s| m.energy(s).map_err(|e| format!("{e}")))
                 .collect::<Result<Vec<_>, _>>()?;
-            let sc = score::score_chain(&hist, &exact.p, &energies, exact.mean_energy, None, seconds);
+            let sc = score_potts(w, &m, potts_states, &energies, seconds)?;
             Ok(Chain {
                 score: sc,
                 updates,
@@ -228,6 +216,38 @@ fn hubo_sweep(h: &Hubo, s: &mut [i8], beta: f64, rng: &mut Pcg, blocks: &[Vec<us
             s[i] = next[k];
         }
     }
+}
+
+fn score_ising(
+    w: &Workload,
+    g: &ferrotherm::graph::Graph,
+    states: &[Vec<i8>],
+    energies: &[f64],
+    seconds: f64,
+) -> Result<Score, String> {
+    if let Some(mean) = w.exact_energy {
+        return Ok(score::score_mean_only(energies, mean, seconds));
+    }
+    let exact = exact_boltzmann(g, w.beta);
+    let hist = score::histogram_spins(states);
+    let (e_mean, mag) = exact_spin_observables(g, &exact);
+    let mae = score::mae(&score::empirical_magnetization(states), &mag);
+    Ok(score::score_chain(&hist, &exact, energies, e_mean, Some(mae), seconds))
+}
+
+fn score_potts(
+    w: &Workload,
+    m: &Potts,
+    states: &[Vec<u8>],
+    energies: &[f64],
+    seconds: f64,
+) -> Result<Score, String> {
+    if let Some(mean) = w.exact_energy {
+        return Ok(score::score_mean_only(energies, mean, seconds));
+    }
+    let exact = potts::enumerate(m, w.beta).map_err(|e| format!("{e:?}"))?;
+    let hist = score::histogram_potts(states, w.q);
+    Ok(score::score_chain(&hist, &exact.p, energies, exact.mean_energy, None, seconds))
 }
 
 fn ising_graph(w: &Workload) -> ferrotherm::graph::Graph {
@@ -358,6 +378,7 @@ mod tests {
             edges: Vec::new(),
             triples: vec![(0, 1, 2, 0.7)],
             blocks: vec![vec![0], vec![1], vec![2]],
+            exact_energy: None,
         };
         let chain = run(&w, 3).unwrap();
         assert!(chain.score.tv < 0.05, "tv {}", chain.score.tv);

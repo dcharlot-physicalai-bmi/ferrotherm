@@ -40,6 +40,13 @@ instrument, and scope. Package joules and whole-system joules are not added
 together. RAPL on hostname `framework-128gb-0000` is the primary energy
 evidence. That host reads package `energy_uj` without root. macmon is secondary.
 
+`--scale` adds the larger workloads: open Ising at 4×4, 8×8, 16×16 (transfer
+matrix; 4×4 is also enumerated), 32×32 and 64×64 (Onsager's infinite lattice,
+not the finite mean), q=3 and q=4 Potts grids with a transfer-matrix mean, and
+three-body models at d=12 and d=16. `--device cuda` asks the THRML runner for a
+JAX GPU and exits if JAX has none. It does not run the CPU device under that
+name. `--device auto` uses a GPU when JAX has one.
+
 ## Fleet evidence, 7 November 2026
 
 `results/fleet/` keeps two records.
