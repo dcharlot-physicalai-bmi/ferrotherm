@@ -71,5 +71,11 @@ The first record, the files directly under `results/fleet/` other than
   stay as measured. They are below the counter cadence. The harness after that
   revision does not attribute a window with fewer than 8 counter updates.
 
+`results/fleet/0029c27/` is the fixed-window rerun of that harness. 40 of 40
+trials on each host were attributable, evidence grade `contended host`. RAPL
+package and macmon whole-system stay in separate tables. The per-workload
+J/ESS intervals and the limits are in `results/fleet/0029c27/RESULTS.md`.
+There is no quiet-host leadership claim in that file.
+
 `results/report.json` is an earlier counter-less accuracy run on a Xeon guest.
 Its provenance says which counters were absent. Do not read a joule out of it.

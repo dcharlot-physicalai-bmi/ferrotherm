@@ -1,0 +1,208 @@
+wall: backend=macmon machine=Apple M5 Max scope=WholeSystem
+rapl: RAPL powercap is not present on this machine
+perf: power PMU type: No such file or directory (os error 2). perf stat was not started: No such file or directory (os error 2)
+nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)
+load1: Some(1.63) quiet: true
+THRML via /Users/dcharlot/bench-scratch/thrml-venv/bin/python /Users/dcharlot/bench-scratch/ferrotherm-thrml/bench/thrml-tsp/python/runner.py
+thrml thrml_readme_ising_chain_n5 seed 260801615 0.248s
+thrml thrml_readme_ising_chain_n5 seed 260801616 0.183s
+thrml thrml_readme_ising_chain_n5 seed 260801617 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260801618 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260801619 0.186s
+thrml ising_grid2d_open_3x3 seed 260801715 0.235s
+thrml ising_grid2d_open_3x3 seed 260801716 0.214s
+thrml ising_grid2d_open_3x3 seed 260801717 0.216s
+thrml ising_grid2d_open_3x3 seed 260801718 0.213s
+thrml ising_grid2d_open_3x3 seed 260801719 0.214s
+thrml potts_path_q3_n6 seed 260801815 0.868s
+thrml potts_path_q3_n6 seed 260801816 0.859s
+thrml potts_path_q3_n6 seed 260801817 0.860s
+thrml potts_path_q3_n6 seed 260801818 0.858s
+thrml potts_path_q3_n6 seed 260801819 0.861s
+thrml tsp_iv4_three_body_d8 seed 260801915 0.596s
+thrml tsp_iv4_three_body_d8 seed 260801916 0.595s
+thrml tsp_iv4_three_body_d8 seed 260801917 0.593s
+thrml tsp_iv4_three_body_d8 seed 260801918 0.591s
+thrml tsp_iv4_three_body_d8 seed 260801919 0.592s
+ferrotherm thrml_readme_ising_chain_n5
+  seed 260801615 tv 0.0402 tau 0.621 ess/s 5.1761e6
+  seed 260801616 tv 0.0546 tau 1.040 ess/s 3.1714e6
+  seed 260801617 tv 0.0518 tau 0.627 ess/s 5.3293e6
+  seed 260801618 tv 0.0671 tau 0.530 ess/s 6.2637e6
+  seed 260801619 tv 0.0488 tau 0.552 ess/s 6.1398e6
+  thrml seed 260801615 tv 0.0524 tau 0.558 ess/s 7.2303e3 (jit 0.20s, not in ess/s)
+  thrml seed 260801616 tv 0.0539 tau 0.647 ess/s 8.4314e3 (jit 0.20s, not in ess/s)
+  thrml seed 260801617 tv 0.0418 tau 0.871 ess/s 6.1916e3 (jit 0.20s, not in ess/s)
+  thrml seed 260801618 tv 0.0512 tau 0.567 ess/s 9.5409e3 (jit 0.20s, not in ess/s)
+  thrml seed 260801619 tv 0.0455 tau 0.550 ess/s 9.7803e3 (jit 0.20s, not in ess/s)
+ferrotherm ising_grid2d_open_3x3
+  seed 260801715 tv 0.1644 tau 0.758 ess/s 3.3777e6
+  seed 260801716 tv 0.1570 tau 0.912 ess/s 2.9122e6
+  seed 260801717 tv 0.1606 tau 0.904 ess/s 2.9551e6
+  seed 260801718 tv 0.1486 tau 0.942 ess/s 2.8648e6
+  seed 260801719 tv 0.1535 tau 0.955 ess/s 2.7250e6
+  thrml seed 260801715 tv 0.1468 tau 0.778 ess/s 5.4781e3 (jit 0.15s, not in ess/s)
+  thrml seed 260801716 tv 0.1530 tau 0.834 ess/s 5.5972e3 (jit 0.15s, not in ess/s)
+  thrml seed 260801717 tv 0.1521 tau 0.782 ess/s 5.9139e3 (jit 0.15s, not in ess/s)
+  thrml seed 260801718 tv 0.1481 tau 0.897 ess/s 5.2275e3 (jit 0.15s, not in ess/s)
+  thrml seed 260801719 tv 0.1568 tau 0.883 ess/s 5.2955e3 (jit 0.15s, not in ess/s)
+ferrotherm potts_path_q3_n6
+  seed 260801815 tv 0.2273 tau 0.500 ess/s 3.9712e6
+  seed 260801816 tv 0.2445 tau 0.518 ess/s 3.9382e6
+  seed 260801817 tv 0.2362 tau 0.733 ess/s 2.7655e6
+  seed 260801818 tv 0.2207 tau 0.615 ess/s 3.3365e6
+  seed 260801819 tv 0.2405 tau 0.516 ess/s 3.9141e6
+  thrml seed 260801815 tv 0.2223 tau 0.608 ess/s 1.8950e3 (jit 0.29s, not in ess/s)
+  thrml seed 260801816 tv 0.2231 tau 0.537 ess/s 2.1684e3 (jit 0.29s, not in ess/s)
+  thrml seed 260801817 tv 0.2395 tau 0.538 ess/s 2.1606e3 (jit 0.29s, not in ess/s)
+  thrml seed 260801818 tv 0.2211 tau 0.560 ess/s 2.0828e3 (jit 0.29s, not in ess/s)
+  thrml seed 260801819 tv 0.2303 tau 0.551 ess/s 2.1090e3 (jit 0.29s, not in ess/s)
+ferrotherm tsp_iv4_three_body_d8
+  seed 260801915 tv 0.1127 tau 0.769 ess/s 2.5539e6
+  seed 260801916 tv 0.0329 tau 6.828 ess/s 2.9550e5
+  seed 260801917 tv 0.0793 tau 10.637 ess/s 1.9120e5
+  seed 260801918 tv 0.0765 tau 8.168 ess/s 2.4712e5
+  seed 260801919 tv 0.1643 tau 20.141 ess/s 1.0063e5
+  thrml seed 260801915 tv 0.0612 tau 11.519 ess/s 1.4568e2 (jit 0.28s, not in ess/s)
+  thrml seed 260801916 tv 0.0857 tau 13.451 ess/s 1.2504e2 (jit 0.28s, not in ess/s)
+  thrml seed 260801917 tv 0.0258 tau 2.175 ess/s 7.7492e2 (jit 0.28s, not in ess/s)
+  thrml seed 260801918 tv 0.0622 tau 17.390 ess/s 9.7288e1 (jit 0.28s, not in ess/s)
+  thrml seed 260801919 tv 0.0904 tau 4.400 ess/s 3.8398e2 (jit 0.28s, not in ess/s)
+thrml thrml_readme_ising_chain_n5 seed 260811615 0.259s
+thrml thrml_readme_ising_chain_n5 seed 260811616 0.188s
+thrml thrml_readme_ising_chain_n5 seed 260811617 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811618 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260811619 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811620 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260811621 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811622 0.189s
+thrml thrml_readme_ising_chain_n5 seed 260811623 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260811624 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811625 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811616 0.192s
+thrml thrml_readme_ising_chain_n5 seed 260811617 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260811618 0.188s
+thrml thrml_readme_ising_chain_n5 seed 260811619 0.185s
+thrml thrml_readme_ising_chain_n5 seed 260811620 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811621 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811622 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811623 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811624 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811625 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811626 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811617 0.198s
+thrml thrml_readme_ising_chain_n5 seed 260811618 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811619 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811620 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811621 0.186s
+thrml thrml_readme_ising_chain_n5 seed 260811622 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811623 0.190s
+thrml thrml_readme_ising_chain_n5 seed 260811624 0.191s
+thrml thrml_readme_ising_chain_n5 seed 260811625 0.188s
+thrml thrml_readme_ising_chain_n5 seed 260811626 0.190s
+thrml thrml_readme_ising_chain_n5 seed 260811627 0.187s
+thrml thrml_readme_ising_chain_n5 seed 260811618 0.197s
+thrml thrml_readme_ising_chain_n5 seed 260811619 0.193s
+thrml thrml_readme_ising_chain_n5 seed 260811620 0.196s
+thrml thrml_readme_ising_chain_n5 seed 260811621 0.191s
+thrml thrml_readme_ising_chain_n5 seed 260811622 0.195s
+thrml thrml_readme_ising_chain_n5 seed 260811623 0.195s
+thrml thrml_readme_ising_chain_n5 seed 260811624 0.192s
+thrml thrml_readme_ising_chain_n5 seed 260811625 0.195s
+thrml thrml_readme_ising_chain_n5 seed 260811626 0.196s
+thrml thrml_readme_ising_chain_n5 seed 260811627 0.194s
+thrml thrml_readme_ising_chain_n5 seed 260811628 0.191s
+thrml thrml_readme_ising_chain_n5 seed 260811619 0.196s
+thrml thrml_readme_ising_chain_n5 seed 260811620 0.194s
+thrml thrml_readme_ising_chain_n5 seed 260811621 0.198s
+thrml thrml_readme_ising_chain_n5 seed 260811622 0.191s
+thrml thrml_readme_ising_chain_n5 seed 260811623 0.193s
+thrml thrml_readme_ising_chain_n5 seed 260811624 0.195s
+thrml thrml_readme_ising_chain_n5 seed 260811625 0.192s
+thrml thrml_readme_ising_chain_n5 seed 260811626 0.195s
+thrml thrml_readme_ising_chain_n5 seed 260811627 0.196s
+thrml thrml_readme_ising_chain_n5 seed 260811628 0.193s
+thrml thrml_readme_ising_chain_n5 seed 260811629 0.194s
+thrml ising_grid2d_open_3x3 seed 260811715 0.236s
+thrml ising_grid2d_open_3x3 seed 260811716 0.226s
+thrml ising_grid2d_open_3x3 seed 260811717 0.251s
+thrml ising_grid2d_open_3x3 seed 260811718 0.225s
+thrml ising_grid2d_open_3x3 seed 260811719 0.224s
+thrml ising_grid2d_open_3x3 seed 260811720 0.224s
+thrml ising_grid2d_open_3x3 seed 260811721 0.226s
+thrml ising_grid2d_open_3x3 seed 260811722 0.224s
+thrml ising_grid2d_open_3x3 seed 260811723 0.224s
+thrml ising_grid2d_open_3x3 seed 260811716 0.225s
+thrml ising_grid2d_open_3x3 seed 260811717 0.218s
+thrml ising_grid2d_open_3x3 seed 260811718 0.216s
+thrml ising_grid2d_open_3x3 seed 260811719 0.219s
+thrml ising_grid2d_open_3x3 seed 260811720 0.217s
+thrml ising_grid2d_open_3x3 seed 260811721 0.217s
+thrml ising_grid2d_open_3x3 seed 260811722 0.220s
+thrml ising_grid2d_open_3x3 seed 260811723 0.218s
+thrml ising_grid2d_open_3x3 seed 260811724 0.219s
+thrml ising_grid2d_open_3x3 seed 260811725 0.218s
+thrml ising_grid2d_open_3x3 seed 260811717 0.226s
+thrml ising_grid2d_open_3x3 seed 260811718 0.217s
+thrml ising_grid2d_open_3x3 seed 260811719 0.218s
+thrml ising_grid2d_open_3x3 seed 260811720 0.218s
+thrml ising_grid2d_open_3x3 seed 260811721 0.218s
+thrml ising_grid2d_open_3x3 seed 260811722 0.217s
+thrml ising_grid2d_open_3x3 seed 260811723 0.218s
+thrml ising_grid2d_open_3x3 seed 260811724 0.217s
+thrml ising_grid2d_open_3x3 seed 260811725 0.219s
+thrml ising_grid2d_open_3x3 seed 260811726 0.220s
+thrml ising_grid2d_open_3x3 seed 260811718 0.232s
+thrml ising_grid2d_open_3x3 seed 260811719 0.220s
+thrml ising_grid2d_open_3x3 seed 260811720 0.219s
+thrml ising_grid2d_open_3x3 seed 260811721 0.217s
+thrml ising_grid2d_open_3x3 seed 260811722 0.218s
+thrml ising_grid2d_open_3x3 seed 260811723 0.221s
+thrml ising_grid2d_open_3x3 seed 260811724 0.218s
+thrml ising_grid2d_open_3x3 seed 260811725 0.221s
+thrml ising_grid2d_open_3x3 seed 260811726 0.224s
+thrml ising_grid2d_open_3x3 seed 260811719 0.230s
+thrml ising_grid2d_open_3x3 seed 260811720 0.227s
+thrml ising_grid2d_open_3x3 seed 260811721 0.225s
+thrml ising_grid2d_open_3x3 seed 260811722 0.224s
+thrml ising_grid2d_open_3x3 seed 260811723 0.224s
+thrml ising_grid2d_open_3x3 seed 260811724 0.224s
+thrml ising_grid2d_open_3x3 seed 260811725 0.223s
+thrml ising_grid2d_open_3x3 seed 260811726 0.224s
+thrml ising_grid2d_open_3x3 seed 260811727 0.259s
+thrml potts_path_q3_n6 seed 260811815 0.905s
+thrml potts_path_q3_n6 seed 260811816 0.894s
+thrml potts_path_q3_n6 seed 260811817 0.896s
+thrml potts_path_q3_n6 seed 260811816 0.899s
+thrml potts_path_q3_n6 seed 260811817 0.900s
+thrml potts_path_q3_n6 seed 260811818 0.895s
+thrml potts_path_q3_n6 seed 260811817 0.904s
+thrml potts_path_q3_n6 seed 260811818 0.895s
+thrml potts_path_q3_n6 seed 260811819 0.898s
+thrml potts_path_q3_n6 seed 260811818 0.904s
+thrml potts_path_q3_n6 seed 260811819 0.900s
+thrml potts_path_q3_n6 seed 260811820 0.900s
+thrml potts_path_q3_n6 seed 260811819 0.905s
+thrml potts_path_q3_n6 seed 260811820 0.902s
+thrml potts_path_q3_n6 seed 260811821 0.902s
+thrml tsp_iv4_three_body_d8 seed 260811915 0.618s
+thrml tsp_iv4_three_body_d8 seed 260811916 0.607s
+thrml tsp_iv4_three_body_d8 seed 260811917 0.607s
+thrml tsp_iv4_three_body_d8 seed 260811918 0.608s
+thrml tsp_iv4_three_body_d8 seed 260811916 0.619s
+thrml tsp_iv4_three_body_d8 seed 260811917 0.626s
+thrml tsp_iv4_three_body_d8 seed 260811918 0.621s
+thrml tsp_iv4_three_body_d8 seed 260811919 0.624s
+thrml tsp_iv4_three_body_d8 seed 260811917 0.673s
+thrml tsp_iv4_three_body_d8 seed 260811918 0.617s
+thrml tsp_iv4_three_body_d8 seed 260811919 0.620s
+thrml tsp_iv4_three_body_d8 seed 260811920 0.620s
+thrml tsp_iv4_three_body_d8 seed 260811918 0.624s
+thrml tsp_iv4_three_body_d8 seed 260811919 0.629s
+thrml tsp_iv4_three_body_d8 seed 260811920 0.626s
+thrml tsp_iv4_three_body_d8 seed 260811921 0.625s
+thrml tsp_iv4_three_body_d8 seed 260811919 0.630s
+thrml tsp_iv4_three_body_d8 seed 260811920 0.627s
+thrml tsp_iv4_three_body_d8 seed 260811921 0.625s
+thrml tsp_iv4_three_body_d8 seed 260811922 0.623s
+wrote /Users/dcharlot/bench-scratch/evidence-0029c27/contended/report.json
