@@ -1,0 +1,16 @@
+HEAD
+8e9ad0a4f1e13b25f3abfcab0a37576fb55c9824
+
+STATUS
+?? bench/thrml-tsp/python/__pycache__/
+
+TRACKED DIFF
+
+TRACKED DIFF EXIT
+0
+
+BYTECODE CACHE
+total 12
+drwxrwxr-x 2 dcharlot dcharlot 4096 Nov  7 12:48 .
+drwxrwxr-x 3 dcharlot dcharlot 4096 Nov  7 12:48 ..
+-rw-rw-r-- 1 dcharlot dcharlot 1164 Nov  7 12:48 platform_choice.cpython-313.pyc

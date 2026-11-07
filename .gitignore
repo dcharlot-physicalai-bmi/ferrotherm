@@ -36,6 +36,11 @@ python/ferrotherm/*.so
 python/ferrotherm/*.dylib
 python/ferrotherm/*.dll
 
+# Python bytecode. Untracked `__pycache__` made a clean checkout look dirty. This does not
+# hide a change to a file that is already tracked: git still diffs those.
+__pycache__/
+*.py[cod]
+
 # Zig's build cache and output. `zig build` creates these beside build.zig, and they arrived the
 # moment that file did: 47 MB of object files, into both the repository and the published crate.
 .zig-cache/

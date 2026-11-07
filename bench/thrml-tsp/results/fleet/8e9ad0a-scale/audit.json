@@ -1,0 +1,43 @@
+{
+  "revision": "8e9ad0a4f1e13b25f3abfcab0a37576fb55c9824",
+  "clean": false,
+  "thrml_meta": "thrml=0.1.4 jax=0.12.0.1 jaxlib=0.12.0.1 equinox=0.13.8 device=cpu:0 jax_platform=cpu",
+  "quiet_grade": "load_gated",
+  "quiet_load_samples": [
+    12.19,
+    12.19,
+    12.49,
+    12.49,
+    12.49,
+    13.18,
+    13.18,
+    13.16,
+    13.16,
+    13.16,
+    19.96,
+    19.96,
+    23.24,
+    23.24,
+    23.24
+  ],
+  "grade": "contended host",
+  "outcome": "measured",
+  "start_load1": 34.27,
+  "energy_load_samples": [
+    24.92
+  ],
+  "trial_load1_min": 11.49,
+  "trial_load1_max": 23.85,
+  "idle_watts": 144.811812,
+  "idle_sigma": 3.47039332,
+  "trials": 150,
+  "attributable": 101,
+  "negative_incremental": 143,
+  "negative_and_attributable": 99,
+  "windows_min_s": 2.000001,
+  "windows_max_s": 3.834162,
+  "counter_updates_min": 1808,
+  "counter_updates_max": 3810,
+  "timeouts": [],
+  "dirty_cause": "generated untracked Python bytecode cache; tracked diff empty, exit 0"
+}

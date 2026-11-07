@@ -84,5 +84,10 @@ package and macmon whole-system stay in separate tables. The per-workload
 J/ESS intervals and the limits are in `results/fleet/0029c27/RESULTS.md`.
 There is no quiet-host leadership claim in that file.
 
+`results/fleet/8e9ad0a-scale/` is a later `--scale` run on `framework-128gb-0000`.
+It is **invalid for energy**: one 144.8 W baseline was subtracted while load1 moved
+from about 11 to about 24, and negative increments were marked attributable. The raw
+traces stayed on that machine. See `INVALID.md` there.
+
 `results/report.json` is an earlier counter-less accuracy run on a Xeon guest.
 Its provenance says which counters were absent. Do not read a joule out of it.

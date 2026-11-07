@@ -379,6 +379,7 @@ mod tests {
             triples: vec![(0, 1, 2, 0.7)],
             blocks: vec![vec![0], vec![1], vec![2]],
             exact_energy: None,
+            oracle: "exact enumeration of the Boltzmann distribution",
         };
         let chain = run(&w, 3).unwrap();
         assert!(chain.score.tv < 0.05, "tv {}", chain.score.tv);
