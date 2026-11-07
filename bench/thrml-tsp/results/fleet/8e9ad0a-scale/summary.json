@@ -1,0 +1,1693 @@
+{
+  "energy": [
+    {
+      "host": "framework-128gb-0000",
+      "workload": "thrml_readme_ising_chain_n5",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.100004207,
+        "lo95": 0.0823454855,
+        "hi95": 0.117662929,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0176935375,
+        "lo95": -0.0270572803,
+        "hi95": -0.00832979473,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -1.26830603e-05,
+        "lo95": -1.78698153e-05,
+        "hi95": -7.49630524e-06,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 21.47,
+      "load1_max": 23.85
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "thrml_readme_ising_chain_n5",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 43.7719424,
+        "lo95": 25.6620308,
+        "hi95": 61.881854,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -9.33939573,
+        "lo95": -13.1460651,
+        "hi95": -5.53272637,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.00693292818,
+        "lo95": -0.00944538632,
+        "hi95": -0.00442047005,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 21.47,
+      "load1_max": 23.76
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_grid2d_open_3x3",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.113504288,
+        "lo95": 0.101303906,
+        "hi95": 0.12570467,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0264255308,
+        "lo95": -0.0358726263,
+        "hi95": -0.0169784353,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -2.35521534e-05,
+        "lo95": -3.1976934e-05,
+        "hi95": -1.51273729e-05,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 21.23,
+      "load1_max": 23.76
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_grid2d_open_3x3",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 54.5317761,
+        "lo95": 26.4344471,
+        "hi95": 82.6291052,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -9.1756447,
+        "lo95": -13.656138,
+        "hi95": -4.69515141,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.00918922935,
+        "lo95": -0.0132420923,
+        "hi95": -0.0051363664,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 21.23,
+      "load1_max": 23.46
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_path_q3_n6",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.127942866,
+        "lo95": 0.0955557517,
+        "hi95": 0.160329981,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.009514806,
+        "lo95": -0.0241953094,
+        "hi95": 0.00516569739,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -9.67984036e-06,
+        "lo95": -1.82125258e-05,
+        "hi95": -1.14715489e-06,
+        "n": 3
+      },
+      "attributable": 3,
+      "load1_min": 20.57,
+      "load1_max": 21.33
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_path_q3_n6",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 206.5726,
+        "lo95": 110.744691,
+        "hi95": 302.400509,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -28.8110106,
+        "lo95": -50.8855997,
+        "hi95": -6.73642154,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.019326089,
+        "lo95": -0.0280631466,
+        "hi95": -0.0105890314,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 20.57,
+      "load1_max": 21.33
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "tsp_iv4_three_body_d8",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.0916107501,
+        "lo95": 0.0831426322,
+        "hi95": 0.100078868,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0306653102,
+        "lo95": -0.0377843895,
+        "hi95": -0.0235462308,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -5.94505599e-05,
+        "lo95": -7.32952937e-05,
+        "hi95": -4.56058261e-05,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 18.85,
+      "load1_max": 20.64
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "tsp_iv4_three_body_d8",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 108.449883,
+        "lo95": 65.8751082,
+        "hi95": 151.024657,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -31.6587923,
+        "lo95": -37.1947557,
+        "hi95": -26.122829,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0831072134,
+        "lo95": -0.122665491,
+        "hi95": -0.0435489356,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 18.85,
+      "load1_max": 20.64
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_4x4",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.743505404,
+        "lo95": 0.52861394,
+        "hi95": 0.958396869,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.250019698,
+        "lo95": -0.339358267,
+        "hi95": -0.160681129,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.000197172899,
+        "lo95": -0.000268021342,
+        "hi95": -0.000126324455,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 17.34,
+      "load1_max": 19.5
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_4x4",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 50.1199191,
+        "lo95": 18.9662096,
+        "hi95": 81.2736286,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -11.2763673,
+        "lo95": -25.359454,
+        "hi95": 2.80671941,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0088006259,
+        "lo95": -0.0201282037,
+        "hi95": 0.00252695185,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 17.34,
+      "load1_max": 19.5
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_8x8",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.466627187,
+        "lo95": 0.30477816,
+        "hi95": 0.628476215,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0207619154,
+        "lo95": -0.0870733171,
+        "hi95": 0.0455494864,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -2.10459932e-05,
+        "lo95": -0.000200648881,
+        "hi95": 0.000158556895,
+        "n": 3
+      },
+      "attributable": 3,
+      "load1_min": 18.04,
+      "load1_max": 19.42
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_8x8",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 60.3416893,
+        "lo95": 40.5389258,
+        "hi95": 80.1444528,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -6.34219014,
+        "lo95": -11.4808392,
+        "hi95": -1.20354109,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.00830437743,
+        "lo95": -0.01065994,
+        "hi95": -0.0059488149,
+        "n": 3
+      },
+      "attributable": 3,
+      "load1_min": 18.04,
+      "load1_max": 19.42
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_16x16",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 1.66708297,
+        "lo95": 1.15030103,
+        "hi95": 2.1838649,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.163317903,
+        "lo95": -0.363563922,
+        "hi95": 0.0369281153,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.000296541735,
+        "lo95": -0.000471274236,
+        "hi95": -0.000121809233,
+        "n": 3
+      },
+      "attributable": 3,
+      "load1_min": 17.21,
+      "load1_max": 18.25
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_16x16",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 67.8153539,
+        "lo95": 37.1690965,
+        "hi95": 98.4616112,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -8.70500966,
+        "lo95": -14.5145025,
+        "hi95": -2.8955168,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.011300218,
+        "lo95": -0.0156266765,
+        "hi95": -0.00697375943,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 17.21,
+      "load1_max": 18.25
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_32x32",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 5.87502943,
+        "lo95": 5.11861215,
+        "hi95": 6.6314467,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.996199653,
+        "lo95": -1.58044091,
+        "hi95": -0.411958393,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.00131824875,
+        "lo95": -0.00202231043,
+        "hi95": -0.000614187064,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 17.91,
+      "load1_max": 19.19
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_32x32",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 94.1057418,
+        "lo95": 49.328691,
+        "hi95": 138.882793,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -14.055665,
+        "lo95": -29.7350976,
+        "hi95": 1.62376758,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0238670641,
+        "lo95": -0.050245899,
+        "hi95": 0.0025117708,
+        "n": 3
+      },
+      "attributable": 3,
+      "load1_min": 17.91,
+      "load1_max": 19.19
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_64x64",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 16.7026989,
+        "lo95": 16.082742,
+        "hi95": 17.3226559,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -8.75120808,
+        "lo95": -9.54370497,
+        "hi95": -7.95871119,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.010192838,
+        "lo95": -0.0112587243,
+        "hi95": -0.00912695179,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 15.99,
+      "load1_max": 18.54
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "ising_open_64x64",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 77.2172774,
+        "lo95": 75.4203881,
+        "hi95": 79.0141667,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -38.1871107,
+        "lo95": -41.9839497,
+        "hi95": -34.3902718,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0407114723,
+        "lo95": -0.0493322313,
+        "hi95": -0.0320907133,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 15.99,
+      "load1_max": 17.77
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q3_4x4",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.227214252,
+        "lo95": 0.196902659,
+        "hi95": 0.257525845,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0965548714,
+        "lo95": -0.121533452,
+        "hi95": -0.0715762908,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -6.3210476e-05,
+        "lo95": -7.95377822e-05,
+        "hi95": -4.68831697e-05,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 14.62,
+      "load1_max": 15.75
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q3_4x4",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 52.0666579,
+        "lo95": 46.4256993,
+        "hi95": 57.7076166,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -25.6163892,
+        "lo95": -29.7927263,
+        "hi95": -21.4400521,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0152098098,
+        "lo95": -0.0180973164,
+        "hi95": -0.0123223032,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 14.62,
+      "load1_max": 15.75
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q3_8x8",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.734850192,
+        "lo95": 0.71315576,
+        "hi95": 0.756544624,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.458671523,
+        "lo95": -0.487590528,
+        "hi95": -0.429752517,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.000312220247,
+        "lo95": -0.00033178447,
+        "hi95": -0.000292656024,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 12.87,
+      "load1_max": 14.17
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q3_8x8",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 51.5342037,
+        "lo95": 45.6100456,
+        "hi95": 57.4583617,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -32.5979067,
+        "lo95": -37.9864797,
+        "hi95": -27.2093336,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0200829253,
+        "lo95": -0.0235468499,
+        "hi95": -0.0166190006,
+        "n": 5
+      },
+      "attributable": 5,
+      "load1_min": 12.48,
+      "load1_max": 14.17
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q4_4x4",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.285070808,
+        "lo95": 0.17066608,
+        "hi95": 0.399475536,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.114002818,
+        "lo95": -0.200622499,
+        "hi95": -0.0273831382,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -8.94229338e-05,
+        "lo95": -9.06337827e-05,
+        "hi95": -8.82120848e-05,
+        "n": 4
+      },
+      "attributable": 4,
+      "load1_min": 11.49,
+      "load1_max": 12.48
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q4_4x4",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 79.8217415,
+        "lo95": 29.765952,
+        "hi95": 129.877531,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -18.978168,
+        "lo95": -42.1340205,
+        "hi95": 4.1776844,
+        "n": 5
+      },
+      "joules_per_ess": {
+        "mean": -0.0213453656,
+        "lo95": -0.0230960932,
+        "hi95": -0.0195946381,
+        "n": 3
+      },
+      "attributable": 3,
+      "load1_min": 11.49,
+      "load1_max": 12.12
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q4_8x8",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 1.76005875,
+        "lo95": 1.61333553,
+        "hi95": 1.90678197,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0319735367,
+        "lo95": -0.110954918,
+        "hi95": 0.0470078447,
+        "n": 5
+      },
+      "joules_per_ess": null,
+      "attributable": 0,
+      "load1_min": 12.09,
+      "load1_max": 14.29
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "potts_open_q4_8x8",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 127.868524,
+        "lo95": 121.602991,
+        "hi95": 134.134057,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -4.46242431,
+        "lo95": -4.7387235,
+        "hi95": -4.18612512,
+        "n": 5
+      },
+      "joules_per_ess": null,
+      "attributable": 0,
+      "load1_min": 12.64,
+      "load1_max": 14.67
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "tsp_iv4_three_body_d12",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 0.331585332,
+        "lo95": 0.251661053,
+        "hi95": 0.41150961,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0114432453,
+        "lo95": -0.0141826181,
+        "hi95": -0.0087038725,
+        "n": 5
+      },
+      "joules_per_ess": null,
+      "attributable": 0,
+      "load1_min": 14.67,
+      "load1_max": 16.23
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "tsp_iv4_three_body_d12",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 249.08717,
+        "lo95": 233.309511,
+        "hi95": 264.86483,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -8.61619361,
+        "lo95": -9.12578377,
+        "hi95": -8.10660345,
+        "n": 5
+      },
+      "joules_per_ess": null,
+      "attributable": 0,
+      "load1_min": 15.02,
+      "load1_max": 16.23
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "tsp_iv4_three_body_d16",
+      "side": "ferrotherm",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 2.77720859,
+        "lo95": 2.13494227,
+        "hi95": 3.4194749,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -0.0966224192,
+        "lo95": -0.119118298,
+        "hi95": -0.07412654,
+        "n": 5
+      },
+      "joules_per_ess": null,
+      "attributable": 0,
+      "load1_min": 16.53,
+      "load1_max": 17.67
+    },
+    {
+      "host": "framework-128gb-0000",
+      "workload": "tsp_iv4_three_body_d16",
+      "side": "thrml",
+      "instrument": "rapl",
+      "scope": "package",
+      "grade": "contended host",
+      "n": 5,
+      "gross_j": {
+        "mean": 225.768099,
+        "lo95": 220.046884,
+        "hi95": 231.489314,
+        "n": 5
+      },
+      "incremental_j": {
+        "mean": -7.83799204,
+        "lo95": -8.06873267,
+        "hi95": -7.6072514,
+        "n": 5
+      },
+      "joules_per_ess": null,
+      "attributable": 0,
+      "load1_min": 16.53,
+      "load1_max": 17.86
+    }
+  ],
+  "ratios": [
+    {
+      "workload": "thrml_readme_ising_chain_n5",
+      "raw_signed_quotient": 546.6289693505597,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "ising_grid2d_open_3x3",
+      "raw_signed_quotient": 390.16514515398836,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "potts_path_q3_n6",
+      "raw_signed_quotient": 1996.5297237608577,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "tsp_iv4_three_body_d8",
+      "raw_signed_quotient": 1397.9214584318827,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "ising_open_4x4",
+      "raw_signed_quotient": 44.634054399129155,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "ising_open_8x8",
+      "raw_signed_quotient": 394.58234881497543,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "ising_open_16x16",
+      "raw_signed_quotient": 38.10666987565848,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "ising_open_32x32",
+      "raw_signed_quotient": 18.10512932403691,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "ising_open_64x64",
+      "raw_signed_quotient": 3.9941253162269432,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "potts_open_q3_4x4",
+      "raw_signed_quotient": 240.6216621434713,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "potts_open_q3_8x8",
+      "raw_signed_quotient": 64.32294347650043,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "potts_open_q4_4x4",
+      "raw_signed_quotient": 238.70124466884803,
+      "valid_efficiency_ratio": null,
+      "reason": "negative mean incremental prices"
+    },
+    {
+      "workload": "potts_open_q4_8x8",
+      "raw_signed_quotient": null,
+      "valid_efficiency_ratio": null,
+      "reason": "J/ESS unavailable"
+    },
+    {
+      "workload": "tsp_iv4_three_body_d12",
+      "raw_signed_quotient": null,
+      "valid_efficiency_ratio": null,
+      "reason": "J/ESS unavailable"
+    },
+    {
+      "workload": "tsp_iv4_three_body_d16",
+      "raw_signed_quotient": null,
+      "valid_efficiency_ratio": null,
+      "reason": "J/ESS unavailable"
+    }
+  ],
+  "accuracy": [
+    {
+      "workload": "thrml_readme_ising_chain_n5",
+      "reference_scope": "finite Boltzmann enumeration",
+      "reference_energy": -0.924234315,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -0.9279,
+          "lo95": -0.9409182415700749,
+          "hi95": -0.914881758429925,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0090531371,
+          "lo95": 0.00293582155,
+          "hi95": 0.0151704526,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.0525087883,
+          "lo95": 0.0403708242,
+          "hi95": 0.0646467525,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.00915298159,
+          "lo95": 0.00509831515,
+          "hi95": 0.013207648,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -0.9179,
+          "lo95": -0.9581163065888637,
+          "hi95": -0.8776836934111364,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0269468629,
+          "lo95": 0.00976258979,
+          "hi95": 0.044131136,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.0489535429,
+          "lo95": 0.0425981004,
+          "hi95": 0.0553089853,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.00885150819,
+          "lo95": 0.00735487836,
+          "hi95": 0.010348138,
+          "n": 5
+        }
+      }
+    },
+    {
+      "workload": "ising_grid2d_open_3x3",
+      "reference_scope": "finite Boltzmann enumeration",
+      "reference_energy": -2.72044887,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -2.7136,
+          "lo95": -2.7592879206379264,
+          "hi95": -2.6679120793620736,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.02926932,
+          "lo95": 0.00631725745,
+          "hi95": 0.0522213825,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.15683046,
+          "lo95": 0.149239229,
+          "hi95": 0.16442169,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.133049719,
+          "lo95": 0.123602188,
+          "hi95": 0.14249725,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -2.7122,
+          "lo95": -2.767031451962948,
+          "hi95": -2.657368548037052,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0324897733,
+          "lo95": -0.000726723775,
+          "hi95": 0.0657062704,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.151360896,
+          "lo95": 0.14641222,
+          "hi95": 0.156309573,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.128018138,
+          "lo95": 0.119704706,
+          "hi95": 0.136331571,
+          "n": 5
+        }
+      }
+    },
+    {
+      "workload": "potts_path_q3_n6",
+      "reference_scope": "finite Boltzmann enumeration",
+      "reference_energy": -0.854467121,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -0.85436,
+          "lo95": -0.8760996892801034,
+          "hi95": -0.8326203107198966,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0130934241,
+          "lo95": 0.0011666517,
+          "hi95": 0.0250201966,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.233856534,
+          "lo95": 0.221794384,
+          "hi95": 0.245918684,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.201088736,
+          "lo95": 0.182144229,
+          "hi95": 0.220033244,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -0.85084,
+          "lo95": -0.8609095811597358,
+          "hi95": -0.8407704188402643,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.00629342413,
+          "lo95": -0.000807333141,
+          "hi95": 0.0133941814,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.227274793,
+          "lo95": 0.21765793,
+          "hi95": 0.236891657,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.19236351,
+          "lo95": 0.178649206,
+          "hi95": 0.206077814,
+          "n": 5
+        }
+      }
+    },
+    {
+      "workload": "tsp_iv4_three_body_d8",
+      "reference_scope": "finite Boltzmann enumeration",
+      "reference_energy": -9.83314127,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -9.77553178,
+          "lo95": -9.904326845806793,
+          "hi95": -9.646736714193207,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.103089746,
+          "lo95": 0.0530574346,
+          "hi95": 0.153122057,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.0931321086,
+          "lo95": 0.0324863432,
+          "hi95": 0.153777874,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.0512162366,
+          "lo95": 0.0305109527,
+          "hi95": 0.0719215206,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -9.828879704,
+          "lo95": -9.928309321054588,
+          "hi95": -9.729450086945413,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0624463772,
+          "lo95": 0.0133935096,
+          "hi95": 0.111499245,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.0650652846,
+          "lo95": 0.033240789,
+          "hi95": 0.0968897802,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.0335310249,
+          "lo95": 0.0212353932,
+          "hi95": 0.0458266566,
+          "n": 5
+        }
+      }
+    },
+    {
+      "workload": "ising_open_4x4",
+      "reference_scope": "finite enumeration + transfer matrix",
+      "reference_energy": -7.95222265,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -7.975,
+          "lo95": -8.204788365920711,
+          "hi95": -7.745211634079289,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.125044531,
+          "lo95": -0.0288033052,
+          "hi95": 0.278892367,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.805370946,
+          "lo95": 0.802201598,
+          "hi95": 0.808540294,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 2.45037143,
+          "lo95": 2.41652906,
+          "hi95": 2.48421379,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -8.041,
+          "lo95": -8.219931063090169,
+          "hi95": -7.862068936909832,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.140155469,
+          "lo95": 0.0434663758,
+          "hi95": 0.236844562,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.806248224,
+          "lo95": 0.80062551,
+          "hi95": 0.811870938,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 2.44009467,
+          "lo95": 2.41035205,
+          "hi95": 2.4698373,
+          "n": 5
+        }
+      }
+    },
+    {
+      "workload": "ising_open_8x8",
+      "reference_scope": "finite open-grid transfer matrix; Kac-Ward cross-check",
+      "reference_energy": -38.2506796,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -38.2076,
+          "lo95": -38.86246364548705,
+          "hi95": -37.55273635451295,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.400264076,
+          "lo95": 0.0485969631,
+          "hi95": 0.75193119,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -38.520799999999994,
+          "lo95": -38.998176936491326,
+          "hi95": -38.04342306350866,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.406392229,
+          "lo95": 0.182284188,
+          "hi95": 0.630500271,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "ising_open_16x16",
+      "reference_scope": "finite open-grid transfer matrix",
+      "reference_energy": -166.480115,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -166.1844,
+          "lo95": -166.91520212375698,
+          "hi95": -165.45359787624304,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.529268718,
+          "lo95": 0.125846498,
+          "hi95": 0.932690939,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -166.7412,
+          "lo95": -168.18453263128265,
+          "hi95": -165.29786736871733,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.944731282,
+          "lo95": 0.241488664,
+          "hi95": 1.6479739,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "ising_open_32x32",
+      "reference_scope": "Onsager infinite-lattice energy \u00d7 N; NOT finite-grid oracle",
+      "reference_energy": -721.407049,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -692.5696,
+          "lo95": -695.1990460534297,
+          "hi95": -689.9401539465704,
+          "n": 5
+        },
+        "reference_within_ci95": false,
+        "energy_abs_err": {
+          "mean": 28.8374485,
+          "lo95": 26.2080025,
+          "hi95": 31.4668946,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -692.4469999999999,
+          "lo95": -693.7045702680939,
+          "hi95": -691.1894297319059,
+          "n": 5
+        },
+        "reference_within_ci95": false,
+        "energy_abs_err": {
+          "mean": 28.9600485,
+          "lo95": 27.7024783,
+          "hi95": 30.2176188,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "ising_open_64x64",
+      "reference_scope": "Onsager infinite-lattice energy \u00d7 N; NOT finite-grid oracle",
+      "reference_energy": -2885.62819,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -2833.0936,
+          "lo95": -2838.384272350742,
+          "hi95": -2827.8029276492584,
+          "n": 5
+        },
+        "reference_within_ci95": false,
+        "energy_abs_err": {
+          "mean": 52.5345941,
+          "lo95": 47.2439218,
+          "hi95": 57.8252665,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -2829.121,
+          "lo95": -2833.5184032295506,
+          "hi95": -2824.7235967704496,
+          "n": 5
+        },
+        "reference_within_ci95": false,
+        "energy_abs_err": {
+          "mean": 56.5071941,
+          "lo95": 52.1097909,
+          "hi95": 60.9045974,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "potts_open_q3_4x4",
+      "reference_scope": "finite Potts transfer matrix",
+      "reference_energy": -11.0065195,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -10.9739,
+          "lo95": -11.00472479328818,
+          "hi95": -10.943075206711821,
+          "n": 5
+        },
+        "reference_within_ci95": false,
+        "energy_abs_err": {
+          "mean": 0.0326195016,
+          "lo95": 0.00179470831,
+          "hi95": 0.0634442949,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -11.034099999999999,
+          "lo95": -11.132438103303981,
+          "hi95": -10.935761896696016,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0621960997,
+          "lo95": 0.00152157704,
+          "hi95": 0.122870622,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "potts_open_q3_8x8",
+      "reference_scope": "finite Potts transfer matrix",
+      "reference_energy": -51.511806,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -51.5654,
+          "lo95": -51.6500729273232,
+          "hi95": -51.48072707267679,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0579163706,
+          "lo95": -0.0210812458,
+          "hi95": 0.136913987,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -51.4962,
+          "lo95": -51.64306751653824,
+          "hi95": -51.349332483461765,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0825612098,
+          "lo95": -0.0117956082,
+          "hi95": 0.176918028,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "potts_open_q4_4x4",
+      "reference_scope": "finite Potts transfer matrix",
+      "reference_energy": -8.60597948,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -8.6333,
+          "lo95": -8.704746408142743,
+          "hi95": -8.561853591857258,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0377041031,
+          "lo95": -0.0239675362,
+          "hi95": 0.0993757425,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -8.5866,
+          "lo95": -8.679658968404778,
+          "hi95": -8.493541031595223,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0631958969,
+          "lo95": 0.0221203871,
+          "hi95": 0.104271407,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "potts_open_q4_8x8",
+      "reference_scope": "finite Potts transfer matrix",
+      "reference_energy": -40.2426104,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -40.246300000000005,
+          "lo95": -40.41933435395859,
+          "hi95": -40.07326564604142,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0990220731,
+          "lo95": -0.00619477906,
+          "hi95": 0.204238925,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -40.2884,
+          "lo95": -40.395398913647405,
+          "hi95": -40.1814010863526,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0828337807,
+          "lo95": 0.0352277571,
+          "hi95": 0.130439804,
+          "n": 5
+        },
+        "tv": null,
+        "kl_empirical_exact": null
+      }
+    },
+    {
+      "workload": "tsp_iv4_three_body_d12",
+      "reference_scope": "finite Boltzmann enumeration",
+      "reference_energy": -13.5236766,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -13.48578708,
+          "lo95": -13.687726779437382,
+          "hi95": -13.283847380562618,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.140759569,
+          "lo95": 0.0675273259,
+          "hi95": 0.213991813,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.226493454,
+          "lo95": 0.14134962,
+          "hi95": 0.311637288,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.205112338,
+          "lo95": 0.101646107,
+          "hi95": 0.308578568,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -13.66640274,
+          "lo95": -13.813925688616584,
+          "hi95": -13.518879791383418,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.142770276,
+          "lo95": -0.00467038088,
+          "hi95": 0.290210933,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.159373073,
+          "lo95": 0.104183746,
+          "hi95": 0.2145624,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.131572646,
+          "lo95": 0.0885370411,
+          "hi95": 0.174608251,
+          "n": 5
+        }
+      }
+    },
+    {
+      "workload": "tsp_iv4_three_body_d16",
+      "reference_scope": "finite Boltzmann enumeration",
+      "reference_energy": -21.9360838,
+      "ferrotherm": {
+        "mean_energy_ci95": {
+          "mean": -21.92052006,
+          "lo95": -22.10258845612405,
+          "hi95": -21.738451663875953,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.121224261,
+          "lo95": 0.0484543859,
+          "hi95": 0.193994137,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.0654173544,
+          "lo95": 0.0583767049,
+          "hi95": 0.0724580039,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.0829873334,
+          "lo95": 0.0594375354,
+          "hi95": 0.106537131,
+          "n": 5
+        }
+      },
+      "thrml": {
+        "mean_energy_ci95": {
+          "mean": -21.96822986,
+          "lo95": -22.117427519097454,
+          "hi95": -21.819032200902548,
+          "n": 5
+        },
+        "reference_within_ci95": true,
+        "energy_abs_err": {
+          "mean": 0.0944983616,
+          "lo95": 0.0105818963,
+          "hi95": 0.178414827,
+          "n": 5
+        },
+        "tv": {
+          "mean": 0.061314561,
+          "lo95": 0.042636184,
+          "hi95": 0.0799929379,
+          "n": 5
+        },
+        "kl_empirical_exact": {
+          "mean": 0.0824765644,
+          "lo95": 0.0597410926,
+          "hi95": 0.105212036,
+          "n": 5
+        }
+      }
+    }
+  ]
+}

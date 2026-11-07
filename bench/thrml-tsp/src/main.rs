@@ -33,11 +33,15 @@ fn main() {
             eprintln!("{e}");
             eprintln!(
                 "usage: ferrotherm-thrml-bench --out DIR [--trials N] [--warmup N] [--draws N] \
-                 [--python PY] [--skip-thrml] [--contended] [--scale] [--device auto|cpu|cuda]"
+                 [--python PY] [--skip-thrml] [--contended] [--scale] [--device auto|cpu|cuda] [--cpus LIST]"
             );
             std::process::exit(2);
         }
     };
+    if !args.cpus.is_empty() {
+        energy::pin_current(&args.cpus).unwrap_or_else(|e| panic!("cpu pin: {e}"));
+        eprintln!("pinned cpus: {}", args.cpus.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(","));
+    }
     let mut work = spec::canonical(args.trials, args.warmup, args.draws);
     if args.scale {
         work.extend(spec::scaling(args.trials, args.warmup, args.draws));
@@ -51,6 +55,7 @@ fn main() {
     let mut probe = Probe::detect();
     eprintln!("wall: {}", probe.wall_note);
     eprintln!("rapl: {}", probe.rapl_note);
+    eprintln!("rapl core: {}", probe.rapl_core_note);
     eprintln!("perf: {}", probe.perf_note);
     eprintln!("nvml: {}", probe.nvml_note);
     eprintln!("load1: {:?} quiet: {}", probe.load1, probe.quiet);
@@ -139,6 +144,7 @@ fn main() {
         &args.out.join("spec.txt"),
         !args.skip_thrml && thrml_ok,
         &args.device,
+        &args.cpus,
     );
     let report = format!(
         "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"provenance\": {prov},\n  \
@@ -166,6 +172,7 @@ struct Args {
     contended: bool,
     scale: bool,
     device: String,
+    cpus: Vec<usize>,
 }
 
 impl Args {
@@ -179,6 +186,7 @@ impl Args {
         let mut contended = false;
         let mut scale = false;
         let mut device = "auto".to_string();
+        let mut cpus = String::new();
         let mut it = args;
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -191,6 +199,7 @@ impl Args {
                 "--contended" => contended = true,
                 "--scale" => scale = true,
                 "--device" => device = need(&mut it, "--device")?,
+                "--cpus" => cpus = need(&mut it, "--cpus")?,
                 "--help" | "-h" => return Err("help".into()),
                 other => return Err(format!("unknown argument {other}")),
             }
@@ -205,6 +214,7 @@ impl Args {
         if !matches!(device.as_str(), "auto" | "cpu" | "cuda") {
             return Err(format!("--device wants auto, cpu, or cuda, got {device}"));
         }
+        let cpus = if cpus.is_empty() { Vec::new() } else { energy::parse_cpu_list(&cpus)? };
         Ok(Args {
             out: PathBuf::from(out),
             trials,
@@ -216,6 +226,7 @@ impl Args {
             contended,
             scale,
             device,
+            cpus,
         })
     }
 }
@@ -432,7 +443,7 @@ fn workload_json(w: &Workload, ft_trials: &[Chain], thrml: Option<&[Chain]>) -> 
     s.push_str(&format!("      \"warmup\": {},\n", w.warmup));
     s.push_str(&format!("      \"draws\": {},\n", w.draws));
     s.push_str(&format!("      \"thin\": {},\n", w.thin));
-    s.push_str(&format!("      \"oracle\": {},\n", json_str("exact enumeration of the Boltzmann distribution")));
+    s.push_str(&format!("      \"oracle\": {},\n", json_str(w.oracle)));
     s.push_str("      \"ferrotherm\": ");
     s.push_str(&side_json(ft_trials, false));
     s.push_str(",\n      \"thrml\": ");
@@ -541,6 +552,7 @@ fn energy_section(
     spec: &Path,
     thrml_ok: bool,
     device: &str,
+    pinned: &[usize],
 ) -> String {
     let poll = if contended { poll_quiet(&[ferrotherm::host::load_average()]) } else { wait_for_quiet_host() };
     let quiet = poll.outcome == "quiet";
@@ -594,89 +606,100 @@ fn energy_section(
             return energy_json(probe, &poll, grade, "unavailable", None, &[], &e);
         }
     };
-    let gpu_idle = probe.nvml.as_ref().and_then(|n| nvml_idle(n).ok());
     let mut session = if thrml_ok {
         ThrmlServe::start(python, runner, spec, device).ok()
     } else {
         None
     };
+    let stat_before_run = fs::read_to_string("/proc/stat").unwrap_or_default();
     let mut rows = Vec::new();
     for w in work {
-        let mut ft_n = 0usize;
-        let mut th_n = 0usize;
-        for side in energy::ab_schedule(trials) {
-            if side == "thrml" && session.is_none() {
-                continue;
-            }
-            let t = if side == "ferrotherm" {
-                let i = ft_n;
-                ft_n += 1;
-                i
-            } else {
-                let i = th_n;
-                th_n += 1;
-                i
+        for pair in 0..trials {
+            let before_b = match sample_bracket(probe, contended) {
+                Ok(v) => v,
+                Err(e) => return energy_json(probe, &poll, grade, "unavailable", None, &[], &e),
             };
-            let seed = w.seed0 + t as u64 + 10_000;
-            let before = read_cpu_snap();
-            let measured = measure_side(probe, side, w, seed, session.as_mut());
-            let after = read_cpu_snap();
-            let rank = energy_rank(measured.instrument, &probe.hostname);
-            let joules = trial_joules(
-                measured.gross,
-                idle.0,
-                idle.1,
-                measured.seconds,
-                measured.instrument,
-                measured.scope,
-                grade,
-                measured.counter_updates,
-            );
-            rows.push(EnergyTrial::from_parts(
-                w.id,
-                side,
-                t,
-                measured.repetitions,
-                measured.counter_updates,
-                measured.window_seconds,
-                joules,
-                measured.ess,
-                after.load1,
-                snap_other_cpu(&before, &after),
-                grade,
-                rank,
-            ));
-            if measured.instrument != "nvml"
-                && let Some((gw, gs)) = gpu_idle
-            {
-                let gpu = measure_counter(probe, side, w, seed, session.as_mut(), CounterKind::Nvml);
-                let gpu_rank = energy_rank(gpu.instrument, &probe.hostname);
-                let gpu_joules = trial_joules(
-                    gpu.gross,
-                    gw,
-                    gs,
-                    gpu.seconds,
-                    gpu.instrument,
-                    gpu.scope,
-                    grade,
-                    gpu.counter_updates,
-                );
-                let gpu_after = read_cpu_snap();
-                rows.push(EnergyTrial::from_parts(
-                    w.id,
-                    side,
-                    t,
-                    gpu.repetitions,
-                    gpu.counter_updates,
-                    gpu.window_seconds,
-                    gpu_joules,
-                    gpu.ess,
-                    gpu_after.load1,
-                    None,
-                    grade,
-                    gpu_rank,
-                ));
+            let mut got: Vec<(&'static str, Vec<SideMeasure>, energy::CpuSnap, energy::CpuSnap)> = Vec::new();
+            for side in energy::pair_order(pair) {
+                if side == "thrml" && session.is_none() {
+                    continue;
+                }
+                let seed = w.seed0 + pair as u64 + 10_000;
+                let before = read_cpu_snap();
+                let mut measured = measure_side(probe, side, w, seed, session.as_mut());
+                if measured.first().map(|m| m.instrument) != Some("nvml") && probe.nvml.is_some() {
+                    measured.extend(measure_counter(probe, side, w, seed, session.as_mut(), CounterKind::Nvml));
+                }
+                let after = read_cpu_snap();
+                got.push((side, measured, before, after));
             }
+            let after_b = match sample_bracket(probe, contended) {
+                Ok(v) => v,
+                Err(e) => return energy_json(probe, &poll, grade, "unavailable", None, &[], &e),
+            };
+            let quiet_bracket = contended
+                || ferrotherm::host::load_average().is_some_and(|l| l <= ferrotherm::host::QUIET_LOAD);
+            let (mean_w, sigma, drift, mut drift_ok) =
+                energy::combine_bracket(before_b.watts, before_b.sigma, after_b.watts, after_b.sigma);
+            if !quiet_bracket {
+                drift_ok = false;
+            }
+            let (core_mean, core_sigma, core_drift, mut core_ok) = match (
+                before_b.core_watts,
+                before_b.core_sigma,
+                after_b.core_watts,
+                after_b.core_sigma,
+            ) {
+                (Some(a), Some(asg), Some(b), Some(bsg)) => energy::combine_bracket(a, asg, b, bsg),
+                _ => (f64::NAN, f64::NAN, f64::NAN, false),
+            };
+            if !quiet_bracket {
+                core_ok = false;
+            }
+            let stat_after = fs::read_to_string("/proc/stat").unwrap_or_default();
+            let other = energy::other_core_busy(&stat_before_run, &stat_after, pinned);
+            let other_txt = other
+                .iter()
+                .map(|(c, f)| format!("{c}:{f:.4}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            for (side, measures, before, after) in &got {
+                for measured in measures {
+                    let rank = energy_rank(measured.instrument, &probe.hostname);
+                    let core_row = measured.scope == "core";
+                    let joules = trial_joules(
+                        measured.gross,
+                        if core_row { core_mean } else { mean_w },
+                        if core_row { core_sigma } else { sigma },
+                        measured.seconds,
+                        measured.instrument,
+                        measured.scope,
+                        grade,
+                        measured.counter_updates,
+                        if core_row { core_ok } else { drift_ok },
+                    );
+                    let mut row = EnergyTrial::from_parts(
+                        w.id,
+                        side,
+                        pair,
+                        measured.repetitions,
+                        measured.counter_updates,
+                        measured.window_seconds,
+                        joules,
+                        measured.ess,
+                        after.load1,
+                        snap_other_cpu(before, after),
+                        grade,
+                        rank,
+                    );
+                    row.idle_before_w = Some(if core_row { before_b.core_watts.unwrap_or(f64::NAN) } else { before_b.watts });
+                    row.idle_after_w = Some(if core_row { after_b.core_watts.unwrap_or(f64::NAN) } else { after_b.watts });
+                    row.baseline_drift_w = Some(if core_row { core_drift } else { drift });
+                    row.other_core_busy = other_txt.clone();
+                    rows.push(row);
+                }
+            }
+            stamp_pairs(&mut rows, w.id, pair, sigma, drift_ok, core_sigma, core_ok);
         }
     }
     energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &energy_note(grade))
@@ -684,12 +707,11 @@ fn energy_section(
 
 fn energy_note(grade: &str) -> String {
     if grade == GRADE_CONTENDED {
-        "Evidence grade contended host. Each trial repeats the sampler for at least 2 s and \
-         reports joules per repetition. Attribution needs 8 counter updates in that window. \
-         Summaries are per workload. RAPL package and macmon whole-system are not combined. \
-         These figures are not quiet-host evidence. load1 and other-process CPU are on every trial. \
-         RAPL on framework-128gb-0000 reads package energy_uj without root and is the primary \
-         instrument. macmon is secondary."
+        "Evidence grade contended host. Each pair is ferrotherm then THRML, or the reverse, \
+         with an idle bracket before and after the pair. Attribution refuses a negative \
+         incremental, a below-noise incremental, and a bracket that drifted. The paired \
+         difference keeps its sign. RAPL package and RAPL core are separate scopes. These \
+         figures are not quiet-host evidence. The quiet gate is unchanged."
             .into()
     } else {
         "Evidence grade quiet. The host cleared the unchanged load gate (at or under 2). \
@@ -698,6 +720,107 @@ fn energy_note(grade: &str) -> String {
          macmon whole-system are not combined. RAPL on framework-128gb-0000 reads package \
          energy_uj without root and is primary; macmon is secondary."
             .into()
+    }
+}
+
+struct BracketSample {
+    watts: f64,
+    sigma: f64,
+    core_watts: Option<f64>,
+    core_sigma: Option<f64>,
+}
+
+fn sample_bracket(probe: &mut Probe, contended: bool) -> Result<BracketSample, String> {
+    if let Some(wall) = probe.wall.as_mut() {
+        let b = if contended {
+            wall.observe_idle(std::time::Duration::from_secs(1))?
+        } else {
+            wall.idle(std::time::Duration::from_secs(1))?
+        };
+        return Ok(BracketSample { watts: b.watts, sigma: b.sigma, core_watts: None, core_sigma: None });
+    }
+    if probe.tegra.is_some() {
+        let t0 = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let w = probe.tegra.as_ref().map(|t| t.since(t0)).unwrap_or_default();
+        let (watts, sigma) = energy::idle_stats(&w).ok_or_else(|| "tegrastats bracket produced fewer than two samples".to_string())?;
+        return Ok(BracketSample { watts, sigma, core_watts: None, core_sigma: None });
+    }
+    let mut pkg = Vec::new();
+    let mut core = Vec::new();
+    for _ in 0..4 {
+        let (j, cj, secs) = counter_slice_pair(probe, 0.25)?;
+        if secs > 0.0 {
+            pkg.push(j / secs);
+            if let Some(c) = cj {
+                core.push(c / secs);
+            }
+        }
+    }
+    let (watts, sigma) = energy::idle_stats(&pkg).ok_or_else(|| "counter bracket produced fewer than two windows".to_string())?;
+    let core_pair = energy::idle_stats(&core);
+    Ok(BracketSample {
+        watts,
+        sigma,
+        core_watts: core_pair.map(|p| p.0),
+        core_sigma: core_pair.map(|p| p.1),
+    })
+}
+
+fn counter_slice_pair(probe: &mut Probe, secs: f64) -> Result<(f64, Option<f64>, f64), String> {
+    if let Some(r) = probe.rapl.as_ref() {
+        let a = r.read_uj()?;
+        let ca = probe.rapl_core.as_ref().and_then(|c| c.read_uj().ok());
+        let t = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+        let b = r.read_uj()?;
+        let cb = probe.rapl_core.as_ref().and_then(|c| c.read_uj().ok());
+        let dt = t.elapsed().as_secs_f64();
+        let core = match (ca, cb, probe.rapl_core.as_ref()) {
+            (Some(x), Some(y), Some(c)) => Some(c.delta_j(x, y)),
+            _ => None,
+        };
+        return Ok((r.delta_j(a, b), core, dt));
+    }
+    let (j, dt) = counter_slice(probe, secs)?;
+    Ok((j, None, dt))
+}
+
+fn stamp_pairs(
+    rows: &mut [EnergyTrial],
+    workload: &str,
+    pair: usize,
+    sigma: f64,
+    drift_ok: bool,
+    core_sigma: f64,
+    core_ok: bool,
+) {
+    let scopes: Vec<String> = rows
+        .iter()
+        .filter(|r| r.workload == workload && r.trial == pair)
+        .map(|r| r.joules.scope.clone())
+        .collect();
+    let mut uniq = scopes;
+    uniq.sort();
+    uniq.dedup();
+    for scope in uniq {
+        let pick = |side: &str| -> Option<(f64, f64, u32)> {
+            rows.iter().find(|r| r.workload == workload && r.trial == pair && r.side == side && r.joules.scope == scope).and_then(|r| {
+                r.joules.incremental.map(|inc| (inc, r.joules.seconds, r.counter_updates))
+            })
+        };
+        let Some((a, sa, ua)) = pick("ferrotherm") else { continue };
+        let Some((b, sb, ub)) = pick("thrml") else { continue };
+        let delta = energy::paired_delta(a, b);
+        let sig = if scope == "core" { core_sigma } else { sigma };
+        let gate = if scope == "core" { core_ok } else { drift_ok };
+        let ok = energy::paired_attributable(delta, sig, sa, sb, gate, ua, ub);
+        for row in rows.iter_mut() {
+            if row.workload == workload && row.trial == pair && row.joules.scope == scope {
+                row.paired_delta_j = Some(delta);
+                row.paired_attributable = ok;
+            }
+        }
     }
 }
 
@@ -766,12 +889,12 @@ fn measure_side(
     w: &Workload,
     seed: u64,
     session: Option<&mut ThrmlServe>,
-) -> SideMeasure {
+) -> Vec<SideMeasure> {
     if probe.wall.is_some() {
-        return measure_wall(probe, side, w, seed, session);
+        return vec![measure_wall(probe, side, w, seed, session)];
     }
     if probe.tegra.is_some() {
-        return measure_tegra(probe, side, w, seed, session);
+        return vec![measure_tegra(probe, side, w, seed, session)];
     }
     if probe.rapl.is_some() {
         return measure_counter(probe, side, w, seed, session, CounterKind::Rapl);
@@ -847,18 +970,6 @@ fn measure_tegra(
     finish_window(ess_sum, mean * seconds, seconds, reps, updates, "tegrastats", "board")
 }
 
-fn nvml_idle(nvml: &energy::Nvml) -> Result<(f64, f64), String> {
-    let mut windows = Vec::new();
-    for _ in 0..6 {
-        let a = nvml.millijoules()?;
-        let t0 = std::time::Instant::now();
-        std::thread::sleep(std::time::Duration::from_secs_f64(0.25));
-        let b = nvml.millijoules()?;
-        windows.push((energy::mj_delta_j(a, b), t0.elapsed().as_secs_f64()));
-    }
-    energy::watts_from_windows(&windows).ok_or_else(|| "NVML idle produced fewer than two windows".into())
-}
-
 fn measure_counter(
     probe: &mut Probe,
     side: &str,
@@ -866,21 +977,33 @@ fn measure_counter(
     seed: u64,
     mut session: Option<&mut ThrmlServe>,
     kind: CounterKind,
-) -> SideMeasure {
+) -> Vec<SideMeasure> {
+    let core_path = if matches!(kind, CounterKind::Rapl) {
+        probe.rapl_core.as_ref().map(|c| c.counter_path().to_path_buf())
+    } else {
+        None
+    };
+    let core_max = probe.rapl_core.as_ref().map_or(0.0, energy::RaplCounter::range_j);
+    let core_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<f64>::new()));
     let opened = match kind {
         CounterKind::Rapl => {
             let rapl = probe.rapl.as_ref().expect("rapl was checked");
             let scope = if rapl.kind == "psys" { "psys" } else { "package" };
             let max_j = rapl.range_j();
             let path = rapl.counter_path().to_path_buf();
+            let sink = std::sync::Arc::clone(&core_log);
+            let core_for_read = core_path.clone();
             OpenedCounter {
                 instrument: "rapl",
                 scope,
                 gross: Gross::Joules { max_j: Some(max_j) },
                 read: Box::new(move || {
-                    let text = std::fs::read_to_string(path.join("energy_uj")).ok()?;
-                    let uj: u64 = text.trim().parse().ok()?;
-                    Some(uj as f64 / 1e6)
+                    if let Some(core) = &core_for_read
+                        && let Some(j) = read_energy_uj(core)
+                    {
+                        sink.lock().unwrap().push(j);
+                    }
+                    read_energy_uj(&path)
                 }),
             }
         }
@@ -910,7 +1033,7 @@ fn measure_counter(
         Gross::Joules { max_j } => energy::window_gross(&readings, max_j),
         Gross::Millijoules => energy::mj_window_j(&readings),
     };
-    finish_window(
+    let mut out = vec![finish_window(
         ess_sum,
         gross_window,
         window_s,
@@ -918,7 +1041,26 @@ fn measure_counter(
         energy::count_counter_updates(&readings),
         opened.instrument,
         opened.scope,
-    )
+    )];
+    if core_path.is_some() {
+        let samples = core_log.lock().unwrap().clone();
+        out.push(finish_window(
+            ess_sum,
+            energy::window_gross(&samples, Some(core_max)),
+            window_s,
+            reps,
+            energy::count_counter_updates(&samples),
+            "rapl",
+            "core",
+        ));
+    }
+    out
+}
+
+fn read_energy_uj(dir: &std::path::Path) -> Option<f64> {
+    let text = std::fs::read_to_string(dir.join("energy_uj")).ok()?;
+    let uj: u64 = text.trim().parse().ok()?;
+    Some(uj as f64 / 1e6)
 }
 
 type CounterRead = Box<dyn FnMut() -> Option<f64> + Send>;
@@ -988,7 +1130,7 @@ fn energy_json(
         "{{\n    \"evidence_grade\": {},\n    \"outcome\": {},\n    \"quiet_threshold\": {},\n    \
          \"load_samples\": {},\n    \"rank_policy\": {},\n    \"order\": {},\n    \
          \"window_s\": {},\n    \"min_counter_updates\": {},\n    \
-         \"backends\": {{\"macmon_or_ina\": {}, \"tegrastats\": {}, \"rapl\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
+         \"backends\": {{\"macmon_or_ina\": {}, \"tegrastats\": {}, \"rapl\": {}, \"rapl_core\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
          \"hostname\": {},\n    \"macos_policy\": {},\n    \"accepted_load\": {},\n    \
          \"idle_watts\": {},\n    \"idle_sigma\": {},\n    \
          \"summaries\": [\n{}    ],\n    \"trials\": [\n{}    ],\n    \
@@ -1000,12 +1142,13 @@ fn energy_json(
         json_str(
             "primary = RAPL package on framework-128gb-0000, read without root; macmon whole-system = secondary; scopes are not combined",
         ),
-        json_str("A/B/A/B... ferrotherm, THRML, ferrotherm, ...; joules are per repetition of a >=2 s window"),
+        json_str("paired A/B then B/A; idle bracket before and after each pair; joules per repetition of a >=2 s window"),
         MIN_ENERGY_WINDOW_S,
         energy::MIN_COUNTER_UPDATES,
         json_str(&probe.wall_note),
         json_str(&probe.tegra_note),
         json_str(&probe.rapl_note),
+        json_str(&probe.rapl_core_note),
         json_str(&probe.perf_note),
         json_str(&probe.nvml_note),
         json_str(&probe.hostname),
@@ -1053,8 +1196,10 @@ fn trial_line(t: &EnergyTrial) -> String {
     format!(
         "      {{\"workload\": {}, \"side\": {}, \"trial\": {}, \"repetitions\": {}, \
          \"counter_updates\": {}, \"window_seconds\": {:.6}, \"grade\": {}, \"rank\": {}, \
-         \"load1\": {}, \"other_process_cpu_s\": {}, \"ess\": {}, \"joules_per_ess\": {}, \
-         \"joules\": {}}}",
+         \"load1\": {}, \"other_process_cpu_s\": {}, \"other_core_busy\": {}, \
+         \"idle_before_w\": {}, \"idle_after_w\": {}, \"baseline_drift_w\": {}, \
+         \"paired_delta_j\": {}, \"paired_attributable\": {}, \"ess\": {}, \
+         \"joules_per_ess\": {}, \"joules\": {}}}",
         json_str(t.workload),
         json_str(t.side),
         t.trial,
@@ -1065,6 +1210,12 @@ fn trial_line(t: &EnergyTrial) -> String {
         json_str(t.rank),
         fmt_f64(t.load1),
         fmt_f64(t.other_cpu_s),
+        json_str(&t.other_core_busy),
+        fmt_f64(t.idle_before_w),
+        fmt_f64(t.idle_after_w),
+        fmt_f64(t.baseline_drift_w),
+        fmt_f64(t.paired_delta_j),
+        if t.paired_attributable { "true" } else { "false" },
         fmt_f64(Some(t.ess)),
         fmt_f64(t.joules_per_ess),
         joules_json(&t.joules),

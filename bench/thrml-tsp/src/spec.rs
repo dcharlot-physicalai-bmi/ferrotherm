@@ -39,6 +39,8 @@ pub struct Workload {
     /// `Some` is a mean energy the state space is too large to histogram:
     /// a transfer-matrix mean, or Onsager's infinite-lattice energy times `n`.
     pub exact_energy: Option<f64>,
+    /// What `exact_energy` is. Enumeration when that mean is computed from the full law.
+    pub oracle: &'static str,
     /// Gibbs blocks, outer index is the sweep order. Nodes inside a block share no edge
     /// (and, for a hypergraph, no term), so a block update is one conditional.
     pub blocks: Vec<Vec<usize>>,
@@ -106,6 +108,7 @@ fn ising_chain(trials: usize, warmup: usize, draws: usize) -> Workload {
         triples: Vec::new(),
         blocks: classes_of(&g),
         exact_energy: None,
+        oracle: "exact enumeration of the Boltzmann distribution",
     }
 }
 
@@ -145,6 +148,7 @@ fn ising_grid(trials: usize, warmup: usize, draws: usize) -> Workload {
         triples: Vec::new(),
         blocks: classes_of(&g),
         exact_energy: None,
+        oracle: "exact enumeration of the Boltzmann distribution",
     }
 }
 
@@ -182,6 +186,7 @@ fn potts_path(trials: usize, warmup: usize, draws: usize) -> Workload {
         triples: Vec::new(),
         blocks,
         exact_energy: None,
+        oracle: "exact enumeration of the Boltzmann distribution",
     }
 }
 
@@ -244,6 +249,7 @@ fn three_body(trials: usize, warmup: usize, draws: usize) -> Workload {
         triples: trips,
         blocks,
         exact_energy: None,
+        oracle: "exact enumeration of the Boltzmann distribution",
     }
 }
 
@@ -296,10 +302,17 @@ fn ising_square(side: usize, trials: usize, warmup: usize, draws: usize) -> Work
         }
         tm.mean_energy
     } else {
-        crate::oracle::onsager_total(side, j, beta)
+        crate::oracle::ising_reference_chain(side, j, beta, SEED0)
     };
     // 4×4 is enumerable. Leave the mean unset so the scorer builds the full law.
     let exact_energy = if side <= 4 { None } else { Some(computed) };
+    let oracle = if side <= 4 {
+        "transfer matrix cross-checked by enumeration"
+    } else if side <= crate::oracle::ISING_TM_MAX_SIDE {
+        "transfer matrix"
+    } else {
+        "long reference chain on the finite lattice"
+    };
     Workload {
         id: match side {
             4 => "ising_open_4x4",
@@ -324,6 +337,7 @@ fn ising_square(side: usize, trials: usize, warmup: usize, draws: usize) -> Work
         triples: Vec::new(),
         blocks: classes_of(&g),
         exact_energy,
+        oracle,
     }
 }
 
@@ -332,8 +346,8 @@ fn source_ising(side: usize) -> &'static str {
         4 => "Open 4x4 Ising, J=1, beta=0.3. Exact by enumeration (2^16) and by the transfer matrix. Checkerboard blocks are the two-colour Gibbs THRML's Ising quickstart uses (https://docs.thrml.ai/en/latest/).",
         8 => "Open 8x8 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean, cross-checked against the Kac-Ward determinant. Checkerboard block Gibbs, as in THRML's Ising quickstart.",
         16 => "Open 16x16 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean. A dense 2^32 transfer matrix is not this number. Checkerboard block Gibbs.",
-        32 => "Open 32x32 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is Onsager's infinite-lattice internal energy times N, not the finite-lattice mean. Checkerboard block Gibbs. The spin-model notebook (https://docs.thrml.ai/en/latest/02_spin_models.html) scales a Pegasus Ising model for throughput on GPUs; that graph is not an enumerable law.",
-        _ => "Open 64x64 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is Onsager's infinite-lattice internal energy times N, not the finite-lattice mean. A reference Gibbs chain is checked against that limit and against a second seed. Checkerboard block Gibbs.",
+        32 => "Open 32x32 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is the mean of a long ferrotherm reference chain on this finite lattice, not Onsager's infinite lattice. Checkerboard block Gibbs.",
+        _ => "Open 64x64 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is the mean of a long ferrotherm reference chain on this finite lattice, not Onsager's infinite lattice. Checkerboard block Gibbs.",
     }
 }
 
@@ -359,6 +373,15 @@ fn potts_square(side: usize, q: usize, trials: usize, warmup: usize, draws: usiz
         let small = crate::oracle::potts_open_transfer(3, 3, j, beta).expect("3x3 q=3");
         let enumerated = crate::oracle::potts_enumerated_mean(3, 3, j, beta).expect("3x3 q=3 enumerates");
         assert!((small.mean_energy - enumerated).abs() < 1e-6, "q=3 3x3 transfer matrix left enumeration");
+    }
+    if q == 3 && side == 4 {
+        let brute = crate::oracle::potts_open_brute_mean(4, 3, j, beta).expect("4x4 q=3 enumerates");
+        assert!(
+            (tm.mean_energy - brute).abs() < 1e-4,
+            "4x4 q=3 transfer matrix {} brute force {}",
+            tm.mean_energy,
+            brute
+        );
     }
     let mut even = Vec::new();
     let mut odd = Vec::new();
@@ -397,6 +420,7 @@ fn potts_square(side: usize, q: usize, trials: usize, warmup: usize, draws: usiz
         triples: Vec::new(),
         blocks: vec![even, odd],
         exact_energy: Some(tm.mean_energy),
+        oracle: "transfer matrix",
     }
 }
 
@@ -460,6 +484,7 @@ fn three_body_sized(
         triples: trips,
         blocks,
         exact_energy: None,
+        oracle: "exact enumeration of the Boltzmann distribution",
     }
 }
 
@@ -692,7 +717,9 @@ mod tests {
         let big = scale.iter().find(|w| w.id == "ising_open_64x64").unwrap();
         assert_eq!(big.n, 4096);
         assert_eq!(big.edges.len(), 2 * 64 * 63);
-        assert!(big.source.contains("Onsager"));
+        assert!(big.source.contains("reference chain"));
+        assert_eq!(big.oracle, "long reference chain on the finite lattice");
+        assert_eq!(four.oracle, "transfer matrix cross-checked by enumeration");
         let d12 = scale.iter().find(|w| w.id == "tsp_iv4_three_body_d12").unwrap();
         assert_eq!(d12.n, 12);
         assert_eq!(d12.edges.len(), 18);

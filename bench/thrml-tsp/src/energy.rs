@@ -76,16 +76,153 @@ impl Joules {
     }
 }
 
-/// `gross - idle * seconds`, and whether that delta clears `3 * sigma * seconds`.
+/// How many baseline standard deviations an incremental must clear.
 ///
-/// A delta inside the band is still returned. `attributable` says whether it may be
-/// divided into a per-sample figure. Dividing a number that did not clear the baseline's
-/// own wander reports precision the counter did not have.
+/// The band is `NOISE_SIGMA_K * sigma * seconds`. A reading inside it, and any negative
+/// incremental, is not attributable. The 8e9ad0a scale run marked 99 negative increments
+/// attributable because the old test used the absolute value.
+pub const NOISE_SIGMA_K: f64 = 3.0;
+
+/// How many baseline standard deviations the before/after idle may move.
+///
+/// A bracket whose two ends differ by more than this is not a baseline. The quiet-host
+/// gate is a separate check and is not this number.
+pub const DRIFT_SIGMA_K: f64 = 3.0;
+
+/// `gross - idle * seconds`, and whether that delta is a positive clearance of the noise band.
+///
+/// The incremental is always returned, including when it is negative. `attributable` is
+/// false for a negative value and for one inside `NOISE_SIGMA_K` standard deviations.
 pub fn split_incremental(gross: f64, idle_watts: f64, idle_sigma: f64, seconds: f64) -> (f64, bool) {
     let incremental = gross - idle_watts * seconds;
-    let band = 3.0 * idle_sigma * seconds;
-    let attributable = incremental.abs() > band && seconds > 0.0 && idle_sigma.is_finite();
+    let band = NOISE_SIGMA_K * idle_sigma * seconds;
+    let attributable = incremental > band && seconds > 0.0 && idle_sigma.is_finite() && incremental.is_finite();
     (incremental, attributable)
+}
+
+/// Mean and sigma of an idle bracket, and whether the two ends drifted too far apart.
+///
+/// Sigma is the root-mean-square of the two window sigmas. The drift test uses that sigma,
+/// so a quiet pair of readings can fail a large jump and a noisy pair is judged against its
+/// own wander.
+pub fn combine_bracket(before_w: f64, before_s: f64, after_w: f64, after_s: f64) -> (f64, f64, f64, bool) {
+    let mean = 0.5 * (before_w + after_w);
+    let sigma = (0.5 * (before_s * before_s + after_s * after_s)).sqrt();
+    let drift = (before_w - after_w).abs();
+    let finite = before_w.is_finite() && after_w.is_finite() && sigma.is_finite();
+    let drift_ok = finite && drift <= DRIFT_SIGMA_K * sigma;
+    (mean, sigma, drift, drift_ok)
+}
+
+/// Ferrotherm incremental minus THRML incremental, both against the same bracket.
+pub fn paired_delta(ferrotherm_inc: f64, thrml_inc: f64) -> f64 {
+    ferrotherm_inc - thrml_inc
+}
+
+/// Whether a paired difference clears the noise of both windows.
+///
+/// The sign is kept. A negative difference means THRML drew more energy than ferrotherm
+/// inside the bracket. That is not the negative-incremental failure, which is a side
+/// whose own gross sat below the idle bracket.
+pub fn paired_attributable(
+    delta: f64,
+    sigma: f64,
+    seconds_a: f64,
+    seconds_b: f64,
+    drift_ok: bool,
+    updates_a: u32,
+    updates_b: u32,
+) -> bool {
+    let band = NOISE_SIGMA_K * sigma * seconds_a.hypot(seconds_b);
+    drift_ok
+        && updates_a >= MIN_COUNTER_UPDATES
+        && updates_b >= MIN_COUNTER_UPDATES
+        && delta.is_finite()
+        && band.is_finite()
+        && delta.abs() > band
+}
+
+/// Even pairs run ferrotherm then THRML. Odd pairs reverse that.
+///
+/// Five pairs therefore start A,B and then B,A, and each sampler runs five times.
+pub fn pair_order(pair: usize) -> [&'static str; 2] {
+    if pair.is_multiple_of(2) { ["ferrotherm", "thrml"] } else { ["thrml", "ferrotherm"] }
+}
+
+/// `0-3,8,10-11` into core indices. Empty input is an error, not "every core".
+pub fn parse_cpu_list(text: &str) -> Result<Vec<usize>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("--cpus was empty".into());
+    }
+    let mut out = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            return Err(format!("empty field in cpu list {text}"));
+        }
+        if let Some((a, b)) = part.split_once('-') {
+            let lo: usize = a.trim().parse().map_err(|_| format!("bad cpu {a}"))?;
+            let hi: usize = b.trim().parse().map_err(|_| format!("bad cpu {b}"))?;
+            if hi < lo {
+                return Err(format!("cpu range {part} is backwards"));
+            }
+            for c in lo..=hi {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        } else {
+            let c: usize = part.parse().map_err(|_| format!("bad cpu {part}"))?;
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(format!("cpu list {text} named no core"));
+    }
+    Ok(out)
+}
+
+/// Busy fraction of cores that are not in `pinned`, from two `/proc/stat` snapshots.
+///
+/// Each line is `cpuN user nice system idle iowait irq softirq steal ...`. Busy is
+/// user+nice+system+irq+softirq+steal. A core with no elapsed ticks is omitted.
+pub fn other_core_busy(before: &str, after: &str, pinned: &[usize]) -> Vec<(usize, f64)> {
+    let mut prior = std::collections::BTreeMap::new();
+    for line in before.lines() {
+        if let Some((cpu, busy, total)) = parse_cpu_n(line) {
+            prior.insert(cpu, (busy, total));
+        }
+    }
+    let mut out = Vec::new();
+    for line in after.lines() {
+        let Some((cpu, busy, total)) = parse_cpu_n(line) else { continue };
+        if pinned.contains(&cpu) {
+            continue;
+        }
+        let Some((b0, t0)) = prior.get(&cpu) else { continue };
+        let db = busy.saturating_sub(*b0) as f64;
+        let dt = total.saturating_sub(*t0) as f64;
+        if dt > 0.0 {
+            out.push((cpu, db / dt));
+        }
+    }
+    out
+}
+
+fn parse_cpu_n(line: &str) -> Option<(usize, u64, u64)> {
+    let mut it = line.split_whitespace();
+    let name = it.next()?;
+    let cpu = name.strip_prefix("cpu")?.parse().ok()?;
+    let mut f = [0u64; 8];
+    for slot in &mut f {
+        *slot = it.next()?.parse().ok()?;
+    }
+    let busy = f[0] + f[1] + f[2] + f[5] + f[6] + f[7];
+    let total = busy + f[3] + f[4];
+    Some((cpu, busy, total))
 }
 
 /// How many times to re-read the load average before calling the host load-gated.
@@ -206,14 +343,7 @@ impl Drop for StopReader<'_> {
 /// `whole-system` (macmon), `psys`, `board` (INA3221), and `gpu` (NVML). Two rows share
 /// a scope only when the label is the same one of those.
 pub fn scopes_may_share_a_table(a: &str, b: &str) -> bool {
-    a == b && matches!(a, "package" | "whole-system" | "psys" | "board" | "gpu")
-}
-
-/// A, B, A, B, ... with `n` runs of each sampler.
-///
-/// The sequence begins ferrotherm, THRML, ferrotherm. Neither sampler is a block at the end.
-pub fn ab_schedule(n: usize) -> Vec<&'static str> {
-    (0..n * 2).map(|i| if i % 2 == 0 { "ferrotherm" } else { "thrml" }).collect()
+    a == b && matches!(a, "package" | "core" | "whole-system" | "psys" | "board" | "gpu")
 }
 
 /// One poll of the 1-minute load average against the unchanged quiet threshold.
@@ -454,19 +584,24 @@ pub fn trial_joules(
     scope: &str,
     grade: &'static str,
     counter_updates: u32,
+    drift_ok: bool,
 ) -> Joules {
     let (incremental, clears_band) = split_incremental(gross, idle_watts, idle_sigma, seconds);
     let cadence = counter_updates >= MIN_COUNTER_UPDATES;
     let moved = gross.is_finite() && gross > 0.0;
-    let attributable = clears_band && cadence && moved && incremental.is_finite();
-    let note = if !cadence {
+    let attributable = clears_band && cadence && moved && drift_ok;
+    let note = if !drift_ok {
+        "attribution refused: the idle bracket drifted, or the quiet gate failed on a bracket".to_string()
+    } else if !cadence {
         format!(
             "attribution refused: the counter advanced {counter_updates} times and the floor is {MIN_COUNTER_UPDATES}"
         )
     } else if !moved {
         "attribution refused: gross energy was not strictly positive".to_string()
+    } else if incremental.is_finite() && incremental <= 0.0 {
+        "attribution refused: incremental energy is negative".to_string()
     } else if !clears_band {
-        "incremental joules are inside the idle band and are not a per-sample price".to_string()
+        "attribution refused: incremental energy is inside the idle noise band".to_string()
     } else {
         String::new()
     };
@@ -504,6 +639,18 @@ pub struct EnergyTrial {
     pub other_cpu_s: Option<f64>,
     pub grade: &'static str,
     pub rank: &'static str,
+    /// Watts of the idle window before this pair.
+    pub idle_before_w: Option<f64>,
+    /// Watts of the idle window after this pair.
+    pub idle_after_w: Option<f64>,
+    /// Absolute drift of the bracket, in watts.
+    pub baseline_drift_w: Option<f64>,
+    /// Ferrotherm incremental minus THRML incremental on this scope. `None` when one side is missing.
+    pub paired_delta_j: Option<f64>,
+    /// The paired difference cleared drift, cadence, and noise. Sign is allowed.
+    pub paired_attributable: bool,
+    /// Busy fraction of cores outside the pin, `cpu:fraction` comma-separated. Empty when unpinned.
+    pub other_core_busy: String,
 }
 
 impl EnergyTrial {
@@ -536,6 +683,12 @@ impl EnergyTrial {
             other_cpu_s,
             grade,
             rank,
+            idle_before_w: None,
+            idle_after_w: None,
+            baseline_drift_w: None,
+            paired_delta_j: None,
+            paired_attributable: false,
+            other_core_busy: String::new(),
         }
     }
 }
@@ -634,6 +787,9 @@ pub struct Probe {
     pub wall_note: String,
     pub rapl: Option<RaplCounter>,
     pub rapl_note: String,
+    /// The `core` subdomain (`intel-rapl:0:0`). Not added to the package counter.
+    pub rapl_core: Option<RaplCounter>,
+    pub rapl_core_note: String,
     pub perf: Option<PerfPkg>,
     pub perf_note: String,
     pub nvml: Option<Nvml>,
@@ -660,6 +816,10 @@ impl Probe {
                 (Some(c), note)
             }
             Err(e) => (None, e),
+        };
+        let (rapl_core, rapl_core_note) = match rapl.as_ref().and_then(|c| RaplCounter::open_core(c.counter_path())) {
+            Some(c) => (Some(c), "core subdomain, reported separately from package".into()),
+            None => (None, "no readable core subdomain".into()),
         };
         let (perf, perf_note) = if rapl.is_some() {
             (None, "not opened; RAPL powercap is the CPU counter".into())
@@ -695,6 +855,8 @@ impl Probe {
             wall_note,
             rapl,
             rapl_note,
+            rapl_core,
+            rapl_core_note,
             perf,
             perf_note,
             nvml,
@@ -882,6 +1044,30 @@ impl RaplCounter {
     pub fn delta_j(&self, prev: u64, now: u64) -> f64 {
         counter_delta_j(prev as f64 / 1e6, now as f64 / 1e6, self.max_uj as f64 / 1e6)
     }
+
+    /// The `core` child of a package domain, if its `energy_uj` is readable.
+    ///
+    /// This is `intel-rapl:0:0` on the Framework machine. It is a subdomain of the package,
+    /// so its joules are not added to the package joules.
+    pub fn open_core(package: &std::path::Path) -> Option<RaplCounter> {
+        let rd = std::fs::read_dir(package).ok()?;
+        for ent in rd.flatten() {
+            let p = ent.path();
+            let name = std::fs::read_to_string(p.join("name")).unwrap_or_default();
+            if name.trim() != "core" {
+                continue;
+            }
+            if std::fs::read_to_string(p.join("energy_uj")).is_err() {
+                continue;
+            }
+            let max = std::fs::read_to_string(p.join("max_energy_range_uj"))
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(u64::MAX);
+            return Some(RaplCounter { path: p, max_uj: max, name: "core".into(), kind: "core" });
+        }
+        None
+    }
 }
 
 fn watts_over(dir: &std::path::Path, secs: f64) -> Option<f64> {
@@ -1011,6 +1197,68 @@ unsafe extern "C" {
     // ABI and is the declaration rustc 1.99 warned as a mismatched runtime symbol.
     fn read(fd: i32, buf: *mut std::ffi::c_void, count: usize) -> isize;
     fn close(fd: i32) -> i32;
+}
+
+/// `sched_setaffinity(0, mask)` without a second declaration of `syscall`.
+fn affinity_syscall(mask: &[u8]) -> i64 {
+    let mut rc: i64;
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 203i64,
+            in("rdi") 0i64,
+            in("rsi") mask.len(),
+            in("rdx") mask.as_ptr(),
+            lateout("rax") rc,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") 122i64,
+            in("x0") 0i64,
+            in("x1") mask.len(),
+            in("x2") mask.as_ptr(),
+            lateout("x0") rc,
+        );
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        rc = -1;
+        let _ = mask;
+    }
+    rc
+}
+
+/// Pin this process to `cpus`. Children spawned afterwards inherit the mask.
+///
+/// `sched_setaffinity` is tried first. If it fails, `taskset -c LIST -p PID` is tried.
+/// Neither path asks for a privilege the process does not already have.
+pub fn pin_current(cpus: &[usize]) -> Result<(), String> {
+    if cpus.is_empty() {
+        return Err("cpu pin was empty".into());
+    }
+    let max = *cpus.iter().max().expect("nonempty");
+    let nbytes = (max / 8 + 1).next_multiple_of(8);
+    let mut mask = vec![0u8; nbytes];
+    for &c in cpus {
+        mask[c / 8] |= 1 << (c % 8);
+    }
+    let rc = affinity_syscall(&mask);
+    if rc == 0 {
+        return Ok(());
+    }
+    let list = cpus.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",");
+    let pid = std::process::id().to_string();
+    match std::process::Command::new("taskset").args(["-c", &list, "-p", &pid]).status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("sched_setaffinity returned {rc} and taskset exited {s}")),
+        Err(e) => Err(format!("sched_setaffinity returned {rc} and taskset was not started: {e}")),
+    }
 }
 
 /// Snapshot of machine busy ticks and this process's own ticks.
@@ -1231,6 +1479,9 @@ mod tests {
         let (small, ok) = split_incremental(8.1, 4.0, 0.1, 2.0);
         assert!((small - 0.1).abs() < 1e-12);
         assert!(!ok, "0.1 J does not clear a 0.6 J band");
+        let (neg, ok) = split_incremental(4.0, 4.0, 0.1, 2.0);
+        assert!((neg + 4.0).abs() < 1e-12);
+        assert!(!ok, "a negative incremental is not attributable even when it clears the band");
     }
 
     #[test]
@@ -1307,8 +1558,11 @@ mod tests {
 
     #[test]
     fn interleaved_order_starts_aba_and_gives_each_side_five() {
-        let seq = ab_schedule(5);
-        assert_eq!(&seq[..3], &["ferrotherm", "thrml", "ferrotherm"]);
+        let mut seq = Vec::new();
+        for pair in 0..5 {
+            seq.extend(pair_order(pair));
+        }
+        assert_eq!(&seq[..4], &["ferrotherm", "thrml", "thrml", "ferrotherm"]);
         assert_eq!(seq.iter().filter(|s| **s == "ferrotherm").count(), 5);
         assert_eq!(seq.iter().filter(|s| **s == "thrml").count(), 5);
     }
@@ -1328,7 +1582,7 @@ mod tests {
     #[test]
     fn incremental_ci_stays_inside_one_grade() {
         let mk = |g: &'static str, inc: f64| {
-            let j = trial_joules(inc + 10.0, 10.0, 0.01, 1.0, "rapl", "package", g, MIN_COUNTER_UPDATES);
+            let j = trial_joules(inc + 10.0, 10.0, 0.01, 1.0, "rapl", "package", g, MIN_COUNTER_UPDATES, true);
             EnergyTrial::from_parts(
                 "ising_grid2d_open_3x3",
                 "ferrotherm",
@@ -1404,6 +1658,7 @@ mod tests {
             "package",
             GRADE_CONTENDED,
             0,
+            true,
         );
         let inc = missed.incremental.unwrap();
         assert!(inc < -0.03 && inc > -0.032, "{inc}");
@@ -1419,6 +1674,7 @@ mod tests {
             "package",
             GRADE_CONTENDED,
             1,
+            true,
         );
         assert!(!one_tick.attributable, "one counter tick is below the cadence floor");
 
@@ -1431,6 +1687,7 @@ mod tests {
             "package",
             GRADE_CONTENDED,
             MIN_COUNTER_UPDATES,
+            true,
         );
         assert!(held.attributable);
         assert!(joules_per_ess(&held, 1000.0).is_some());
@@ -1442,7 +1699,7 @@ mod tests {
         assert!(scopes_may_share_a_table("package", "package"));
         assert!(!scopes_may_share_a_table("cpu-package", "cpu-package"));
         let row = |workload: &'static str, scope: &'static str| {
-            let j = trial_joules(2.0, 1.0, 0.01, 1.0, if scope == "package" { "rapl" } else { "macmon" }, scope, GRADE_CONTENDED, MIN_COUNTER_UPDATES);
+            let j = trial_joules(2.0, 1.0, 0.01, 1.0, if scope == "package" { "rapl" } else { "macmon" }, scope, GRADE_CONTENDED, MIN_COUNTER_UPDATES, true);
             EnergyTrial::from_parts(workload, "ferrotherm", 0, 4, MIN_COUNTER_UPDATES, 2.0, j, 10.0, Some(2.5), Some(0.2), GRADE_CONTENDED, "primary")
         };
         let package = row("thrml_readme_ising_chain_n5", "package");
@@ -1472,5 +1729,44 @@ mod tests {
         assert!((parse_tegrastats_vdd_in_watts(mw).unwrap() - 2.5).abs() < 1e-12);
         assert!(parse_tegrastats_vdd_in_watts("VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717").is_none());
         assert!(parse_tegrastats_vdd_in_watts("no power here").is_none());
+    }
+
+    #[test]
+    fn a_negative_or_drifting_bracket_is_not_attributable_and_pairs_keep_their_sign() {
+        let neg = trial_joules(4.0, 4.0, 0.01, 2.0, "rapl", "package", GRADE_CONTENDED, MIN_COUNTER_UPDATES, true);
+        assert!(neg.incremental.unwrap() < 0.0);
+        assert!(!neg.attributable);
+        assert!(joules_per_ess(&neg, 100.0).is_none());
+        let drifted = trial_joules(20.0, 4.0, 0.01, 2.0, "rapl", "package", GRADE_CONTENDED, MIN_COUNTER_UPDATES, false);
+        assert!(!drifted.attributable);
+        let (mean, sigma, drift, ok) = combine_bracket(10.0, 0.2, 10.1, 0.2);
+        assert!((mean - 10.05).abs() < 1e-12);
+        assert!(ok, "0.1 W drift against sigma 0.2 is inside 3 sigma, drift {drift} sigma {sigma}");
+        let (_, _, big, ok) = combine_bracket(10.0, 0.1, 12.0, 0.1);
+        assert!(!ok && (big - 2.0).abs() < 1e-12);
+        let delta = paired_delta(1.5, 4.0);
+        assert!((delta + 2.5).abs() < 1e-12);
+        assert!(paired_attributable(delta, 0.05, 2.0, 2.0, true, MIN_COUNTER_UPDATES, MIN_COUNTER_UPDATES));
+        assert!(!paired_attributable(0.01, 0.05, 2.0, 2.0, true, MIN_COUNTER_UPDATES, MIN_COUNTER_UPDATES));
+        assert!(!paired_attributable(delta, 0.05, 2.0, 2.0, false, MIN_COUNTER_UPDATES, MIN_COUNTER_UPDATES));
+        assert_eq!(pair_order(0), ["ferrotherm", "thrml"]);
+        assert_eq!(pair_order(1), ["thrml", "ferrotherm"]);
+        assert!(!scopes_may_share_a_table("package", "core"));
+        assert!(scopes_may_share_a_table("core", "core"));
+    }
+
+    #[test]
+    fn cpu_pin_lists_parse_and_other_cores_are_the_ones_outside_the_set() {
+        assert_eq!(parse_cpu_list("0-2,8").unwrap(), vec![0, 1, 2, 8]);
+        assert!(parse_cpu_list("").is_err());
+        assert!(parse_cpu_list("3-1").is_err());
+        let before = "cpu  0 0 0 0 0 0 0 0\ncpu0 10 0 0 80 0 0 0 10\ncpu1 10 0 0 90 0 0 0 0\ncpu2 0 0 0 100 0 0 0 0\n";
+        let after = "cpu  0 0 0 0 0 0 0 0\ncpu0 30 0 0 80 0 0 0 10\ncpu1 60 0 0 140 0 0 0 0\ncpu2 0 0 0 200 0 0 0 0\n";
+        let busy = other_core_busy(before, after, &[0]);
+        assert_eq!(busy.len(), 2);
+        assert_eq!(busy[0].0, 1);
+        assert!((busy[0].1 - 0.5).abs() < 1e-12, "cpu1 busy {}", busy[0].1);
+        assert_eq!(busy[1].0, 2);
+        assert!(busy[1].1.abs() < 1e-12);
     }
 }

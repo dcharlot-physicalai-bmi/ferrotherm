@@ -1,0 +1,12 @@
+[
+  {
+    "path": "/sys/class/powercap/intel-rapl:0",
+    "name": "package-0",
+    "max_energy_range_uj": 65532610987
+  },
+  {
+    "path": "/sys/class/powercap/intel-rapl:0:0",
+    "name": "core",
+    "max_energy_range_uj": 65532610987
+  }
+]

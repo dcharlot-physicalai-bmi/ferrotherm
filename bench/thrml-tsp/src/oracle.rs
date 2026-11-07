@@ -16,7 +16,6 @@
 //! graph is not an enumerable law. The check that can be made here is the same block
 //! Gibbs on lattices whose energy is known.
 
-use ferrotherm::free_energy::onsager_energy_density;
 use ferrotherm::ising::{exact_boltzmann, grid2d};
 use ferrotherm::pfaffian;
 use ferrotherm::potts::{self, Interaction, PottsBuilder};
@@ -220,12 +219,20 @@ fn collapse(log_w: &[f64], mean_e: &[f64]) -> Result<LatticeEnergy, String> {
     Ok(LatticeEnergy { log_z: acc_l, mean_energy: acc_e })
 }
 
-/// Onsager's infinite-square-lattice internal energy, times `l²` sites.
+/// Mean energy of a long heat-bath chain on the finite open grid.
 ///
-/// This is not the finite-lattice mean. Callers that subtract it from a finite sample
-/// are measuring finite-size error and sampling error together.
-pub fn onsager_total(l: usize, j: f64, beta: f64) -> f64 {
-    onsager_energy_density(beta, j) * (l * l) as f64
+/// This is a Monte Carlo reference, not a closed form. It is what 32×32 and 64×64 use
+/// instead of Onsager's infinite lattice. The chain is 200 sweeps of burn-in and 400
+/// kept draws, seed `seed`, started from all −1.
+pub fn ising_reference_chain(side: usize, j: f64, beta: f64, seed: u64) -> f64 {
+    let g = grid2d(side, side, j);
+    let mut smp = ferrotherm::gibbs::Sampler::new(&g, beta, seed);
+    for s in &mut smp.s {
+        *s = -1;
+    }
+    let set = smp.collect(&ferrotherm::samples::Plan::new(200, 400, 1), None);
+    let e = set.energies();
+    e.iter().sum::<f64>() / e.len() as f64
 }
 
 /// Mean energy of an open Ising grid by enumeration. `None` above 20 spins.
@@ -253,6 +260,57 @@ pub fn ising_kac_ward_energy(l: usize, j: f64, beta: f64) -> Result<f64, String>
     sol.energy.ok_or_else(|| "Kac-Ward did not return an internal energy".into())
 }
 
+/// Every state of an open Potts grid, streamed. `3^16` is about 43 million states.
+///
+/// The mean is accumulated in log space. The distribution is not stored.
+pub fn potts_open_brute_mean(l: usize, q: usize, j: f64, beta: f64) -> Result<f64, String> {
+    if q < 2 || l == 0 {
+        return Err("brute Potts needs q >= 2 and a side".into());
+    }
+    let n = l * l;
+    let states = q.checked_pow(u32::try_from(n).map_err(|_| "n".to_string())?).ok_or("state count overflow")?;
+    let mut edges = Vec::new();
+    for y in 0..l {
+        for x in 0..l {
+            let i = y * l + x;
+            if x + 1 < l {
+                edges.push((i, i + 1));
+            }
+            if y + 1 < l {
+                edges.push((i, i + l));
+            }
+        }
+    }
+    let mut state = vec![0u8; n];
+    let mut log_z = f64::NEG_INFINITY;
+    let mut mean = 0.0;
+    for _ in 0..states {
+        let mut energy = 0.0;
+        for &(a, b) in &edges {
+            if state[a] == state[b] {
+                energy -= j;
+            }
+        }
+        let (nl, nm) = log_sum_mean(log_z, mean, -beta * energy, energy);
+        log_z = nl;
+        mean = nm;
+        let mut k = 0;
+        while k < n {
+            let next = usize::from(state[k]) + 1;
+            if next < q {
+                state[k] = next as u8;
+                break;
+            }
+            state[k] = 0;
+            k += 1;
+        }
+    }
+    if !mean.is_finite() {
+        return Err("brute Potts mean was not finite".into());
+    }
+    Ok(mean)
+}
+
 /// Enumerated Potts mean on an open grid. `None` when `q^{L²}` exceeds the library limit.
 pub fn potts_enumerated_mean(l: usize, q: usize, j: f64, beta: f64) -> Option<f64> {
     let n = l * l;
@@ -278,6 +336,7 @@ pub fn potts_enumerated_mean(l: usize, q: usize, j: f64, beta: f64) -> Option<f6
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrotherm::free_energy::onsager_energy_density;
     use ferrotherm::gibbs::Sampler;
     use ferrotherm::samples::Plan;
 
@@ -348,6 +407,99 @@ mod tests {
         assert!(potts_open_transfer(8, 5, j, beta).is_err(), "5^8 does not fit the vector");
         assert!(beta < potts::critical_beta(3));
         assert!(beta < potts::critical_beta(4));
+    }
+
+    #[test]
+    fn q3_4x4_transfer_matrix_matches_brute_force_enumeration() {
+        let j = 1.0;
+        let beta = 0.5;
+        let tm = potts_open_transfer(4, 3, j, beta).unwrap();
+        let brute = potts_open_brute_mean(4, 3, j, beta).unwrap();
+        assert!(
+            (tm.mean_energy - brute).abs() < 1e-6,
+            "transfer matrix {} brute {}",
+            tm.mean_energy,
+            brute
+        );
+    }
+
+    fn potts_chain_workload(warmup: usize, draws: usize) -> crate::spec::Workload {
+        let side = 4usize;
+        let q = 3usize;
+        let j = 1.0;
+        let n = side * side;
+        let mut edges = Vec::new();
+        let mut even = Vec::new();
+        let mut odd = Vec::new();
+        for y in 0..side {
+            for x in 0..side {
+                let i = y * side + x;
+                if x + 1 < side {
+                    edges.push((i, i + 1, j));
+                }
+                if y + 1 < side {
+                    edges.push((i, i + side, j));
+                }
+                if (x + y).is_multiple_of(2) {
+                    even.push(i);
+                } else {
+                    odd.push(i);
+                }
+            }
+        }
+        let mean = potts_open_transfer(side, q, j, 0.5).unwrap().mean_energy;
+        crate::spec::Workload {
+            id: "potts_open_q3_4x4",
+            kind: crate::spec::Kind::Potts,
+            beta: 0.5,
+            warmup,
+            draws,
+            thin: 1,
+            trials: 1,
+            seed0: 1,
+            source: "test",
+            n,
+            q,
+            biases: vec![0.0; n],
+            edges,
+            triples: Vec::new(),
+            blocks: vec![even, odd],
+            exact_energy: Some(mean),
+            oracle: "transfer matrix",
+        }
+    }
+
+    #[test]
+    fn longer_q3_4x4_chains_cover_the_transfer_matrix() {
+        let j = 1.0;
+        let beta = 0.5;
+        let oracle = potts_open_transfer(4, 3, j, beta).unwrap().mean_energy;
+        let mut means = Vec::new();
+        for seed in 0..12u64 {
+            let w = potts_chain_workload(1500, 1500);
+            let chain = crate::ft::run(&w, seed).unwrap();
+            means.push(chain.score.mean_energy);
+        }
+        let n = means.len() as f64;
+        let mean = means.iter().sum::<f64>() / n;
+        let var = means.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        let half = 2.201 * (var / n).sqrt();
+        let lo = mean - half;
+        let hi = mean + half;
+        assert!(
+            oracle >= lo && oracle <= hi,
+            "q=3 4x4 oracle {oracle} outside chain interval [{lo}, {hi}] mean {mean}"
+        );
+    }
+
+    #[test]
+    fn an_8x8_reference_chain_lands_near_the_transfer_matrix() {
+        let j = 1.0;
+        let beta = 0.3;
+        let tm = ising_open_transfer(8, j, beta).unwrap();
+        let chain = ising_reference_chain(8, j, beta, 3);
+        let gap = (chain - tm.mean_energy).abs() / 64.0;
+        assert!(gap < 0.05, "reference {chain} transfer {} per-site gap {gap}", tm.mean_energy);
     }
 
     #[test]

@@ -1,0 +1,6 @@
+From https://github.com/dcharlot-physicalai-bmi/ferrotherm
+ * branch            bench/thrml-tsp-fleet -> FETCH_HEAD
+Previous HEAD position was 0029c27 Publish the 189502d contended joules and refuse a short RAPL window.
+HEAD is now at 8e9ad0a Add scaled Ising, Potts, and three-body workloads, and a CUDA energy path.
+   Compiling ferrotherm-thrml-bench v0.0.0 (/home/dcharlot/bench-scratch/ferrotherm-thrml/bench/thrml-tsp)
+    Finished `release` profile [optimized] target(s) in 10.52s
