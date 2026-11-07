@@ -1,0 +1,16 @@
+# Resolved together on 2026-11-07 against PyPI, then smoke-tested:
+# a 5-spin Ising chain from the THRML 0.1.4 README samples on jaxlib CPU.
+# thrml 0.1.4 does not pin JAX. These pins are the resolution this harness ran.
+# jax[cpu] keeps the reproduction on the CPU build of jaxlib. A GPU run is a
+# different instrument and has to be labelled as one.
+thrml==0.1.4
+jax[cpu]==0.12.0.1
+jaxlib==0.12.0.1
+equinox==0.13.8
+jaxtyping==0.3.11
+numpy==2.5.4
+scipy==1.18.1
+ml_dtypes==0.6.0
+opt_einsum==3.4.0
+wadler_lindig==0.1.8
+typing_extensions==4.16.0
