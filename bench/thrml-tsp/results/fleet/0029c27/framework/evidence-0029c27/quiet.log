@@ -1,0 +1,71 @@
+wall: no macmon and no INA3221 rail
+rapl: package-0 (package)
+perf: not opened; RAPL powercap is the CPU counter
+nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)
+load1: Some(2.52) quiet: false
+THRML via /home/dcharlot/bench-scratch/thrml-venv/bin/python /home/dcharlot/bench-scratch/ferrotherm-thrml/bench/thrml-tsp/python/runner.py
+thrml thrml_readme_ising_chain_n5 seed 260801615 0.403s
+thrml thrml_readme_ising_chain_n5 seed 260801616 0.273s
+thrml thrml_readme_ising_chain_n5 seed 260801617 0.275s
+thrml thrml_readme_ising_chain_n5 seed 260801618 0.269s
+thrml thrml_readme_ising_chain_n5 seed 260801619 0.273s
+thrml ising_grid2d_open_3x3 seed 260801715 0.375s
+thrml ising_grid2d_open_3x3 seed 260801716 0.309s
+thrml ising_grid2d_open_3x3 seed 260801717 0.311s
+thrml ising_grid2d_open_3x3 seed 260801718 0.315s
+thrml ising_grid2d_open_3x3 seed 260801719 0.320s
+thrml potts_path_q3_n6 seed 260801815 1.157s
+thrml potts_path_q3_n6 seed 260801816 1.143s
+thrml potts_path_q3_n6 seed 260801817 1.143s
+thrml potts_path_q3_n6 seed 260801818 1.131s
+thrml potts_path_q3_n6 seed 260801819 1.144s
+thrml tsp_iv4_three_body_d8 seed 260801915 0.749s
+thrml tsp_iv4_three_body_d8 seed 260801916 0.743s
+thrml tsp_iv4_three_body_d8 seed 260801917 0.737s
+thrml tsp_iv4_three_body_d8 seed 260801918 0.739s
+thrml tsp_iv4_three_body_d8 seed 260801919 0.744s
+ferrotherm thrml_readme_ising_chain_n5
+  seed 260801615 tv 0.0402 tau 0.621 ess/s 3.0132e6
+  seed 260801616 tv 0.0546 tau 1.040 ess/s 1.9005e6
+  seed 260801617 tv 0.0518 tau 0.627 ess/s 3.1549e6
+  seed 260801618 tv 0.0671 tau 0.530 ess/s 3.7530e6
+  seed 260801619 tv 0.0488 tau 0.552 ess/s 3.5090e6
+  thrml seed 260801615 tv 0.0524 tau 0.558 ess/s 4.4524e3 (jit 0.36s, not in ess/s)
+  thrml seed 260801616 tv 0.0539 tau 0.647 ess/s 5.6640e3 (jit 0.36s, not in ess/s)
+  thrml seed 260801617 tv 0.0418 tau 0.871 ess/s 4.1730e3 (jit 0.36s, not in ess/s)
+  thrml seed 260801618 tv 0.0512 tau 0.567 ess/s 6.5684e3 (jit 0.36s, not in ess/s)
+  thrml seed 260801619 tv 0.0455 tau 0.550 ess/s 6.6543e3 (jit 0.36s, not in ess/s)
+ferrotherm ising_grid2d_open_3x3
+  seed 260801715 tv 0.1644 tau 0.758 ess/s 2.1705e6
+  seed 260801716 tv 0.1570 tau 0.912 ess/s 1.8201e6
+  seed 260801717 tv 0.1606 tau 0.904 ess/s 1.8222e6
+  seed 260801718 tv 0.1486 tau 0.942 ess/s 1.7652e6
+  seed 260801719 tv 0.1535 tau 0.955 ess/s 1.7259e6
+  thrml seed 260801715 tv 0.1468 tau 0.778 ess/s 3.4289e3 (jit 0.25s, not in ess/s)
+  thrml seed 260801716 tv 0.1530 tau 0.834 ess/s 3.8770e3 (jit 0.25s, not in ess/s)
+  thrml seed 260801717 tv 0.1521 tau 0.782 ess/s 4.1159e3 (jit 0.25s, not in ess/s)
+  thrml seed 260801718 tv 0.1481 tau 0.897 ess/s 3.5433e3 (jit 0.25s, not in ess/s)
+  thrml seed 260801719 tv 0.1568 tau 0.883 ess/s 3.5366e3 (jit 0.25s, not in ess/s)
+ferrotherm potts_path_q3_n6
+  seed 260801815 tv 0.2273 tau 0.500 ess/s 3.7412e6
+  seed 260801816 tv 0.2445 tau 0.518 ess/s 3.7055e6
+  seed 260801817 tv 0.2362 tau 0.733 ess/s 2.5854e6
+  seed 260801818 tv 0.2207 tau 0.615 ess/s 3.1098e6
+  seed 260801819 tv 0.2405 tau 0.516 ess/s 3.7027e6
+  thrml seed 260801815 tv 0.2223 tau 0.608 ess/s 1.4217e3 (jit 0.46s, not in ess/s)
+  thrml seed 260801816 tv 0.2231 tau 0.537 ess/s 1.6301e3 (jit 0.46s, not in ess/s)
+  thrml seed 260801817 tv 0.2395 tau 0.538 ess/s 1.6256e3 (jit 0.46s, not in ess/s)
+  thrml seed 260801818 tv 0.2211 tau 0.560 ess/s 1.5803e3 (jit 0.46s, not in ess/s)
+  thrml seed 260801819 tv 0.2303 tau 0.551 ess/s 1.5862e3 (jit 0.46s, not in ess/s)
+ferrotherm tsp_iv4_three_body_d8
+  seed 260801915 tv 0.1127 tau 0.769 ess/s 2.3423e6
+  seed 260801916 tv 0.0329 tau 6.828 ess/s 2.6532e5
+  seed 260801917 tv 0.0793 tau 10.637 ess/s 1.7107e5
+  seed 260801918 tv 0.0765 tau 8.168 ess/s 2.2076e5
+  seed 260801919 tv 0.1643 tau 20.141 ess/s 8.9645e4
+  thrml seed 260801915 tv 0.0612 tau 11.519 ess/s 1.1592e2 (jit 0.43s, not in ess/s)
+  thrml seed 260801916 tv 0.0857 tau 13.451 ess/s 1.0008e2 (jit 0.43s, not in ess/s)
+  thrml seed 260801917 tv 0.0258 tau 2.175 ess/s 6.2348e2 (jit 0.43s, not in ess/s)
+  thrml seed 260801918 tv 0.0622 tau 17.390 ess/s 7.7788e1 (jit 0.43s, not in ess/s)
+  thrml seed 260801919 tv 0.0904 tau 4.400 ess/s 3.0547e2 (jit 0.43s, not in ess/s)
+wrote /home/dcharlot/bench-scratch/evidence-0029c27/quiet/report.json

@@ -1,0 +1,58 @@
+{
+  "framework": {
+    "revision": "0029c270ea401109254f691ad78bc1666c9540df",
+    "dirty": false,
+    "outcome": "measured",
+    "grade": "contended host",
+    "start_load1": 2.65,
+    "energy_load_samples": [
+      2.81
+    ],
+    "idle_watts": 37.3700971,
+    "idle_sigma": 0.309415322,
+    "attributable": 40,
+    "trial_count": 40,
+    "window_s_min": 2.000025,
+    "window_s_max": 2.404664,
+    "counter_updates_min": 1999,
+    "counter_updates_max": 2397,
+    "anomalies": [],
+    "quiet_outcome": "load_gated",
+    "quiet_load_samples": [
+      2.86,
+      2.79,
+      2.79,
+      2.79,
+      2.73,
+      2.73,
+      2.75,
+      2.75,
+      2.75,
+      2.77,
+      2.77,
+      2.71,
+      2.71,
+      2.71,
+      2.65
+    ]
+  },
+  "m5": {
+    "revision": "0029c270ea401109254f691ad78bc1666c9540df",
+    "dirty": false,
+    "outcome": "measured",
+    "grade": "contended host",
+    "start_load1": 1.63,
+    "energy_load_samples": [
+      1.83
+    ],
+    "idle_watts": 12.8485681,
+    "idle_sigma": 0.153944291,
+    "attributable": 40,
+    "trial_count": 40,
+    "window_s_min": 2.000041,
+    "window_s_max": 2.713468,
+    "counter_updates_min": 18,
+    "counter_updates_max": 25,
+    "anomalies": []
+  }
+}

@@ -824,7 +824,7 @@ impl PerfPkg {
 
     pub fn read_raw(&self) -> Result<u64, String> {
         let mut buf = [0u8; 8];
-        let n = unsafe { read(self.fd, buf.as_mut_ptr(), buf.len()) };
+        let n = unsafe { read(self.fd, buf.as_mut_ptr().cast(), buf.len()) };
         if n != 8 {
             return Err(format!("perf energy-pkg read returned {n}"));
         }
@@ -842,7 +842,7 @@ impl PerfPkg {
 
 pub fn perf_sample_j(fd: i32, scale: f64) -> Option<f64> {
     let mut buf = [0u8; 8];
-    let n = unsafe { read(fd, buf.as_mut_ptr(), buf.len()) };
+    let n = unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) };
     if n == 8 { Some(u64::from_ne_bytes(buf) as f64 * scale) } else { None }
 }
 
@@ -914,7 +914,9 @@ const SYS_PERF_EVENT_OPEN: i64 = 241;
 
 unsafe extern "C" {
     fn syscall(n: i64, attr: *const u8, pid: isize, cpu: isize, group: isize, flags: u64) -> i64;
-    fn read(fd: i32, buf: *mut u8, count: usize) -> isize;
+    // POSIX `read` as the standard library names it. `*mut u8` is the same pointer
+    // ABI and is the declaration rustc 1.99 warned as a mismatched runtime symbol.
+    fn read(fd: i32, buf: *mut std::ffi::c_void, count: usize) -> isize;
     fn close(fd: i32) -> i32;
 }
 

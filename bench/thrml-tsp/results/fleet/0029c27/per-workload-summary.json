@@ -1,0 +1,482 @@
+[
+  {
+    "host": "framework",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "ferrotherm",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0349753044,
+      "lo95": 0.0345073745,
+      "hi95": 0.0354432342,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00762297997,
+      "lo95": 0.00716986192,
+      "hi95": 0.00807609803,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 4.73864417e-06,
+      "lo95": 4.45701112e-06,
+      "hi95": 5.02027723e-06,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.17,
+    "load1_max": 3.23
+  },
+  {
+    "host": "framework",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "thrml",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 14.8533452,
+      "lo95": 14.1554931,
+      "hi95": 15.5511972,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 4.42705006,
+      "lo95": 4.18247246,
+      "hi95": 4.67162766,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.00277753027,
+      "lo95": 0.00240850973,
+      "hi95": 0.00314655081,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.16,
+    "load1_max": 3.21
+  },
+  {
+    "host": "framework",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "ferrotherm",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0422565478,
+      "lo95": 0.0414073796,
+      "hi95": 0.043105716,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00951579834,
+      "lo95": 0.00851408589,
+      "hi95": 0.0105175108,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 8.47697947e-06,
+      "lo95": 7.58536698e-06,
+      "hi95": 9.36859196e-06,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.11,
+    "load1_max": 3.16
+  },
+  {
+    "host": "framework",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "thrml",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 16.9857013,
+      "lo95": 16.6777909,
+      "hi95": 17.2936117,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 4.95333738,
+      "lo95": 4.82329748,
+      "hi95": 5.08337727,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.00448414457,
+      "lo95": 0.00442244895,
+      "hi95": 0.00454584019,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.11,
+    "load1_max": 3.15
+  },
+  {
+    "host": "framework",
+    "workload": "potts_path_q3_n6",
+    "side": "ferrotherm",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0383715276,
+      "lo95": 0.0372722332,
+      "hi95": 0.0394708219,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00891746875,
+      "lo95": 0.00758209876,
+      "hi95": 0.0102528387,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 5.09328891e-06,
+      "lo95": 4.33088027e-06,
+      "hi95": 5.85569755e-06,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.09,
+    "load1_max": 3.16
+  },
+  {
+    "host": "framework",
+    "workload": "potts_path_q3_n6",
+    "side": "thrml",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 57.0122906,
+      "lo95": 55.9564115,
+      "hi95": 58.0681697,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 13.9607768,
+      "lo95": 13.0233807,
+      "hi95": 14.8981729,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.00765889751,
+      "lo95": 0.00707170181,
+      "hi95": 0.00824609322,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.09,
+    "load1_max": 3.16
+  },
+  {
+    "host": "framework",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "ferrotherm",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0389789301,
+      "lo95": 0.0379511372,
+      "hi95": 0.040006723,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00901661957,
+      "lo95": 0.00865248664,
+      "hi95": 0.00938075249,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 1.74431866e-05,
+      "lo95": 1.6730469e-05,
+      "hi95": 1.81559042e-05,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.12,
+    "load1_max": 3.19
+  },
+  {
+    "host": "framework",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "thrml",
+    "instrument": "rapl",
+    "scope": "package",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 38.8973009,
+      "lo95": 37.5147609,
+      "hi95": 40.2798408,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 10.7228736,
+      "lo95": 10.5511626,
+      "hi95": 10.8945846,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.0297110511,
+      "lo95": 0.0202037979,
+      "hi95": 0.0392183044,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 3.12,
+    "load1_max": 3.34
+  },
+  {
+    "host": "m5",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "ferrotherm",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.012557574,
+      "lo95": 0.012344879,
+      "hi95": 0.0127702689,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00709339689,
+      "lo95": 0.00684585859,
+      "hi95": 0.00734093518,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 4.40969033e-06,
+      "lo95": 4.2561104e-06,
+      "hi95": 4.56327027e-06,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.49,
+    "load1_max": 2.75
+  },
+  {
+    "host": "m5",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "thrml",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 4.99957169,
+      "lo95": 4.64080081,
+      "hi95": 5.35834257,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 2.51641786,
+      "lo95": 2.18592886,
+      "hi95": 2.84690687,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.00156413579,
+      "lo95": 0.00132624936,
+      "hi95": 0.00180202222,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.64,
+    "load1_max": 2.75
+  },
+  {
+    "host": "m5",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "ferrotherm",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0159285411,
+      "lo95": 0.0146396927,
+      "hi95": 0.0172173894,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00906510956,
+      "lo95": 0.00771314475,
+      "hi95": 0.0104170744,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 8.06818676e-06,
+      "lo95": 6.86359572e-06,
+      "hi95": 9.2727778e-06,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.67,
+    "load1_max": 2.79
+  },
+  {
+    "host": "m5",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "thrml",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 5.96819473,
+      "lo95": 5.67721419,
+      "hi95": 6.25917527,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 3.05959324,
+      "lo95": 2.69712091,
+      "hi95": 3.42206556,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.00280065807,
+      "lo95": 0.00247721379,
+      "hi95": 0.00312410234,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.67,
+    "load1_max": 2.87
+  },
+  {
+    "host": "m5",
+    "workload": "potts_path_q3_n6",
+    "side": "ferrotherm",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0169482621,
+      "lo95": 0.0162016368,
+      "hi95": 0.0176948874,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00860117667,
+      "lo95": 0.0078555919,
+      "hi95": 0.00934676144,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 4.91204208e-06,
+      "lo95": 4.48560206e-06,
+      "hi95": 5.33848211e-06,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.82,
+    "load1_max": 2.96
+  },
+  {
+    "host": "m5",
+    "workload": "potts_path_q3_n6",
+    "side": "thrml",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 22.2324002,
+      "lo95": 21.9661161,
+      "hi95": 22.4986844,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 10.6432397,
+      "lo95": 10.3461985,
+      "hi95": 10.9402809,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.00579050226,
+      "lo95": 0.00544504263,
+      "hi95": 0.00613596188,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.76,
+    "load1_max": 2.96
+  },
+  {
+    "host": "m5",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "ferrotherm",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 0.0182445555,
+      "lo95": 0.0170795419,
+      "hi95": 0.0194095692,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.00979340246,
+      "lo95": 0.00854508117,
+      "hi95": 0.0110417238,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 1.89290013e-05,
+      "lo95": 1.64946008e-05,
+      "hi95": 2.13634017e-05,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.61,
+    "load1_max": 2.76
+  },
+  {
+    "host": "m5",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "thrml",
+    "instrument": "macmon",
+    "scope": "whole-system",
+    "grade": "contended host",
+    "n": 5,
+    "gross_j": {
+      "mean": 15.8536676,
+      "lo95": 14.8880262,
+      "hi95": 16.819309,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 7.7988645,
+      "lo95": 6.82056854,
+      "hi95": 8.77716046,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.0230589743,
+      "lo95": 0.0175634105,
+      "hi95": 0.0285545381,
+      "n": 5
+    },
+    "attributable": 5,
+    "load1_min": 2.48,
+    "load1_max": 2.72
+  }
+]

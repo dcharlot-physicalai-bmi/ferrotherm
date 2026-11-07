@@ -1,0 +1,4 @@
+{"mode": "quiet", "command": ["/home/dcharlot/bench-scratch/ferrotherm-thrml/target/release/ferrotherm-thrml-bench", "--out", "/home/dcharlot/bench-scratch/evidence-0029c27/quiet", "--trials", "5", "--python", "/home/dcharlot/bench-scratch/thrml-venv/bin/python"], "start": "2026-11-07T12:27:43.337043+00:00"}
+{"mode": "quiet", "exit_code": 0, "end": "2026-11-07T12:28:27.219408+00:00"}
+{"mode": "contended", "command": ["/home/dcharlot/bench-scratch/ferrotherm-thrml/target/release/ferrotherm-thrml-bench", "--out", "/home/dcharlot/bench-scratch/evidence-0029c27/contended", "--trials", "5", "--python", "/home/dcharlot/bench-scratch/thrml-venv/bin/python", "--contended"], "start": "2026-11-07T12:28:27.219908+00:00"}
+{"mode": "contended", "exit_code": 0, "end": "2026-11-07T12:30:13.252711+00:00"}
