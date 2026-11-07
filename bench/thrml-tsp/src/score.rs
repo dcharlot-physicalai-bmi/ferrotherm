@@ -31,6 +31,31 @@ pub struct Score {
     pub draws: usize,
 }
 
+/// Energy, autocorrelation and ESS, without a histogram.
+///
+/// Used when the state space is not enumerated. `tv` and the KLs are non-finite and the
+/// report prints them as null. `exact_mean_energy` is whatever the caller proved: a
+/// transfer-matrix mean, or Onsager's infinite-lattice energy times `N`.
+pub fn score_mean_only(energies: &[f64], exact_mean_energy: f64, seconds: f64) -> Score {
+    let est = estimate(energies);
+    let ess_per_second = if seconds > 0.0 && est.ess.is_finite() { Some(est.ess / seconds) } else { None };
+    Score {
+        tv: f64::NAN,
+        kl_empirical_exact: f64::NAN,
+        kl_exact_empirical: None,
+        missed_states: 0,
+        tau_int_energy: est.tau_int,
+        ess_energy: est.ess,
+        ess_per_second,
+        mean_energy: est.value,
+        exact_mean_energy,
+        energy_abs_err: (est.value - exact_mean_energy).abs(),
+        magnetization_mae: None,
+        seconds,
+        draws: energies.len(),
+    }
+}
+
 pub fn score_chain(
     hist: &[f64],
     exact: &[f64],

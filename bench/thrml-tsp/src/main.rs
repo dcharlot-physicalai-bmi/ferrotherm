@@ -8,6 +8,7 @@
 
 mod energy;
 mod ft;
+mod oracle;
 mod score;
 mod spec;
 
@@ -32,12 +33,15 @@ fn main() {
             eprintln!("{e}");
             eprintln!(
                 "usage: ferrotherm-thrml-bench --out DIR [--trials N] [--warmup N] [--draws N] \
-                 [--python PY] [--skip-thrml] [--contended]"
+                 [--python PY] [--skip-thrml] [--contended] [--scale] [--device auto|cpu|cuda]"
             );
             std::process::exit(2);
         }
     };
-    let work = spec::canonical(args.trials, args.warmup, args.draws);
+    let mut work = spec::canonical(args.trials, args.warmup, args.draws);
+    if args.scale {
+        work.extend(spec::scaling(args.trials, args.warmup, args.draws));
+    }
     let spec_text = spec::write_spec(&work);
     fs::create_dir_all(&args.out).unwrap_or_else(|e| panic!("create {}: {e}", args.out.display()));
     let traces = args.out.join("traces");
@@ -61,7 +65,7 @@ fn main() {
     let thrml_raw = if args.skip_thrml {
         None
     } else {
-        match run_thrml(&args.python, &args.runner, &args.out.join("spec.txt"), &args.out.join("thrml_raw.txt")) {
+        match run_thrml(&args.python, &args.runner, &args.out.join("spec.txt"), &args.out.join("thrml_raw.txt"), &args.device) {
             Ok(()) => {
                 thrml_ok = true;
                 Some(fs::read_to_string(args.out.join("thrml_raw.txt")).unwrap_or_default())
@@ -134,6 +138,7 @@ fn main() {
         &args.runner,
         &args.out.join("spec.txt"),
         !args.skip_thrml && thrml_ok,
+        &args.device,
     );
     let report = format!(
         "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"provenance\": {prov},\n  \
@@ -159,6 +164,8 @@ struct Args {
     runner: PathBuf,
     skip_thrml: bool,
     contended: bool,
+    scale: bool,
+    device: String,
 }
 
 impl Args {
@@ -170,6 +177,8 @@ impl Args {
         let mut python = std::env::var("THRML_PYTHON").unwrap_or_else(|_| "python3".into());
         let mut skip = false;
         let mut contended = false;
+        let mut scale = false;
+        let mut device = "auto".to_string();
         let mut it = args;
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -180,6 +189,8 @@ impl Args {
                 "--python" => python = need(&mut it, "--python")?,
                 "--skip-thrml" => skip = true,
                 "--contended" => contended = true,
+                "--scale" => scale = true,
+                "--device" => device = need(&mut it, "--device")?,
                 "--help" | "-h" => return Err("help".into()),
                 other => return Err(format!("unknown argument {other}")),
             }
@@ -191,6 +202,9 @@ impl Args {
         if draws < 64 {
             return Err("--draws must be at least 64; tau_int is NaN under 16 and noisy near it".into());
         }
+        if !matches!(device.as_str(), "auto" | "cpu" | "cuda") {
+            return Err(format!("--device wants auto, cpu, or cuda, got {device}"));
+        }
         Ok(Args {
             out: PathBuf::from(out),
             trials,
@@ -200,6 +214,8 @@ impl Args {
             runner: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/runner.py"),
             skip_thrml: skip,
             contended,
+            scale,
+            device,
         })
     }
 }
@@ -212,14 +228,16 @@ fn parse_usize(s: &str, flag: &str) -> Result<usize, String> {
     s.parse().map_err(|_| format!("{flag} wants an integer, got {s}"))
 }
 
-fn run_thrml(python: &Path, runner: &Path, spec: &Path, out: &Path) -> Result<(), String> {
-    eprintln!("THRML via {} {}", python.display(), runner.display());
+fn run_thrml(python: &Path, runner: &Path, spec: &Path, out: &Path, device: &str) -> Result<(), String> {
+    eprintln!("THRML via {} {} --device {device}", python.display(), runner.display());
     let status = Command::new(python)
         .arg(runner)
         .arg("--spec")
         .arg(spec)
         .arg("--out")
         .arg(out)
+        .arg("--device")
+        .arg(device)
         .status()
         .map_err(|e| format!("could not start {}: {e}", python.display()))?;
     if status.success() {
@@ -492,7 +510,7 @@ fn trial_json(c: &Chain, external: bool) -> String {
     format!(
         "          {{\"draws\": {}, \"seconds\": {:.8e}, \"jit_seconds\": {jit_s}, \
          \"jit_excluded_from_seconds\": {jit_flag}, \
-         \"tv\": {:.8e}, \"kl_empirical_exact\": {:.8e}, \"kl_exact_empirical\": {kl_rev}, \
+         \"tv\": {}, \"kl_empirical_exact\": {}, \"kl_exact_empirical\": {kl_rev}, \
          \"missed_states\": {}, \"tau_int_energy\": {:.8e}, \"ess_energy\": {:.8e}, \
          \"ess_per_second\": {ess_s}, \"mean_energy\": {:.8e}, \"exact_mean_energy\": {:.8e}, \
          \"energy_abs_err\": {:.8e}, \"magnetization_mae\": {mag}, \
@@ -500,8 +518,8 @@ fn trial_json(c: &Chain, external: bool) -> String {
          \"measured_joules_per_ess\": null}}",
         sc.draws,
         sc.seconds,
-        sc.tv,
-        sc.kl_empirical_exact,
+        fmt_finite(sc.tv),
+        fmt_finite(sc.kl_empirical_exact),
         sc.missed_states,
         sc.tau_int_energy,
         sc.ess_energy,
@@ -522,11 +540,16 @@ fn energy_section(
     runner: &Path,
     spec: &Path,
     thrml_ok: bool,
+    device: &str,
 ) -> String {
     let poll = if contended { poll_quiet(&[ferrotherm::host::load_average()]) } else { wait_for_quiet_host() };
     let quiet = poll.outcome == "quiet";
     let grade = grade_for(contended, quiet);
-    let has_instrument = probe.rapl.is_some() || probe.perf.is_some() || probe.wall.is_some() || probe.nvml.is_some();
+    let has_instrument = probe.rapl.is_some()
+        || probe.perf.is_some()
+        || probe.wall.is_some()
+        || probe.nvml.is_some()
+        || probe.tegra.is_some();
     if grade == "load_gated" {
         let gated = energy::load_gated(
             "No joules. The quiet-host gate is unchanged (load average above 2). After the bounded \
@@ -559,8 +582,9 @@ fn energy_section(
         let missing = Joules::unavailable(
             0.0,
             "none",
-            "No joules were obtained. No macmon, RAPL powercap, perf power/energy-pkg, or NVML counter \
-             opened on this host. Nothing was filled in from a device-price table.",
+            "No joules were obtained. No macmon, INA3221, tegrastats VDD_IN, RAPL powercap, \
+             perf power/energy-pkg, or NVML counter opened on this host. Nothing was filled in \
+             from a device-price table.",
         );
         return energy_json(probe, &poll, grade, missing.evidence, None, &[], &missing.note);
     }
@@ -570,8 +594,9 @@ fn energy_section(
             return energy_json(probe, &poll, grade, "unavailable", None, &[], &e);
         }
     };
+    let gpu_idle = probe.nvml.as_ref().and_then(|n| nvml_idle(n).ok());
     let mut session = if thrml_ok {
-        ThrmlServe::start(python, runner, spec).ok()
+        ThrmlServe::start(python, runner, spec, device).ok()
     } else {
         None
     };
@@ -621,6 +646,37 @@ fn energy_section(
                 grade,
                 rank,
             ));
+            if measured.instrument != "nvml"
+                && let Some((gw, gs)) = gpu_idle
+            {
+                let gpu = measure_counter(probe, side, w, seed, session.as_mut(), CounterKind::Nvml);
+                let gpu_rank = energy_rank(gpu.instrument, &probe.hostname);
+                let gpu_joules = trial_joules(
+                    gpu.gross,
+                    gw,
+                    gs,
+                    gpu.seconds,
+                    gpu.instrument,
+                    gpu.scope,
+                    grade,
+                    gpu.counter_updates,
+                );
+                let gpu_after = read_cpu_snap();
+                rows.push(EnergyTrial::from_parts(
+                    w.id,
+                    side,
+                    t,
+                    gpu.repetitions,
+                    gpu.counter_updates,
+                    gpu.window_seconds,
+                    gpu_joules,
+                    gpu.ess,
+                    gpu_after.load1,
+                    None,
+                    grade,
+                    gpu_rank,
+                ));
+            }
         }
     }
     energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &energy_note(grade))
@@ -714,6 +770,9 @@ fn measure_side(
     if probe.wall.is_some() {
         return measure_wall(probe, side, w, seed, session);
     }
+    if probe.tegra.is_some() {
+        return measure_tegra(probe, side, w, seed, session);
+    }
     if probe.rapl.is_some() {
         return measure_counter(probe, side, w, seed, session, CounterKind::Rapl);
     }
@@ -770,6 +829,34 @@ enum CounterKind {
     Rapl,
     Perf,
     Nvml,
+}
+
+fn measure_tegra(
+    probe: &mut Probe,
+    side: &str,
+    w: &Workload,
+    seed: u64,
+    mut session: Option<&mut ThrmlServe>,
+) -> SideMeasure {
+    let t0 = std::time::Instant::now();
+    let (reps, ess_sum) = repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session));
+    let seconds = t0.elapsed().as_secs_f64();
+    let watts = probe.tegra.as_ref().map(|t| t.since(t0)).unwrap_or_default();
+    let updates = u32::try_from(watts.len()).unwrap_or(u32::MAX);
+    let mean = if watts.is_empty() { f64::NAN } else { watts.iter().sum::<f64>() / watts.len() as f64 };
+    finish_window(ess_sum, mean * seconds, seconds, reps, updates, "tegrastats", "board")
+}
+
+fn nvml_idle(nvml: &energy::Nvml) -> Result<(f64, f64), String> {
+    let mut windows = Vec::new();
+    for _ in 0..6 {
+        let a = nvml.millijoules()?;
+        let t0 = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_secs_f64(0.25));
+        let b = nvml.millijoules()?;
+        windows.push((energy::mj_delta_j(a, b), t0.elapsed().as_secs_f64()));
+    }
+    energy::watts_from_windows(&windows).ok_or_else(|| "NVML idle produced fewer than two windows".into())
 }
 
 fn measure_counter(
@@ -901,7 +988,7 @@ fn energy_json(
         "{{\n    \"evidence_grade\": {},\n    \"outcome\": {},\n    \"quiet_threshold\": {},\n    \
          \"load_samples\": {},\n    \"rank_policy\": {},\n    \"order\": {},\n    \
          \"window_s\": {},\n    \"min_counter_updates\": {},\n    \
-         \"backends\": {{\"macmon_or_ina\": {}, \"rapl\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
+         \"backends\": {{\"macmon_or_ina\": {}, \"tegrastats\": {}, \"rapl\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
          \"hostname\": {},\n    \"macos_policy\": {},\n    \"accepted_load\": {},\n    \
          \"idle_watts\": {},\n    \"idle_sigma\": {},\n    \
          \"summaries\": [\n{}    ],\n    \"trials\": [\n{}    ],\n    \
@@ -917,6 +1004,7 @@ fn energy_json(
         MIN_ENERGY_WINDOW_S,
         energy::MIN_COUNTER_UPDATES,
         json_str(&probe.wall_note),
+        json_str(&probe.tegra_note),
         json_str(&probe.rapl_note),
         json_str(&probe.perf_note),
         json_str(&probe.nvml_note),
@@ -990,10 +1078,12 @@ struct ThrmlServe {
 }
 
 impl ThrmlServe {
-    fn start(python: &Path, runner: &Path, spec: &Path) -> Result<ThrmlServe, String> {
+    fn start(python: &Path, runner: &Path, spec: &Path, device: &str) -> Result<ThrmlServe, String> {
         let mut child = Command::new(python)
             .arg(runner)
             .arg("--serve")
+            .arg("--device")
+            .arg(device)
             .arg("--spec")
             .arg(spec)
             .stdin(std::process::Stdio::piped())
@@ -1112,6 +1202,10 @@ fn rustc_version() -> String {
     )
 }
 
+fn fmt_finite(x: f64) -> String {
+    if x.is_finite() { format!("{x:.8e}") } else { "null".into() }
+}
+
 fn fmt_f64(v: Option<f64>) -> String {
     match v {
         Some(x) if x.is_finite() => format!("{x:.8e}"),
@@ -1143,6 +1237,17 @@ fn json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn jax_cuda_is_refused_when_the_only_device_is_cpu() {
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("python/test_platform.py");
+        let out = std::process::Command::new("python3").arg(&script).output().expect("python3");
+        assert!(
+            out.status.success(),
+            "platform choice failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     #[test]
     fn the_harness_does_not_name_a_privileged_power_tool() {
         // The macOS path is macmon, inside ferrotherm-meter. These files are the harness.

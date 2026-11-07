@@ -25,6 +25,7 @@ import jax
 import jax.numpy as jnp
 
 import thrml
+from platform_choice import choose_platform
 from thrml import Block, CategoricalNode, SamplingSchedule, SpinNode, sample_states
 from thrml.block_sampling import BlockGibbsSpec
 from thrml.factor import FactorSamplingProgram
@@ -42,23 +43,30 @@ def main() -> int:
     ap.add_argument("--spec", required=True)
     ap.add_argument("--out")
     ap.add_argument("--serve", action="store_true")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     args = ap.parse_args()
+    try:
+        platform, device = bind_device(args.device)
+    except ValueError as err:
+        raise SystemExit(str(err)) from err
     workloads = parse_spec(open(args.spec, encoding="utf-8").read())
     if args.serve:
-        return serve(workloads)
+        return serve(workloads, device, platform)
     if not args.out:
         raise SystemExit("--out is required unless --serve")
     lines = [
-        "META thrml={thrml} jax={jaxv} jaxlib={jaxlib} equinox={eqx} device={dev}".format(
+        "META thrml={thrml} jax={jaxv} jaxlib={jaxlib} equinox={eqx} device={dev} jax_platform={plat}".format(
             thrml=thrml.__version__,
             jaxv=jax.__version__,
             jaxlib=_jaxlib_version(),
             eqx=_eqx_version(),
-            dev=str(jax.devices()[0]),
+            dev=str(device),
+            plat=platform,
         )
     ]
-    for w in workloads:
-        lines.extend(run_workload(w))
+    with jax.default_device(device):
+        for w in workloads:
+            lines.extend(run_workload(w))
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return 0
@@ -140,34 +148,43 @@ def _finish(cur: dict) -> dict:
     }
 
 
-def serve(workloads: list[dict]) -> int:
+def bind_device(requested: str):
+    """Pick a JAX device. `cuda` requires platform `gpu` and does not fall back to CPU."""
+    devices = list(jax.devices())
+    platform = choose_platform(requested, [d.platform for d in devices])
+    device = next(d for d in devices if d.platform == platform)
+    return platform, device
+
+
+def serve(workloads: list[dict], device, platform: str) -> int:
     """JIT once, then sample one seed per `RUN id seed` line. QUIT ends the process."""
     ready = {}
-    for w in workloads:
-        program, init, observe, decode = _build(w)
-        key = jax.random.key(0)
-        burned = sample_states(key, program, SamplingSchedule(1, 2, 1), init, [], observe)
-        jax.block_until_ready(burned)
-        ready[w["id"]] = (w, program, init, observe, decode)
-    print("READY", flush=True)
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        if line == "QUIT":
-            return 0
-        parts = line.split()
-        if len(parts) != 3 or parts[0] != "RUN":
-            print(f"ERR unrecognised {line}", flush=True)
-            continue
-        wid, seed_s = parts[1], parts[2]
-        if wid not in ready:
-            print(f"ERR unknown workload {wid}", flush=True)
-            continue
-        w, program, init, observe, decode = ready[wid]
-        seed = int(seed_s)
-        lines = _one_trial(w, program, init, observe, decode, seed, 0.0)
-        print("\n".join(lines), flush=True)
+    with jax.default_device(device):
+        for w in workloads:
+            program, init, observe, decode = _build(w)
+            key = jax.random.key(0)
+            burned = sample_states(key, program, SamplingSchedule(1, 2, 1), init, [], observe)
+            jax.block_until_ready(burned)
+            ready[w["id"]] = (w, program, init, observe, decode)
+        print(f"READY platform={platform}", flush=True)
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            if line == "QUIT":
+                return 0
+            parts = line.split()
+            if len(parts) != 3 or parts[0] != "RUN":
+                print(f"ERR unrecognised {line}", flush=True)
+                continue
+            wid, seed_s = parts[1], parts[2]
+            if wid not in ready:
+                print(f"ERR unknown workload {wid}", flush=True)
+                continue
+            w, program, init, observe, decode = ready[wid]
+            seed = int(seed_s)
+            lines = _one_trial(w, program, init, observe, decode, seed, 0.0)
+            print("\n".join(lines), flush=True)
     return 0
 
 
