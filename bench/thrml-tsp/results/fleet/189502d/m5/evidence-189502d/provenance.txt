@@ -1,0 +1,22 @@
+2026-11-07T07:14:01-05:00
+Davids-MacBook-Pro-M5-Max-48GB-4.local
+Darwin Davids-MacBook-Pro-M5-Max-48GB-4.local 27.2.0 Darwin Kernel Version 27.2.0: Wed Oct 14 23:47:58 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6050 arm64
+      Model Name: MacBook Pro
+      Model Identifier: Mac17,6
+      Chip: Apple M5 Max
+      Memory: 48 GB
+macmon 0.10.0
+cargo 1.99.1 (5f94df478 2026-08-27)
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+189502d509080634a1fbe3253876c1b75e5bbd56
+equinox==0.13.8
+jax==0.12.0.1
+jaxlib==0.12.0.1
+jaxtyping==0.3.11
+ml_dtypes==0.6.0
+numpy==2.5.4
+opt_einsum==3.4.0
+scipy==1.18.1
+thrml==0.1.4
+typing_extensions==4.16.0
+wadler_lindig==0.1.8

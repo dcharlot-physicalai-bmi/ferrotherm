@@ -1,0 +1,262 @@
+{
+  "schema": "ferrotherm-thrml-bench/1",
+  "provenance": {
+    "git_rev": "189502d509080634a1fbe3253876c1b75e5bbd56",
+    "git_dirty": false,
+    "host_cpu": "unknown",
+    "os": "macos",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "thrml_pin": "thrml==0.1.4",
+    "thrml_wheel_sha256": "6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858",
+    "load1_at_start": 2.2700,
+    "what_this_machine_measured": "wall: backend=macmon machine=Apple M5 Max scope=WholeSystem. nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine).",
+    "what_still_needs_fleet_hardware": "A quiet machine with a live RAPL domain (or a whole-board rail) for CPU joules; an NVIDIA GPU with libnvidia-ml.so.1 for GPU joules; an Apple silicon host with macmon on PATH for the SoC counter. None of those counters were a substitute for the others, and none of them is a Z1 device. BMI fleet hardware is what would meter a sustained run and, separately, any future silicon."
+  },
+  "energy": {
+    "evidence_grade": "contended host",
+    "outcome": "measured",
+    "quiet_threshold": 2,
+    "load_samples": [2.3400],
+    "rank_policy": "primary = RAPL on framework-128gb-0000; macmon = secondary",
+    "order": "A/B/A/B... ferrotherm, THRML, ferrotherm, ...",
+    "backends": {"macmon_or_ina": "backend=macmon machine=Apple M5 Max scope=WholeSystem", "rapl": "RAPL powercap is not present on this machine", "perf": "power PMU type: No such file or directory (os error 2). perf stat was not started: No such file or directory (os error 2)", "nvml": "libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)"},
+    "hostname": "unknown",
+    "macos_policy": "macOS power, when that OS is the host, is ferrotherm_meter::Meter::macmon (rootless IOReport via the macmon binary). This harness has no other macOS path.",
+    "accepted_load": null,
+    "idle_watts": 1.67105363e1,
+    "idle_sigma": 1.83278712e0,
+    "ferrotherm": {"grade": "contended host", "n": 20, "gross_j": {"mean": 4.93024098e1, "lo95": 4.74094082e1, "hi95": 5.11954113e1, "n": 20}, "incremental_j": {"mean": 2.42320592e1, "lo95": 2.23386860e1, "hi95": 2.61254324e1, "n": 20}, "joules_per_ess": {"mean": 1.75433783e-5, "lo95": 5.27504975e-6, "hi95": 2.98117068e-5, "n": 20}},
+    "thrml": {"grade": "contended host", "n": 20, "gross_j": {"mean": 5.33894726e1, "lo95": 5.19674329e1, "hi95": 5.48115123e1, "n": 20}, "incremental_j": {"mean": 2.43881836e1, "lo95": 2.26448307e1, "hi95": 2.61315366e1, "n": 20}, "joules_per_ess": {"mean": 9.92965904e-3, "lo95": 2.10140320e-3, "hi95": 1.77579149e-2, "n": 20}},
+    "trials": [
+      {"side": "ferrotherm", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.04000000e0, "other_process_cpu_s": null, "ess": 5.61436137e6, "joules_per_ess": 5.60237588e-6, "joules": {"gross_j": 5.65229747e1, "incremental_j": 3.14537627e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500204, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.11000000e0, "other_process_cpu_s": null, "ess": 7.71580185e3, "joules_per_ess": 4.54046505e-3, "joules": {"gross_j": 6.24241710e1, "incremental_j": 3.50333286e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.639136, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.11000000e0, "other_process_cpu_s": null, "ess": 5.77962858e6, "joules_per_ess": 4.92288777e-6, "joules": {"gross_j": 5.35216895e1, "incremental_j": 2.84524628e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500205, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.11000000e0, "other_process_cpu_s": null, "ess": 1.48663899e4, "joules_per_ess": 1.60897762e-3, "joules": {"gross_j": 4.98891014e1, "incremental_j": 2.39196886e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.554074, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.19000000e0, "other_process_cpu_s": null, "ess": 4.55253409e6, "joules_per_ess": 5.91346968e-6, "joules": {"gross_j": 5.19916770e1, "incremental_j": 2.69212723e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500275, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.19000000e0, "other_process_cpu_s": null, "ess": 9.24427632e3, "joules_per_ess": 2.75967254e-3, "joules": {"gross_j": 5.13850834e1, "incremental_j": 2.55111755e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.548359, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.19000000e0, "other_process_cpu_s": null, "ess": 6.13884760e6, "joules_per_ess": 4.37722632e-6, "joules": {"gross_j": 5.19406472e1, "incremental_j": 2.68711253e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500222, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.25000000e0, "other_process_cpu_s": null, "ess": 1.05946486e4, "joules_per_ess": 2.31714353e-3, "joules": {"gross_j": 5.06115906e1, "incremental_j": 2.45493216e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.559631, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.25000000e0, "other_process_cpu_s": null, "ess": 4.86434109e6, "joules_per_ess": 5.71375998e-6, "joules": {"gross_j": 5.28632077e1, "incremental_j": 2.77936775e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500223, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.25000000e0, "other_process_cpu_s": null, "ess": 1.25697653e4, "joules_per_ess": 2.07284709e-3, "joules": {"gross_j": 5.21127950e1, "incremental_j": 2.60552013e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.559351, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.23000000e0, "other_process_cpu_s": null, "ess": 3.39266465e6, "joules_per_ess": 7.38976159e-6, "joules": {"gross_j": 5.01396303e1, "incremental_j": 2.50709829e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500170, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.23000000e0, "other_process_cpu_s": null, "ess": 8.18737444e3, "joules_per_ess": 3.46184635e-3, "joules": {"gross_j": 5.57470749e1, "incremental_j": 2.83434323e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.639902, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.23000000e0, "other_process_cpu_s": null, "ess": 3.20674694e6, "joules_per_ess": 8.69730026e-6, "joules": {"gross_j": 5.29583207e1, "incremental_j": 2.78900410e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500148, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.21000000e0, "other_process_cpu_s": null, "ess": 7.21863714e3, "joules_per_ess": 3.23983939e-3, "joules": {"gross_j": 5.03292571e1, "incremental_j": 2.33872250e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.612278, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.21000000e0, "other_process_cpu_s": null, "ess": 2.74497840e6, "joules_per_ess": 9.51881156e-6, "joules": {"gross_j": 5.12030522e1, "incremental_j": 2.61289321e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500498, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.27000000e0, "other_process_cpu_s": null, "ess": 9.20595259e3, "joules_per_ess": 2.75908073e-3, "joules": {"gross_j": 5.21126861e1, "incremental_j": 2.53999664e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.598556, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.27000000e0, "other_process_cpu_s": null, "ess": 3.48925481e6, "joules_per_ess": 7.73002907e-6, "joules": {"gross_j": 5.20439603e1, "incremental_j": 2.69720411e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500366, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.27000000e0, "other_process_cpu_s": null, "ess": 7.35297476e3, "joules_per_ess": 3.81683976e-3, "joules": {"gross_j": 5.46006789e1, "incremental_j": 2.80651264e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.587953, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.25000000e0, "other_process_cpu_s": null, "ess": 3.24886005e6, "joules_per_ess": 8.85146386e-6, "joules": {"gross_j": 5.38244186e1, "incremental_j": 2.87571673e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500087, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.25000000e0, "other_process_cpu_s": null, "ess": 8.27321010e3, "joules_per_ess": 2.95064443e-3, "joules": {"gross_j": 5.09619128e1, "incremental_j": 2.44113013e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.588855, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.25000000e0, "other_process_cpu_s": null, "ess": 5.28017485e6, "joules_per_ess": 4.79607036e-6, "joules": {"gross_j": 5.03917891e1, "incremental_j": 2.53240901e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500113, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.31000000e0, "other_process_cpu_s": null, "ess": 3.39768466e3, "joules_per_ess": 7.99096721e-3, "joules": {"gross_j": 5.73689927e1, "incremental_j": 2.71507867e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.808333, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.31000000e0, "other_process_cpu_s": null, "ess": 3.75884225e6, "joules_per_ess": 5.91414174e-6, "joules": {"gross_j": 4.73022116e1, "incremental_j": 2.22303258e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500364, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.31000000e0, "other_process_cpu_s": null, "ess": 3.46254568e3, "joules_per_ess": 7.68685458e-3, "joules": {"gross_j": 5.69120431e1, "incremental_j": 2.66160851e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.812985, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.53000000e0, "other_process_cpu_s": null, "ess": 3.40237044e6, "joules_per_ess": 6.72558128e-6, "joules": {"gross_j": 4.79560781e1, "incremental_j": 2.28829189e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500440, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.53000000e0, "other_process_cpu_s": null, "ess": 3.88585073e3, "joules_per_ess": 6.33889877e-3, "joules": {"gross_j": 5.50071184e1, "incremental_j": 2.46320144e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.817722, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.53000000e0, "other_process_cpu_s": null, "ess": 4.73660365e6, "joules_per_ess": 4.60575935e-6, "joules": {"gross_j": 4.68890538e1, "incremental_j": 2.18156565e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500454, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.40000000e0, "other_process_cpu_s": null, "ess": 3.36586147e3, "joules_per_ess": 6.35437791e-3, "joules": {"gross_j": 5.24438128e1, "incremental_j": 2.13879558e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.858460, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.40000000e0, "other_process_cpu_s": null, "ess": 5.28648584e6, "joules_per_ess": 3.24867626e-6, "joules": {"gross_j": 4.22486913e1, "incremental_j": 1.71740810e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500527, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.37000000e0, "other_process_cpu_s": null, "ess": 3.94147917e3, "joules_per_ess": 5.15402272e-3, "joules": {"gross_j": 5.12782594e1, "incremental_j": 2.03144732e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.852950, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.37000000e0, "other_process_cpu_s": null, "ess": 2.32547033e5, "joules_per_ess": 7.97065257e-5, "joules": {"gross_j": 4.36014145e1, "incremental_j": 1.85355161e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500006, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 0, "grade": "contended host", "rank": "secondary", "load1": 3.37000000e0, "other_process_cpu_s": null, "ess": 2.29503016e3, "joules_per_ess": 9.14154908e-3, "joules": {"gross_j": 5.42206065e1, "incremental_j": 2.09801309e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.989193, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.18000000e0, "other_process_cpu_s": null, "ess": 1.51617442e6, "joules_per_ess": 1.44089072e-5, "joules": {"gross_j": 4.69148974e1, "incremental_j": 2.18464164e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500160, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 1, "grade": "contended host", "rank": "secondary", "load1": 3.18000000e0, "other_process_cpu_s": null, "ess": 1.84221458e3, "joules_per_ess": 1.03449872e-2, "joules": {"gross_j": 5.11243698e1, "incremental_j": 1.90576861e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.918950, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.18000000e0, "other_process_cpu_s": null, "ess": 2.31290848e6, "joules_per_ess": 8.17223011e-6, "joules": {"gross_j": 4.39751959e1, "incremental_j": 1.89016203e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500465, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 2, "grade": "contended host", "rank": "secondary", "load1": 3.17000000e0, "other_process_cpu_s": null, "ess": 1.37254532e3, "joules_per_ess": 1.59762804e-2, "joules": {"gross_j": 5.41551908e1, "incremental_j": 2.19281688e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.928545, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.17000000e0, "other_process_cpu_s": null, "ess": 2.51017055e5, "joules_per_ess": 7.80154253e-5, "joules": {"gross_j": 4.46517104e1, "incremental_j": 1.95832023e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500162, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 3, "grade": "contended host", "rank": "secondary", "load1": 3.07000000e0, "other_process_cpu_s": null, "ess": 2.70596778e2, "joules_per_ess": 7.75178361e-2, "joules": {"gross_j": 5.28937379e1, "incremental_j": 2.09760767e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.910032, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "ferrotherm", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.07000000e0, "other_process_cpu_s": null, "ess": 2.61711507e5, "joules_per_ess": 7.65571627e-5, "joules": {"gross_j": 4.51075749e1, "incremental_j": 2.00358904e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.500352, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}},
+      {"side": "thrml", "trial": 4, "grade": "contended host", "rank": "secondary", "load1": 3.07000000e0, "other_process_cpu_s": null, "ess": 8.88496595e2, "joules_per_ess": 2.25600504e-2, "joules": {"gross_j": 5.22109701e1, "incremental_j": 2.00445280e1, "idle_watts": 1.67105363e1, "idle_sigma": 1.83278712e0, "seconds": 1.924920, "attributable": true, "evidence": "contended host", "instrument": "macmon", "scope": "whole-system", "note": "", "projected_prices_applied": false}}    ],
+    "projected_prices_applied": false,
+    "note": "Evidence grade contended host. Energy above idle is reported with 95% intervals. These figures are not quiet-host evidence and are not pooled with a quiet run. load1 and other-process CPU are on every trial. RAPL on framework-128gb-0000 is the primary instrument; macmon is secondary."
+  },
+  "thrml_meta": "thrml=0.1.4 jax=0.12.0.1 jaxlib=0.12.0.1 equinox=0.13.8 device=cpu:0",
+  "thrml_error": null,
+  "workloads": [
+    {
+      "id": "thrml_readme_ising_chain_n5",
+      "kind": "ising",
+      "source": "THRML 0.1.4 README quickstart and https://docs.thrml.ai/en/latest/ (5-spin Ising chain, J=0.5, h=0, beta=1, two-colour block Gibbs)",
+      "beta": 1.0000000000000000,
+      "n": 5,
+      "q": 2,
+      "warmup": 400,
+      "draws": 2000,
+      "thin": 1,
+      "oracle": "exact enumeration of the Boltzmann distribution",
+      "ferrotherm": {
+        "summary": {
+          "tv": {"mean": 5.25087883e-2, "lo95": 4.03708242e-2, "hi95": 6.46467525e-2, "n": 5},
+          "kl_empirical_exact": {"mean": 9.15298159e-3, "lo95": 5.09831515e-3, "hi95": 1.32076480e-2, "n": 5},
+          "tau_int_energy": {"mean": 6.73852048e-1, "lo95": 4.14059725e-1, "hi95": 9.33644370e-1, "n": 5},
+          "ess_per_second": {"mean": 5.05386670e6, "lo95": 3.49533311e6, "hi95": 6.61240029e6, "n": 5},
+          "energy_abs_err": {"mean": 9.05313710e-3, "lo95": 2.93582155e-3, "hi95": 1.51704526e-2, "n": 5},
+          "magnetization_mae": {"mean": 3.72400000e-2, "lo95": 2.47992951e-2, "hi95": 4.96807049e-2, "n": 5}
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 3.47792000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 4.02123487e-2, "kl_empirical_exact": 6.69428635e-3, "kl_exact_empirical": 6.69430219e-3, "missed_states": 0, "tau_int_energy": 6.20958418e-1, "ess_energy": 1.61041379e3, "ess_per_second": 4.63039343e6, "mean_energy": -9.13500000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 1.07343145e-2, "magnetization_mae": 3.06000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 3.07916000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 5.46497143e-2, "kl_empirical_exact": 8.61199338e-3, "kl_exact_empirical": 8.87425246e-3, "missed_states": 0, "tau_int_energy": 1.04035794e0, "ess_energy": 9.61207636e2, "ess_per_second": 3.12165537e6, "mean_energy": -9.39000000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 1.47656855e-2, "magnetization_mae": 3.60000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 3.04459000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 5.17720297e-2, "kl_empirical_exact": 6.80576990e-3, "kl_exact_empirical": 6.77197685e-3, "missed_states": 0, "tau_int_energy": 6.26783702e-1, "ess_energy": 1.59544672e3, "ess_per_second": 5.24026788e6, "mean_energy": -9.21500000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 2.73431452e-3, "magnetization_mae": 3.30000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 3.06208000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 6.70817228e-2, "kl_empirical_exact": 1.46997835e-2, "kl_exact_empirical": 1.54971686e-2, "missed_states": 0, "tau_int_energy": 5.29516476e-1, "ess_energy": 1.88851536e3, "ess_per_second": 6.16742659e6, "mean_energy": -9.36000000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 1.17656855e-2, "magnetization_mae": 5.48000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 2.96708000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 4.88281261e-2, "kl_empirical_exact": 8.95307486e-3, "kl_exact_empirical": 9.26981836e-3, "missed_states": 0, "tau_int_energy": 5.51643699e-1, "ess_energy": 1.81276429e3, "ess_per_second": 6.10959022e6, "mean_energy": -9.29500000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 5.26568548e-3, "magnetization_mae": 3.18000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null}
+        ]
+      },
+      "thrml": {
+        "summary": {
+          "tv": {"mean": 4.89535429e-2, "lo95": 4.25981004e-2, "hi95": 5.53089853e-2, "n": 5},
+          "kl_empirical_exact": {"mean": 8.85150819e-3, "lo95": 7.35487836e-3, "hi95": 1.03481380e-2, "n": 5},
+          "tau_int_energy": {"mean": 6.38540729e-1, "lo95": 4.69926211e-1, "hi95": 8.07155247e-1, "n": 5},
+          "ess_per_second": {"mean": 7.92227709e3, "lo95": 6.19661400e3, "hi95": 9.64794017e3, "n": 5},
+          "energy_abs_err": {"mean": 2.69468629e-2, "lo95": 9.76258979e-3, "hi95": 4.41311360e-2, "n": 5},
+          "magnetization_mae": {"mean": 2.64800000e-2, "lo95": 1.20568019e-2, "hi95": 4.09031981e-2, "n": 5}
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 2.57059542e-1, "jit_seconds": 2.05682750e-1, "jit_excluded_from_seconds": true, "tv": 5.23749274e-2, "kl_empirical_exact": 9.46885420e-3, "kl_exact_empirical": 9.37504878e-3, "missed_states": 0, "tau_int_energy": 5.57646495e-1, "ess_energy": 1.79325076e3, "ess_per_second": 6.97601320e3, "mean_energy": -8.74000000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 5.02343145e-2, "magnetization_mae": 2.16000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 1.89682083e-1, "jit_seconds": 2.05682750e-1, "jit_excluded_from_seconds": true, "tv": 5.38770928e-2, "kl_empirical_exact": 9.59432292e-3, "kl_exact_empirical": 9.91286020e-3, "missed_states": 0, "tau_int_energy": 6.46575333e-1, "ess_energy": 1.54661019e3, "ess_per_second": 8.15369680e3, "mean_energy": -9.51000000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 2.67656855e-2, "magnetization_mae": 4.10000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 1.88098416e-1, "jit_seconds": 2.05682750e-1, "jit_excluded_from_seconds": true, "tv": 4.17654918e-2, "kl_empirical_exact": 7.27355771e-3, "kl_exact_empirical": 7.98958895e-3, "missed_states": 0, "tau_int_energy": 8.71395956e-1, "ess_energy": 1.14758394e3, "ess_per_second": 6.10097607e3, "mean_energy": -9.49000000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 2.47656855e-2, "magnetization_mae": 2.28000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 1.99579500e-1, "jit_seconds": 2.05682750e-1, "jit_excluded_from_seconds": true, "tv": 5.12483572e-2, "kl_empirical_exact": 1.00478000e-2, "kl_exact_empirical": 1.03689127e-2, "missed_states": 0, "tau_int_energy": 5.66736064e-1, "ess_energy": 1.76448979e3, "ess_per_second": 8.84103724e3, "mean_energy": -9.07500000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 1.67343145e-2, "magnetization_mae": 3.52000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 1.90470708e-1, "jit_seconds": 2.05682750e-1, "jit_excluded_from_seconds": true, "tv": 4.55018452e-2, "kl_empirical_exact": 7.87300614e-3, "kl_exact_empirical": 7.73812197e-3, "missed_states": 0, "tau_int_energy": 5.50349798e-1, "ess_energy": 1.81702620e3, "ess_per_second": 9.53966212e3, "mean_energy": -9.08000000e-1, "exact_mean_energy": -9.24234315e-1, "energy_abs_err": 1.62343145e-2, "magnetization_mae": 1.18000000e-2, "gibbs_updates": 12000, "reads": 10000, "measured_joules_per_ess": null}
+        ]
+      }
+    },
+    {
+      "id": "ising_grid2d_open_3x3",
+      "kind": "ising",
+      "source": "Finite open 2D Ising, the lattice both codebases sample (ferrotherm::ising::grid2d; THRML IsingEBM). 3x3 rather than 4x4 so a few thousand draws can resolve total variation. Not Onsager's infinite lattice, and not a Z1-topology graph.",
+      "beta": 0.8000000000000000,
+      "n": 9,
+      "q": 2,
+      "warmup": 400,
+      "draws": 2000,
+      "thin": 1,
+      "oracle": "exact enumeration of the Boltzmann distribution",
+      "ferrotherm": {
+        "summary": {
+          "tv": {"mean": 1.56830460e-1, "lo95": 1.49239229e-1, "hi95": 1.64421690e-1, "n": 5},
+          "kl_empirical_exact": {"mean": 1.33049719e-1, "lo95": 1.23602188e-1, "hi95": 1.42497250e-1, "n": 5},
+          "tau_int_energy": {"mean": 8.94104330e-1, "lo95": 7.96249129e-1, "hi95": 9.91959531e-1, "n": 5},
+          "ess_per_second": {"mean": 2.97588773e6, "lo95": 2.51462538e6, "hi95": 3.43715008e6, "n": 5},
+          "energy_abs_err": {"mean": 2.92693200e-2, "lo95": 6.31725745e-3, "hi95": 5.22213825e-2, "n": 5},
+          "magnetization_mae": {"mean": 2.45333333e-2, "lo95": 1.75397011e-2, "hi95": 3.15269656e-2, "n": 5}
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 3.66375000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.64409612e-1, "kl_empirical_exact": 1.42642523e-1, "kl_exact_empirical": null, "missed_states": 157, "tau_int_energy": 7.58149963e-1, "ess_energy": 1.31900026e3, "ess_per_second": 3.60013719e6, "mean_energy": -2.71400000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 6.44886664e-3, "magnetization_mae": 2.20000000e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 4.20333000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.56953998e-1, "kl_empirical_exact": 1.32263487e-1, "kl_exact_empirical": null, "missed_states": 167, "tau_int_energy": 9.12429340e-1, "ess_energy": 1.09597528e3, "ess_per_second": 2.60739765e6, "mean_energy": -2.68400000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 3.64488666e-2, "magnetization_mae": 2.31111111e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 3.77667000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.60604860e-1, "kl_empirical_exact": 1.36604706e-1, "kl_exact_empirical": null, "missed_states": 171, "tau_int_energy": 9.03606247e-1, "ess_energy": 1.10667672e3, "ess_per_second": 2.93029765e6, "mean_energy": -2.77650000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 5.60511334e-2, "magnetization_mae": 2.65555556e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 3.65583000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.48648010e-1, "kl_empirical_exact": 1.21874380e-1, "kl_exact_empirical": null, "missed_states": 156, "tau_int_energy": 9.41518286e-1, "ess_energy": 1.06211426e3, "ess_per_second": 2.90526163e6, "mean_energy": -2.69400000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 2.64488666e-2, "magnetization_mae": 1.80000000e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 3.69250000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.53535820e-1, "kl_empirical_exact": 1.31863499e-1, "kl_exact_empirical": null, "missed_states": 161, "tau_int_energy": 9.54817812e-1, "ess_energy": 1.04732022e3, "ess_per_second": 2.83634453e6, "mean_energy": -2.69950000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 2.09488666e-2, "magnetization_mae": 3.30000000e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null}
+        ]
+      },
+      "thrml": {
+        "summary": {
+          "tv": {"mean": 1.51360896e-1, "lo95": 1.46412220e-1, "hi95": 1.56309573e-1, "n": 5},
+          "kl_empirical_exact": {"mean": 1.28018138e-1, "lo95": 1.19704706e-1, "hi95": 1.36331571e-1, "n": 5},
+          "tau_int_energy": {"mean": 8.34772125e-1, "lo95": 7.65895232e-1, "hi95": 9.03649017e-1, "n": 5},
+          "ess_per_second": {"mean": 5.30791376e3, "lo95": 4.89377932e3, "hi95": 5.72204820e3, "n": 5},
+          "energy_abs_err": {"mean": 3.24897733e-2, "lo95": -7.26723775e-4, "hi95": 6.57062704e-2, "n": 5},
+          "magnetization_mae": {"mean": 2.03555556e-2, "lo95": 1.29649533e-2, "hi95": 2.77461578e-2, "n": 5}
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 2.40491584e-1, "jit_seconds": 1.51860084e-1, "jit_excluded_from_seconds": true, "tv": 1.46809219e-1, "kl_empirical_exact": 1.21504614e-1, "kl_exact_empirical": null, "missed_states": 145, "tau_int_energy": 7.78070486e-1, "ess_energy": 1.28523060e3, "ess_per_second": 5.34418120e3, "mean_energy": -2.71250000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 7.94886664e-3, "magnetization_mae": 2.73333333e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 2.20243833e-1, "jit_seconds": 1.51860084e-1, "jit_excluded_from_seconds": true, "tv": 1.52955570e-1, "kl_empirical_exact": 1.32951026e-1, "kl_exact_empirical": null, "missed_states": 171, "tau_int_energy": 8.33612272e-1, "ess_energy": 1.19959846e3, "ess_per_second": 5.44668355e3, "mean_energy": -2.77100000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 5.05511334e-2, "magnetization_mae": 1.65555556e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 2.21551917e-1, "jit_seconds": 1.51860084e-1, "jit_excluded_from_seconds": true, "tv": 1.52133100e-1, "kl_empirical_exact": 1.29715795e-1, "kl_exact_empirical": null, "missed_states": 168, "tau_int_energy": 7.81572336e-1, "ess_energy": 1.27947210e3, "ess_per_second": 5.77504415e3, "mean_energy": -2.69600000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 2.44488666e-2, "magnetization_mae": 1.42222222e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 2.23478542e-1, "jit_seconds": 1.51860084e-1, "jit_excluded_from_seconds": true, "tv": 1.48135094e-1, "kl_empirical_exact": 1.20554729e-1, "kl_exact_empirical": null, "missed_states": 169, "tau_int_energy": 8.97172301e-1, "ess_energy": 1.11461310e3, "ess_per_second": 4.98756208e3, "mean_energy": -2.73050000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 1.00511334e-2, "magnetization_mae": 1.75555556e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 2.27020708e-1, "jit_seconds": 1.51860084e-1, "jit_excluded_from_seconds": true, "tv": 1.56771499e-1, "kl_empirical_exact": 1.35364527e-1, "kl_exact_empirical": null, "missed_states": 159, "tau_int_energy": 8.83433228e-1, "ess_energy": 1.13194746e3, "ess_per_second": 4.98609784e3, "mean_energy": -2.65100000e0, "exact_mean_energy": -2.72044887e0, "energy_abs_err": 6.94488666e-2, "magnetization_mae": 2.61111111e-2, "gibbs_updates": 21600, "reads": 18000, "measured_joules_per_ess": null}
+        ]
+      }
+    },
+    {
+      "id": "potts_path_q3_n6",
+      "kind": "potts",
+      "source": "Potts interaction as in Extropic's codon-optimisation note (https://docs.thrml.ai/en/latest/papers/codon-optimization/) and arXiv:2510.23972 Appendix C.1.1, reduced to an enumerable path. ferrotherm::potts heat-bath, index order; THRML one node per block in that order.",
+      "beta": 1.0000000000000000,
+      "n": 6,
+      "q": 3,
+      "warmup": 400,
+      "draws": 2000,
+      "thin": 1,
+      "oracle": "exact enumeration of the Boltzmann distribution",
+      "ferrotherm": {
+        "summary": {
+          "tv": {"mean": 2.33856534e-1, "lo95": 2.21794384e-1, "hi95": 2.45918684e-1, "n": 5},
+          "kl_empirical_exact": {"mean": 2.01088736e-1, "lo95": 1.82144229e-1, "hi95": 2.20033244e-1, "n": 5},
+          "tau_int_energy": {"mean": 5.76474149e-1, "lo95": 4.54128984e-1, "hi95": 6.98819315e-1, "n": 5},
+          "ess_per_second": {"mean": 3.43559363e6, "lo95": 2.83320164e6, "hi95": 4.03798562e6, "n": 5},
+          "energy_abs_err": {"mean": 1.30934241e-2, "lo95": 1.16665170e-3, "hi95": 2.50201966e-2, "n": 5},
+          "magnetization_mae": null
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 5.15125000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 2.27339687e-1, "kl_empirical_exact": 1.89457133e-1, "kl_exact_empirical": null, "missed_states": 61, "tau_int_energy": 5.00000000e-1, "ess_energy": 2.00000000e3, "ess_per_second": 3.88255278e6, "mean_energy": -8.35800000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 1.86671207e-2, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 5.00584000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 2.44527963e-1, "kl_empirical_exact": 2.17563471e-1, "kl_exact_empirical": null, "missed_states": 81, "tau_int_energy": 5.18346985e-1, "ess_energy": 1.92920964e3, "ess_per_second": 3.85391790e6, "mean_energy": -8.59600000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 5.13287933e-3, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 5.02375000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 2.36196962e-1, "kl_empirical_exact": 2.00496348e-1, "kl_exact_empirical": null, "missed_states": 78, "tau_int_energy": 7.32781793e-1, "ess_energy": 1.36466273e3, "ess_per_second": 2.71642245e6, "mean_energy": -8.81800000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 2.73328793e-2, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 5.04208000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 2.20745778e-1, "kl_empirical_exact": 1.82915764e-1, "kl_exact_empirical": null, "missed_states": 66, "tau_int_energy": 6.15322424e-1, "ess_energy": 1.62516424e3, "ess_per_second": 3.22320201e6, "mean_energy": -8.48200000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 6.26712067e-3, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 5.53500000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 2.40472282e-1, "kl_empirical_exact": 2.15010967e-1, "kl_exact_empirical": null, "missed_states": 83, "tau_int_energy": 5.15919545e-1, "ess_energy": 1.93828671e3, "ess_per_second": 3.50187301e6, "mean_energy": -8.46400000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 8.06712067e-3, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null}
+        ]
+      },
+      "thrml": {
+        "summary": {
+          "tv": {"mean": 2.27274793e-1, "lo95": 2.17657930e-1, "hi95": 2.36891657e-1, "n": 5},
+          "kl_empirical_exact": {"mean": 1.92363510e-1, "lo95": 1.78649206e-1, "hi95": 2.06077814e-1, "n": 5},
+          "tau_int_energy": {"mean": 5.58608109e-1, "lo95": 5.22572711e-1, "hi95": 5.94643506e-1, "n": 5},
+          "ess_per_second": {"mean": 1.97503490e3, "lo95": 1.84646161e3, "hi95": 2.10360820e3, "n": 5},
+          "energy_abs_err": {"mean": 6.29342413e-3, "lo95": -8.07333141e-4, "hi95": 1.33941814e-2, "n": 5},
+          "magnetization_mae": null
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 9.11434083e-1, "jit_seconds": 3.09467000e-1, "jit_excluded_from_seconds": true, "tv": 2.22306320e-1, "kl_empirical_exact": 1.86200846e-1, "kl_exact_empirical": null, "missed_states": 71, "tau_int_energy": 6.07669612e-1, "ess_energy": 1.64563108e3, "ess_per_second": 1.80554042e3, "mean_energy": -8.54400000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 6.71206713e-5, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 9.04877917e-1, "jit_seconds": 3.09467000e-1, "jit_excluded_from_seconds": true, "tv": 2.23078912e-1, "kl_empirical_exact": 1.85031623e-1, "kl_exact_empirical": null, "missed_states": 70, "tau_int_energy": 5.36730721e-1, "ess_energy": 1.86313166e3, "ess_per_second": 2.05898677e3, "mean_energy": -8.58400000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 3.93287933e-3, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 9.05496167e-1, "jit_seconds": 3.09467000e-1, "jit_excluded_from_seconds": true, "tv": 2.39540347e-1, "kl_empirical_exact": 2.11239530e-1, "kl_exact_empirical": null, "missed_states": 82, "tau_int_energy": 5.38005499e-1, "ess_energy": 1.85871706e3, "ess_per_second": 2.05270561e3, "mean_energy": -8.42000000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 1.24671207e-2, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 9.13507625e-1, "jit_seconds": 3.09467000e-1, "jit_excluded_from_seconds": true, "tv": 2.21119566e-1, "kl_empirical_exact": 1.86105021e-1, "kl_exact_empirical": null, "missed_states": 70, "tau_int_energy": 5.59635710e-1, "ess_energy": 1.78687668e3, "ess_per_second": 1.95606105e3, "mean_energy": -8.57200000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 2.73287933e-3, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 9.06590166e-1, "jit_seconds": 3.09467000e-1, "jit_excluded_from_seconds": true, "tv": 2.30328822e-1, "kl_empirical_exact": 1.93240531e-1, "kl_exact_empirical": null, "missed_states": 69, "tau_int_energy": 5.50999003e-1, "ess_energy": 1.81488532e3, "ess_per_second": 2.00188066e3, "mean_energy": -8.42200000e-1, "exact_mean_energy": -8.54467121e-1, "energy_abs_err": 1.22671207e-2, "magnetization_mae": null, "gibbs_updates": 14400, "reads": 12000, "measured_joules_per_ess": null}
+        ]
+      }
+    },
+    {
+      "id": "tsp_iv4_three_body_d8",
+      "kind": "hubo",
+      "source": "arXiv:2608.01615 §IV.4 and Appendix J.3, reduced from d=12 to d=8 so a histogram of a few thousand draws can be compared with the exact law. 12 pairs, 10 triples, weights i.i.d. N(0, 0.6^2). The paper does not publish the draw seed; this pin uses ferrotherm::rng::Pcg::new(260801615, 0x54535031), Box-Muller, and rejection-sampled Fisher-Yates. Native chromatic Gibbs of the three-body energy, not Figure 12.",
+      "beta": 1.0000000000000000,
+      "n": 8,
+      "q": 2,
+      "warmup": 400,
+      "draws": 2000,
+      "thin": 1,
+      "oracle": "exact enumeration of the Boltzmann distribution",
+      "ferrotherm": {
+        "summary": {
+          "tv": {"mean": 9.31321086e-2, "lo95": 3.24863432e-2, "hi95": 1.53777874e-1, "n": 5},
+          "kl_empirical_exact": {"mean": 5.12162366e-2, "lo95": 3.05109527e-2, "hi95": 7.19215206e-2, "n": 5},
+          "tau_int_energy": {"mean": 9.30879767e0, "lo95": 5.40079365e-1, "hi95": 1.80775160e1, "n": 5},
+          "ess_per_second": {"mean": 7.20632510e5, "lo95": -6.81139529e5, "hi95": 2.12240455e6, "n": 5},
+          "energy_abs_err": {"mean": 1.03089746e-1, "lo95": 5.30574346e-2, "hi95": 1.53122057e-1, "n": 5},
+          "magnetization_mae": {"mean": 7.58270234e-2, "lo95": 1.36863877e-2, "hi95": 1.37967659e-1, "n": 5}
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 4.75416000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.12660268e-1, "kl_empirical_exact": 5.74034275e-2, "kl_exact_empirical": null, "missed_states": 233, "tau_int_energy": 7.68901504e-1, "ess_energy": 1.30055670e3, "ess_per_second": 2.73561827e6, "mean_energy": -9.94684191e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 1.13700641e-1, "magnetization_mae": 1.01094188e-1, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 4.77917000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 3.29145089e-2, "kl_empirical_exact": 3.00591460e-2, "kl_exact_empirical": null, "missed_states": 216, "tau_int_energy": 6.82846493e0, "ess_energy": 1.46445799e2, "ess_per_second": 3.06425171e5, "mean_energy": -9.77373900e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 5.94022676e-2, "magnetization_mae": 1.04184735e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 4.72208000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 7.92749439e-2, "kl_empirical_exact": 4.25450566e-2, "kl_exact_empirical": null, "missed_states": 213, "tau_int_energy": 1.06373264e1, "ess_energy": 9.40085846e1, "ess_per_second": 1.99082999e5, "mean_energy": -9.75352587e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 7.96154022e-2, "magnetization_mae": 6.39058121e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 4.73875000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 7.65015490e-2, "kl_empirical_exact": 5.13805194e-2, "kl_exact_empirical": null, "missed_states": 203, "tau_int_energy": 8.16799803e0, "ess_energy": 1.22429021e2, "ess_per_second": 2.58357206e5, "mean_energy": -9.66769254e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 1.65448730e-1, "magnetization_mae": 5.94058121e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 4.78875000e-4, "jit_seconds": null, "jit_excluded_from_seconds": false, "tv": 1.64309273e-1, "kl_empirical_exact": 7.46930337e-2, "kl_exact_empirical": null, "missed_states": 218, "tau_int_energy": 2.01412975e1, "ess_energy": 4.96492345e1, "ess_per_second": 1.03678903e5, "mean_energy": -9.73585958e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 9.72816893e-2, "magnetization_mae": 1.44310831e-1, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null}
+        ]
+      },
+      "thrml": {
+        "summary": {
+          "tv": {"mean": 6.50652846e-2, "lo95": 3.32407890e-2, "hi95": 9.68897802e-2, "n": 5},
+          "kl_empirical_exact": {"mean": 3.35310249e-2, "lo95": 2.12353932e-2, "hi95": 4.58266566e-2, "n": 5},
+          "tau_int_energy": {"mean": 9.78698612e0, "lo95": 1.90495900e0, "hi95": 1.76690132e1, "n": 5},
+          "ess_per_second": {"mean": 2.89369363e2, "lo95": -4.57978242e1, "hi95": 6.24536551e2, "n": 5},
+          "energy_abs_err": {"mean": 6.24463772e-2, "lo95": 1.33935096e-2, "hi95": 1.11499245e-1, "n": 5},
+          "magnetization_mae": {"mean": 4.96705540e-2, "lo95": 1.97542923e-2, "hi95": 7.95868156e-2, "n": 5}
+        },
+        "trials": [
+          {"draws": 2000, "seconds": 6.23026167e-1, "jit_seconds": 2.80162458e-1, "jit_excluded_from_seconds": true, "tv": 6.11817455e-2, "kl_empirical_exact": 3.80287073e-2, "kl_exact_empirical": null, "missed_states": 227, "tau_int_energy": 1.15190517e1, "ess_energy": 8.68127019e1, "ess_per_second": 1.39340379e2, "mean_energy": -9.76138412e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 7.17571550e-2, "magnetization_mae": 5.31628079e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 6.20434625e-1, "jit_seconds": 2.80162458e-1, "jit_excluded_from_seconds": true, "tv": 8.56587907e-2, "kl_empirical_exact": 4.61269720e-2, "kl_exact_empirical": null, "missed_states": 222, "tau_int_energy": 1.34512319e1, "ess_energy": 7.43426335e1, "ess_per_second": 1.19823476e2, "mean_energy": -9.76165154e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 7.14897281e-2, "magnetization_mae": 6.30308121e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 6.28129167e-1, "jit_seconds": 2.80162458e-1, "jit_excluded_from_seconds": true, "tv": 2.58463961e-2, "kl_empirical_exact": 1.95689286e-2, "kl_exact_empirical": null, "missed_states": 221, "tau_int_energy": 2.17526296e0, "ess_energy": 4.59714535e2, "ess_per_second": 7.31878982e2, "mean_energy": -9.85924737e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 2.61060970e-2, "magnetization_mae": 1.36891688e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 6.23723791e-1, "jit_seconds": 2.80162458e-1, "jit_excluded_from_seconds": true, "tv": 6.22294449e-2, "kl_empirical_exact": 3.45643977e-2, "kl_exact_empirical": null, "missed_states": 223, "tau_int_energy": 1.73895756e1, "ess_energy": 5.75057161e1, "ess_per_second": 9.21974068e1, "mean_energy": -9.80961829e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 2.35229758e-2, "magnetization_mae": 4.11558121e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null},
+          {"draws": 2000, "seconds": 6.25078417e-1, "jit_seconds": 2.80162458e-1, "jit_excluded_from_seconds": true, "tv": 9.04100457e-2, "kl_empirical_exact": 2.93661189e-2, "kl_exact_empirical": null, "missed_states": 229, "tau_int_energy": 4.39980846e0, "ess_energy": 2.27282621e2, "ess_per_second": 3.63606573e2, "mean_energy": -9.95249720e0, "exact_mean_energy": -9.83314127e0, "energy_abs_err": 1.19355930e-1, "magnetization_mae": 7.73141688e-2, "gibbs_updates": 19200, "reads": 16000, "measured_joules_per_ess": null}
+        ]
+      }
+    }
+  ]
+}

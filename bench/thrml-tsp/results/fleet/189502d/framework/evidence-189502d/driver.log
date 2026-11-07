@@ -1,0 +1,6 @@
+quiet start
+quiet exit 0
+quiet energy load_gated load_gated
+contended start
+contended exit 0
+contended energy measured contended host

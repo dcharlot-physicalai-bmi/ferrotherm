@@ -1,0 +1,466 @@
+[
+  {
+    "host": "framework",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 0.0375772,
+      "lo95": 0.011148723055299889,
+      "hi95": 0.06400567694470011,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.005086573146,
+      "lo95": -0.02124786577533342,
+      "hi95": 0.03142101206733342,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 4.4275651199999994e-06,
+      "lo95": -1.2303748452452644e-05,
+      "hi95": 2.1158878692452644e-05,
+      "n": 5
+    },
+    "load1_min": 2.87,
+    "load1_max": 2.87,
+    "duration_min_s": 0.000785,
+    "duration_max_s": 0.001082
+  },
+  {
+    "host": "framework",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 16.1564032,
+      "lo95": 12.004641293539219,
+      "hi95": 20.30816510646078,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 4.6378109279999995,
+      "lo95": 3.5856599830621376,
+      "hi95": 5.689961872937861,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.0036701571860000004,
+      "lo95": 0.0016544936456010066,
+      "hi95": 0.005685820726398994,
+      "n": 5
+    },
+    "load1_min": 2.87,
+    "load1_max": 2.87,
+    "duration_min_s": 0.270585,
+    "duration_max_s": 0.427175
+  },
+  {
+    "host": "framework",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 0.0487066,
+      "lo95": 0.04483384445605747,
+      "hi95": 0.05257935554394254,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.01477743332,
+      "lo95": 0.011530624521245154,
+      "hi95": 0.018024242118754846,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 1.3342954014000001e-05,
+      "lo95": 1.0175008920049996e-05,
+      "hi95": 1.6510899107950004e-05,
+      "n": 5
+    },
+    "load1_min": 2.87,
+    "load1_max": 2.87,
+    "duration_min_s": 0.000883,
+    "duration_max_s": 0.000943
+  },
+  {
+    "host": "framework",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 16.9911898,
+      "lo95": 16.191653568334527,
+      "hi95": 17.790726031665475,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 4.690096874,
+      "lo95": 4.597376691967508,
+      "hi95": 4.782817056032492,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.004110409682,
+      "lo95": 0.0036271809680552855,
+      "hi95": 0.004593638395944714,
+      "n": 5
+    },
+    "load1_min": 2.87,
+    "load1_max": 2.87,
+    "duration_min_s": 0.317926,
+    "duration_max_s": 0.356418
+  },
+  {
+    "host": "framework",
+    "workload": "potts_path_q3_n6",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 0.047663,
+      "lo95": 0.044738339852856364,
+      "hi95": 0.05058766014714363,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.0166724773,
+      "lo95": 0.01356888351485773,
+      "hi95": 0.019776071085142267,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 1.064233445e-05,
+      "lo95": 7.02435367115716e-06,
+      "hi95": 1.426031522884284e-05,
+      "n": 5
+    },
+    "load1_min": 2.87,
+    "load1_max": 2.88,
+    "duration_min_s": 0.000798,
+    "duration_max_s": 0.000855
+  },
+  {
+    "host": "framework",
+    "workload": "potts_path_q3_n6",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 55.8773288,
+      "lo95": 54.69153669075854,
+      "hi95": 57.06312090924146,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 12.1788175,
+      "lo95": 11.223618922309237,
+      "hi95": 13.134016077690761,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.006790032109999999,
+      "lo95": 0.005794428945118599,
+      "hi95": 0.0077856352748814,
+      "n": 5
+    },
+    "load1_min": 2.87,
+    "load1_max": 2.88,
+    "duration_min_s": 1.145888,
+    "duration_max_s": 1.209886
+  },
+  {
+    "host": "framework",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 0.0464084,
+      "lo95": 0.04328952557490297,
+      "hi95": 0.04952727442509704,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 0.014511740810000002,
+      "lo95": 0.007670645417156048,
+      "hi95": 0.021352836202843957,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.000104067873054,
+      "lo95": 4.950793557208157e-06,
+      "hi95": 0.00020318495255079185,
+      "n": 5
+    },
+    "load1_min": 2.88,
+    "load1_max": 2.89,
+    "duration_min_s": 0.000783,
+    "duration_max_s": 0.000992
+  },
+  {
+    "host": "framework",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "primary",
+    "gross_j": {
+      "mean": 37.7725342,
+      "lo95": 36.71333206872773,
+      "hi95": 38.831736331272275,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 9.547090712,
+      "lo95": 9.039159463625097,
+      "hi95": 10.055021960374901,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.03649412308,
+      "lo95": -0.008858091556399814,
+      "hi95": 0.08184633771639982,
+      "n": 5
+    },
+    "load1_min": 2.89,
+    "load1_max": 2.89,
+    "duration_min_s": 0.737985,
+    "duration_max_s": 0.7757
+  },
+  {
+    "host": "m5",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 53.36803922,
+      "lo95": 51.03154047862574,
+      "hi95": 55.70453796137426,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 28.298460119999998,
+      "lo95": 25.96159143423226,
+      "hi95": 30.635328805767735,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 5.305943926000001e-06,
+      "lo95": 4.512705787630103e-06,
+      "hi95": 6.099182064369899e-06,
+      "n": 5
+    },
+    "load1_min": 3.04,
+    "load1_max": 3.25,
+    "duration_min_s": 1.500204,
+    "duration_max_s": 1.500275
+  },
+  {
+    "host": "m5",
+    "workload": "thrml_readme_ising_chain_n5",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 53.28454828,
+      "lo95": 46.85698976188088,
+      "hi95": 59.71210679811912,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 27.013743119999997,
+      "lo95": 21.353034879530803,
+      "hi95": 32.67445136046919,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.002659821166,
+      "lo95": 0.001255995168505243,
+      "hi95": 0.004063647163494757,
+      "n": 5
+    },
+    "load1_min": 3.11,
+    "load1_max": 3.25,
+    "duration_min_s": 1.548359,
+    "duration_max_s": 1.639136
+  },
+  {
+    "host": "m5",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 52.03387642,
+      "lo95": 50.241060495108606,
+      "hi95": 53.82669234489139,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 26.963832880000002,
+      "lo95": 25.16943318865887,
+      "hi95": 28.758232571341132,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 8.437473268e-06,
+      "lo95": 7.361020072715289e-06,
+      "hi95": 9.51392646328471e-06,
+      "n": 5
+    },
+    "load1_min": 3.21,
+    "load1_max": 3.27,
+    "duration_min_s": 1.500087,
+    "duration_max_s": 1.500498
+  },
+  {
+    "host": "m5",
+    "workload": "ising_grid2d_open_3x3",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 52.750321959999994,
+      "lo95": 49.84691890118609,
+      "hi95": 55.653725018813894,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 25.921410279999996,
+      "lo95": 23.184383333601822,
+      "hi95": 28.65843722639817,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.0032456501319999996,
+      "lo95": 0.0027274095998972114,
+      "hi95": 0.0037638906641027877,
+      "n": 5
+    },
+    "load1_min": 3.21,
+    "load1_max": 3.27,
+    "duration_min_s": 1.587953,
+    "duration_max_s": 1.639902
+  },
+  {
+    "host": "m5",
+    "workload": "potts_path_q3_n6",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 46.95756478,
+      "lo95": 43.280064446369046,
+      "hi95": 50.63506511363095,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 21.88541446,
+      "lo95": 18.205184461333648,
+      "hi95": 25.565644458666352,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 5.058045798e-06,
+      "lo95": 3.408385578545719e-06,
+      "hi95": 6.707706017454281e-06,
+      "n": 5
+    },
+    "load1_min": 3.25,
+    "load1_max": 3.53,
+    "duration_min_s": 1.500113,
+    "duration_max_s": 1.500527
+  },
+  {
+    "host": "m5",
+    "workload": "potts_path_q3_n6",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 54.602045280000006,
+      "lo95": 51.266744625065876,
+      "hi95": 57.937345934934136,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 24.02026304,
+      "lo95": 20.214677836183686,
+      "hi95": 27.825848243816313,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.006705024238,
+      "lo95": 0.005278427605271257,
+      "hi95": 0.008131620870728743,
+      "n": 5
+    },
+    "load1_min": 3.31,
+    "load1_max": 3.53,
+    "duration_min_s": 1.808333,
+    "duration_max_s": 1.85846
+  },
+  {
+    "host": "m5",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "ferrotherm",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 44.85015862,
+      "lo95": 43.24392901013638,
+      "hi95": 46.45638822986363,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 19.780529100000003,
+      "lo95": 18.174195957617194,
+      "hi95": 21.38686224238281,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 5.1372050201999996e-05,
+      "lo95": 5.837079820217546e-06,
+      "hi95": 9.690702058378245e-05,
+      "n": 5
+    },
+    "load1_min": 3.07,
+    "load1_max": 3.37,
+    "duration_min_s": 1.500006,
+    "duration_max_s": 1.500465
+  },
+  {
+    "host": "m5",
+    "workload": "tsp_iv4_three_body_d8",
+    "side": "thrml",
+    "evidence_grade": "contended host",
+    "rank": "secondary",
+    "gross_j": {
+      "mean": 52.92097502,
+      "lo95": 51.28487717640601,
+      "hi95": 54.55707286359399,
+      "n": 5
+    },
+    "incremental_j": {
+      "mean": 20.597318100000003,
+      "lo95": 19.2460688902629,
+      "hi95": 21.948567309737104,
+      "n": 5
+    },
+    "joules_per_ess": {
+      "mean": 0.027108140636,
+      "lo95": -0.008499389304100026,
+      "hi95": 0.06271567057610003,
+      "n": 5
+    },
+    "load1_min": 3.07,
+    "load1_max": 3.37,
+    "duration_min_s": 1.910032,
+    "duration_max_s": 1.989193
+  }
+]

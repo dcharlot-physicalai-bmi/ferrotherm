@@ -18,7 +18,17 @@
 //! intervals. Every number from that mode is evidence grade `contended host`. A quiet
 //! sample during that mode does not promote the run. The two grades are not pooled.
 //!
-//! RAPL on hostname `framework-128gb-0000` is the primary energy evidence. macmon is secondary.
+//! Each trial repeats the sampler until the window is at least [`MIN_ENERGY_WINDOW_S`],
+//! then divides joules, seconds, and effective-sample size by the repetition count.
+//! Attribution also requires [`MIN_COUNTER_UPDATES`] advances of the counter. A
+//! sub-millisecond window that catches zero or one RAPL tick is not a per-sample price.
+//!
+//! Summaries are per workload, sampler, instrument, and scope. RAPL package energy and
+//! macmon whole-system energy do not share a table.
+//!
+//! RAPL on hostname `framework-128gb-0000` is the primary energy evidence. That host
+//! reads package `energy_uj` without root. The permission denial was `framework-32gb-0001`.
+//! macmon is secondary and whole-system.
 //!
 //! Gross energy is the counter delta over the run. Incremental energy is gross minus
 //! `idle_watts * seconds`. Both are stored. A delta inside the baseline's own wander is
@@ -85,9 +95,119 @@ pub fn split_incremental(gross: f64, idle_watts: f64, idle_sigma: f64, seconds: 
 /// as quiet.
 pub const QUIET_ATTEMPTS: usize = 15;
 
-/// Power-integrating backends (macmon, INA3221) need a window this long before a mean is a mean.
-/// Counter backends (RAPL, perf, NVML) can subtract two readings of a shorter trial.
-pub const MIN_POWER_WINDOW_S: f64 = 1.5;
+/// Every measured trial repeats the sampler until the window is at least this long.
+///
+/// A ferrotherm chain on the pinned workloads returns in about a millisecond. RAPL on
+/// `framework-128gb-0000` does not advance on that interval: one trial at revision
+/// `189502d` recorded 0 J gross and a negative incremental and was still marked
+/// attributable. Two seconds covers the counter's update cadence. The window's joules
+/// are then divided by the repetition count.
+pub const MIN_ENERGY_WINDOW_S: f64 = 2.0;
+
+/// Attribution needs at least this many counter advances inside the window.
+///
+/// One tick, or none, is a collision with the update cadence. Eight is the same floor
+/// the wall-power meter already uses for a mean.
+pub const MIN_COUNTER_UPDATES: u32 = 8;
+
+/// Joules and seconds of one repetition, from a window that ran `repetitions` times.
+///
+/// A zero repetition count is not a measurement.
+pub fn per_repetition(window_joules: f64, window_seconds: f64, repetitions: u32) -> (f64, f64) {
+    if repetitions == 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let n = f64::from(repetitions);
+    (window_joules / n, window_seconds / n)
+}
+
+/// How many times successive finite readings of a counter differed.
+///
+/// The first reading is the baseline, not an update. Equal neighbours are the counter
+/// standing still. `NaN` is ignored.
+pub fn count_counter_updates(readings: &[f64]) -> u32 {
+    let mut updates = 0u32;
+    let mut prev: Option<f64> = None;
+    for reading in readings {
+        if !reading.is_finite() {
+            continue;
+        }
+        if let Some(p) = prev
+            && *reading != p
+        {
+            updates += 1;
+        }
+        prev = Some(*reading);
+    }
+    updates
+}
+
+/// Gross joules from the first and last finite reading.
+///
+/// `max_j` is the counter's range when a wrap is defined. Without it, a decrease is not
+/// a measurement.
+pub fn window_gross(readings: &[f64], max_j: Option<f64>) -> f64 {
+    let Some(first) = readings.iter().copied().find(|r| r.is_finite()) else {
+        return f64::NAN;
+    };
+    let Some(last) = readings.iter().copied().rev().find(|r| r.is_finite()) else {
+        return f64::NAN;
+    };
+    match max_j {
+        Some(max) => counter_delta_j(first, last, max),
+        None if last >= first => last - first,
+        None => f64::NAN,
+    }
+}
+
+/// Read `read` about every 250 µs while `body` runs.
+///
+/// The samples are the cadence record. `body` runs on this thread. `read` runs on another,
+/// so it must not touch the sampler `body` is driving. On panic inside `body` the reader
+/// is stopped before the scope joins it.
+pub fn sample_during<R>(
+    mut read: impl FnMut() -> Option<f64> + Send,
+    body: impl FnOnce() -> R,
+) -> (Vec<f64>, f64, R) {
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let flag = &stop;
+        let handle = scope.spawn(move || {
+            let mut samples = Vec::new();
+            while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(x) = read() {
+                    samples.push(x);
+                }
+                std::thread::sleep(Duration::from_micros(250));
+            }
+            samples
+        });
+        let _stop_on_drop = StopReader(&stop);
+        let started = std::time::Instant::now();
+        let value = body();
+        let seconds = started.elapsed().as_secs_f64();
+        drop(_stop_on_drop);
+        let samples = handle.join().unwrap_or_default();
+        (samples, seconds, value)
+    })
+}
+
+struct StopReader<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for StopReader<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Package energy and whole-system energy are different measurements.
+///
+/// The labels that may be summarised are `package` (RAPL package or `power/energy-pkg`),
+/// `whole-system` (macmon), `psys`, `board` (INA3221), and `gpu` (NVML). Two rows share
+/// a scope only when the label is the same one of those.
+pub fn scopes_may_share_a_table(a: &str, b: &str) -> bool {
+    a == b && matches!(a, "package" | "whole-system" | "psys" | "board" | "gpu")
+}
 
 /// A, B, A, B, ... with `n` runs of each sampler.
 ///
@@ -314,10 +434,17 @@ pub fn parse_self_stat_busy(text: &str) -> Option<u64> {
     Some(utime + stime)
 }
 
-/// Build the joule record for one trial from a counter delta and an idle baseline.
+/// Build the joule record for one repetition from a window and an idle baseline.
+///
+/// `gross` and `seconds` are already per repetition. `counter_updates` is how many times
+/// the counter advanced during the whole window, before the division.
 ///
 /// `grade` is stored as the evidence grade. A caller who passes `quiet` is asserting the
 /// quiet-host gate already passed. Contended mode passes `contended host` and nothing else.
+///
+/// Attribution requires the incremental to clear the idle band, a strictly positive gross,
+/// and at least [`MIN_COUNTER_UPDATES`] advances. Zero gross with a negative incremental
+/// is the signature of a window that missed the counter, and it is not attributable.
 pub fn trial_joules(
     gross: f64,
     idle_watts: f64,
@@ -326,8 +453,23 @@ pub fn trial_joules(
     instrument: &str,
     scope: &str,
     grade: &'static str,
+    counter_updates: u32,
 ) -> Joules {
-    let (incremental, attributable) = split_incremental(gross, idle_watts, idle_sigma, seconds);
+    let (incremental, clears_band) = split_incremental(gross, idle_watts, idle_sigma, seconds);
+    let cadence = counter_updates >= MIN_COUNTER_UPDATES;
+    let moved = gross.is_finite() && gross > 0.0;
+    let attributable = clears_band && cadence && moved && incremental.is_finite();
+    let note = if !cadence {
+        format!(
+            "attribution refused: the counter advanced {counter_updates} times and the floor is {MIN_COUNTER_UPDATES}"
+        )
+    } else if !moved {
+        "attribution refused: gross energy was not strictly positive".to_string()
+    } else if !clears_band {
+        "incremental joules are inside the idle band and are not a per-sample price".to_string()
+    } else {
+        String::new()
+    };
     Joules {
         gross: Some(gross),
         incremental: Some(incremental),
@@ -338,16 +480,23 @@ pub fn trial_joules(
         evidence: grade,
         instrument: instrument.to_string(),
         scope: scope.to_string(),
-        note: String::new(),
+        note,
         projected_prices_applied: false,
     }
 }
 
-/// One metered trial of one sampler.
+/// One metered trial of one sampler on one workload.
 #[derive(Clone, Debug)]
 pub struct EnergyTrial {
+    pub workload: &'static str,
     pub side: &'static str,
     pub trial: usize,
+    /// Sampler executions inside the window. Joules and `ess` are per execution.
+    pub repetitions: u32,
+    /// Counter advances observed in the window, before dividing by [`Self::repetitions`].
+    pub counter_updates: u32,
+    /// Wall time of the whole window, before dividing.
+    pub window_seconds: f64,
     pub joules: Joules,
     pub ess: f64,
     pub joules_per_ess: Option<f64>,
@@ -359,8 +508,12 @@ pub struct EnergyTrial {
 
 impl EnergyTrial {
     pub fn from_parts(
+        workload: &'static str,
         side: &'static str,
         trial: usize,
+        repetitions: u32,
+        counter_updates: u32,
+        window_seconds: f64,
         joules: Joules,
         ess: f64,
         load1: Option<f64>,
@@ -369,22 +522,52 @@ impl EnergyTrial {
         rank: &'static str,
     ) -> EnergyTrial {
         let joules_per_ess = joules_per_ess(&joules, ess);
-        EnergyTrial { side, trial, joules, ess, joules_per_ess, load1, other_cpu_s, grade, rank }
+        EnergyTrial {
+            workload,
+            side,
+            trial,
+            repetitions,
+            counter_updates,
+            window_seconds,
+            joules,
+            ess,
+            joules_per_ess,
+            load1,
+            other_cpu_s,
+            grade,
+            rank,
+        }
     }
 }
 
-/// Intervals for one sampler. Refuses a slice that mixes grades: the caller has to split first.
+/// Whether two trials are the same cell of a table.
+///
+/// A cell is one workload, one sampler, one instrument, one scope, and one evidence grade.
+/// Package joules and whole-system joules are not a cell.
+pub fn may_share_summary(a: &EnergyTrial, b: &EnergyTrial) -> bool {
+    a.workload == b.workload
+        && a.side == b.side
+        && a.joules.instrument == b.joules.instrument
+        && scopes_may_share_a_table(&a.joules.scope, &b.joules.scope)
+        && grades_may_share_a_table(a.grade, b.grade)
+}
+
+/// Intervals for one cell. Refuses a slice that mixes workload, sampler, scope, instrument, or grade.
 pub fn summarise_one_grade(trials: &[EnergyTrial]) -> Result<GradeSummary, &'static str> {
     let Some(first) = trials.first() else {
         return Err("no trials");
     };
-    if trials.iter().any(|t| !grades_may_share_a_table(t.grade, first.grade)) {
-        return Err("mixed evidence grades");
+    if trials.iter().any(|t| !may_share_summary(t, first)) {
+        return Err("mixed workload, sampler, scope, instrument, or evidence grade");
     }
     let gross: Vec<f64> = trials.iter().filter_map(|t| t.joules.gross).collect();
     let incremental: Vec<f64> = trials.iter().filter_map(|t| t.joules.incremental).collect();
     let per_ess: Vec<f64> = trials.iter().filter_map(|t| t.joules_per_ess).collect();
     Ok(GradeSummary {
+        workload: first.workload,
+        side: first.side,
+        instrument: first.joules.instrument.clone(),
+        scope: first.joules.scope.clone(),
         grade: first.grade,
         n: trials.len(),
         gross: mean_interval(&gross),
@@ -393,7 +576,36 @@ pub fn summarise_one_grade(trials: &[EnergyTrial]) -> Result<GradeSummary, &'sta
     })
 }
 
+/// One summary per workload, sampler, instrument, and scope, in first-seen order.
+///
+/// Package rows and whole-system rows stay in different summaries.
+pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
+    let mut keys: Vec<(&str, &str, &str, &str, &str)> = Vec::new();
+    for t in trials {
+        let key = (t.workload, t.side, t.joules.instrument.as_str(), t.joules.scope.as_str(), t.grade);
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys.into_iter()
+        .filter_map(|key| {
+            let group: Vec<EnergyTrial> = trials
+                .iter()
+                .filter(|t| {
+                    (t.workload, t.side, t.joules.instrument.as_str(), t.joules.scope.as_str(), t.grade) == key
+                })
+                .cloned()
+                .collect();
+            summarise_one_grade(&group).ok()
+        })
+        .collect()
+}
+
 pub struct GradeSummary {
+    pub workload: &'static str,
+    pub side: &'static str,
+    pub instrument: String,
+    pub scope: String,
     pub grade: &'static str,
     pub n: usize,
     pub gross: Option<(f64, f64, f64, usize)>,
@@ -478,16 +690,6 @@ impl Probe {
         }
     }
 
-    /// CPU energy instrument, if one opened. RAPL wins over perf. macmon is separate.
-    pub fn cpu_counter(&mut self) -> Option<CpuCounter<'_>> {
-        if let Some(c) = self.rapl.as_mut() {
-            return Some(CpuCounter::Rapl(c));
-        }
-        if let Some(c) = self.perf.as_mut() {
-            return Some(CpuCounter::Perf(c));
-        }
-        None
-    }
 }
 
 fn read_hostname() -> String {
@@ -568,16 +770,20 @@ impl RaplCounter {
         Ok(RaplCounter { path, max_uj, name, kind })
     }
 
+    pub fn counter_path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    pub fn range_j(&self) -> f64 {
+        self.max_uj as f64 / 1e6
+    }
+
     pub fn read_uj(&self) -> Result<u64, String> {
         std::fs::read_to_string(self.path.join("energy_uj"))
             .map_err(|e| format!("RAPL read: {e}"))?
             .trim()
             .parse()
             .map_err(|e| format!("RAPL parse: {e}"))
-    }
-
-    pub fn read_j(&self) -> Result<f64, String> {
-        Ok(self.read_uj()? as f64 / 1e6)
     }
 
     pub fn delta_j(&self, prev: u64, now: u64) -> f64 {
@@ -628,6 +834,16 @@ impl PerfPkg {
     pub fn read_j(&self) -> Result<f64, String> {
         Ok(self.read_raw()? as f64 * self.scale)
     }
+
+    pub fn fd_and_scale(&self) -> (i32, f64) {
+        (self.fd, self.scale)
+    }
+}
+
+pub fn perf_sample_j(fd: i32, scale: f64) -> Option<f64> {
+    let mut buf = [0u8; 8];
+    let n = unsafe { read(fd, buf.as_mut_ptr(), buf.len()) };
+    if n == 8 { Some(u64::from_ne_bytes(buf) as f64 * scale) } else { None }
 }
 
 impl Drop for PerfPkg {
@@ -702,27 +918,6 @@ unsafe extern "C" {
     fn close(fd: i32) -> i32;
 }
 
-pub enum CpuCounter<'a> {
-    Rapl(&'a mut RaplCounter),
-    Perf(&'a mut PerfPkg),
-}
-
-impl CpuCounter<'_> {
-    pub fn read_j(&self) -> Result<f64, String> {
-        match self {
-            CpuCounter::Rapl(c) => c.read_j(),
-            CpuCounter::Perf(c) => c.read_j(),
-        }
-    }
-
-    pub fn instrument(&self) -> &'static str {
-        match self {
-            CpuCounter::Rapl(_) => "rapl",
-            CpuCounter::Perf(_) => "perf",
-        }
-    }
-}
-
 /// Snapshot of machine busy ticks and this process's own ticks.
 pub struct CpuSnap {
     pub busy: u64,
@@ -792,6 +987,40 @@ impl Nvml {
 
     pub fn joules(&self) -> Result<f64, String> {
         Ok(self.millijoules()? as f64 / 1000.0)
+    }
+
+    /// A copy of the handles the cadence poller can own.
+    ///
+    /// The poller is the only caller of these handles while a window is running.
+    /// `nvmlDeviceGetTotalEnergyConsumption` is safe to call from that thread for the
+    /// duration of the window; the main thread does not call it then.
+    pub fn sampler(&self) -> NvmlSampler {
+        NvmlSampler {
+            get_energy: self.get_energy,
+            handles: self.devices.iter().map(|d| d.handle).collect(),
+        }
+    }
+}
+
+pub struct NvmlSampler {
+    get_energy: GetEnergy,
+    handles: Vec<*mut std::ffi::c_void>,
+}
+
+// The poller thread is the sole user of these device handles for the window.
+unsafe impl Send for NvmlSampler {}
+
+impl NvmlSampler {
+    pub fn millijoules(&self) -> Option<u64> {
+        let mut total = 0u64;
+        for handle in &self.handles {
+            let mut mj = 0u64;
+            if unsafe { (self.get_energy)(*handle, &mut mj) } != 0 {
+                return None;
+            }
+            total = total.saturating_add(mj);
+        }
+        Some(total)
     }
 }
 
@@ -875,6 +1104,17 @@ unsafe extern "C" {
 pub fn mj_delta_j(prev: u64, now: u64) -> f64 {
     let d = if now >= prev { now - prev } else { now.wrapping_add(u64::MAX - prev).wrapping_add(1) };
     d as f64 / 1000.0
+}
+
+/// Joules across a series of millijoule readings, using [`mj_delta_j`] for the wrap.
+pub fn mj_window_j(readings_mj: &[f64]) -> f64 {
+    let Some(first) = readings_mj.iter().copied().find(|r| r.is_finite()) else {
+        return f64::NAN;
+    };
+    let Some(last) = readings_mj.iter().copied().rev().find(|r| r.is_finite()) else {
+        return f64::NAN;
+    };
+    mj_delta_j(first as u64, last as u64)
 }
 
 /// Quiet idle on a wall-power meter. The meter's own `idle` refuses a load above [`QUIET_LOAD`].
@@ -993,8 +1233,21 @@ mod tests {
     #[test]
     fn incremental_ci_stays_inside_one_grade() {
         let mk = |g: &'static str, inc: f64| {
-            let j = trial_joules(inc + 10.0, 10.0, 0.01, 1.0, "rapl", "package", g);
-            EnergyTrial::from_parts("ferrotherm", 0, j, 100.0, Some(0.4), Some(0.1), g, "primary")
+            let j = trial_joules(inc + 10.0, 10.0, 0.01, 1.0, "rapl", "package", g, MIN_COUNTER_UPDATES);
+            EnergyTrial::from_parts(
+                "ising_grid2d_open_3x3",
+                "ferrotherm",
+                0,
+                1,
+                MIN_COUNTER_UPDATES,
+                1.0,
+                j,
+                100.0,
+                Some(0.4),
+                Some(0.1),
+                g,
+                "primary",
+            )
         };
         let quiet: Vec<_> = (0..5).map(|i| mk(GRADE_QUIET, 1.0 + i as f64 * 0.1)).collect();
         let sum = summarise_one_grade(&quiet).unwrap();
@@ -1032,5 +1285,84 @@ mod tests {
         assert!(gated.gross.is_none());
         assert_eq!(gated.evidence, "load_gated");
         assert!(!gated.projected_prices_applied);
+    }
+
+    #[test]
+    fn a_short_window_is_divided_by_repetitions_and_a_missed_cadence_is_not_attributable() {
+        let (j, s) = per_repetition(90.0, 2.0, 2000);
+        assert!((j - 0.045).abs() < 1e-12);
+        assert!((s - 0.001).abs() < 1e-12);
+        assert!(per_repetition(1.0, 2.0, 0).0.is_nan());
+        assert_eq!(count_counter_updates(&[10.0, 10.0, 10.0]), 0);
+        assert_eq!(count_counter_updates(&[10.0, 10.0, 10.4]), 1);
+        assert_eq!(count_counter_updates(&[1.0, 2.0, 2.0, 3.0, f64::NAN, 4.0]), 3);
+        assert!(count_counter_updates(&[0.0; 9]) < MIN_COUNTER_UPDATES);
+
+        // 189502d, chain workload, ferrotherm trial 3: 0.827 ms, gross 0, incremental about -0.031 J,
+        // and the harness of that revision marked it attributable.
+        let missed = trial_joules(
+            0.0,
+            37.4752469,
+            0.200209929,
+            0.000827,
+            "rapl",
+            "package",
+            GRADE_CONTENDED,
+            0,
+        );
+        let inc = missed.incremental.unwrap();
+        assert!(inc < -0.03 && inc > -0.032, "{inc}");
+        assert!(!missed.attributable);
+        assert!(joules_per_ess(&missed, 1727.79274).is_none());
+
+        let one_tick = trial_joules(
+            0.045545,
+            37.4752469,
+            0.200209929,
+            0.001082,
+            "rapl",
+            "package",
+            GRADE_CONTENDED,
+            1,
+        );
+        assert!(!one_tick.attributable, "one counter tick is below the cadence floor");
+
+        let held = trial_joules(
+            0.045,
+            37.4752469,
+            0.200209929,
+            0.001,
+            "rapl",
+            "package",
+            GRADE_CONTENDED,
+            MIN_COUNTER_UPDATES,
+        );
+        assert!(held.attributable);
+        assert!(joules_per_ess(&held, 1000.0).is_some());
+    }
+
+    #[test]
+    fn package_and_whole_system_are_not_one_table_and_workloads_are_not_pooled() {
+        assert!(!scopes_may_share_a_table("package", "whole-system"));
+        assert!(scopes_may_share_a_table("package", "package"));
+        assert!(!scopes_may_share_a_table("cpu-package", "cpu-package"));
+        let row = |workload: &'static str, scope: &'static str| {
+            let j = trial_joules(2.0, 1.0, 0.01, 1.0, if scope == "package" { "rapl" } else { "macmon" }, scope, GRADE_CONTENDED, MIN_COUNTER_UPDATES);
+            EnergyTrial::from_parts(workload, "ferrotherm", 0, 4, MIN_COUNTER_UPDATES, 2.0, j, 10.0, Some(2.5), Some(0.2), GRADE_CONTENDED, "primary")
+        };
+        let package = row("thrml_readme_ising_chain_n5", "package");
+        let whole = row("thrml_readme_ising_chain_n5", "whole-system");
+        let other = row("ising_grid2d_open_3x3", "package");
+        assert!(!may_share_summary(&package, &whole));
+        assert!(!may_share_summary(&package, &other));
+        assert!(summarise_one_grade(&[package.clone(), whole.clone()]).is_err());
+        assert!(summarise_one_grade(&[package.clone(), other.clone()]).is_err());
+        let sums = summarise_workloads(&[package, whole, other]);
+        assert_eq!(sums.len(), 3);
+        assert_eq!(sums[0].scope, "package");
+        assert_eq!(sums[0].workload, "thrml_readme_ising_chain_n5");
+        assert_eq!(sums[1].scope, "whole-system");
+        assert_eq!(sums[1].instrument, "macmon");
+        assert_eq!(sums[2].workload, "ising_grid2d_open_3x3");
     }
 }

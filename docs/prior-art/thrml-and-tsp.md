@@ -425,19 +425,33 @@ intervals, with `load1` and other-process CPU on every trial. Every number from
 that mode is evidence grade `contended host`. It is not quiet-host evidence and
 it is not pooled with a quiet run.
 
-RAPL on hostname `framework-128gb-0000` is the primary energy evidence. macmon
-is secondary. A fleet attempt on 7 November 2026 obtained no joules. The
-machine that answered the Framework request was `framework-32gb-0001`; RAPL
-`energy_uj` was permission denied and `perf` `power/energy-pkg` failed at
-`perf_event_paranoid` 4. The M5 Max 48 GB run had rootless macmon traces and a
-load average of 6.45, so the quiet gate refused a baseline. Those traces are
-secondary and contended, and they were not turned into joules. The record is
-`bench/thrml-tsp/results/fleet/`.
+RAPL on hostname `framework-128gb-0000` is the primary energy evidence. That
+machine reads package `energy_uj` without root. macmon is secondary and its
+scope is whole-system. Package joules and whole-system joules are not added
+together, and a summary that mixed them is refused.
+
+An earlier fleet attempt on 7 November 2026 obtained no joules. The machine
+that answered was `framework-32gb-0001`, not `framework-128gb-0000`. On
+`framework-32gb-0001`, RAPL `energy_uj` was permission denied and `perf`
+`power/energy-pkg` failed at `perf_event_paranoid` 4. The M5 Max 48 GB run of
+that attempt had rootless macmon traces and a load average of 6.45, so the
+quiet gate refused a baseline. Those traces were not turned into joules.
+
+The first measured-joules bundle is `bench/thrml-tsp/results/fleet/189502d/`,
+revision `189502d`, both hosts evidence grade `contended host`.
+`framework-128gb-0000` measured RAPL package energy. The M5 Max measured macmon
+whole-system energy. Quiet mode on the Framework host stayed above load 2 and
+recorded `load_gated`. The ferrotherm windows in that bundle are about 1 ms,
+below the RAPL update cadence. One trial records gross 0 J, a negative
+incremental, and `attributable: true`. Those values stay in the bundle. The
+harness now repeats each sampler for at least 2 s, divides by the repetition
+count, and refuses attribution when the counter advanced fewer than 8 times.
+Summaries are per workload. The two scopes stay in separate tables.
 
 A delta inside three standard deviations of the baseline's own wander is kept
-in the trace and is not divided into a per-sample price. Absence of a counter
-is a null joule with a reason. It is not filled from `Z1_SPICE`, from
-Table 4, or from Appendix E.
+in the trace and is not divided into a per-sample price. So is a window whose
+counter did not keep updating. Absence of a counter is a null joule with a
+reason. It is not filled from `Z1_SPICE`, from Table 4, or from Appendix E.
 
 ## Where each one is stronger
 
