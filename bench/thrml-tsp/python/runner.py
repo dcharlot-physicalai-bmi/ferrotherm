@@ -40,9 +40,14 @@ from thrml.models.ising import IsingEBM, IsingSamplingProgram
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--spec", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out")
+    ap.add_argument("--serve", action="store_true")
     args = ap.parse_args()
     workloads = parse_spec(open(args.spec, encoding="utf-8").read())
+    if args.serve:
+        return serve(workloads)
+    if not args.out:
+        raise SystemExit("--out is required unless --serve")
     lines = [
         "META thrml={thrml} jax={jaxv} jaxlib={jaxlib} equinox={eqx} device={dev}".format(
             thrml=thrml.__version__,
@@ -135,46 +140,79 @@ def _finish(cur: dict) -> dict:
     }
 
 
-def run_workload(w: dict) -> list[str]:
+def serve(workloads: list[dict]) -> int:
+    """JIT once, then sample one seed per `RUN id seed` line. QUIT ends the process."""
+    ready = {}
+    for w in workloads:
+        program, init, observe, decode = _build(w)
+        key = jax.random.key(0)
+        burned = sample_states(key, program, SamplingSchedule(1, 2, 1), init, [], observe)
+        jax.block_until_ready(burned)
+        ready[w["id"]] = (w, program, init, observe, decode)
+    print("READY", flush=True)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        if line == "QUIT":
+            return 0
+        parts = line.split()
+        if len(parts) != 3 or parts[0] != "RUN":
+            print(f"ERR unrecognised {line}", flush=True)
+            continue
+        wid, seed_s = parts[1], parts[2]
+        if wid not in ready:
+            print(f"ERR unknown workload {wid}", flush=True)
+            continue
+        w, program, init, observe, decode = ready[wid]
+        seed = int(seed_s)
+        lines = _one_trial(w, program, init, observe, decode, seed, 0.0)
+        print("\n".join(lines), flush=True)
+    return 0
+
+
+def _build(w: dict):
     kind = w["kind"]
     if kind == "ising":
-        build = _ising_program
-    elif kind == "potts":
-        build = _potts_program
-    elif kind == "hubo":
-        build = _hubo_program
-    else:
-        raise SystemExit(f"unknown kind {kind}")
-    program, init, observe, decode = build(w)
-    # Compile on a throwaway schedule. Not included in the sample timing.
+        return _ising_program(w)
+    if kind == "potts":
+        return _potts_program(w)
+    if kind == "hubo":
+        return _hubo_program(w)
+    raise SystemExit(f"unknown kind {kind}")
+
+
+def _one_trial(w, program, init, observe, decode, seed: int, jit_s: float) -> list[str]:
+    thin = max(1, w["thin"])
+    schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
+    key = jax.random.key(seed)
+    t0 = time.perf_counter()
+    samples = sample_states(key, program, schedule, init, [], observe)
+    jax.block_until_ready(samples)
+    seconds = time.perf_counter() - t0
+    states = decode(samples)
+    if len(states) != w["draws"] or len(states[0]) != w["n"]:
+        raise SystemExit(f"{w['id']} seed {seed}: shape {len(states)} x {len(states[0]) if states else 0}")
+    lines = [
+        f"WORK id={w['id']} seed={seed} kind={w['kind']} seconds={seconds:.9f} jit_seconds={jit_s:.9f}"
+    ]
+    for row in states:
+        lines.append("STATE " + " ".join(str(int(v)) for v in row))
+    lines.append("END")
+    print(f"thrml {w['id']} seed {seed} {seconds:.3f}s", file=sys.stderr)
+    return lines
+
+
+def run_workload(w: dict) -> list[str]:
+    program, init, observe, decode = _build(w)
     key = jax.random.key(0)
     t0 = time.perf_counter()
     burned = sample_states(key, program, SamplingSchedule(1, 2, 1), init, [], observe)
     jax.block_until_ready(burned)
     jit_s = time.perf_counter() - t0
     lines = []
-    thin = max(1, w["thin"])
-    schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
     for trial in range(w["trials"]):
-        seed = w["seed0"] + trial
-        key = jax.random.key(seed)
-        t0 = time.perf_counter()
-        samples = sample_states(key, program, schedule, init, [], observe)
-        jax.block_until_ready(samples)
-        seconds = time.perf_counter() - t0
-        states = decode(samples)
-        if len(states) != w["draws"]:
-            raise SystemExit(f"{w['id']} seed {seed}: expected {w['draws']} states, got {len(states)}")
-        width = len(states[0])
-        if width != w["n"]:
-            raise SystemExit(f"{w['id']} seed {seed}: expected width {w['n']}, got {width}")
-        lines.append(
-            f"WORK id={w['id']} seed={seed} kind={kind} seconds={seconds:.9f} jit_seconds={jit_s:.9f}"
-        )
-        for row in states:
-            lines.append("STATE " + " ".join(str(int(v)) for v in row))
-        lines.append("END")
-        print(f"thrml {w['id']} seed {seed} {seconds:.3f}s", file=sys.stderr)
+        lines.extend(_one_trial(w, program, init, observe, decode, w["seed0"] + trial, jit_s))
     return lines
 
 

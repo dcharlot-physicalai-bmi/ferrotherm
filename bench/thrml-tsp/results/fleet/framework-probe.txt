@@ -1,0 +1,15 @@
+Requested label: framework-128gb-0000
+Requested machineId: 73417997-397c-476e-a62f-00a4e63efe36
+Observed hostname: framework-32gb-0001
+No prior ~/bench-scratch directory was printed by the inventory.
+Process filter could not run because rg was not installed; no processes were killed.
+All discovered energy_uj paths returned Errno 13 Permission denied:
+/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+/sys/class/powercap/intel-rapl:0/energy_uj
+/sys/class/powercap/intel-rapl:0/intel-rapl:0:0/energy_uj
+/sys/class/powercap/intel-rapl:0:0/device/energy_uj
+/sys/class/powercap/intel-rapl:0:0/energy_uj
+Command: perf stat -e power/energy-pkg/ -- true
+Result: exit 1; No supported events found. Access to performance monitoring and observability operations is limited. perf_event_paranoid setting is 4.
+No sudo, chmod, capability, or configuration changes attempted.
+Fallback machineId 94655143-44cb-4c99-a72a-a988f4af51e9: command failed to spawn because the action was not approved. Nothing ran; no retry.
