@@ -26,28 +26,50 @@ different mode. It still subtracts idle and reports 95% intervals, and every
 figure from that run is evidence grade `contended host`. Those figures are not
 quiet-host evidence and are not pooled with a quiet run. The schedule is
 A/B/A: ferrotherm, THRML, ferrotherm, and so on, five or more of each. Each
-trial records `load1` and other-process CPU time.
+trial repeats the sampler until the window is at least 2 s, divides joules and
+effective-sample size by the repetition count, and records `load1`,
+other-process CPU, the repetition count, and how many times the counter
+advanced. Fewer than 8 counter updates is not attributable. A zero gross with a
+negative incremental is that case.
 
-Instruments, one per trial: rootless macmon or an INA3221 rail when that
-backend is open; otherwise RAPL `energy_uj`; otherwise `perf` event
-`power/energy-pkg`; otherwise NVML. NVML is not added to a CPU counter.
-RAPL on hostname `framework-128gb-0000` is the primary energy evidence.
-macmon is secondary.
+Instruments, one per trial: rootless macmon (whole-system) or an INA3221 rail
+(board) when that backend is open; otherwise RAPL `energy_uj` (package, unless
+the honest domain is `psys`); otherwise `perf` event `power/energy-pkg`
+(package); otherwise NVML (gpu). Summaries are per workload, sampler,
+instrument, and scope. Package joules and whole-system joules are not added
+together. RAPL on hostname `framework-128gb-0000` is the primary energy
+evidence. That host reads package `energy_uj` without root. macmon is secondary.
 
 ## Fleet evidence, 7 November 2026
 
-No joules were obtained. No energy comparison is supported by that bundle.
+`results/fleet/` keeps two records.
 
-`results/fleet/` is the measurement as it came off the machines.
+The first record, the files directly under `results/fleet/` other than
+`189502d/`, obtained no joules.
 
 - M5 Max 48 GB, rootless macmon 0.10.0. Accuracy trials finished. The harness
   refused the idle baseline because load1 was 6.45, above 2. The macmon traces
   are secondary and contended. They were not integrated into joules, and they
   are not quiet-host evidence.
-- The Framework host that answered was `framework-32gb-0001`, not the requested
-  `framework-128gb-0000`. Every RAPL `energy_uj` read was permission denied.
-  `perf stat -e power/energy-pkg/` failed with `perf_event_paranoid` 4. No RAPL
-  joules exist. Primary energy evidence was not collected.
+- The host that answered that Framework request was `framework-32gb-0001`.
+  Every RAPL `energy_uj` read there was permission denied, and
+  `perf stat -e power/energy-pkg/` failed with `perf_event_paranoid` 4.
+  That denial is `framework-32gb-0001`. It is not a property of
+  `framework-128gb-0000`.
+
+`results/fleet/189502d/` is the first measured-joules bundle, revision
+`189502d`, both hosts evidence grade `contended host`.
+
+- `framework-128gb-0000` (AMD RYZEN AI MAX+ 395) reads RAPL package
+  `energy_uj` without root. Quiet mode stayed above load 2 and recorded
+  `load_gated` with no energy trials. `--contended` then measured 40 trials.
+  Scope is CPU package. Core is a subdomain and is not added to package energy.
+- M5 Max 48 GB, rootless macmon 0.10.0, `--contended`, 40 trials. Scope is
+  whole-system. Those joules are not combined with the package joules.
+- The ferrotherm RAPL windows in that bundle are about 1 ms. One trial records
+  gross 0 J, incremental about −0.031 J, and `attributable: true`. Those values
+  stay as measured. They are below the counter cadence. The harness after that
+  revision does not attribute a window with fewer than 8 counter updates.
 
 `results/report.json` is an earlier counter-less accuracy run on a Xeon guest.
 Its provenance says which counters were absent. Do not read a joule out of it.

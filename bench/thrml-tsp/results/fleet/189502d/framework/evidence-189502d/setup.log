@@ -1,0 +1,20 @@
+From https://github.com/dcharlot-physicalai-bmi/ferrotherm
+ * branch            bench/thrml-tsp-fleet -> FETCH_HEAD
+Previous HEAD position was e92c9fc Add a THRML/TSP prior-art note and a pinned head-to-head sampler harness.
+HEAD is now at 189502d Record the fleet energy denials and keep contended joules off the quiet grade.
+   Compiling ferrotherm-meter v0.4.22 (/home/dcharlot/bench-scratch/ferrotherm-thrml/meter)
+   Compiling ferrotherm-thrml-bench v0.0.0 (/home/dcharlot/bench-scratch/ferrotherm-thrml/bench/thrml-tsp)
+warning: suspicious definition of the runtime `read` symbol used by the standard library
+   --> bench/thrml-tsp/src/energy.rs:701:5
+    |
+701 |     fn read(fd: i32, buf: *mut u8, count: usize) -> isize;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected `unsafe extern "C" fn(i32, *mut c_void, usize) -> isize` (for the current target)
+            found    `unsafe extern "C" fn(i32, *mut u8, usize) -> isize`
+    = help: either fix the signature or remove any attributes like `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "read")]`, or `#[link_name = "read"]`
+    = help: allow this lint if the signature is compatible
+    = note: `#[warn(suspicious_runtime_symbol_definitions)]` on by default
+
+warning: `ferrotherm-thrml-bench` (bin "ferrotherm-thrml-bench") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 9.01s
