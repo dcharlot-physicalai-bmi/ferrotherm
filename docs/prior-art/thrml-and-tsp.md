@@ -416,11 +416,27 @@ counter (`nvmlDeviceGetTotalEnergyConsumption`, millijoules) by `dlopen` of
 `libnvidia-ml.so.1`, summed across devices and labelled as a GPU sum, not as
 whole-machine energy.
 
-Idle is refused when the 1-minute load average exceeds 2 runnable threads.
+The quiet-host gate is unchanged: a 1-minute load average above 2 is not quiet.
+The harness waits and retries for at most thirty seconds, then records
+`load_gated` and takes no energy figure, instead of omitting the field.
+`--contended` is a separate mode. It still subtracts an idle baseline and
+reports gross joules, incremental joules, joules per effective sample, and 95%
+intervals, with `load1` and other-process CPU on every trial. Every number from
+that mode is evidence grade `contended host`. It is not quiet-host evidence and
+it is not pooled with a quiet run.
+
+RAPL on hostname `framework-128gb-0000` is the primary energy evidence. macmon
+is secondary. A fleet attempt on 7 November 2026 obtained no joules. The
+machine that answered the Framework request was `framework-32gb-0001`; RAPL
+`energy_uj` was permission denied and `perf` `power/energy-pkg` failed at
+`perf_event_paranoid` 4. The M5 Max 48 GB run had rootless macmon traces and a
+load average of 6.45, so the quiet gate refused a baseline. Those traces are
+secondary and contended, and they were not turned into joules. The record is
+`bench/thrml-tsp/results/fleet/`.
+
 A delta inside three standard deviations of the baseline's own wander is kept
-in the trace and marked not attributable, because dividing it by an effective
-sample size would report precision the counter did not have. Absence of a
-counter is a null joule with a reason. It is not filled from `Z1_SPICE`, from
+in the trace and is not divided into a per-sample price. Absence of a counter
+is a null joule with a reason. It is not filled from `Z1_SPICE`, from
 Table 4, or from Appendix E.
 
 ## Where each one is stronger

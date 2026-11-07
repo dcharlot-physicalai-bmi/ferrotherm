@@ -11,7 +11,12 @@ mod ft;
 mod score;
 mod spec;
 
-use energy::{joules_per_ess, mj_delta_j, split_incremental, Joules, Probe};
+use energy::{
+    energy_rank, grade_for, mj_delta_j, poll_quiet, read_cpu_snap, snap_other_cpu, trial_joules, wait_for_quiet_host,
+    EnergyTrial, GradeSummary, Joules, Probe, GRADE_CONTENDED, MIN_POWER_WINDOW_S,
+};
+use ferrotherm_meter::Baseline;
+use std::io::{BufRead, BufReader, Write};
 use ft::Chain;
 use score::{mean_ci_95, Score};
 use spec::Workload;
@@ -27,7 +32,7 @@ fn main() {
             eprintln!("{e}");
             eprintln!(
                 "usage: ferrotherm-thrml-bench --out DIR [--trials N] [--warmup N] [--draws N] \
-                 [--python PY] [--skip-thrml]"
+                 [--python PY] [--skip-thrml] [--contended]"
             );
             std::process::exit(2);
         }
@@ -41,6 +46,8 @@ fn main() {
 
     let mut probe = Probe::detect();
     eprintln!("wall: {}", probe.wall_note);
+    eprintln!("rapl: {}", probe.rapl_note);
+    eprintln!("perf: {}", probe.perf_note);
     eprintln!("nvml: {}", probe.nvml_note);
     eprintln!("load1: {:?} quiet: {}", probe.load1, probe.quiet);
 
@@ -118,7 +125,16 @@ fn main() {
         body.push('\n');
     }
 
-    let energy = energy_section(&mut probe, &work);
+    let energy = energy_section(
+        &mut probe,
+        &work,
+        args.contended,
+        args.trials,
+        &args.python,
+        &args.runner,
+        &args.out.join("spec.txt"),
+        !args.skip_thrml && thrml_ok,
+    );
     let report = format!(
         "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"provenance\": {prov},\n  \
          \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_error\": {err},\n  \
@@ -142,6 +158,7 @@ struct Args {
     python: PathBuf,
     runner: PathBuf,
     skip_thrml: bool,
+    contended: bool,
 }
 
 impl Args {
@@ -152,6 +169,7 @@ impl Args {
         let mut draws = spec::DRAWS;
         let mut python = std::env::var("THRML_PYTHON").unwrap_or_else(|_| "python3".into());
         let mut skip = false;
+        let mut contended = false;
         let mut it = args;
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -161,6 +179,7 @@ impl Args {
                 "--draws" => draws = parse_usize(&need(&mut it, "--draws")?, "--draws")?,
                 "--python" => python = need(&mut it, "--python")?,
                 "--skip-thrml" => skip = true,
+                "--contended" => contended = true,
                 "--help" | "-h" => return Err("help".into()),
                 other => return Err(format!("unknown argument {other}")),
             }
@@ -180,6 +199,7 @@ impl Args {
             python: PathBuf::from(python),
             runner: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/runner.py"),
             skip_thrml: skip,
+            contended,
         })
     }
 }
@@ -493,152 +513,388 @@ fn trial_json(c: &Chain, external: bool) -> String {
     )
 }
 
-fn energy_section(probe: &mut Probe, work: &[Workload]) -> String {
-    // Accuracy chains of a few thousand sweeps on n <= 16 finish in milliseconds, under
-    // the meter's minimum window. Ask the meter about a separate repeat that lasts at
-    // least two seconds. If it refuses, the refusal is the result.
-    let joules = match long_run(probe, &work[0]) {
-        Ok(j) => j,
-        Err(note) => Joules::unavailable(0.0, "none", &note),
+fn energy_section(
+    probe: &mut Probe,
+    work: &[Workload],
+    contended: bool,
+    trials: usize,
+    python: &Path,
+    runner: &Path,
+    spec: &Path,
+    thrml_ok: bool,
+) -> String {
+    let poll = if contended { poll_quiet(&[ferrotherm::host::load_average()]) } else { wait_for_quiet_host() };
+    let quiet = poll.outcome == "quiet";
+    let grade = grade_for(contended, quiet);
+    let has_instrument = probe.rapl.is_some() || probe.perf.is_some() || probe.wall.is_some() || probe.nvml.is_some();
+    if grade == "load_gated" {
+        let gated = energy::load_gated(
+            "No joules. The quiet-host gate is unchanged (load average above 2). After the bounded \
+             wait the host was still contended, and this run did not opt into contended-host mode, \
+             so no energy figure was taken. A contended figure would be a different grade and is \
+             not implied here.",
+        );
+        return energy_json(
+            probe,
+            &poll,
+            grade,
+            gated.evidence,
+            None,
+            &[],
+            &gated.note,
+        );
+    }
+    if trials < 5 {
+        return energy_json(
+            probe,
+            &poll,
+            grade,
+            "too_few_trials",
+            None,
+            &[],
+            "No joules. The energy head-to-head needs at least 5 interleaved trials so a 95% interval exists.",
+        );
+    }
+    if !has_instrument {
+        let missing = Joules::unavailable(
+            0.0,
+            "none",
+            "No joules were obtained. No macmon, RAPL powercap, perf power/energy-pkg, or NVML counter \
+             opened on this host. Nothing was filled in from a device-price table.",
+        );
+        return energy_json(probe, &poll, grade, missing.evidence, None, &[], &missing.note);
+    }
+    let idle = match take_idle(probe, contended) {
+        Ok(b) => b,
+        Err(e) => {
+            return energy_json(probe, &poll, grade, "unavailable", None, &[], &e);
+        }
     };
-    // The long run is not the scored chain, so there is no ESS to divide by.
-    // Calling the function keeps that refusal in the same place as a real division.
-    let per_ess = joules_per_ess(&joules, f64::NAN);
+    let mut session = if thrml_ok {
+        ThrmlServe::start(python, runner, spec).ok()
+    } else {
+        None
+    };
+    let mut rows = Vec::new();
+    for w in work {
+        let mut ft_n = 0usize;
+        let mut th_n = 0usize;
+        for side in energy::ab_schedule(trials) {
+            if side == "thrml" && session.is_none() {
+                continue;
+            }
+            let t = if side == "ferrotherm" {
+                let i = ft_n;
+                ft_n += 1;
+                i
+            } else {
+                let i = th_n;
+                th_n += 1;
+                i
+            };
+            let seed = w.seed0 + t as u64 + 10_000;
+            let before = read_cpu_snap();
+            let (ess, gross, seconds, instrument, scope) =
+                measure_side(probe, side, w, seed, session.as_mut());
+            let after = read_cpu_snap();
+            let rank = energy_rank(instrument, &probe.hostname);
+            let joules = trial_joules(gross, idle.0, idle.1, seconds, instrument, scope, grade);
+            rows.push(EnergyTrial::from_parts(
+                side,
+                t,
+                joules,
+                ess,
+                after.load1,
+                snap_other_cpu(&before, &after),
+                grade,
+                rank,
+            ));
+        }
+    }
+    energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &energy_note(grade))
+}
+
+fn energy_note(grade: &str) -> String {
+    if grade == GRADE_CONTENDED {
+        "Evidence grade contended host. Energy above idle is reported with 95% intervals. \
+         These figures are not quiet-host evidence and are not pooled with a quiet run. \
+         load1 and other-process CPU are on every trial. RAPL on framework-128gb-0000 is the \
+         primary instrument; macmon is secondary."
+            .into()
+    } else {
+        "Evidence grade quiet. The host cleared the unchanged load gate (at or under 2). \
+         Energy above idle uses that quiet baseline. RAPL on framework-128gb-0000 would be \
+         primary; macmon is secondary."
+            .into()
+    }
+}
+
+fn take_idle(probe: &mut Probe, contended: bool) -> Result<(f64, f64), String> {
+    if let Some(wall) = probe.wall.as_mut() {
+        let b = if contended {
+            wall.observe_idle(std::time::Duration::from_secs(2))?
+        } else {
+            energy::idle_baseline(wall)?
+        };
+        return Ok((b.watts, b.sigma));
+    }
+    counter_idle(probe)
+}
+
+fn counter_idle(probe: &mut Probe) -> Result<(f64, f64), String> {
+    let mut windows = Vec::new();
+    for _ in 0..6 {
+        let (j, secs) = counter_slice(probe, 0.25)?;
+        windows.push((j, secs));
+    }
+    energy::watts_from_windows(&windows).ok_or_else(|| "idle counter produced fewer than two windows".into())
+}
+
+fn counter_slice(probe: &mut Probe, secs: f64) -> Result<(f64, f64), String> {
+    if let Some(r) = probe.rapl.as_ref() {
+        let a = r.read_uj()?;
+        let t = Instant::now();
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+        let b = r.read_uj()?;
+        return Ok((r.delta_j(a, b), t.elapsed().as_secs_f64()));
+    }
+    if let Some(p) = probe.perf.as_ref() {
+        let a = p.read_j()?;
+        let t = Instant::now();
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+        let b = p.read_j()?;
+        let dt = t.elapsed().as_secs_f64();
+        let gross = if b >= a { b - a } else { 0.0 };
+        return Ok((gross, dt));
+    }
+    if let Some(n) = probe.nvml.as_ref() {
+        let a = n.joules()?;
+        let t = Instant::now();
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+        let b = n.joules()?;
+        return Ok((energy::counter_delta_j(a, b, u64::MAX as f64 / 1000.0), t.elapsed().as_secs_f64()));
+    }
+    Err("no counter".into())
+}
+
+fn measure_side(
+    probe: &mut Probe,
+    side: &str,
+    w: &Workload,
+    seed: u64,
+    mut session: Option<&mut ThrmlServe>,
+) -> (f64, f64, f64, &'static str, &'static str) {
+    if let Some(wall) = probe.wall.as_mut() {
+        let backend = wall.backend();
+        let instrument = if backend == "macmon" { "macmon" } else { "ina3221" };
+        let mut ess = 0.0;
+        let integrated = wall.integrate(
+            Baseline { watts: 0.0, sigma: 0.0, samples: 0, load1: None },
+            || {
+                let t0 = Instant::now();
+                loop {
+                    ess += if side == "ferrotherm" {
+                        ft::run(w, seed).map_or(f64::NAN, |c| c.score.ess_energy)
+                    } else if let Some(s) = session.as_deref_mut() {
+                        s.run(w, seed).map_or(f64::NAN, |c| c.score.ess_energy)
+                    } else {
+                        f64::NAN
+                    };
+                    if t0.elapsed().as_secs_f64() >= MIN_POWER_WINDOW_S {
+                        break;
+                    }
+                }
+            },
+        );
+        // The zero baseline above is only so integrate returns a Run. Gross is mean watts
+        // times seconds. Incremental is applied by the caller against the real idle.
+        if let Ok((run, ())) = integrated {
+            return (ess, run.joules_total, run.seconds, instrument, "whole-system");
+        }
+        return (ess, f64::NAN, 0.0, instrument, "whole-system");
+    }
+    let cpu = probe.cpu_counter().map(|counter| (counter.instrument(), counter.read_j().ok()));
+    let (instrument, scope, start) = if let Some((instrument, start)) = cpu {
+        (instrument, "cpu-package", start)
+    } else {
+        ("nvml", "gpu", probe.nvml.as_ref().and_then(|n| n.joules().ok()))
+    };
+    let t0 = Instant::now();
+    let ess = one_plan(side, w, seed, session);
+    let seconds = t0.elapsed().as_secs_f64();
+    let gross = if instrument != "nvml" {
+        let end = probe.cpu_counter().and_then(|c| c.read_j().ok());
+        match (start, end) {
+            (Some(a), Some(b)) if instrument == "rapl" => probe.rapl.as_ref().map_or(f64::NAN, |r| {
+                r.delta_j((a * 1e6) as u64, (b * 1e6) as u64)
+            }),
+            (Some(a), Some(b)) if b >= a => b - a,
+            _ => f64::NAN,
+        }
+    } else {
+        let end = probe.nvml.as_ref().and_then(|n| n.millijoules().ok());
+        let start_mj = start.map(|j| (j * 1000.0) as u64);
+        match (start_mj, end) {
+            (Some(a), Some(b)) => mj_delta_j(a, b),
+            _ => f64::NAN,
+        }
+    };
+    (ess, gross, seconds, instrument, scope)
+}
+
+fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> f64 {
+    if side == "ferrotherm" {
+        ft::run(w, seed).map_or(f64::NAN, |c| c.score.ess_energy)
+    } else if let Some(s) = session {
+        s.run(w, seed).map_or(f64::NAN, |c| c.score.ess_energy)
+    } else {
+        f64::NAN
+    }
+}
+
+fn energy_json(
+    probe: &Probe,
+    poll: &energy::QuietPoll,
+    grade: &str,
+    outcome: &str,
+    idle: Option<(f64, f64)>,
+    rows: &[EnergyTrial],
+    note: &str,
+) -> String {
+    let ft: Vec<&EnergyTrial> = rows.iter().filter(|t| t.side == "ferrotherm").collect();
+    let th: Vec<&EnergyTrial> = rows.iter().filter(|t| t.side == "thrml").collect();
+    let ft_sum = energy::summarise_one_grade(&owned(&ft)).ok();
+    let th_sum = energy::summarise_one_grade(&owned(&th)).ok();
     format!(
-        "{{\n    \"wall_probe\": {},\n    \"nvml_probe\": {},\n    \"load1\": {},\n    \
-         \"quiet\": {},\n    \"macos_policy\": {},\n    \"long_run\": {},\n    \
-         \"joules_per_effective_sample\": {},\n    \
-         \"projected_prices_applied\": false,\n    \
-         \"note\": {}\n  }}",
+        "{{\n    \"evidence_grade\": {},\n    \"outcome\": {},\n    \"quiet_threshold\": {},\n    \
+         \"load_samples\": {},\n    \"rank_policy\": {},\n    \"order\": {},\n    \
+         \"backends\": {{\"macmon_or_ina\": {}, \"rapl\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
+         \"hostname\": {},\n    \"macos_policy\": {},\n    \"accepted_load\": {},\n    \
+         \"idle_watts\": {},\n    \"idle_sigma\": {},\n    \
+         \"ferrotherm\": {},\n    \"thrml\": {},\n    \"trials\": [\n{}    ],\n    \
+         \"projected_prices_applied\": false,\n    \"note\": {}\n  }}",
+        json_str(grade),
+        json_str(outcome),
+        poll.threshold,
+        loads_json(&poll.samples),
+        json_str("primary = RAPL on framework-128gb-0000; macmon = secondary"),
+        json_str("A/B/A/B... ferrotherm, THRML, ferrotherm, ..."),
         json_str(&probe.wall_note),
+        json_str(&probe.rapl_note),
+        json_str(&probe.perf_note),
         json_str(&probe.nvml_note),
-        match probe.load1 {
-            Some(v) => format!("{v:.4}"),
-            None => "null".into(),
-        },
-        if probe.quiet { "true" } else { "false" },
+        json_str(&probe.hostname),
         json_str(probe.macos_policy),
-        joules_json(&joules),
-        fmt_f64(per_ess),
-        json_str(
-            "Per-trial joules are null: those chains are shorter than a power-counter window. \
-             long_run is a separate repeat of the first workload, metered only if a counter is \
-             present. Joules per effective sample are not computed from it, because that repeat \
-             is not the chain whose ESS was scored, so joules_per_effective_sample stays null \
-             even when long_run cleared the noise floor. Projected device prices, including \
-             Z1_SPICE, are not an input.",
-        ),
+        fmt_f64(poll.accepted),
+        fmt_f64(idle.map(|p| p.0)),
+        fmt_f64(idle.map(|p| p.1)),
+        grade_summary_json(ft_sum.as_ref()),
+        grade_summary_json(th_sum.as_ref()),
+        rows.iter().map(trial_line).collect::<Vec<_>>().join(",\n"),
+        json_str(note),
     )
 }
 
-fn long_run(probe: &mut Probe, w: &Workload) -> Result<Joules, String> {
-    if probe.wall.is_none() && probe.nvml.is_none() {
-        return Err("no RAPL, INA3221, macmon, or NVML counter on this machine".into());
+fn owned(rows: &[&EnergyTrial]) -> Vec<EnergyTrial> {
+    rows.iter().map(|t| (*t).clone()).collect()
+}
+
+fn loads_json(loads: &[f64]) -> String {
+    let parts: Vec<String> = loads.iter().map(|l| if l.is_finite() { format!("{l:.4}") } else { "null".into() }).collect();
+    format!("[{}]", parts.join(", "))
+}
+
+fn grade_summary_json(s: Option<&GradeSummary>) -> String {
+    let Some(s) = s else { return "null".into() };
+    format!(
+        "{{\"grade\": {}, \"n\": {}, \"gross_j\": {}, \"incremental_j\": {}, \"joules_per_ess\": {}}}",
+        json_str(s.grade),
+        s.n,
+        ci_opt(s.gross),
+        ci_opt(s.incremental),
+        ci_opt(s.joules_per_ess),
+    )
+}
+
+fn ci_opt(v: Option<(f64, f64, f64, usize)>) -> String {
+    match v {
+        Some((mean, lo, hi, n)) => format!(
+            "{{\"mean\": {mean:.8e}, \"lo95\": {lo:.8e}, \"hi95\": {hi:.8e}, \"n\": {n}}}"
+        ),
+        None => "null".into(),
     }
-    if probe.wall.is_some() {
-        let baseline = match energy::idle_baseline(probe) {
-            Ok(b) => b,
-            Err(e) => return Ok(Joules::unavailable(0.0, "wall", &e)),
-        };
-        let nvml_before = probe.nvml.as_ref().and_then(|n| n.joules().ok());
-        let started = Instant::now();
-        let mut repeats = 0u32;
-        let measured = probe.wall.as_mut().expect("meter present").measure(baseline, || {
-            let t0 = Instant::now();
-            while t0.elapsed().as_secs_f64() < 2.0 {
-                let _ = ft::run(w, 1);
-                repeats += 1;
-            }
-        });
-        let nvml_after = probe.nvml.as_ref().and_then(|n| n.joules().ok());
-        let seconds = started.elapsed().as_secs_f64();
-        return match measured {
-            Ok(run) => {
-                let (inc, ok) = split_incremental(run.joules_total, run.idle_watts, run.idle_sigma, run.seconds);
-                // The meter already refused anything under its floor, so `ok` here is a second look
-                // with the same 3-sigma rule. Prefer the meter's own incremental, which cleared it.
-                let _ = (inc, ok, repeats);
-                Ok(Joules {
-                    gross: Some(run.joules_total),
-                    incremental: Some(run.joules_above_idle),
-                    idle_watts: Some(run.idle_watts),
-                    idle_sigma: Some(run.idle_sigma),
-                    seconds: run.seconds,
-                    attributable: true,
-                    evidence: "metered",
-                    instrument: run.backend.to_string(),
-                    scope: run.machine.clone(),
-                    note: format!(
-                        "separate >=2s repeat of {}, {repeats} calls; not the scored chain. \
-                         NVML joules over a wider window: {}",
-                        w.id,
-                        nvml_pair(nvml_before, nvml_after)
-                    ),
-                    projected_prices_applied: false,
-                })
-            }
-            Err(e) => Ok(Joules::unavailable(
-                seconds,
-                "wall",
-                &format!("{e} NVML: {}", nvml_pair(nvml_before, nvml_after)),
-            )),
-        };
-    }
-    // NVML only. Diff the energy counter around a two-second repeat. Idle is a two-second
-    // counter delta taken first, and only while the machine is quiet.
-    if !probe.quiet {
-        return Ok(Joules::unavailable(
-            0.0,
-            "nvml",
-            "machine is not quiet; refusing an NVML idle baseline",
-        ));
-    }
-    let idle_j = nvml_over(probe, 2.0)?;
-    let idle_w = idle_j / 2.0;
-    let run_j = {
-        let t0 = Instant::now();
-        let before = probe.nvml.as_ref().unwrap().millijoules()?;
-        while t0.elapsed().as_secs_f64() < 2.0 {
-            let _ = ft::run(w, 1);
+}
+
+fn trial_line(t: &EnergyTrial) -> String {
+    format!(
+        "      {{\"side\": {}, \"trial\": {}, \"grade\": {}, \"rank\": {}, \"load1\": {}, \
+         \"other_process_cpu_s\": {}, \"ess\": {}, \"joules_per_ess\": {}, \"joules\": {}}}",
+        json_str(t.side),
+        t.trial,
+        json_str(t.grade),
+        json_str(t.rank),
+        fmt_f64(t.load1),
+        fmt_f64(t.other_cpu_s),
+        fmt_f64(Some(t.ess)),
+        fmt_f64(t.joules_per_ess),
+        joules_json(&t.joules),
+    )
+}
+
+struct ThrmlServe {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    out: BufReader<std::process::ChildStdout>,
+}
+
+impl ThrmlServe {
+    fn start(python: &Path, runner: &Path, spec: &Path) -> Result<ThrmlServe, String> {
+        let mut child = Command::new(python)
+            .arg(runner)
+            .arg("--serve")
+            .arg("--spec")
+            .arg(spec)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("THRML serve: {e}"))?;
+        let stdin = child.stdin.take().ok_or("THRML serve has no stdin")?;
+        let stdout = child.stdout.take().ok_or("THRML serve has no stdout")?;
+        let mut out = BufReader::new(stdout);
+        let mut line = String::new();
+        out.read_line(&mut line).map_err(|e| format!("THRML serve ready: {e}"))?;
+        if !line.starts_with("READY") {
+            return Err(format!("THRML serve said {line:?}"));
         }
-        let after = probe.nvml.as_ref().unwrap().millijoules()?;
-        let seconds = t0.elapsed().as_secs_f64();
-        (mj_delta_j(before, after), seconds)
-    };
-    let (inc, ok) = split_incremental(run_j.0, idle_w, 0.0, run_j.1);
-    // sigma is unknown from two counter endpoints. Mark not attributable: a single idle
-    // window has no wander to compare against. Gross is still the counter delta.
-    let _ = ok;
-    Ok(Joules {
-        gross: Some(run_j.0),
-        incremental: Some(inc),
-        idle_watts: Some(idle_w),
-        idle_sigma: None,
-        seconds: run_j.1,
-        attributable: false,
-        evidence: "metered",
-        instrument: "nvml".into(),
-        scope: format!("sum of GPU energy counters ({})", probe.nvml_note),
-        note: "gross is the NVML total-energy counter delta. Incremental subtracts one idle \
-               window and is not attributable: that window was not repeated, so it has no sigma. \
-               Not added to a CPU package counter, because no CPU counter was open."
-            .into(),
-        projected_prices_applied: false,
-    })
+        Ok(ThrmlServe { child, stdin, out })
+    }
+
+    fn run(&mut self, w: &Workload, seed: u64) -> Result<Chain, String> {
+        writeln!(self.stdin, "RUN {} {seed}", w.id).map_err(|e| format!("THRML serve write: {e}"))?;
+        self.stdin.flush().ok();
+        let mut buf = String::new();
+        loop {
+            let mut line = String::new();
+            let n = self.out.read_line(&mut line).map_err(|e| format!("THRML serve read: {e}"))?;
+            if n == 0 {
+                return Err("THRML serve closed".into());
+            }
+            buf.push_str(&line);
+            if line.trim() == "END" {
+                break;
+            }
+        }
+        let (_, mut map) = parse_thrml(&buf)?;
+        let raw = map.remove(w.id).and_then(|mut v| v.pop()).ok_or("THRML serve returned no chain")?;
+        score_external(w, &raw)
+    }
 }
 
-fn nvml_over(probe: &Probe, seconds: f64) -> Result<f64, String> {
-    let n = probe.nvml.as_ref().ok_or("no NVML")?;
-    let a = n.millijoules()?;
-    std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
-    let b = n.millijoules()?;
-    Ok(mj_delta_j(a, b))
-}
-
-fn nvml_pair(before: Option<f64>, after: Option<f64>) -> String {
-    match (before, after) {
-        (Some(a), Some(b)) => format!("{:.6} J", b - a),
-        _ => "not read".into(),
+impl Drop for ThrmlServe {
+    fn drop(&mut self) {
+        let _ = writeln!(self.stdin, "QUIT");
+        let _ = self.child.wait();
     }
 }
 
@@ -646,7 +902,7 @@ fn joules_json(j: &Joules) -> String {
     format!(
         "{{\"gross_j\": {}, \"incremental_j\": {}, \"idle_watts\": {}, \"idle_sigma\": {}, \
          \"seconds\": {:.6}, \"attributable\": {}, \"evidence\": {}, \"instrument\": {}, \
-         \"scope\": {}, \"note\": {}, \"projected_prices_applied\": {}}}\n",
+         \"scope\": {}, \"note\": {}, \"projected_prices_applied\": {}}}",
         fmt_f64(j.gross),
         fmt_f64(j.incremental),
         fmt_f64(j.idle_watts),

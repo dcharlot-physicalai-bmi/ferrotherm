@@ -367,6 +367,15 @@ impl Meter {
         &self.machine
     }
 
+    #[must_use]
+    /// Which backend is open: `macmon`, `rapl`, or `ina3221`.
+    ///
+    /// The harness uses this to decide whether a trial is a power integral (`macmon`,
+    /// `ina3221`) or a counter delta (`rapl`). Those are different measurements.
+    pub fn backend(&self) -> &'static str {
+        self.backend
+    }
+
     /// Mean power with nothing running, over `at_least`.
     ///
     /// Take it immediately before or after the run rather than once at startup: idle drifts with
@@ -382,6 +391,41 @@ impl Meter {
     ///
     /// Never: a busy machine or a short window is an `Err`, not a panic.
     pub fn idle(&mut self, at_least: Duration) -> Result<Baseline, String> {
+        let baseline = self.power_window(at_least)?;
+        // A BUSY MACHINE HAS NO IDLE. Checked here rather than trusted, because the failure is
+        // silent and it has already cost this project a published number: an earlier 86 ns/flip
+        // figure was contaminated by concurrent background load and had to be corrected. Worse,
+        // the contamination biases in the dangerous direction -- other people's work inflates the
+        // baseline, so idle looks LARGER than it is, and any argument that turns on how much of
+        // the bill is idle comes out overstated. Measured here at load 82 with five other sessions
+        // running experiments, this backend reported a 67.6 W "idle" on a machine whose real idle
+        // is a fraction of that.
+        //
+        // This is the quiet-host gate. It is not optional on this path, and the threshold is
+        // [`ferrotherm::host::QUIET_LOAD`]. A contended reading uses [`Self::observe_idle`] and
+        // must be labelled as contended by the caller. This function does not do that labelling,
+        // and it does not accept the load.
+        quiet_enough(load_average())?;
+        Ok(baseline)
+    }
+
+    /// The same window as [`Self::idle`], without the quiet-host gate.
+    ///
+    /// The number is a baseline taken while other work may be running. It is not a quiet baseline.
+    /// Callers that use it have to grade the result `contended host` and must not present it as quiet.
+    ///
+    /// # Errors
+    ///
+    /// A message when too few readings arrived. Load is recorded on the baseline and is not an error.
+    ///
+    /// # Panics
+    ///
+    /// Never.
+    pub fn observe_idle(&mut self, at_least: Duration) -> Result<Baseline, String> {
+        self.power_window(at_least)
+    }
+
+    fn power_window(&mut self, at_least: Duration) -> Result<Baseline, String> {
         // Settle first. Measured without this on a machine that had just finished a build: idle
         // came out at 67.6 W and the workload that followed averaged 65.9 W, so the subtraction
         // went negative and the "measurement" reported that computing costs nothing. A baseline is
@@ -397,20 +441,48 @@ impl Meter {
                 at_least.as_secs_f64()
             ));
         }
-        // A BUSY MACHINE HAS NO IDLE. Checked here rather than trusted, because the failure is
-        // silent and it has already cost this project a published number: an earlier 86 ns/flip
-        // figure was contaminated by concurrent background load and had to be corrected. Worse,
-        // the contamination biases in the dangerous direction -- other people's work inflates the
-        // baseline, so idle looks LARGER than it is, and any argument that turns on how much of
-        // the bill is idle comes out overstated. Measured here at load 82 with five other sessions
-        // running experiments, this backend reported a 67.6 W "idle" on a machine whose real idle
-        // is a fraction of that.
-        let load1 = load_average();
-        quiet_enough(load1)?;
         let v = self.readings.lock().unwrap();
         let inside: Vec<f64> = v.iter().filter(|(t, _)| *t >= from).map(|(_, w)| *w).collect();
         let var = inside.iter().map(|w| (w - mean).powi(2)).sum::<f64>() / inside.len() as f64;
-        Ok(Baseline { watts: mean, sigma: var.sqrt(), samples: n, load1 })
+        Ok(Baseline { watts: mean, sigma: var.sqrt(), samples: n, load1: load_average() })
+    }
+
+    /// Integrate power over `f` and return both gross and above-idle joules, including a delta
+    /// inside the noise. [`Self::measure`] still refuses that delta. This one returns it so a
+    /// contended run can show the number under its own grade instead of dropping it.
+    ///
+    /// # Errors
+    ///
+    /// Too few samples for a mean.
+    pub fn integrate<R>(&mut self, idle: Baseline, f: impl FnOnce() -> R) -> Result<(Run, R), String> {
+        let idle_watts = idle.watts;
+        let t0 = Instant::now();
+        let value = f();
+        let seconds = t0.elapsed().as_secs_f64();
+        std::thread::sleep(Duration::from_millis(INTERVAL_MS + INTERVAL_MS / 2));
+        let (mean, samples) = self.mean_since(t0);
+        if samples < MIN_SAMPLES {
+            return Err(format!(
+                "that workload ran for {seconds:.3} s and produced {samples} power reading(s). \
+                 The backend ticks about every {INTERVAL_MS} ms and a mean of fewer than \
+                 {MIN_SAMPLES} readings is not an estimate.",
+            ));
+        }
+        let delta = mean - idle_watts;
+        Ok((
+            Run {
+                seconds,
+                mean_watts: mean,
+                idle_watts,
+                idle_sigma: idle.sigma,
+                joules_total: mean * seconds,
+                joules_above_idle: delta * seconds,
+                samples,
+                machine: self.machine.clone(),
+                backend: self.backend,
+            },
+            value,
+        ))
     }
 
     /// Run `f`, sampling wall power throughout.

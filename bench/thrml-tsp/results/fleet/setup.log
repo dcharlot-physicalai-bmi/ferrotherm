@@ -1,0 +1,57 @@
+Collecting thrml==0.1.4 (from -r bench/thrml-tsp/python/requirements.txt (line 6))
+  Downloading thrml-0.1.4-py3-none-any.whl.metadata (4.3 kB)
+Collecting jax==0.12.0.1 (from jax[cpu]==0.12.0.1->-r bench/thrml-tsp/python/requirements.txt (line 7))
+  Downloading jax-0.12.0.1-py3-none-any.whl.metadata (13 kB)
+Collecting jaxlib==0.12.0.1 (from -r bench/thrml-tsp/python/requirements.txt (line 8))
+  Downloading jaxlib-0.12.0.1-cp313-cp313-macosx_11_0_arm64.whl.metadata (1.3 kB)
+Collecting equinox==0.13.8 (from -r bench/thrml-tsp/python/requirements.txt (line 9))
+  Downloading equinox-0.13.8-py3-none-any.whl.metadata (18 kB)
+Collecting jaxtyping==0.3.11 (from -r bench/thrml-tsp/python/requirements.txt (line 10))
+  Downloading jaxtyping-0.3.11-py3-none-any.whl.metadata (6.2 kB)
+Collecting numpy==2.5.4 (from -r bench/thrml-tsp/python/requirements.txt (line 11))
+  Using cached numpy-2.5.4-cp313-cp313-macosx_14_0_arm64.whl.metadata (6.6 kB)
+Collecting scipy==1.18.1 (from -r bench/thrml-tsp/python/requirements.txt (line 12))
+  Downloading scipy-1.18.1-cp313-cp313-macosx_14_0_arm64.whl.metadata (62 kB)
+Collecting ml_dtypes==0.6.0 (from -r bench/thrml-tsp/python/requirements.txt (line 13))
+  Downloading ml_dtypes-0.6.0-cp313-cp313-macosx_10_13_universal2.whl.metadata (8.8 kB)
+Collecting opt_einsum==3.4.0 (from -r bench/thrml-tsp/python/requirements.txt (line 14))
+  Using cached opt_einsum-3.4.0-py3-none-any.whl.metadata (6.3 kB)
+Collecting wadler_lindig==0.1.8 (from -r bench/thrml-tsp/python/requirements.txt (line 15))
+  Downloading wadler_lindig-0.1.8-py3-none-any.whl.metadata (17 kB)
+Collecting typing_extensions==4.16.0 (from -r bench/thrml-tsp/python/requirements.txt (line 16))
+  Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Downloading thrml-0.1.4-py3-none-any.whl (38 kB)
+Downloading jax-0.12.0.1-py3-none-any.whl (3.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.5/3.5 MB 18.0 MB/s  0:00:00
+
+Downloading jaxlib-0.12.0.1-cp313-cp313-macosx_11_0_arm64.whl (60.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 60.7/60.7 MB 16.2 MB/s  0:00:03
+
+Downloading equinox-0.13.8-py3-none-any.whl (185 kB)
+Downloading jaxtyping-0.3.11-py3-none-any.whl (56 kB)
+Using cached numpy-2.5.4-cp313-cp313-macosx_14_0_arm64.whl (5.4 MB)
+Downloading scipy-1.18.1-cp313-cp313-macosx_14_0_arm64.whl (20.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 20.5/20.5 MB 13.4 MB/s  0:00:01
+
+Downloading ml_dtypes-0.6.0-cp313-cp313-macosx_10_13_universal2.whl (565 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 565.5/565.5 kB 10.4 MB/s  0:00:00
+
+Using cached opt_einsum-3.4.0-py3-none-any.whl (71 kB)
+Downloading wadler_lindig-0.1.8-py3-none-any.whl (20 kB)
+Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Installing collected packages: wadler_lindig, typing_extensions, opt_einsum, numpy, scipy, ml_dtypes, jaxtyping, jaxlib, jax, equinox, thrml
+
+
+Successfully installed equinox-0.13.8 jax-0.12.0.1 jaxlib-0.12.0.1 jaxtyping-0.3.11 ml_dtypes-0.6.0 numpy-2.5.4 opt_einsum-3.4.0 scipy-1.18.1 thrml-0.1.4 typing_extensions-4.16.0 wadler_lindig-0.1.8
+
+[notice] A new release of pip is available: 26.2.2 -> 26.3
+[notice] To update, run: /Users/dcharlot/bench-scratch/thrml-venv/bin/python -m pip install --upgrade pip
+    Updating crates.io index
+     Locking 204 packages to highest Rust 1.96 compatible versions
+      Adding nusb v0.1.14 (available: v0.2.9)
+      Adding pollster v0.4.0 (available: v1.0.1)
+      Adding ureq v2.12.1 (available: v3.5.1)
+   Compiling ferrotherm v0.44.0 (/Users/dcharlot/bench-scratch/ferrotherm-thrml)
+   Compiling ferrotherm-thrml-bench v0.0.0 (/Users/dcharlot/bench-scratch/ferrotherm-thrml/bench/thrml-tsp)
+   Compiling ferrotherm-meter v0.4.22 (/Users/dcharlot/bench-scratch/ferrotherm-thrml/meter)
+    Finished `release` profile [optimized] target(s) in 15.32s
