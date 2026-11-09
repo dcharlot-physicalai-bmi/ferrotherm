@@ -1,0 +1,17 @@
+Mon Nov  9 09:17:31 PM UTC 2026
+ 16:17:31 up 3 days,  3:35,  2 users,  load average: 5.24, 1.97, 2.02
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+root     2549870 Mon Nov  9 16:17:30 2026  225  0.0   8 joule_moq-c2f74 /workspace/Transaction-Science/open-standards/joule-code/joule-code-rs/target/debug/deps/joule_moq-c2f74a51c9b3a966
+root     2538743 Mon Nov  9 16:16:47 2026  4.7  0.5   0 cargo           /root/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin/cargo test --workspace --exclude joule-moq-relay --exclude joule-moq-ingest --exclude joule-contrib
+root     2538131 Mon Nov  9 16:16:20 2026  0.8  0.0   7 kworker/u80:6-e [kworker/u80:6-events_power_efficient]
+root        1776 Fri Nov  6 12:42:07 2026  0.7  0.2   6 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+root     2538130 Mon Nov  9 16:16:20 2026  0.3  0.0  16 kworker/u80:4-e [kworker/u80:4-events_unbound]
+nx       4096848 Sat Nov  7 11:25:51 2026  0.2  0.3  15 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0   2 kswapd0         [kswapd0]
+root        2287 Fri Nov  6 12:42:11 2026  0.1  0.3  13 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.2   6 containerd      /usr/bin/containerd
+root         710 Fri Nov  6 12:42:05 2026  0.1  0.0   9 irq/194-iwlwifi [irq/194-iwlwifi:queue_10]
+root         147 Fri Nov  6 12:41:59 2026  0.1  0.0  10 kcompactd0      [kcompactd0]
+dcharlot    5221 Fri Nov  6 12:43:17 2026  0.0  0.1  16 forgejo-runner  /home/dcharlot/.local/bin/forgejo-runner daemon --config /home/dcharlot/forgejo-runner/config.yaml
+dcharlot    3804 Fri Nov  6 12:42:22 2026  0.0  0.5   8 gnome-shell     /usr/bin/gnome-shell
+txhw        5770 Fri Nov  6 12:43:21 2026  0.0  0.0   2 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/txhw/runner/config.yaml

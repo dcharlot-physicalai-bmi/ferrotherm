@@ -1,0 +1,34 @@
+Mon Nov  9 19:41:34 UTC 2026
+14:41  up 1 day,  4:26, 1 user, load averages: 1.78 2.73 2.78
+{ 1.78 2.73 2.78 }
+USER               PID STARTED                       %CPU %MEM COMM
+dcharlot         34413 Mon Nov  9 14:39:12 2026      82.6  0.1 /usr/libexec/biomesyncd
+dcharlot           720 Sun Nov  8 09:52:29 2026      13.4  0.0 /System/Library/PrivateFrameworks/BiomeStreams.framework/Support/BiomeAgent
+dcharlot         34624 Mon Nov  9 14:40:33 2026       7.9  0.0 macmon
+dcharlot           722 Sun Nov  8 09:52:29 2026       3.1  0.0 /System/Library/PrivateFrameworks/TCC.framework/Support/tccd
+root               395 Thu Apr  1 00:00:26 1976       1.7  0.0 /usr/libexec/opendirectoryd
+root               353 Thu Apr  1 00:00:26 1976       1.3  0.2 /usr/libexec/logd
+dcharlot           729 Sun Nov  8 09:52:29 2026       0.8  0.0 /usr/libexec/trustd
+dcharlot           718 Sun Nov  8 09:52:29 2026       0.6  0.2 /usr/libexec/rapportd
+root               358 Thu Apr  1 00:00:26 1976       0.6  0.0 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd
+root                 1 Wed Dec 31 19:00:14 1969       0.4  0.1 /sbin/launchd
+dcharlot           756 Sun Nov  8 09:52:30 2026       0.3  0.1 /System/Library/PrivateFrameworks/IDS.framework/identityservicesd.app/Contents/MacOS/identityservicesd
+_driverkit         763 Sun Nov  8 09:52:30 2026       0.3  0.1 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha
+root               421 Thu Apr  1 00:00:26 1976       0.3  0.0 /usr/sbin/notifyd
+root               511 Sun Nov  8 09:52:21 2026       0.2  0.1 /usr/libexec/syspolicyd
+
+USER               PID  %CPU ARGS
+dcharlot         34413  88.9 /usr/libexec/biomesyncd
+dcharlot           720  13.4 /System/Library/PrivateFrameworks/BiomeStreams.framework/Support/BiomeAgent
+dcharlot         34624   7.6 macmon pipe -s 0 -i 100
+dcharlot           722   3.1 /System/Library/PrivateFrameworks/TCC.framework/Support/tccd
+root               395   1.7 /usr/libexec/opendirectoryd
+root               353   1.3 /usr/libexec/logd
+dcharlot         35212   1.0 /bin/sh -c date -u; uptime; sysctl -n vm.loadavg; ps -Ao user,pid,lstart,%cpu,%mem,comm -r | head -15; echo; ps -Ao user,pid,%cpu,args -r | head -15
+dcharlot           729   0.8 /usr/libexec/trustd --agent
+root               358   0.6 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd
+dcharlot           718   0.6 /usr/libexec/rapportd
+root                 1   0.4 /sbin/launchd
+dcharlot           756   0.3 /System/Library/PrivateFrameworks/IDS.framework/identityservicesd.app/Contents/MacOS/identityservicesd
+_driverkit         763   0.3 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha com.apple.driver.AppleCentauriAlpha 0x100001662 com.apple.driver.AppleCentauriAlpha
+root               421   0.3 /usr/sbin/notifyd

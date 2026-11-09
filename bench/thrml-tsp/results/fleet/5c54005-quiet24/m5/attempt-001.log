@@ -1,0 +1,10 @@
+2026-11-09T19:40:32.048833+00:00 driver: attempt 1 utc_start 2026-11-09T19:40:32.048833+00:00
+2026-11-09T19:40:33.579746+00:00 wall: backend=macmon machine=Apple M5 Max scope=soc-telemetry
+2026-11-09T19:40:33.579771+00:00 rapl: RAPL powercap is not present on this machine
+2026-11-09T19:40:33.579779+00:00 rapl core: no readable core subdomain
+2026-11-09T19:40:33.579787+00:00 perf: power PMU type: No such file or directory (os error 2). perf stat was not started: No such file or directory (os error 2)
+2026-11-09T19:40:33.579797+00:00 nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)
+2026-11-09T19:40:33.579821+00:00 load1: Some(2.3) quiet: false
+2026-11-09T19:40:33.579829+00:00 quiet-gate preflight: 60 s
+2026-11-09T19:41:34.286586+00:00 quiet gate refused the run; max load1 Some(2.3)
+2026-11-09T19:41:34.286889+00:00 driver: attempt 1 utc_end 2026-11-09T19:41:34.286889+00:00 exit 1

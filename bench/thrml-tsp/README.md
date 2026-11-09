@@ -45,15 +45,31 @@ macmon is secondary.
 `--quiet-gate` samples load1 once a second for 60 seconds, and the busy
 fraction of cores outside `--cpus` over that same window, before any workload
 runs. The run starts only when every load sample is at or under 2. The busy
-fraction is stamped on the receipt and is not a second threshold. The evidence
-grade is written on the report, on each workload, and on `quiet-gate.json`.
+fraction is stamped on the receipt and is not a second threshold. The bundle
+grade is the energy-phase grade. Preflight, energy, and accuracy are stamped
+separately. A passing preflight does not make the bundle quiet.
 `--quiet-gate` and `--contended` are different grades and are refused together.
 When that preflight holds, the energy phase runs next and the accuracy phase
-follows it. load1 is a one-minute average, so accuracy and THRML before the
-energy check raise the average the check then refuses. The threshold stays 2.
-No process is taken out of the load. The energy section still requires load1
-at or under 2. `settle_load1` on the receipt is null: energy used the passing
-preflight and did not wait for a second 60 s decay.
+follows it. THRML is started inside the first THRML trial window.
+
+Before every idle bracket the harness waits until load1 has stayed at or under
+2 for 60 consecutive 1 Hz samples, and gives up after 600 samples. Every 1 Hz
+sample through the bracket then has to stay at or under 2. load1 is not the
+trial-window criterion: it counts runnable threads, so the multithreaded
+sampler trips it. Linux trial windows use the busy fraction of cores outside
+`--cpus` (mean at most 0.05, no sample above 0.15). macOS trial windows use
+non-harness CPU (mean at most 0.15 of one core, no sample above 0.50) and
+require the idle brackets to agree within 3 sigma. Those fractions attribute
+and refuse. They are not subtracted from joules. On Linux a quiet energy grade
+requires `--cpus`. The thresholds are flags, recorded on the receipt. The rule
+is `METHODOLOGY.md`.
+
+The harness takes an exclusive `flock(2)` `LOCK_EX` on `/tmp/bmi-energy.lock`
+(`--lock` changes the path) and holds it from the start of preflight through
+both phases, including the post-trial idle bracket. A busy lock is waited out
+up to `--lock-wait-s` (default 3600) and logged. The run does not proceed
+unlocked. If the lock is not acquired, the energy grade is refused with reason
+`host lock not held`. The same `flock` constants are used on macOS.
 
 `--scale` adds the larger workloads: open Ising at 4×4, 8×8, 16×16 (transfer
 matrix; 4×4 is also enumerated), 32×32 and 64×64 (Onsager's infinite lattice,
