@@ -2,6 +2,8 @@
 
 Values copied directly from the harness summaries, not recalculated. Cells are mean [95% CI]; n=5 per sampler per workload. Gross and above-baseline joules are normalized per sampler repetition, NOT totals for the >=2-second measurement window. J/ESS is incremental joules per effective sample. Exact report.json records and raw traces are included. Both measured runs have evidence grade **contended host**.
 
+The macmon scope in these receipts was recorded as `whole-system`. That token is `sys_power`, SoC telemetry, not wall power. The cells below are the harness mean-times-duration figures. They were not replaced by a trapezoid: the raw traces have no per-trial timestamps. The whole-trace integrals, the uncertainty budget, and whether the ratios still separate are in `RESULTS.md`. Package and core are not added. This harness did not emit a core column.
+
 ## Framework — RAPL package, primary
 
 Grade: contended host. Run-start load1=2.65; energy-section load1=[2.81]. Baseline=37.3700971 W, sigma=0.309415322 W. Attributable: 40/40. Window range: 2.000025–2.404664 s; counter updates: 1999–2397.
@@ -19,7 +21,7 @@ Grade: contended host. Run-start load1=2.65; energy-section load1=[2.81]. Baseli
 
 Quiet attempt: load_gated; load samples [2.86, 2.79, 2.79, 2.79, 2.73, 2.73, 2.75, 2.75, 2.75, 2.77, 2.77, 2.71, 2.71, 2.71, 2.65]. No quiet-host energy trials.
 
-## M5 Max 48GB — macmon whole-system, secondary
+## M5 Max 48GB — macmon SoC telemetry (`sys_power`), secondary
 
 Grade: contended host. Run-start load1=1.63; energy-section load1=[1.83]. Baseline=12.8485681 W, sigma=0.153944291 W. Attributable: 40/40. Window range: 2.000041–2.713468 s; counter updates: 18–25.
 

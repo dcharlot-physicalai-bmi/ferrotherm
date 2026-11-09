@@ -5,9 +5,10 @@
 //! A part that runs 54x faster while drawing 54x the power costs exactly the same, and a stack that
 //! prices computation in joules should be able to say which happened.
 //!
-//! Both sides measured the same way -- whole-system wall power above idle, divided by the node
+//! Both sides measured the same way -- the meter's own scope above idle, divided by the node
 //! updates the ledger counted -- so the comparison is between two ways of doing one thing on one
-//! machine, not between a measurement and a datasheet.
+//! machine, not between a measurement and a datasheet. On Apple silicon that scope is `macmon`
+//! `sys_power`: SoC telemetry, not wall power.
 
 use ferrotherm::{gibbs::Sampler, ising::lattice2d, ledger::Ledger, wgsl::GpuModel};
 use std::time::Duration;
@@ -118,6 +119,7 @@ fn main() {
         println!("  works -- which is the expected shape. Time and joules are different questions and");
         println!("  a stack that prices in joules has to answer the second one on its own terms.");
     }
-    println!("  Both sides: whole-system wall power above idle, divided by counted node updates, on");
-    println!("  one machine. Neither is a datasheet.");
+    println!("  Both sides: the meter's scope above idle, divided by counted node updates, on");
+    println!("  one machine. On Apple silicon that scope is macmon sys_power (SoC telemetry, not wall).");
+    println!("  Neither side is a datasheet.");
 }

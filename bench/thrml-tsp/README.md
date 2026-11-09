@@ -32,13 +32,23 @@ other-process CPU, the repetition count, and how many times the counter
 advanced. Fewer than 8 counter updates is not attributable. A zero gross with a
 negative incremental is that case.
 
-Instruments, one per trial: rootless macmon (whole-system) or an INA3221 rail
-(board) when that backend is open; otherwise RAPL `energy_uj` (package, unless
-the honest domain is `psys`); otherwise `perf` event `power/energy-pkg`
-(package); otherwise NVML (gpu). Summaries are per workload, sampler,
-instrument, and scope. Package joules and whole-system joules are not added
-together. RAPL on hostname `framework-128gb-0000` is the primary energy
-evidence. That host reads package `energy_uj` without root. macmon is secondary.
+Instruments, one per trial: rootless macmon (`sys_power`, SoC telemetry, not
+wall power) or an INA3221 rail (board) when that backend is open; otherwise
+RAPL `energy_uj` (package, unless the honest domain is `psys`) with the core
+domain reported separately and not added; otherwise `perf` event
+`power/energy-pkg` (package); otherwise NVML (gpu). Summaries are per workload,
+sampler, instrument, and scope. Package joules, core joules, and SoC-telemetry
+joules are not added together. RAPL on hostname `framework-128gb-0000` is the
+primary energy evidence. That host reads package `energy_uj` without root.
+macmon is secondary.
+
+`--quiet-gate` samples load1 once a second for 60 seconds, and the busy
+fraction of cores outside `--cpus` over that same window, before any workload
+runs. The run starts only when every load sample is at or under 2. The busy
+fraction is stamped on the receipt and is not a second threshold. The evidence
+grade is written on the report, on each workload, and on `quiet-gate.json`.
+`--quiet-gate` and `--contended` are different grades and are refused together.
+The energy section's own quiet gate is unchanged.
 
 `--scale` adds the larger workloads: open Ising at 4×4, 8×8, 16×16 (transfer
 matrix; 4×4 is also enumerated), 32×32 and 64×64 (Onsager's infinite lattice,
@@ -71,8 +81,9 @@ The first record, the files directly under `results/fleet/` other than
   `energy_uj` without root. Quiet mode stayed above load 2 and recorded
   `load_gated` with no energy trials. `--contended` then measured 40 trials.
   Scope is CPU package. Core is a subdomain and is not added to package energy.
-- M5 Max 48 GB, rootless macmon 0.10.0, `--contended`, 40 trials. Scope is
-  whole-system. Those joules are not combined with the package joules.
+- M5 Max 48 GB, rootless macmon 0.10.0, `--contended`, 40 trials. The scope is
+  SoC telemetry (`sys_power`), not wall power. Those joules are not combined
+  with the package joules.
 - The ferrotherm RAPL windows in that bundle are about 1 ms. One trial records
   gross 0 J, incremental about −0.031 J, and `attributable: true`. Those values
   stay as measured. They are below the counter cadence. The harness after that
@@ -80,7 +91,7 @@ The first record, the files directly under `results/fleet/` other than
 
 `results/fleet/0029c27/` is the fixed-window rerun of that harness. 40 of 40
 trials on each host were attributable, evidence grade `contended host`. RAPL
-package and macmon whole-system stay in separate tables. The per-workload
+package and macmon SoC telemetry stay in separate tables. The per-workload
 J/ESS intervals and the limits are in `results/fleet/0029c27/RESULTS.md`.
 There is no quiet-host leadership claim in that file.
 

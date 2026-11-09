@@ -1,4 +1,5 @@
-//! Measured wall power, so a joules figure can describe the machine that produced it.
+//! Measured power in the backend's own scope, so a joules figure can describe the machine that
+//! produced it.
 //!
 //! `ferrotherm`'s ledger counts operations exactly and prices them against a [`Prices`] table. The
 //! only table in the tree is `Z1_SPICE` — pre-silicon SPICE estimates for a device that has not
@@ -9,10 +10,14 @@
 //!
 //! # What it measures, and what it subtracts
 //!
-//! Whole-system wall power, integrated over the run. Then **idle is subtracted**: a machine that
-//! draws 20 W doing nothing does not charge that to your workload, and a "measurement" that
-//! forgets to subtract it reports mostly the cost of the computer being switched on. Both numbers
-//! are reported so the subtraction is visible rather than assumed.
+//! Each backend has a scope. `macmon` `sys_power` is `SoC` telemetry (the CPU, the integrated GPU,
+//! and the ANE). It is not wall power: the display, the fans, and the rest of the board are
+//! outside it. RAPL package energy is the CPU package. An INA3221 rail is the board rail that
+//! chip sits on. The integral is a trapezoid over the timestamped samples, with the window edges
+//! placed explicitly. Then **idle is subtracted**: a machine that draws 20 W doing nothing does
+//! not charge that to your workload, and a "measurement" that forgets to subtract it reports
+//! mostly the cost of the computer being switched on. Both numbers are reported so the subtraction
+//! is visible rather than assumed.
 //!
 //! # What it refuses
 //!
@@ -79,14 +84,14 @@ const SETTLE: Duration = Duration::from_secs(3);
 //
 // `QUIET_LOAD` is two, not a fraction of the core count, and the reason is what a load average
 // counts: RUNNABLE THREADS, not utilisation. Two threads that never sleep are two cores' worth of
-// heat whether the machine has four cores or forty, and that heat lands in the same whole-system
-// wall reading the baseline is made of. A percentage-of-cores threshold would quietly permit an
+// heat whether the machine has four cores or forty, and that heat lands in the same power reading
+// the baseline is made of. A percentage-of-cores threshold would quietly permit an
 // 18-core machine to take a "baseline" with four builds running.
 use ferrotherm::host::{load_average, QUIET_LOAD};
 
 pub mod ina3221;
 
-/// A source of wall-power readings, in watts.
+/// A source of power readings, in watts, in the backend's own scope.
 pub struct Meter {
     /// The backend subprocess, when the backend IS one. `ina3221` reads sysfs from a thread and
     /// has none -- so this became an Option rather than forcing a fake child to exist.
@@ -110,15 +115,21 @@ pub struct Meter {
 /// anything, and they silently were not: RAPL `package-0` on a laptop with a DISCRETE RTX 4050
 /// reported the GPU arm of a duty-cycle run as 5.5 W marginal, because the card's draw never enters
 /// the CPU package counter. The number was small, plausible, and about the cost of FEEDING the
-/// GPU rather than running it. On an Apple `SoC` the same code was correct, because `sys_power`
-/// covers the whole package including the GPU — so the error appears only when the backend changes.
+/// GPU rather than running it. On an Apple `SoC`, `sys_power` covers the integrated GPU and does
+/// not cover a discrete card, and it is `SoC` telemetry rather than a wall measurement — so the
+/// error appears only when the backend changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
-    /// Everything on one rail: CPU, integrated GPU, memory, the board. A discrete card on its own
-    /// power feed is still outside it, but nothing else is.
+    /// A rail or domain that claims everything downstream of it. A discrete card on its own power
+    /// feed can still be outside a package counter; this variant is not used for `macmon`.
     WholeSystem,
     /// The CPU package alone. A discrete GPU is **invisible**, and so are RAM, storage and fans.
     CpuPackage,
+    /// `macmon` field `sys_power`: telemetry from the `SoC` (CPU, integrated GPU, ANE).
+    ///
+    /// Not wall power. The display, the fans, and the rest of the board are outside the field.
+    /// It does not see a discrete GPU on its own feed.
+    SocTelemetry,
 }
 
 impl Scope {
@@ -128,7 +139,30 @@ impl Scope {
     /// no answer — so callers refuse rather than divide.
     #[must_use = "false means this meter cannot see that device, and reporting anyway attributes the wrong component's energy"]
     pub fn covers(&self, device_is_discrete: bool) -> bool {
-        !(device_is_discrete && *self == Scope::CpuPackage)
+        match self {
+            Scope::WholeSystem => true,
+            Scope::CpuPackage | Scope::SocTelemetry => !device_is_discrete,
+        }
+    }
+
+    /// Short label stored on a receipt. `soc-telemetry` is `macmon` `sys_power`, not wall power.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Scope::WholeSystem => "whole-system",
+            Scope::CpuPackage => "package",
+            Scope::SocTelemetry => "soc-telemetry",
+        }
+    }
+}
+
+/// Which backend produced a meter, and which RAPL domain when the backend is RAPL.
+fn backend_scope(backend: &str, rapl_kind: &str) -> Scope {
+    match (backend, rapl_kind) {
+        ("macmon", _) => Scope::SocTelemetry,
+        ("rapl", "psys") => Scope::WholeSystem,
+        ("rapl", _) => Scope::CpuPackage,
+        _ => Scope::WholeSystem,
     }
 }
 
@@ -140,7 +174,7 @@ impl Scope {
 /// than the baseline's own variation is not a small measurement, it is not a measurement.
 #[derive(Clone, Copy, Debug)]
 pub struct Baseline {
-    /// Mean whole-system power over the baseline window.
+    /// Time-weighted mean power over the covered baseline window, in the backend's scope.
     pub watts: f64,
     /// Standard deviation of the readings the baseline was computed from.
     pub sigma: f64,
@@ -153,6 +187,249 @@ pub struct Baseline {
     /// baseline describes an idle machine or somebody else's build. It is carried on the result so
     /// a figure published from it can be audited later, when the machine is no longer in that state.
     pub load1: Option<f64>,
+    /// Median spacing of the samples that entered the baseline integral, in seconds.
+    ///
+    /// `NaN` when fewer than two samples were available to space.
+    pub cadence_s: f64,
+}
+
+/// How a window boundary was placed on the sample series.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeFix {
+    /// A sample landed on the boundary.
+    OnSample,
+    /// Power at the boundary is the linear interpolation of the samples on either side.
+    Interpolated,
+    /// No sample brackets the boundary from outside. The integral stops at the nearest sample
+    /// inside the window. The uncovered duration is recorded and is not filled in.
+    Uncovered,
+}
+
+impl EdgeFix {
+    /// Receipt token for this edge.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            EdgeFix::OnSample => "on-sample",
+            EdgeFix::Interpolated => "interpolated",
+            EdgeFix::Uncovered => "uncovered",
+        }
+    }
+}
+
+/// Trapezoidal integral of a timestamped power series over `[start, end]`.
+///
+/// Times are seconds on the same clock as the samples. Joules cover only the span whose edges
+/// were either on a sample or interpolated. An uncovered edge is omitted from the joules.
+#[derive(Clone, Debug)]
+pub struct PowerIntegral {
+    /// Integral over the covered span, in joules.
+    pub joules: f64,
+    /// Seconds the trapezoid actually covers.
+    pub covered_s: f64,
+    /// Seconds the caller asked for.
+    pub window_s: f64,
+    /// Raw samples whose timestamps fall inside the closed window.
+    pub samples: usize,
+    /// Median positive spacing of the samples that touched the window, including one bracket
+    /// on each side when one exists. `NaN` when fewer than two such samples exist.
+    pub cadence_s: f64,
+    /// How the start of the window was placed.
+    pub left: EdgeFix,
+    /// How the end of the window was placed.
+    pub right: EdgeFix,
+    /// Seconds before the first covered knot.
+    pub uncovered_left_s: f64,
+    /// Seconds after the last covered knot.
+    pub uncovered_right_s: f64,
+    /// Time from the start to the nearer sample that brackets it. `NaN` when that edge is uncovered.
+    pub left_gap_s: f64,
+    /// Time from the end to the nearer sample that brackets it. `NaN` when that edge is uncovered.
+    pub right_gap_s: f64,
+    /// Absolute power step of the pair that brackets the start. `NaN` when there is no pair.
+    pub left_step_w: f64,
+    /// Absolute power step of the pair that brackets the end. `NaN` when there is no pair.
+    pub right_step_w: f64,
+    /// Max minus min power among the knots that were integrated.
+    pub power_span_w: f64,
+}
+
+impl PowerIntegral {
+    /// Bound on the joules the edges could still move, in joules.
+    ///
+    /// An interpolated edge contributes half its gap times the bracketing power step: the
+    /// unsampled stub at the boundary, times the step the two samples already showed. An
+    /// uncovered edge contributes its uncovered duration times the power span of the knots.
+    /// That span is the range the series actually took, not a fill-in of the missing joules.
+    /// An on-sample edge contributes nothing. A `NaN` term means the samples do not state it,
+    /// and it stays `NaN` rather than becoming zero.
+    #[must_use]
+    pub fn cadence_edge_j(&self) -> f64 {
+        let left = edge_term(self.left, self.left_gap_s, self.left_step_w, self.uncovered_left_s, self.power_span_w);
+        let right = edge_term(self.right, self.right_gap_s, self.right_step_w, self.uncovered_right_s, self.power_span_w);
+        left + right
+    }
+}
+
+fn edge_term(edge: EdgeFix, gap: f64, step: f64, uncovered: f64, span: f64) -> f64 {
+    match edge {
+        EdgeFix::OnSample => 0.0,
+        EdgeFix::Interpolated => {
+            if gap.is_finite() && step.is_finite() { 0.5 * gap * step } else { f64::NAN }
+        }
+        EdgeFix::Uncovered => {
+            if uncovered == 0.0 {
+                0.0
+            } else if span.is_finite() {
+                uncovered * span
+            } else {
+                f64::NAN
+            }
+        }
+    }
+}
+
+/// A sample within this many seconds of a boundary counts as on the boundary.
+const EDGE_EPS: f64 = 1e-6;
+
+/// Integrate `samples` of `(seconds, watts)` from `start` to `end`.
+///
+/// The series is sorted by time. A boundary with a sample on it uses that sample. A boundary
+/// with a sample on both sides is linearly interpolated. A boundary with no outside sample stops
+/// the integral at the nearest interior sample. The missing edge is not replaced by holding the
+/// nearest power across it.
+///
+/// # Errors
+///
+/// The window is not a positive finite interval, no sample is finite, or the edges leave fewer
+/// than two knots.
+///
+/// # Panics
+///
+/// Never. A knot list shorter than two is the error above, and the span is read only after that
+/// check.
+pub fn trapezoid(samples: &[(f64, f64)], start: f64, end: f64) -> Result<PowerIntegral, String> {
+    if !start.is_finite() || !end.is_finite() || end <= start {
+        return Err(format!("energy window [{start}, {end}] is not a positive finite interval"));
+    }
+    let mut pts: Vec<(f64, f64)> = samples
+        .iter()
+        .copied()
+        .filter(|(t, p)| t.is_finite() && p.is_finite())
+        .collect();
+    if pts.is_empty() {
+        return Err("no finite power samples".into());
+    }
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let on = |t: f64, boundary: f64| (t - boundary).abs() <= EDGE_EPS;
+    let (left, p_start, left_gap_s, left_step_w) = place_edge(&pts, start, end, true, on);
+    let (right, p_end, right_gap_s, right_step_w) = place_edge(&pts, end, start, false, on);
+
+    let mut knots: Vec<(f64, f64)> = Vec::new();
+    if let Some(p) = p_start {
+        knots.push((start, p));
+    }
+    for (t, p) in &pts {
+        if *t > start + EDGE_EPS && *t < end - EDGE_EPS {
+            knots.push((*t, *p));
+        }
+    }
+    if let Some(p) = p_end {
+        knots.push((end, p));
+    }
+    if knots.len() < 2 {
+        return Err(format!(
+            "the window [{start}, {end}] has {} knot(s) after placing the edges; a trapezoid needs two",
+            knots.len()
+        ));
+    }
+    let mut joules = 0.0;
+    for w in knots.windows(2) {
+        let dt = w[1].0 - w[0].0;
+        if dt > 0.0 {
+            joules += 0.5 * (w[0].1 + w[1].1) * dt;
+        }
+    }
+    let first_t = knots[0].0;
+    let last_t = knots[knots.len() - 1].0;
+    let covered_s = last_t - first_t;
+    let uncovered_left_s = if left == EdgeFix::Uncovered { (first_t - start).max(0.0) } else { 0.0 };
+    let uncovered_right_s = if right == EdgeFix::Uncovered { (end - last_t).max(0.0) } else { 0.0 };
+    let inside: Vec<(f64, f64)> = pts
+        .iter()
+        .copied()
+        .filter(|(t, _)| *t >= start - EDGE_EPS && *t <= end + EDGE_EPS)
+        .collect();
+    let mut used: Vec<f64> = Vec::new();
+    if let Some((t, _)) = pts.iter().rev().find(|(t, _)| *t < start - EDGE_EPS) {
+        used.push(*t);
+    }
+    used.extend(inside.iter().map(|(t, _)| *t));
+    if let Some((t, _)) = pts.iter().find(|(t, _)| *t > end + EDGE_EPS) {
+        used.push(*t);
+    }
+    used.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    used.dedup_by(|a, b| (*a - *b).abs() <= EDGE_EPS);
+    let mut dts = Vec::new();
+    for w in used.windows(2) {
+        let dt = w[1] - w[0];
+        if dt > 0.0 {
+            dts.push(dt);
+        }
+    }
+    let powers: Vec<f64> = knots.iter().map(|k| k.1).collect();
+    let (mn, mx) = powers.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| (mn.min(*p), mx.max(*p)));
+    let power_span_w = if powers.len() >= 2 && mn.is_finite() && mx.is_finite() { mx - mn } else { f64::NAN };
+    Ok(PowerIntegral {
+        joules,
+        covered_s,
+        window_s: end - start,
+        samples: inside.len(),
+        cadence_s: median_positive(&dts),
+        left,
+        right,
+        uncovered_left_s,
+        uncovered_right_s,
+        left_gap_s,
+        right_gap_s,
+        left_step_w,
+        right_step_w,
+        power_span_w,
+    })
+}
+
+fn place_edge(
+    pts: &[(f64, f64)],
+    boundary: f64,
+    other: f64,
+    is_left: bool,
+    on: impl Fn(f64, f64) -> bool,
+) -> (EdgeFix, Option<f64>, f64, f64) {
+    if let Some((_, p)) = pts.iter().find(|(t, _)| on(*t, boundary)) {
+        return (EdgeFix::OnSample, Some(*p), 0.0, 0.0);
+    }
+    let before = pts.iter().rev().find(|(t, _)| *t < boundary - EDGE_EPS).copied();
+    let after = pts.iter().find(|(t, _)| *t > boundary + EDGE_EPS).copied();
+    if let (Some((t0, p0)), Some((t1, p1))) = (before, after) {
+        let p = p0 + (p1 - p0) * (boundary - t0) / (t1 - t0);
+        let toward_inside = if is_left { t1 - boundary } else { boundary - t0 };
+        let toward_outside = if is_left { boundary - t0 } else { t1 - boundary };
+        let window = (other - boundary).abs();
+        let gap = toward_inside.min(toward_outside).min(window);
+        return (EdgeFix::Interpolated, Some(p), gap, (p1 - p0).abs());
+    }
+    (EdgeFix::Uncovered, None, f64::NAN, f64::NAN)
+}
+
+fn median_positive(xs: &[f64]) -> f64 {
+    let mut v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite() && *x > 0.0).collect();
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len();
+    if n.is_multiple_of(2) { 0.5 * (v[n / 2 - 1] + v[n / 2]) } else { v[n / 2] }
 }
 
 /// What a measured run cost.
@@ -160,22 +437,34 @@ pub struct Baseline {
 pub struct Run {
     /// Wall time the workload took.
     pub seconds: f64,
-    /// Mean whole-system power while it ran.
+    /// Seconds the trapezoid covered. Shorter than `seconds` when an edge was uncovered.
+    pub covered_s: f64,
+    /// Time-weighted mean power over the covered span, in the backend's scope.
     pub mean_watts: f64,
-    /// Mean whole-system power with the machine idle, measured separately.
+    /// Idle power the caller measured, in the same scope.
     pub idle_watts: f64,
     /// How much that baseline wandered, so a reader can see whether the delta cleared it.
     pub idle_sigma: f64,
-    /// Everything the wall paid during the run, idle included.
+    /// Integral over the covered span, idle included. An uncovered edge is not filled in.
     pub joules_total: f64,
-    /// What the workload added: `(mean − idle) × seconds`.
+    /// `joules_total − idle_watts × covered_s`.
     ///
     /// This is the number to attribute to the computation. Reported beside `joules_total` rather
     /// than instead of it, because the subtraction is a modelling choice and hiding it would make
     /// two different quantities look like one.
     pub joules_above_idle: f64,
-    /// Power readings collected inside the window.
+    /// Power readings whose timestamps fell inside the closed window.
     pub samples: usize,
+    /// Median sample spacing, in seconds.
+    pub cadence_s: f64,
+    /// How the start of the workload window was placed on the sample series.
+    pub left_edge: EdgeFix,
+    /// How the end of the workload window was placed on the sample series.
+    pub right_edge: EdgeFix,
+    /// Seconds at the two edges that were not integrated.
+    pub uncovered_s: f64,
+    /// Edge bound from [`PowerIntegral::cadence_edge_j`], in joules, over the window.
+    pub cadence_edge_j: f64,
     /// What produced these numbers.
     pub machine: String,
     /// Which power backend produced these readings.
@@ -224,7 +513,7 @@ impl Meter {
             std::thread::sleep(ina3221::POLL);
         });
         // A board rail carries everything downstream of it, discrete parts included.
-        let m = Meter { child: None, readings, machine, backend: "ina3221", scope: Scope::WholeSystem };
+        let m = Meter { child: None, readings, machine, backend: "ina3221", scope: backend_scope("ina3221", "") };
         m.wait_for_first(Duration::from_secs(4))?;
         Some(m)
     }
@@ -280,7 +569,7 @@ impl Meter {
             })
             .unwrap_or_else(|| "unknown x86".into());
         let machine = format!("{cpu} [{}]", rapl::scope_note(kind));
-        let scope = if kind == "psys" { Scope::WholeSystem } else { Scope::CpuPackage };
+        let scope = backend_scope("rapl", kind);
         let m = Meter { child: None, readings, machine, backend: "rapl", scope };
         m.wait_for_first(Duration::from_secs(3))?;
         Some(m)
@@ -322,9 +611,9 @@ impl Meter {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "unknown Apple silicon".into());
-        // `sys_power` is the whole SoC, GPU included -- which is why the discrete-GPU trap
-        // never appeared on Apple silicon.
-        let m = Meter { child: Some(child), readings, machine, backend: "macmon", scope: Scope::WholeSystem };
+        // `sys_power` is SoC telemetry, integrated GPU included. It is not a wall-plug reading,
+        // and a discrete GPU on its own feed is outside it.
+        let m = Meter { child: Some(child), readings, machine, backend: "macmon", scope: backend_scope("macmon", "") };
         // macmon does not produce its first reading for over a second. Waiting for it here means a
         // caller's measurement window covers their workload rather than the backend's warm-up --
         // which is what made a 1.2 s idle window collect exactly one sample.
@@ -344,14 +633,21 @@ impl Meter {
         None
     }
 
-    /// Mean of the readings that arrived between `from` and now.
-    fn mean_since(&self, from: Instant) -> (f64, usize) {
-        let v = self.readings.lock().unwrap();
-        let inside: Vec<f64> = v.iter().filter(|(t, _)| *t >= from).map(|(_, w)| *w).collect();
-        if inside.is_empty() {
-            return (0.0, 0);
-        }
-        (inside.iter().sum::<f64>() / inside.len() as f64, inside.len())
+    /// Readings as `(seconds since origin, watts)`. A sample from before `origin` is negative.
+    fn readings_secs(&self, origin: Instant) -> Vec<(f64, f64)> {
+        self.readings
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(t, w)| {
+                let dt = if *t >= origin {
+                    t.duration_since(origin).as_secs_f64()
+                } else {
+                    -(origin.duration_since(*t).as_secs_f64())
+                };
+                (dt, *w)
+            })
+            .collect()
     }
 
     /// What this is measuring.
@@ -433,7 +729,9 @@ impl Meter {
         std::thread::sleep(SETTLE);
         let from = Instant::now();
         std::thread::sleep(at_least.max(Duration::from_millis(MIN_SAMPLES as u64 * INTERVAL_MS)));
-        let (mean, n) = self.mean_since(from);
+        let seconds = from.elapsed().as_secs_f64();
+        let series = self.readings_secs(from);
+        let n = series.iter().filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS).count();
         if n < MIN_SAMPLES {
             return Err(format!(
                 "idle needs at least {MIN_SAMPLES} readings and got {n} in {:.2} s; the backend \
@@ -441,10 +739,19 @@ impl Meter {
                 at_least.as_secs_f64()
             ));
         }
-        let v = self.readings.lock().unwrap();
-        let inside: Vec<f64> = v.iter().filter(|(t, _)| *t >= from).map(|(_, w)| *w).collect();
-        let var = inside.iter().map(|w| (w - mean).powi(2)).sum::<f64>() / inside.len() as f64;
-        Ok(Baseline { watts: mean, sigma: var.sqrt(), samples: n, load1: load_average() })
+        let integ = trapezoid(&series, 0.0, seconds)?;
+        if integ.covered_s <= 0.0 {
+            return Err("the idle window produced no covered span".into());
+        }
+        let watts = integ.joules / integ.covered_s;
+        let inside: Vec<f64> = series
+            .iter()
+            .filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS)
+            .map(|(_, w)| *w)
+            .collect();
+        let amean = inside.iter().sum::<f64>() / inside.len() as f64;
+        let var = inside.iter().map(|w| (w - amean).powi(2)).sum::<f64>() / inside.len() as f64;
+        Ok(Baseline { watts, sigma: var.sqrt(), samples: integ.samples, load1: load_average(), cadence_s: integ.cadence_s })
     }
 
     /// Integrate power over `f` and return both gross and above-idle joules, including a delta
@@ -453,46 +760,22 @@ impl Meter {
     ///
     /// # Errors
     ///
-    /// Too few samples for a mean.
+    /// Too few samples for an integral, or the edges leave fewer than two knots.
     pub fn integrate<R>(&mut self, idle: Baseline, f: impl FnOnce() -> R) -> Result<(Run, R), String> {
-        let idle_watts = idle.watts;
         let t0 = Instant::now();
         let value = f();
         let seconds = t0.elapsed().as_secs_f64();
         std::thread::sleep(Duration::from_millis(INTERVAL_MS + INTERVAL_MS / 2));
-        let (mean, samples) = self.mean_since(t0);
-        if samples < MIN_SAMPLES {
-            return Err(format!(
-                "that workload ran for {seconds:.3} s and produced {samples} power reading(s). \
-                 The backend ticks about every {INTERVAL_MS} ms and a mean of fewer than \
-                 {MIN_SAMPLES} readings is not an estimate.",
-            ));
-        }
-        let delta = mean - idle_watts;
-        Ok((
-            Run {
-                seconds,
-                mean_watts: mean,
-                idle_watts,
-                idle_sigma: idle.sigma,
-                joules_total: mean * seconds,
-                joules_above_idle: delta * seconds,
-                samples,
-                machine: self.machine.clone(),
-                backend: self.backend,
-            },
-            value,
-        ))
+        Ok((self.integrate_window(idle, t0, seconds)?, value))
     }
 
-    /// Run `f`, sampling wall power throughout.
+    /// Run `f`, sampling the backend's scope throughout.
     ///
     /// # Errors
     ///
     /// A message when the workload drew less above the baseline than the baseline's own drift, since
     /// dividing that delta by a work count reports precision the measurement does not have.
     pub fn measure<R>(&mut self, idle: Baseline, f: impl FnOnce() -> R) -> Result<Run, String> {
-        let idle_watts = idle.watts;
         let t0 = Instant::now();
         let _ = f();
         let seconds = t0.elapsed().as_secs_f64();
@@ -500,7 +783,10 @@ impl Meter {
         // The backend ticks on its own clock, so the reading covering the end of the window has not
         // necessarily arrived. Wait one interval for it rather than truncating the run.
         std::thread::sleep(Duration::from_millis(INTERVAL_MS + INTERVAL_MS / 2));
-        let (mean, samples) = self.mean_since(t0);
+        let run = self.integrate_window(idle, t0, seconds)?;
+        let mean = run.mean_watts;
+        let idle_watts = idle.watts;
+        let samples = run.samples;
 
         // A run that drew LESS than its baseline did not generate power; the baseline was taken
         // while the machine was still busy. Clamping this to zero was the first version, and it
@@ -545,17 +831,42 @@ impl Meter {
             ));
         }
 
+        // No clamp: a delta below the noise floor is refused above, so anything reaching here
+        // has cleared it. A `.max(0.0)` here would be a second chance for a bad measurement to
+        // become a plausible zero. The joules are already the trapezoid over the covered span.
+        Ok(run)
+    }
+
+    fn integrate_window(&self, idle: Baseline, t0: Instant, seconds: f64) -> Result<Run, String> {
+        let series = self.readings_secs(t0);
+        let samples = series.iter().filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS).count();
+        if samples < MIN_SAMPLES {
+            return Err(format!(
+                "that workload ran for {seconds:.3} s and produced {samples} power reading(s). \
+                 The backend ticks about every {INTERVAL_MS} ms and a mean of fewer than \
+                 {MIN_SAMPLES} readings is not an estimate.",
+            ));
+        }
+        let integ = trapezoid(&series, 0.0, seconds)?;
+        if integ.covered_s <= 0.0 {
+            return Err("the window produced no covered span".into());
+        }
+        let mean = integ.joules / integ.covered_s;
+        let delta = mean - idle.watts;
         Ok(Run {
             seconds,
+            covered_s: integ.covered_s,
             mean_watts: mean,
-            idle_watts,
+            idle_watts: idle.watts,
             idle_sigma: idle.sigma,
-            joules_total: mean * seconds,
-            // No clamp: a delta below the noise floor is refused above, so anything reaching here
-            // has cleared it. A `.max(0.0)` here would be a second chance for a bad measurement to
-            // become a plausible zero.
-            joules_above_idle: delta * seconds,
-            samples,
+            joules_total: integ.joules,
+            joules_above_idle: delta * integ.covered_s,
+            samples: integ.samples,
+            cadence_s: integ.cadence_s,
+            left_edge: integ.left,
+            right_edge: integ.right,
+            uncovered_s: integ.uncovered_left_s + integ.uncovered_right_s,
+            cadence_edge_j: integ.cadence_edge_j(),
             machine: self.machine.clone(),
             backend: self.backend,
         })
@@ -687,12 +998,18 @@ mod tests {
     fn a_derived_price_is_graded_metered() {
         let m = Run {
             seconds: 10.0,
+            covered_s: 10.0,
             mean_watts: 4.05,
             idle_watts: 3.5,
             idle_sigma: 0.008,
             joules_total: 40.5,
             joules_above_idle: 0.55,
             samples: 100,
+            cadence_s: 0.1,
+            left_edge: EdgeFix::OnSample,
+            right_edge: EdgeFix::OnSample,
+            uncovered_s: 0.0,
+            cadence_edge_j: 0.0,
             machine: "test".into(),
             backend: "test",
         };
@@ -755,6 +1072,61 @@ mod tests {
         assert_eq!(field(line, "not_here"), None);
         // A negative and an exponent, both of which appear in real output.
         assert_eq!(field(r#"{"x":-1.5e-3}"#, "x"), Some(-1.5e-3));
+    }
+
+    #[test]
+    fn macmon_sys_power_is_soc_telemetry_and_does_not_cover_a_discrete_gpu() {
+        assert_eq!(backend_scope("macmon", ""), Scope::SocTelemetry);
+        assert_eq!(Scope::SocTelemetry.label(), "soc-telemetry");
+        assert!(Scope::SocTelemetry.covers(false));
+        assert!(!Scope::SocTelemetry.covers(true), "sys_power does not see a discrete card");
+        assert_eq!(backend_scope("rapl", "package"), Scope::CpuPackage);
+        assert_eq!(backend_scope("rapl", "psys"), Scope::WholeSystem);
+        assert!(Scope::CpuPackage.covers(false));
+        assert!(!Scope::CpuPackage.covers(true));
+    }
+
+    #[test]
+    fn trapezoid_uses_the_timestamps_and_does_not_fill_an_uncovered_edge() {
+        let flat = [(0.0, 10.0), (1.0, 10.0), (2.0, 10.0)];
+        let even = trapezoid(&flat, 0.0, 2.0).unwrap();
+        assert!((even.joules - 20.0).abs() < 1e-12);
+        assert_eq!(even.samples, 3);
+        assert!((even.cadence_s - 1.0).abs() < 1e-12);
+        assert_eq!(even.left, EdgeFix::OnSample);
+        assert_eq!(even.right, EdgeFix::OnSample);
+        assert_eq!(even.uncovered_left_s + even.uncovered_right_s, 0.0);
+        assert_eq!(even.cadence_edge_j(), 0.0);
+
+        // Arithmetic mean of these samples is 50, and 50 W times 2 s is 100 J.
+        // The trapezoid weights the short jump and is 95 J.
+        let uneven = [(0.0, 0.0), (1.0, 0.0), (1.1, 100.0), (2.0, 100.0)];
+        let trap = trapezoid(&uneven, 0.0, 2.0).unwrap();
+        assert!((trap.joules - 95.0).abs() < 1e-9, "{}", trap.joules);
+        let mean = uneven.iter().map(|(_, p)| p).sum::<f64>() / uneven.len() as f64;
+        assert!((mean * 2.0 - 100.0).abs() < 1e-9);
+        assert!((trap.joules - mean * 2.0).abs() > 1.0);
+
+        let bridged = [(-0.2, 0.0), (0.2, 10.0), (0.8, 10.0), (1.2, 20.0)];
+        let edges = trapezoid(&bridged, 0.0, 1.0).unwrap();
+        assert!((edges.joules - 10.0).abs() < 1e-9, "{}", edges.joules);
+        assert_eq!(edges.left, EdgeFix::Interpolated);
+        assert_eq!(edges.right, EdgeFix::Interpolated);
+        assert_eq!(edges.samples, 2);
+        assert!((edges.cadence_s - 0.4).abs() < 1e-12);
+        assert!((edges.cadence_edge_j() - 2.0).abs() < 1e-9, "{}", edges.cadence_edge_j());
+
+        let open = [(0.25, 4.0), (0.75, 8.0)];
+        let missing = trapezoid(&open, 0.0, 1.0).unwrap();
+        assert!((missing.joules - 3.0).abs() < 1e-12, "{}", missing.joules);
+        assert!((missing.covered_s - 0.5).abs() < 1e-12);
+        assert!((missing.uncovered_left_s - 0.25).abs() < 1e-12);
+        assert!((missing.uncovered_right_s - 0.25).abs() < 1e-12);
+        assert_eq!(missing.left, EdgeFix::Uncovered);
+        assert_eq!(missing.right, EdgeFix::Uncovered);
+        assert!((missing.cadence_edge_j() - 2.0).abs() < 1e-12, "{}", missing.cadence_edge_j());
+        assert_eq!(missing.samples, 2);
+        assert!((missing.cadence_s - 0.5).abs() < 1e-12);
     }
 
     #[test]
@@ -821,7 +1193,7 @@ mod tests {
         // own clock, so a fast workload simply is not observable, and returning a number anyway
         // would be inventing precision.
         let (mut m, _own) = meter_or_skip!();
-        let zero = Baseline { watts: 0.0, sigma: 0.0, samples: MIN_SAMPLES, load1: None };
+        let zero = Baseline { watts: 0.0, sigma: 0.0, samples: MIN_SAMPLES, load1: None, cadence_s: 0.1 };
         let e = m.measure(zero, || std::hint::black_box(1 + 1)).unwrap_err();
         assert!(e.contains("reading"), "must say what was short: {e}");
         assert!(e.contains("not an estimate"), "and why that is refused: {e}");
@@ -938,12 +1310,18 @@ mod tests {
         // total energy by node updates and calling it e_sample while writes paid for most of it.
         let run = Run {
             seconds: 1.0,
+            covered_s: 1.0,
             mean_watts: 30.0,
             idle_watts: 20.0,
             idle_sigma: 0.1,
             joules_total: 30.0,
             joules_above_idle: 10.0,
             samples: 10,
+            cadence_s: 0.1,
+            left_edge: EdgeFix::OnSample,
+            right_edge: EdgeFix::OnSample,
+            uncovered_s: 0.0,
+            cadence_edge_j: 0.0,
             machine: "test".into(),
             backend: "test",
         };

@@ -427,8 +427,9 @@ it is not pooled with a quiet run.
 
 RAPL on hostname `framework-128gb-0000` is the primary energy evidence. That
 machine reads package `energy_uj` without root. macmon is secondary and its
-scope is whole-system. Package joules and whole-system joules are not added
-together, and a summary that mixed them is refused.
+scope is SoC telemetry (`sys_power`), not wall power. Package joules, core
+joules, and SoC-telemetry joules are not added together, and a summary that
+mixed them is refused.
 
 An earlier fleet attempt on 7 November 2026 obtained no joules. The machine
 that answered was `framework-32gb-0001`, not `framework-128gb-0000`. On
@@ -440,7 +441,7 @@ quiet gate refused a baseline. Those traces were not turned into joules.
 The first measured-joules bundle is `bench/thrml-tsp/results/fleet/189502d/`,
 revision `189502d`, both hosts evidence grade `contended host`.
 `framework-128gb-0000` measured RAPL package energy. The M5 Max measured macmon
-whole-system energy. Quiet mode on the Framework host stayed above load 2 and
+SoC telemetry (`sys_power`), not wall power. Quiet mode on the Framework host stayed above load 2 and
 recorded `load_gated`. The ferrotherm windows in that bundle are about 1 ms,
 below the RAPL update cadence. One trial records gross 0 J, a negative
 incremental, and `attributable: true`. Those values stay in the bundle. The
