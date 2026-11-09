@@ -1,0 +1,93 @@
+MANIFEST of files intentionally left out of jetsonhub-attempt-003-publish.tar.gz
+Generated: 2026-11-09T23:24:53Z
+Reason: raw high-rate / high-volume sample dumps that dominate the 328 MB attempt-003 bundle.
+Per-trial window/bracket energy records remain inside attempt-003/report.json.
+Per-trial state/energy traces remain under attempt-003/traces/.
+
+LEFT_OUT path | size_bytes | size_human | sha256
+evidence-5c54005-quiet24-jetsonhub/attempt-003/thrml_raw.txt | 283662008 | 271M | d13eb5880fdbca739f3f285f72df0d401d03cb7201a95952508decdd4c06e36e
+evidence-5c54005-quiet24-jetsonhub/attempt-003-rapl-raw.jsonl | 10980507 | 11M | 4d06cd848c95b07b5eb580bb06a630e56a58830e8e2d8e0fb7356c2e71bef519
+evidence-5c54005-quiet24-jetsonhub/attempt-001-rapl-raw.jsonl | 413248 | 404K | ed44516786e3b21d3c628334542d57ef8f4d1190ac46785d97bd045934f7dc80
+evidence-5c54005-quiet24-jetsonhub/attempt-002-rapl-raw.jsonl | 405561 | 400K | daaf1e9e0c81dae46b90d1bda7b2dca433ba043e103e2c0f90026224d456d2b8
+
+INCLUDED path | size_bytes | sha256
+attempt-001.log | 887 | 59274936d75882bef6e77180ba6370d014cecfd6b38ffc227c9dc2ac3e5fd609
+attempt-001-pre-load.txt | 1892 | 83714e546700ee90ad3e6216889b5659d81fad66a959b37745f411be7e9ba74f
+attempt-001/quiet-gate.json | 1140 | 28e21fec069a39a2a75236374fabcb46b1d78889ea42c6e4ce836724bbdcc9e3
+attempt-001-refused-load.txt | 2203 | ab4d7733b46fd7f949b209ce2af975220e9877782b14d35ac972b0ae85f76dc7
+attempt-001/report.json | 2258 | 777978b9ec81b86a1e6abdd156e36af269ca9ec23813f0364846c7f3491b7833
+attempt-001/spec.txt | 447080 | 9709bad9c60669d923f293e9de34a9ec7fa1ed66a9a03b5928fcfc00d4702447
+attempt-002.log | 886 | bfba0a1b6bb336086c09b85fabf5056cbd62188f5a1c054b1e945eac62d455a4
+attempt-002-pre-load.txt | 2013 | d708e1482cbe31dafdd0e98a4bcca1749a7ed21755715a26318ddccd44acc241
+attempt-002/quiet-gate.json | 1140 | 1e86c3ec9f55615fe99e0c940c67c567b2b32b796ec37fd8ed4be7dd6a9e604a
+attempt-002-refused-load.txt | 2029 | 390a3e179c53a34f0fb3b014129e7493a7a679a731a811c55143cab2b68c8462
+attempt-002/report.json | 2258 | 205675db585b60b6b261a5fe9717bb78a7611c7f78757680a61a3d92111b159a
+attempt-002/spec.txt | 447080 | 9709bad9c60669d923f293e9de34a9ec7fa1ed66a9a03b5928fcfc00d4702447
+attempt-003.log | 132011 | 100e142d93d7eef378b7ced7ac9ad93abe62d80b73c529a244b460daa092d681
+attempt-003-pre-load.txt | 1784 | d0aedb02a4fe9d67b14b175c4c3d9f2d7f51793c7f7081c3c2af84b36213d523
+attempt-003/quiet-gate.json | 1135 | 62b40d3efdcda60af366b3cb1cb914840a6e3e66d617e66c7083ef4772cb5cfa
+attempt-003/report.json | 1191002 | aca5da3bf79224d9c1558179fadb3cd49f6d5fd99d3c6a28fa624d02e596a31c
+attempt-003/spec.txt | 447080 | 9709bad9c60669d923f293e9de34a9ec7fa1ed66a9a03b5928fcfc00d4702447
+attempt-003/traces/ising_grid2d_open_3x3_ferrotherm_trial0.energy.txt | 39716 | 0cc88e1bcf41ead2f66220bcac2a7ee47858d4d34246b353af6d85589e04295c
+attempt-003/traces/ising_grid2d_open_3x3_ferrotherm_trial0.states.txt | 45194 | 76a21ab76c35adcccdc5eb891e2bca79526f14500627f963c10904b5f38b2b45
+attempt-003/traces/ising_grid2d_open_3x3_thrml_trial0.energy.txt | 39693 | 169c28bfa3454f16a747f63aaac263509dcfa18a80daed00231c0ead9cb1793f
+attempt-003/traces/ising_grid2d_open_3x3_thrml_trial0.states.txt | 44804 | b684766e5880bf2481ce4f59ec0476077b12a81e48365bdf809601a75430e47f
+attempt-003/traces/ising_open_16x16_ferrotherm_trial0.energy.txt | 43985 | 03cee00448a09d74610109224f0031e7d363ff8570917d8fdc85fa07f615c303
+attempt-003/traces/ising_open_16x16_ferrotherm_trial0.states.txt | 1281065 | 82dcbe656aad1f132f0f9f0cba922508ccb9e449868165f9f3e9a823d64b98b4
+attempt-003/traces/ising_open_16x16_thrml_trial0.energy.txt | 43989 | 2636e6ed2e99b2a1674cf883c7eb90eb8bfbbcff5341b95636fce4ce56c324b2
+attempt-003/traces/ising_open_16x16_thrml_trial0.states.txt | 1282911 | 46da286ea0e71a7dcdd39d35355a257688385df5321c9a8e0c5f87acbae17fb4
+attempt-003/traces/ising_open_32x32_ferrotherm_trial0.energy.txt | 44000 | b183108e6cf68e59805bed17d702e79351c04ef40450b55369e47def496b54cd
+attempt-003/traces/ising_open_32x32_ferrotherm_trial0.states.txt | 5123742 | 37fa476576f2d9f9435d50fecc026aa0af5a20efbe22a15fcfc4f9090c751248
+attempt-003/traces/ising_open_32x32_thrml_trial0.energy.txt | 44000 | a761654526f68ae73d0183615bc71bc08b08aa71c1a432240f3ef4e38a5d17a1
+attempt-003/traces/ising_open_32x32_thrml_trial0.states.txt | 5129501 | d2934235d58aaedec21d99aaec7cde109bcdeb696fda5ccd7d3311a15baa84fa
+attempt-003/traces/ising_open_4x4_ferrotherm_trial0.energy.txt | 40562 | 112ef1522f6eb11c6b894c9bc946f0ece9a1d8fe1e6ee23533bea4271f3b6002
+attempt-003/traces/ising_open_4x4_ferrotherm_trial0.states.txt | 80389 | 1f6eafc59f57782592ccd659c895b9d0501153ff4215ddc5f5a5d72b1229c6fa
+attempt-003/traces/ising_open_4x4_thrml_trial0.energy.txt | 40662 | 5afdb769743855be36f3aa16842b6e50b477ff2cc25177c1a9eff22e6bd885dd
+attempt-003/traces/ising_open_4x4_thrml_trial0.states.txt | 79663 | 2f8060c68fe79d4c438463e5333c1ecfa830c579af42944b1052b33e4b122487
+attempt-003/traces/ising_open_64x64_ferrotherm_trial0.energy.txt | 46000 | efa061cba2c993a9eec4e269851fb193497765776501a0e87a3d5f786f58626b
+attempt-003/traces/ising_open_64x64_ferrotherm_trial0.states.txt | 20485554 | 8e79cd15bf0b53e5e1de04504d6d23c0cf1c7d6e5459e233948e81ed7a10289a
+attempt-003/traces/ising_open_64x64_thrml_trial0.energy.txt | 46000 | f9a6f4e2684c05a82237b40a3028e8e9857628251b6dfebe7099da65dbd5fb23
+attempt-003/traces/ising_open_64x64_thrml_trial0.states.txt | 20478306 | 15ddac67ec3dc8fc59c744411e62cfc1b72411b47e5d34fb55427a7a5bba8752
+attempt-003/traces/ising_open_8x8_ferrotherm_trial0.energy.txt | 41986 | d26db3876c1f7050458931207fd5880da7437de79e8b29a8559ed74b4a05e98c
+attempt-003/traces/ising_open_8x8_ferrotherm_trial0.states.txt | 320668 | bd736b28c1e873ed15c2b60df4d6853873c344bd783a3e5041fb55c8473c498b
+attempt-003/traces/ising_open_8x8_thrml_trial0.energy.txt | 41982 | 75c3f1317371bd93e035f48bc132af4e45270206d4fb1a63e2adc690e169981f
+attempt-003/traces/ising_open_8x8_thrml_trial0.states.txt | 321603 | edc719196cedc4e4df6c1b333dc794696ba35ce9dbbc383a2ec8ad45212b5062
+attempt-003/traces/potts_open_q3_4x4_ferrotherm_trial0.energy.txt | 41413 | f2d74e5bb144fbb35623cd5e7636074efa63a6ec74aac6ad14c4fe061605131d
+attempt-003/traces/potts_open_q3_4x4_ferrotherm_trial0.states.txt | 64000 | 4bc2e61cde3afa6d9b217b8c2a8ca463c98852f1a06c95362b79aa4efc31e085
+attempt-003/traces/potts_open_q3_4x4_thrml_trial0.energy.txt | 41414 | 89bf8336b8299ac7647ee4502dd510ad4731c62b97c3e83819f465b83cb582b7
+attempt-003/traces/potts_open_q3_4x4_thrml_trial0.states.txt | 64000 | 29b3efaab8dbba1bee9d8cd1856e4f8309239f6e2baee16a785ad804255882a8
+attempt-003/traces/potts_open_q3_8x8_ferrotherm_trial0.energy.txt | 42000 | fca87779c6a70f32f868cb393e43ec0e73ed925914999b5221179baddfe12de8
+attempt-003/traces/potts_open_q3_8x8_ferrotherm_trial0.states.txt | 256000 | 6113d58535a25e90c4def4b2bd08fe698eff01f102c2e4cef4710b83d089f038
+attempt-003/traces/potts_open_q3_8x8_thrml_trial0.energy.txt | 42000 | a8a17dd00323838661b7b0c2042ee3898aaacff26caec360f59767eec4b94723
+attempt-003/traces/potts_open_q3_8x8_thrml_trial0.states.txt | 256000 | 5020cf13de704e2050309063080db5afbab8a878ea4f29243796613433054df2
+attempt-003/traces/potts_open_q4_4x4_ferrotherm_trial0.energy.txt | 40661 | 3d3ad9458cb9eee44b7f527f5318e83ccc4f0cf8765261262d24ce9468ce9fe7
+attempt-003/traces/potts_open_q4_4x4_ferrotherm_trial0.states.txt | 64000 | 26acb40e45b0031cc80909afce4edf0bf25ab77d051a05298c1270225c9f79af
+attempt-003/traces/potts_open_q4_4x4_thrml_trial0.energy.txt | 40682 | 513071cacddb9344538b4c17b1c40b522e44d29f8ea64389043588250448a739
+attempt-003/traces/potts_open_q4_4x4_thrml_trial0.states.txt | 64000 | 3195aa41f1b1e3065c17119173a3442438a91fb23072af2631e7f9ebf80c97b0
+attempt-003/traces/potts_open_q4_8x8_ferrotherm_trial0.energy.txt | 42000 | 366339712f9b892337cc71adba39de2ceaa09c44a7114a527ccd0fba159676bb
+attempt-003/traces/potts_open_q4_8x8_ferrotherm_trial0.states.txt | 256000 | 15935ede2b7f7858accef34014ee6dc9e8e8f6fb29ca27cc8af8f26461948dac
+attempt-003/traces/potts_open_q4_8x8_thrml_trial0.energy.txt | 42000 | 207e228860e84cfd67fdbd9e2761b3c0a84324e2f66695010b4ae2aa7eb6cd2a
+attempt-003/traces/potts_open_q4_8x8_thrml_trial0.states.txt | 256000 | 6f6b2ca024170d14097e432dd508debd032a91360dddd052c1e9c75e801c8bef
+attempt-003/traces/potts_path_q3_n6_ferrotherm_trial0.energy.txt | 39854 | 54556a787216e01482ac3bd48b21b150946c975007570126a141b1541bb273ed
+attempt-003/traces/potts_path_q3_n6_ferrotherm_trial0.states.txt | 24000 | a72e345f1d2b43e35b243826dd8bbd872445367852d92770725b1170952219af
+attempt-003/traces/potts_path_q3_n6_thrml_trial0.energy.txt | 39872 | b3fb67183e8c4b85a65d94aaec0359c725cfc5c7f9027a997e12a767dc5ff3a3
+attempt-003/traces/potts_path_q3_n6_thrml_trial0.states.txt | 24000 | 00235b1a697aeda7a8a7c28bf30ee3874ccca783fc799e1253bec9fb24e7e69f
+attempt-003/traces/thrml_readme_ising_chain_n5_ferrotherm_trial0.energy.txt | 39410 | b0a23925ce0fd3fc0baf88c5415ba8e2261f01b2c7f1185ac0de071a93e6930f
+attempt-003/traces/thrml_readme_ising_chain_n5_ferrotherm_trial0.states.txt | 25007 | bd966d58156c83114ff615f5dac0af578ab88325c9de5382eaefc6a013ced681
+attempt-003/traces/thrml_readme_ising_chain_n5_thrml_trial0.energy.txt | 39376 | 658e50cff0e815e7e9b9ae593f90c47fad5349e94f5ad0c1961a5c80701b2d7f
+attempt-003/traces/thrml_readme_ising_chain_n5_thrml_trial0.states.txt | 25034 | 302c2415eeeacd6949fc6a73e07af9cef0fd3ed7546c9e16ece9bb15ba5a8077
+attempt-003/traces/tsp_iv4_three_body_d12_ferrotherm_trial0.energy.txt | 41869 | f1b262280178795504ee251b855119dd9fe73fe237ee86e977bb18069a7d038e
+attempt-003/traces/tsp_iv4_three_body_d12_ferrotherm_trial0.states.txt | 57657 | b167582b328ac2f1727cc3d4448309d79adbfd8c703746cecca84d99f740b46b
+attempt-003/traces/tsp_iv4_three_body_d12_thrml_trial0.energy.txt | 41892 | 5aef99b60e9a1e64acaef5b6f6ed044144dd64c7f9ca6cd6634558399a6e901c
+attempt-003/traces/tsp_iv4_three_body_d12_thrml_trial0.states.txt | 57492 | 09af0eb5188af3a245f5c95fd4d8e960998e48ce26ee891c40df7d4941fe547f
+attempt-003/traces/tsp_iv4_three_body_d16_ferrotherm_trial0.energy.txt | 42000 | 271285e13b4ce0a934e2f94177b594debf788f549c70cd8d8229bf3760cddc9a
+attempt-003/traces/tsp_iv4_three_body_d16_ferrotherm_trial0.states.txt | 73742 | 5565353030e83e8e4bd81c81eb33983b2c53ad5f5bbc76835cd29d9697c5cb5d
+attempt-003/traces/tsp_iv4_three_body_d16_thrml_trial0.energy.txt | 41999 | d439573656318b55b3ddcdad5c7afdfba817e81ab4e1049386feea9ce34e5604
+attempt-003/traces/tsp_iv4_three_body_d16_thrml_trial0.states.txt | 73712 | a15171f40b1e7b21717cdf14b25bc581bf09efe6eb230fa3c746391045975278
+attempt-003/traces/tsp_iv4_three_body_d8_ferrotherm_trial0.energy.txt | 41490 | ab19db6ad70d58889fb6fc51914117f76f1a1eccc3121c1c00e86f740f4e72d4
+attempt-003/traces/tsp_iv4_three_body_d8_ferrotherm_trial0.states.txt | 37628 | ce74545202f3a51538e4668da543c665aafb2da744e3a59a738e5bec27f8187e
+attempt-003/traces/tsp_iv4_three_body_d8_thrml_trial0.energy.txt | 41406 | 4ed1a3c04a54b2ba07910493912a448a7ba258198ac38ffc55674ec89dc3abf5
+attempt-003/traces/tsp_iv4_three_body_d8_thrml_trial0.states.txt | 37867 | 48729b7dd8415ac837474e71890cbc16dd3c857fae286b6074fcefe55bedc4d3
+events.jsonl | 2824 | a13360db0bf2d11c5361410d23dfb17496729577504e478ec3780460faa24212
+exit.txt | 24 | 04853c2dc9c09d812c21fc0c867161693f1dbebf1591548417527dcc382d11f4
+rapl-domains.json | 1034 | 314b712c8319c856c5aa1213f1fbbcbcd1b08d451785bbd8c749fdfd21b43562
