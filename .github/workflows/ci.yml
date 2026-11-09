@@ -347,6 +347,18 @@ jobs:
       - name: the type stub matches the library it describes
         run: scripts/check-stubs.sh
 
+  aarch64-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      # c_char is u8 on this target. A dlopen signature written as *const i8
+      # compiles on the x86_64 runner and fails on Jetson Thor.
+      - name: the THRML harness typechecks on aarch64
+        run: scripts/check-aarch64-harness.sh
+
   wasm:
     runs-on: ubuntu-latest
     steps:

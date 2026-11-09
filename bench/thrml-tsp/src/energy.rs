@@ -376,7 +376,9 @@ impl Drop for StopReader<'_> {
 /// `tegrastats` `VDD_IN`), and `gpu` (NVML). Two rows share a scope only when the label is
 /// the same one of those.
 pub fn scopes_may_share_a_table(a: &str, b: &str) -> bool {
-    a == b && matches!(a, "package" | "core" | "soc-telemetry" | "whole-system" | "psys" | "board" | "gpu")
+    a == b
+        && (matches!(a, "package" | "core" | "soc-telemetry" | "whole-system" | "psys" | "board" | "vin" | "gpu")
+            || a.starts_with("subrail:"))
 }
 
 /// What the scope does not include. This is a statement, not a joule, and it is not folded
@@ -391,9 +393,13 @@ pub fn scope_limit(scope: &str) -> &'static str {
         }
         "core" => "RAPL core domain only. It is not added to package energy.",
         "psys" => "RAPL psys, kept only when it contains the package. It is not macmon and it is not a wall-plug measurement.",
-        "board" => "One board rail (INA3221 or tegrastats VDD_IN). Other rails are not summed.",
-        "gpu" => "NVML total energy, summed across devices. It is not package energy and not SoC telemetry.",
+        "board" => "One board rail (INA3221 total or tegrastats VDD_IN). Other rails are not summed.",
+        "vin" => "Module-input boundary. L4T R39 calls INA238 VIN the overall system, module plus carrier, not the wall. INA3221 sub-rails are not added to it.",
+        "gpu" => "NVML total energy, summed across devices. It is not package energy and not SoC telemetry. On Thor this counter is NOT_SUPPORTED and is not substituted with a sub-rail sum.",
         "whole-system" => "Legacy label. On a macmon receipt this token meant sys_power, which is SoC telemetry, not wall power.",
+        _ if scope.starts_with("subrail:") => {
+            "One INA3221 channel. It is not a total, and it is not added to VIN or to the other channels."
+        }
         _ => "scope not recognised",
     }
 }
@@ -1070,7 +1076,12 @@ pub struct Probe {
     pub perf_note: String,
     pub nvml: Option<Nvml>,
     pub nvml_note: String,
-    /// Jetson `tegrastats` `VDD_IN`, only when no wall backend opened. Not a sum of rails.
+    /// INA238 `VIN` when that hwmon node is present. Not wall power, and not a sum of sub-rails.
+    pub ina238: Option<HwmonSeries>,
+    pub ina238_note: String,
+    /// INA3221 channels that are not a total. Each is its own scope.
+    pub subrails: Vec<HwmonSeries>,
+    /// Jetson `tegrastats` `VIN` or `VDD_IN`, only when INA238 did not open. Not a sum of rails.
     pub tegra: Option<Tegra>,
     pub tegra_note: String,
     pub hostname: String,
@@ -1116,11 +1127,27 @@ impl Probe {
             }
             Err(e) => (None, e),
         };
-        let (tegra, tegra_note) = if wall.is_some() {
-            (None, "not opened; a power backend (macmon SoC telemetry or INA3221) is already open".into())
+        let (ina238, ina238_note) = match HwmonSeries::open_ina238() {
+            Ok(series) => {
+                let note = series.note.clone();
+                (Some(series), note)
+            }
+            Err(e) => (None, e),
+        };
+        let subrails = HwmonSeries::open_subrails();
+        let (tegra, tegra_note) = if ina238.is_some() {
+            (None, "not opened; INA238 VIN is the module-input meter and tegrastats would read the same boundary".into())
+        } else if wall.is_some() {
+            (None, "not opened; a power backend (macmon SoC telemetry or an INA3221 total) is already open".into())
         } else {
             match Tegra::open() {
-                Ok(t) => (Some(t), "tegrastats VDD_IN, rootless, other rails not summed".into()),
+                Ok(t) => {
+                    let note = format!(
+                        "tegrastats {}, rootless, label recorded, other rails not summed",
+                        t.label
+                    );
+                    (Some(t), note)
+                }
                 Err(e) => (None, e),
             }
         };
@@ -1137,6 +1164,9 @@ impl Probe {
             perf_note,
             nvml,
             nvml_note,
+            ina238,
+            ina238_note,
+            subrails,
             tegra,
             tegra_note,
             hostname: read_hostname(),
@@ -1147,32 +1177,52 @@ impl Probe {
 
 }
 
-/// One `tegrastats` line's `VDD_IN` rail, in watts.
+/// Module-input sample from one `tegrastats` line.
 ///
-/// The token is `1864/1864` or `1864mW/1864mW`. The first number is the instantaneous
-/// draw, in milliwatts. A line that only names `VDD_CPU_GPU_CV` or `VDD_SOC` is `None`:
-/// those rails are inside `VDD_IN`, and summing them would count the same current twice.
-pub fn parse_tegrastats_vdd_in_watts(line: &str) -> Option<f64> {
+/// `label` is the token that matched: `VIN` on Thor, `VDD_IN` on earlier Jetsons. `VIN_SYS_5V0`
+/// is a different token and is not this rail. The number before the slash is instantaneous
+/// milliwatts. Sub-rails on the same line are not added.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TegraInput {
+    /// `VIN` or `VDD_IN`.
+    pub label: &'static str,
+    /// Instantaneous draw, in watts.
+    pub watts: f64,
+}
+
+/// `VIN` if the line has it, otherwise `VDD_IN`.
+///
+/// Thor prints module input as `VIN`. A line that only names `VDD_GPU`, `VDD_CPU_SOC_MSS`, or
+/// `VIN_SYS_5V0` is `None`.
+pub fn parse_tegrastats_module_input(line: &str) -> Option<TegraInput> {
+    let mut vin = None;
+    let mut vdd = None;
     let mut tokens = line.split_whitespace();
     while let Some(tok) = tokens.next() {
-        if tok == "VDD_IN" {
-            let raw = tokens.next()?;
-            let head = raw.split('/').next().unwrap_or(raw);
-            let digits: String = head.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-            let mw: f64 = digits.parse().ok()?;
-            if mw.is_finite() && mw >= 0.0 {
-                return Some(mw / 1000.0);
-            }
-            return None;
+        let label = match tok {
+            "VIN" => "VIN",
+            "VDD_IN" => "VDD_IN",
+            _ => continue,
+        };
+        let Some(raw) = tokens.next() else { continue };
+        let head = raw.split('/').next().unwrap_or(raw);
+        let digits: String = head.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+        let Ok(mw) = digits.parse::<f64>() else { continue };
+        if mw.is_finite() && mw >= 0.0 {
+            let sample = TegraInput { label, watts: mw / 1000.0 };
+            if label == "VIN" { vin = Some(sample); } else { vdd = Some(sample); }
         }
     }
-    None
+    vin.or(vdd)
 }
+
 
 /// A rootless `tegrastats` reader. The child is stopped when this value is dropped.
 pub struct Tegra {
     child: std::process::Child,
     samples: std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, f64)>>>,
+    /// `VIN` or `VDD_IN`, whichever the first sample matched.
+    pub label: String,
 }
 
 impl Tegra {
@@ -1185,7 +1235,9 @@ impl Tegra {
             .map_err(|e| format!("tegrastats was not started: {e}"))?;
         let stdout = child.stdout.take().ok_or("tegrastats has no stdout")?;
         let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let label = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let sink = std::sync::Arc::clone(&samples);
+        let sink_label = std::sync::Arc::clone(&label);
         std::thread::spawn(move || {
             let mut reader = std::io::BufReader::new(stdout);
             let mut line = String::new();
@@ -1195,20 +1247,26 @@ impl Tegra {
                 if n == 0 {
                     break;
                 }
-                if let Some(w) = parse_tegrastats_vdd_in_watts(&line) {
-                    sink.lock().unwrap().push((std::time::Instant::now(), w));
+                if let Some(sample) = parse_tegrastats_module_input(&line) {
+                    let mut name = sink_label.lock().unwrap();
+                    if name.is_empty() {
+                        *name = sample.label.to_string();
+                    }
+                    drop(name);
+                    sink.lock().unwrap().push((std::time::Instant::now(), sample.watts));
                 }
             }
         });
         let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(2) {
             if !samples.lock().unwrap().is_empty() {
-                return Ok(Tegra { child, samples });
+                let label = label.lock().unwrap().clone();
+                return Ok(Tegra { child, samples, label });
             }
             std::thread::sleep(Duration::from_millis(50));
         }
         let _ = child.kill();
-        Err("tegrastats produced no VDD_IN sample. Other rails were not summed.".into())
+        Err("tegrastats produced no VIN or VDD_IN sample. Other rails were not summed.".into())
     }
 
     /// Samples at or after `from`, plus the last sample before `from` when one exists.
@@ -1230,6 +1288,222 @@ impl Drop for Tegra {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// An `ina238` hwmon node, identified by its `name` file and i2c address.
+///
+/// `power1_input` is microwatts. `energy1_input`, when present, is microjoules and is preferred
+/// because it is a counter. L4T R39's Jetson Thor guide says the INA238 at i2c `2-0044` is `VIN`:
+/// overall system power, module plus carrier. That is not wall power. A different address or name
+/// is read and marked unverified.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ina238Found {
+    pub name: String,
+    pub i2c: String,
+    /// `power1_input` or `energy1_input`.
+    pub source: &'static str,
+    pub path: std::path::PathBuf,
+    /// True only for `ina238` at i2c `2-0044`, the rail L4T R39 documents.
+    pub verified: bool,
+    /// Cumulative microjoules when `source` is `energy1_input`. Watts samples otherwise.
+    pub counter: bool,
+    pub note: String,
+}
+
+fn i2c_addr_of(start: &std::path::Path) -> String {
+    let mut dir = start;
+    loop {
+        if let Some(name) = dir.file_name().and_then(|s| s.to_str())
+            && is_i2c_node(name)
+        {
+            return name.to_string();
+        }
+        match dir.parent() {
+            Some(parent) if parent != dir => dir = parent,
+            _ => return "unknown".into(),
+        }
+    }
+}
+
+fn is_i2c_node(name: &str) -> bool {
+    let Some((bus, addr)) = name.split_once('-') else { return false };
+    bus.chars().all(|c| c.is_ascii_digit()) && addr.len() == 4 && addr.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn walk_hwmon_names(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
+    if depth > 6 {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for ent in rd.flatten() {
+        let path = ent.path();
+        if path.file_name().and_then(|s| s.to_str()) == Some("name") {
+            out.push(path);
+        } else if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
+            walk_hwmon_names(&path, out, depth + 1);
+        }
+    }
+}
+
+/// Find an `ina238` under `root`. Prefers a verified `2-0044` node when several exist.
+pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
+    let mut names = Vec::new();
+    walk_hwmon_names(root, &mut names, 0);
+    let mut found = Vec::new();
+    for name_path in names {
+        let Ok(raw) = std::fs::read_to_string(&name_path) else { continue };
+        let name = raw.trim().to_string();
+        if !name.eq_ignore_ascii_case("ina238") {
+            continue;
+        }
+        let Some(dir) = name_path.parent() else { continue };
+        let energy = dir.join("energy1_input");
+        let power = dir.join("power1_input");
+        let (path, source, counter) = if energy.is_file() {
+            (energy, "energy1_input", true)
+        } else if power.is_file() {
+            (power, "power1_input", false)
+        } else {
+            continue;
+        };
+        let i2c = i2c_addr_of(dir);
+        let verified = i2c.eq_ignore_ascii_case("2-0044");
+        let volts = std::fs::read_to_string(dir.join("in0_input"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|mv| mv.is_finite())
+            .map(|mv| format!(" in0_input={:.3} V", mv / 1000.0))
+            .unwrap_or_default();
+        let note = if verified {
+            format!(
+                "ina238 i2c {i2c} name={name} source={source}.{volts} L4T R39 Jetson Thor: VIN is overall system power, module plus carrier, not wall. INA3221 sub-rails are not added."
+            )
+        } else {
+            format!(
+                "unverified ina238 i2c {i2c} name={name} source={source}.{volts} Not the L4T R39 node at 2-0044, so this is not established as module-input VIN."
+            )
+        };
+        found.push(Ina238Found { name, i2c, source, path, verified, counter, note });
+    }
+    found.sort_by_key(|item| !item.verified);
+    found.into_iter().next().ok_or_else(|| "no ina238 hwmon with power1_input or energy1_input".into())
+}
+
+/// Scope token for one INA3221 channel that is not a total rail.
+///
+/// `None` for a total label, including the removed voltage sum. The label is kept intact so
+/// `VDD_GPU` and `VIN_SYS_5V0` stay different scopes.
+pub fn subrail_scope(label: &str) -> Option<String> {
+    if ferrotherm_meter::ina3221::is_total_label(label) || label.eq_ignore_ascii_case("sum of shunt voltages") {
+        return None;
+    }
+    let label = label.trim();
+    if label.is_empty() {
+        return None;
+    }
+    Some(format!("subrail:{label}"))
+}
+
+/// A hwmon series polled on its own thread. `counter` samples are cumulative joules.
+pub struct HwmonSeries {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    samples: std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, f64)>>>,
+    pub scope: String,
+    pub instrument: &'static str,
+    pub note: String,
+    pub counter: bool,
+}
+
+impl HwmonSeries {
+    fn spawn_file(found: &Ina238Found) -> HwmonSeries {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let flag = std::sync::Arc::clone(&stop);
+        let sink = std::sync::Arc::clone(&samples);
+        let path = found.path.clone();
+        let scale = 1.0e-6;
+        std::thread::spawn(move || {
+            while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Ok(text) = std::fs::read_to_string(&path)
+                    && let Ok(raw) = text.trim().parse::<f64>()
+                    && raw.is_finite()
+                    && raw >= 0.0
+                {
+                    sink.lock().unwrap().push((std::time::Instant::now(), raw * scale));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
+        HwmonSeries {
+            stop,
+            samples,
+            scope: "vin".into(),
+            instrument: "ina238",
+            note: found.note.clone(),
+            counter: found.counter,
+        }
+    }
+
+    pub fn open_ina238() -> Result<HwmonSeries, String> {
+        let found = find_ina238(std::path::Path::new("/sys"))?;
+        Ok(Self::spawn_file(&found))
+    }
+
+    /// One background reader per non-total INA3221 channel under `/sys`.
+    pub fn open_subrails() -> Vec<HwmonSeries> {
+        let mut rails = Vec::new();
+        for root in ["/sys/bus/i2c/devices", "/sys/class/hwmon"] {
+            if let Ok(found) = ferrotherm_meter::ina3221::Rails::list_at(std::path::Path::new(root)) {
+                for rail in found {
+                    if subrail_scope(&rail.label).is_some() && rails.iter().all(|have: &ferrotherm_meter::ina3221::Rail| have.label != rail.label) {
+                        rails.push(rail);
+                    }
+                }
+            }
+        }
+        rails.into_iter().filter_map(|rail| {
+            let scope = subrail_scope(&rail.label)?;
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let flag = std::sync::Arc::clone(&stop);
+            let sink = std::sync::Arc::clone(&samples);
+            std::thread::spawn(move || {
+                while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(watts) = ferrotherm_meter::ina3221::Rails::channel_watts(&rail)
+                        && watts.is_finite()
+                        && watts >= 0.0
+                    {
+                        sink.lock().unwrap().push((std::time::Instant::now(), watts));
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            });
+            Some(HwmonSeries {
+                stop,
+                samples,
+                scope,
+                instrument: "ina3221",
+                note: "INA3221 sub-rail. Not added to VIN and not added to the other channels.".into(),
+                counter: false,
+            })
+        }).collect()
+    }
+
+    pub fn since_stamped(&self, from: std::time::Instant) -> Vec<(std::time::Instant, f64)> {
+        let v = self.samples.lock().unwrap();
+        let mut out = Vec::new();
+        if let Some(prev) = v.iter().rev().find(|(t, _)| *t < from) {
+            out.push(*prev);
+        }
+        out.extend(v.iter().copied().filter(|(t, _)| *t >= from));
+        out
+    }
+}
+
+impl Drop for HwmonSeries {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -1686,7 +1960,7 @@ fn open_unix() -> Result<Nvml, String> {
     type Init = unsafe extern "C" fn() -> i32;
     type Count = unsafe extern "C" fn(*mut u32) -> i32;
     type ByIndex = unsafe extern "C" fn(u32, *mut *mut std::ffi::c_void) -> i32;
-    type GetName = unsafe extern "C" fn(*mut std::ffi::c_void, *mut i8, u32) -> i32;
+    type GetName = unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_char, u32) -> i32;
     let init: Init = unsafe { std::mem::transmute(sym("nvmlInit_v2")?) };
     let count_fn: Count = unsafe { std::mem::transmute(sym("nvmlDeviceGetCount_v2")?) };
     let by_index: ByIndex = unsafe { std::mem::transmute(sym("nvmlDeviceGetHandleByIndex_v2")?) };
@@ -1709,9 +1983,9 @@ fn open_unix() -> Result<Nvml, String> {
             unsafe { dlclose(lib) };
             return Err(format!("NVML device {i} has no handle"));
         }
-        let mut buf = [0i8; 96];
+        let mut buf = [0 as std::ffi::c_char; 96];
         let name = if unsafe { get_name(handle, buf.as_mut_ptr(), buf.len() as u32) } == 0 {
-            let bytes: Vec<u8> = buf.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+            let bytes: Vec<u8> = buf.iter().copied().take_while(|c| *c != 0).map(|c| c as u8).collect();
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
             format!("gpu{i}")
@@ -1719,13 +1993,28 @@ fn open_unix() -> Result<Nvml, String> {
         names.push(name.clone());
         devices.push(NvmlDevice { handle, name });
     }
+    // Thor's NVML builds the symbol and then returns NOT_SUPPORTED. A later read would
+    // fail the same way, so the open is the failure and the module-input meter is the fallback.
+    let mut probe_mj = 0u64;
+    let rc = unsafe { get_energy(devices[0].handle, &mut probe_mj) };
+    if rc == 3 {
+        unsafe { dlclose(lib) };
+        return Err(
+            "nvmlDeviceGetTotalEnergyConsumption returned NOT_SUPPORTED. CUDA energy uses the module-input VIN meter, not this counter."
+                .into(),
+        );
+    }
+    if rc != 0 {
+        unsafe { dlclose(lib) };
+        return Err(format!("nvmlDeviceGetTotalEnergyConsumption returned {rc}"));
+    }
     Ok(Nvml { lib, get_energy, devices, names })
 }
 
 #[cfg(unix)]
 unsafe extern "C" {
-    fn dlopen(filename: *const i8, flags: i32) -> *mut std::ffi::c_void;
-    fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8) -> *mut std::ffi::c_void;
+    fn dlopen(filename: *const std::ffi::c_char, flags: i32) -> *mut std::ffi::c_void;
+    fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::ffi::c_char) -> *mut std::ffi::c_void;
     fn dlclose(handle: *mut std::ffi::c_void) -> i32;
 }
 
@@ -2056,11 +2345,96 @@ mod tests {
     #[test]
     fn tegrastats_vdd_in_is_one_rail_and_other_rails_are_not_summed() {
         let line = "RAM 1543/7772MB CPU [1%@102] VDD_IN 1864/1864 VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717";
-        assert!((parse_tegrastats_vdd_in_watts(line).unwrap() - 1.864).abs() < 1e-12);
+        let parsed = parse_tegrastats_module_input(line).unwrap();
+        assert_eq!(parsed.label, "VDD_IN");
+        assert!((parsed.watts - 1.864).abs() < 1e-12);
         let mw = "VDD_IN 2500mW/2500mW VDD_CPU_GPU_CV 100mW/100mW";
-        assert!((parse_tegrastats_vdd_in_watts(mw).unwrap() - 2.5).abs() < 1e-12);
-        assert!(parse_tegrastats_vdd_in_watts("VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717").is_none());
-        assert!(parse_tegrastats_vdd_in_watts("no power here").is_none());
+        assert!((parse_tegrastats_module_input(mw).unwrap().watts - 2.5).abs() < 1e-12);
+        assert!(parse_tegrastats_module_input("VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717").is_none());
+        assert!(parse_tegrastats_module_input("no power here").is_none());
+    }
+
+    #[test]
+    fn thor_tegrastats_vin_is_module_input_and_subrails_are_not_added() {
+        // R39 tegrastats power-block form. VIN is the module-input token. VIN_SYS_5V0 is a
+        // different token and must not be parsed as VIN. The value is the first number, in mW.
+        let line = "11-09-2026 21:04:11 RAM 4512/125772MB (lfb 2048x4MB) SWAP 0/0MB (cached 0MB) \
+                    CPU [2%@729,1%@729] EMC_FREQ 3%@3199 GR3D_FREQ 0%@[0,0,0] \
+                    VIN 26140mW/25980mW VDD_CPU_SOC_MSS 4120mW/4001mW VDD_GPU 890mW/870mW \
+                    VIN_SYS_5V0 1510mW/1490mW";
+        let sample = parse_tegrastats_module_input(line).expect("VIN");
+        assert_eq!(sample.label, "VIN");
+        assert!((sample.watts - 26.140).abs() < 1e-12, "{}", sample.watts);
+        let summed = 26.140 + 4.120 + 0.890 + 1.510;
+        assert!((sample.watts - summed).abs() > 1.0, "sub-rails were added into VIN");
+        let bare = parse_tegrastats_module_input("VIN 18000/17900 VDD_GPU 100/100").unwrap();
+        assert_eq!(bare.label, "VIN");
+        assert!((bare.watts - 18.0).abs() < 1e-12);
+        assert!(parse_tegrastats_module_input("VDD_GPU 890mW/870mW VIN_SYS_5V0 1510mW/1490mW").is_none());
+    }
+
+    #[test]
+    fn thor_ina238_hwmon_is_vin_and_ina3221_channels_stay_separate() {
+        let root = std::env::temp_dir().join(format!("ft-thor-hwmon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let ina = root.join("2-0044/hwmon/hwmon0");
+        std::fs::create_dir_all(&ina).unwrap();
+        std::fs::write(ina.join("name"), "ina238\n").unwrap();
+        std::fs::write(ina.join("power1_input"), "26000000\n").unwrap();
+        std::fs::write(ina.join("in0_input"), "28000\n").unwrap();
+        let found = find_ina238(&root).expect("ina238");
+        assert!(found.verified, "{}", found.note);
+        assert_eq!(found.i2c, "2-0044");
+        assert_eq!(found.name, "ina238");
+        assert_eq!(found.source, "power1_input");
+        assert!(!found.counter);
+        assert!(found.note.contains("not wall"), "{}", found.note);
+        assert!(found.note.contains("28.000 V"), "{}", found.note);
+        let raw: f64 = std::fs::read_to_string(&found.path).unwrap().trim().parse().unwrap();
+        assert!((raw * 1.0e-6 - 26.0).abs() < 1e-9);
+
+        let other = root.join("1-0044/hwmon/hwmon1");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("name"), "ina238\n").unwrap();
+        std::fs::write(other.join("energy1_input"), "5000000\n").unwrap();
+        std::fs::write(other.join("power1_input"), "1000000\n").unwrap();
+        // The verified 2-0044 node is preferred over this unverified one.
+        let again = find_ina238(&root).unwrap();
+        assert!(again.verified);
+        assert_eq!(again.i2c, "2-0044");
+        let _ = std::fs::remove_dir_all(&ina);
+        let unverified = find_ina238(&root).unwrap();
+        assert!(!unverified.verified, "{}", unverified.note);
+        assert!(unverified.note.contains("unverified"), "{}", unverified.note);
+        assert_eq!(unverified.source, "energy1_input");
+        assert!(unverified.counter);
+
+        let rails = root.join("2-0040/hwmon/hwmon2");
+        std::fs::create_dir_all(&rails).unwrap();
+        for (i, (label, volt, curr)) in [
+            ("VDD_GPU", "800", "1000"),
+            ("VDD_CPU_SOC_MSS", "800", "5000"),
+            ("VIN_SYS_5V0", "5000", "300"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let n = i + 1;
+            std::fs::write(rails.join(format!("in{n}_label")), format!("{label}\n")).unwrap();
+            std::fs::write(rails.join(format!("in{n}_input")), format!("{volt}\n")).unwrap();
+            std::fs::write(rails.join(format!("curr{n}_input")), format!("{curr}\n")).unwrap();
+        }
+        let listed = ferrotherm_meter::ina3221::Rails::list_at(&rails).unwrap();
+        let scopes: Vec<String> = listed.iter().filter_map(|rail| subrail_scope(&rail.label)).collect();
+        assert_eq!(scopes.len(), 3);
+        assert!(scopes.iter().all(|s| s.starts_with("subrail:")));
+        assert!(scopes.iter().all(|s| s != "vin" && s != "board"));
+        assert!(!scopes_may_share_a_table("vin", "subrail:VDD_GPU"));
+        assert!(scopes_may_share_a_table("subrail:VDD_GPU", "subrail:VDD_GPU"));
+        assert!(!scopes_may_share_a_table("subrail:VDD_GPU", "subrail:VIN_SYS_5V0"));
+        assert!(subrail_scope("sum of shunt voltages").is_none());
+        assert!(subrail_scope("VDD_IN").is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

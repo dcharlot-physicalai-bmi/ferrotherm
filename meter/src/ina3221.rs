@@ -47,7 +47,16 @@ use std::time::Duration;
 ///
 /// Matched case-insensitively against `in[123]_label`. `VDD_IN` is the usual one; carrier boards
 /// vary and some report the module input under a different name.
-const TOTAL_RAIL_NAMES: &[&str] = &["vdd_in", "vdd_sys_in", "sum of shunt voltages", "vdd_mux"];
+const TOTAL_RAIL_NAMES: &[&str] = &["vdd_in", "vdd_sys_in", "vdd_mux"];
+
+/// Whether `label` is one of the names this crate treats as a whole-board rail.
+///
+/// `sum of shunt voltages` is not here. That string is a sum of voltages, not a power rail,
+/// and matching it selected a voltage sum as though it were watts.
+#[must_use]
+pub fn is_total_label(label: &str) -> bool {
+    TOTAL_RAIL_NAMES.contains(&label.to_ascii_lowercase().as_str())
+}
 
 /// Why a set of rails could not be turned into a power reading.
 #[derive(Clone, Debug, PartialEq)]
@@ -170,6 +179,25 @@ impl Rails {
         })
     }
 
+    /// Every channel under `root`, with no rail chosen as the total.
+    ///
+    /// Jetson Thor's INA3221 at i2c `2-0040` exposes `VDD_GPU`, `VDD_CPU_SOC_MSS`, and
+    /// `VIN_SYS_5V0`. Those are sub-rails. [`Rails::at`] refuses them, because none is a total
+    /// and they must not be summed. This lists them so a caller can report each one alone.
+    ///
+    /// # Errors
+    ///
+    /// [`RailError::NotFound`] when the directory has no channel. [`RailError::Unreadable`] when a
+    /// label file is not text.
+    pub fn list_at(root: &Path) -> Result<Vec<Rail>, RailError> {
+        let mut rails = Rails::scan(root)?;
+        if rails.is_empty() {
+            return Err(RailError::NotFound { looked_in: vec![root.display().to_string()] });
+        }
+        rails.sort_by(|a, b| a.label.cmp(&b.label));
+        Ok(rails)
+    }
+
     /// Find rails under an arbitrary directory.
     ///
     /// Public because it is the seam that makes every part of this testable without a Jetson: the
@@ -187,7 +215,7 @@ impl Rails {
         rails.sort_by(|a, b| a.label.cmp(&b.label));
         let total = rails
             .iter()
-            .position(|r| TOTAL_RAIL_NAMES.contains(&r.label.to_ascii_lowercase().as_str()))
+            .position(|r| is_total_label(&r.label))
             .ok_or_else(|| RailError::NoTotalRail {
                 found: rails.iter().map(|r| r.label.clone()).collect(),
             })?;
@@ -290,6 +318,18 @@ impl Rails {
         &self.rails[self.total]
     }
 
+    /// This channel's power, in watts. Not a sum across channels.
+    ///
+    /// # Errors
+    ///
+    /// [`RailError::Unreadable`] when a rail file disappeared or stopped holding a number.
+    pub fn channel_watts(rail: &Rail) -> Result<f64, RailError> {
+        match &rail.source {
+            RailSource::VoltsAmps { volt, curr } => Ok(read_f64(volt)? * read_f64(curr)? / 1.0e6),
+            RailSource::Milliwatts { power } => Ok(read_f64(power)? / 1.0e3),
+        }
+    }
+
     /// Whole-board power, in **watts**.
     ///
     /// One rail, never a sum. See the module docs for why that is not a simplification.
@@ -299,12 +339,9 @@ impl Rails {
     /// [`RailError::Unreadable`] when a rail file disappeared or stopped holding a number between
     /// detection and this read.
     pub fn watts(&self) -> Result<f64, RailError> {
-        match &self.total().source {
-            // mV x mA = uW, so divide by 1e6 for watts. Getting this wrong by a factor of 1000 is
-            // the easiest possible error here and would still look like a plausible wattage.
-            RailSource::VoltsAmps { volt, curr } => Ok(read_f64(volt)? * read_f64(curr)? / 1.0e6),
-            RailSource::Milliwatts { power } => Ok(read_f64(power)? / 1.0e3),
-        }
+        // mV x mA = uW, so divide by 1e6 for watts. Getting this wrong by a factor of 1000 is
+        // the easiest possible error here and would still look like a plausible wattage.
+        Self::channel_watts(self.total())
     }
 }
 
@@ -444,6 +481,59 @@ mod tests {
         let d = tmp("empty");
         std::fs::create_dir_all(&d).unwrap();
         assert!(matches!(Rails::at(&d), Err(RailError::NotFound { .. })));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_sum_of_shunt_voltages_is_not_a_power_rail() {
+        let d = tmp("shunt-sum");
+        write(
+            &d,
+            &[
+                ("in1_label", "sum of shunt voltages\n"),
+                ("in1_input", "28000\n"),
+                ("curr1_input", "1000\n"),
+                ("in2_label", "VDD_GPU\n"),
+                ("in2_input", "800\n"),
+                ("curr2_input", "500\n"),
+            ],
+        );
+        assert!(!is_total_label("sum of shunt voltages"));
+        assert!(matches!(Rails::at(&d), Err(RailError::NoTotalRail { .. })));
+        let listed = Rails::list_at(&d).expect("the channels are still there");
+        assert_eq!(listed.len(), 2);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn thor_ina3221_subrails_are_listed_and_not_a_total() {
+        let d = tmp("thor-3221");
+        write(
+            &d,
+            &[
+                ("in1_label", "VDD_GPU\n"),
+                ("in1_input", "800\n"),
+                ("curr1_input", "1000\n"),
+                ("in2_label", "VDD_CPU_SOC_MSS\n"),
+                ("in2_input", "800\n"),
+                ("curr2_input", "5000\n"),
+                ("in3_label", "VIN_SYS_5V0\n"),
+                ("in3_input", "5000\n"),
+                ("curr3_input", "300\n"),
+            ],
+        );
+        assert!(matches!(Rails::at(&d), Err(RailError::NoTotalRail { .. })));
+        let listed = Rails::list_at(&d).expect("three sub-rails");
+        assert_eq!(
+            listed.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+            vec!["VDD_CPU_SOC_MSS", "VDD_GPU", "VIN_SYS_5V0"]
+        );
+        let gpu = Rails::channel_watts(&listed[1]).unwrap();
+        let cpu = Rails::channel_watts(&listed[0]).unwrap();
+        let sys = Rails::channel_watts(&listed[2]).unwrap();
+        assert!((gpu - 0.8).abs() < 1e-9, "{gpu}");
+        assert!((cpu - 4.0).abs() < 1e-9, "{cpu}");
+        assert!((sys - 1.5).abs() < 1e-9, "{sys}");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
