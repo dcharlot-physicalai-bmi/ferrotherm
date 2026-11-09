@@ -5,8 +5,9 @@ datasheet.
 
 [ferrotherm](https://github.com/dcharlot-physicalai-bmi/ferrotherm)'s core ledger prices a run
 against a `Prices` device model — useful, and explicitly a projection. This crate is the other half:
-it turns a run's operation counts into per-operation energy from **wall power you actually
-observed**.
+it turns a run's operation counts into per-operation energy from the backend's own
+scope. On Apple silicon that scope is `macmon` `sys_power`: SoC telemetry, not a
+wall-plug measurement.
 
 ```sh
 cargo add ferrotherm-meter

@@ -6699,7 +6699,7 @@ problem sizes. Read off the source, not measured — re-measuring is pending a q
 - `duty_cycle` reports every path the instrument could see. An earlier version returned early unless
   **both** measured, which threw away a good GPU measurement because the CPU's delta sat in the
   noise — and the finding here is a property of one machine at a time, not of a ratio.
-- The example states which comparison it is making: the meter reads whole-system power, so its idle
+- The example states which comparison it is making: the meter reads the backend's scope (on Apple silicon, `macmon` `sys_power`, which is SoC telemetry and not wall power), so its idle
   term prices a fabric that **replaces** the host. A fabric sitting *beside* a host that stays awake
   anyway is a different sum, and an integrated SoC shares one rail, so per-component idle is not
   separable on this machine. Named rather than split by assumption.
@@ -7714,7 +7714,7 @@ The ledger counted operations exactly and priced them against the one table in t
 pre-silicon estimates for an accelerator nobody has characterised. `Prices::UNSTATED` made borrowing
 it honest. This makes borrowing it unnecessary.
 
-- **Measured on an Apple M5 Max: 4.261e-7 J per node update** — whole-system wall power above idle,
+- **Measured on an Apple M5 Max: 4.261e-7 J per node update** — SoC telemetry (`macmon` `sys_power`) above idle, not wall power,
   over an 8.29 s window with 75 power readings. `Z1_SPICE` estimates 7.09e-15 J. The ratio is 6.0e7,
   and it is *the size of the prize being claimed, not a measured speedup*: one side is a
   general-purpose CPU at the wall, the other a per-device SPICE estimate for silicon that has not

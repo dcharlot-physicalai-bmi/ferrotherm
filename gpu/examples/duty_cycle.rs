@@ -197,7 +197,8 @@ fn main() {
 
     // CAN THIS METER SEE THIS DEVICE? Checked before measuring, not after.
     //
-    // On an Apple SoC `sys_power` covers the GPU and this is always true. On the Linux box it is
+    // On an Apple SoC `sys_power` is SoC telemetry and covers the integrated GPU. It is not wall
+    // power, and it does not cover a discrete card. On the Linux box it is
     // not: RAPL `package-0` reads the CPU package, and a DISCRETE RTX 4050 draws on its own feed.
     // The first run here reported the GPU arm at 5.5 W marginal and 1.06 J for the task -- small,
     // plausible, and the cost of FEEDING the card rather than running it, with tens of watts

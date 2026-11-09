@@ -33,7 +33,8 @@ fn main() {
             eprintln!("{e}");
             eprintln!(
                 "usage: ferrotherm-thrml-bench --out DIR [--trials N] [--warmup N] [--draws N] \
-                 [--python PY] [--skip-thrml] [--contended] [--scale] [--device auto|cpu|cuda] [--cpus LIST]"
+                 [--python PY] [--skip-thrml] [--contended] [--quiet-gate] [--scale] \
+                 [--device auto|cpu|cuda] [--cpus LIST]"
             );
             std::process::exit(2);
         }
@@ -60,7 +61,30 @@ fn main() {
     eprintln!("nvml: {}", probe.nvml_note);
     eprintln!("load1: {:?} quiet: {}", probe.load1, probe.quiet);
 
-    let mut body = String::new();
+    let quiet_gate = if args.quiet_gate {
+        eprintln!("quiet-gate preflight: {} s", energy::QUIET_GATE_SECONDS);
+        let gate = energy::sample_quiet_gate(&args.cpus);
+        let receipt = quiet_gate_json(&gate);
+        fs::write(args.out.join("quiet-gate.json"), &receipt).unwrap_or_else(|e| panic!("quiet-gate: {e}"));
+        if !gate.held {
+            let report = format!(
+                "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": {},\n  \
+                 \"provenance\": {prov},\n  \"quiet_gate\": {gate},\n  \"energy\": null,\n  \
+                 \"workloads\": []\n}}\n",
+                json_str("load_gated"),
+                prov = provenance_json(&probe, "load_gated"),
+                gate = receipt,
+            );
+            fs::write(args.out.join("report.json"), &report).expect("write report");
+            eprintln!("quiet gate refused the run; max load1 {:?}", gate.max_load1);
+            std::process::exit(1);
+        }
+        Some(gate)
+    } else {
+        None
+    };
+
+    let mut done: Vec<(usize, Vec<Chain>, Option<Vec<Chain>>)> = Vec::new();
     let mut thrml_ok = args.skip_thrml;
     let mut thrml_note = if args.skip_thrml {
         "THRML runner skipped on request".to_string()
@@ -126,15 +150,14 @@ fn main() {
         {
             write_trace(&traces, w.id, "thrml", first);
         }
-        body.push_str(&workload_json(w, &ft_trials, thrml_trials.as_deref()));
-        body.push_str(",\n");
-    }
-    if body.ends_with(",\n") {
-        body.truncate(body.len() - 2);
-        body.push('\n');
+        done.push((
+            work.iter().position(|item| item.id == w.id).expect("workload id"),
+            ft_trials,
+            thrml_trials,
+        ));
     }
 
-    let energy = energy_section(
+    let (energy, grade) = energy_section(
         &mut probe,
         &work,
         args.contended,
@@ -146,11 +169,24 @@ fn main() {
         &args.device,
         &args.cpus,
     );
+    let mut body = String::new();
+    for (index, ft_trials, thrml_trials) in &done {
+        body.push_str(&workload_json(&work[*index], ft_trials, thrml_trials.as_deref(), grade));
+        body.push_str(",\n");
+    }
+    if body.ends_with(",\n") {
+        body.truncate(body.len() - 2);
+        body.push('\n');
+    }
+    let gate_json = quiet_gate.as_ref().map_or_else(|| "null".into(), quiet_gate_json);
     let report = format!(
-        "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"provenance\": {prov},\n  \
+        "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": {grade},\n  \
+         \"provenance\": {prov},\n  \"quiet_gate\": {gate},\n  \
          \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_error\": {err},\n  \
          \"workloads\": [\n{body}  ]\n}}\n",
-        prov = provenance_json(&probe),
+        grade = json_str(grade),
+        prov = provenance_json(&probe, grade),
+        gate = gate_json,
         meta = json_str(&thrml_meta),
         err = if thrml_note.is_empty() { "null".into() } else { json_str(&thrml_note) },
     );
@@ -170,6 +206,7 @@ struct Args {
     runner: PathBuf,
     skip_thrml: bool,
     contended: bool,
+    quiet_gate: bool,
     scale: bool,
     device: String,
     cpus: Vec<usize>,
@@ -184,6 +221,7 @@ impl Args {
         let mut python = std::env::var("THRML_PYTHON").unwrap_or_else(|_| "python3".into());
         let mut skip = false;
         let mut contended = false;
+        let mut quiet_gate = false;
         let mut scale = false;
         let mut device = "auto".to_string();
         let mut cpus = String::new();
@@ -197,6 +235,7 @@ impl Args {
                 "--python" => python = need(&mut it, "--python")?,
                 "--skip-thrml" => skip = true,
                 "--contended" => contended = true,
+                "--quiet-gate" => quiet_gate = true,
                 "--scale" => scale = true,
                 "--device" => device = need(&mut it, "--device")?,
                 "--cpus" => cpus = need(&mut it, "--cpus")?,
@@ -214,6 +253,9 @@ impl Args {
         if !matches!(device.as_str(), "auto" | "cpu" | "cuda") {
             return Err(format!("--device wants auto, cpu, or cuda, got {device}"));
         }
+        if quiet_gate && contended {
+            return Err("--quiet-gate and --contended name different evidence grades".into());
+        }
         let cpus = if cpus.is_empty() { Vec::new() } else { energy::parse_cpu_list(&cpus)? };
         Ok(Args {
             out: PathBuf::from(out),
@@ -224,6 +266,7 @@ impl Args {
             runner: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/runner.py"),
             skip_thrml: skip,
             contended,
+            quiet_gate,
             scale,
             device,
             cpus,
@@ -431,10 +474,11 @@ fn write_trace(dir: &Path, id: &str, side: &str, chain: &Chain) {
     fs::write(&state_path, s).expect("state trace");
 }
 
-fn workload_json(w: &Workload, ft_trials: &[Chain], thrml: Option<&[Chain]>) -> String {
+fn workload_json(w: &Workload, ft_trials: &[Chain], thrml: Option<&[Chain]>, grade: &str) -> String {
     let mut s = String::new();
     s.push_str("    {\n");
     s.push_str(&format!("      \"id\": {},\n", json_str(w.id)));
+    s.push_str(&format!("      \"evidence_grade\": {},\n", json_str(grade)));
     s.push_str(&format!("      \"kind\": {},\n", json_str(w.kind.as_str())));
     s.push_str(&format!("      \"source\": {},\n", json_str(w.source)));
     s.push_str(&format!("      \"beta\": {:.16},\n", w.beta));
@@ -553,7 +597,7 @@ fn energy_section(
     thrml_ok: bool,
     device: &str,
     pinned: &[usize],
-) -> String {
+) -> (String, &'static str) {
     let poll = if contended { poll_quiet(&[ferrotherm::host::load_average()]) } else { wait_for_quiet_host() };
     let quiet = poll.outcome == "quiet";
     let grade = grade_for(contended, quiet);
@@ -569,7 +613,7 @@ fn energy_section(
              so no energy figure was taken. A contended figure would be a different grade and is \
              not implied here.",
         );
-        return energy_json(
+        return (energy_json(
             probe,
             &poll,
             grade,
@@ -577,10 +621,10 @@ fn energy_section(
             None,
             &[],
             &gated.note,
-        );
+        ), grade);
     }
     if trials < 5 {
-        return energy_json(
+        return (energy_json(
             probe,
             &poll,
             grade,
@@ -588,7 +632,7 @@ fn energy_section(
             None,
             &[],
             "No joules. The energy head-to-head needs at least 5 interleaved trials so a 95% interval exists.",
-        );
+        ), grade);
     }
     if !has_instrument {
         let missing = Joules::unavailable(
@@ -598,12 +642,12 @@ fn energy_section(
              perf power/energy-pkg, or NVML counter opened on this host. Nothing was filled in \
              from a device-price table.",
         );
-        return energy_json(probe, &poll, grade, missing.evidence, None, &[], &missing.note);
+        return (energy_json(probe, &poll, grade, missing.evidence, None, &[], &missing.note), grade);
     }
     let idle = match take_idle(probe, contended) {
         Ok(b) => b,
         Err(e) => {
-            return energy_json(probe, &poll, grade, "unavailable", None, &[], &e);
+            return (energy_json(probe, &poll, grade, "unavailable", None, &[], &e), grade);
         }
     };
     let mut session = if thrml_ok {
@@ -617,7 +661,7 @@ fn energy_section(
         for pair in 0..trials {
             let before_b = match sample_bracket(probe, contended) {
                 Ok(v) => v,
-                Err(e) => return energy_json(probe, &poll, grade, "unavailable", None, &[], &e),
+                Err(e) => return (energy_json(probe, &poll, grade, "unavailable", None, &[], &e), grade),
             };
             let mut got: Vec<(&'static str, Vec<SideMeasure>, energy::CpuSnap, energy::CpuSnap)> = Vec::new();
             for side in energy::pair_order(pair) {
@@ -635,7 +679,7 @@ fn energy_section(
             }
             let after_b = match sample_bracket(probe, contended) {
                 Ok(v) => v,
-                Err(e) => return energy_json(probe, &poll, grade, "unavailable", None, &[], &e),
+                Err(e) => return (energy_json(probe, &poll, grade, "unavailable", None, &[], &e), grade),
             };
             let quiet_bracket = contended
                 || ferrotherm::host::load_average().is_some_and(|l| l <= ferrotherm::host::QUIET_LOAD);
@@ -696,13 +740,20 @@ fn energy_section(
                     row.idle_after_w = Some(if core_row { after_b.core_watts.unwrap_or(f64::NAN) } else { after_b.watts });
                     row.baseline_drift_w = Some(if core_row { core_drift } else { drift });
                     row.other_core_busy = other_txt.clone();
+                    row.cadence_s = measured.cadence_s;
+                    row.left_edge = measured.left_edge.to_string();
+                    row.right_edge = measured.right_edge.to_string();
+                    row.uncovered_s = measured.uncovered_s;
+                    row.samples = measured.samples;
+                    row.quantization_window_j = measured.quantization_j;
+                    row.cadence_edge_window_j = measured.cadence_edge_j;
                     rows.push(row);
                 }
             }
             stamp_pairs(&mut rows, w.id, pair, sigma, drift_ok, core_sigma, core_ok);
         }
     }
-    energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &energy_note(grade))
+    (energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &energy_note(grade)), grade)
 }
 
 fn energy_note(grade: &str) -> String {
@@ -716,9 +767,10 @@ fn energy_note(grade: &str) -> String {
     } else {
         "Evidence grade quiet. The host cleared the unchanged load gate (at or under 2). \
          Each trial repeats the sampler for at least 2 s and reports joules per repetition. \
-         Attribution needs 8 counter updates. Summaries are per workload. RAPL package and \
-         macmon whole-system are not combined. RAPL on framework-128gb-0000 reads package \
-         energy_uj without root and is primary; macmon is secondary."
+         Attribution needs 8 counter updates. Summaries are per workload. RAPL package, \
+         RAPL core, and macmon SoC telemetry are not combined. RAPL on framework-128gb-0000 \
+         reads package energy_uj without root and is primary; macmon sys_power is secondary \
+         and is not wall power."
             .into()
     }
 }
@@ -742,9 +794,17 @@ fn sample_bracket(probe: &mut Probe, contended: bool) -> Result<BracketSample, S
     if probe.tegra.is_some() {
         let t0 = std::time::Instant::now();
         std::thread::sleep(std::time::Duration::from_secs(1));
-        let w = probe.tegra.as_ref().map(|t| t.since(t0)).unwrap_or_default();
-        let (watts, sigma) = energy::idle_stats(&w).ok_or_else(|| "tegrastats bracket produced fewer than two samples".to_string())?;
-        return Ok(BracketSample { watts, sigma, core_watts: None, core_sigma: None });
+        let seconds = t0.elapsed().as_secs_f64();
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let stamped = probe.tegra.as_ref().map(|t| t.since_stamped(t0)).unwrap_or_default();
+        let series = series_secs(t0, &stamped);
+        let integ = ferrotherm_meter::trapezoid(&series, 0.0, seconds)?;
+        let inside: Vec<f64> = series.iter().filter(|(t, _)| *t >= 0.0 && *t <= seconds).map(|(_, w)| *w).collect();
+        let (_, sigma) = energy::idle_stats(&inside).ok_or_else(|| "tegrastats bracket produced fewer than two samples".to_string())?;
+        if integ.covered_s <= 0.0 {
+            return Err("tegrastats bracket covered no time".into());
+        }
+        return Ok(BracketSample { watts: integ.joules / integ.covered_s, sigma, core_watts: None, core_sigma: None });
     }
     let mut pkg = Vec::new();
     let mut core = Vec::new();
@@ -881,6 +941,13 @@ struct SideMeasure {
     counter_updates: u32,
     instrument: &'static str,
     scope: &'static str,
+    cadence_s: f64,
+    left_edge: &'static str,
+    right_edge: &'static str,
+    uncovered_s: f64,
+    samples: u32,
+    quantization_j: Option<f64>,
+    cadence_edge_j: f64,
 }
 
 fn measure_side(
@@ -914,37 +981,39 @@ fn measure_wall(
 ) -> SideMeasure {
     let wall = probe.wall.as_mut().expect("wall was checked");
     let backend = wall.backend();
-    let (instrument, scope) = if backend == "macmon" { ("macmon", "whole-system") } else { ("ina3221", "board") };
+    let (instrument, scope) = if backend == "macmon" { ("macmon", "soc-telemetry") } else { ("ina3221", "board") };
     let mut reps = 0u32;
     let mut ess_sum = 0.0;
-    let integrated = wall.integrate(Baseline { watts: 0.0, sigma: 0.0, samples: 0, load1: None }, || {
-        let (r, e) = repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session));
-        reps = r;
-        ess_sum = e;
-    });
-    // The zero baseline above is only so integrate returns a Run. Gross is mean watts
-    // times seconds. Incremental is applied by the caller against the real idle.
+    let integrated = wall.integrate(
+        Baseline { watts: 0.0, sigma: 0.0, samples: 0, load1: None, cadence_s: f64::NAN },
+        || {
+            let (r, e) = repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session));
+            reps = r;
+            ess_sum = e;
+        },
+    );
+    // The zero baseline above is only so integrate returns a Run. Gross is the trapezoid
+    // over the covered span. Incremental is applied by the caller against the real idle.
     // Joules and ESS below are per repetition.
     match integrated {
         Ok((run, ())) => finish_window(
             ess_sum,
             run.joules_total,
+            run.covered_s,
             run.seconds,
             reps,
             u32::try_from(run.samples).unwrap_or(u32::MAX),
             instrument,
             scope,
+            run.cadence_s,
+            run.left_edge.label(),
+            run.right_edge.label(),
+            run.uncovered_s,
+            u32::try_from(run.samples).unwrap_or(u32::MAX),
+            None,
+            run.cadence_edge_j,
         ),
-        Err(_) => SideMeasure {
-            ess: f64::NAN,
-            gross: f64::NAN,
-            seconds: 0.0,
-            window_seconds: 0.0,
-            repetitions: reps,
-            counter_updates: 0,
-            instrument,
-            scope,
-        },
+        Err(_) => empty_side(reps, instrument, scope),
     }
 }
 
@@ -964,10 +1033,30 @@ fn measure_tegra(
     let t0 = std::time::Instant::now();
     let (reps, ess_sum) = repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session));
     let seconds = t0.elapsed().as_secs_f64();
-    let watts = probe.tegra.as_ref().map(|t| t.since(t0)).unwrap_or_default();
-    let updates = u32::try_from(watts.len()).unwrap_or(u32::MAX);
-    let mean = if watts.is_empty() { f64::NAN } else { watts.iter().sum::<f64>() / watts.len() as f64 };
-    finish_window(ess_sum, mean * seconds, seconds, reps, updates, "tegrastats", "board")
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let stamped = probe.tegra.as_ref().map(|t| t.since_stamped(t0)).unwrap_or_default();
+    let series = series_secs(t0, &stamped);
+    let Ok(integ) = ferrotherm_meter::trapezoid(&series, 0.0, seconds) else {
+        return empty_side(reps, "tegrastats", "board");
+    };
+    let samples = u32::try_from(integ.samples).unwrap_or(u32::MAX);
+    finish_window(
+        ess_sum,
+        integ.joules,
+        integ.covered_s,
+        seconds,
+        reps,
+        samples,
+        "tegrastats",
+        "board",
+        integ.cadence_s,
+        integ.left.label(),
+        integ.right.label(),
+        integ.uncovered_left_s + integ.uncovered_right_s,
+        samples,
+        None,
+        integ.cadence_edge_j(),
+    )
 }
 
 fn measure_counter(
@@ -1026,32 +1115,54 @@ fn measure_counter(
             }
         }
     };
-    let (readings, window_s, (reps, ess_sum)) = energy::sample_during(opened.read, || {
+    let sampled = energy::sample_during(opened.read, || {
         repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session))
     });
+    let readings = sampled.readings;
+    let window_s = sampled.seconds;
+    let (reps, ess_sum) = sampled.value;
     let gross_window = match opened.gross {
         Gross::Joules { max_j } => energy::window_gross(&readings, max_j),
         Gross::Millijoules => energy::mj_window_j(&readings),
     };
+    let samples = u32::try_from(readings.len()).unwrap_or(u32::MAX);
+    let quantum = energy::counter_quantum_j(opened.instrument).map(energy::counter_quantization_j);
     let mut out = vec![finish_window(
         ess_sum,
         gross_window,
+        window_s,
         window_s,
         reps,
         energy::count_counter_updates(&readings),
         opened.instrument,
         opened.scope,
+        sampled.cadence_s,
+        "counter",
+        "counter",
+        0.0,
+        samples,
+        quantum,
+        energy::counter_cadence_edge_j(gross_window, window_s, sampled.cadence_s),
     )];
     if core_path.is_some() {
         let samples = core_log.lock().unwrap().clone();
+        let core_gross = energy::window_gross(&samples, Some(core_max));
         out.push(finish_window(
             ess_sum,
-            energy::window_gross(&samples, Some(core_max)),
+            core_gross,
+            window_s,
             window_s,
             reps,
             energy::count_counter_updates(&samples),
             "rapl",
             "core",
+            sampled.cadence_s,
+            "counter",
+            "counter",
+            0.0,
+            u32::try_from(samples.len()).unwrap_or(u32::MAX),
+            energy::counter_quantum_j("rapl").map(energy::counter_quantization_j),
+            energy::counter_cadence_edge_j(core_gross, window_s, sampled.cadence_s),
         ));
     }
     out
@@ -1080,15 +1191,73 @@ enum Gross {
 fn finish_window(
     ess_sum: f64,
     gross_window: f64,
+    energy_seconds: f64,
     window_seconds: f64,
     repetitions: u32,
     counter_updates: u32,
     instrument: &'static str,
     scope: &'static str,
+    cadence_s: f64,
+    left_edge: &'static str,
+    right_edge: &'static str,
+    uncovered_s: f64,
+    samples: u32,
+    quantization_j: Option<f64>,
+    cadence_edge_j: f64,
 ) -> SideMeasure {
-    let (gross, seconds) = energy::per_repetition(gross_window, window_seconds, repetitions);
-    let ess = energy::per_repetition(ess_sum, window_seconds, repetitions).0;
-    SideMeasure { ess, gross, seconds, window_seconds, repetitions, counter_updates, instrument, scope }
+    let (gross, seconds) = energy::per_repetition(gross_window, energy_seconds, repetitions);
+    let ess = energy::per_repetition(ess_sum, energy_seconds, repetitions).0;
+    SideMeasure {
+        ess,
+        gross,
+        seconds,
+        window_seconds,
+        repetitions,
+        counter_updates,
+        instrument,
+        scope,
+        cadence_s,
+        left_edge,
+        right_edge,
+        uncovered_s,
+        samples,
+        quantization_j,
+        cadence_edge_j,
+    }
+}
+
+fn empty_side(repetitions: u32, instrument: &'static str, scope: &'static str) -> SideMeasure {
+    SideMeasure {
+        ess: f64::NAN,
+        gross: f64::NAN,
+        seconds: 0.0,
+        window_seconds: 0.0,
+        repetitions,
+        counter_updates: 0,
+        instrument,
+        scope,
+        cadence_s: f64::NAN,
+        left_edge: "uncovered",
+        right_edge: "uncovered",
+        uncovered_s: 0.0,
+        samples: 0,
+        quantization_j: None,
+        cadence_edge_j: f64::NAN,
+    }
+}
+
+fn series_secs(origin: std::time::Instant, samples: &[(std::time::Instant, f64)]) -> Vec<(f64, f64)> {
+    samples
+        .iter()
+        .map(|(t, w)| {
+            let dt = if *t >= origin {
+                t.duration_since(origin).as_secs_f64()
+            } else {
+                -(origin.duration_since(*t).as_secs_f64())
+            };
+            (dt, *w)
+        })
+        .collect()
 }
 
 fn repeat_until_window(seed: u64, mut once: impl FnMut(u64) -> f64) -> (u32, f64) {
@@ -1140,7 +1309,7 @@ fn energy_json(
         poll.threshold,
         loads_json(&poll.samples),
         json_str(
-            "primary = RAPL package on framework-128gb-0000, read without root; macmon whole-system = secondary; scopes are not combined",
+            "primary = RAPL package on framework-128gb-0000, read without root; macmon sys_power = SoC telemetry, secondary; package and core are not combined",
         ),
         json_str("paired A/B then B/A; idle bracket before and after each pair; joules per repetition of a >=2 s window"),
         MIN_ENERGY_WINDOW_S,
@@ -1170,7 +1339,8 @@ fn loads_json(loads: &[f64]) -> String {
 fn grade_summary_json(s: &GradeSummary) -> String {
     format!(
         "      {{\"workload\": {}, \"side\": {}, \"instrument\": {}, \"scope\": {}, \"grade\": {}, \
-         \"n\": {}, \"gross_j\": {}, \"incremental_j\": {}, \"joules_per_ess\": {}}}",
+         \"n\": {}, \"gross_j\": {}, \"incremental_j\": {}, \"joules_per_ess\": {}, \
+         \"uncertainty_j_per_ess\": {}, \"scope_limit\": {}}}",
         json_str(s.workload),
         json_str(s.side),
         json_str(&s.instrument),
@@ -1180,6 +1350,19 @@ fn grade_summary_json(s: &GradeSummary) -> String {
         ci_opt(s.gross),
         ci_opt(s.incremental),
         ci_opt(s.joules_per_ess),
+        uncertainty_json(&s.uncertainty),
+        json_str(energy::scope_limit(&s.scope)),
+    )
+}
+
+fn uncertainty_json(u: &energy::UncertaintyBudget) -> String {
+    format!(
+        "{{\"student_t_half\": {}, \"quantization\": {}, \"cadence_edge\": {}, \"bracket\": {}, \"combined\": {}}}",
+        fmt_f64(Some(u.student_t_half)),
+        fmt_f64(u.quantization),
+        fmt_f64(u.cadence_edge),
+        fmt_f64(Some(u.bracket)),
+        fmt_f64(Some(u.combined)),
     )
 }
 
@@ -1195,7 +1378,8 @@ fn ci_opt(v: Option<(f64, f64, f64, usize)>) -> String {
 fn trial_line(t: &EnergyTrial) -> String {
     format!(
         "      {{\"workload\": {}, \"side\": {}, \"trial\": {}, \"repetitions\": {}, \
-         \"counter_updates\": {}, \"window_seconds\": {:.6}, \"grade\": {}, \"rank\": {}, \
+         \"counter_updates\": {}, \"samples\": {}, \"cadence_s\": {}, \"left_edge\": {}, \
+         \"right_edge\": {}, \"uncovered_s\": {}, \"window_seconds\": {:.6}, \"grade\": {}, \"rank\": {}, \
          \"load1\": {}, \"other_process_cpu_s\": {}, \"other_core_busy\": {}, \
          \"idle_before_w\": {}, \"idle_after_w\": {}, \"baseline_drift_w\": {}, \
          \"paired_delta_j\": {}, \"paired_attributable\": {}, \"ess\": {}, \
@@ -1205,6 +1389,11 @@ fn trial_line(t: &EnergyTrial) -> String {
         t.trial,
         t.repetitions,
         t.counter_updates,
+        t.samples,
+        fmt_f64(Some(t.cadence_s)),
+        json_str(&t.left_edge),
+        json_str(&t.right_edge),
+        fmt_f64(Some(t.uncovered_s)),
         t.window_seconds,
         json_str(t.grade),
         json_str(t.rank),
@@ -1300,7 +1489,27 @@ fn joules_json(j: &Joules) -> String {
     )
 }
 
-fn provenance_json(probe: &Probe) -> String {
+fn quiet_gate_json(gate: &energy::QuietGate) -> String {
+    let busy: Vec<String> = gate
+        .other_core_busy
+        .iter()
+        .map(|(cpu, busy)| format!("{{\"cpu\": {cpu}, \"busy\": {busy:.6}}}"))
+        .collect();
+    format!(
+        "{{\"seconds\": {:.3}, \"threshold\": {}, \"held\": {}, \"evidence_grade\": {}, \
+         \"max_load1\": {}, \"busy_readable\": {}, \"load1\": {}, \"other_core_busy\": [{}]}}",
+        gate.seconds,
+        gate.threshold,
+        if gate.held { "true" } else { "false" },
+        json_str(if gate.held { energy::GRADE_QUIET } else { "load_gated" }),
+        fmt_f64(gate.max_load1),
+        if gate.busy_readable { "true" } else { "false" },
+        loads_json(&gate.samples),
+        busy.join(", "),
+    )
+}
+
+fn provenance_json(probe: &Probe, grade: &str) -> String {
     let rev = Command::new("git").args(["rev-parse", "HEAD"]).output().ok();
     let rev = rev.filter(|o| o.status.success()).map_or_else(
         || "unknown".into(),
@@ -1320,10 +1529,11 @@ fn provenance_json(probe: &Probe) -> String {
         })
         .unwrap_or_else(|| "unknown".into());
     format!(
-        "{{\n    \"git_rev\": {},\n    \"git_dirty\": {},\n    \"host_cpu\": {},\n    \
+        "{{\n    \"evidence_grade\": {},\n    \"git_rev\": {},\n    \"git_dirty\": {},\n    \"host_cpu\": {},\n    \
          \"os\": {},\n    \"rustc\": {},\n    \"thrml_pin\": {},\n    \"thrml_wheel_sha256\": {},\n    \
          \"load1_at_start\": {},\n    \"what_this_machine_measured\": {},\n    \
          \"what_still_needs_fleet_hardware\": {}\n  }}",
+        json_str(grade),
         json_str(&rev),
         if dirty { "true" } else { "false" },
         json_str(&cpu),
@@ -1388,6 +1598,20 @@ fn json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quiet_gate_refuses_to_share_a_run_with_contended_mode() {
+        let Err(err) = super::Args::parse(
+            ["--out", "out", "--quiet-gate", "--contended"].into_iter().map(str::to_string),
+        ) else {
+            panic!("--quiet-gate and --contended were accepted together");
+        };
+        assert!(err.contains("--quiet-gate"), "{err}");
+        assert!(err.contains("--contended"), "{err}");
+        assert!(
+            super::Args::parse(["--out", "out", "--quiet-gate"].into_iter().map(str::to_string)).is_ok()
+        );
+    }
+
     #[test]
     fn jax_cuda_is_refused_when_the_only_device_is_cpu() {
         let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("python/test_platform.py");

@@ -24,11 +24,11 @@
 //! sub-millisecond window that catches zero or one RAPL tick is not a per-sample price.
 //!
 //! Summaries are per workload, sampler, instrument, and scope. RAPL package energy and
-//! macmon whole-system energy do not share a table.
+//! macmon `SoC` telemetry do not share a table. Package and core do not share one either.
 //!
 //! RAPL on hostname `framework-128gb-0000` is the primary energy evidence. That host
 //! reads package `energy_uj` without root. The permission denial was `framework-32gb-0001`.
-//! macmon is secondary and whole-system.
+//! macmon is secondary. Its field `sys_power` is `SoC` telemetry, not wall power.
 //!
 //! Gross energy is the counter delta over the run. Incremental energy is gross minus
 //! `idle_watts * seconds`. Both are stored. A delta inside the baseline's own wander is
@@ -302,31 +302,62 @@ pub fn window_gross(readings: &[f64], max_j: Option<f64>) -> f64 {
 /// The samples are the cadence record. `body` runs on this thread. `read` runs on another,
 /// so it must not touch the sampler `body` is driving. On panic inside `body` the reader
 /// is stopped before the scope joins it.
+/// Counter samples taken while `body` ran, with the median spacing of the reads.
+pub struct SampledWindow<R> {
+    /// Readings in the counter's own unit. The energy is still the first-to-last delta.
+    pub readings: Vec<f64>,
+    /// Wall seconds `body` took.
+    pub seconds: f64,
+    /// Median spacing of successful reads, in seconds. `NaN` below two reads.
+    pub cadence_s: f64,
+    /// Whatever `body` returned.
+    pub value: R,
+}
+
 pub fn sample_during<R>(
     mut read: impl FnMut() -> Option<f64> + Send,
     body: impl FnOnce() -> R,
-) -> (Vec<f64>, f64, R) {
+) -> SampledWindow<R> {
     let stop = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
         let flag = &stop;
         let handle = scope.spawn(move || {
             let mut samples = Vec::new();
+            let mut times = Vec::new();
             while !flag.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Some(x) = read() {
+                    times.push(std::time::Instant::now());
                     samples.push(x);
                 }
                 std::thread::sleep(Duration::from_micros(250));
             }
-            samples
+            (samples, times)
         });
         let _stop_on_drop = StopReader(&stop);
         let started = std::time::Instant::now();
         let value = body();
         let seconds = started.elapsed().as_secs_f64();
         drop(_stop_on_drop);
-        let samples = handle.join().unwrap_or_default();
-        (samples, seconds, value)
+        let (readings, times) = handle.join().unwrap_or_default();
+        let mut dts = Vec::new();
+        for w in times.windows(2) {
+            let dt = w[1].saturating_duration_since(w[0]).as_secs_f64();
+            if dt > 0.0 {
+                dts.push(dt);
+            }
+        }
+        SampledWindow { readings, seconds, cadence_s: median_positive(&dts), value }
     })
+}
+
+fn median_positive(xs: &[f64]) -> f64 {
+    let mut v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite() && *x > 0.0).collect();
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len();
+    if n.is_multiple_of(2) { 0.5 * (v[n / 2 - 1] + v[n / 2]) } else { v[n / 2] }
 }
 
 struct StopReader<'a>(&'a std::sync::atomic::AtomicBool);
@@ -337,13 +368,191 @@ impl Drop for StopReader<'_> {
     }
 }
 
-/// Package energy and whole-system energy are different measurements.
+/// Package energy, core energy, and `SoC` telemetry are different measurements.
 ///
 /// The labels that may be summarised are `package` (RAPL package or `power/energy-pkg`),
-/// `whole-system` (macmon), `psys`, `board` (INA3221), and `gpu` (NVML). Two rows share
-/// a scope only when the label is the same one of those.
+/// `core` (RAPL core, not added to package), `soc-telemetry` (`macmon` `sys_power`, not wall
+/// power), `whole-system` (a legacy token; not `macmon`), `psys`, `board` (INA3221 or
+/// `tegrastats` `VDD_IN`), and `gpu` (NVML). Two rows share a scope only when the label is
+/// the same one of those.
 pub fn scopes_may_share_a_table(a: &str, b: &str) -> bool {
-    a == b && matches!(a, "package" | "core" | "whole-system" | "psys" | "board" | "gpu")
+    a == b && matches!(a, "package" | "core" | "soc-telemetry" | "whole-system" | "psys" | "board" | "gpu")
+}
+
+/// What the scope does not include. This is a statement, not a joule, and it is not folded
+/// into the combined uncertainty.
+pub fn scope_limit(scope: &str) -> &'static str {
+    match scope {
+        "soc-telemetry" => {
+            "macmon sys_power is SoC telemetry (CPU, integrated GPU, ANE). It is not wall power. Display, fans, and the rest of the board are outside it. Package and core are different scopes and are not added here."
+        }
+        "package" => {
+            "RAPL package energy. The core domain is inside the package and is reported as its own scope, not added here. DRAM and the board are outside this counter."
+        }
+        "core" => "RAPL core domain only. It is not added to package energy.",
+        "psys" => "RAPL psys, kept only when it contains the package. It is not macmon and it is not a wall-plug measurement.",
+        "board" => "One board rail (INA3221 or tegrastats VDD_IN). Other rails are not summed.",
+        "gpu" => "NVML total energy, summed across devices. It is not package energy and not SoC telemetry.",
+        "whole-system" => "Legacy label. On a macmon receipt this token meant sys_power, which is SoC telemetry, not wall power.",
+        _ => "scope not recognised",
+    }
+}
+
+/// Recorded quantum of a counter, in joules. `None` when the instrument does not state one.
+///
+/// RAPL `energy_uj` is an integer number of microjoules. NVML total energy is millijoules.
+/// `macmon` emits a float and states no quantum.
+pub fn counter_quantum_j(instrument: &str) -> Option<f64> {
+    match instrument {
+        "rapl" => Some(1e-6),
+        "nvml" => Some(1e-3),
+        _ => None,
+    }
+}
+
+/// Both ends of a counter reading, each uncertain by one recorded quantum.
+pub fn counter_quantization_j(quantum_j: f64) -> f64 {
+    2.0 * quantum_j
+}
+
+/// Energy in one poll interval at the window's average power.
+///
+/// That is half an interval at each end. It is a bound beside the counter delta, not a
+/// replacement for it. `NaN` when the cadence or the window is not a positive finite number.
+pub fn counter_cadence_edge_j(gross_window: f64, window_s: f64, cadence_s: f64) -> f64 {
+    if window_s <= 0.0 || !cadence_s.is_finite() || !gross_window.is_finite() || !cadence_s.is_sign_positive() {
+        return f64::NAN;
+    }
+    cadence_s * (gross_window / window_s)
+}
+
+/// Student-t scatter and the systematic terms that sit beside it.
+///
+/// `combined` is the root-sum-square of the finite terms. A missing quantization or edge
+/// term is omitted and stays `None`. It is not entered as zero.
+#[derive(Clone, Debug)]
+pub struct UncertaintyBudget {
+    /// Half-width of the 95% Student-t interval, in the same units as the other terms.
+    pub student_t_half: f64,
+    /// Counter resolution at both ends. `None` when the instrument states no quantum.
+    pub quantization: Option<f64>,
+    /// Sampling-cadence and edge bound. `None` when the samples that would set it are absent.
+    pub cadence_edge: Option<f64>,
+    /// `idle_sigma * seconds`, one standard deviation of the baseline times the window.
+    pub bracket: f64,
+    /// Root-sum-square of the finite terms above.
+    pub combined: f64,
+}
+
+/// Combine the stated terms. A non-finite term is left out of the root-sum-square.
+pub fn combine_uncertainty(
+    student_t_half: f64,
+    quantization: Option<f64>,
+    cadence_edge: Option<f64>,
+    bracket: f64,
+) -> UncertaintyBudget {
+    let quantization = quantization.filter(|q| q.is_finite());
+    let cadence_edge = cadence_edge.filter(|q| q.is_finite());
+    let mut acc = 0.0;
+    let mut n = 0u32;
+    for term in [Some(student_t_half), quantization, cadence_edge, Some(bracket)].into_iter().flatten() {
+        if term.is_finite() {
+            acc += term * term;
+            n += 1;
+        }
+    }
+    UncertaintyBudget {
+        student_t_half,
+        quantization,
+        cadence_edge,
+        bracket,
+        combined: if n == 0 { f64::NAN } else { acc.sqrt() },
+    }
+}
+
+/// How long [`sample_quiet_gate`] watches the host before a run is allowed to start.
+pub const QUIET_GATE_SECONDS: u64 = 60;
+
+/// A 60-second preflight of load1 and the busy fraction of the cores outside the pin.
+///
+/// `held` is the unchanged quiet gate: every load sample finite and at or under
+/// [`QUIET_LOAD`]. The busy fraction is recorded and is not a second threshold.
+#[derive(Clone, Debug)]
+pub struct QuietGate {
+    /// Seconds between the first and last load sample.
+    pub seconds: f64,
+    /// One load1 per second, including both ends of the window.
+    pub samples: Vec<f64>,
+    /// Largest finite load1. `None` when none was readable.
+    pub max_load1: Option<f64>,
+    /// The quiet gate held for every sample.
+    pub held: bool,
+    /// Busy fraction of cores not in the pin, over the whole window. Empty when unpinned
+    /// means every core is reported, because there is no pin to exclude.
+    pub other_core_busy: Vec<(usize, f64)>,
+    /// `/proc/stat` was readable at both ends. A missing file does not by itself fail the
+    /// load gate; the receipt says the busy fraction was not readable.
+    pub busy_readable: bool,
+    /// The threshold that was applied. This is [`QUIET_LOAD`].
+    pub threshold: f64,
+}
+
+/// Decide the preflight from samples already taken.
+///
+/// An empty series does not hold. A missing or non-finite load does not hold. A load above
+/// [`QUIET_LOAD`] does not hold. The busy fraction is stored and does not change `held`.
+pub fn quiet_gate_from(
+    loads: &[Option<f64>],
+    other_core_busy: &[(usize, f64)],
+    busy_readable: bool,
+    seconds: f64,
+) -> QuietGate {
+    let mut samples = Vec::with_capacity(loads.len());
+    let mut held = !loads.is_empty();
+    let mut max_l = f64::NEG_INFINITY;
+    for load in loads {
+        match load {
+            Some(v) if v.is_finite() => {
+                samples.push(*v);
+                max_l = max_l.max(*v);
+                if *v > QUIET_LOAD {
+                    held = false;
+                }
+            }
+            _ => {
+                samples.push(f64::NAN);
+                held = false;
+            }
+        }
+    }
+    QuietGate {
+        seconds,
+        samples,
+        max_load1: if max_l.is_finite() { Some(max_l) } else { None },
+        held,
+        other_core_busy: other_core_busy.to_vec(),
+        busy_readable,
+        threshold: QUIET_LOAD,
+    }
+}
+
+/// Sample load1 once a second for [`QUIET_GATE_SECONDS`], and the busy fraction of cores
+/// outside `pinned` across that same window.
+pub fn sample_quiet_gate(pinned: &[usize]) -> QuietGate {
+    let before = std::fs::read_to_string("/proc/stat").unwrap_or_default();
+    let t0 = std::time::Instant::now();
+    let mut loads = Vec::with_capacity(QUIET_GATE_SECONDS as usize + 1);
+    for i in 0..=QUIET_GATE_SECONDS {
+        loads.push(load_average());
+        if i < QUIET_GATE_SECONDS {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+    let seconds = t0.elapsed().as_secs_f64();
+    let after = std::fs::read_to_string("/proc/stat").unwrap_or_default();
+    let busy_readable = before.contains("cpu") && after.contains("cpu");
+    let busy = if busy_readable { other_core_busy(&before, &after, pinned) } else { Vec::new() };
+    quiet_gate_from(&loads, &busy, busy_readable, seconds)
 }
 
 /// One poll of the 1-minute load average against the unchanged quiet threshold.
@@ -651,6 +860,21 @@ pub struct EnergyTrial {
     pub paired_attributable: bool,
     /// Busy fraction of cores outside the pin, `cpu:fraction` comma-separated. Empty when unpinned.
     pub other_core_busy: String,
+    /// Median sample spacing over the window, in seconds. `NaN` when it was not recorded.
+    pub cadence_s: f64,
+    /// How the left edge of a power integral was placed. `counter` for a counter delta.
+    pub left_edge: String,
+    /// How the right edge was placed.
+    pub right_edge: String,
+    /// Seconds at the edges that the integral did not cover. Zero for a counter delta.
+    pub uncovered_s: f64,
+    /// Raw samples inside the window. For a counter this is the number of reads, which is not
+    /// the number of times the counter changed.
+    pub samples: u32,
+    /// Window joules of counter quantization, both ends. `None` when the instrument states none.
+    pub quantization_window_j: Option<f64>,
+    /// Window joules of the cadence and edge bound. `NaN` when the samples do not state it.
+    pub cadence_edge_window_j: f64,
 }
 
 impl EnergyTrial {
@@ -689,14 +913,51 @@ impl EnergyTrial {
             paired_delta_j: None,
             paired_attributable: false,
             other_core_busy: String::new(),
+            cadence_s: f64::NAN,
+            left_edge: String::new(),
+            right_edge: String::new(),
+            uncovered_s: 0.0,
+            samples: counter_updates,
+            quantization_window_j: None,
+            cadence_edge_window_j: f64::NAN,
         }
     }
+}
+
+/// Uncertainty of joules per effective sample for one cell.
+///
+/// The Student-t half-width is the published scatter of the mean. The systematic terms are
+/// the mean of the per-trial bounds and are not divided by the square root of the trial count:
+/// a shared instrument limit does not shrink because the trial was repeated.
+pub fn j_per_ess_uncertainty(trials: &[EnergyTrial]) -> UncertaintyBudget {
+    let per_ess: Vec<f64> = trials.iter().filter_map(|t| t.joules_per_ess).collect();
+    let student = mean_interval(&per_ess).map_or(f64::NAN, |(_, lo, hi, _)| 0.5 * (hi - lo));
+    let mut quant = Vec::new();
+    let mut edge = Vec::new();
+    let mut bracket = Vec::new();
+    for t in trials {
+        if !(t.ess > 0.0) || !t.ess.is_finite() || t.repetitions == 0 {
+            continue;
+        }
+        let reps = f64::from(t.repetitions);
+        if let Some(q) = t.quantization_window_j {
+            quant.push(q / reps / t.ess);
+        }
+        if t.cadence_edge_window_j.is_finite() {
+            edge.push(t.cadence_edge_window_j / reps / t.ess);
+        }
+        if let Some(sig) = t.joules.idle_sigma.filter(|s| s.is_finite()) {
+            bracket.push(sig * t.joules.seconds / t.ess);
+        }
+    }
+    let mean = |v: &[f64]| if v.is_empty() { None } else { Some(v.iter().sum::<f64>() / v.len() as f64) };
+    combine_uncertainty(student, mean(&quant), mean(&edge), mean(&bracket).unwrap_or(f64::NAN))
 }
 
 /// Whether two trials are the same cell of a table.
 ///
 /// A cell is one workload, one sampler, one instrument, one scope, and one evidence grade.
-/// Package joules and whole-system joules are not a cell.
+/// Package joules and SoC-telemetry joules are not a cell.
 pub fn may_share_summary(a: &EnergyTrial, b: &EnergyTrial) -> bool {
     a.workload == b.workload
         && a.side == b.side
@@ -726,12 +987,13 @@ pub fn summarise_one_grade(trials: &[EnergyTrial]) -> Result<GradeSummary, &'sta
         gross: mean_interval(&gross),
         incremental: mean_interval(&incremental),
         joules_per_ess: mean_interval(&per_ess),
+        uncertainty: j_per_ess_uncertainty(trials),
     })
 }
 
 /// One summary per workload, sampler, instrument, and scope, in first-seen order.
 ///
-/// Package rows and whole-system rows stay in different summaries.
+/// Package rows and SoC-telemetry rows stay in different summaries.
 pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
     let mut keys: Vec<(&str, &str, &str, &str, &str)> = Vec::new();
     for t in trials {
@@ -764,6 +1026,8 @@ pub struct GradeSummary {
     pub gross: Option<(f64, f64, f64, usize)>,
     pub incremental: Option<(f64, f64, f64, usize)>,
     pub joules_per_ess: Option<(f64, f64, f64, usize)>,
+    /// Combined uncertainty of joules per effective sample, beside the Student-t interval.
+    pub uncertainty: UncertaintyBudget,
 }
 
 /// 95% Student-t interval over the finite values. `None` when fewer than two exist.
@@ -807,7 +1071,7 @@ impl Probe {
         let quiet = load1.is_some_and(|l| l <= QUIET_LOAD);
         let wall = Meter::detect().filter(|m| m.backend() != "rapl");
         let wall_note = match &wall {
-            Some(m) => format!("backend={} machine={} scope={:?}", m.backend(), m.machine(), m.scope()),
+            Some(m) => format!("backend={} machine={} scope={}", m.backend(), m.machine(), m.scope().label()),
             None => "no macmon and no INA3221 rail".into(),
         };
         let (rapl, rapl_note) = match RaplCounter::open() {
@@ -841,7 +1105,7 @@ impl Probe {
             Err(e) => (None, e),
         };
         let (tegra, tegra_note) = if wall.is_some() {
-            (None, "not opened; a wall backend (macmon or INA3221) is already the board or whole-system reading".into())
+            (None, "not opened; a power backend (macmon SoC telemetry or INA3221) is already open".into())
         } else {
             match Tegra::open() {
                 Ok(t) => (Some(t), "tegrastats VDD_IN, rootless, other rails not summed".into()),
@@ -935,8 +1199,18 @@ impl Tegra {
         Err("tegrastats produced no VDD_IN sample. Other rails were not summed.".into())
     }
 
-    pub fn since(&self, from: std::time::Instant) -> Vec<f64> {
-        self.samples.lock().unwrap().iter().filter(|(t, _)| *t >= from).map(|(_, w)| *w).collect()
+    /// Samples at or after `from`, plus the last sample before `from` when one exists.
+    ///
+    /// The earlier sample is the left bracket for a trapezoid. Dropping it would leave the
+    /// start of the window uncovered.
+    pub fn since_stamped(&self, from: std::time::Instant) -> Vec<(std::time::Instant, f64)> {
+        let v = self.samples.lock().unwrap();
+        let mut out = Vec::new();
+        if let Some(prev) = v.iter().rev().find(|(t, _)| *t < from) {
+            out.push(*prev);
+        }
+        out.extend(v.iter().copied().filter(|(t, _)| *t >= from));
+        out
     }
 }
 
@@ -1694,31 +1968,66 @@ mod tests {
     }
 
     #[test]
-    fn package_and_whole_system_are_not_one_table_and_workloads_are_not_pooled() {
-        assert!(!scopes_may_share_a_table("package", "whole-system"));
+    fn package_core_and_soc_telemetry_are_not_one_table() {
+        assert!(!scopes_may_share_a_table("package", "soc-telemetry"));
+        assert!(!scopes_may_share_a_table("package", "core"));
+        assert!(!scopes_may_share_a_table("core", "soc-telemetry"));
         assert!(scopes_may_share_a_table("package", "package"));
+        assert!(scopes_may_share_a_table("soc-telemetry", "soc-telemetry"));
         assert!(!scopes_may_share_a_table("cpu-package", "cpu-package"));
         let row = |workload: &'static str, scope: &'static str| {
             let j = trial_joules(2.0, 1.0, 0.01, 1.0, if scope == "package" { "rapl" } else { "macmon" }, scope, GRADE_CONTENDED, MIN_COUNTER_UPDATES, true);
             EnergyTrial::from_parts(workload, "ferrotherm", 0, 4, MIN_COUNTER_UPDATES, 2.0, j, 10.0, Some(2.5), Some(0.2), GRADE_CONTENDED, "primary")
         };
         let package = row("thrml_readme_ising_chain_n5", "package");
-        let whole = row("thrml_readme_ising_chain_n5", "whole-system");
+        let soc = row("thrml_readme_ising_chain_n5", "soc-telemetry");
+        let core = row("thrml_readme_ising_chain_n5", "core");
         let other = row("ising_grid2d_open_3x3", "package");
-        assert!(!may_share_summary(&package, &whole));
+        assert!(!may_share_summary(&package, &soc));
+        assert!(!may_share_summary(&package, &core));
         assert!(!may_share_summary(&package, &other));
-        assert!(summarise_one_grade(&[package.clone(), whole.clone()]).is_err());
+        assert!(summarise_one_grade(&[package.clone(), soc.clone()]).is_err());
         assert!(summarise_one_grade(&[package.clone(), other.clone()]).is_err());
-        let sums = summarise_workloads(&[package, whole, other]);
-        assert_eq!(sums.len(), 3);
+        let sums = summarise_workloads(&[package, soc, core, other]);
+        assert_eq!(sums.len(), 4);
         assert_eq!(sums[0].scope, "package");
         assert_eq!(sums[0].workload, "thrml_readme_ising_chain_n5");
-        assert_eq!(sums[1].scope, "whole-system");
+        assert_eq!(sums[1].scope, "soc-telemetry");
         assert_eq!(sums[1].instrument, "macmon");
-        assert_eq!(sums[2].workload, "ising_grid2d_open_3x3");
+        assert_eq!(sums[2].scope, "core");
+        assert_eq!(sums[3].workload, "ising_grid2d_open_3x3");
         assert!(!scopes_may_share_a_table("gpu", "package"));
-        assert!(!scopes_may_share_a_table("board", "whole-system"));
+        assert!(!scopes_may_share_a_table("board", "soc-telemetry"));
         assert!(!scopes_may_share_a_table("gpu", "board"));
+        assert!(!scopes_may_share_a_table("whole-system", "soc-telemetry"));
+    }
+
+    #[test]
+    fn uncertainty_keeps_a_missing_quantum_out_of_the_root_sum_square() {
+        let budget = combine_uncertainty(3.0, None, Some(4.0), 0.0);
+        assert!((budget.combined - 5.0).abs() < 1e-12, "{}", budget.combined);
+        assert!(budget.quantization.is_none());
+        let stated = combine_uncertainty(0.0, Some(3.0), Some(4.0), 0.0);
+        assert!((stated.combined - 5.0).abs() < 1e-12);
+        assert_eq!(counter_quantum_j("rapl"), Some(1e-6));
+        assert_eq!(counter_quantum_j("macmon"), None);
+        assert!((counter_quantization_j(1e-6) - 2e-6).abs() < 1e-18);
+        assert!((counter_cadence_edge_j(10.0, 2.0, 0.1) - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn quiet_gate_holds_only_when_every_load_sample_is_at_or_under_the_threshold() {
+        assert_eq!(QUIET_GATE_SECONDS, 60);
+        let quiet = quiet_gate_from(&[Some(1.0), Some(QUIET_LOAD), Some(0.5)], &[(1, 0.1)], true, 60.0);
+        assert!(quiet.held);
+        assert_eq!(quiet.max_load1, Some(QUIET_LOAD));
+        assert_eq!(quiet.other_core_busy, vec![(1, 0.1)]);
+        let over = quiet_gate_from(&[Some(1.0), Some(QUIET_LOAD + 0.01)], &[], true, 60.0);
+        assert!(!over.held, "one sample over the unchanged gate refuses the run");
+        let missing = quiet_gate_from(&[Some(1.0), None], &[], false, 60.0);
+        assert!(!missing.held);
+        assert!(!missing.busy_readable);
+        assert!(!quiet_gate_from(&[], &[], true, 0.0).held);
     }
 
     #[test]
