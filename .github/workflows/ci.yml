@@ -1,8 +1,11 @@
 name: ci
 on:
   push:
-    branches: [main]
+    # `main` is the release line. The other two are the branches whose CI has to go green
+    # without a pull request: Actions does not run a push that is not listed here.
+    branches: [main, fix/ci-green, bench/thrml-tsp-fleet]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
