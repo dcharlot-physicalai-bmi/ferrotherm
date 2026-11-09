@@ -656,7 +656,9 @@ fn energy_section(
         || probe.perf.is_some()
         || probe.wall.is_some()
         || probe.nvml.is_some()
-        || probe.tegra.is_some();
+        || probe.ina238.is_some()
+        || probe.tegra.is_some()
+        || !probe.subrails.is_empty();
     if grade == "load_gated" {
         let gated = energy::load_gated(
             "No joules. The quiet-host gate is unchanged (load average above 2). After the bounded \
@@ -689,9 +691,9 @@ fn energy_section(
         let missing = Joules::unavailable(
             0.0,
             "none",
-            "No joules were obtained. No macmon, INA3221, tegrastats VDD_IN, RAPL powercap, \
-             perf power/energy-pkg, or NVML counter opened on this host. Nothing was filled in \
-             from a device-price table.",
+            "No joules were obtained. No macmon, INA3221 sub-rail, INA238 VIN, tegrastats VIN or \
+             VDD_IN, RAPL powercap, perf power/energy-pkg, or NVML counter opened on this host. \
+             Nothing was filled in from a device-price table.",
         );
         return (energy_json(probe, &poll, grade, missing.evidence, None, &[], &missing.note), grade);
     }
@@ -721,7 +723,7 @@ fn energy_section(
                 }
                 let seed = w.seed0 + pair as u64 + 10_000;
                 let before = read_cpu_snap();
-                let mut measured = measure_side(probe, side, w, seed, session.as_mut());
+                let mut measured = measure_side(probe, side, w, seed, session.as_mut(), device);
                 if measured.first().map(|m| m.instrument) != Some("nvml") && probe.nvml.is_some() {
                     measured.extend(measure_counter(probe, side, w, seed, session.as_mut(), CounterKind::Nvml));
                 }
@@ -734,7 +736,7 @@ fn energy_section(
             };
             let quiet_bracket = contended
                 || ferrotherm::host::load_average().is_some_and(|l| l <= ferrotherm::host::QUIET_LOAD);
-            let (mean_w, sigma, drift, mut drift_ok) =
+            let (mean_w, sigma, _drift, mut drift_ok) =
                 energy::combine_bracket(before_b.watts, before_b.sigma, after_b.watts, after_b.sigma);
             if !quiet_bracket {
                 drift_ok = false;
@@ -762,16 +764,24 @@ fn energy_section(
                 for measured in measures {
                     let rank = energy_rank(measured.instrument, &probe.hostname);
                     let core_row = measured.scope == "core";
+                    let (row_idle, row_sigma, row_drift_ok) = if core_row {
+                        (core_mean, core_sigma, core_ok && quiet_bracket)
+                    } else if let Some((before_w, before_s, after_w, after_s)) = subrail_bracket(&before_b, &after_b, &measured.scope) {
+                        let (mean, sig, _, ok) = energy::combine_bracket(before_w, before_s, after_w, after_s);
+                        (mean, sig, ok && quiet_bracket)
+                    } else {
+                        (mean_w, sigma, drift_ok)
+                    };
                     let joules = trial_joules(
                         measured.gross,
-                        if core_row { core_mean } else { mean_w },
-                        if core_row { core_sigma } else { sigma },
+                        row_idle,
+                        row_sigma,
                         measured.seconds,
                         measured.instrument,
-                        measured.scope,
+                        &measured.scope,
                         grade,
                         measured.counter_updates,
-                        if core_row { core_ok } else { drift_ok },
+                        row_drift_ok,
                     );
                     let mut row = EnergyTrial::from_parts(
                         w.id,
@@ -787,9 +797,17 @@ fn energy_section(
                         grade,
                         rank,
                     );
-                    row.idle_before_w = Some(if core_row { before_b.core_watts.unwrap_or(f64::NAN) } else { before_b.watts });
-                    row.idle_after_w = Some(if core_row { after_b.core_watts.unwrap_or(f64::NAN) } else { after_b.watts });
-                    row.baseline_drift_w = Some(if core_row { core_drift } else { drift });
+                    row.idle_before_w = Some(if core_row {
+                        before_b.core_watts.unwrap_or(f64::NAN)
+                    } else {
+                        subrail_level(&before_b, &measured.scope).unwrap_or(before_b.watts)
+                    });
+                    row.idle_after_w = Some(if core_row {
+                        after_b.core_watts.unwrap_or(f64::NAN)
+                    } else {
+                        subrail_level(&after_b, &measured.scope).unwrap_or(after_b.watts)
+                    });
+                    row.baseline_drift_w = Some(if core_row { core_drift } else { (row.idle_before_w.unwrap_or(0.0) - row.idle_after_w.unwrap_or(0.0)).abs() });
                     row.other_core_busy = other_txt.clone();
                     row.cadence_s = measured.cadence_s;
                     row.left_edge = measured.left_edge.to_string();
@@ -804,7 +822,12 @@ fn energy_section(
             stamp_pairs(&mut rows, w.id, pair, sigma, drift_ok, core_sigma, core_ok);
         }
     }
-    (energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &energy_note(grade)), grade)
+    let mut note = energy_note(grade);
+    if device == "cuda" && probe.nvml_note.contains("NOT_SUPPORTED") {
+        note.push(' ');
+        note.push_str(&probe.nvml_note);
+    }
+    (energy_json(probe, &poll, grade, "measured", Some(idle), &rows, &note), grade)
 }
 
 fn energy_note(grade: &str) -> String {
@@ -831,16 +854,45 @@ struct BracketSample {
     sigma: f64,
     core_watts: Option<f64>,
     core_sigma: Option<f64>,
+    /// `(scope, watts, sigma)` for each INA3221 sub-rail. Not summed.
+    subrails: Vec<(String, f64, f64)>,
+}
+
+fn subrail_level(bracket: &BracketSample, scope: &str) -> Option<f64> {
+    bracket.subrails.iter().find(|(name, _, _)| name == scope).map(|(_, watts, _)| *watts)
+}
+
+fn subrail_bracket(before: &BracketSample, after: &BracketSample, scope: &str) -> Option<(f64, f64, f64, f64)> {
+    if !scope.starts_with("subrail:") {
+        return None;
+    }
+    let (_, bw, bs) = before.subrails.iter().find(|(name, _, _)| name == scope)?;
+    let (_, aw, asg) = after.subrails.iter().find(|(name, _, _)| name == scope)?;
+    Some((*bw, *bs, *aw, *asg))
 }
 
 fn sample_bracket(probe: &mut Probe, contended: bool) -> Result<BracketSample, String> {
+    let t0 = std::time::Instant::now();
     if let Some(wall) = probe.wall.as_mut() {
         let b = if contended {
             wall.observe_idle(std::time::Duration::from_secs(1))?
         } else {
             wall.idle(std::time::Duration::from_secs(1))?
         };
-        return Ok(BracketSample { watts: b.watts, sigma: b.sigma, core_watts: None, core_sigma: None });
+        return Ok(BracketSample {
+            watts: b.watts,
+            sigma: b.sigma,
+            core_watts: None,
+            core_sigma: None,
+            subrails: subrail_idles(probe, t0),
+        });
+    }
+    if let Some(series) = probe.ina238.as_ref() {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let seconds = t0.elapsed().as_secs_f64();
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let (watts, sigma) = series_idle(&series.since_stamped(t0), t0, seconds, series.counter)?;
+        return Ok(BracketSample { watts, sigma, core_watts: None, core_sigma: None, subrails: subrail_idles(probe, t0) });
     }
     if probe.tegra.is_some() {
         let t0 = std::time::Instant::now();
@@ -855,7 +907,13 @@ fn sample_bracket(probe: &mut Probe, contended: bool) -> Result<BracketSample, S
         if integ.covered_s <= 0.0 {
             return Err("tegrastats bracket covered no time".into());
         }
-        return Ok(BracketSample { watts: integ.joules / integ.covered_s, sigma, core_watts: None, core_sigma: None });
+        return Ok(BracketSample {
+            watts: integ.joules / integ.covered_s,
+            sigma,
+            core_watts: None,
+            core_sigma: None,
+            subrails: subrail_idles(probe, t0),
+        });
     }
     let mut pkg = Vec::new();
     let mut core = Vec::new();
@@ -875,7 +933,46 @@ fn sample_bracket(probe: &mut Probe, contended: bool) -> Result<BracketSample, S
         sigma,
         core_watts: core_pair.map(|p| p.0),
         core_sigma: core_pair.map(|p| p.1),
+        subrails: subrail_idles(probe, t0),
     })
+}
+
+fn subrail_idles(probe: &Probe, from: std::time::Instant) -> Vec<(String, f64, f64)> {
+    let seconds = from.elapsed().as_secs_f64().max(0.001);
+    probe
+        .subrails
+        .iter()
+        .filter_map(|series| {
+            let (watts, sigma) = series_idle(&series.since_stamped(from), from, seconds, series.counter).ok()?;
+            Some((series.scope.clone(), watts, sigma))
+        })
+        .collect()
+}
+
+fn series_idle(
+    stamped: &[(std::time::Instant, f64)],
+    from: std::time::Instant,
+    seconds: f64,
+    counter: bool,
+) -> Result<(f64, f64), String> {
+    if counter {
+        let inside: Vec<f64> = stamped.iter().filter(|(t, _)| *t >= from).map(|(_, j)| *j).collect();
+        if inside.len() < 2 || seconds <= 0.0 {
+            return Err("module-input counter bracket produced fewer than two samples".into());
+        }
+        let watts = (inside[inside.len() - 1] - inside[0]) / seconds;
+        let steps: Vec<f64> = inside.windows(2).map(|w| (w[1] - w[0]) * inside.len() as f64 / seconds).collect();
+        let (_, sigma) = energy::idle_stats(&steps).unwrap_or((watts, 0.0));
+        return Ok((watts, sigma));
+    }
+    let series = series_secs(from, stamped);
+    let integ = ferrotherm_meter::trapezoid(&series, 0.0, seconds)?;
+    if integ.covered_s <= 0.0 {
+        return Err("power bracket covered no time".into());
+    }
+    let inside: Vec<f64> = series.iter().filter(|(t, _)| *t >= 0.0 && *t <= seconds).map(|(_, w)| *w).collect();
+    let (_, sigma) = energy::idle_stats(&inside).ok_or_else(|| "power bracket produced fewer than two samples".to_string())?;
+    Ok((integ.joules / integ.covered_s, sigma))
 }
 
 fn counter_slice_pair(probe: &mut Probe, secs: f64) -> Result<(f64, Option<f64>, f64), String> {
@@ -991,7 +1088,7 @@ struct SideMeasure {
     repetitions: u32,
     counter_updates: u32,
     instrument: &'static str,
-    scope: &'static str,
+    scope: String,
     cadence_s: f64,
     left_edge: &'static str,
     right_edge: &'static str,
@@ -1007,20 +1104,108 @@ fn measure_side(
     w: &Workload,
     seed: u64,
     session: Option<&mut ThrmlServe>,
+    device: &str,
 ) -> Vec<SideMeasure> {
-    if probe.wall.is_some() {
-        return vec![measure_wall(probe, side, w, seed, session)];
+    let t0 = std::time::Instant::now();
+    let cuda_vin = device == "cuda" && probe.nvml.is_none() && probe.nvml_note.contains("NOT_SUPPORTED");
+    let mut out = if cuda_vin && let Some(series) = probe.ina238.as_ref() {
+        vec![measure_hwmon(series, side, w, seed, session)]
+    } else if cuda_vin && probe.tegra.is_some() {
+        vec![measure_tegra(probe, side, w, seed, session)]
+    } else if probe.wall.is_some() && !cuda_vin {
+        vec![measure_wall(probe, side, w, seed, session)]
+    } else if let Some(series) = probe.ina238.as_ref() {
+        vec![measure_hwmon(series, side, w, seed, session)]
+    } else if probe.tegra.is_some() {
+        vec![measure_tegra(probe, side, w, seed, session)]
+    } else if probe.wall.is_some() {
+        vec![measure_wall(probe, side, w, seed, session)]
+    } else if probe.rapl.is_some() {
+        measure_counter(probe, side, w, seed, session, CounterKind::Rapl)
+    } else if probe.perf.is_some() {
+        measure_counter(probe, side, w, seed, session, CounterKind::Perf)
+    } else if probe.nvml.is_some() {
+        measure_counter(probe, side, w, seed, session, CounterKind::Nvml)
+    } else {
+        Vec::new()
+    };
+    let (reps, ess_sum, window_s) = match out.first() {
+        Some(row) if row.repetitions > 0 => (row.repetitions, row.ess * f64::from(row.repetitions), row.window_seconds),
+        _ => (0, f64::NAN, 0.0),
+    };
+    if reps > 0 && !probe.subrails.is_empty() {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        for series in &probe.subrails {
+            out.push(integrate_logged(series, t0, reps, ess_sum, window_s));
+        }
     }
-    if probe.tegra.is_some() {
-        return vec![measure_tegra(probe, side, w, seed, session)];
+    out
+}
+
+fn measure_hwmon(
+    series: &energy::HwmonSeries,
+    side: &str,
+    w: &Workload,
+    seed: u64,
+    mut session: Option<&mut ThrmlServe>,
+) -> SideMeasure {
+    let t0 = std::time::Instant::now();
+    let (reps, ess_sum) = repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session));
+    let seconds = t0.elapsed().as_secs_f64();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    integrate_logged(series, t0, reps, ess_sum, seconds)
+}
+
+fn integrate_logged(series: &energy::HwmonSeries, t0: std::time::Instant, reps: u32, ess_sum: f64, seconds: f64) -> SideMeasure {
+    let stamped = series.since_stamped(t0);
+    let samples = u32::try_from(stamped.len()).unwrap_or(u32::MAX);
+    if series.counter {
+        let inside: Vec<f64> = stamped.iter().filter(|(t, _)| *t >= t0).map(|(_, j)| *j).collect();
+        let gross = match (inside.first(), inside.last()) {
+            (Some(a), Some(b)) if b >= a => b - a,
+            _ => f64::NAN,
+        };
+        let cadence = if inside.len() > 1 { seconds / (inside.len() - 1) as f64 } else { f64::NAN };
+        return finish_window(
+            ess_sum,
+            gross,
+            seconds,
+            seconds,
+            reps,
+            samples.saturating_sub(1),
+            series.instrument,
+            series.scope.as_str(),
+            cadence,
+            "counter",
+            "counter",
+            0.0,
+            samples,
+            Some(energy::counter_quantization_j(1e-6)),
+            energy::counter_cadence_edge_j(gross, seconds, cadence),
+        );
     }
-    if probe.rapl.is_some() {
-        return measure_counter(probe, side, w, seed, session, CounterKind::Rapl);
-    }
-    if probe.perf.is_some() {
-        return measure_counter(probe, side, w, seed, session, CounterKind::Perf);
-    }
-    measure_counter(probe, side, w, seed, session, CounterKind::Nvml)
+    let points = series_secs(t0, &stamped);
+    let Ok(integ) = ferrotherm_meter::trapezoid(&points, 0.0, seconds) else {
+        return empty_side(reps, series.instrument, &series.scope);
+    };
+    let n = u32::try_from(integ.samples).unwrap_or(u32::MAX);
+    finish_window(
+        ess_sum,
+        integ.joules,
+        integ.covered_s,
+        seconds,
+        reps,
+        n,
+        series.instrument,
+        series.scope.as_str(),
+        integ.cadence_s,
+        integ.left.label(),
+        integ.right.label(),
+        integ.uncovered_left_s + integ.uncovered_right_s,
+        n,
+        None,
+        integ.cadence_edge_j(),
+    )
 }
 
 fn measure_wall(
@@ -1085,10 +1270,11 @@ fn measure_tegra(
     let (reps, ess_sum) = repeat_until_window(seed, |seed_i| plan_ess(side, w, seed_i, &mut session));
     let seconds = t0.elapsed().as_secs_f64();
     std::thread::sleep(std::time::Duration::from_millis(250));
+    let scope = if probe.tegra.as_ref().is_some_and(|t| t.label == "VIN") { "vin" } else { "board" };
     let stamped = probe.tegra.as_ref().map(|t| t.since_stamped(t0)).unwrap_or_default();
     let series = series_secs(t0, &stamped);
     let Ok(integ) = ferrotherm_meter::trapezoid(&series, 0.0, seconds) else {
-        return empty_side(reps, "tegrastats", "board");
+        return empty_side(reps, "tegrastats", scope);
     };
     let samples = u32::try_from(integ.samples).unwrap_or(u32::MAX);
     finish_window(
@@ -1099,7 +1285,7 @@ fn measure_tegra(
         reps,
         samples,
         "tegrastats",
-        "board",
+        scope,
         integ.cadence_s,
         integ.left.label(),
         integ.right.label(),
@@ -1247,7 +1433,7 @@ fn finish_window(
     repetitions: u32,
     counter_updates: u32,
     instrument: &'static str,
-    scope: &'static str,
+    scope: &str,
     cadence_s: f64,
     left_edge: &'static str,
     right_edge: &'static str,
@@ -1266,7 +1452,7 @@ fn finish_window(
         repetitions,
         counter_updates,
         instrument,
-        scope,
+        scope: scope.to_string(),
         cadence_s,
         left_edge,
         right_edge,
@@ -1277,7 +1463,7 @@ fn finish_window(
     }
 }
 
-fn empty_side(repetitions: u32, instrument: &'static str, scope: &'static str) -> SideMeasure {
+fn empty_side(repetitions: u32, instrument: &'static str, scope: &str) -> SideMeasure {
     SideMeasure {
         ess: f64::NAN,
         gross: f64::NAN,
@@ -1286,7 +1472,7 @@ fn empty_side(repetitions: u32, instrument: &'static str, scope: &'static str) -
         repetitions,
         counter_updates: 0,
         instrument,
-        scope,
+        scope: scope.to_string(),
         cadence_s: f64::NAN,
         left_edge: "uncovered",
         right_edge: "uncovered",
@@ -1350,7 +1536,7 @@ fn energy_json(
         "{{\n    \"evidence_grade\": {},\n    \"outcome\": {},\n    \"quiet_threshold\": {},\n    \
          \"load_samples\": {},\n    \"rank_policy\": {},\n    \"order\": {},\n    \
          \"window_s\": {},\n    \"min_counter_updates\": {},\n    \
-         \"backends\": {{\"macmon_or_ina\": {}, \"tegrastats\": {}, \"rapl\": {}, \"rapl_core\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
+         \"backends\": {{\"macmon_or_ina\": {}, \"ina238\": {}, \"tegrastats\": {}, \"rapl\": {}, \"rapl_core\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
          \"hostname\": {},\n    \"macos_policy\": {},\n    \"accepted_load\": {},\n    \
          \"idle_watts\": {},\n    \"idle_sigma\": {},\n    \
          \"summaries\": [\n{}    ],\n    \"trials\": [\n{}    ],\n    \
@@ -1366,6 +1552,7 @@ fn energy_json(
         MIN_ENERGY_WINDOW_S,
         energy::MIN_COUNTER_UPDATES,
         json_str(&probe.wall_note),
+        json_str(&probe.ina238_note),
         json_str(&probe.tegra_note),
         json_str(&probe.rapl_note),
         json_str(&probe.rapl_core_note),
