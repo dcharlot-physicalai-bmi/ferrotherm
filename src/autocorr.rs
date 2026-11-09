@@ -4534,19 +4534,30 @@ mod tests {
         let kernel = Kernel::ChromaticGibbs;
         let dense = tau_int_fundamental(&glass, 2.0, kernel, |s| glass.energy(s)).unwrap();
         let rtol = 1e-10;
+        // The refusal is the contract. An Ok whose tau happens to land inside `rtol` is still
+        // the bug: the true residual is below the rounding floor, and the estimate that omits
+        // the floor reads that noise as convergence. On a release build that Ok can be close
+        // enough that `|tau - dense| <= rtol (tau + 1/2)` holds, which is why a test that
+        // allowed the accurate Ok stayed green in CI.
         match tau_int_krylov(&glass, 2.0, kernel, |s| glass.energy(s), rtol, 5_000) {
-            Err(AutocorrError::AtFloor { .. }) => {}
-            Ok(k) => {
-                let tol = rtol * (dense.tau_int + 0.5);
-                let diff = (k.tau_int - dense.tau_int).abs();
+            Err(AutocorrError::AtFloor { err_est, tau, .. }) => {
+                let announced = rtol * (tau + 0.5);
                 assert!(
-                    diff <= tol,
-                    "GMRES accepted a residual that is rounding: |tau - dense| = {diff:.3e} past \
-                     rtol*(tau+1/2) = {tol:.3e}, claimed error {:?}",
-                    k.err_est
+                    err_est > announced,
+                    "AtFloor must be refusing rtol, not passing under another name: \
+                     estimate {err_est:.3e}, rtol*(tau+1/2) {announced:.3e}"
+                );
+                let diff = (tau - dense.tau_int).abs();
+                assert!(
+                    diff < 1e-8 * dense.tau_int,
+                    "the refused iterate {tau:.8e} is no longer the dense tau {:.8e} (diff {diff:.3e})",
+                    dense.tau_int
                 );
             }
-            other => panic!("chromatic sweep at beta 2, rtol {rtol}: {other:?}"),
+            other => panic!(
+                "chromatic sweep at beta 2, rtol {rtol} must stop at the rounding floor. \
+                 An Ok is the floorless estimate accepting a residual that is rounding: {other:?}"
+            ),
         }
     }
 
