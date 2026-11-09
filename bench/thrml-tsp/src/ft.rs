@@ -53,9 +53,7 @@ fn run_ising(w: &Workload, seed: u64) -> Result<Chain, String> {
         }
     }
     let mut smp = ferrotherm::gibbs::Sampler::new(&g, w.beta, seed);
-    for s in &mut smp.s {
-        *s = -1;
-    }
+    smp.s.fill(-1);
     let mut led = Ledger::default();
     let plan = Plan::new(w.warmup, w.draws, w.thin);
     let t0 = Instant::now();

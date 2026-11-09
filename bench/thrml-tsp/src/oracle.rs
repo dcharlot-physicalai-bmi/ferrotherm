@@ -227,9 +227,7 @@ fn collapse(log_w: &[f64], mean_e: &[f64]) -> Result<LatticeEnergy, String> {
 pub fn ising_reference_chain(side: usize, j: f64, beta: f64, seed: u64) -> f64 {
     let g = grid2d(side, side, j);
     let mut smp = ferrotherm::gibbs::Sampler::new(&g, beta, seed);
-    for s in &mut smp.s {
-        *s = -1;
-    }
+    smp.s.fill(-1);
     let set = smp.collect(&ferrotherm::samples::Plan::new(200, 400, 1), None);
     let e = set.energies();
     e.iter().sum::<f64>() / e.len() as f64
@@ -369,9 +367,7 @@ mod tests {
         for side in [32usize, 64] {
             let g = grid2d(side, side, j);
             let mut smp = Sampler::new(&g, beta, 11);
-            for s in &mut smp.s {
-                *s = -1;
-            }
+            smp.s.fill(-1);
             let plan = Plan::new(40, 40, 1);
             let set = smp.collect(&plan, None);
             let mean = set.energies().iter().sum::<f64>() / set.energies().len() as f64;
@@ -382,9 +378,7 @@ mod tests {
                 "{side}x{side} chain {density} is not closer to Onsager {onsager} than the exact 16x16 gap {gap16}"
             );
             let mut smp2 = Sampler::new(&g, beta, 29);
-            for s in &mut smp2.s {
-                *s = -1;
-            }
+            smp2.s.fill(-1);
             let set2 = smp2.collect(&plan, None);
             let mean2 = set2.energies().iter().sum::<f64>() / set2.energies().len() as f64;
             let agree = (mean - mean2).abs() / (side * side) as f64;
