@@ -1,0 +1,20 @@
+{
+  "schema": "ferrotherm-thrml-bench/1",
+  "evidence_grade": "load_gated",
+  "provenance": {
+    "evidence_grade": "load_gated",
+    "git_rev": "5c54005fd0ff8dc62adedda478faa52388911902",
+    "git_dirty": false,
+    "host_cpu": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "os": "linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "thrml_pin": "thrml==0.1.4",
+    "thrml_wheel_sha256": "6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858",
+    "load1_at_start": 20.3200,
+    "what_this_machine_measured": "wall: no macmon and no INA3221 rail. nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine).",
+    "what_still_needs_fleet_hardware": "A quiet machine with a live RAPL domain (or a whole-board rail) for CPU joules; an NVIDIA GPU with libnvidia-ml.so.1 for GPU joules; an Apple silicon host with macmon on PATH for the SoC counter. None of those counters were a substitute for the others, and none of them is a Z1 device. BMI fleet hardware is what would meter a sustained run and, separately, any future silicon."
+  },
+  "quiet_gate": {"seconds": 60.014, "threshold": 2, "held": false, "evidence_grade": "load_gated", "max_load1": 2.24700000e1, "busy_readable": true, "load1": [20.3200, 20.3200, 20.3200, 19.2600, 19.2600, 19.2600, 19.2600, 19.2600, 21.0800, 21.0800, 21.0800, 21.0800, 21.0800, 21.6300, 21.6300, 21.6300, 21.6300, 21.6300, 19.9000, 19.9000, 19.9000, 19.9000, 19.9000, 18.6300, 18.6300, 18.6300, 18.6300, 18.6300, 17.4500, 17.4500, 17.4500, 17.4500, 17.4500, 17.3400, 17.3400, 17.3400, 17.3400, 17.3400, 17.2300, 17.2300, 17.2300, 17.2300, 17.2300, 16.2500, 16.2500, 16.2500, 16.2500, 16.2500, 16.0700, 16.0700, 16.0700, 16.0700, 16.0700, 22.4700, 22.4700, 22.4700, 22.4700, 22.4700, 22.1900, 22.1900, 22.1900], "other_core_busy": [{"cpu": 0, "busy": 0.445531}, {"cpu": 1, "busy": 0.498155}, {"cpu": 2, "busy": 0.625272}, {"cpu": 3, "busy": 0.399732}, {"cpu": 8, "busy": 0.421988}, {"cpu": 9, "busy": 0.378075}, {"cpu": 10, "busy": 0.349708}, {"cpu": 11, "busy": 0.378261}, {"cpu": 12, "busy": 0.347034}, {"cpu": 13, "busy": 0.353975}, {"cpu": 14, "busy": 0.355481}, {"cpu": 15, "busy": 0.641412}, {"cpu": 16, "busy": 0.366058}, {"cpu": 17, "busy": 0.707610}, {"cpu": 18, "busy": 0.525849}, {"cpu": 19, "busy": 0.389632}, {"cpu": 24, "busy": 0.402474}, {"cpu": 25, "busy": 0.422003}, {"cpu": 26, "busy": 0.343311}, {"cpu": 27, "busy": 0.336116}, {"cpu": 28, "busy": 0.335629}, {"cpu": 29, "busy": 0.421791}, {"cpu": 30, "busy": 0.389316}, {"cpu": 31, "busy": 0.398496}]},
+  "energy": null,
+  "workloads": []
+}

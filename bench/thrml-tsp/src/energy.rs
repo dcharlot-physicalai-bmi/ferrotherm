@@ -37,7 +37,7 @@
 //! Projected device prices are not an input to any function here. There is no parameter
 //! for them, so they cannot be subtracted, added, or substituted when a counter is missing.
 
-use ferrotherm::host::{load_average, QUIET_LOAD};
+use ferrotherm::host::{QUIET_LOAD, load_average};
 use ferrotherm_meter::Meter;
 use std::time::Duration;
 
@@ -93,10 +93,16 @@ pub const DRIFT_SIGMA_K: f64 = 3.0;
 ///
 /// The incremental is always returned, including when it is negative. `attributable` is
 /// false for a negative value and for one inside `NOISE_SIGMA_K` standard deviations.
-pub fn split_incremental(gross: f64, idle_watts: f64, idle_sigma: f64, seconds: f64) -> (f64, bool) {
+pub fn split_incremental(
+    gross: f64,
+    idle_watts: f64,
+    idle_sigma: f64,
+    seconds: f64,
+) -> (f64, bool) {
     let incremental = gross - idle_watts * seconds;
     let band = NOISE_SIGMA_K * idle_sigma * seconds;
-    let attributable = incremental > band && seconds > 0.0 && idle_sigma.is_finite() && incremental.is_finite();
+    let attributable =
+        incremental > band && seconds > 0.0 && idle_sigma.is_finite() && incremental.is_finite();
     (incremental, attributable)
 }
 
@@ -105,7 +111,12 @@ pub fn split_incremental(gross: f64, idle_watts: f64, idle_sigma: f64, seconds: 
 /// Sigma is the root-mean-square of the two window sigmas. The drift test uses that sigma,
 /// so a quiet pair of readings can fail a large jump and a noisy pair is judged against its
 /// own wander.
-pub fn combine_bracket(before_w: f64, before_s: f64, after_w: f64, after_s: f64) -> (f64, f64, f64, bool) {
+pub fn combine_bracket(
+    before_w: f64,
+    before_s: f64,
+    after_w: f64,
+    after_s: f64,
+) -> (f64, f64, f64, bool) {
     let mean = 0.5 * (before_w + after_w);
     let sigma = (0.5 * (before_s * before_s + after_s * after_s)).sqrt();
     let drift = (before_w - after_w).abs();
@@ -146,7 +157,11 @@ pub fn paired_attributable(
 ///
 /// Five pairs therefore start A,B and then B,A, and each sampler runs five times.
 pub fn pair_order(pair: usize) -> [&'static str; 2] {
-    if pair.is_multiple_of(2) { ["ferrotherm", "thrml"] } else { ["thrml", "ferrotherm"] }
+    if pair.is_multiple_of(2) {
+        ["ferrotherm", "thrml"]
+    } else {
+        ["thrml", "ferrotherm"]
+    }
 }
 
 /// `0-3,8,10-11` into core indices. Empty input is an error, not "every core".
@@ -198,11 +213,15 @@ pub fn other_core_busy(before: &str, after: &str, pinned: &[usize]) -> Vec<(usiz
     }
     let mut out = Vec::new();
     for line in after.lines() {
-        let Some((cpu, busy, total)) = parse_cpu_n(line) else { continue };
+        let Some((cpu, busy, total)) = parse_cpu_n(line) else {
+            continue;
+        };
         if pinned.contains(&cpu) {
             continue;
         }
-        let Some((b0, t0)) = prior.get(&cpu) else { continue };
+        let Some((b0, t0)) = prior.get(&cpu) else {
+            continue;
+        };
         let db = busy.saturating_sub(*b0) as f64;
         let dt = total.saturating_sub(*t0) as f64;
         if dt > 0.0 {
@@ -346,18 +365,31 @@ pub fn sample_during<R>(
                 dts.push(dt);
             }
         }
-        SampledWindow { readings, seconds, cadence_s: median_positive(&dts), value }
+        SampledWindow {
+            readings,
+            seconds,
+            cadence_s: median_positive(&dts),
+            value,
+        }
     })
 }
 
 fn median_positive(xs: &[f64]) -> f64 {
-    let mut v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite() && *x > 0.0).collect();
+    let mut v: Vec<f64> = xs
+        .iter()
+        .copied()
+        .filter(|x| x.is_finite() && *x > 0.0)
+        .collect();
     if v.is_empty() {
         return f64::NAN;
     }
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = v.len();
-    if n.is_multiple_of(2) { 0.5 * (v[n / 2 - 1] + v[n / 2]) } else { v[n / 2] }
+    if n.is_multiple_of(2) {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    } else {
+        v[n / 2]
+    }
 }
 
 struct StopReader<'a>(&'a std::sync::atomic::AtomicBool);
@@ -377,8 +409,17 @@ impl Drop for StopReader<'_> {
 /// the same one of those.
 pub fn scopes_may_share_a_table(a: &str, b: &str) -> bool {
     a == b
-        && (matches!(a, "package" | "core" | "soc-telemetry" | "whole-system" | "psys" | "board" | "vin" | "gpu")
-            || a.starts_with("subrail:"))
+        && (matches!(
+            a,
+            "package"
+                | "core"
+                | "soc-telemetry"
+                | "whole-system"
+                | "psys"
+                | "board"
+                | "vin"
+                | "gpu"
+        ) || a.starts_with("subrail:"))
 }
 
 /// What the scope does not include. This is a statement, not a joule, and it is not folded
@@ -392,11 +433,21 @@ pub fn scope_limit(scope: &str) -> &'static str {
             "RAPL package energy. The core domain is inside the package and is reported as its own scope, not added here. DRAM and the board are outside this counter."
         }
         "core" => "RAPL core domain only. It is not added to package energy.",
-        "psys" => "RAPL psys, kept only when it contains the package. It is not macmon and it is not a wall-plug measurement.",
-        "board" => "One board rail (INA3221 total or tegrastats VDD_IN). Other rails are not summed.",
-        "vin" => "Module-input boundary. L4T R39 calls INA238 VIN the overall system, module plus carrier, not the wall. INA3221 sub-rails are not added to it.",
-        "gpu" => "NVML total energy, summed across devices. It is not package energy and not SoC telemetry. On Thor this counter is NOT_SUPPORTED and is not substituted with a sub-rail sum.",
-        "whole-system" => "Legacy label. On a macmon receipt this token meant sys_power, which is SoC telemetry, not wall power.",
+        "psys" => {
+            "RAPL psys, kept only when it contains the package. It is not macmon and it is not a wall-plug measurement."
+        }
+        "board" => {
+            "One board rail (INA3221 total or tegrastats VDD_IN). Other rails are not summed."
+        }
+        "vin" => {
+            "Module-input boundary. L4T R39 calls INA238 VIN the overall system, module plus carrier, not the wall. INA3221 sub-rails are not added to it."
+        }
+        "gpu" => {
+            "NVML total energy, summed across devices. It is not package energy and not SoC telemetry. On Thor this counter is NOT_SUPPORTED and is not substituted with a sub-rail sum."
+        }
+        "whole-system" => {
+            "Legacy label. On a macmon receipt this token meant sys_power, which is SoC telemetry, not wall power."
+        }
         _ if scope.starts_with("subrail:") => {
             "One INA3221 channel. It is not a total, and it is not added to VIN or to the other channels."
         }
@@ -426,7 +477,11 @@ pub fn counter_quantization_j(quantum_j: f64) -> f64 {
 /// That is half an interval at each end. It is a bound beside the counter delta, not a
 /// replacement for it. `NaN` when the cadence or the window is not a positive finite number.
 pub fn counter_cadence_edge_j(gross_window: f64, window_s: f64, cadence_s: f64) -> f64 {
-    if window_s <= 0.0 || !cadence_s.is_finite() || !gross_window.is_finite() || !cadence_s.is_sign_positive() {
+    if window_s <= 0.0
+        || !cadence_s.is_finite()
+        || !gross_window.is_finite()
+        || !cadence_s.is_sign_positive()
+    {
         return f64::NAN;
     }
     cadence_s * (gross_window / window_s)
@@ -461,7 +516,15 @@ pub fn combine_uncertainty(
     let cadence_edge = cadence_edge.filter(|q| q.is_finite());
     let mut acc = 0.0;
     let mut n = 0u32;
-    for term in [Some(student_t_half), quantization, cadence_edge, Some(bracket)].into_iter().flatten() {
+    for term in [
+        Some(student_t_half),
+        quantization,
+        cadence_edge,
+        Some(bracket),
+    ]
+    .into_iter()
+    .flatten()
+    {
         if term.is_finite() {
             acc += term * term;
             n += 1;
@@ -557,7 +620,11 @@ pub fn sample_quiet_gate(pinned: &[usize]) -> QuietGate {
     let seconds = t0.elapsed().as_secs_f64();
     let after = std::fs::read_to_string("/proc/stat").unwrap_or_default();
     let busy_readable = before.contains("cpu") && after.contains("cpu");
-    let busy = if busy_readable { other_core_busy(&before, &after, pinned) } else { Vec::new() };
+    let busy = if busy_readable {
+        other_core_busy(&before, &after, pinned)
+    } else {
+        Vec::new()
+    };
     quiet_gate_from(&loads, &busy, busy_readable, seconds)
 }
 
@@ -570,7 +637,506 @@ pub fn sample_quiet_gate(pinned: &[usize]) -> QuietGate {
 /// accuracy stays first. The threshold is still [`QUIET_LOAD`]. No process is
 /// removed from the load.
 pub fn phase_order(quiet_gate_held: bool) -> [&'static str; 2] {
-    if quiet_gate_held { ["energy", "accuracy"] } else { ["accuracy", "energy"] }
+    if quiet_gate_held {
+        ["energy", "accuracy"]
+    } else {
+        ["accuracy", "energy"]
+    }
+}
+
+/// How often the energy phase reads `load1`. One sample a second, for the whole phase.
+pub const ENERGY_WATCH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// One `load1` sample and the time it was taken.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoadReading {
+    /// Seconds since the Unix epoch, with millisecond fraction. The clock is the host's.
+    pub at_unix_s: f64,
+    pub load1: f64,
+}
+
+/// What an energy-phase load series decides.
+///
+/// Quiet requires every sample to be finite and at or under [`QUIET_LOAD`]. The first sample
+/// that fails aborts the phase. Samples after that are not a recovery, and an empty series is
+/// not quiet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnergyWatchVerdict {
+    pub evidence_grade: &'static str,
+    pub abort: Option<LoadReading>,
+    /// Samples up to and including the aborting one.
+    pub samples: Vec<LoadReading>,
+}
+
+/// Grade `samples` in order. `None` is an unreadable load and aborts.
+pub fn grade_energy_watch(samples: &[Option<f64>]) -> EnergyWatchVerdict {
+    let mut kept = Vec::new();
+    for (i, sample) in samples.iter().enumerate() {
+        let at = i as f64;
+        match sample {
+            Some(v) if v.is_finite() && *v <= QUIET_LOAD => {
+                kept.push(LoadReading {
+                    at_unix_s: at,
+                    load1: *v,
+                });
+            }
+            Some(v) => {
+                let reading = LoadReading {
+                    at_unix_s: at,
+                    load1: if v.is_finite() { *v } else { f64::NAN },
+                };
+                kept.push(reading.clone());
+                return EnergyWatchVerdict {
+                    evidence_grade: "load_gated",
+                    abort: Some(reading),
+                    samples: kept,
+                };
+            }
+            None => {
+                let reading = LoadReading {
+                    at_unix_s: at,
+                    load1: f64::NAN,
+                };
+                return EnergyWatchVerdict {
+                    evidence_grade: "load_gated",
+                    abort: Some(reading),
+                    samples: kept,
+                };
+            }
+        }
+    }
+    if kept.is_empty() {
+        EnergyWatchVerdict {
+            evidence_grade: "load_gated",
+            abort: None,
+            samples: kept,
+        }
+    } else {
+        EnergyWatchVerdict {
+            evidence_grade: GRADE_QUIET,
+            abort: None,
+            samples: kept,
+        }
+    }
+}
+
+/// The bundle grade is the energy-phase grade.
+///
+/// A quiet preflight does not make the bundle quiet. [`GRADE_QUIET`] is returned only when the
+/// energy phase itself is quiet. [`GRADE_CONTENDED`] stays contended. Anything else is
+/// `load_gated`.
+pub fn bundle_grade(energy_grade: &str) -> &'static str {
+    if energy_grade == GRADE_QUIET {
+        GRADE_QUIET
+    } else if energy_grade == GRADE_CONTENDED {
+        GRADE_CONTENDED
+    } else {
+        "load_gated"
+    }
+}
+
+/// Consecutive 1 Hz samples at or under [`QUIET_LOAD`] that an idle bracket waits for.
+pub const SETTLE_STREAK: usize = 60;
+
+/// Most 1 Hz samples a settle may take. Past this the bracket is refused.
+pub const SETTLE_BOUND: usize = 600;
+
+/// Result of waiting for [`SETTLE_STREAK`] quiet load samples.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettleOutcome {
+    pub settled: bool,
+    pub samples: Vec<f64>,
+    pub reason: &'static str,
+}
+
+/// Walk `samples` in order, at most [`SETTLE_BOUND`] of them unless `bound` is passed.
+///
+/// A finite sample at or under [`QUIET_LOAD`] extends the streak. Anything else resets it.
+/// The wait succeeds when the streak reaches `streak` samples.
+pub fn settle_outcome(samples: &[Option<f64>], streak: usize, bound: usize) -> SettleOutcome {
+    let mut kept = Vec::new();
+    let mut run = 0usize;
+    if streak == 0 {
+        return SettleOutcome {
+            settled: false,
+            samples: kept,
+            reason: "the settle streak is zero",
+        };
+    }
+    for sample in samples.iter().take(bound) {
+        match sample {
+            Some(v) if v.is_finite() && *v <= QUIET_LOAD => {
+                kept.push(*v);
+                run += 1;
+                if run >= streak {
+                    return SettleOutcome {
+                        settled: true,
+                        samples: kept,
+                        reason: "load1 stayed at or under 2 for the required consecutive samples",
+                    };
+                }
+            }
+            Some(v) => {
+                kept.push(if v.is_finite() { *v } else { f64::NAN });
+                run = 0;
+            }
+            None => {
+                kept.push(f64::NAN);
+                run = 0;
+            }
+        }
+    }
+    SettleOutcome {
+        settled: false,
+        samples: kept,
+        reason: "load1 did not stay at or under 2 for 60 consecutive 1 Hz samples within the bound",
+    }
+}
+
+/// `Some(load)` when a bracket sample is missing or above [`QUIET_LOAD`].
+///
+/// An empty series has not been watched, so it is a refusal. The returned load is the
+/// first offending sample.
+pub fn bracket_load_offender(samples: &[Option<f64>]) -> Option<f64> {
+    if samples.is_empty() {
+        return Some(f64::NAN);
+    }
+    for sample in samples {
+        match sample {
+            Some(v) if v.is_finite() && *v <= QUIET_LOAD => {}
+            Some(v) => return Some(if v.is_finite() { *v } else { f64::NAN }),
+            None => return Some(f64::NAN),
+        }
+    }
+    None
+}
+
+/// Thresholds stamped on every energy receipt. The trial-window rule uses these.
+///
+/// `load1` is not one of them. It counts runnable threads, so the multithreaded
+/// workload under test trips it. Brackets use `load1`. Trial windows do not.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrialWindowRule {
+    /// When false, samples are recorded and no trial is refused for them.
+    pub enforce: bool,
+    /// Linux: mean busy fraction of cores outside `--cpus`.
+    pub other_core_mean_max: f64,
+    /// Linux: no 1 Hz sample of that fraction above this.
+    pub other_core_sample_max: f64,
+    /// macOS: mean summed non-harness CPU, as a fraction of one core.
+    pub foreign_cpu_mean_max: f64,
+    /// macOS: no 1 Hz sample of that sum above this.
+    pub foreign_cpu_sample_max: f64,
+}
+
+impl TrialWindowRule {
+    pub fn defaults() -> TrialWindowRule {
+        TrialWindowRule {
+            enforce: true,
+            other_core_mean_max: 0.05,
+            other_core_sample_max: 0.15,
+            foreign_cpu_mean_max: 0.15,
+            foreign_cpu_sample_max: 0.50,
+        }
+    }
+}
+
+/// Why a 1 Hz fraction series is refused, or `None` when it passes.
+///
+/// Empty input is a refusal: a window that recorded nothing did not clear the rule.
+pub fn fraction_refusal(samples: &[f64], mean_max: f64, sample_max: f64) -> Option<&'static str> {
+    if samples.is_empty() || samples.iter().any(|s| !s.is_finite()) {
+        return Some("the trial window recorded no finite sample");
+    }
+    if samples.iter().any(|s| *s > sample_max) {
+        return Some("a sample exceeded the maximum");
+    }
+    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    if mean > mean_max {
+        return Some("the mean exceeded the maximum");
+    }
+    None
+}
+
+/// Linux quiet energy needs a pin. Unpinned, every core is a core the sampler may run on,
+/// and the outside-core fraction is undefined.
+pub fn linux_quiet_needs_pin(os: &str, pinned: usize) -> bool {
+    os == "linux" && pinned == 0
+}
+
+/// macOS quiet energy requires the idle bracket's drift test. `drift_ok` is the existing
+/// 3-sigma comparison. A false result refuses the quiet grade. It does not change joules.
+pub fn macos_drift_refuses_quiet(os: &str, drift_ok: bool) -> bool {
+    os == "macos" && !drift_ok
+}
+
+/// Mean busy fraction of the cores outside `pinned`, from two `/proc/stat` snapshots.
+///
+/// No outside core means the fraction is 0. A snapshot pair with no parseable ticks is `None`.
+pub fn other_core_fraction(before: &str, after: &str, pinned: &[usize]) -> Option<f64> {
+    if !before.contains("cpu") || !after.contains("cpu") {
+        return None;
+    }
+    let cores = other_core_busy(before, after, pinned);
+    if cores.is_empty() {
+        return Some(0.0);
+    }
+    Some(cores.iter().map(|(_, fraction)| fraction).sum::<f64>() / cores.len() as f64)
+}
+
+/// Exclusive host lock. `flock(2)` `LOCK_EX` on Linux and on macOS.
+///
+/// The constants are the same on both: `LOCK_EX` is 2, `LOCK_NB` is 4, `LOCK_UN` is 8.
+pub const HOST_LOCK_DEFAULT: &str = "/tmp/bmi-energy.lock";
+
+/// Default bound, in seconds, for waiting on a busy host lock.
+pub const HOST_LOCK_WAIT_S: f64 = 3600.0;
+
+/// Refusal text when the lock is not acquired. The run does not continue unlocked.
+pub const HOST_LOCK_REFUSAL: &str = "host lock not held";
+
+const LOCK_EX: i32 = 2;
+const LOCK_NB: i32 = 4;
+const LOCK_UN: i32 = 8;
+
+/// `seconds` since the Unix epoch as `YYYY-MM-DDThh:mm:ss.mmmZ`.
+pub fn format_unix_utc(seconds: f64) -> String {
+    if !seconds.is_finite() {
+        return "invalid".into();
+    }
+    let whole = seconds.floor() as i64;
+    let millis = ((seconds - whole as f64) * 1000.0)
+        .round()
+        .clamp(0.0, 999.0) as u32;
+    let days = whole.div_euclid(86400);
+    let tod = whole.rem_euclid(86400) as u32;
+    let hour = tod / 3600;
+    let min = (tod % 3600) / 60;
+    let sec = tod % 60;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z")
+}
+
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    (year as i32, month as u32, day as u32)
+}
+
+/// A held `flock(2)` `LOCK_EX`. Dropping it unlocks.
+pub struct HostLock {
+    file: std::fs::File,
+    pub path: std::path::PathBuf,
+    pub acquired_unix_s: f64,
+    pub wait_s: f64,
+    pub holder_pid: u32,
+}
+
+impl HostLock {
+    /// Block until `LOCK_EX` is held, or return [`HOST_LOCK_REFUSAL`] when `wait_s` elapses.
+    ///
+    /// The wait is polled with `LOCK_NB` once a second and logged. A failed acquire does not
+    /// leave the caller holding the lock.
+    pub fn acquire(path: &std::path::Path, wait_s: f64) -> Result<HostLock, String> {
+        #[cfg(not(unix))]
+        {
+            let _ = (path, wait_s);
+            return Err(HOST_LOCK_REFUSAL.into());
+        }
+        #[cfg(unix)]
+        {
+            acquire_unix(path, wait_s)
+        }
+    }
+
+    pub fn acquired_utc(&self) -> String {
+        format_unix_utc(self.acquired_unix_s)
+    }
+
+    /// Unlock, then return the UTC time the lock was released.
+    pub fn release(self) -> String {
+        drop(self);
+        format_unix_utc(unix_now_s())
+    }
+}
+
+impl Drop for HostLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            let _ = unlock_fd(std::os::unix::io::AsRawFd::as_raw_fd(&self.file));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn acquire_unix(path: &std::path::Path, wait_s: f64) -> Result<HostLock, String> {
+    use std::io::{Seek, Write};
+    use std::os::unix::io::AsRawFd;
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| {
+            eprintln!("host lock {path:?} was not opened: {e}");
+            HOST_LOCK_REFUSAL.to_string()
+        })?;
+    let fd = file.as_raw_fd();
+    let started = std::time::Instant::now();
+    let wait = if wait_s.is_finite() && wait_s > 0.0 {
+        wait_s
+    } else {
+        0.0
+    };
+    loop {
+        if flock_nb(fd) {
+            let pid = std::process::id();
+            let mut owned = file;
+            let _ = owned.seek(std::io::SeekFrom::Start(0));
+            let _ = owned.set_len(0);
+            let _ = writeln!(owned, "{pid}");
+            let _ = owned.flush();
+            return Ok(HostLock {
+                file: owned,
+                path: path.to_path_buf(),
+                acquired_unix_s: unix_now_s(),
+                wait_s: started.elapsed().as_secs_f64(),
+                holder_pid: pid,
+            });
+        }
+        let holder = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        let waited = started.elapsed().as_secs_f64();
+        let holder_txt = match holder {
+            Some(pid) => pid.to_string(),
+            None => "unknown".to_string(),
+        };
+        eprintln!(
+            "host lock busy: {} holder_pid={holder_txt} waited={waited:.1}s",
+            path.display()
+        );
+        if waited >= wait {
+            return Err(HOST_LOCK_REFUSAL.into());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[cfg(unix)]
+fn flock_nb(fd: i32) -> bool {
+    unsafe { flock(fd, LOCK_EX | LOCK_NB) == 0 }
+}
+
+#[cfg(unix)]
+fn unlock_fd(fd: i32) -> bool {
+    unsafe { flock(fd, LOCK_UN) == 0 }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn flock(fd: i32, operation: i32) -> i32;
+}
+
+/// `ps` cumulative CPU time. Accepts `m:ss`, `m:ss.ff`, `h:mm:ss`, and `d-hh:mm:ss`.
+pub fn parse_cpu_clock(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let (days, rest) = match text.split_once('-') {
+        Some((d, rest)) => (d.parse::<f64>().ok()?, rest),
+        None => (0.0, text),
+    };
+    let mut parts = rest.split(':').collect::<Vec<_>>();
+    if parts.len() == 1 {
+        return None;
+    }
+    let sec: f64 = parts.pop()?.parse().ok()?;
+    let min: f64 = parts.pop()?.parse().ok()?;
+    let hour: f64 = if let Some(h) = parts.pop() {
+        h.parse().ok()?
+    } else {
+        0.0
+    };
+    if !parts.is_empty() {
+        return None;
+    }
+    Some(days * 86400.0 + hour * 3600.0 + min * 60.0 + sec)
+}
+
+/// One `ps` row: pid, parent pid, cumulative CPU seconds.
+pub fn parse_ps_cpu_row(line: &str) -> Option<(u32, u32, f64)> {
+    let mut it = line.split_whitespace();
+    let pid: u32 = it.next()?.parse().ok()?;
+    let ppid: u32 = it.next()?.parse().ok()?;
+    let time = parse_cpu_clock(it.next()?)?;
+    Some((pid, ppid, time))
+}
+
+/// Sum of CPU-seconds gained by processes that are not `self_pid` and not its descendants,
+/// divided by `wall_s`. That is a fraction of one core. It is a refusal input, not an energy term.
+pub fn foreign_cpu_fraction(
+    before: &[(u32, u32, f64)],
+    after: &[(u32, u32, f64)],
+    self_pid: u32,
+    wall_s: f64,
+) -> Option<f64> {
+    if !(wall_s > 0.0) {
+        return None;
+    }
+    let mut parent = std::collections::BTreeMap::new();
+    for (pid, ppid, _) in before.iter().chain(after.iter()) {
+        parent.insert(*pid, *ppid);
+    }
+    let harness = |pid: u32| -> bool {
+        let mut cur = pid;
+        for _ in 0..32 {
+            if cur == self_pid {
+                return true;
+            }
+            match parent.get(&cur).copied() {
+                Some(next) if next != cur && next != 0 => cur = next,
+                _ => return false,
+            }
+        }
+        false
+    };
+    let mut prior = std::collections::BTreeMap::new();
+    for (pid, _, cpu) in before {
+        prior.insert(*pid, *cpu);
+    }
+    let mut sum = 0.0;
+    for (pid, _, cpu) in after {
+        if harness(*pid) {
+            continue;
+        }
+        if let Some(was) = prior.get(pid) {
+            sum += (cpu - was).max(0.0);
+        }
+    }
+    Some(sum / wall_s)
+}
+
+fn unix_now_s() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(f64::NAN, |d| d.as_secs_f64())
 }
 
 /// One poll of the 1-minute load average against the unchanged quiet threshold.
@@ -591,13 +1157,23 @@ pub fn poll_quiet(reads: &[Option<f64>]) -> QuietPoll {
         match read {
             Some(l) if l.is_finite() && *l <= QUIET_LOAD => {
                 samples.push(*l);
-                return QuietPoll { outcome: "quiet", samples, accepted: Some(*l), threshold: QUIET_LOAD };
+                return QuietPoll {
+                    outcome: "quiet",
+                    samples,
+                    accepted: Some(*l),
+                    threshold: QUIET_LOAD,
+                };
             }
             Some(l) => samples.push(*l),
             None => samples.push(f64::NAN),
         }
     }
-    QuietPoll { outcome: "load_gated", samples, accepted: None, threshold: QUIET_LOAD }
+    QuietPoll {
+        outcome: "load_gated",
+        samples,
+        accepted: None,
+        threshold: QUIET_LOAD,
+    }
 }
 
 /// Live poll. Sleeps two seconds between attempts, at most [`QUIET_ATTEMPTS`] times.
@@ -617,7 +1193,11 @@ pub fn wait_for_quiet_host() -> QuietPoll {
 
 /// Mean and sample standard deviation of idle power samples. `None` below two finite samples.
 pub fn idle_stats(watts: &[f64]) -> Option<(f64, f64)> {
-    let v: Vec<f64> = watts.iter().copied().filter(|w| w.is_finite() && *w >= 0.0).collect();
+    let v: Vec<f64> = watts
+        .iter()
+        .copied()
+        .filter(|w| w.is_finite() && *w >= 0.0)
+        .collect();
     if v.len() < 2 {
         return None;
     }
@@ -629,12 +1209,20 @@ pub fn idle_stats(watts: &[f64]) -> Option<(f64, f64)> {
 
 /// Counter wrap: `max_j` is the counter's range in joules.
 pub fn counter_delta_j(prev: f64, now: f64, max_j: f64) -> f64 {
-    if now >= prev { now - prev } else { (max_j - prev) + now }
+    if now >= prev {
+        now - prev
+    } else {
+        (max_j - prev) + now
+    }
 }
 
 /// Watts from successive counter windows `(delta_joules, seconds)`.
 pub fn watts_from_windows(windows: &[(f64, f64)]) -> Option<(f64, f64)> {
-    let watts: Vec<f64> = windows.iter().filter(|(j, s)| *s > 0.0 && j.is_finite()).map(|(j, s)| j / s).collect();
+    let watts: Vec<f64> = windows
+        .iter()
+        .filter(|(j, s)| *s > 0.0 && j.is_finite())
+        .map(|(j, s)| j / s)
+        .collect();
     idle_stats(&watts)
 }
 
@@ -668,7 +1256,11 @@ pub fn parse_perf_event(text: &str) -> Result<u64, String> {
             saw = true;
         }
     }
-    if saw { Ok(config) } else { Err(format!("no perf event field in {text:?}")) }
+    if saw {
+        Ok(config)
+    } else {
+        Err(format!("no perf event field in {text:?}"))
+    }
 }
 
 fn parse_u64_token(v: &str) -> Result<u64, String> {
@@ -759,7 +1351,13 @@ pub fn energy_rank(instrument: &str, hostname: &str) -> &'static str {
 ///
 /// `busy` is every non-idle tick on the machine. `mine` is this process. The difference is
 /// everyone else. A wrap or a clock that went backwards contributes zero, not a negative.
-pub fn other_cpu_seconds(busy_before: u64, mine_before: u64, busy_after: u64, mine_after: u64, hz: f64) -> f64 {
+pub fn other_cpu_seconds(
+    busy_before: u64,
+    mine_before: u64,
+    busy_after: u64,
+    mine_after: u64,
+    hz: f64,
+) -> f64 {
     if !(hz > 0.0) {
         return f64::NAN;
     }
@@ -818,7 +1416,8 @@ pub fn trial_joules(
     let moved = gross.is_finite() && gross > 0.0;
     let attributable = clears_band && cadence && moved && drift_ok;
     let note = if !drift_ok {
-        "attribution refused: the idle bracket drifted, or the quiet gate failed on a bracket".to_string()
+        "attribution refused: the idle bracket drifted, or the quiet gate failed on a bracket"
+            .to_string()
     } else if !cadence {
         format!(
             "attribution refused: the counter advanced {counter_updates} times and the floor is {MIN_COUNTER_UPDATES}"
@@ -886,6 +1485,16 @@ pub struct EnergyTrial {
     pub right_edge: String,
     /// Seconds at the edges that the integral did not cover. Zero for a counter delta.
     pub uncovered_s: f64,
+    /// 1 Hz `load1` through the trial window, comma-separated. Evidence only.
+    pub window_load1: String,
+    /// 1 Hz trial-window signal: outside-core busy fraction, or non-harness CPU fraction.
+    pub window_signal: String,
+    /// `ps` rows for processes that are not this harness. Attribution, not a joule term.
+    pub ps_attribution: String,
+    /// Empty when the trial window passed. Otherwise the refusal text.
+    pub trial_refusal: String,
+    /// 1 Hz `load1` samples of the settle that preceded this pair's bracket.
+    pub settle_load1: String,
     /// Raw samples inside the window. For a counter this is the number of reads, which is not
     /// the number of times the counter changed.
     pub samples: u32,
@@ -938,6 +1547,11 @@ impl EnergyTrial {
             samples: counter_updates,
             quantization_window_j: None,
             cadence_edge_window_j: f64::NAN,
+            window_load1: String::new(),
+            window_signal: String::new(),
+            ps_attribution: String::new(),
+            trial_refusal: String::new(),
+            settle_load1: String::new(),
         }
     }
 }
@@ -968,8 +1582,19 @@ pub fn j_per_ess_uncertainty(trials: &[EnergyTrial]) -> UncertaintyBudget {
             bracket.push(sig * t.joules.seconds / t.ess);
         }
     }
-    let mean = |v: &[f64]| if v.is_empty() { None } else { Some(v.iter().sum::<f64>() / v.len() as f64) };
-    combine_uncertainty(student, mean(&quant), mean(&edge), mean(&bracket).unwrap_or(f64::NAN))
+    let mean = |v: &[f64]| {
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.iter().sum::<f64>() / v.len() as f64)
+        }
+    };
+    combine_uncertainty(
+        student,
+        mean(&quant),
+        mean(&edge),
+        mean(&bracket).unwrap_or(f64::NAN),
+    )
 }
 
 /// Whether two trials are the same cell of a table.
@@ -1015,7 +1640,13 @@ pub fn summarise_one_grade(trials: &[EnergyTrial]) -> Result<GradeSummary, &'sta
 pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
     let mut keys: Vec<(&str, &str, &str, &str, &str)> = Vec::new();
     for t in trials {
-        let key = (t.workload, t.side, t.joules.instrument.as_str(), t.joules.scope.as_str(), t.grade);
+        let key = (
+            t.workload,
+            t.side,
+            t.joules.instrument.as_str(),
+            t.joules.scope.as_str(),
+            t.grade,
+        );
         if !keys.contains(&key) {
             keys.push(key);
         }
@@ -1025,7 +1656,13 @@ pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
             let group: Vec<EnergyTrial> = trials
                 .iter()
                 .filter(|t| {
-                    (t.workload, t.side, t.joules.instrument.as_str(), t.joules.scope.as_str(), t.grade) == key
+                    (
+                        t.workload,
+                        t.side,
+                        t.joules.instrument.as_str(),
+                        t.joules.scope.as_str(),
+                        t.grade,
+                    ) == key
                 })
                 .cloned()
                 .collect();
@@ -1058,7 +1695,10 @@ pub fn joules_per_ess(joules: &Joules, ess: f64) -> Option<f64> {
     if !joules.attributable || !(ess > 0.0) || !ess.is_finite() {
         return None;
     }
-    joules.incremental.filter(|j| j.is_finite()).map(|j| j / ess)
+    joules
+        .incremental
+        .filter(|j| j.is_finite())
+        .map(|j| j / ess)
 }
 
 pub struct Probe {
@@ -1094,7 +1734,12 @@ impl Probe {
         let quiet = load1.is_some_and(|l| l <= QUIET_LOAD);
         let wall = Meter::detect().filter(|m| m.backend() != "rapl");
         let wall_note = match &wall {
-            Some(m) => format!("backend={} machine={} scope={}", m.backend(), m.machine(), m.scope().label()),
+            Some(m) => format!(
+                "backend={} machine={} scope={}",
+                m.backend(),
+                m.machine(),
+                m.scope().label()
+            ),
             None => "no macmon and no INA3221 rail".into(),
         };
         let (rapl, rapl_note) = match RaplCounter::open() {
@@ -1104,8 +1749,14 @@ impl Probe {
             }
             Err(e) => (None, e),
         };
-        let (rapl_core, rapl_core_note) = match rapl.as_ref().and_then(|c| RaplCounter::open_core(c.counter_path())) {
-            Some(c) => (Some(c), "core subdomain, reported separately from package".into()),
+        let (rapl_core, rapl_core_note) = match rapl
+            .as_ref()
+            .and_then(|c| RaplCounter::open_core(c.counter_path()))
+        {
+            Some(c) => (
+                Some(c),
+                "core subdomain, reported separately from package".into(),
+            ),
             None => (None, "no readable core subdomain".into()),
         };
         let (perf, perf_note) = if rapl.is_some() {
@@ -1174,7 +1825,6 @@ impl Probe {
                            (rootless IOReport via the macmon binary). This harness has no other macOS path.",
         }
     }
-
 }
 
 /// Module-input sample from one `tegrastats` line.
@@ -1206,16 +1856,27 @@ pub fn parse_tegrastats_module_input(line: &str) -> Option<TegraInput> {
         };
         let Some(raw) = tokens.next() else { continue };
         let head = raw.split('/').next().unwrap_or(raw);
-        let digits: String = head.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-        let Ok(mw) = digits.parse::<f64>() else { continue };
+        let digits: String = head
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let Ok(mw) = digits.parse::<f64>() else {
+            continue;
+        };
         if mw.is_finite() && mw >= 0.0 {
-            let sample = TegraInput { label, watts: mw / 1000.0 };
-            if label == "VIN" { vin = Some(sample); } else { vdd = Some(sample); }
+            let sample = TegraInput {
+                label,
+                watts: mw / 1000.0,
+            };
+            if label == "VIN" {
+                vin = Some(sample);
+            } else {
+                vdd = Some(sample);
+            }
         }
     }
     vin.or(vdd)
 }
-
 
 /// A rootless `tegrastats` reader. The child is stopped when this value is dropped.
 pub struct Tegra {
@@ -1253,7 +1914,9 @@ impl Tegra {
                         *name = sample.label.to_string();
                     }
                     drop(name);
-                    sink.lock().unwrap().push((std::time::Instant::now(), sample.watts));
+                    sink.lock()
+                        .unwrap()
+                        .push((std::time::Instant::now(), sample.watts));
                 }
             }
         });
@@ -1261,7 +1924,11 @@ impl Tegra {
         while start.elapsed() < Duration::from_secs(2) {
             if !samples.lock().unwrap().is_empty() {
                 let label = label.lock().unwrap().clone();
-                return Ok(Tegra { child, samples, label });
+                return Ok(Tegra {
+                    child,
+                    samples,
+                    label,
+                });
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -1327,15 +1994,21 @@ fn i2c_addr_of(start: &std::path::Path) -> String {
 }
 
 fn is_i2c_node(name: &str) -> bool {
-    let Some((bus, addr)) = name.split_once('-') else { return false };
-    bus.chars().all(|c| c.is_ascii_digit()) && addr.len() == 4 && addr.chars().all(|c| c.is_ascii_hexdigit())
+    let Some((bus, addr)) = name.split_once('-') else {
+        return false;
+    };
+    bus.chars().all(|c| c.is_ascii_digit())
+        && addr.len() == 4
+        && addr.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn walk_hwmon_names(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
     if depth > 6 {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for ent in rd.flatten() {
         let path = ent.path();
         if path.file_name().and_then(|s| s.to_str()) == Some("name") {
@@ -1352,12 +2025,16 @@ pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
     walk_hwmon_names(root, &mut names, 0);
     let mut found = Vec::new();
     for name_path in names {
-        let Ok(raw) = std::fs::read_to_string(&name_path) else { continue };
+        let Ok(raw) = std::fs::read_to_string(&name_path) else {
+            continue;
+        };
         let name = raw.trim().to_string();
         if !name.eq_ignore_ascii_case("ina238") {
             continue;
         }
-        let Some(dir) = name_path.parent() else { continue };
+        let Some(dir) = name_path.parent() else {
+            continue;
+        };
         let energy = dir.join("energy1_input");
         let power = dir.join("power1_input");
         let (path, source, counter) = if energy.is_file() {
@@ -1384,10 +2061,21 @@ pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
                 "unverified ina238 i2c {i2c} name={name} source={source}.{volts} Not the L4T R39 node at 2-0044, so this is not established as module-input VIN."
             )
         };
-        found.push(Ina238Found { name, i2c, source, path, verified, counter, note });
+        found.push(Ina238Found {
+            name,
+            i2c,
+            source,
+            path,
+            verified,
+            counter,
+            note,
+        });
     }
     found.sort_by_key(|item| !item.verified);
-    found.into_iter().next().ok_or_else(|| "no ina238 hwmon with power1_input or energy1_input".into())
+    found
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no ina238 hwmon with power1_input or energy1_input".into())
 }
 
 /// Scope token for one INA3221 channel that is not a total rail.
@@ -1395,7 +2083,9 @@ pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
 /// `None` for a total label, including the removed voltage sum. The label is kept intact so
 /// `VDD_GPU` and `VIN_SYS_5V0` stay different scopes.
 pub fn subrail_scope(label: &str) -> Option<String> {
-    if ferrotherm_meter::ina3221::is_total_label(label) || label.eq_ignore_ascii_case("sum of shunt voltages") {
+    if ferrotherm_meter::ina3221::is_total_label(label)
+        || label.eq_ignore_ascii_case("sum of shunt voltages")
+    {
         return None;
     }
     let label = label.trim();
@@ -1430,7 +2120,9 @@ impl HwmonSeries {
                     && raw.is_finite()
                     && raw >= 0.0
                 {
-                    sink.lock().unwrap().push((std::time::Instant::now(), raw * scale));
+                    sink.lock()
+                        .unwrap()
+                        .push((std::time::Instant::now(), raw * scale));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -1454,40 +2146,51 @@ impl HwmonSeries {
     pub fn open_subrails() -> Vec<HwmonSeries> {
         let mut rails = Vec::new();
         for root in ["/sys/bus/i2c/devices", "/sys/class/hwmon"] {
-            if let Ok(found) = ferrotherm_meter::ina3221::Rails::list_at(std::path::Path::new(root)) {
+            if let Ok(found) = ferrotherm_meter::ina3221::Rails::list_at(std::path::Path::new(root))
+            {
                 for rail in found {
-                    if subrail_scope(&rail.label).is_some() && rails.iter().all(|have: &ferrotherm_meter::ina3221::Rail| have.label != rail.label) {
+                    if subrail_scope(&rail.label).is_some()
+                        && rails
+                            .iter()
+                            .all(|have: &ferrotherm_meter::ina3221::Rail| have.label != rail.label)
+                    {
                         rails.push(rail);
                     }
                 }
             }
         }
-        rails.into_iter().filter_map(|rail| {
-            let scope = subrail_scope(&rail.label)?;
-            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-            let flag = std::sync::Arc::clone(&stop);
-            let sink = std::sync::Arc::clone(&samples);
-            std::thread::spawn(move || {
-                while !flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    if let Ok(watts) = ferrotherm_meter::ina3221::Rails::channel_watts(&rail)
-                        && watts.is_finite()
-                        && watts >= 0.0
-                    {
-                        sink.lock().unwrap().push((std::time::Instant::now(), watts));
+        rails
+            .into_iter()
+            .filter_map(|rail| {
+                let scope = subrail_scope(&rail.label)?;
+                let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let flag = std::sync::Arc::clone(&stop);
+                let sink = std::sync::Arc::clone(&samples);
+                std::thread::spawn(move || {
+                    while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Ok(watts) = ferrotherm_meter::ina3221::Rails::channel_watts(&rail)
+                            && watts.is_finite()
+                            && watts >= 0.0
+                        {
+                            sink.lock()
+                                .unwrap()
+                                .push((std::time::Instant::now(), watts));
+                        }
+                        std::thread::sleep(Duration::from_millis(200));
                     }
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-            });
-            Some(HwmonSeries {
-                stop,
-                samples,
-                scope,
-                instrument: "ina3221",
-                note: "INA3221 sub-rail. Not added to VIN and not added to the other channels.".into(),
-                counter: false,
+                });
+                Some(HwmonSeries {
+                    stop,
+                    samples,
+                    scope,
+                    instrument: "ina3221",
+                    note: "INA3221 sub-rail. Not added to VIN and not added to the other channels."
+                        .into(),
+                    counter: false,
+                })
             })
-        }).collect()
+            .collect()
     }
 
     pub fn since_stamped(&self, from: std::time::Instant) -> Vec<(std::time::Instant, f64)> {
@@ -1567,7 +2270,9 @@ impl RaplCounter {
                 denied.join(", ")
             ));
         }
-        let pkg = domains.iter().position(|(_, n, _)| n.starts_with("package"));
+        let pkg = domains
+            .iter()
+            .position(|(_, n, _)| n.starts_with("package"));
         let psys = domains.iter().position(|(_, n, _)| n == "psys");
         let Some(pkg_i) = pkg else {
             return Err("RAPL exposed no package domain".into());
@@ -1582,7 +2287,12 @@ impl RaplCounter {
         let idx = if use_psys { psys.expect("psys") } else { pkg_i };
         let (path, name, max_uj) = domains.swap_remove(idx);
         let kind = if use_psys { "psys" } else { "package" };
-        Ok(RaplCounter { path, max_uj, name, kind })
+        Ok(RaplCounter {
+            path,
+            max_uj,
+            name,
+            kind,
+        })
     }
 
     pub fn counter_path(&self) -> &std::path::Path {
@@ -1602,7 +2312,11 @@ impl RaplCounter {
     }
 
     pub fn delta_j(&self, prev: u64, now: u64) -> f64 {
-        counter_delta_j(prev as f64 / 1e6, now as f64 / 1e6, self.max_uj as f64 / 1e6)
+        counter_delta_j(
+            prev as f64 / 1e6,
+            now as f64 / 1e6,
+            self.max_uj as f64 / 1e6,
+        )
     }
 
     /// The `core` child of a package domain, if its `energy_uj` is readable.
@@ -1624,7 +2338,12 @@ impl RaplCounter {
                 .ok()
                 .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(u64::MAX);
-            return Some(RaplCounter { path: p, max_uj: max, name: "core".into(), kind: "core" });
+            return Some(RaplCounter {
+                path: p,
+                max_uj: max,
+                name: "core".into(),
+                kind: "core",
+            });
         }
         None
     }
@@ -1632,14 +2351,26 @@ impl RaplCounter {
 
 fn watts_over(dir: &std::path::Path, secs: f64) -> Option<f64> {
     let read = |p: &std::path::Path| -> Option<u64> {
-        std::fs::read_to_string(p.join("energy_uj")).ok()?.trim().parse().ok()
+        std::fs::read_to_string(p.join("energy_uj"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
     };
     let a = read(dir)?;
     let t = std::time::Instant::now();
     std::thread::sleep(Duration::from_secs_f64(secs));
     let b = read(dir)?;
-    let max: u64 = std::fs::read_to_string(dir.join("max_energy_range_uj")).ok()?.trim().parse().ok()?;
-    let d = if b >= a { b - a } else { max.saturating_sub(a).saturating_add(b) };
+    let max: u64 = std::fs::read_to_string(dir.join("max_energy_range_uj"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let d = if b >= a {
+        b - a
+    } else {
+        max.saturating_sub(a).saturating_add(b)
+    };
     Some((d as f64 / 1e6) / t.elapsed().as_secs_f64())
 }
 
@@ -1682,7 +2413,11 @@ impl PerfPkg {
 pub fn perf_sample_j(fd: i32, scale: f64) -> Option<f64> {
     let mut buf = [0u8; 8];
     let n = unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) };
-    if n == 8 { Some(u64::from_ne_bytes(buf) as f64 * scale) } else { None }
+    if n == 8 {
+        Some(u64::from_ne_bytes(buf) as f64 * scale)
+    } else {
+        None
+    }
 }
 
 impl Drop for PerfPkg {
@@ -1697,10 +2432,11 @@ fn open_perf_pkg() -> Result<PerfPkg, String> {
         .map_err(|e| format!("power PMU type: {e}. {}", perf_stat_note()))?;
     let ev = std::fs::read_to_string("/sys/bus/event_source/devices/power/events/energy-pkg")
         .map_err(|e| format!("energy-pkg event: {e}. {}", perf_stat_note()))?;
-    let scale = std::fs::read_to_string("/sys/bus/event_source/devices/power/events/energy-pkg.scale")
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(1.0);
+    let scale =
+        std::fs::read_to_string("/sys/bus/event_source/devices/power/events/energy-pkg.scale")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(1.0);
     let ty: u32 = match ty_s.trim().parse() {
         Ok(v) => v,
         Err(_) => return Err(format!("bad power PMU type {ty_s}")),
@@ -1722,13 +2458,22 @@ fn open_perf_pkg() -> Result<PerfPkg, String> {
     };
     if fd < 0 {
         let err = std::io::Error::last_os_error();
-        return Err(format!("perf_event_open power/energy-pkg: {err}. {}", perf_stat_note()));
+        return Err(format!(
+            "perf_event_open power/energy-pkg: {err}. {}",
+            perf_stat_note()
+        ));
     }
-    Ok(PerfPkg { fd: fd as i32, scale })
+    Ok(PerfPkg {
+        fd: fd as i32,
+        scale,
+    })
 }
 
 fn perf_stat_note() -> String {
-    match std::process::Command::new("perf").args(["stat", "-e", "power/energy-pkg/", "--", "true"]).output() {
+    match std::process::Command::new("perf")
+        .args(["stat", "-e", "power/energy-pkg/", "--", "true"])
+        .output()
+    {
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
             let err = err.trim();
@@ -1812,12 +2557,23 @@ pub fn pin_current(cpus: &[usize]) -> Result<(), String> {
     if rc == 0 {
         return Ok(());
     }
-    let list = cpus.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",");
+    let list = cpus
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let pid = std::process::id().to_string();
-    match std::process::Command::new("taskset").args(["-c", &list, "-p", &pid]).status() {
+    match std::process::Command::new("taskset")
+        .args(["-c", &list, "-p", &pid])
+        .status()
+    {
         Ok(s) if s.success() => Ok(()),
-        Ok(s) => Err(format!("sched_setaffinity returned {rc} and taskset exited {s}")),
-        Err(e) => Err(format!("sched_setaffinity returned {rc} and taskset was not started: {e}")),
+        Ok(s) => Err(format!(
+            "sched_setaffinity returned {rc} and taskset exited {s}"
+        )),
+        Err(e) => Err(format!(
+            "sched_setaffinity returned {rc} and taskset was not started: {e}"
+        )),
     }
 }
 
@@ -1833,15 +2589,28 @@ pub fn read_cpu_snap() -> CpuSnap {
         .ok()
         .and_then(|s| s.lines().find_map(parse_proc_stat_busy))
         .unwrap_or(0);
-    let mine = std::fs::read_to_string("/proc/self/stat").ok().and_then(|s| parse_self_stat_busy(&s)).unwrap_or(0);
-    CpuSnap { busy, mine, load1: load_average() }
+    let mine = std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|s| parse_self_stat_busy(&s))
+        .unwrap_or(0);
+    CpuSnap {
+        busy,
+        mine,
+        load1: load_average(),
+    }
 }
 
 pub fn snap_other_cpu(before: &CpuSnap, after: &CpuSnap) -> Option<f64> {
     if before.busy == 0 && after.busy == 0 {
         return None;
     }
-    Some(other_cpu_seconds(before.busy, before.mine, after.busy, after.mine, 100.0))
+    Some(other_cpu_seconds(
+        before.busy,
+        before.mine,
+        after.busy,
+        after.mine,
+        100.0,
+    ))
 }
 
 /// One device's NVML energy counter, in millijoules since driver load.
@@ -1946,7 +2715,9 @@ fn open_unix() -> Result<Nvml, String> {
     let path = std::ffi::CString::new("libnvidia-ml.so.1").expect("static path");
     let lib = unsafe { dlopen(path.as_ptr(), 2) }; // RTLD_NOW
     if lib.is_null() {
-        return Err("libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)".into());
+        return Err(
+            "libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)".into(),
+        );
     }
     let sym = |name: &str| -> Result<*mut std::ffi::c_void, String> {
         let c = std::ffi::CString::new(name).expect("symbol");
@@ -1965,7 +2736,8 @@ fn open_unix() -> Result<Nvml, String> {
     let count_fn: Count = unsafe { std::mem::transmute(sym("nvmlDeviceGetCount_v2")?) };
     let by_index: ByIndex = unsafe { std::mem::transmute(sym("nvmlDeviceGetHandleByIndex_v2")?) };
     let get_name: GetName = unsafe { std::mem::transmute(sym("nvmlDeviceGetName")?) };
-    let get_energy: GetEnergy = unsafe { std::mem::transmute(sym("nvmlDeviceGetTotalEnergyConsumption")?) };
+    let get_energy: GetEnergy =
+        unsafe { std::mem::transmute(sym("nvmlDeviceGetTotalEnergyConsumption")?) };
     if unsafe { init() } != 0 {
         unsafe { dlclose(lib) };
         return Err("nvmlInit_v2 failed".into());
@@ -1985,7 +2757,12 @@ fn open_unix() -> Result<Nvml, String> {
         }
         let mut buf = [0 as std::ffi::c_char; 96];
         let name = if unsafe { get_name(handle, buf.as_mut_ptr(), buf.len() as u32) } == 0 {
-            let bytes: Vec<u8> = buf.iter().copied().take_while(|c| *c != 0).map(|c| c as u8).collect();
+            let bytes: Vec<u8> = buf
+                .iter()
+                .copied()
+                .take_while(|c| *c != 0)
+                .map(|c| c as u8)
+                .collect();
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
             format!("gpu{i}")
@@ -2008,19 +2785,31 @@ fn open_unix() -> Result<Nvml, String> {
         unsafe { dlclose(lib) };
         return Err(format!("nvmlDeviceGetTotalEnergyConsumption returned {rc}"));
     }
-    Ok(Nvml { lib, get_energy, devices, names })
+    Ok(Nvml {
+        lib,
+        get_energy,
+        devices,
+        names,
+    })
 }
 
 #[cfg(unix)]
 unsafe extern "C" {
     fn dlopen(filename: *const std::ffi::c_char, flags: i32) -> *mut std::ffi::c_void;
-    fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+    fn dlsym(
+        handle: *mut std::ffi::c_void,
+        symbol: *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_void;
     fn dlclose(handle: *mut std::ffi::c_void) -> i32;
 }
 
 /// Millijoule counter delta, wrap included, as joules.
 pub fn mj_delta_j(prev: u64, now: u64) -> f64 {
-    let d = if now >= prev { now - prev } else { now.wrapping_add(u64::MAX - prev).wrapping_add(1) };
+    let d = if now >= prev {
+        now - prev
+    } else {
+        now.wrapping_add(u64::MAX - prev).wrapping_add(1)
+    };
     d as f64 / 1000.0
 }
 
@@ -2038,7 +2827,9 @@ pub fn mj_window_j(readings_mj: &[f64]) -> f64 {
 /// Quiet idle on a wall-power meter. The meter's own `idle` refuses a load above [`QUIET_LOAD`].
 /// A contended baseline is [`ferrotherm_meter::Meter::observe_idle`], and that result is a
 /// different evidence grade.
-pub fn idle_baseline(meter: &mut ferrotherm_meter::Meter) -> Result<ferrotherm_meter::Baseline, String> {
+pub fn idle_baseline(
+    meter: &mut ferrotherm_meter::Meter,
+) -> Result<ferrotherm_meter::Baseline, String> {
     meter.idle(Duration::from_secs(2))
 }
 
@@ -2056,7 +2847,10 @@ mod tests {
         assert!(!ok, "0.1 J does not clear a 0.6 J band");
         let (neg, ok) = split_incremental(4.0, 4.0, 0.1, 2.0);
         assert!((neg + 4.0).abs() < 1e-12);
-        assert!(!ok, "a negative incremental is not attributable even when it clears the band");
+        assert!(
+            !ok,
+            "a negative incremental is not attributable even when it clears the band"
+        );
     }
 
     #[test]
@@ -2127,7 +2921,10 @@ mod tests {
     fn rapl_on_the_named_framework_is_primary_and_macmon_is_secondary() {
         assert_eq!(energy_rank("rapl", "framework-128gb-0000"), "primary");
         assert_eq!(energy_rank("rapl", "framework-32gb-0001"), "unranked");
-        assert_eq!(energy_rank("macmon", "Davids-MacBook-Pro-M5-Max-48GB-4.local"), "secondary");
+        assert_eq!(
+            energy_rank("macmon", "Davids-MacBook-Pro-M5-Max-48GB-4.local"),
+            "secondary"
+        );
         assert_eq!(energy_rank("perf", "framework-128gb-0000"), "unranked");
     }
 
@@ -2157,7 +2954,17 @@ mod tests {
     #[test]
     fn incremental_ci_stays_inside_one_grade() {
         let mk = |g: &'static str, inc: f64| {
-            let j = trial_joules(inc + 10.0, 10.0, 0.01, 1.0, "rapl", "package", g, MIN_COUNTER_UPDATES, true);
+            let j = trial_joules(
+                inc + 10.0,
+                10.0,
+                0.01,
+                1.0,
+                "rapl",
+                "package",
+                g,
+                MIN_COUNTER_UPDATES,
+                true,
+            );
             EnergyTrial::from_parts(
                 "ising_grid2d_open_3x3",
                 "ferrotherm",
@@ -2173,7 +2980,9 @@ mod tests {
                 "primary",
             )
         };
-        let quiet: Vec<_> = (0..5).map(|i| mk(GRADE_QUIET, 1.0 + i as f64 * 0.1)).collect();
+        let quiet: Vec<_> = (0..5)
+            .map(|i| mk(GRADE_QUIET, 1.0 + i as f64 * 0.1))
+            .collect();
         let sum = summarise_one_grade(&quiet).unwrap();
         assert_eq!(sum.grade, GRADE_QUIET);
         assert!(sum.incremental.is_some());
@@ -2219,7 +3028,10 @@ mod tests {
         assert!(per_repetition(1.0, 2.0, 0).0.is_nan());
         assert_eq!(count_counter_updates(&[10.0, 10.0, 10.0]), 0);
         assert_eq!(count_counter_updates(&[10.0, 10.0, 10.4]), 1);
-        assert_eq!(count_counter_updates(&[1.0, 2.0, 2.0, 3.0, f64::NAN, 4.0]), 3);
+        assert_eq!(
+            count_counter_updates(&[1.0, 2.0, 2.0, 3.0, f64::NAN, 4.0]),
+            3
+        );
         assert!(count_counter_updates(&[0.0; 9]) < MIN_COUNTER_UPDATES);
 
         // 189502d, chain workload, ferrotherm trial 3: 0.827 ms, gross 0, incremental about -0.031 J,
@@ -2251,7 +3063,10 @@ mod tests {
             1,
             true,
         );
-        assert!(!one_tick.attributable, "one counter tick is below the cadence floor");
+        assert!(
+            !one_tick.attributable,
+            "one counter tick is below the cadence floor"
+        );
 
         let held = trial_joules(
             0.045,
@@ -2277,8 +3092,31 @@ mod tests {
         assert!(scopes_may_share_a_table("soc-telemetry", "soc-telemetry"));
         assert!(!scopes_may_share_a_table("cpu-package", "cpu-package"));
         let row = |workload: &'static str, scope: &'static str| {
-            let j = trial_joules(2.0, 1.0, 0.01, 1.0, if scope == "package" { "rapl" } else { "macmon" }, scope, GRADE_CONTENDED, MIN_COUNTER_UPDATES, true);
-            EnergyTrial::from_parts(workload, "ferrotherm", 0, 4, MIN_COUNTER_UPDATES, 2.0, j, 10.0, Some(2.5), Some(0.2), GRADE_CONTENDED, "primary")
+            let j = trial_joules(
+                2.0,
+                1.0,
+                0.01,
+                1.0,
+                if scope == "package" { "rapl" } else { "macmon" },
+                scope,
+                GRADE_CONTENDED,
+                MIN_COUNTER_UPDATES,
+                true,
+            );
+            EnergyTrial::from_parts(
+                workload,
+                "ferrotherm",
+                0,
+                4,
+                MIN_COUNTER_UPDATES,
+                2.0,
+                j,
+                10.0,
+                Some(2.5),
+                Some(0.2),
+                GRADE_CONTENDED,
+                "primary",
+            )
         };
         let package = row("thrml_readme_ising_chain_n5", "package");
         let soc = row("thrml_readme_ising_chain_n5", "soc-telemetry");
@@ -2319,12 +3157,20 @@ mod tests {
     #[test]
     fn quiet_gate_holds_only_when_every_load_sample_is_at_or_under_the_threshold() {
         assert_eq!(QUIET_GATE_SECONDS, 60);
-        let quiet = quiet_gate_from(&[Some(1.0), Some(QUIET_LOAD), Some(0.5)], &[(1, 0.1)], true, 60.0);
+        let quiet = quiet_gate_from(
+            &[Some(1.0), Some(QUIET_LOAD), Some(0.5)],
+            &[(1, 0.1)],
+            true,
+            60.0,
+        );
         assert!(quiet.held);
         assert_eq!(quiet.max_load1, Some(QUIET_LOAD));
         assert_eq!(quiet.other_core_busy, vec![(1, 0.1)]);
         let over = quiet_gate_from(&[Some(1.0), Some(QUIET_LOAD + 0.01)], &[], true, 60.0);
-        assert!(!over.held, "one sample over the unchanged gate refuses the run");
+        assert!(
+            !over.held,
+            "one sample over the unchanged gate refuses the run"
+        );
         let missing = quiet_gate_from(&[Some(1.0), None], &[], false, 60.0);
         assert!(!missing.held);
         assert!(!missing.busy_readable);
@@ -2343,8 +3189,233 @@ mod tests {
     }
 
     #[test]
+    fn the_bundle_is_quiet_only_when_the_energy_phase_is_quiet() {
+        assert_eq!(bundle_grade(GRADE_QUIET), GRADE_QUIET);
+        assert_eq!(bundle_grade("load_gated"), "load_gated");
+        assert_eq!(bundle_grade(GRADE_CONTENDED), GRADE_CONTENDED);
+        assert_eq!(bundle_grade("unavailable"), "load_gated");
+        // A passing preflight and a quiet accuracy phase do not promote a refused energy phase.
+        assert_ne!(bundle_grade("load_gated"), GRADE_QUIET);
+        assert_eq!(ENERGY_WATCH_INTERVAL, Duration::from_secs(1));
+        assert_eq!(QUIET_LOAD, 2.0);
+    }
+
+    #[test]
+    fn an_energy_watch_aborts_on_the_first_sample_over_the_threshold() {
+        let held = grade_energy_watch(&[Some(1.0), Some(QUIET_LOAD), Some(1.5)]);
+        assert_eq!(held.evidence_grade, GRADE_QUIET);
+        assert!(held.abort.is_none());
+        assert_eq!(held.samples.len(), 3);
+
+        let refused = grade_energy_watch(&[Some(1.0), Some(1.5), Some(2.4), Some(1.0)]);
+        assert_eq!(refused.evidence_grade, "load_gated");
+        let abort = refused.abort.expect("the 2.4 sample");
+        assert!((abort.load1 - 2.4).abs() < 1e-12);
+        assert_eq!(abort.at_unix_s, 2.0);
+        assert_eq!(
+            refused.samples.len(),
+            3,
+            "samples after the abort are not a recovery"
+        );
+        assert!(grade_energy_watch(&[]).evidence_grade != GRADE_QUIET);
+        assert_eq!(grade_energy_watch(&[None]).evidence_grade, "load_gated");
+    }
+
+    #[test]
+    fn a_settle_needs_sixty_consecutive_samples_and_a_high_sample_resets_it() {
+        let mut quiet = vec![Some(3.0)];
+        quiet.extend(std::iter::repeat_n(Some(1.5), 59));
+        let short = settle_outcome(&quiet, SETTLE_STREAK, SETTLE_BOUND);
+        assert!(!short.settled, "{}", short.reason);
+        quiet.push(Some(1.2));
+        let ok = settle_outcome(&quiet, SETTLE_STREAK, SETTLE_BOUND);
+        assert!(ok.settled, "{}", ok.reason);
+        assert_eq!(ok.samples.len(), 61);
+        let mut bounded = vec![Some(1.0); 59];
+        bounded.push(Some(2.01));
+        bounded.extend(std::iter::repeat_n(Some(1.0), 59));
+        let reset = settle_outcome(&bounded, SETTLE_STREAK, 60);
+        assert!(!reset.settled);
+        assert!(reset.reason.contains("60"));
+        assert_eq!(SETTLE_STREAK, 60);
+        const _: () = assert!(SETTLE_BOUND >= SETTLE_STREAK);
+        assert_eq!(QUIET_LOAD, 2.0);
+    }
+
+    #[test]
+    fn a_bracket_sample_above_two_refuses_and_an_empty_bracket_is_not_quiet() {
+        assert!(bracket_load_offender(&[Some(1.0), Some(2.0)]).is_none());
+        assert_eq!(bracket_load_offender(&[Some(1.0), Some(2.41)]), Some(2.41));
+        assert!(bracket_load_offender(&[]).is_some());
+    }
+
+    #[test]
+    fn linux_other_core_and_macos_foreign_cpu_refuse_on_mean_or_sample() {
+        let rule = TrialWindowRule::defaults();
+        assert!(rule.enforce);
+        assert!((rule.other_core_mean_max - 0.05).abs() < 1e-12);
+        assert!((rule.other_core_sample_max - 0.15).abs() < 1e-12);
+        assert!((rule.foreign_cpu_mean_max - 0.15).abs() < 1e-12);
+        assert!((rule.foreign_cpu_sample_max - 0.50).abs() < 1e-12);
+        assert!(
+            fraction_refusal(
+                &[0.04, 0.04],
+                rule.other_core_mean_max,
+                rule.other_core_sample_max
+            )
+            .is_none()
+        );
+        assert_eq!(
+            fraction_refusal(
+                &[0.04, 0.16],
+                rule.other_core_mean_max,
+                rule.other_core_sample_max
+            ),
+            Some("a sample exceeded the maximum")
+        );
+        assert_eq!(
+            fraction_refusal(
+                &[0.06, 0.06],
+                rule.other_core_mean_max,
+                rule.other_core_sample_max
+            ),
+            Some("the mean exceeded the maximum")
+        );
+        assert_eq!(
+            fraction_refusal(&[], rule.other_core_mean_max, rule.other_core_sample_max),
+            Some("the trial window recorded no finite sample")
+        );
+        assert!(
+            fraction_refusal(
+                &[0.10, 0.14],
+                rule.foreign_cpu_mean_max,
+                rule.foreign_cpu_sample_max
+            )
+            .is_none()
+        );
+        assert!(
+            fraction_refusal(
+                &[0.10, 0.51],
+                rule.foreign_cpu_mean_max,
+                rule.foreign_cpu_sample_max
+            )
+            .is_some()
+        );
+        assert!(
+            fraction_refusal(
+                &[0.20, 0.20],
+                rule.foreign_cpu_mean_max,
+                rule.foreign_cpu_sample_max
+            )
+            .is_some()
+        );
+        assert!(linux_quiet_needs_pin("linux", 0));
+        assert!(!linux_quiet_needs_pin("linux", 4));
+        assert!(!linux_quiet_needs_pin("macos", 0));
+        let (mean, sigma, _, drift_ok) = combine_bracket(10.0, 0.1, 12.0, 0.1);
+        assert!(!drift_ok);
+        assert!((mean - 11.0).abs() < 1e-9);
+        assert!(sigma > 0.0);
+        assert!(macos_drift_refuses_quiet("macos", false));
+        assert!(!macos_drift_refuses_quiet("macos", true));
+        assert!(!macos_drift_refuses_quiet("linux", false));
+    }
+
+    #[test]
+    fn foreign_cpu_attributes_other_processes_and_does_not_price_them() {
+        assert!((parse_cpu_clock("1:02.5").unwrap() - 62.5).abs() < 1e-9);
+        assert!((parse_cpu_clock("1-00:00:01").unwrap() - 86401.0).abs() < 1e-9);
+        let row = parse_ps_cpu_row("10 1 0:01").unwrap();
+        assert_eq!(row.0, 10);
+        let before = [(1u32, 0u32, 0.0), (10, 1, 1.0), (11, 10, 1.0), (20, 2, 5.0)];
+        let after = [(1, 0, 0.0), (10, 1, 1.1), (11, 10, 1.4), (20, 2, 5.5)];
+        // self is 10. 11 is its child. 20 is foreign and gained 0.5 s over 1 s of wall.
+        let frac = foreign_cpu_fraction(&before, &after, 10, 1.0).unwrap();
+        assert!((frac - 0.5).abs() < 1e-9, "{frac}");
+        let joules = trial_joules(
+            1.0,
+            0.2,
+            0.01,
+            1.0,
+            "macmon",
+            "soc-telemetry",
+            GRADE_QUIET,
+            MIN_COUNTER_UPDATES,
+            true,
+        );
+        assert!(
+            (joules.gross.unwrap() - 1.0).abs() < 1e-12,
+            "a cpu fraction is not subtracted from joules"
+        );
+    }
+
+    #[test]
+    fn a_contended_host_lock_is_refused_and_a_free_lock_records_the_holder() {
+        // A second `flock` in this process succeeds on macOS: the lock is per process there.
+        // The holder is a child, which is the contention the receipt has to refuse.
+        if std::env::var_os("FT_HOLD_LOCK").is_some() {
+            let path = std::env::var("FT_HOLD_LOCK_PATH").expect("path");
+            let ready = std::env::var("FT_HOLD_LOCK_READY").expect("ready");
+            let held = HostLock::acquire(std::path::Path::new(&path), 2.0).expect("child acquires");
+            std::fs::write(&ready, held.holder_pid.to_string()).expect("ready");
+            std::thread::sleep(Duration::from_secs(2));
+            drop(held);
+            return;
+        }
+        assert_eq!(HOST_LOCK_DEFAULT, "/tmp/bmi-energy.lock");
+        assert_eq!(HOST_LOCK_WAIT_S, 3600.0);
+        assert_eq!(format_unix_utc(0.0), "1970-01-01T00:00:00.000Z");
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "ft-bmi-energy-{}-{}.lock",
+            std::process::id(),
+            line!()
+        ));
+        let ready = dir.join(format!(
+            "ft-bmi-energy-{}-{}.ready",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&ready);
+        let exe = std::env::current_exe().expect("test exe");
+        let mut child = std::process::Command::new(exe)
+            .args(["--exact", "energy::tests::a_contended_host_lock_is_refused_and_a_free_lock_records_the_holder"])
+            .env("FT_HOLD_LOCK", "1")
+            .env("FT_HOLD_LOCK_PATH", &path)
+            .env("FT_HOLD_LOCK_READY", &ready)
+            .spawn()
+            .expect("spawn holder");
+        let start = std::time::Instant::now();
+        while !ready.exists() {
+            if start.elapsed() > Duration::from_secs(8) {
+                let _ = child.kill();
+                panic!("holder did not acquire");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let err = match HostLock::acquire(&path, 0.5) {
+            Err(text) => text,
+            Ok(lock) => {
+                drop(lock);
+                panic!("contended lock was acquired");
+            }
+        };
+        assert_eq!(err, HOST_LOCK_REFUSAL);
+        let _ = child.wait();
+        let again = HostLock::acquire(&path, 2.0).expect("released");
+        assert_eq!(again.holder_pid, std::process::id());
+        assert!(again.acquired_utc().ends_with('Z'));
+        let released = again.release();
+        assert!(released.ends_with('Z'));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&ready);
+    }
+
+    #[test]
     fn tegrastats_vdd_in_is_one_rail_and_other_rails_are_not_summed() {
-        let line = "RAM 1543/7772MB CPU [1%@102] VDD_IN 1864/1864 VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717";
+        let line =
+            "RAM 1543/7772MB CPU [1%@102] VDD_IN 1864/1864 VDD_CPU_GPU_CV 341/341 VDD_SOC 717/717";
         let parsed = parse_tegrastats_module_input(line).unwrap();
         assert_eq!(parsed.label, "VDD_IN");
         assert!((parsed.watts - 1.864).abs() < 1e-12);
@@ -2366,11 +3437,17 @@ mod tests {
         assert_eq!(sample.label, "VIN");
         assert!((sample.watts - 26.140).abs() < 1e-12, "{}", sample.watts);
         let summed = 26.140 + 4.120 + 0.890 + 1.510;
-        assert!((sample.watts - summed).abs() > 1.0, "sub-rails were added into VIN");
+        assert!(
+            (sample.watts - summed).abs() > 1.0,
+            "sub-rails were added into VIN"
+        );
         let bare = parse_tegrastats_module_input("VIN 18000/17900 VDD_GPU 100/100").unwrap();
         assert_eq!(bare.label, "VIN");
         assert!((bare.watts - 18.0).abs() < 1e-12);
-        assert!(parse_tegrastats_module_input("VDD_GPU 890mW/870mW VIN_SYS_5V0 1510mW/1490mW").is_none());
+        assert!(
+            parse_tegrastats_module_input("VDD_GPU 890mW/870mW VIN_SYS_5V0 1510mW/1490mW")
+                .is_none()
+        );
     }
 
     #[test]
@@ -2390,7 +3467,11 @@ mod tests {
         assert!(!found.counter);
         assert!(found.note.contains("not wall"), "{}", found.note);
         assert!(found.note.contains("28.000 V"), "{}", found.note);
-        let raw: f64 = std::fs::read_to_string(&found.path).unwrap().trim().parse().unwrap();
+        let raw: f64 = std::fs::read_to_string(&found.path)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!((raw * 1.0e-6 - 26.0).abs() < 1e-9);
 
         let other = root.join("1-0044/hwmon/hwmon1");
@@ -2405,7 +3486,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ina);
         let unverified = find_ina238(&root).unwrap();
         assert!(!unverified.verified, "{}", unverified.note);
-        assert!(unverified.note.contains("unverified"), "{}", unverified.note);
+        assert!(
+            unverified.note.contains("unverified"),
+            "{}",
+            unverified.note
+        );
         assert_eq!(unverified.source, "energy1_input");
         assert!(unverified.counter);
 
@@ -2425,13 +3510,22 @@ mod tests {
             std::fs::write(rails.join(format!("curr{n}_input")), format!("{curr}\n")).unwrap();
         }
         let listed = ferrotherm_meter::ina3221::Rails::list_at(&rails).unwrap();
-        let scopes: Vec<String> = listed.iter().filter_map(|rail| subrail_scope(&rail.label)).collect();
+        let scopes: Vec<String> = listed
+            .iter()
+            .filter_map(|rail| subrail_scope(&rail.label))
+            .collect();
         assert_eq!(scopes.len(), 3);
         assert!(scopes.iter().all(|s| s.starts_with("subrail:")));
         assert!(scopes.iter().all(|s| s != "vin" && s != "board"));
         assert!(!scopes_may_share_a_table("vin", "subrail:VDD_GPU"));
-        assert!(scopes_may_share_a_table("subrail:VDD_GPU", "subrail:VDD_GPU"));
-        assert!(!scopes_may_share_a_table("subrail:VDD_GPU", "subrail:VIN_SYS_5V0"));
+        assert!(scopes_may_share_a_table(
+            "subrail:VDD_GPU",
+            "subrail:VDD_GPU"
+        ));
+        assert!(!scopes_may_share_a_table(
+            "subrail:VDD_GPU",
+            "subrail:VIN_SYS_5V0"
+        ));
         assert!(subrail_scope("sum of shunt voltages").is_none());
         assert!(subrail_scope("VDD_IN").is_none());
         let _ = std::fs::remove_dir_all(&root);
@@ -2439,22 +3533,69 @@ mod tests {
 
     #[test]
     fn a_negative_or_drifting_bracket_is_not_attributable_and_pairs_keep_their_sign() {
-        let neg = trial_joules(4.0, 4.0, 0.01, 2.0, "rapl", "package", GRADE_CONTENDED, MIN_COUNTER_UPDATES, true);
+        let neg = trial_joules(
+            4.0,
+            4.0,
+            0.01,
+            2.0,
+            "rapl",
+            "package",
+            GRADE_CONTENDED,
+            MIN_COUNTER_UPDATES,
+            true,
+        );
         assert!(neg.incremental.unwrap() < 0.0);
         assert!(!neg.attributable);
         assert!(joules_per_ess(&neg, 100.0).is_none());
-        let drifted = trial_joules(20.0, 4.0, 0.01, 2.0, "rapl", "package", GRADE_CONTENDED, MIN_COUNTER_UPDATES, false);
+        let drifted = trial_joules(
+            20.0,
+            4.0,
+            0.01,
+            2.0,
+            "rapl",
+            "package",
+            GRADE_CONTENDED,
+            MIN_COUNTER_UPDATES,
+            false,
+        );
         assert!(!drifted.attributable);
         let (mean, sigma, drift, ok) = combine_bracket(10.0, 0.2, 10.1, 0.2);
         assert!((mean - 10.05).abs() < 1e-12);
-        assert!(ok, "0.1 W drift against sigma 0.2 is inside 3 sigma, drift {drift} sigma {sigma}");
+        assert!(
+            ok,
+            "0.1 W drift against sigma 0.2 is inside 3 sigma, drift {drift} sigma {sigma}"
+        );
         let (_, _, big, ok) = combine_bracket(10.0, 0.1, 12.0, 0.1);
         assert!(!ok && (big - 2.0).abs() < 1e-12);
         let delta = paired_delta(1.5, 4.0);
         assert!((delta + 2.5).abs() < 1e-12);
-        assert!(paired_attributable(delta, 0.05, 2.0, 2.0, true, MIN_COUNTER_UPDATES, MIN_COUNTER_UPDATES));
-        assert!(!paired_attributable(0.01, 0.05, 2.0, 2.0, true, MIN_COUNTER_UPDATES, MIN_COUNTER_UPDATES));
-        assert!(!paired_attributable(delta, 0.05, 2.0, 2.0, false, MIN_COUNTER_UPDATES, MIN_COUNTER_UPDATES));
+        assert!(paired_attributable(
+            delta,
+            0.05,
+            2.0,
+            2.0,
+            true,
+            MIN_COUNTER_UPDATES,
+            MIN_COUNTER_UPDATES
+        ));
+        assert!(!paired_attributable(
+            0.01,
+            0.05,
+            2.0,
+            2.0,
+            true,
+            MIN_COUNTER_UPDATES,
+            MIN_COUNTER_UPDATES
+        ));
+        assert!(!paired_attributable(
+            delta,
+            0.05,
+            2.0,
+            2.0,
+            false,
+            MIN_COUNTER_UPDATES,
+            MIN_COUNTER_UPDATES
+        ));
         assert_eq!(pair_order(0), ["ferrotherm", "thrml"]);
         assert_eq!(pair_order(1), ["thrml", "ferrotherm"]);
         assert!(!scopes_may_share_a_table("package", "core"));

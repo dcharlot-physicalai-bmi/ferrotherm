@@ -1,0 +1,15 @@
+Mon Nov  9 19:40:31 UTC 2026
+Davids-MacBook-Pro-M5-Max-48GB-4.local
+Darwin Davids-MacBook-Pro-M5-Max-48GB-4.local 27.2.0 Darwin Kernel Version 27.2.0: Wed Oct 14 23:47:58 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6050 arm64
+ProductName:		macOS
+ProductVersion:		27.2
+BuildVersion:		26B123
+Apple M5 Max
+18
+macmon 0.11.0
+5c54005fd0ff8dc62adedda478faa52388911902
+       0
+jax==0.12.0.1
+jaxlib==0.12.0.1
+jaxtyping==0.3.11
+thrml==0.1.4

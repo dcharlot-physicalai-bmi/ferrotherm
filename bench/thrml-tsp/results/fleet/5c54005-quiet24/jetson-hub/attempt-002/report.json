@@ -1,0 +1,20 @@
+{
+  "schema": "ferrotherm-thrml-bench/1",
+  "evidence_grade": "load_gated",
+  "provenance": {
+    "evidence_grade": "load_gated",
+    "git_rev": "5c54005fd0ff8dc62adedda478faa52388911902",
+    "git_dirty": false,
+    "host_cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+    "os": "linux",
+    "rustc": "unknown",
+    "thrml_pin": "thrml==0.1.4",
+    "thrml_wheel_sha256": "6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858",
+    "load1_at_start": 0.1800,
+    "what_this_machine_measured": "wall: no macmon and no INA3221 rail. nvml: 1 device(s): NVIDIA GeForce RTX 4050 Laptop GPU via nvmlDeviceGetTotalEnergyConsumption.",
+    "what_still_needs_fleet_hardware": "A quiet machine with a live RAPL domain (or a whole-board rail) for CPU joules; an NVIDIA GPU with libnvidia-ml.so.1 for GPU joules; an Apple silicon host with macmon on PATH for the SoC counter. None of those counters were a substitute for the others, and none of them is a Z1 device. BMI fleet hardware is what would meter a sustained run and, separately, any future silicon."
+  },
+  "quiet_gate": {"seconds": 60.010, "threshold": 2, "held": false, "evidence_grade": "load_gated", "max_load1": 5.24000000e0, "busy_readable": true, "load1": [0.3300, 0.3300, 0.3300, 0.3300, 0.3300, 0.3000, 0.3000, 0.3000, 0.3000, 0.3000, 0.3600, 0.3600, 0.3600, 0.3600, 0.3600, 0.3300, 0.3300, 0.3300, 0.3300, 0.3300, 0.3000, 0.3000, 0.3000, 0.3000, 0.3000, 0.6000, 0.6000, 0.6000, 0.6000, 0.6000, 1.0300, 1.0300, 1.0300, 1.0300, 1.0300, 1.3500, 1.3500, 1.3500, 1.3500, 1.3500, 1.7200, 1.7200, 1.7200, 1.7200, 1.7200, 1.5800, 1.5800, 1.5800, 1.5800, 1.5800, 1.7000, 1.7000, 1.7000, 1.7000, 1.7000, 3.0800, 3.0800, 3.0800, 3.0800, 3.0800, 5.2400], "other_core_busy": [{"cpu": 0, "busy": 0.302718}, {"cpu": 1, "busy": 0.057767}, {"cpu": 2, "busy": 0.333782}, {"cpu": 3, "busy": 0.032938}, {"cpu": 4, "busy": 0.421954}, {"cpu": 5, "busy": 0.109106}, {"cpu": 6, "busy": 0.432778}, {"cpu": 7, "busy": 0.055500}, {"cpu": 12, "busy": 0.095675}, {"cpu": 13, "busy": 0.091866}, {"cpu": 14, "busy": 0.094355}, {"cpu": 15, "busy": 0.084015}, {"cpu": 16, "busy": 0.098897}, {"cpu": 17, "busy": 0.105764}, {"cpu": 18, "busy": 0.140902}, {"cpu": 19, "busy": 0.145148}]},
+  "energy": null,
+  "workloads": []
+}

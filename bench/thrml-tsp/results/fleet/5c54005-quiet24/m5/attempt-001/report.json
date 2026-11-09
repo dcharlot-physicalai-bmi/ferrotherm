@@ -1,0 +1,20 @@
+{
+  "schema": "ferrotherm-thrml-bench/1",
+  "evidence_grade": "load_gated",
+  "provenance": {
+    "evidence_grade": "load_gated",
+    "git_rev": "5c54005fd0ff8dc62adedda478faa52388911902",
+    "git_dirty": false,
+    "host_cpu": "unknown",
+    "os": "macos",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "thrml_pin": "thrml==0.1.4",
+    "thrml_wheel_sha256": "6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858",
+    "load1_at_start": 2.3000,
+    "what_this_machine_measured": "wall: backend=macmon machine=Apple M5 Max scope=soc-telemetry. nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine).",
+    "what_still_needs_fleet_hardware": "A quiet machine with a live RAPL domain (or a whole-board rail) for CPU joules; an NVIDIA GPU with libnvidia-ml.so.1 for GPU joules; an Apple silicon host with macmon on PATH for the SoC counter. None of those counters were a substitute for the others, and none of them is a Z1 device. BMI fleet hardware is what would meter a sustained run and, separately, any future silicon."
+  },
+  "quiet_gate": {"seconds": 60.652, "threshold": 2, "held": false, "evidence_grade": "load_gated", "max_load1": 2.30000000e0, "busy_readable": false, "load1": [2.3000, 2.3000, 2.3000, 2.3000, 2.1900, 2.1900, 2.1900, 2.1900, 2.1900, 2.2600, 2.2600, 2.2600, 2.2600, 2.2600, 2.1600, 2.1600, 2.1600, 2.1600, 2.1600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0600, 2.0500, 2.0500, 2.0500, 2.0500, 2.0500, 1.8900, 1.8900, 1.8900, 1.8900, 1.8900, 1.9000, 1.9000, 1.9000, 1.9000, 1.9000, 1.9100, 1.9100, 1.9100, 1.9100, 1.9100, 1.8300, 1.8300, 1.8300, 1.8300, 1.8300, 1.8500, 1.8500, 1.8500, 1.8500, 1.8500, 1.7800, 1.7800], "other_core_busy": []},
+  "energy": null,
+  "workloads": []
+}

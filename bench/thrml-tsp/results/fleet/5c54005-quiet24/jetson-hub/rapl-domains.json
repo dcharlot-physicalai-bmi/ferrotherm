@@ -1,0 +1,36 @@
+{
+  "readable": [
+    {
+      "path": "/sys/class/powercap/intel-rapl:0",
+      "name": "package-0",
+      "key": "intel-rapl:0/package-0",
+      "max_energy_range_uj": 262143328850
+    },
+    {
+      "path": "/sys/class/powercap/intel-rapl:0:0",
+      "name": "core",
+      "key": "intel-rapl:0:0/core",
+      "max_energy_range_uj": 262143328850
+    },
+    {
+      "path": "/sys/class/powercap/intel-rapl:0:1",
+      "name": "uncore",
+      "key": "intel-rapl:0:1/uncore",
+      "max_energy_range_uj": 262143328850
+    },
+    {
+      "path": "/sys/class/powercap/intel-rapl:1",
+      "name": "psys",
+      "key": "intel-rapl:1/psys",
+      "max_energy_range_uj": 262143328850
+    }
+  ],
+  "unreadable": [
+    {
+      "path": "/sys/class/powercap/intel-rapl-mmio:0",
+      "name": "package-0",
+      "error": "[Errno 13] Permission denied: '/sys/class/powercap/intel-rapl-mmio:0/energy_uj'"
+    }
+  ],
+  "note": "intel-rapl:1 is psys (platform), not a second package. core and uncore are subdomains of package-0; nothing is summed."
+}
