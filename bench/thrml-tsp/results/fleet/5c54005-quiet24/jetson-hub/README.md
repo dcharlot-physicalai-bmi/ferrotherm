@@ -1,4 +1,11 @@
-# jetson-hub, attempt 2
+# jetson-hub
+
+Attempt 2, below, is `load_gated`. Attempt 3 is a different receipt, in
+`attempt-003/`, labeled: quiet preflight on 5c54005 (max load1 0.55); trial
+windows unguarded; NOT quiet-host joules under the c82c1e96 rule. The two
+attempts are not pooled. Attempt 3 does not turn attempt 2 into a quiet run.
+
+## Attempt 2
 
 Harness `5c54005fd0ff8dc62adedda478faa52388911902`, `git_dirty` false. The
 driver event names the host `jetson-hub`. The receipt's CPU is a 13th Gen
