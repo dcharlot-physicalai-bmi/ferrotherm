@@ -1,0 +1,9 @@
+2026-11-09T19:30:37.096950+00:00 pinned cpus: 4,5,6,7,20,21,22,23
+2026-11-09T19:30:39.759237+00:00 wall: no macmon and no INA3221 rail
+2026-11-09T19:30:39.759293+00:00 rapl: package-0 (package)
+2026-11-09T19:30:39.759297+00:00 rapl core: core subdomain, reported separately from package
+2026-11-09T19:30:39.759300+00:00 perf: not opened; RAPL powercap is the CPU counter
+2026-11-09T19:30:39.759303+00:00 nvml: libnvidia-ml.so.1 did not load (no NVIDIA Management Library on this machine)
+2026-11-09T19:30:39.759313+00:00 load1: Some(21.36) quiet: false
+2026-11-09T19:30:39.759315+00:00 quiet-gate preflight: 60 s
+2026-11-09T19:31:39.789351+00:00 quiet gate refused the run; max load1 Some(21.36)

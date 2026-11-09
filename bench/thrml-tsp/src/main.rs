@@ -84,20 +84,114 @@ fn main() {
         None
     };
 
-    let mut done: Vec<(usize, Vec<Chain>, Option<Vec<Chain>>)> = Vec::new();
-    let mut thrml_ok = args.skip_thrml;
-    let mut thrml_note = if args.skip_thrml {
+    let held = quiet_gate.as_ref().is_some_and(|gate| gate.held);
+    let order = energy::phase_order(held);
+    let spec_path = args.out.join("spec.txt");
+    let (energy, grade, accuracy) = match order {
+        ["energy", "accuracy"] => {
+            eprintln!("phase order: energy, then accuracy");
+            let (energy, grade) = energy_section(
+                &mut probe,
+                &work,
+                args.contended,
+                args.trials,
+                &args.python,
+                &args.runner,
+                &spec_path,
+                !args.skip_thrml,
+                &args.device,
+                &args.cpus,
+            );
+            let accuracy = run_accuracy(&work, args.skip_thrml, &args.python, &args.runner, &args.out, &spec_path, &traces, &args.device);
+            (energy, grade, accuracy)
+        }
+        ["accuracy", "energy"] => {
+            eprintln!("phase order: accuracy, then energy");
+            let accuracy = run_accuracy(&work, args.skip_thrml, &args.python, &args.runner, &args.out, &spec_path, &traces, &args.device);
+            let (energy, grade) = energy_section(
+                &mut probe,
+                &work,
+                args.contended,
+                args.trials,
+                &args.python,
+                &args.runner,
+                &spec_path,
+                !args.skip_thrml && accuracy.thrml_ok,
+                &args.device,
+                &args.cpus,
+            );
+            (energy, grade, accuracy)
+        }
+        other => panic!("phase_order returned {other:?}"),
+    };
+    let mut body = String::new();
+    for (index, ft_trials, thrml_trials) in &accuracy.done {
+        body.push_str(&workload_json(&work[*index], ft_trials, thrml_trials.as_deref(), grade));
+        body.push_str(",\n");
+    }
+    if body.ends_with(",\n") {
+        body.truncate(body.len() - 2);
+        body.push('\n');
+    }
+    let gate_json = quiet_gate.as_ref().map_or_else(|| "null".into(), quiet_gate_json);
+    let order_json = format!("[{}, {}]", json_str(order[0]), json_str(order[1]));
+    let settle_note = if order[0] == "energy" {
+        "energy followed the passing 60 s preflight, so no settle samples were taken. load1 was not discounted by pid."
+    } else {
+        "the 60 s preflight did not admit this run, so accuracy stayed before energy and no settle was taken."
+    };
+    let report = format!(
+        "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": {grade},\n  \
+         \"phase_order\": {order},\n  \"settle_load1\": null,\n  \"settle_note\": {settle},\n  \
+         \"provenance\": {prov},\n  \"quiet_gate\": {gate},\n  \
+         \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_error\": {err},\n  \
+         \"workloads\": [\n{body}  ]\n}}\n",
+        grade = json_str(grade),
+        order = order_json,
+        settle = json_str(settle_note),
+        prov = provenance_json(&probe, grade),
+        gate = gate_json,
+        meta = json_str(&accuracy.thrml_meta),
+        err = if accuracy.thrml_note.is_empty() { "null".into() } else { json_str(&accuracy.thrml_note) },
+    );
+    fs::write(args.out.join("report.json"), &report).expect("write report");
+    eprintln!("wrote {}", args.out.join("report.json").display());
+    if !accuracy.thrml_ok {
+        std::process::exit(1);
+    }
+}
+
+struct AccuracyRun {
+    done: Vec<(usize, Vec<Chain>, Option<Vec<Chain>>)>,
+    thrml_ok: bool,
+    thrml_note: String,
+    thrml_meta: String,
+}
+
+fn run_accuracy(
+    work: &[Workload],
+    skip_thrml: bool,
+    python: &Path,
+    runner: &Path,
+    out: &Path,
+    spec: &Path,
+    traces: &Path,
+    device: &str,
+) -> AccuracyRun {
+    let mut done = Vec::new();
+    let mut thrml_ok = skip_thrml;
+    let mut thrml_note = if skip_thrml {
         "THRML runner skipped on request".to_string()
     } else {
         String::new()
     };
-    let thrml_raw = if args.skip_thrml {
+    let thrml_raw = if skip_thrml {
         None
     } else {
-        match run_thrml(&args.python, &args.runner, &args.out.join("spec.txt"), &args.out.join("thrml_raw.txt"), &args.device) {
+        match run_thrml(python, runner, spec, &out.join("thrml_raw.txt"), device) {
             Ok(()) => {
                 thrml_ok = true;
-                Some(fs::read_to_string(args.out.join("thrml_raw.txt")).unwrap_or_default())
+                Some(fs::read_to_string(out.join("thrml_raw.txt")).unwrap_or_default())
             }
             Err(e) => {
                 thrml_note = e;
@@ -116,15 +210,14 @@ fn main() {
             (String::new(), None)
         }
     };
-
-    for w in &work {
+    for w in work {
         eprintln!("ferrotherm {}", w.id);
         let mut ft_trials = Vec::new();
         for t in 0..w.trials {
             let seed = w.seed0 + t as u64;
             let chain = ft::run(w, seed).unwrap_or_else(|e| panic!("{} seed {seed}: {e}", w.id));
             if t == 0 {
-                write_trace(&traces, w.id, "ferrotherm", &chain);
+                write_trace(traces, w.id, "ferrotherm", &chain);
             }
             eprintln!(
                 "  seed {seed} tv {:.4} tau {:.3} ess/s {}",
@@ -148,53 +241,11 @@ fn main() {
         if let Some(trials) = &thrml_trials
             && let Some(first) = trials.first()
         {
-            write_trace(&traces, w.id, "thrml", first);
+            write_trace(traces, w.id, "thrml", first);
         }
-        done.push((
-            work.iter().position(|item| item.id == w.id).expect("workload id"),
-            ft_trials,
-            thrml_trials,
-        ));
+        done.push((work.iter().position(|item| item.id == w.id).expect("workload id"), ft_trials, thrml_trials));
     }
-
-    let (energy, grade) = energy_section(
-        &mut probe,
-        &work,
-        args.contended,
-        args.trials,
-        &args.python,
-        &args.runner,
-        &args.out.join("spec.txt"),
-        !args.skip_thrml && thrml_ok,
-        &args.device,
-        &args.cpus,
-    );
-    let mut body = String::new();
-    for (index, ft_trials, thrml_trials) in &done {
-        body.push_str(&workload_json(&work[*index], ft_trials, thrml_trials.as_deref(), grade));
-        body.push_str(",\n");
-    }
-    if body.ends_with(",\n") {
-        body.truncate(body.len() - 2);
-        body.push('\n');
-    }
-    let gate_json = quiet_gate.as_ref().map_or_else(|| "null".into(), quiet_gate_json);
-    let report = format!(
-        "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": {grade},\n  \
-         \"provenance\": {prov},\n  \"quiet_gate\": {gate},\n  \
-         \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_error\": {err},\n  \
-         \"workloads\": [\n{body}  ]\n}}\n",
-        grade = json_str(grade),
-        prov = provenance_json(&probe, grade),
-        gate = gate_json,
-        meta = json_str(&thrml_meta),
-        err = if thrml_note.is_empty() { "null".into() } else { json_str(&thrml_note) },
-    );
-    fs::write(args.out.join("report.json"), &report).expect("write report");
-    eprintln!("wrote {}", args.out.join("report.json").display());
-    if !thrml_ok {
-        std::process::exit(1);
-    }
+    AccuracyRun { done, thrml_ok, thrml_note, thrml_meta }
 }
 
 struct Args {

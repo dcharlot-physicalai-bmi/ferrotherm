@@ -1,0 +1,17 @@
+Mon Nov  9 19:30:37 UTC 2026
+ 19:30:37 up 24 days,  7:08,  6 users,  load average: 21.36, 24.07, 25.32
+USER         PID                  STARTED %CPU %MEM COMMAND         COMMAND
+root      488816 Mon Nov  9 19:30:25 2026  599  1.5 trace-b4f56b891 /ci-cache/waitransport/rust/debug/deps/trace-b4f56b89163d1f29
+dcharlot  347693 Mon Nov  9 19:29:08 2026  134  0.0 wai-quantum     wai-quantum lab tdvp -n 100 --bond 64 --dt 0.1 --t 4
+dcharlot  497311 Mon Nov  9 19:30:30 2026 99.8  0.0 wai-quantum     wai-quantum lab dmrg -n 200 --bond 64 --sweeps 4
+dcharlot  331381 Sat Nov  7 13:30:49 2026 99.5  0.0 bash            bash /home/dcharlot/src/mojo/.pixi/envs/default/bin/max
+dcharlot  507075 Mon Nov  9 19:30:35 2026 99.3  0.0 exe             /proc/396506/exe read
+dcharlot  395141 Mon Nov  9 19:29:47 2026  3.9  0.0 depth-5ab806787 /home/dcharlot/wai-build/rb/targets/os-wt-qdepth/release/deps/depth-5ab80678786e0a16
+dcharlot  461770 Mon Nov  9 19:30:12 2026  1.0  0.0 python3         python3 /home/dcharlot/wai-build/rb/wt/os-wt-qjoules/wai/tools/quantum-docs/check_docs.py --cli /home/dcharlot/wai-build/rb/targets/os-wt-qjoules/release/wai-quantum --service http://127.0.0.1:18931 --python /home/dcharlot/wai-build/rb/tmp/os-wt-qjoules/tmp.YCCitCRbX8/wai-quantum-docs/venv/bin/python --rust
+root     2078667 Thu Oct 22 16:44:37 2026  0.7  0.0 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+syslog   4134497 Sat Oct 24 06:31:09 2026  0.5  0.0 rsyslogd        /usr/sbin/rsyslogd -n -iNONE
+root         248 Fri Oct 16 12:21:43 2026  0.3  0.0 kswapd0         [kswapd0]
+root        2132 Fri Oct 16 12:21:49 2026  0.3  0.0 containerd      /usr/bin/containerd
+txlinux  1001927 Tue Nov  3 11:41:09 2026  0.3  0.0 forgejo-runner- /usr/local/bin/forgejo-runner-amd daemon --config /home/txlinux/runner/config.yaml
+root      782742 Wed Nov  4 06:24:44 2026  0.3  0.0 systemd-journal /usr/lib/systemd/systemd-journald
+root        2708 Fri Oct 16 12:21:53 2026  0.3  0.0 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock

@@ -48,7 +48,12 @@ runs. The run starts only when every load sample is at or under 2. The busy
 fraction is stamped on the receipt and is not a second threshold. The evidence
 grade is written on the report, on each workload, and on `quiet-gate.json`.
 `--quiet-gate` and `--contended` are different grades and are refused together.
-The energy section's own quiet gate is unchanged.
+When that preflight holds, the energy phase runs next and the accuracy phase
+follows it. load1 is a one-minute average, so accuracy and THRML before the
+energy check raise the average the check then refuses. The threshold stays 2.
+No process is taken out of the load. The energy section still requires load1
+at or under 2. `settle_load1` on the receipt is null: energy used the passing
+preflight and did not wait for a second 60 s decay.
 
 `--scale` adds the larger workloads: open Ising at 4×4, 8×8, 16×16 (transfer
 matrix; 4×4 is also enumerated), 32×32 and 64×64 (Onsager's infinite lattice,
