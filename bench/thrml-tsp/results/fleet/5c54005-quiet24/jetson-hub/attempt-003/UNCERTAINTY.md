@@ -118,3 +118,69 @@ Scope limit from the receipt: NVML total energy, summed across devices. It is no
 | tsp_iv4_three_body_d12 | thrml | 10 | 7.14516050e2 [6.68406013e2, 7.60626087e2] n=10 | 7.07439293e2 [6.61688441e2, 7.53190146e2] n=10 | 6.61372191e0 [5.08008210e0, 8.14736173e0] n=7 | 1.53363981e0 | 8.86105519e-6 | 6.18134588e-3 | 4.66422301e-3 | 1.53365936e0 |
 | tsp_iv4_three_body_d16 | ferrotherm | 10 | 7.80871403e0 [7.52046685e0, 8.09696121e0] n=10 | 7.73064686e0 [7.44510539e0, 8.01618834e0] n=10 | 1.61647386e-2 [1.52589898e-2, 1.70704874e-2] n=5 | 9.05748779e-4 | 2.80775481e-8 | 1.96650402e-5 | 1.09360285e-5 | 9.06028235e-4 |
 | tsp_iv4_three_body_d16 | thrml | 10 | 7.37221050e2 [7.22958292e2, 7.51483808e2] n=10 | 7.29821073e2 [7.15578805e2, 7.44063341e2] n=10 | 1.48373374e0 [8.08960195e-1, 2.15850729e0] n=5 | 6.74773550e-1 | 2.09421346e-6 | 1.45993380e-3 | 1.07202889e-3 | 6.74775981e-1 |
+
+## Size against the quotient, one host, one meter
+
+Host `jetson-hub` only. Grade of every row: quiet preflight, unguarded windows. That is not grade quiet, and it is not the contended 0029c27 bundle. Package, core, and NVML are three tables. They are not pooled with each other or with any other host.
+
+The quotient is THRML J/ESS divided by ferrotherm J/ESS, using the summary means above. The ± on each J/ESS is that summary's `combined` term. The ± on the quotient is `R * sqrt((u_f / J_f)^2 + (u_t / J_t)^2)`, with `u` those combined terms, treated as independent. Where either side has null J/ESS, the quotient is not formed. A quotient on a 5-spin chain is not a quotient on a 64×64 grid. On package the chain is 545.6 ± 46.6, about 546×, and the open 64×64 (n=4096) is 8.688 ± 1.41, about 8.7×.
+
+### RAPL package, jetson-hub
+
+| workload | side size | ferrotherm J/ESS ± combined | THRML J/ESS ± combined | THRML / ferrotherm | grade |
+| --- | --- | --- | --- | --- | --- |
+| thrml_readme_ising_chain_n5 | n=5, open chain | 8.49821370e-6 ± 6.66934427e-7 | 4.63666514e-3 ± 1.55541040e-4 | 545.6 ± 46.57 | quiet preflight, unguarded windows |
+| ising_grid2d_open_3x3 | n=9, open Ising 3×3 | 1.34316749e-5 ± 1.73736949e-6 | 8.05946240e-3 ± 5.01590399e-4 | 600.0 ± 86.13 | quiet preflight, unguarded windows |
+| potts_path_q3_n6 | n=6, q=3, Potts path | null | null | not formed | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d8 | n=8, three-body d=8 | null | null | not formed | quiet preflight, unguarded windows |
+| ising_open_4x4 | n=16, open Ising 4x4 | null | null | not formed | quiet preflight, unguarded windows |
+| ising_open_8x8 | n=64, open Ising 8x8 | 5.32427701e-5 ± 7.26553247e-6 | 8.36564446e-3 ± 3.66887787e-4 | 157.1 ± 22.52 | quiet preflight, unguarded windows |
+| ising_open_16x16 | n=256, open Ising 16x16 | 1.87750448e-4 ± 2.01172167e-5 | 9.90613863e-3 ± 4.58448929e-4 | 52.76 ± 6.158 | quiet preflight, unguarded windows |
+| ising_open_32x32 | n=1024, open Ising 32x32 | 7.56757555e-4 ± 8.12869043e-5 | 1.38571202e-2 ± 5.63110937e-4 | 18.31 ± 2.103 | quiet preflight, unguarded windows |
+| ising_open_64x64 | n=4096, open Ising 64x64 | 3.13378895e-3 ± 3.87430026e-4 | 2.72259987e-2 ± 2.87025364e-3 | 8.688 ± 1.412 | quiet preflight, unguarded windows |
+| potts_open_q3_4x4 | n=16, q=3, open Potts 4x4 | 2.95011224e-5 ± 3.29534181e-6 | 7.26997337e-3 ± 2.30394063e-4 | 246.4 ± 28.61 | quiet preflight, unguarded windows |
+| potts_open_q3_8x8 | n=64, q=3, open Potts 8x8 | 1.22398042e-4 ± 1.33377773e-5 | 8.32422867e-3 ± 3.98433452e-4 | 68.01 ± 8.094 | quiet preflight, unguarded windows |
+| potts_open_q4_4x4 | n=16, q=4, open Potts 4x4 | 3.20520816e-5 ± 2.41001329e-6 | 9.24940936e-3 ± 6.26088463e-4 | 288.6 ± 29.20 | quiet preflight, unguarded windows |
+| potts_open_q4_8x8 | n=64, q=4, open Potts 8x8 | 1.49501012e-4 ± 1.42093009e-5 | 9.83591165e-3 ± 6.25930809e-4 | 65.79 ± 7.525 | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d12 | n=12, three-body d=12 | 2.05538586e-4 ± 2.97181083e-5 | 2.40200969e-1 ± 5.73922424e-2 | 1169 ± 326.4 | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d16 | n=16, three-body d=16 | 4.30913723e-4 ± 5.22045696e-5 | 5.67708909e-2 ± 2.49894060e-2 | 131.7 ± 60.15 | quiet preflight, unguarded windows |
+
+### RAPL core, jetson-hub
+
+| workload | side size | ferrotherm J/ESS ± combined | THRML J/ESS ± combined | THRML / ferrotherm | grade |
+| --- | --- | --- | --- | --- | --- |
+| thrml_readme_ising_chain_n5 | n=5, open chain | 8.85749403e-6 ± 5.73363758e-7 | 4.68409696e-3 ± 3.22161464e-4 | 528.8 ± 49.95 | quiet preflight, unguarded windows |
+| ising_grid2d_open_3x3 | n=9, open Ising 3×3 | 1.42005831e-5 ± 1.48332962e-6 | 7.95052698e-3 ± 4.35452896e-4 | 559.9 ± 66.03 | quiet preflight, unguarded windows |
+| potts_path_q3_n6 | n=6, q=3, Potts path | null | null | not formed | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d8 | n=8, three-body d=8 | null | null | not formed | quiet preflight, unguarded windows |
+| ising_open_4x4 | n=16, open Ising 4x4 | null | null | not formed | quiet preflight, unguarded windows |
+| ising_open_8x8 | n=64, open Ising 8x8 | 5.56319674e-5 ± 7.31374165e-6 | 8.30306359e-3 ± 3.26865240e-4 | 149.2 ± 20.48 | quiet preflight, unguarded windows |
+| ising_open_16x16 | n=256, open Ising 16x16 | 1.97065457e-4 ± 1.91611517e-5 | 9.78721917e-3 ± 3.99143792e-4 | 49.66 ± 5.237 | quiet preflight, unguarded windows |
+| ising_open_32x32 | n=1024, open Ising 32x32 | 7.97162950e-4 ± 8.04049298e-5 | 1.38588429e-2 ± 5.01672523e-4 | 17.39 ± 1.863 | quiet preflight, unguarded windows |
+| ising_open_64x64 | n=4096, open Ising 64x64 | 3.26451088e-3 ± 3.94666161e-4 | 2.72566563e-2 ± 2.82057976e-3 | 8.349 ± 1.329 | quiet preflight, unguarded windows |
+| potts_open_q3_4x4 | n=16, q=3, open Potts 4x4 | 3.10876533e-5 ± 3.16535304e-6 | 7.29727145e-3 ± 2.11280993e-4 | 234.7 ± 24.85 | quiet preflight, unguarded windows |
+| potts_open_q3_8x8 | n=64, q=3, open Potts 8x8 | 1.28628139e-4 ± 1.27095286e-5 | 8.35250281e-3 ± 3.93348942e-4 | 64.94 ± 7.108 | quiet preflight, unguarded windows |
+| potts_open_q4_4x4 | n=16, q=4, open Potts 4x4 | 3.40169896e-5 ± 2.40060512e-6 | 9.35496796e-3 ± 6.25080260e-4 | 275.0 ± 26.73 | quiet preflight, unguarded windows |
+| potts_open_q4_8x8 | n=64, q=4, open Potts 8x8 | 1.56928468e-4 ± 1.33039785e-5 | 9.92795720e-3 ± 5.73270471e-4 | 63.26 ± 6.489 | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d12 | n=12, three-body d=12 | 2.15332267e-4 ± 3.02602129e-5 | 2.39459299e-1 ± 5.74896702e-2 | 1112 ± 309.4 | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d16 | n=16, three-body d=16 | 4.55528448e-4 ± 5.40462154e-5 | 5.63520599e-2 ± 2.47419341e-2 | 123.7 ± 56.26 | quiet preflight, unguarded windows |
+
+### NVML gpu, jetson-hub
+
+| workload | side size | ferrotherm J/ESS ± combined | THRML J/ESS ± combined | THRML / ferrotherm | grade |
+| --- | --- | --- | --- | --- | --- |
+| thrml_readme_ising_chain_n5 | n=5, open chain | 2.54591183e-4 ± 8.87651844e-6 | 1.19685725e-1 ± 5.82101314e-3 | 470.1 ± 28.13 | quiet preflight, unguarded windows |
+| ising_grid2d_open_3x3 | n=9, open Ising 3×3 | 4.68745116e-4 ± 1.88543621e-5 | 2.23665629e-1 ± 1.23721785e-2 | 477.2 ± 32.63 | quiet preflight, unguarded windows |
+| potts_path_q3_n6 | n=6, q=3, Potts path | null | null | not formed | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d8 | n=8, three-body d=8 | null | null | not formed | quiet preflight, unguarded windows |
+| ising_open_4x4 | n=16, open Ising 4x4 | null | null | not formed | quiet preflight, unguarded windows |
+| ising_open_8x8 | n=64, open Ising 8x8 | 1.46092533e-3 ± 8.17986041e-5 | 2.32297285e-1 ± 1.38126330e-2 | 159.0 ± 12.99 | quiet preflight, unguarded windows |
+| ising_open_16x16 | n=256, open Ising 16x16 | 6.03586320e-3 ± 2.71229801e-4 | 2.69144641e-1 ± 1.18443336e-2 | 44.59 ± 2.805 | quiet preflight, unguarded windows |
+| ising_open_32x32 | n=1024, open Ising 32x32 | 2.54149189e-2 ± 8.85415695e-4 | 3.90331935e-1 ± 1.04130995e-2 | 15.36 ± 0.6739 | quiet preflight, unguarded windows |
+| ising_open_64x64 | n=4096, open Ising 64x64 | 9.66126146e-2 ± 4.97224309e-3 | 7.62782277e-1 ± 6.84837357e-2 | 7.895 ± 0.8171 | quiet preflight, unguarded windows |
+| potts_open_q3_4x4 | n=16, q=3, open Potts 4x4 | 9.80276582e-4 ± 4.10804312e-5 | 2.01608665e-1 ± 3.29960109e-3 | 205.7 ± 9.253 | quiet preflight, unguarded windows |
+| potts_open_q3_8x8 | n=64, q=3, open Potts 8x8 | 3.88157191e-3 ± 1.70710287e-4 | 2.27950056e-1 ± 8.61245827e-3 | 58.73 ± 3.405 | quiet preflight, unguarded windows |
+| potts_open_q4_4x4 | n=16, q=4, open Potts 4x4 | 1.17139085e-3 ± 4.47056126e-5 | 2.62559446e-1 ± 1.51680911e-2 | 224.1 ± 15.52 | quiet preflight, unguarded windows |
+| potts_open_q4_8x8 | n=64, q=4, open Potts 8x8 | 4.85666519e-3 ± 1.94217968e-4 | 2.80193949e-1 ± 1.54426992e-2 | 57.69 ± 3.929 | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d12 | n=12, three-body d=12 | 6.66415298e-3 ± 3.47446068e-4 | 6.61372191e0 ± 1.53365936e0 | 992.4 ± 235.9 | quiet preflight, unguarded windows |
+| tsp_iv4_three_body_d16 | n=16, three-body d=16 | 1.61647386e-2 ± 9.06028235e-4 | 1.48373374e0 ± 6.74775981e-1 | 91.79 ± 42.06 | quiet preflight, unguarded windows |

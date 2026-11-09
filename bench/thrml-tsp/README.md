@@ -114,7 +114,11 @@ The first record, the files directly under `results/fleet/` other than
 trials on each host were attributable, evidence grade `contended host`. RAPL
 package and macmon SoC telemetry stay in separate tables. The per-workload
 J/ESS intervals and the limits are in `results/fleet/0029c27/RESULTS.md`.
-There is no quiet-host leadership claim in that file.
+The package quotients there run from 529× on the open 3×3 (9 spins) to 1703×
+on the 8-spin three-body model. The SoC-telemetry quotients run from 347× to
+1218× on those same two sizes. The other two models in each table are the
+5-spin chain and the 6-site Potts path. That span does not cover a 16×16 or
+larger grid, and it is not a quiet-host claim.
 
 `results/fleet/8e9ad0a-scale/` is a later `--scale` run on `framework-128gb-0000`.
 It is **invalid for energy**: one 144.8 W baseline was subtracted while load1 moved
