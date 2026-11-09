@@ -1783,18 +1783,24 @@ impl Probe {
                 let note = series.note.clone();
                 (Some(series), note)
             }
-            Err(e) => (None, e),
+            Err(e) => (None, format!("backend not chosen: ina238. reason: {e}")),
         };
         let subrails = HwmonSeries::open_subrails();
         let (tegra, tegra_note) = if ina238.is_some() {
-            (None, "not opened; INA238 VIN is the module-input meter and tegrastats would read the same boundary".into())
+            (
+                None,
+                "backend not chosen: tegrastats. reason: INA238 VIN is the Jetson module-input meter (module plus carrier, not wall power), so tegrastats is not opened.".into(),
+            )
         } else if wall.is_some() {
-            (None, "not opened; a power backend (macmon SoC telemetry or an INA3221 total) is already open".into())
+            (
+                None,
+                "backend not chosen: tegrastats. reason: a power backend (macmon SoC telemetry or an INA3221 total) is already open.".into(),
+            )
         } else {
             match Tegra::open() {
                 Ok(t) => {
                     let note = format!(
-                        "tegrastats {}, rootless, label recorded, other rails not summed",
+                        "backend chosen: tegrastats. reason: {ina238_note} label {} is Jetson module input (VIN or VDD_IN), not wall power. Other rails are not summed.",
                         t.label
                     );
                     (Some(t), note)
@@ -1979,18 +1985,27 @@ pub struct Ina238Found {
 }
 
 fn i2c_addr_of(start: &std::path::Path) -> String {
-    let mut dir = start;
-    loop {
-        if let Some(name) = dir.file_name().and_then(|s| s.to_str())
+    if let Some(addr) = i2c_addr_along(start) {
+        return addr;
+    }
+    // `/sys/class/hwmon/hwmonN` is a symlink. The i2c address is on the target, not the link path.
+    if let Ok(canon) = std::fs::canonicalize(start)
+        && let Some(addr) = i2c_addr_along(&canon)
+    {
+        return addr;
+    }
+    "unknown".into()
+}
+
+fn i2c_addr_along(start: &std::path::Path) -> Option<String> {
+    for ancestor in start.ancestors() {
+        if let Some(name) = ancestor.file_name().and_then(|s| s.to_str())
             && is_i2c_node(name)
         {
-            return name.to_string();
-        }
-        match dir.parent() {
-            Some(parent) if parent != dir => dir = parent,
-            _ => return "unknown".into(),
+            return Some(name.to_string());
         }
     }
+    None
 }
 
 fn is_i2c_node(name: &str) -> bool {
@@ -2002,8 +2017,23 @@ fn is_i2c_node(name: &str) -> bool {
         && addr.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn walk_hwmon_names(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
-    if depth > 6 {
+/// Walk `dir`, following directory symlinks.
+///
+/// `symlink_metadata` does not treat a symlink as a directory, so `/sys/class/hwmon/hwmonN`
+/// and `/sys/bus/i2c/devices/2-0044` were skipped and the deep device path was past the
+/// depth bound. `metadata` follows the link. Canonical paths are remembered so a link
+/// back into an ancestor does not recurse.
+fn walk_hwmon_names(
+    dir: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+    seen: &mut std::collections::HashSet<std::path::PathBuf>,
+    depth: usize,
+) {
+    if depth > 8 {
+        return;
+    }
+    let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !seen.insert(canon) {
         return;
     }
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -2013,16 +2043,22 @@ fn walk_hwmon_names(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, de
         let path = ent.path();
         if path.file_name().and_then(|s| s.to_str()) == Some("name") {
             out.push(path);
-        } else if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
-            walk_hwmon_names(&path, out, depth + 1);
+        } else if std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+            walk_hwmon_names(&path, out, seen, depth + 1);
         }
     }
 }
 
 /// Find an `ina238` under `root`. Prefers a verified `2-0044` node when several exist.
+///
+/// Looks through `/sys/class/hwmon/*` symlinks and `/sys/bus/i2c/devices/*/hwmon/*`, and
+/// through a direct `2-0044/hwmon/` tree. The same device reached both ways is one result.
 pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
     let mut names = Vec::new();
-    walk_hwmon_names(root, &mut names, 0);
+    let mut seen = std::collections::HashSet::new();
+    walk_hwmon_names(&root.join("class/hwmon"), &mut names, &mut seen, 0);
+    walk_hwmon_names(&root.join("bus/i2c/devices"), &mut names, &mut seen, 0);
+    walk_hwmon_names(root, &mut names, &mut seen, 0);
     let mut found = Vec::new();
     for name_path in names {
         let Ok(raw) = std::fs::read_to_string(&name_path) else {
@@ -2046,6 +2082,8 @@ pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
         };
         let i2c = i2c_addr_of(dir);
         let verified = i2c.eq_ignore_ascii_case("2-0044");
+        let resolved = std::fs::canonicalize(dir)
+            .map_or_else(|_| dir.display().to_string(), |p| p.display().to_string());
         let volts = std::fs::read_to_string(dir.join("in0_input"))
             .ok()
             .and_then(|s| s.trim().parse::<f64>().ok())
@@ -2054,13 +2092,21 @@ pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
             .unwrap_or_default();
         let note = if verified {
             format!(
-                "ina238 i2c {i2c} name={name} source={source}.{volts} L4T R39 Jetson Thor: VIN is overall system power, module plus carrier, not wall. INA3221 sub-rails are not added."
+                "backend chosen: ina238. reason: verified Jetson module input (VIN) at i2c {i2c}, module plus carrier, not wall power. name={name} source={source} path={} resolved={resolved}.{volts} INA3221 sub-rails are not added.",
+                dir.display()
             )
         } else {
             format!(
-                "unverified ina238 i2c {i2c} name={name} source={source}.{volts} Not the L4T R39 node at 2-0044, so this is not established as module-input VIN."
+                "unverified ina238 i2c {i2c} name={name} source={source} path={} resolved={resolved}.{volts} Not the L4T R39 node at 2-0044, so this is not established as module-input VIN and is not wall power.",
+                dir.display()
             )
         };
+        let sensor = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if found.iter().any(|item: &Ina238Found| {
+            std::fs::canonicalize(&item.path).unwrap_or_else(|_| item.path.clone()) == sensor
+        }) {
+            continue;
+        }
         found.push(Ina238Found {
             name,
             i2c,
@@ -2075,7 +2121,9 @@ pub fn find_ina238(root: &std::path::Path) -> Result<Ina238Found, String> {
     found
         .into_iter()
         .next()
-        .ok_or_else(|| "no ina238 hwmon with power1_input or energy1_input".into())
+        .ok_or_else(|| {
+            "no ina238 hwmon with power1_input or energy1_input after following class/hwmon symlinks and bus/i2c/devices/*/hwmon".into()
+        })
 }
 
 /// Scope token for one INA3221 channel that is not a total rail.
@@ -3528,6 +3576,42 @@ mod tests {
         ));
         assert!(subrail_scope("sum of shunt voltages").is_none());
         assert!(subrail_scope("VDD_IN").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_ina238_behind_hwmon_symlinks_is_module_input_not_wall() {
+        let root = std::env::temp_dir().join(format!("ft-thor-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // Deeper than the walk bound, so a directory-only scan never sees `name`.
+        let real = root.join("deep/a/b/c/d/e/f/2-0044/hwmon/hwmon7");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("name"), "ina238\n").unwrap();
+        std::fs::write(real.join("power1_input"), "31000000\n").unwrap();
+        std::fs::write(real.join("in0_input"), "20000\n").unwrap();
+        let class = root.join("class/hwmon");
+        let i2c = root.join("bus/i2c/devices");
+        std::fs::create_dir_all(&class).unwrap();
+        std::fs::create_dir_all(&i2c).unwrap();
+        std::os::unix::fs::symlink(&real, class.join("hwmon7")).unwrap();
+        std::os::unix::fs::symlink(real.parent().unwrap().parent().unwrap(), i2c.join("2-0044")).unwrap();
+        let found = find_ina238(&root).expect("symlink");
+        assert!(found.verified, "{}", found.note);
+        assert_eq!(found.i2c, "2-0044");
+        assert_eq!(found.source, "power1_input");
+        assert!(found.note.contains("backend chosen: ina238"), "{}", found.note);
+        assert!(found.note.contains("module input"), "{}", found.note);
+        assert!(found.note.contains("not wall"), "{}", found.note);
+        assert!(found.note.contains("class/hwmon"), "{}", found.note);
+        let raw: f64 = std::fs::read_to_string(&found.path).unwrap().trim().parse().unwrap();
+        assert!((raw * 1.0e-6 - 31.0).abs() < 1e-9, "{raw}");
+        std::fs::remove_file(class.join("hwmon7")).unwrap();
+        let via_i2c = find_ina238(&root).expect("i2c symlink");
+        assert_eq!(via_i2c.i2c, "2-0044");
+        assert!(via_i2c.note.contains("bus/i2c/devices"), "{}", via_i2c.note);
+        assert!(via_i2c.note.contains("not wall"), "{}", via_i2c.note);
+        std::fs::remove_file(i2c.join("2-0044")).unwrap();
+        assert!(find_ina238(&root).is_err(), "the deep path alone is not the discovery");
         let _ = std::fs::remove_dir_all(&root);
     }
 
