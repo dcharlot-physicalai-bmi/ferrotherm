@@ -8,7 +8,7 @@
 //! Both sides measured the same way -- the meter's own scope above idle, divided by the node
 //! updates the ledger counted -- so the comparison is between two ways of doing one thing on one
 //! machine, not between a measurement and a datasheet. On Apple silicon that scope is `macmon`
-//! `sys_power`: SoC telemetry, not wall power.
+//! `sys_power`: `SoC` telemetry, not wall power.
 
 use ferrotherm::{gibbs::Sampler, ising::lattice2d, ledger::Ledger, wgsl::GpuModel};
 use std::time::Duration;
