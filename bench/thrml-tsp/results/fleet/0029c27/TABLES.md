@@ -2,7 +2,7 @@
 
 Values copied directly from the harness summaries, not recalculated. Cells are mean [95% CI]; n=5 per sampler per workload. Gross and above-baseline joules are normalized per sampler repetition, NOT totals for the >=2-second measurement window. J/ESS is incremental joules per effective sample. Exact report.json records and raw traces are included. Both measured runs have evidence grade **contended host**.
 
-The macmon scope in these receipts was recorded as `whole-system`. That token is `sys_power`, SoC telemetry, not wall power. The cells below are the harness mean-times-duration figures. They were not replaced by a trapezoid: the raw traces have no per-trial timestamps. The whole-trace integrals, the uncertainty budget, and whether the ratios still separate are in `RESULTS.md`. Package and core are not added. This harness did not emit a core column.
+The macmon scope in these receipts was recorded as `whole-system`. That token is `sys_power`, SoC telemetry, not wall power. The cells below are the harness mean-times-duration figures. They were not replaced by a trapezoid: the raw traces have no per-trial timestamps. The whole-trace integrals and the uncertainty budget are in `RESULTS.md`. The quotients there, 529×–1703× on package and 347×–1218× on SoC telemetry, are the endpoints of these four models only: the 5-spin chain, the open 3×3 (9 spins), the 6-site Potts path, and the 8-spin three-body system. They do not separate the samplers on a larger grid. Package and core are not added. This harness did not emit a core column.
 
 ## Framework — RAPL package, primary
 

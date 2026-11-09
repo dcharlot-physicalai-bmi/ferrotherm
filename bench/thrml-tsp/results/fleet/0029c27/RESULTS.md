@@ -77,11 +77,13 @@ This budget sits beside the Student-t scatter. It does not replace the cells. Pe
 | soc-telemetry | potts_path_q3_n6 | 4.912042e-06 ± 6.935e-07 | 5.790502e-03 ± 6.193e-04 | 1179 | no |
 | soc-telemetry | tsp_iv4_three_body_d8 | 1.892900e-05 ± 3.188e-06 | 2.305897e-02 ± 5.910e-03 | 1218 | no |
 
-Within each scope, ferrotherm J/ESS stays below THRML J/ESS after that combined budget. The macmon ordering is an ordering of SoC-telemetry mean-times-duration figures. It is not a wall-power result, and it is not a per-trial trapezoidal recomputation: those windows are not in the trace. The whole-recording trapezoid of `sys_power` differs from mean-times-duration by 2.22e-5, which does not move a ratio of a few hundred. The package ordering is an ordering of package counter deltas. The core integral above is a different number and was not folded in.
+The package column runs from 529× on `ising_grid2d_open_3x3` (open 3×3, 9 spins) to 1703× on `tsp_iv4_three_body_d8` (8 spins). The SoC-telemetry column runs from 347× on that same 3×3 to 1218× on that same 8-spin three-body model. The other two rows in each scope are the 5-spin chain (`thrml_readme_ising_chain_n5`, 586× package, 355× SoC telemetry) and the 6-site Potts path (`potts_path_q3_n6`, 1504× package, 1179× SoC telemetry). Those four models are the whole of this bundle. The span is not a 16×16, 32×32, or 64×64 result, and it is not a claim that ferrotherm costs less on a large grid. Every cell is grade contended host.
+
+On those four models, and only those, ferrotherm J/ESS stays below THRML J/ESS after the combined budget, inside its own scope. The macmon ordering is an ordering of SoC-telemetry mean-times-duration figures. It is not a wall-power result, and it is not a per-trial trapezoidal recomputation: those windows are not in the trace. The whole-recording trapezoid of `sys_power` differs from mean-times-duration by 2.22e-5, which does not move the quotients in this table. The package ordering is an ordering of package counter deltas on the same four models. The core integral above is a different number and was not folded in.
 
 ## Limits
 
 - Contended host. The Framework quiet attempt was `load_gated`. The M5 run was `--contended` and stays contended host. These figures are not quiet-host evidence.
 - THRML 0.1.4 ran on JAX 0.12.0.1 CPU. There is no GPU THRML result here.
-- The models are small: a 5-spin chain, a 3×3 Ising grid, a 6-site Potts path, and an 8-spin three-body system. Each cell is five trials.
-- No quiet-host leadership claim. This bundle does not say which sampler costs less on a quiet machine, and it does not speak for a Z1 device.
+- The models are these four and no others: a 5-spin chain, a 3×3 Ising grid (9 spins), a 6-site Potts path, and an 8-spin three-body system. Each cell is five trials. The 529×–1703× package span and the 347×–1218× SoC-telemetry span are the endpoints of those four rows. They do not cover a larger grid.
+- No quiet-host leadership claim, and no large-grid claim. This bundle does not say which sampler costs less on a quiet machine, on a 16×16 or larger lattice, or on a Z1 device.
