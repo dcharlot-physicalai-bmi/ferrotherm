@@ -1,4 +1,9 @@
-//! Intel RAPL: energy counters on x86, read from `/sys/class/powercap`.
+//! RAPL energy counters on x86, read from `/sys/class/powercap`.
+//!
+//! AMD package and core are model- or estimate-based `SoC` energy, not wall power, and that
+//! interface has no DRAM domain. Intel package and core are a different counter: not wall power,
+//! with DRAM a separate domain when the chip exposes it. The directory is often still named
+//! `intel-rapl` on an AMD host. That name is not the vendor.
 //!
 //! The other two backends sample POWER and multiply by time. RAPL exposes ENERGY directly, as a
 //! monotonically increasing microjoule counter, so a window's cost is one subtraction rather than
@@ -119,10 +124,44 @@ pub(crate) fn choose() -> Option<(Domain, &'static str)> {
 }
 
 /// What the chosen domain covers, for the `Meter`'s machine string.
+///
+/// The package sentence is the Intel one. AMD hosts use [`scope_note_for`].
 pub(crate) fn scope_note(kind: &str) -> &'static str {
-    match kind {
-        "psys" => "RAPL psys (whole platform)",
-        _ => "RAPL package only (no RAM, storage, fans or supply losses; understates the machine)",
+    scope_note_for(kind, "intel")
+}
+
+/// Vendor from `/proc/cpuinfo`. `unknown` when the file or the line is absent.
+pub(crate) fn cpu_vendor() -> &'static str {
+    let Ok(text) = std::fs::read_to_string("/proc/cpuinfo") else {
+        return "unknown";
+    };
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.trim() == "vendor_id" {
+            return match value.trim() {
+                "AuthenticAMD" => "amd",
+                "GenuineIntel" => "intel",
+                _ => "unknown",
+            };
+        }
+    }
+    "unknown"
+}
+
+/// Domain coverage for one vendor. AMD and Intel do not share the package sentence.
+pub(crate) fn scope_note_for(kind: &str, vendor: &str) -> &'static str {
+    if kind == "psys" {
+        return "RAPL psys (whole platform). Not a substitute for a wall meter, and not the AMD package model basis.";
+    }
+    match vendor {
+        "amd" => {
+            "AMD RAPL package: model- or estimate-based SoC energy, not wall power, no DRAM domain. Absolute joules need a wall-meter cross-check. Schöne et al., IEEE CLUSTER 2021 (arXiv:2108.00808), on a Zen 2 EPYC 7502: the energy data is modeled, not measured. The amd_energy hwmon text says Measured and does not say how. This note does not claim AMD documentation says the counters are modeled."
+        }
+        _ => {
+            "Intel RAPL package only (not wall power; DRAM is a separate domain when the chip exposes it and is not included; not the AMD model basis; no RAM, storage, fans or supply losses; understates the machine)"
+        }
     }
 }
 
@@ -148,6 +187,14 @@ mod tests {
         assert!(scope_note("psys").contains("whole platform"));
         let pkg = scope_note("package");
         assert!(pkg.contains("package only") && pkg.contains("understates"));
+        let amd = scope_note_for("package", "amd");
+        assert!(amd.contains("not wall"));
+        assert!(amd.contains("no DRAM"));
+        assert!(amd.contains("modeled, not measured"));
+        assert!(amd.contains("does not claim AMD documentation says"));
+        let intel = scope_note_for("package", "intel");
+        assert!(intel.contains("not the AMD model basis"));
+        assert!(!intel.contains("modeled, not measured"));
     }
 
     #[test]

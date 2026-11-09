@@ -518,7 +518,10 @@ impl Meter {
         Some(m)
     }
 
-    /// The x86 Linux backend: Intel RAPL energy counters via `/sys/class/powercap`.
+    /// The x86 Linux backend: RAPL energy counters via `/sys/class/powercap`.
+    ///
+    /// AMD package energy is model- or estimate-based `SoC` energy, not wall power.
+    /// Intel package energy is a different counter. The machine string says which.
     ///
     /// Unlike the other two this reads ENERGY rather than power, so a window's cost is a
     /// subtraction instead of an integral estimated from samples — which removes the "workload
@@ -568,7 +571,12 @@ impl Meter {
                     .map(|v| v.trim().to_string())
             })
             .unwrap_or_else(|| "unknown x86".into());
-        let machine = format!("{cpu} [{}]", rapl::scope_note(kind));
+        let note = if rapl::cpu_vendor() == "amd" {
+            rapl::scope_note_for(kind, "amd")
+        } else {
+            rapl::scope_note(kind)
+        };
+        let machine = format!("{cpu} [{note}]");
         let scope = backend_scope("rapl", kind);
         let m = Meter { child: None, readings, machine, backend: "rapl", scope };
         m.wait_for_first(Duration::from_secs(3))?;

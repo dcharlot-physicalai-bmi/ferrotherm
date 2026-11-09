@@ -2,8 +2,15 @@
 
 Harness `5c54005fd0ff8dc62adedda478faa52388911902`, `git_dirty` false. Host CPU
 in the receipt: AMD Ryzen AI MAX+ 395 w/ Radeon 8060S. The driver pinned
-`4-7,20-23` and asked for `--device cpu`. Meter is RAPL: `package-0` and the
-`core` subdomain, recorded separately and not added. There is no macmon row
+`4-7,20-23` and asked for `--device cpu`. Meter is AMD RAPL: `package-0` and the `core` subdomain, model- or
+estimate-based SoC energy, not wall power, and no DRAM domain. Schöne et al.,
+IEEE CLUSTER 2021 (arXiv:2108.00808), on a Zen 2 EPYC 7502: the energy data is
+modeled, not measured. Zen 5 / Strix Halo accuracy on this Ryzen AI Max+ 395
+has not been validated by any primary measurement study. The `amd_energy`
+hwmon text calls the inputs Measured and does not say how; this note does not
+claim AMD documentation says the counters are modeled. No joules were taken
+here, so there is no absolute J/ESS to cross-check. This is not Intel RAPL.
+Package and core are recorded separately and not added. The receipt is unchanged. There is no macmon row
 and no NVML device. This directory is not pooled with the M5 `soc-telemetry`
 refusal or with `jetson-hub`.
 

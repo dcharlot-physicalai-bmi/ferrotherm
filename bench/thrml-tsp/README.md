@@ -38,9 +38,12 @@ RAPL `energy_uj` (package, unless the honest domain is `psys`) with the core
 domain reported separately and not added; otherwise `perf` event
 `power/energy-pkg` (package); otherwise NVML (gpu). Summaries are per workload,
 sampler, instrument, and scope. Package joules, core joules, and SoC-telemetry
-joules are not added together. RAPL on hostname `framework-128gb-0000` is the
-primary energy evidence. That host reads package `energy_uj` without root.
-macmon is secondary.
+joules are not added together. On `framework-128gb-0000` the package counter
+is AMD RAPL: model- or estimate-based SoC energy, not wall power, and no DRAM
+domain. Absolute J/ESS from it needs a wall-meter cross-check. A same-host
+ratio may stand when that basis is stated. Intel RAPL, as on `jetson-hub`, is
+a different counter and is not given this label. macmon `sys_power` is
+secondary SoC telemetry. The harness stamps `macmon --version` on every receipt.
 
 `--quiet-gate` samples load1 once a second for 60 seconds, and the busy
 fraction of cores outside `--cpus` over that same window, before any workload

@@ -2304,7 +2304,7 @@ fn energy_json(
         "{{\n    \"evidence_grade\": {},\n    \"outcome\": {},\n    \"quiet_threshold\": {},\n    \
          \"load_samples\": {},\n    \"rank_policy\": {},\n    \"order\": {},\n    \
          \"window_s\": {},\n    \"min_counter_updates\": {},\n    \
-         \"backends\": {{\"macmon_or_ina\": {}, \"ina238\": {}, \"tegrastats\": {}, \"rapl\": {}, \"rapl_core\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
+         \"backends\": {{\"macmon_or_ina\": {}, \"macmon_version\": {}, \"ina238\": {}, \"tegrastats\": {}, \"rapl\": {}, \"rapl_core\": {}, \"rapl_basis\": {}, \"perf\": {}, \"nvml\": {}}},\n    \
          \"hostname\": {},\n    \"macos_policy\": {},\n    \"accepted_load\": {},\n    \
          \"idle_watts\": {},\n    \"idle_sigma\": {},\n    \
          \"trial_window_rule\": {},\n    \"baseline_settle_load1\": {},\n    \
@@ -2315,7 +2315,7 @@ fn energy_json(
         poll.threshold,
         loads_json(&poll.samples),
         json_str(
-            "primary = RAPL package on framework-128gb-0000, read without root; macmon sys_power = SoC telemetry, secondary; package and core are not combined",
+            "framework-128gb-0000 reads AMD package RAPL without root. That counter is model- or estimate-based SoC energy, not wall power, and it has no DRAM domain. Absolute J/ESS from it needs a wall-meter cross-check. macmon sys_power is SoC telemetry, secondary. Package, core, macmon, and Intel RAPL are not combined and are not the same basis.",
         ),
         json_str(
             "paired A/B then B/A; idle bracket before and after each pair; joules per repetition of a >=2 s window"
@@ -2323,10 +2323,12 @@ fn energy_json(
         MIN_ENERGY_WINDOW_S,
         energy::MIN_COUNTER_UPDATES,
         json_str(&probe.wall_note),
+        json_str(&probe.macmon_version),
         json_str(&probe.ina238_note),
         json_str(&probe.tegra_note),
         json_str(&probe.rapl_note),
         json_str(&probe.rapl_core_note),
+        json_str(&probe.rapl_basis),
         json_str(&probe.perf_note),
         json_str(&probe.nvml_note),
         json_str(&probe.hostname),
@@ -2609,7 +2611,8 @@ fn write_lock_refusal(out: &Path, path: &Path, wait_s: f64) {
     );
     let report = format!(
         "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": \"load_gated\",\n  \
-         \"phases\": {phases},\n  \"host_lock\": {lock},\n  \"energy\": {energy},\n  \"workloads\": []\n}}\n",
+         \"phases\": {phases},\n  \"host_lock\": {lock},\n  \"macmon_version\": {macmon},\n  \"energy\": {energy},\n  \"workloads\": []\n}}\n",
+        macmon = json_str(&energy::macmon_version()),
         phases = phases_json("not_run", "load_gated", "not_run"),
         lock = host_lock_json(path, None, None, wait_s, None, false, Some(reason)),
     );
@@ -2668,7 +2671,7 @@ fn provenance_json(probe: &Probe, grade: &str) -> String {
         .unwrap_or_else(|| "unknown".into());
     format!(
         "{{\n    \"evidence_grade\": {},\n    \"git_rev\": {},\n    \"git_dirty\": {},\n    \"host_cpu\": {},\n    \
-         \"os\": {},\n    \"rustc\": {},\n    \"thrml_pin\": {},\n    \"thrml_wheel_sha256\": {},\n    \
+         \"os\": {},\n    \"rustc\": {},\n    \"macmon_version\": {},\n    \"thrml_pin\": {},\n    \"thrml_wheel_sha256\": {},\n    \
          \"load1_at_start\": {},\n    \"what_this_machine_measured\": {},\n    \
          \"what_still_needs_fleet_hardware\": {}\n  }}",
         json_str(grade),
@@ -2677,6 +2680,7 @@ fn provenance_json(probe: &Probe, grade: &str) -> String {
         json_str(&cpu),
         json_str(std::env::consts::OS),
         json_str(&rustc_version()),
+        json_str(&probe.macmon_version),
         json_str("thrml==0.1.4"),
         json_str("6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858"),
         match probe.load1 {

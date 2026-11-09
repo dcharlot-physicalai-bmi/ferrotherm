@@ -9,8 +9,12 @@ attempts are not pooled. Attempt 3 does not turn attempt 2 into a quiet run.
 
 Harness `5c54005fd0ff8dc62adedda478faa52388911902`, `git_dirty` false. The
 driver event names the host `jetson-hub`. The receipt's CPU is a 13th Gen
-Intel Core i9-13900H. The driver pinned cpus `8-11`. Meter is RAPL:
-`package-0` and the `core` subdomain, recorded separately and not added. The
+Intel Core i9-13900H. The driver pinned cpus `8-11`. Meter is Intel RAPL:
+`package-0` and the `core` subdomain. Those are the processor's RAPL energy
+counters for those domains, not wall power. DRAM, when exposed, is a separate
+domain and is not part of these two. This is not the AMD model or estimate
+basis used for `framework-128gb-0000`. Package and core are recorded
+separately and not added. The receipt numbers are unchanged. The
 receipt also sees an NVIDIA GeForce RTX 4050 via NVML and does not add it to
 the package counter. No joules were taken: the preflight refused before a
 trial. This directory is not pooled with the M5 `soc-telemetry` refusal or

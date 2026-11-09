@@ -3,7 +3,9 @@
 //! Instruments, in the order a host actually has them:
 //!
 //! - macOS: rootless `macmon` (`IOReport`), via `ferrotherm_meter`. No other macOS path.
-//! - Linux CPU: Intel RAPL `energy_uj` under `/sys/class/powercap` when that file is readable.
+//! - Linux CPU: RAPL `energy_uj` under `/sys/class/powercap` when that file is readable.
+//!   AMD package and core are model- or estimate-based `SoC` energy, not wall power.
+//!   Intel package and core are a different counter and are not given that label.
 //! - Linux CPU, when powercap is missing or unreadable: `perf` event `power/energy-pkg`.
 //! - NVIDIA GPU: NVML `nvmlDeviceGetTotalEnergyConsumption`, only when no wall-power
 //!   backend and no CPU counter opened. It is not added to a CPU counter.
@@ -430,9 +432,11 @@ pub fn scope_limit(scope: &str) -> &'static str {
             "macmon sys_power is SoC telemetry (CPU, integrated GPU, ANE). It is not wall power. Display, fans, and the rest of the board are outside it. Package and core are different scopes and are not added here."
         }
         "package" => {
-            "RAPL package energy. The core domain is inside the package and is reported as its own scope, not added here. DRAM and the board are outside this counter."
+            "RAPL package energy, not wall power. The core domain is its own scope and is not added. On AMD this is a model- or estimate-based SoC energy counter and the interface has no DRAM domain. On Intel, DRAM is a separate domain when the chip exposes it and is not part of this package figure. The two vendors are not the same counter."
         }
-        "core" => "RAPL core domain only. It is not added to package energy.",
+        "core" => {
+            "RAPL core domain only. It is not added to package energy and it is not wall power. On AMD it is a model- or estimate-based SoC energy counter and there is no DRAM domain beside it. On Intel it is not the AMD model basis."
+        }
         "psys" => {
             "RAPL psys, kept only when it contains the package. It is not macmon and it is not a wall-plug measurement."
         }
@@ -1334,8 +1338,11 @@ pub fn grades_may_share_a_table(a: &str, b: &str) -> bool {
     a == b && (a == GRADE_QUIET || a == GRADE_CONTENDED)
 }
 
-/// RAPL on `framework-128gb-0000` is the primary energy evidence.
-/// macmon is secondary. A different Framework hostname is not the primary machine.
+/// RAPL on `framework-128gb-0000` is the instrument that host reads.
+///
+/// That rank is not a wall-validated absolute joule. The host is AMD, and
+/// [`rapl_basis`] says what the counter is. macmon is secondary. A different
+/// Framework hostname is not this machine.
 pub fn energy_rank(instrument: &str, hostname: &str) -> &'static str {
     let host = hostname.trim();
     if instrument == "rapl" && host == "framework-128gb-0000" {
@@ -1344,6 +1351,72 @@ pub fn energy_rank(instrument: &str, hostname: &str) -> &'static str {
         "secondary"
     } else {
         "unranked"
+    }
+}
+
+/// `AuthenticAMD`, `GenuineIntel`, or `unknown` from `/proc/cpuinfo`.
+pub fn cpu_vendor() -> &'static str {
+    cpu_vendor_from(&std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default())
+}
+
+/// Vendor id in a `cpuinfo` blob. `unknown` when the line is absent.
+pub fn cpu_vendor_from(cpuinfo: &str) -> &'static str {
+    for line in cpuinfo.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.trim() == "vendor_id" {
+            return match value.trim() {
+                "AuthenticAMD" => "amd",
+                "GenuineIntel" => "intel",
+                _ => "unknown",
+            };
+        }
+    }
+    "unknown"
+}
+
+/// What a RAPL package or core counter is, for the vendor that produced it.
+///
+/// AMD and Intel are not given the same sentence. Absolute joules per effective
+/// sample from the AMD counter are not a wall figure.
+pub fn rapl_basis(vendor: &str) -> &'static str {
+    match vendor {
+        "amd" => {
+            "AMD package and core RAPL are model- or estimate-based SoC energy counters, not wall power, and this interface has no DRAM domain. Schöne et al., IEEE CLUSTER 2021 (arXiv:2108.00808), on a Zen 2 EPYC 7502: the energy data is modeled, not measured. Zen 5 / Strix Halo accuracy (framework-128gb-0000, Ryzen AI Max+ 395) has not been validated by any primary measurement study. The kernel amd_energy hwmon text calls the inputs Measured and does not say how. This note does not claim that AMD documentation says the counters are modeled. Absolute J/ESS from these counters needs a wall-meter cross-check before it can be claimed. A same-host ratio may stand when this model basis is stated with it."
+        }
+        "intel" => {
+            "Intel RAPL package and core are that processor's RAPL energy counters for those domains. They are not wall power. DRAM, when the chip exposes it, is a separate domain and is not part of package or core. This is not the AMD model or estimate basis."
+        }
+        _ => {
+            "RAPL vendor was not read from cpuinfo, so this note does not call the counter AMD or Intel. It is not wall power."
+        }
+    }
+}
+
+/// `macmon --version`, or why the binary did not answer. Stamped on every receipt.
+pub fn macmon_version() -> String {
+    match std::process::Command::new("macmon").arg("--version").output() {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let text = text.trim();
+            if text.is_empty() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let err = err.trim();
+                if err.is_empty() {
+                    "macmon --version produced no text".into()
+                } else {
+                    err.to_string()
+                }
+            } else {
+                text.lines().next().unwrap_or(text).to_string()
+            }
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            format!("macmon --version exited {}: {}", out.status, err.trim())
+        }
+        Err(e) => format!("macmon not run: {e}"),
     }
 }
 
@@ -1709,9 +1782,13 @@ pub struct Probe {
     pub wall_note: String,
     pub rapl: Option<RaplCounter>,
     pub rapl_note: String,
-    /// The `core` subdomain (`intel-rapl:0:0`). Not added to the package counter.
+    /// The `core` subdomain. Not added to the package counter.
     pub rapl_core: Option<RaplCounter>,
     pub rapl_core_note: String,
+    /// Vendor label for package and core. AMD and Intel do not share this sentence.
+    pub rapl_basis: String,
+    /// Output of `macmon --version`, or why it did not run.
+    pub macmon_version: String,
     pub perf: Option<PerfPkg>,
     pub perf_note: String,
     pub nvml: Option<Nvml>,
@@ -1733,7 +1810,13 @@ impl Probe {
         let load1 = load_average();
         let quiet = load1.is_some_and(|l| l <= QUIET_LOAD);
         let wall = Meter::detect().filter(|m| m.backend() != "rapl");
+        let macmon_version = macmon_version();
         let wall_note = match &wall {
+            Some(m) if m.backend() == "macmon" => format!(
+                "backend=macmon version={macmon_version} machine={} scope={}",
+                m.machine(),
+                m.scope().label()
+            ),
             Some(m) => format!(
                 "backend={} machine={} scope={}",
                 m.backend(),
@@ -1742,9 +1825,10 @@ impl Probe {
             ),
             None => "no macmon and no INA3221 rail".into(),
         };
+        let basis = rapl_basis(cpu_vendor()).to_string();
         let (rapl, rapl_note) = match RaplCounter::open() {
             Ok(c) => {
-                let note = format!("{} ({})", c.name, c.kind);
+                let note = format!("{} ({}). {basis}", c.name, c.kind);
                 (Some(c), note)
             }
             Err(e) => (None, e),
@@ -1755,9 +1839,9 @@ impl Probe {
         {
             Some(c) => (
                 Some(c),
-                "core subdomain, reported separately from package".into(),
+                format!("core subdomain, reported separately from package. {basis}"),
             ),
-            None => (None, "no readable core subdomain".into()),
+            None => (None, format!("no readable core subdomain. {basis}")),
         };
         let (perf, perf_note) = if rapl.is_some() {
             (None, "not opened; RAPL powercap is the CPU counter".into())
@@ -1817,6 +1901,8 @@ impl Probe {
             rapl_note,
             rapl_core,
             rapl_core_note,
+            rapl_basis: basis,
+            macmon_version,
             perf,
             perf_note,
             nvml,
@@ -2369,8 +2455,8 @@ impl RaplCounter {
 
     /// The `core` child of a package domain, if its `energy_uj` is readable.
     ///
-    /// This is `intel-rapl:0:0` on the Framework machine. It is a subdomain of the package,
-    /// so its joules are not added to the package joules.
+    /// The `core` child of the package. The kernel directory may be named `intel-rapl`
+    /// on an AMD host; that name is not the vendor label. Joules are not added to package.
     pub fn open_core(package: &std::path::Path) -> Option<RaplCounter> {
         let rd = std::fs::read_dir(package).ok()?;
         for ent in rd.flatten() {
@@ -2963,6 +3049,25 @@ mod tests {
         assert!(!grades_may_share_a_table(GRADE_QUIET, GRADE_CONTENDED));
         assert!(grades_may_share_a_table(GRADE_QUIET, GRADE_QUIET));
         assert!(grades_may_share_a_table(GRADE_CONTENDED, GRADE_CONTENDED));
+    }
+
+    #[test]
+    fn amd_rapl_is_not_intel_rapl_and_neither_is_wall() {
+        assert_eq!(cpu_vendor_from("vendor_id : AuthenticAMD\n"), "amd");
+        assert_eq!(cpu_vendor_from("vendor_id : GenuineIntel\n"), "intel");
+        assert_eq!(cpu_vendor_from("model name : nothing\n"), "unknown");
+        let amd = rapl_basis("amd");
+        assert!(amd.contains("not wall power"), "{amd}");
+        assert!(amd.contains("no DRAM domain"), "{amd}");
+        assert!(amd.contains("the energy data is modeled, not measured"), "{amd}");
+        assert!(amd.contains("arXiv:2108.00808"), "{amd}");
+        assert!(amd.contains("has not been validated"), "{amd}");
+        assert!(amd.contains("does not claim that AMD documentation says"), "{amd}");
+        assert!(amd.contains("wall-meter cross-check"), "{amd}");
+        let intel = rapl_basis("intel");
+        assert!(intel.contains("not wall power"), "{intel}");
+        assert!(intel.contains("not the AMD model"), "{intel}");
+        assert!(!intel.contains("modeled, not measured"), "{intel}");
     }
 
     #[test]

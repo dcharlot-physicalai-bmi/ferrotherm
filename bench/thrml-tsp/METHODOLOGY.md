@@ -66,6 +66,39 @@ failing sample refuses the trial. The fraction is not subtracted from joules.
 `energy.trial_window_rule`, including `enforce` and
 `why_load1_is_not_a_trial_criterion`.
 
+## RAPL vendors
+
+Package and core stay separate from each other, from `soc-telemetry`, and from `vin`.
+Which sentence applies depends on the CPU vendor. A new receipt stamps it as
+`energy.rapl_basis`. Old receipts are not rewritten.
+
+AMD package and core RAPL, including `framework-128gb-0000` (Ryzen AI Max+ 395,
+Zen 5 / Strix Halo), are model- or estimate-based SoC energy counters. They are
+not wall power. This interface has no DRAM domain. Schöne et al., IEEE CLUSTER
+2021 (arXiv:2108.00808), on a Zen 2 EPYC 7502, found that the energy data is
+modeled, not measured. Zen 5 / Strix Halo accuracy has not been validated by
+any primary measurement study. The kernel `amd_energy` hwmon text calls the
+inputs Measured and does not say how. That is not a claim that AMD
+documentation says the counters are modeled. Absolute J/ESS from AMD RAPL needs
+a wall-meter cross-check before it can be claimed. A same-host ratio may stand
+when this model basis is stated with it.
+
+Intel RAPL package and core, including `jetson-hub` (Core i9-13900H), are that
+processor's RAPL energy counters for those domains. They are not wall power.
+DRAM, when the chip exposes it, is a separate domain and is not part of package
+or core. They are not given the AMD model or estimate label. The kernel
+powercap directory may still be named `intel-rapl` on an AMD host. The vendor
+comes from `cpuinfo`, not from that directory name.
+
+## macmon
+
+`sys_power` is SoC telemetry, `max(smc_sys, cpu+gpu+ane)`. It is not wall power,
+and it is not `ram_power`. macmon 0.11.0 (2026-11-06, pull request 125, commit
+`8c732646`) drops `ram_power` values above system power. Those were rare spikes
+of hundreds of watts on macOS 27. The fix does not change `sys_power`. Every
+new receipt stamps `macmon --version`. Joules in this harness are taken from
+`sys_power` only, so a `ram_power` spike does not enter them.
+
 ## Host lock
 
 Another measurement on the same machine is foreign load. The harness takes
