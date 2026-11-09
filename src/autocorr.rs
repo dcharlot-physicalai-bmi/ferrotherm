@@ -4533,19 +4533,18 @@ mod tests {
         let glass = grid_glass(3, 3, 5);
         let kernel = Kernel::ChromaticGibbs;
         let dense = tau_int_fundamental(&glass, 2.0, kernel, |s| glass.energy(s)).unwrap();
-        let rtol = 1e-10;
-        // The refusal is the contract. An Ok whose tau happens to land inside `rtol` is still
-        // the bug: the true residual is below the rounding floor, and the estimate that omits
-        // the floor reads that noise as convergence. On a release build that Ok can be close
-        // enough that `|tau - dense| <= rtol (tau + 1/2)` holds, which is why a test that
-        // allowed the accurate Ok stayed green in CI.
+        // rtol 1e-12 is under both estimates, so both the floored solver and the floorless one
+        // return AtFloor. What differs is the estimate they refuse with. Measured in release:
+        // with the floor, 4.04e-5; without it, 8.02e-6. On the CI host the floorless solver
+        // also refuses at 1e-10, so a test that only demanded AtFloor stayed green. 2e-5 sits
+        // between those two estimates.
+        let rtol = 1e-12;
         match tau_int_krylov(&glass, 2.0, kernel, |s| glass.energy(s), rtol, 5_000) {
             Err(AutocorrError::AtFloor { err_est, tau, .. }) => {
-                let announced = rtol * (tau + 0.5);
                 assert!(
-                    err_est > announced,
-                    "AtFloor must be refusing rtol, not passing under another name: \
-                     estimate {err_est:.3e}, rtol*(tau+1/2) {announced:.3e}"
+                    err_est > 2e-5,
+                    "the rounding floor is missing from the estimate: {err_est:.3e} \
+                     (with the floor this is 4.0e-5; without it, 8.0e-6)"
                 );
                 let diff = (tau - dense.tau_int).abs();
                 assert!(
@@ -4555,8 +4554,7 @@ mod tests {
                 );
             }
             other => panic!(
-                "chromatic sweep at beta 2, rtol {rtol} must stop at the rounding floor. \
-                 An Ok is the floorless estimate accepting a residual that is rounding: {other:?}"
+                "chromatic sweep at beta 2, rtol {rtol} must stop at the rounding floor: {other:?}"
             ),
         }
     }
