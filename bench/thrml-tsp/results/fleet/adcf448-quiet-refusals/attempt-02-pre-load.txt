@@ -1,0 +1,17 @@
+Mon Nov  9 17:40:37 UTC 2026
+ 17:40:37 up 24 days,  5:18,  4 users,  load average: 2.14, 2.22, 2.90
+USER         PID                  STARTED %CPU %MEM COMMAND         COMMAND
+dcharlot  423178 Mon Nov  9 17:40:11 2026 99.9  0.0 python3         python3 -I live-conformance/live_watermark_verify.py live-conformance/watermark
+dcharlot  331381 Sat Nov  7 13:30:49 2026 99.5  0.0 bash            bash /home/dcharlot/src/mojo/.pixi/envs/default/bin/max
+dcharlot   45163 Mon Nov  9 16:52:29 2026  1.3  0.0 wai             /home/dcharlot/wai-build/rb/targets/aw19/wai-cli-target/debug/wai conform --independent --root . --out /home/dcharlot/wai-build/rb/tmp/_wt-aw19/tmp.XbYk6SpyNe/independent/records --format junit
+root     2078667 Thu Oct 22 16:44:37 2026  0.7  0.0 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+syslog   4134497 Sat Oct 24 06:31:09 2026  0.5  0.0 rsyslogd        /usr/sbin/rsyslogd -n -iNONE
+root        2132 Fri Oct 16 12:21:49 2026  0.3  0.0 containerd      /usr/bin/containerd
+root         248 Fri Oct 16 12:21:43 2026  0.3  0.0 kswapd0         [kswapd0]
+txlinux  1001927 Tue Nov  3 11:41:09 2026  0.3  0.0 forgejo-runner- /usr/local/bin/forgejo-runner-amd daemon --config /home/txlinux/runner/config.yaml
+root      782742 Wed Nov  4 06:24:44 2026  0.3  0.0 systemd-journal /usr/lib/systemd/systemd-journald
+root        2708 Fri Oct 16 12:21:53 2026  0.3  0.0 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+dcharlot 2153607 Mon Nov  9 05:12:19 2026  0.2  0.0 relay-16ac1ecfb /home/dcharlot/wai-build/rb/targets/_wt-wt-wiring-dev/debug/deps/relay-16ac1ecfba521dcf --exact the_edge_s_process /home/dcharlot/wai-build/rb/tmp/_wt-wt-wiring/wt-process-edge-2150687-1794201137434999/there/edge-far-1.toml --ignored --test-threads=1
+dcharlot 2316073 Mon Nov  9 05:14:42 2026  0.2  0.0 relay-16ac1ecfb /home/dcharlot/wai-build/rb/targets/_wt-wt-wiring-dev/debug/deps/relay-16ac1ecfba521dcf --exact the_edge_s_process /home/dcharlot/wai-build/rb/tmp/_wt-wt-wiring/wt-process-edge-2309201-1794201276502996/there/edge-far-2.toml --ignored --test-threads=1
+root         221 Fri Oct 16 12:21:43 2026  0.1  0.0 kcompactd0      [kcompactd0]
+dcharlot 2083721 Thu Nov  5 00:50:11 2026  0.1  0.0 grokbot-tunnel  /home/dcharlot/.local/bin/grokbot-tunnel connect --permission ask --label framework-128gb-0000

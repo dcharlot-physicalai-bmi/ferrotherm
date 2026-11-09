@@ -1,0 +1,17 @@
+Mon Nov  9 19:11:40 UTC 2026
+ 19:11:40 up 24 days,  6:49,  7 users,  load average: 16.45, 20.48, 33.59
+USER         PID                  STARTED %CPU %MEM COMMAND         COMMAND
+dcharlot   65228 Mon Nov  9 19:11:39 2026 1446  0.0 python          /home/dcharlot/.cache/wai-quantum-cross-simulator/venv-3.12.16-bdf150316d9ca59d/bin/python -I /home/dcharlot/wai-build/rb/wt/os-wt-qjoules/wai/quantum-cross-simulator/tools/engines.py aer.stabilizer /home/dcharlot/wai-build/rb/tmp/os-wt-qjoules/qcorpus-5ivlxy92/clifford_random_n65-aer.stabilizer-3.job.json /home/dcharlot/wai-build/rb/tmp/os-wt-qjoules/qcorpus-5ivlxy92/clifford_random_n65-aer.stabilizer-3.answer.json
+dcharlot   64529 Mon Nov  9 19:11:34 2026  369  0.2 ingest-f9966001 /home/dcharlot/wai-build/rb/targets/wt-proof/debug/deps/ingest-f9966001cb2310be
+dcharlot   64530 Mon Nov  9 19:11:34 2026  362  0.2 ingest-f9966001 /home/dcharlot/wai-build/rb/targets/wt-proof/debug/deps/ingest-f9966001cb2310be
+dcharlot   65180 Mon Nov  9 19:11:38 2026  259  0.0 python          /home/dcharlot/.cache/wai-quantum-cross-simulator/venv-3.12.16-bdf150316d9ca59d/bin/python -I /home/dcharlot/wai-build/rb/wt/os-wt-qjoules/wai/quantum-cross-simulator/tools/compare.py --tier ci --jobs 2 --inject stabilizer --only clifford_random_n65 --timeout 900
+dcharlot   34641 Mon Nov  9 19:08:00 2026  107  2.2 wasmtime        wasmtime run -W nan-canonicalization=y -W relaxed-simd-deterministic=y /home/dcharlot/wai-build/rb/targets/os-wt-qlandscape-capacity/wasm32-wasip2/debug/deps/wai_quantum-e6b95b5055932987.wasm quantum_landscape::
+dcharlot   65188 Mon Nov  9 19:11:39 2026  100  0.0 python          /home/dcharlot/.cache/wai-quantum-cross-simulator/venv-3.12.16-bdf150316d9ca59d/bin/python -I /home/dcharlot/wai-build/rb/wt/q668/wai/quantum-cross-simulator/tools/compare.py --tier ci --jobs 2 --inject stabilizer --only clifford_random_n65 --timeout 900
+dcharlot  331381 Sat Nov  7 13:30:49 2026 99.5  0.0 max             /usr/bin/env bash /home/dcharlot/src/mojo/.pixi/envs/default/bin/max
+root     2078667 Thu Oct 22 16:44:37 2026  0.7  0.0 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+root     4058552 Mon Nov  9 18:56:51 2026  0.7  0.0 kworker/u129:2- [kworker/u129:2-flush-252:0]
+syslog   4134497 Sat Oct 24 06:31:09 2026  0.5  0.0 rsyslogd        /usr/sbin/rsyslogd -n -iNONE
+root         248 Fri Oct 16 12:21:43 2026  0.3  0.0 kswapd0         [kswapd0]
+root        2132 Fri Oct 16 12:21:49 2026  0.3  0.0 containerd      /usr/bin/containerd
+txlinux  1001927 Tue Nov  3 11:41:09 2026  0.3  0.0 forgejo-runner- /usr/local/bin/forgejo-runner-amd daemon --config /home/txlinux/runner/config.yaml
+root      782742 Wed Nov  4 06:24:44 2026  0.3  0.0 systemd-journal /usr/lib/systemd/systemd-journald

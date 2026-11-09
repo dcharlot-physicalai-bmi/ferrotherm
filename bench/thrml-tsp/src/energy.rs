@@ -555,6 +555,18 @@ pub fn sample_quiet_gate(pinned: &[usize]) -> QuietGate {
     quiet_gate_from(&loads, &busy, busy_readable, seconds)
 }
 
+/// What runs after a quiet-gate decision.
+///
+/// `load1` is a one-minute average. The accuracy phase and the THRML runner are
+/// CPU work, so they raise that average. A preflight that held, followed by that
+/// work, then by another load check, refuses a host the preflight had accepted.
+/// When the 60 s gate held, energy is next and accuracy follows it. Otherwise
+/// accuracy stays first. The threshold is still [`QUIET_LOAD`]. No process is
+/// removed from the load.
+pub fn phase_order(quiet_gate_held: bool) -> [&'static str; 2] {
+    if quiet_gate_held { ["energy", "accuracy"] } else { ["accuracy", "energy"] }
+}
+
 /// One poll of the 1-minute load average against the unchanged quiet threshold.
 #[derive(Clone, Debug)]
 pub struct QuietPoll {
@@ -2028,6 +2040,17 @@ mod tests {
         assert!(!missing.held);
         assert!(!missing.busy_readable);
         assert!(!quiet_gate_from(&[], &[], true, 0.0).held);
+    }
+
+    #[test]
+    fn a_held_quiet_gate_runs_energy_before_accuracy() {
+        // Attempt 03 of adcf448 held at load1 1.19, then the accuracy phase ran,
+        // and the pre-energy recheck saw 3.76–4.96. load1 is a one-minute average,
+        // so that order is the harness refusing its own work. The threshold stays 2.
+        assert_eq!(phase_order(true), ["energy", "accuracy"]);
+        assert_eq!(phase_order(false), ["accuracy", "energy"]);
+        assert!(phase_order(true)[0] == "energy");
+        assert_eq!(QUIET_LOAD, 2.0);
     }
 
     #[test]
