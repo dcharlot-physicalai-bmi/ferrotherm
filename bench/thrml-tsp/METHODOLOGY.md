@@ -159,6 +159,16 @@ reading spins (`memory_ns`), forming the field or the threshold (`field_ns`),
 and drawing accept bits (`rng_ns`). With more than one thread the three CPU
 times are summed across threads. They are not joules.
 
+A wall-time profile on a 4-vCPU cloud VM does not say where the curve bends on
+an i9-13900H or on Thor. Those hosts have different core counts, caches, and
+memory systems. The bend is a measurement on the host that will be quoted, with
+that host's own `--cpus` list. The VM numbers are a check that the levers run
+and that parity holds. They are not that curve.
+
+A grid-scale energy run requires `--cpus`. There is no default list. The host
+driver passes the cores it is measuring. `--profile` does not measure energy
+and does not require the flag.
+
 ### Levers
 
 `--lever` may be repeated. The names are `parallel`, `simd`, `tiled`,
@@ -217,7 +227,7 @@ one. Repeat with `--device cuda` only in a venv whose JAX is `jax[cuda13]`.
 cargo build --release -p ferrotherm-thrml-bench
 ./target/release/ferrotherm-thrml-bench \
   --out results/grid-scale-a-cpu \
-  --grid-scale --quiet-gate --cpus 0-7 \
+  --grid-scale --quiet-gate --cpus CORES \
   --device cpu \
   --python /path/to/thrml-0.1.4-venv/bin/python \
   --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
@@ -233,7 +243,7 @@ the same CUDA JAX. Do not point `--python-b` at A's tree.
 ```sh
 ./target/release/ferrotherm-thrml-bench \
   --out results/grid-scale-cuda \
-  --grid-scale --quiet-gate --cpus 0-7 \
+  --grid-scale --quiet-gate --cpus CORES \
   --device cuda \
   --python ~/bench-scratch/thrml-venv-cuda/bin/python \
   --python-b ~/bench-scratch/thrml-main-2d96f4b4-cuda/bin/python
@@ -245,7 +255,7 @@ Ferrotherm GPU lever, built with wgpu, still against both THRML baselines:
 cargo build --release -p ferrotherm-thrml-bench --features gpu
 ./target/release/ferrotherm-thrml-bench \
   --out results/grid-scale-ferrotherm-gpu \
-  --grid-scale --lever gpu --quiet-gate --cpus 0-7 \
+  --grid-scale --lever gpu --quiet-gate --cpus CORES \
   --device cpu \
   --python /path/to/thrml-0.1.4-venv/bin/python \
   --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
@@ -257,8 +267,8 @@ One CPU lever at a time, so the effect is not confounded. `LEVER` is
 ```sh
 ./target/release/ferrotherm-thrml-bench \
   --out results/grid-scale-lever-$LEVER \
-  --grid-scale --lever $LEVER --threads 8 \
-  --quiet-gate --cpus 0-7 --device cpu \
+  --grid-scale --lever $LEVER \
+  --quiet-gate --cpus CORES --device cpu \
   --python /path/to/thrml-0.1.4-venv/bin/python \
   --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
 ```
@@ -268,7 +278,7 @@ Profile, no joules, same levers:
 ```sh
 ./target/release/ferrotherm-thrml-bench \
   --out results/grid-scale-profile-$LEVER \
-  --grid-scale --profile --lever $LEVER --threads 8 \
+  --grid-scale --profile --lever $LEVER --threads N \
   --device cpu \
   --python /path/to/thrml-0.1.4-venv/bin/python \
   --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
