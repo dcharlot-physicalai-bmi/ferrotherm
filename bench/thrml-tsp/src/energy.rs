@@ -1513,6 +1513,9 @@ pub struct EnergyTrial {
     pub ess_per_sweep: f64,
     /// Wall seconds per sweep, from the joule window's per-repetition time.
     pub seconds_per_sweep: f64,
+    /// Nanoseconds per sweep excluding JIT. For THRML this is the DONE timer, not the joule
+    /// window. For ferrotherm there is no JIT, so it is the window time.
+    pub wall_ns_per_sweep: f64,
     /// Attributable joules per sweep. None when the joules were not attributable.
     pub joules_per_sweep: Option<f64>,
     /// Raw samples inside the window. For a counter this is the number of reads, which is not
@@ -1579,6 +1582,7 @@ impl EnergyTrial {
             sweeps_per_rep: 0,
             ess_per_sweep: f64::NAN,
             seconds_per_sweep: f64::NAN,
+            wall_ns_per_sweep: f64::NAN,
             joules_per_sweep: None,
         }
     }

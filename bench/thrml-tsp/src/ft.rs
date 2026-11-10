@@ -29,6 +29,10 @@ pub struct Chain {
     pub states_potts: Vec<Vec<u8>>,
     /// Compile time of an external runner. Absent for ferrotherm, which is not a JIT.
     pub jit_seconds: Option<f64>,
+    /// GPU submissions for this chain. Zero when the chain did not run on the packed shader.
+    pub submits: u32,
+    /// Sweeps per submission. NaN when `submits` is zero.
+    pub sweeps_per_submit: f64,
 }
 
 /// Levers for an open-grid workload. `None` on a grid is the scalar stencil, one thread.
@@ -90,6 +94,8 @@ fn run_open_grid(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Ch
         states_spin: Vec::new(),
         states_potts: Vec::new(),
         jit_seconds: None,
+        submits: 0,
+        sweeps_per_submit: f64::NAN,
     })
 }
 
@@ -122,6 +128,8 @@ fn run_ising(w: &Workload, seed: u64) -> Result<Chain, String> {
         states_spin: set.states().to_vec(),
         states_potts: Vec::new(),
         jit_seconds: None,
+        submits: 0,
+        sweeps_per_submit: f64::NAN,
     })
 }
 
@@ -143,6 +151,8 @@ fn run_potts(w: &Workload, seed: u64) -> Result<Chain, String> {
         states_spin: Vec::new(),
         states_potts: run.states().to_vec(),
         jit_seconds: None,
+        submits: 0,
+        sweeps_per_submit: f64::NAN,
     })
 }
 
@@ -183,6 +193,8 @@ fn run_hubo(w: &Workload, seed: u64) -> Result<Chain, String> {
         states_spin: states,
         states_potts: Vec::new(),
         jit_seconds: None,
+        submits: 0,
+        sweeps_per_submit: f64::NAN,
     })
 }
 
@@ -219,6 +231,8 @@ pub fn score_energies(
         states_spin: Vec::new(),
         states_potts: Vec::new(),
         jit_seconds,
+        submits: 0,
+        sweeps_per_submit: f64::NAN,
     })
 }
 
@@ -245,6 +259,8 @@ pub fn score_observed(
                 states_spin: spins.to_vec(),
                 states_potts: Vec::new(),
                 jit_seconds,
+                submits: 0,
+                sweeps_per_submit: f64::NAN,
             })
         }
         Kind::Potts => {
@@ -262,6 +278,8 @@ pub fn score_observed(
                 states_spin: Vec::new(),
                 states_potts: potts_states.to_vec(),
                 jit_seconds,
+                submits: 0,
+                sweeps_per_submit: f64::NAN,
             })
         }
         Kind::Hubo => {
@@ -281,6 +299,8 @@ pub fn score_observed(
                 states_spin: spins.to_vec(),
                 states_potts: Vec::new(),
                 jit_seconds,
+                submits: 0,
+                sweeps_per_submit: f64::NAN,
             })
         }
     }

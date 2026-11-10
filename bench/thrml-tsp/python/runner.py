@@ -195,7 +195,10 @@ def serve(workloads: list[dict], device, platform: str) -> int:
             except MemoryError as err:
                 failed[w["id"]] = f"LIMIT oom {err}"
             except Exception as err:
-                failed[w["id"]] = f"{type(err).__name__}: {err}"
+                if _oom_text(err):
+                    failed[w["id"]] = f"LIMIT oom {type(err).__name__}: {err}"
+                else:
+                    failed[w["id"]] = f"{type(err).__name__}: {err}"
         print(f"READY platform={platform} baseline={BASELINE}", flush=True)
         for line in sys.stdin:
             line = line.strip()
@@ -227,7 +230,10 @@ def serve(workloads: list[dict], device, platform: str) -> int:
                 print(f"LIMIT {wid} oom {err}", flush=True)
                 continue
             except Exception as err:
-                print(f"ERR {wid} {type(err).__name__}: {err}", flush=True)
+                if _oom_text(err):
+                    print(f"LIMIT {wid} oom {type(err).__name__}: {err}", flush=True)
+                else:
+                    print(f"ERR {wid} {type(err).__name__}: {err}", flush=True)
                 continue
             print("\n".join(lines), flush=True)
     return 0
@@ -265,6 +271,17 @@ def _one_trial(w, program, init, observe, decode, seed: int, jit_s: float) -> li
     return lines
 
 
+def _oom_text(err: BaseException) -> bool:
+    text = f"{type(err).__name__}: {err}".lower()
+    return (
+        "out of memory" in text
+        or "resource_exhausted" in text
+        or "cuda_error_out_of_memory" in text
+        or "cublas_status_alloc_failed" in text
+        or "failed to allocate" in text
+    )
+
+
 def run_workload(w: dict) -> list[str]:
     try:
         built = _build(w)
@@ -272,6 +289,8 @@ def run_workload(w: dict) -> list[str]:
     except MemoryError as err:
         return [f"LIMIT {w['id']} oom {err}"]
     except Exception as err:
+        if _oom_text(err):
+            return [f"LIMIT {w['id']} oom {type(err).__name__}: {err}"]
         raise SystemExit(f"{w['id']}: {type(err).__name__}: {err}") from err
     lines = []
     for trial in range(w["trials"]):
