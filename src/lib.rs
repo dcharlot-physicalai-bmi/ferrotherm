@@ -126,6 +126,7 @@ pub mod factor;
 pub mod kernel;
 pub mod schedule;
 pub mod gibbs;
+pub mod grid;
 pub mod informed;
 pub mod invertible;
 pub mod samples;

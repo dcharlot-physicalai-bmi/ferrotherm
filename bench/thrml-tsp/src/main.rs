@@ -9,6 +9,7 @@
 mod energy;
 mod ft;
 mod oracle;
+mod parity;
 mod score;
 mod spec;
 
@@ -33,9 +34,11 @@ fn main() {
             eprintln!("{e}");
             eprintln!(
                 "usage: ferrotherm-thrml-bench --out DIR [--trials N] [--warmup N] [--draws N] \
-                 [--python PY] [--skip-thrml] [--contended] [--quiet-gate] [--scale] \
-                 [--device auto|cpu|cuda] [--cpus LIST] [--lock PATH] [--lock-wait-s SECONDS] \
-                 [--other-core-mean F] [--other-core-max F] [--foreign-cpu-mean F] [--foreign-cpu-max F]"
+                 [--python PY] [--python-b PY] [--skip-thrml] [--contended] [--quiet-gate] [--scale] \
+                 [--grid-scale] [--profile] [--profile-sweeps N] [--lever NAME] [--threads N] \
+                 [--sides LIST] [--device auto|cpu|cuda] [--cpus LIST] [--lock PATH] \
+                 [--lock-wait-s SECONDS] [--other-core-mean F] [--other-core-max F] \
+                 [--foreign-cpu-mean F] [--foreign-cpu-max F]"
             );
             std::process::exit(2);
         }
@@ -51,10 +54,20 @@ fn main() {
                 .join(",")
         );
     }
-    let mut work = spec::canonical(args.trials, args.warmup, args.draws);
-    if args.scale {
-        work.extend(spec::scaling(args.trials, args.warmup, args.draws));
-    }
+    GRID_CHOICE.with(|c| c.set((args.levers, args.threads, args.gpu)));
+    let work = if args.grid_scale {
+        let mut grids = spec::grid_scaling(args.trials, args.warmup, args.draws);
+        if !args.sides.is_empty() {
+            grids.retain(|w| args.sides.contains(&w.open_grid().expect("grid id").0));
+        }
+        grids
+    } else {
+        let mut canonical = spec::canonical(args.trials, args.warmup, args.draws);
+        if args.scale {
+            canonical.extend(spec::scaling(args.trials, args.warmup, args.draws));
+        }
+        canonical
+    };
     let spec_text = spec::write_spec(&work);
     fs::create_dir_all(&args.out).unwrap_or_else(|e| panic!("create {}: {e}", args.out.display()));
     let traces = args.out.join("traces");
@@ -104,6 +117,60 @@ fn main() {
     };
 
     let held = quiet_gate.as_ref().is_some_and(|gate| gate.held);
+    if args.profile {
+        let spec_path = args.out.join("spec.txt");
+        let accuracy = run_accuracy(
+            &work,
+            args.skip_thrml,
+            &args.python,
+            &args.python_b,
+            &args.runner,
+            &args.out,
+            &spec_path,
+            &traces,
+            &args.device,
+            args.grid_choice(),
+            args.gpu,
+        );
+        let profile = profile_json(&work, args.grid_choice(), args.profile_sweeps, args.gpu);
+        fs::write(args.out.join("profile.json"), &profile).expect("write profile");
+        let parity_failed = accuracy.done.iter().any(|row| row.4.iter().any(|(_, ok, _)| !*ok));
+        let lock_json = release_lock_json(host_lock);
+        let mut body = String::new();
+        for (index, ft_trials, thrml_trials, thrml_b, parity) in &accuracy.done {
+            body.push_str(&workload_json(
+                &work[*index],
+                ft_trials,
+                thrml_trials.as_deref(),
+                thrml_b.as_deref(),
+                "measured",
+                parity,
+            ));
+            body.push_str(",\n");
+        }
+        if body.ends_with(",\n") {
+            body.truncate(body.len() - 2);
+            body.push('\n');
+        }
+        let report = format!(
+            "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": \"not_run\",\n  \
+             \"profile_note\": \"no energy was measured. wall_ns is VM or host elapsed time, not joules.\",\n  \
+             \"host_lock\": {lock},\n  \"profile\": {profile},\n  \
+             \"thrml_meta\": {meta},\n  \"thrml_b_meta\": {meta_b},\n  \
+             \"thrml_error\": {err},\n  \"thrml_b_error\": {err_b},\n  \
+             \"workloads\": [\n{body}  ]\n}}\n",
+            lock = lock_json,
+            meta = json_str(&accuracy.thrml_meta),
+            meta_b = json_str(&accuracy.thrml_b_meta),
+            err = if accuracy.thrml_note.is_empty() { "null".into() } else { json_str(&accuracy.thrml_note) },
+            err_b = if accuracy.thrml_b_note.is_empty() { "null".into() } else { json_str(&accuracy.thrml_b_note) },
+        );
+        fs::write(args.out.join("report.json"), &report).expect("write report");
+        if !accuracy.thrml_ok || !accuracy.thrml_b_ok || parity_failed {
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
     let order = energy::phase_order(held);
     let spec_path = args.out.join("spec.txt");
     let rule = args.window_rule();
@@ -116,6 +183,7 @@ fn main() {
                 args.contended,
                 args.trials,
                 &args.python,
+                &args.python_b,
                 &args.runner,
                 &spec_path,
                 !args.skip_thrml,
@@ -123,16 +191,21 @@ fn main() {
                 &args.cpus,
                 held,
                 &rule,
+                args.grid_choice(),
+                args.gpu,
             );
             let accuracy = run_accuracy(
                 &work,
                 args.skip_thrml,
                 &args.python,
+                &args.python_b,
                 &args.runner,
                 &args.out,
                 &spec_path,
                 &traces,
                 &args.device,
+                args.grid_choice(),
+                args.gpu,
             );
             (energy, grade, accuracy)
         }
@@ -142,11 +215,14 @@ fn main() {
                 &work,
                 args.skip_thrml,
                 &args.python,
+                &args.python_b,
                 &args.runner,
                 &args.out,
                 &spec_path,
                 &traces,
                 &args.device,
+                args.grid_choice(),
+                args.gpu,
             );
             let (energy, grade) = energy_section(
                 &mut probe,
@@ -154,6 +230,7 @@ fn main() {
                 args.contended,
                 args.trials,
                 &args.python,
+                &args.python_b,
                 &args.runner,
                 &spec_path,
                 !args.skip_thrml && accuracy.thrml_ok,
@@ -161,6 +238,8 @@ fn main() {
                 &args.cpus,
                 held,
                 &rule,
+                args.grid_choice(),
+                args.gpu,
             );
             (energy, grade, accuracy)
         }
@@ -172,12 +251,14 @@ fn main() {
         "measured"
     };
     let mut body = String::new();
-    for (index, ft_trials, thrml_trials) in &accuracy.done {
+    for (index, ft_trials, thrml_trials, thrml_b, parity) in &accuracy.done {
         body.push_str(&workload_json(
             &work[*index],
             ft_trials,
             thrml_trials.as_deref(),
+            thrml_b.as_deref(),
             accuracy_grade,
+            parity,
         ));
         body.push_str(",\n");
     }
@@ -203,7 +284,8 @@ fn main() {
          \"phases\": {phases},\n  \"host_lock\": {lock},\n  \
          \"phase_order\": {order},\n  \"settle_note\": {settle},\n  \
          \"provenance\": {prov},\n  \"quiet_gate\": {gate},\n  \
-         \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_error\": {err},\n  \
+         \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_b_meta\": {meta_b},\n  \
+         \"thrml_error\": {err},\n  \"thrml_b_error\": {err_b},\n  \
          \"workloads\": [\n{body}  ]\n}}\n",
         grade = json_str(bundle),
         phases = phases_json(preflight_grade, grade, accuracy_grade),
@@ -213,74 +295,81 @@ fn main() {
         prov = provenance_json(&probe, bundle),
         gate = gate_json,
         meta = json_str(&accuracy.thrml_meta),
+        meta_b = json_str(&accuracy.thrml_b_meta),
         err = if accuracy.thrml_note.is_empty() {
             "null".into()
         } else {
             json_str(&accuracy.thrml_note)
         },
+        err_b = if accuracy.thrml_b_note.is_empty() {
+            "null".into()
+        } else {
+            json_str(&accuracy.thrml_b_note)
+        },
     );
     fs::write(args.out.join("report.json"), &report).expect("write report");
     eprintln!("wrote {}", args.out.join("report.json").display());
-    if !accuracy.thrml_ok {
+    let parity_failed = accuracy.done.iter().any(|row| row.4.iter().any(|(_, ok, _)| !*ok));
+    if !accuracy.thrml_ok || !accuracy.thrml_b_ok || parity_failed {
         std::process::exit(1);
     }
 }
 
 struct AccuracyRun {
-    done: Vec<(usize, Vec<Chain>, Option<Vec<Chain>>)>,
+    done: Vec<(usize, Vec<Chain>, Option<Vec<Chain>>, Option<Vec<Chain>>, Vec<(String, bool, String)>)>,
     thrml_ok: bool,
     thrml_note: String,
     thrml_meta: String,
+    thrml_b_ok: bool,
+    thrml_b_note: String,
+    thrml_b_meta: String,
 }
 
 fn run_accuracy(
     work: &[Workload],
     skip_thrml: bool,
     python: &Path,
+    python_b: &Path,
     runner: &Path,
     out: &Path,
     spec: &Path,
     traces: &Path,
     device: &str,
+    grid: Option<ft::GridChoice>,
+    gpu: bool,
 ) -> AccuracyRun {
     let mut done = Vec::new();
-    let mut thrml_ok = skip_thrml;
-    let mut thrml_note = if skip_thrml {
-        "THRML runner skipped on request".to_string()
+    let (thrml_ok, thrml_note, thrml_meta, thrml_by_id) = if skip_thrml {
+        (true, "THRML runner skipped on request".to_string(), String::new(), None)
     } else {
-        String::new()
+        load_baseline(python, runner, spec, &out.join("thrml_raw.txt"), device, "A", "baseline A")
     };
-    let thrml_raw = if skip_thrml {
-        None
+    let (thrml_b_ok, thrml_b_note, thrml_b_meta, thrml_b_by_id) = if skip_thrml {
+        (true, "THRML runner skipped on request".to_string(), String::new(), None)
+    } else if python_b.as_os_str().is_empty() {
+        (
+            false,
+            "baseline B interpreter was not set. Pass --python-b or THRML_PYTHON_B. A is not used in its place.".into(),
+            String::new(),
+            None,
+        )
     } else {
-        match run_thrml(python, runner, spec, &out.join("thrml_raw.txt"), device) {
-            Ok(()) => {
-                thrml_ok = true;
-                Some(fs::read_to_string(out.join("thrml_raw.txt")).unwrap_or_default())
-            }
-            Err(e) => {
-                thrml_note = e;
-                thrml_ok = false;
-                None
-            }
-        }
+        load_baseline(python_b, runner, spec, &out.join("thrml_b_raw.txt"), device, "B", "baseline B")
     };
-    let thrml_chains = thrml_raw.as_deref().map(parse_thrml).transpose();
-    let (thrml_meta, thrml_by_id) = match thrml_chains {
-        Ok(Some((meta, map))) => (meta, Some(map)),
-        Ok(None) => (String::new(), None),
-        Err(e) => {
-            thrml_note = e;
-            thrml_ok = false;
-            (String::new(), None)
-        }
-    };
+    let mut thrml_ok = thrml_ok;
+    let mut thrml_note = thrml_note;
+    let mut thrml_b_ok = thrml_b_ok;
+    let mut thrml_b_note = thrml_b_note;
     for w in work {
         eprintln!("ferrotherm {}", w.id);
         let mut ft_trials = Vec::new();
         for t in 0..w.trials {
             let seed = w.seed0 + t as u64;
-            let chain = ft::run(w, seed).unwrap_or_else(|e| panic!("{} seed {seed}: {e}", w.id));
+            let chain = if gpu {
+                run_gpu_chain(w, seed).unwrap_or_else(|e| panic!("{} seed {seed}: {e}", w.id))
+            } else {
+                ft::run_with(w, seed, grid).unwrap_or_else(|e| panic!("{} seed {seed}: {e}", w.id))
+            };
             if t == 0 {
                 write_trace(traces, w.id, "ferrotherm", &chain);
             }
@@ -292,28 +381,30 @@ fn run_accuracy(
             );
             ft_trials.push(chain);
         }
-        let thrml_trials = match &thrml_by_id {
-            Some(map) => match map.get(w.id) {
-                Some(raws) => Some(score_thrml(w, raws)),
-                None => {
-                    thrml_note = format!("THRML raw output has no workload {}", w.id);
-                    thrml_ok = false;
-                    None
-                }
-            },
-            None => None,
-        };
+        let thrml_trials = take_side(w, &thrml_by_id, &mut thrml_note, &mut thrml_ok);
+        let thrml_b_trials = take_side(w, &thrml_b_by_id, &mut thrml_b_note, &mut thrml_b_ok);
         if let Some(trials) = &thrml_trials
             && let Some(first) = trials.first()
         {
             write_trace(traces, w.id, "thrml", first);
         }
+        if let Some(trials) = &thrml_b_trials
+            && let Some(first) = trials.first()
+        {
+            write_trace(traces, w.id, spec::THRML_B_SIDE, first);
+        }
+        let parity = parity_for(w, &ft_trials, thrml_trials.as_deref(), thrml_b_trials.as_deref());
+        for (side, ok, reason) in &parity {
+            if !ok {
+                eprintln!("parity refused {side} {}: {reason}", w.id);
+            }
+        }
         done.push((
-            work.iter()
-                .position(|item| item.id == w.id)
-                .expect("workload id"),
+            work.iter().position(|item| item.id == w.id).expect("workload id"),
             ft_trials,
             thrml_trials,
+            thrml_b_trials,
+            parity,
         ));
     }
     AccuracyRun {
@@ -321,6 +412,138 @@ fn run_accuracy(
         thrml_ok,
         thrml_note,
         thrml_meta,
+        thrml_b_ok,
+        thrml_b_note,
+        thrml_b_meta,
+    }
+}
+
+fn load_baseline(
+    python: &Path,
+    runner: &Path,
+    spec: &Path,
+    out: &Path,
+    device: &str,
+    baseline: &str,
+    label: &str,
+) -> (bool, String, String, Option<std::collections::BTreeMap<String, Vec<RawChain>>>) {
+    match run_thrml(python, runner, spec, out, device, baseline) {
+        Ok(()) => match fs::read_to_string(out).ok().as_deref().map(parse_thrml).transpose() {
+            Ok(Some((meta, map))) => (true, String::new(), meta, Some(map)),
+            Ok(None) => (false, format!("{label} produced no output"), String::new(), None),
+            Err(e) => (false, format!("{label}: {e}"), String::new(), None),
+        },
+        Err(e) => (false, format!("{label}: {e}"), String::new(), None),
+    }
+}
+
+fn take_side(
+    w: &Workload,
+    by_id: &Option<std::collections::BTreeMap<String, Vec<RawChain>>>,
+    note: &mut String,
+    ok: &mut bool,
+) -> Option<Vec<Chain>> {
+    match by_id {
+        Some(map) => match map.get(w.id) {
+            Some(raws) => Some(score_thrml(w, raws)),
+            None => {
+                *note = format!("THRML raw output has no workload {}", w.id);
+                *ok = false;
+                None
+            }
+        },
+        None => None,
+    }
+}
+
+fn parity_for(
+    w: &Workload,
+    ft: &[Chain],
+    a: Option<&[Chain]>,
+    b: Option<&[Chain]>,
+) -> Vec<(String, bool, String)> {
+    let Some((side, _)) = w.open_grid() else {
+        return Vec::new();
+    };
+    let gap = grid_gap16();
+    let onsager = ferrotherm::free_energy::onsager_energy_density(w.beta, 1.0);
+    let mut out = Vec::new();
+    out.push(judge_side("ferrotherm", side, ft, w.exact_energy, onsager, gap));
+    if let Some(chains) = a {
+        out.push(judge_side("thrml", side, chains, w.exact_energy, onsager, gap));
+    }
+    if let Some(chains) = b {
+        out.push(judge_side(spec::THRML_B_SIDE, side, chains, w.exact_energy, onsager, gap));
+    }
+    out
+}
+
+fn judge_side(
+    name: &str,
+    side: usize,
+    chains: &[Chain],
+    exact: Option<f64>,
+    onsager: f64,
+    gap16: f64,
+) -> (String, bool, String) {
+    let Some(first) = chains.first() else {
+        return (name.into(), false, format!("{name} produced no chain"));
+    };
+    let other = chains.get(1).map(|c| c.score.mean_energy);
+    let verdict = parity::judge_ising_open(
+        side,
+        first.score.mean_energy,
+        other,
+        exact,
+        onsager,
+        gap16,
+    );
+    (name.into(), verdict.ok, verdict.reason)
+}
+
+fn grid_gap16() -> f64 {
+    let tm = oracle::ising_open_transfer(16, 1.0, 0.3).expect("16x16 transfer matrix").mean_energy;
+    let onsager = ferrotherm::free_energy::onsager_energy_density(0.3, 1.0);
+    (tm / 256.0 - onsager).abs()
+}
+
+fn run_gpu_chain(w: &Workload, seed: u64) -> Result<Chain, String> {
+    #[cfg(feature = "gpu")]
+    {
+        let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
+        let gpu = ferrotherm_gpu::Gpu::new()
+            .ok_or_else(|| "no wgpu adapter. The GPU lever is not run on the CPU.".to_string())?;
+        if !gpu.is_hardware() {
+            eprintln!(
+                "wgpu adapter {} is not hardware. Timings from it are not a GPU result.",
+                gpu.adapter().name
+            );
+        }
+        let thin = u32::try_from(w.thin.max(1)).map_err(|_| "thin does not fit u32")?;
+        let warmup = u32::try_from(w.warmup).map_err(|_| "warmup does not fit u32")?;
+        let mut state = vec![-1i8; side * side];
+        let t0 = std::time::Instant::now();
+        // The first kept state is warmup + thin sweeps in, matching Sampler::collect.
+        ferrotherm_gpu::sweep_open_grid_from(&gpu, side, j, w.beta, &mut state, 0, warmup + thin, seed)?;
+        let mut energies = Vec::with_capacity(w.draws);
+        energies.push(ferrotherm::grid::grid_energy(&state, side, j));
+        let mut done = warmup + thin;
+        for _ in 1..w.draws {
+            ferrotherm_gpu::sweep_open_grid_from(&gpu, side, j, w.beta, &mut state, done, thin, seed)?;
+            done = done.saturating_add(thin);
+            energies.push(ferrotherm::grid::grid_energy(&state, side, j));
+        }
+        let seconds = t0.elapsed().as_secs_f64();
+        ft::score_energies(w, seconds, None, &energies)
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (w, seed);
+        Err(
+            "the bench was built without the gpu feature. Rebuild with --features gpu. \
+             The GPU lever is not run on the CPU."
+                .into(),
+        )
     }
 }
 
@@ -330,11 +553,19 @@ struct Args {
     warmup: usize,
     draws: usize,
     python: PathBuf,
+    python_b: PathBuf,
     runner: PathBuf,
     skip_thrml: bool,
     contended: bool,
     quiet_gate: bool,
     scale: bool,
+    grid_scale: bool,
+    profile: bool,
+    profile_sweeps: usize,
+    levers: ferrotherm::grid::Levers,
+    gpu: bool,
+    threads: usize,
+    sides: Vec<usize>,
     device: String,
     cpus: Vec<usize>,
     lock: PathBuf,
@@ -352,10 +583,18 @@ impl Args {
         let mut warmup = spec::WARMUP;
         let mut draws = spec::DRAWS;
         let mut python = std::env::var("THRML_PYTHON").unwrap_or_else(|_| "python3".into());
+        let mut python_b = std::env::var("THRML_PYTHON_B").unwrap_or_default();
         let mut skip = false;
         let mut contended = false;
         let mut quiet_gate = false;
         let mut scale = false;
+        let mut grid_scale = false;
+        let mut profile = false;
+        let mut profile_sweeps = 4usize;
+        let mut levers = ferrotherm::grid::Levers::SCALAR;
+        let mut gpu = false;
+        let mut threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let mut sides = Vec::new();
         let mut device = "auto".to_string();
         let mut cpus = String::new();
         let rule = energy::TrialWindowRule::defaults();
@@ -373,10 +612,49 @@ impl Args {
                 "--warmup" => warmup = parse_usize(&need(&mut it, "--warmup")?, "--warmup")?,
                 "--draws" => draws = parse_usize(&need(&mut it, "--draws")?, "--draws")?,
                 "--python" => python = need(&mut it, "--python")?,
+                "--python-b" => python_b = need(&mut it, "--python-b")?,
                 "--skip-thrml" => skip = true,
                 "--contended" => contended = true,
                 "--quiet-gate" => quiet_gate = true,
                 "--scale" => scale = true,
+                "--grid-scale" => grid_scale = true,
+                "--profile" => profile = true,
+                "--profile-sweeps" => {
+                    profile_sweeps = parse_usize(&need(&mut it, "--profile-sweeps")?, "--profile-sweeps")?;
+                }
+                "--lever" => {
+                    let name = need(&mut it, "--lever")?;
+                    if name == "gpu" {
+                        if levers != ferrotherm::grid::Levers::SCALAR {
+                            return Err("gpu does not combine with a CPU lever. Run it on its own.".into());
+                        }
+                        gpu = true;
+                    } else if gpu {
+                        return Err(format!(
+                            "--lever {name} does not combine with gpu. Run that lever on its own."
+                        ));
+                    } else {
+                        let one = ferrotherm::grid::Levers::one(&name)?;
+                        levers.parallel |= one.parallel;
+                        levers.simd |= one.simd;
+                        levers.tiled |= one.tiled;
+                        levers.sparse_rng |= one.sparse_rng;
+                    }
+                }
+                "--threads" => threads = parse_usize(&need(&mut it, "--threads")?, "--threads")?,
+                "--sides" => {
+                    let text = need(&mut it, "--sides")?;
+                    for part in text.split(',') {
+                        let side = parse_usize(part.trim(), "--sides")?;
+                        if !spec::GRID_SIDES.contains(&side) {
+                            return Err(format!(
+                                "--sides got {side}, which is not one of {}",
+                                spec::GRID_SIDES.map(|s| s.to_string()).join(",")
+                            ));
+                        }
+                        sides.push(side);
+                    }
+                }
                 "--device" => device = need(&mut it, "--device")?,
                 "--cpus" => cpus = need(&mut it, "--cpus")?,
                 "--lock" => lock = need(&mut it, "--lock")?,
@@ -414,6 +692,27 @@ impl Args {
         if quiet_gate && contended {
             return Err("--quiet-gate and --contended name different evidence grades".into());
         }
+        if scale && grid_scale {
+            return Err("--scale and --grid-scale are different workload sets".into());
+        }
+        if profile && !grid_scale {
+            return Err("--profile is the no-energy sub-mode of --grid-scale".into());
+        }
+        if !sides.is_empty() && !grid_scale {
+            return Err("--sides filters --grid-scale and was given without it".into());
+        }
+        if threads == 0 {
+            return Err("--threads must be at least 1".into());
+        }
+        if profile_sweeps == 0 {
+            return Err("--profile-sweeps must be at least 1".into());
+        }
+        if gpu && !cfg!(feature = "gpu") {
+            return Err(
+                "--lever gpu needs this bench rebuilt with --features gpu. It is not run on the CPU."
+                    .into(),
+            );
+        }
         let cpus = if cpus.is_empty() {
             Vec::new()
         } else {
@@ -425,11 +724,19 @@ impl Args {
             warmup,
             draws,
             python: PathBuf::from(python),
+            python_b: PathBuf::from(python_b),
             runner: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/runner.py"),
             skip_thrml: skip,
             contended,
             quiet_gate,
             scale,
+            grid_scale,
+            profile,
+            profile_sweeps,
+            levers,
+            gpu,
+            threads,
+            sides,
             device,
             cpus,
             lock: PathBuf::from(lock),
@@ -455,6 +762,14 @@ fn parse_f64(text: &str, flag: &str) -> Result<f64, String> {
 }
 
 impl Args {
+    fn grid_choice(&self) -> Option<ft::GridChoice> {
+        if self.gpu {
+            None
+        } else {
+            Some(ft::GridChoice { levers: self.levers, threads: self.threads })
+        }
+    }
+
     fn window_rule(&self) -> energy::TrialWindowRule {
         energy::TrialWindowRule {
             enforce: true,
@@ -481,6 +796,7 @@ fn run_thrml(
     spec: &Path,
     out: &Path,
     device: &str,
+    baseline: &str,
 ) -> Result<(), String> {
     eprintln!(
         "THRML via {} {} --device {device}",
@@ -495,6 +811,8 @@ fn run_thrml(
         .arg(out)
         .arg("--device")
         .arg(device)
+        .arg("--baseline")
+        .arg(baseline)
         .status()
         .map_err(|e| format!("could not start {}: {e}", python.display()))?;
     if status.success() {
@@ -510,6 +828,7 @@ struct RawChain {
     jit_seconds: f64,
     states_spin: Vec<Vec<i8>>,
     states_potts: Vec<Vec<u8>>,
+    energies: Vec<f64>,
 }
 
 fn parse_thrml(
@@ -527,6 +846,10 @@ fn parse_thrml(
                 return Err("WORK inside an open WORK".into());
             }
             cur = Some(RawChainBuild::parse(rest)?);
+        } else if let Some(rest) = line.strip_prefix("ENERGY ") {
+            let c = cur.as_mut().ok_or("ENERGY outside WORK")?;
+            let v: f64 = rest.trim().parse().map_err(|_| format!("bad ENERGY {rest}"))?;
+            c.energies.push(v);
         } else if let Some(rest) = line.strip_prefix("STATE ") {
             let c = cur.as_mut().ok_or("STATE outside WORK")?;
             c.push_state(rest)?;
@@ -550,6 +873,7 @@ struct RawChainBuild {
     seconds: f64,
     jit_seconds: f64,
     rows: Vec<Vec<i64>>,
+    energies: Vec<f64>,
 }
 
 impl RawChainBuild {
@@ -579,6 +903,7 @@ impl RawChainBuild {
             seconds: seconds.ok_or("WORK missing seconds")?,
             jit_seconds: jit.ok_or("WORK missing jit_seconds")?,
             rows: Vec::new(),
+            energies: Vec::new(),
         })
     }
 
@@ -595,8 +920,18 @@ impl RawChainBuild {
     }
 
     fn finish(self) -> Result<RawChain, String> {
+        if self.rows.is_empty() && self.energies.is_empty() {
+            return Err(format!("{} produced no states and no energies", self.id));
+        }
         if self.rows.is_empty() {
-            return Err(format!("{} produced no states", self.id));
+            return Ok(RawChain {
+                seed: self.seed,
+                seconds: self.seconds,
+                jit_seconds: self.jit_seconds,
+                states_spin: Vec::new(),
+                states_potts: Vec::new(),
+                energies: self.energies,
+            });
         }
         let width = self.rows[0].len();
         let mut spins = Vec::new();
@@ -631,6 +966,7 @@ impl RawChainBuild {
             jit_seconds: self.jit_seconds,
             states_spin: spins,
             states_potts: potts,
+            energies: Vec::new(),
         })
     }
 }
@@ -653,6 +989,9 @@ fn score_thrml(w: &Workload, raws: &[RawChain]) -> Vec<Chain> {
 }
 
 fn score_external(w: &Workload, raw: &RawChain) -> Result<Chain, String> {
+    if raw.states_spin.is_empty() && raw.states_potts.is_empty() && !raw.energies.is_empty() {
+        return ft::score_energies(w, raw.seconds, Some(raw.jit_seconds), &raw.energies);
+    }
     // Re-score with the ferrotherm energy and the ferrotherm oracle. The external
     // runner contributed states and a wall-clock; it did not contribute the metric.
     ft::score_observed(
@@ -701,7 +1040,9 @@ fn workload_json(
     w: &Workload,
     ft_trials: &[Chain],
     thrml: Option<&[Chain]>,
+    thrml_b: Option<&[Chain]>,
     grade: &str,
+    parity: &[(String, bool, String)],
 ) -> String {
     let mut s = String::new();
     s.push_str("    {\n");
@@ -723,7 +1064,24 @@ fn workload_json(
         Some(t) => s.push_str(&side_json(t, true)),
         None => s.push_str("null"),
     }
-    s.push_str("\n    }");
+    s.push_str(",\n      \"thrml_main_2d96f4b4\": ");
+    match thrml_b {
+        Some(t) => s.push_str(&side_json(t, true)),
+        None => s.push_str("null"),
+    }
+    s.push_str(",\n      \"parity\": [");
+    for (i, (side, ok, reason)) in parity.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "{{\"side\": {}, \"ok\": {}, \"reason\": {}}}",
+            json_str(side),
+            if *ok { "true" } else { "false" },
+            if reason.is_empty() { "null".into() } else { json_str(reason) },
+        ));
+    }
+    s.push_str("]\n    }");
     s
 }
 
@@ -801,8 +1159,8 @@ fn trial_json(c: &Chain, external: bool) -> String {
          \"jit_excluded_from_seconds\": {jit_flag}, \
          \"tv\": {}, \"kl_empirical_exact\": {}, \"kl_exact_empirical\": {kl_rev}, \
          \"missed_states\": {}, \"tau_int_energy\": {:.8e}, \"ess_energy\": {:.8e}, \
-         \"ess_per_second\": {ess_s}, \"mean_energy\": {:.8e}, \"exact_mean_energy\": {:.8e}, \
-         \"energy_abs_err\": {:.8e}, \"magnetization_mae\": {mag}, \
+         \"ess_per_second\": {ess_s}, \"ess_per_sweep\": {}, \"mean_energy\": {}, \
+         \"exact_mean_energy\": {}, \"energy_abs_err\": {}, \"magnetization_mae\": {mag}, \
          \"gibbs_updates\": {}, \"reads\": {}, \
          \"measured_joules_per_ess\": null}}",
         sc.draws,
@@ -812,9 +1170,14 @@ fn trial_json(c: &Chain, external: bool) -> String {
         sc.missed_states,
         sc.tau_int_energy,
         sc.ess_energy,
-        sc.mean_energy,
-        sc.exact_mean_energy,
-        sc.energy_abs_err,
+        if sc.draws > 0 && sc.ess_energy.is_finite() {
+            fmt_finite(sc.ess_energy / sc.draws as f64)
+        } else {
+            "null".into()
+        },
+        fmt_finite(sc.mean_energy),
+        fmt_finite(sc.exact_mean_energy),
+        fmt_finite(sc.energy_abs_err),
         c.updates,
         c.reads,
     )
@@ -1003,6 +1366,7 @@ fn energy_section(
     contended: bool,
     trials: usize,
     python: &Path,
+    python_b: &Path,
     runner: &Path,
     spec: &Path,
     thrml_ok: bool,
@@ -1010,6 +1374,8 @@ fn energy_section(
     pinned: &[usize],
     preflight_held: bool,
     rule: &energy::TrialWindowRule,
+    grid: Option<ft::GridChoice>,
+    gpu: bool,
 ) -> (String, &'static str) {
     let poll = if contended {
         poll_quiet(&[ferrotherm::host::load_average()])
@@ -1112,14 +1478,28 @@ fn energy_section(
             "load_gated",
         );
     }
-    // THRML is not started until the first B-arm sample, inside that trial window.
-    let mut slot = ThrmlSlot {
+    // THRML is not started until the first arm sample, inside that trial window.
+    // A and B are separate pairings. Their ferrotherm rows do not share a summary.
+    let _ = (&grid, gpu);
+    let mut slot_a = ThrmlSlot {
         session: None,
+        side: spec::THRML_A_SIDE,
+        baseline: "A",
         python: python.to_path_buf(),
         runner: runner.to_path_buf(),
         spec: spec.to_path_buf(),
         device: device.to_string(),
         enabled: thrml_ok,
+    };
+    let mut slot_b = ThrmlSlot {
+        session: None,
+        side: spec::THRML_B_SIDE,
+        baseline: "B",
+        python: python_b.to_path_buf(),
+        runner: runner.to_path_buf(),
+        spec: spec.to_path_buf(),
+        device: device.to_string(),
+        enabled: thrml_ok && !python_b.as_os_str().is_empty(),
     };
     let baseline_settle = match settle_for_bracket(contended) {
         Ok(samples) => samples,
@@ -1192,6 +1572,15 @@ fn energy_section(
     let mut rows = Vec::new();
     let mut phase_refused = String::new();
     'pairs: for w in work {
+        for pass in 0..2 {
+        let (pairing, other_side, slot) = match pass {
+            0 => ("A", spec::THRML_A_SIDE, &mut slot_a),
+            _ => ("B", spec::THRML_B_SIDE, &mut slot_b),
+        };
+        if pass == 1 && python_b.as_os_str().is_empty() {
+            // No B interpreter. Do not time an empty window and call it B's joules.
+            continue;
+        }
         for pair in 0..trials {
             let settle_samples = match settle_for_bracket(contended) {
                 Ok(samples) => samples,
@@ -1214,7 +1603,12 @@ fn energy_section(
                 energy::CpuSnap,
                 energy::CpuSnap,
             )> = Vec::new();
-            for side in energy::pair_order(pair) {
+            let order = if pass == 0 {
+                energy::pair_order(pair)
+            } else {
+                energy::pair_order_against(pair, other_side)
+            };
+            for side in order {
                 let seed = w.seed0 + pair as u64 + 10_000;
                 let before = read_cpu_snap();
                 let mut measured = measure_side(
@@ -1222,7 +1616,7 @@ fn energy_section(
                     side,
                     w,
                     seed,
-                    &mut slot,
+                    &mut *slot,
                     device,
                     pinned,
                     &window_rule,
@@ -1233,7 +1627,7 @@ fn energy_section(
                         side,
                         w,
                         seed,
-                        &mut slot,
+                        &mut *slot,
                         CounterKind::Nvml,
                     ));
                 }
@@ -1272,6 +1666,16 @@ fn energy_section(
                 .map(|(c, f)| format!("{c}:{f:.4}"))
                 .collect::<Vec<_>>()
                 .join(",");
+            if w.open_grid().is_some() {
+                let seed0 = w.seed0 + pair as u64 + 10_000;
+                for (side, measures, _, _) in &mut got {
+                    let reps = measures.first().map(|m| m.repetitions).unwrap_or(0);
+                    let ess = remix_ess(side, w, seed0, reps, slot);
+                    for m in measures.iter_mut() {
+                        m.ess = ess;
+                    }
+                }
+            }
             for (side, measures, before, after) in &got {
                 for measured in measures {
                     let rank = energy_rank(measured.instrument, &probe.hostname);
@@ -1311,6 +1715,8 @@ fn energy_section(
                         snap_other_cpu(before, after),
                         grade,
                         rank,
+                        pairing,
+                        fabric_name(side, pairing, device, gpu),
                     );
                     row.idle_before_w = Some(if core_row {
                         before_b.core_watts.unwrap_or(f64::NAN)
@@ -1340,6 +1746,22 @@ fn energy_section(
                     row.ps_attribution = measured.ps_attribution.clone();
                     row.trial_refusal = measured.trial_refusal.clone();
                     row.settle_load1 = settle_txt.clone();
+                    if w.open_grid().is_some() {
+                        let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
+                        let produced = (w.draws * w.thin.max(1)) as f64;
+                        row.sweeps_per_rep = sweeps;
+                        row.ess_per_sweep = if produced > 0.0 && row.ess.is_finite() {
+                            row.ess / produced
+                        } else {
+                            f64::NAN
+                        };
+                        row.seconds_per_sweep = if sweeps > 0 {
+                            row.joules.seconds / sweeps as f64
+                        } else {
+                            f64::NAN
+                        };
+                        row.joules_per_sweep = row.joules.incremental.filter(|j| sweeps > 0 && j.is_finite()).map(|j| j / sweeps as f64);
+                    }
                     if !measured.trial_refusal.is_empty() {
                         row.joules.attributable = false;
                         row.joules.evidence = "load_gated";
@@ -1352,10 +1774,11 @@ fn energy_section(
                     rows.push(row);
                 }
             }
-            stamp_pairs(&mut rows, w.id, pair, sigma, drift_ok, core_sigma, core_ok);
+            stamp_pairs(&mut rows, w.id, pair, pairing, sigma, drift_ok, core_sigma, core_ok);
             if !phase_refused.is_empty() {
                 break 'pairs;
             }
+        }
         }
     }
     if !phase_refused.is_empty() && !contended {
@@ -1603,6 +2026,7 @@ fn stamp_pairs(
     rows: &mut [EnergyTrial],
     workload: &str,
     pair: usize,
+    pairing: &str,
     sigma: f64,
     drift_ok: bool,
     core_sigma: f64,
@@ -1610,7 +2034,7 @@ fn stamp_pairs(
 ) {
     let scopes: Vec<String> = rows
         .iter()
-        .filter(|r| r.workload == workload && r.trial == pair)
+                .filter(|r| r.workload == workload && r.trial == pair && r.pairing == pairing)
         .map(|r| r.joules.scope.clone())
         .collect();
     let mut uniq = scopes;
@@ -1622,6 +2046,7 @@ fn stamp_pairs(
                 .find(|r| {
                     r.workload == workload
                         && r.trial == pair
+                        && r.pairing == pairing
                         && r.side == side
                         && r.joules.scope == scope
                 })
@@ -1634,7 +2059,7 @@ fn stamp_pairs(
         let Some((a, sa, ua)) = pick("ferrotherm") else {
             continue;
         };
-        let Some((b, sb, ub)) = pick("thrml") else {
+        let Some((b, sb, ub)) = pick(if pairing == "B" { spec::THRML_B_SIDE } else { spec::THRML_A_SIDE }) else {
             continue;
         };
         let delta = energy::paired_delta(a, b);
@@ -1642,7 +2067,7 @@ fn stamp_pairs(
         let gate = if scope == "core" { core_ok } else { drift_ok };
         let ok = energy::paired_attributable(delta, sig, sa, sb, gate, ua, ub);
         for row in rows.iter_mut() {
-            if row.workload == workload && row.trial == pair && row.joules.scope == scope {
+            if row.workload == workload && row.trial == pair && row.pairing == pairing && row.joules.scope == scope {
                 row.paired_delta_j = Some(delta);
                 row.paired_attributable = ok;
             }
@@ -2240,6 +2665,8 @@ fn plan_ess(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe
 
 struct ThrmlSlot {
     session: Option<ThrmlServe>,
+    side: &'static str,
+    baseline: &'static str,
     python: PathBuf,
     runner: PathBuf,
     spec: PathBuf,
@@ -2250,8 +2677,8 @@ struct ThrmlSlot {
 impl ThrmlSlot {
     /// Start THRML on the first B-arm call. The caller invokes this inside the timed window.
     fn arm(&mut self, side: &str) {
-        if side == "thrml" && self.enabled && self.session.is_none() {
-            match ThrmlServe::start(&self.python, &self.runner, &self.spec, &self.device) {
+        if side == self.side && self.enabled && self.session.is_none() {
+            match ThrmlServe::start(&self.python, &self.runner, &self.spec, &self.device, self.baseline) {
                 Ok(child) => self.session = Some(child),
                 Err(e) => eprintln!("THRML start inside the trial window failed: {e}"),
             }
@@ -2260,12 +2687,150 @@ impl ThrmlSlot {
 }
 
 fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> f64 {
+    if w.open_grid().is_some() {
+        // Cost only. ESS is measured after the window, on the same seeds.
+        if side == "ferrotherm" {
+            let (levers, threads, gpu_on) = GRID_CHOICE.with(|c| c.get());
+            if gpu_on {
+                let _ = gpu_cost(w, seed);
+            } else {
+                let _ = ft::cost_sweeps(w, seed, Some(ft::GridChoice { levers, threads }));
+            }
+        } else if let Some(s) = session {
+            let _ = s.cost(w, seed);
+        }
+        return f64::NAN;
+    }
     if side == "ferrotherm" {
         ft::run(w, seed).map_or(f64::NAN, |c| c.score.ess_energy)
     } else if let Some(s) = session {
         s.run(w, seed).map_or(f64::NAN, |c| c.score.ess_energy)
     } else {
         f64::NAN
+    }
+}
+
+thread_local! {
+    static GRID_CHOICE: std::cell::Cell<(ferrotherm::grid::Levers, usize, bool)> =
+        std::cell::Cell::new((ferrotherm::grid::Levers::SCALAR, 1, false));
+}
+
+fn remix_ess(side: &str, w: &Workload, seed: u64, reps: u32, slot: &mut ThrmlSlot) -> f64 {
+    if reps == 0 {
+        return f64::NAN;
+    }
+    let mut sum = 0.0;
+    let mut n = 0u32;
+    for r in 0..reps {
+        let s = seed.wrapping_add(u64::from(r));
+        let ess = if side == "ferrotherm" {
+            let (levers, threads, gpu_on) = GRID_CHOICE.with(|c| c.get());
+            if gpu_on {
+                run_gpu_chain(w, s).map(|c| c.score.ess_energy).unwrap_or(f64::NAN)
+            } else {
+                ft::run_with(w, s, Some(ft::GridChoice { levers, threads }))
+                    .map(|c| c.score.ess_energy)
+                    .unwrap_or(f64::NAN)
+            }
+        } else {
+            slot.arm(side);
+            match slot.session.as_mut() {
+                Some(session) => session.ess(w, s).unwrap_or(f64::NAN),
+                None => f64::NAN,
+            }
+        };
+        if ess.is_finite() {
+            sum += ess;
+            n += 1;
+        }
+    }
+    if n == 0 { f64::NAN } else { sum / f64::from(n) }
+}
+
+fn gpu_cost(w: &Workload, seed: u64) -> Result<(), String> {
+    #[cfg(feature = "gpu")]
+    {
+        let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
+        let gpu = ferrotherm_gpu::Gpu::new().ok_or_else(|| "no wgpu adapter".to_string())?;
+        let sweeps = u32::try_from(w.warmup + w.draws * w.thin.max(1)).unwrap_or(u32::MAX);
+        let _ = ferrotherm_gpu::sweep_open_grid(&gpu, side, j, w.beta, sweeps, seed)?;
+        Ok(())
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (w, seed);
+        Err("gpu feature is off".into())
+    }
+}
+
+fn profile_json(work: &[Workload], choice: Option<ft::GridChoice>, sweeps: usize, gpu: bool) -> String {
+    let mut s = String::from("[\n");
+    for (i, w) in work.iter().enumerate() {
+        let Some((side, j)) = w.open_grid() else { continue };
+        if i > 0 && !s.ends_with("[\n") {
+            s.push_str(",\n");
+        }
+        if gpu {
+            s.push_str(&format!(
+                "    {{\"workload\": {}, \"side\": {side}, \"fabric\": \"ferrotherm-gpu\", \
+                 \"note\": \"profile timings are the CPU stencil. The GPU lever's wall time is the accuracy chain.\"}}",
+                json_str(w.id)
+            ));
+            continue;
+        }
+        let choice = choice.unwrap_or(ft::GridChoice {
+            levers: ferrotherm::grid::Levers::SCALAR,
+            threads: 1,
+        });
+        let mut g = match ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, w.seed0, choice.levers, choice.threads) {
+            Ok(g) => g,
+            Err(e) => {
+                s.push_str(&format!(
+                    "    {{\"workload\": {}, \"error\": {}}}",
+                    json_str(w.id),
+                    json_str(&e.message)
+                ));
+                continue;
+            }
+        };
+        g.set_profile(true);
+        let prof = g.sweeps(sweeps);
+        let wall_per = if prof.sweeps > 0 { prof.wall_ns as f64 / prof.sweeps as f64 } else { f64::NAN };
+        s.push_str(&format!(
+            "    {{\"workload\": {}, \"side\": {side}, \"fabric\": \"ferrotherm-cpu\", \
+             \"levers\": {{\"parallel\": {}, \"simd\": {}, \"tiled\": {}, \"sparse_rng\": {}}}, \
+             \"threads_used\": {}, \"sweeps\": {}, \"wall_ns\": {}, \"wall_ns_per_sweep\": {:.4}, \
+             \"memory_ns\": {}, \"field_ns\": {}, \"rng_ns\": {}, \"rng_words\": {}, \
+             \"note\": \"memory_ns, field_ns and rng_ns are CPU time summed across threads. wall_ns is elapsed. Not joules.\"}}",
+            json_str(w.id),
+            if choice.levers.parallel { "true" } else { "false" },
+            if choice.levers.simd { "true" } else { "false" },
+            if choice.levers.tiled { "true" } else { "false" },
+            if choice.levers.sparse_rng { "true" } else { "false" },
+            prof.threads_used,
+            prof.sweeps,
+            prof.wall_ns,
+            wall_per,
+            prof.memory_ns,
+            prof.field_ns,
+            prof.rng_ns,
+            prof.rng_words,
+        ));
+    }
+    s.push_str("\n  ]");
+    s
+}
+
+fn fabric_name(side: &str, pairing: &str, device: &str, gpu: bool) -> &'static str {
+    let cuda = device == "cuda";
+    if side == "ferrotherm" {
+        if gpu { "ferrotherm-gpu" } else { "ferrotherm-cpu" }
+    } else if pairing == "B" {
+        if cuda { "thrml-main-2d96f4b4-jax-cuda" } else { "thrml-main-2d96f4b4-jax-cpu" }
+    } else if cuda {
+        "thrml-0.1.4-jax-cuda"
+    } else {
+        "thrml-0.1.4-jax-cpu"
     }
 }
 
@@ -2362,11 +2927,13 @@ fn loads_json(loads: &[f64]) -> String {
 
 fn grade_summary_json(s: &GradeSummary) -> String {
     format!(
-        "      {{\"workload\": {}, \"side\": {}, \"instrument\": {}, \"scope\": {}, \"grade\": {}, \
+        "      {{\"workload\": {}, \"side\": {}, \"pairing\": {}, \"fabric\": {}, \"instrument\": {}, \"scope\": {}, \"grade\": {}, \
          \"n\": {}, \"gross_j\": {}, \"incremental_j\": {}, \"joules_per_ess\": {}, \
          \"uncertainty_j_per_ess\": {}, \"scope_limit\": {}}}",
         json_str(s.workload),
         json_str(s.side),
+        json_str(s.pairing),
+        json_str(s.fabric),
         json_str(&s.instrument),
         json_str(&s.scope),
         json_str(s.grade),
@@ -2407,7 +2974,10 @@ fn trial_line(t: &EnergyTrial) -> String {
          \"load1\": {}, \"other_process_cpu_s\": {}, \"other_core_busy\": {}, \
          \"idle_before_w\": {}, \"idle_after_w\": {}, \"baseline_drift_w\": {}, \
          \"paired_delta_j\": {}, \"paired_attributable\": {}, \"ess\": {}, \
-         \"joules_per_ess\": {}, \"window_load1\": {}, \"window_signal\": {}, \
+         \"joules_per_ess\": {}, \"sweeps_per_rep\": {}, \"ess_per_sweep\": {}, \
+         \"seconds_per_sweep\": {}, \"joules_per_sweep\": {}, \
+         \"pairing\": {}, \"fabric\": {}, \
+         \"window_load1\": {}, \"window_signal\": {}, \
          \"ps_attribution\": {}, \"trial_refusal\": {}, \"settle_load1\": {}, \
          \"joules\": {}}}",
         json_str(t.workload),
@@ -2437,6 +3007,12 @@ fn trial_line(t: &EnergyTrial) -> String {
         },
         fmt_f64(Some(t.ess)),
         fmt_f64(t.joules_per_ess),
+        t.sweeps_per_rep,
+        fmt_f64(Some(t.ess_per_sweep)),
+        fmt_f64(Some(t.seconds_per_sweep)),
+        fmt_f64(t.joules_per_sweep),
+        json_str(t.pairing),
+        json_str(t.fabric),
         json_str(&t.window_load1),
         json_str(&t.window_signal),
         json_str(&t.ps_attribution),
@@ -2458,12 +3034,15 @@ impl ThrmlServe {
         runner: &Path,
         spec: &Path,
         device: &str,
+        baseline: &str,
     ) -> Result<ThrmlServe, String> {
         let mut child = Command::new(python)
             .arg(runner)
             .arg("--serve")
             .arg("--device")
             .arg(device)
+            .arg("--baseline")
+            .arg(baseline)
             .arg("--spec")
             .arg(spec)
             .stdin(std::process::Stdio::piped())
@@ -2484,9 +3063,12 @@ impl ThrmlServe {
     }
 
     fn run(&mut self, w: &Workload, seed: u64) -> Result<Chain, String> {
-        writeln!(self.stdin, "RUN {} {seed}", w.id)
-            .map_err(|e| format!("THRML serve write: {e}"))?;
+        writeln!(self.stdin, "RUN {} {seed}", w.id).map_err(|e| format!("THRML serve write: {e}"))?;
         self.stdin.flush().ok();
+        self.read_chain(w)
+    }
+
+    fn read_chain(&mut self, w: &Workload) -> Result<Chain, String> {
         let mut buf = String::new();
         loop {
             let mut line = String::new();
@@ -2496,6 +3078,9 @@ impl ThrmlServe {
                 .map_err(|e| format!("THRML serve read: {e}"))?;
             if n == 0 {
                 return Err("THRML serve closed".into());
+            }
+            if line.starts_with("ERR") {
+                return Err(line.trim().to_string());
             }
             buf.push_str(&line);
             if line.trim() == "END" {
@@ -2508,6 +3093,25 @@ impl ThrmlServe {
             .and_then(|mut v| v.pop())
             .ok_or("THRML serve returned no chain")?;
         score_external(w, &raw)
+    }
+
+    fn ess(&mut self, w: &Workload, seed: u64) -> Result<f64, String> {
+        writeln!(self.stdin, "ESS {} {seed}", w.id).map_err(|e| format!("THRML ess write: {e}"))?;
+        self.stdin.flush().ok();
+        let chain = self.read_chain(w)?;
+        Ok(chain.score.ess_energy)
+    }
+
+    fn cost(&mut self, w: &Workload, seed: u64) -> Result<(), String> {
+        writeln!(self.stdin, "COST {} {seed}", w.id).map_err(|e| format!("THRML cost write: {e}"))?;
+        self.stdin.flush().ok();
+        let mut line = String::new();
+        self.out.read_line(&mut line).map_err(|e| format!("THRML cost read: {e}"))?;
+        if line.starts_with("DONE") {
+            Ok(())
+        } else {
+            Err(format!("THRML cost said {}", line.trim()))
+        }
     }
 }
 
@@ -2677,7 +3281,7 @@ fn provenance_json(probe: &Probe, grade: &str) -> String {
         json_str(&cpu),
         json_str(std::env::consts::OS),
         json_str(&rustc_version()),
-        json_str("thrml==0.1.4"),
+        json_str(&format!("thrml==0.1.4 and {}", spec::THRML_B_COMMIT)),
         json_str("6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858"),
         match probe.load1 {
             Some(v) => format!("{v:.4}"),
@@ -2748,6 +3352,46 @@ fn json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grid_scale_flags_name_what_they_refuse() {
+        let err = match super::Args::parse(
+            ["--out", "out", "--scale", "--grid-scale"].into_iter().map(str::to_string),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("both workload sets were accepted"),
+        };
+        assert!(err.contains("--scale") && err.contains("--grid-scale"), "{err}");
+        let err = match super::Args::parse(
+            ["--out", "out", "--profile"].into_iter().map(str::to_string),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("profile alone was accepted"),
+        };
+        assert!(err.contains("--profile"), "{err}");
+        let err = match super::Args::parse(
+            ["--out", "out", "--grid-scale", "--lever", "cuda"].into_iter().map(str::to_string),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("unknown lever was accepted"),
+        };
+        assert!(err.contains("cuda"), "{err}");
+        let err = match super::Args::parse(
+            ["--out", "out", "--grid-scale", "--sides", "7"].into_iter().map(str::to_string),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("side 7 was accepted"),
+        };
+        assert!(err.contains('7'), "{err}");
+        assert!(
+            super::Args::parse(
+                ["--out", "out", "--grid-scale", "--profile", "--sides", "8,64", "--skip-thrml"]
+                    .into_iter()
+                    .map(str::to_string),
+            )
+            .is_ok()
+        );
+    }
+
     #[test]
     fn quiet_gate_refuses_to_share_a_run_with_contended_mode() {
         let Err(err) = super::Args::parse(

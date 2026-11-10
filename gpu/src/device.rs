@@ -164,7 +164,7 @@ impl Device for GpuDevice {
             // draw the same numbers at the same nodes, which is the failure the step counter
             // already exists to prevent, one level up.
             let stage_seed = seed.wrapping_add(i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            self.gpu.sweep_seeded(m, &mut self.state, st.beta, st.sweeps as u32, stage_seed)?;
+            self.gpu.sweep_seeded(m, &mut self.state, st.beta, st.sweeps as u32, stage_seed, 0)?;
             self.ledger.samples += m.n as u64 * st.sweeps as u64;
             // `sweep_seeded` brings the state back to the host, and scoring it below is why. One
             // full readback per stage, charged -- on this backend it is the PCIe copy, the term a
@@ -195,7 +195,7 @@ impl Device for GpuDevice {
         self.state = (0..g.n).map(|_| rng.spin(0.5)).collect();
         let thin = plan.thin.max(1);
         if plan.burn_in > 0 {
-            self.gpu.sweep_seeded(m, &mut self.state, beta, plan.burn_in as u32, seed)?;
+            self.gpu.sweep_seeded(m, &mut self.state, beta, plan.burn_in as u32, seed, 0)?;
         }
         let mut states = Vec::with_capacity(plan.draws);
         let mut energies = Vec::with_capacity(plan.draws);
@@ -203,7 +203,7 @@ impl Device for GpuDevice {
             // A fresh stream per draw, for the reason the stage loop in `run` already documents:
             // one stream reused would draw the same numbers at the same nodes every time.
             let s = seed.wrapping_add(d as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            self.gpu.sweep_seeded(m, &mut self.state, beta, thin as u32, s)?;
+            self.gpu.sweep_seeded(m, &mut self.state, beta, thin as u32, s, 0)?;
             energies.push(g.energy(&self.state));
             states.push(self.state.clone());
         }
@@ -298,9 +298,9 @@ mod tests {
         let mut a = vec![1i8; g.n];
         let mut b = vec![1i8; g.n];
         let mut a_again = vec![1i8; g.n];
-        d.gpu.sweep_seeded(&m, &mut a, hot, 40, 1).unwrap();
-        d.gpu.sweep_seeded(&m, &mut b, hot, 40, 2).unwrap();
-        d.gpu.sweep_seeded(&m, &mut a_again, hot, 40, 1).unwrap();
+        d.gpu.sweep_seeded(&m, &mut a, hot, 40, 1, 0).unwrap();
+        d.gpu.sweep_seeded(&m, &mut b, hot, 40, 2, 0).unwrap();
+        d.gpu.sweep_seeded(&m, &mut a_again, hot, 40, 1, 0).unwrap();
         assert_ne!(a, b, "two seeds produced identical states; the seed is being ignored");
         assert_eq!(a, a_again, "the same seed must reproduce; this is a seed, not just noise");
 
@@ -308,7 +308,7 @@ mod tests {
         // ever taken on this shader silently moved.
         let mut viaseed = vec![1i8; g.n];
         let mut unseeded = vec![1i8; g.n];
-        d.gpu.sweep_seeded(&m, &mut viaseed, hot, 40, 0).unwrap();
+        d.gpu.sweep_seeded(&m, &mut viaseed, hot, 40, 0, 0).unwrap();
         d.gpu.sweep(&m, &mut unseeded, hot, 40).unwrap();
         assert_eq!(viaseed, unseeded, "seed 0 must be the stream that existed before seeding");
     }
