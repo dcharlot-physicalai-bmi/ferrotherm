@@ -698,6 +698,13 @@ impl Args {
         if profile && !grid_scale {
             return Err("--profile is the no-energy sub-mode of --grid-scale".into());
         }
+        if grid_scale && !profile && cpus.is_empty() {
+            return Err(
+                "--cpus is required for a grid-scale energy run. There is no default list. \
+                 The host driver passes the cores it is measuring."
+                    .into(),
+            );
+        }
         if !sides.is_empty() && !grid_scale {
             return Err("--sides filters --grid-scale and was given without it".into());
         }
@@ -3385,6 +3392,21 @@ mod tests {
         assert!(
             super::Args::parse(
                 ["--out", "out", "--grid-scale", "--profile", "--sides", "8,64", "--skip-thrml"]
+                    .into_iter()
+                    .map(str::to_string),
+            )
+            .is_ok()
+        );
+        let err = match super::Args::parse(
+            ["--out", "out", "--grid-scale"].into_iter().map(str::to_string),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("grid-scale energy without --cpus was accepted"),
+        };
+        assert!(err.contains("--cpus"), "{err}");
+        assert!(
+            super::Args::parse(
+                ["--out", "out", "--grid-scale", "--cpus", "2,5-6"]
                     .into_iter()
                     .map(str::to_string),
             )
