@@ -8,9 +8,13 @@ description = "Head-to-head sampler benchmark of ferrotherm against a pinned THR
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferrotherm"
 
+[features]
+gpu = ["dep:ferrotherm-gpu"]
+
 [dependencies]
 ferrotherm = { version = "0.44", path = "../.." }
 ferrotherm-meter = { version = "0.4", path = "../../meter" }
+ferrotherm-gpu = { version = "0.3.26", path = "../../gpu", optional = true }
 
 [lints]
 workspace = true

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Open-grid levers
+
+`grid::OpenIsing` is the checkerboard stencil for an open Ising grid. `parallel`,
+`simd`, `tiled`, and `sparse_rng` are separate flags. `simd` on an odd side is an
+error. The sparse-rng path compares a threshold table of `kernel::p_up` from the
+high bit of the generator. Using the low bits of nearby streams biased a 2×2
+chain off the Boltzmann law; that is the test `each_lever_matches_the_boltzmann_law_on_a_2x2`.
+The GPU sweep stays in `ferrotherm-gpu`.
+
 ### The committed wasm was three weeks behind its own ABI, and two pages called the old one
 
 `ft_ebm_train` gained a `method` parameter on 2026-09-09 (`af6d066`): the C header and the Python,

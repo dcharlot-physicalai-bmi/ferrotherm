@@ -31,12 +31,66 @@ pub struct Chain {
     pub jit_seconds: Option<f64>,
 }
 
+/// Levers for an open-grid workload. `None` on a grid is the scalar stencil, one thread.
+#[derive(Clone, Copy, Debug)]
+pub struct GridChoice {
+    pub levers: ferrotherm::grid::Levers,
+    pub threads: usize,
+}
+
 pub fn run(w: &Workload, seed: u64) -> Result<Chain, String> {
+    run_with(w, seed, None)
+}
+
+pub fn run_with(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Chain, String> {
+    if w.open_grid().is_some() {
+        return run_open_grid(w, seed, grid);
+    }
     match w.kind {
         Kind::Ising => run_ising(w, seed),
         Kind::Potts => run_potts(w, seed),
         Kind::Hubo => run_hubo(w, seed),
     }
+}
+
+/// Sweeps only. No energy evaluation, so a joule window is not paying for the trace.
+pub fn cost_sweeps(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<u64, String> {
+    let Some((side, j)) = w.open_grid() else {
+        return Err(format!("{} is not an open-grid workload", w.id));
+    };
+    let choice = grid.unwrap_or(GridChoice {
+        levers: ferrotherm::grid::Levers::SCALAR,
+        threads: 1,
+    });
+    let mut g = ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, seed, choice.levers, choice.threads)
+        .map_err(|e| e.message)?;
+    let n = w.warmup + w.draws * w.thin.max(1);
+    g.sweeps(n);
+    Ok(n as u64)
+}
+
+fn run_open_grid(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Chain, String> {
+    let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
+    let choice = grid.unwrap_or(GridChoice {
+        levers: ferrotherm::grid::Levers::SCALAR,
+        threads: 1,
+    });
+    let mut g = ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, seed, choice.levers, choice.threads)
+        .map_err(|e| e.message)?;
+    let t0 = Instant::now();
+    let energies = g.energies(w.warmup, w.draws, w.thin);
+    let seconds = t0.elapsed().as_secs_f64();
+    let sc = score::score_mean_only(&energies, w.exact_energy.unwrap_or(f64::NAN), seconds);
+    let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
+    Ok(Chain {
+        score: sc,
+        updates: sweeps * w.n as u64,
+        reads: (w.draws * w.n) as u64,
+        energies,
+        states_spin: Vec::new(),
+        states_potts: Vec::new(),
+        jit_seconds: None,
+    })
 }
 
 fn run_ising(w: &Workload, seed: u64) -> Result<Chain, String> {
@@ -137,6 +191,37 @@ fn run_hubo(w: &Workload, seed: u64) -> Result<Chain, String> {
 /// `updates` and `reads` are the schedule's counts (one update per site per sweep, one read per
 /// site per kept state), not a ledger the other runner charged. ferrotherm's own chains report
 /// the ledger instead, which for these schedules is the same arithmetic.
+/// Score an energy trace that was computed with [`ferrotherm::grid::grid_energy`].
+///
+/// Used when the state itself does not fit in the receipt. The estimator is still this
+/// crate's. The energies are not THRML's beta-scaled energy.
+pub fn score_energies(
+    w: &Workload,
+    seconds: f64,
+    jit_seconds: Option<f64>,
+    energies: &[f64],
+) -> Result<Chain, String> {
+    if energies.len() != w.draws {
+        return Err(format!(
+            "{} expected {} energies, got {}",
+            w.id,
+            w.draws,
+            energies.len()
+        ));
+    }
+    let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
+    let sc = score::score_mean_only(energies, w.exact_energy.unwrap_or(f64::NAN), seconds);
+    Ok(Chain {
+        score: sc,
+        updates: sweeps * w.n as u64,
+        reads: (w.draws * w.n) as u64,
+        energies: energies.to_vec(),
+        states_spin: Vec::new(),
+        states_potts: Vec::new(),
+        jit_seconds,
+    })
+}
+
 pub fn score_observed(
     w: &Workload,
     seconds: f64,

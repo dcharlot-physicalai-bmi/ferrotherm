@@ -72,11 +72,17 @@ unlocked. If the lock is not acquired, the energy grade is refused with reason
 `host lock not held`. The same `flock` constants are used on macOS.
 
 `--scale` adds the larger workloads: open Ising at 4×4, 8×8, 16×16 (transfer
-matrix; 4×4 is also enumerated), 32×32 and 64×64 (Onsager's infinite lattice,
-not the finite mean), q=3 and q=4 Potts grids with a transfer-matrix mean, and
-three-body models at d=12 and d=16. `--device cuda` asks the THRML runner for a
-JAX GPU and exits if JAX has none. It does not run the CPU device under that
-name. `--device auto` uses a GPU when JAX has one.
+matrix; 4×4 is also enumerated), 32×32 and 64×64 (a long reference chain on the
+finite lattice, not Onsager's infinite lattice), q=3 and q=4 Potts grids with a
+transfer-matrix mean, and three-body models at d=12 and d=16. `--grid-scale` is
+a different list: open Ising sides 8 through 4096. The rule is
+`METHODOLOGY.md`. `--device cuda` asks the THRML runner for a JAX GPU and exits
+if JAX has none. It does not run the CPU device under that name. `--device auto`
+uses a GPU when JAX has one.
+
+Two THRML baselines are reported separately. `--python` is A, `thrml==0.1.4`.
+`--python-b` is B, commit `2d96f4b4b67bfa2625d89ed79f0a22c08af3b992`, in its own
+venv. Their rows are not averaged.
 
 ## Fleet evidence, 7 November 2026
 

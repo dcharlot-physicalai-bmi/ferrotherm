@@ -262,6 +262,92 @@ fn three_body(trials: usize, warmup: usize, draws: usize) -> Workload {
 ///
 /// Couplings: Ising `J = 1`, `beta = 0.3` (`K = 0.3`, below Onsager's `K_c ≈ 0.4407`).
 /// Potts `J = 1`, `beta = 0.5`, below [`ferrotherm::potts::critical_beta`].
+/// Open Ising sides for the large-grid sweep. Not part of [`scaling`].
+pub const GRID_SIDES: [usize; 10] = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+
+/// Baseline C is not a thing. A is THRML 0.1.4. B is this commit of THRML main, in its own venv.
+pub const THRML_B_COMMIT: &str = "2d96f4b4b67bfa2625d89ed79f0a22c08af3b992";
+pub const THRML_B_SIDE: &str = "thrml-main-2d96f4b4";
+pub const THRML_A_SIDE: &str = "thrml";
+
+impl Workload {
+    /// `Some((side, J))` for a [`grid_scaling`] workload. The edge list is not the specification.
+    #[must_use]
+    pub fn open_grid(&self) -> Option<(usize, f64)> {
+        let rest = self.id.strip_prefix("grid_scale_ising_")?;
+        let side: usize = rest.parse().ok()?;
+        if side.checked_mul(side) != Some(self.n) {
+            return None;
+        }
+        Some((side, 1.0))
+    }
+}
+
+/// Open Ising grids at `J = 1`, `beta = 0.3`, sides [`GRID_SIDES`].
+///
+/// Sides 8 and 16 carry the transfer-matrix mean. Larger sides do not carry Onsager's
+/// infinite-lattice energy as if it were the finite mean. Their parity gate is the same
+/// comparison the 32 and 64 tests already make: the per-site gap to Onsager is strictly
+/// smaller than the exact 16×16 gap, and two seeds agree to 0.05 per site.
+pub fn grid_scaling(trials: usize, warmup: usize, draws: usize) -> Vec<Workload> {
+    GRID_SIDES.iter().copied().map(|side| grid_scale_one(side, trials, warmup, draws)).collect()
+}
+
+fn grid_scale_id(side: usize) -> &'static str {
+    match side {
+        8 => "grid_scale_ising_8",
+        16 => "grid_scale_ising_16",
+        32 => "grid_scale_ising_32",
+        64 => "grid_scale_ising_64",
+        128 => "grid_scale_ising_128",
+        256 => "grid_scale_ising_256",
+        512 => "grid_scale_ising_512",
+        1024 => "grid_scale_ising_1024",
+        2048 => "grid_scale_ising_2048",
+        4096 => "grid_scale_ising_4096",
+        _ => "grid_scale_ising_unknown",
+    }
+}
+
+fn grid_scale_one(side: usize, trials: usize, warmup: usize, draws: usize) -> Workload {
+    let j = 1.0;
+    let beta = 0.3;
+    let n = side * side;
+    let (exact_energy, oracle) = if side <= crate::oracle::ISING_TM_MAX_SIDE {
+        let tm = crate::oracle::ising_open_transfer(side, j, beta).expect("side is inside the transfer matrix");
+        (Some(tm.mean_energy), "transfer matrix")
+    } else {
+        (
+            None,
+            "Onsager gap strictly below the exact 16x16 gap, and two seeds within 0.05 per site. Not a finite-lattice mean.",
+        )
+    };
+    let source = match side {
+        8 => "Open 8x8 Ising, J=1, beta=0.3. Grid-scale sweep. exact_energy is the transfer matrix.",
+        16 => "Open 16x16 Ising, J=1, beta=0.3. Grid-scale sweep. exact_energy is the transfer matrix.",
+        _ => "Open Ising grid, J=1, beta=0.3, side in the id. Past the transfer matrix. Parity is the Onsager gap against the exact 16x16 gap, plus two-seed agreement of 0.05 per site. Onsager is not stored as the finite mean.",
+    };
+    Workload {
+        id: grid_scale_id(side),
+        kind: Kind::Ising,
+        beta,
+        warmup,
+        draws,
+        thin: THIN,
+        trials,
+        seed0: SEED0 + 9_000 * side as u64,
+        source,
+        n,
+        q: 2,
+        biases: Vec::new(),
+        edges: Vec::new(),
+        triples: Vec::new(),
+        blocks: Vec::new(),
+        exact_energy,
+        oracle,
+    }
+}
+
 pub fn scaling(trials: usize, warmup: usize, draws: usize) -> Vec<Workload> {
     let mut out = Vec::new();
     for side in [4usize, 8, 16, 32, 64] {
@@ -589,6 +675,9 @@ pub fn write_spec(work: &[Workload]) -> String {
         s.push_str("SOURCE ");
         s.push_str(&w.source.replace('\n', " "));
         s.push('\n');
+        if let Some((side, j)) = w.open_grid() {
+            s.push_str(&format!("GRID side={side} j={j:.16}\n"));
+        }
         s.push_str("BIASES");
         for b in &w.biases {
             s.push_str(&format!(" {b:.16}"));
@@ -728,6 +817,39 @@ mod tests {
         assert_eq!(q4.q, 4);
         assert_eq!(q4.n, 64);
         assert!(q4.exact_energy.unwrap() < 0.0);
+    }
+
+    #[test]
+    fn grid_scaling_lists_every_side_once_and_does_not_write_the_edge_list() {
+        let grids = grid_scaling(2, 40, 64);
+        let ids: Vec<&str> = grids.iter().map(|w| w.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "grid_scale_ising_8",
+                "grid_scale_ising_16",
+                "grid_scale_ising_32",
+                "grid_scale_ising_64",
+                "grid_scale_ising_128",
+                "grid_scale_ising_256",
+                "grid_scale_ising_512",
+                "grid_scale_ising_1024",
+                "grid_scale_ising_2048",
+                "grid_scale_ising_4096",
+            ]
+        );
+        let eight = grids.iter().find(|w| w.id == "grid_scale_ising_8").unwrap();
+        assert!(eight.exact_energy.is_some());
+        assert!(eight.edges.is_empty(), "the spec is the GRID line, not an edge dump");
+        assert_eq!(eight.open_grid(), Some((8, 1.0)));
+        let big = grids.iter().find(|w| w.id == "grid_scale_ising_4096").unwrap();
+        assert!(big.exact_energy.is_none(), "4096 has no finite-lattice mean stored");
+        assert_eq!(big.n, 4096 * 4096);
+        let text = write_spec(&grids);
+        assert!(text.contains("GRID side=64 j=1.0000000000000000"));
+        assert!(!text.contains("0,1,1.0000000000000000"), "edges were written out");
+        let canonical = canonical(2, 40, 64);
+        assert!(canonical.iter().all(|w| w.open_grid().is_none()));
     }
 
     #[test]

@@ -148,7 +148,7 @@ impl Gpu {
         // at all. That is deliberate: the Onsager checks and the browser's numbers were taken on
         // this stream, and a "harmless" refactor that silently moved every draw would invalidate
         // them without failing anything.
-        self.sweep_seeded(m, spins, beta, sweeps, 0)
+        self.sweep_seeded(m, spins, beta, sweeps, 0, 0)
     }
 
     /// The same sweep, drawing from the stream `seed` selects.
@@ -177,6 +177,7 @@ impl Gpu {
         beta: f64,
         sweeps: u32,
         seed: u64,
+        start_sweep: u32,
     ) -> Result<(), String> {
         if spins.len() != m.n as usize {
             return Err(format!(
@@ -311,7 +312,9 @@ impl Gpu {
                 // Knuth's multiplicative constant: mixes the seed across the whole u32 range and
                 // maps 0 to 0, which is what keeps the unseeded path exactly where it was.
                 let offset = (seed as u32).wrapping_mul(0x9E37_79B9);
-                let step = offset.wrapping_add((s * live.len() + li + 1) as u32);
+                let step = offset.wrapping_add(
+                    ((u64::from(start_sweep) + s as u64) * live.len() as u64 + li as u64 + 1) as u32,
+                );
                 let at = (s * live.len() + li) * stride as usize;
                 let p = &mut params[at..at + PARAMS_BYTES as usize];
                 p[0..4].copy_from_slice(&m.n.to_le_bytes());
@@ -424,6 +427,66 @@ fn bytes_i32(v: &[i32]) -> &[u8] {
 }
 fn bytes_f32(v: &[f32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
+}
+
+/// Chromatic sweeps of an open Ising grid, started from all −1.
+///
+/// The shader is [`ferrotherm::wgsl::sweep_shader`]. Same seed and sweep count, same spins.
+/// This is not the CPU sampler's stream. No adapter is `Err` naming that, not a CPU fallback.
+///
+/// # Errors
+///
+/// A zero side, a non-finite coupling or temperature, or whatever [`Gpu::sweep_seeded`] returns.
+pub fn sweep_open_grid(
+    gpu: &Gpu,
+    side: usize,
+    j: f64,
+    beta: f64,
+    sweeps: u32,
+    seed: u64,
+) -> Result<Vec<i8>, String> {
+    if side == 0 {
+        return Err("open grid side is 0".into());
+    }
+    if !j.is_finite() {
+        return Err(format!("open grid J is not finite: {j}"));
+    }
+    let g = ferrotherm::ising::grid2d(side, side, j);
+    let model = ferrotherm::wgsl::GpuModel::from_graph(&g);
+    let mut spins = vec![-1i8; g.n];
+    gpu.sweep_seeded(&model, &mut spins, beta, sweeps, seed, 0)?;
+    Ok(spins)
+}
+
+/// Continue an open grid. `start_sweep` is the number of sweeps already applied to `spins`
+/// with this seed, so the shader's counter does not restart.
+///
+/// # Errors
+///
+/// The same as [`sweep_open_grid`], plus a state whose length is not `side²`.
+pub fn sweep_open_grid_from(
+    gpu: &Gpu,
+    side: usize,
+    j: f64,
+    beta: f64,
+    spins: &mut [i8],
+    start_sweep: u32,
+    sweeps: u32,
+    seed: u64,
+) -> Result<(), String> {
+    if side == 0 || spins.len() != side * side {
+        return Err(format!(
+            "open grid continuation expected {} spins for side {side}, got {}",
+            side * side,
+            spins.len()
+        ));
+    }
+    if !j.is_finite() {
+        return Err(format!("open grid J is not finite: {j}"));
+    }
+    let g = ferrotherm::ising::grid2d(side, side, j);
+    let model = ferrotherm::wgsl::GpuModel::from_graph(&g);
+    gpu.sweep_seeded(&model, spins, beta, sweeps, seed, start_sweep)
 }
 
 #[cfg(test)]
@@ -592,5 +655,16 @@ pub(crate) mod tests {
             let e = gpu.sweep(&m, &mut s, bad, 1).unwrap_err();
             assert!(e.contains("beta"), "{bad} should be refused by name, got: {e}");
         }
+    }
+
+    #[test]
+    fn an_open_grid_repeats_for_a_fixed_seed_and_moves_when_the_seed_changes() {
+        let (gpu, _own) = gpu_or_skip!();
+        let a = sweep_open_grid(&gpu, 4, 1.0, 0.3, 30, 11).expect("seed 11");
+        let b = sweep_open_grid(&gpu, 4, 1.0, 0.3, 30, 11).expect("seed 11 again");
+        assert_eq!(a, b, "the GPU stream is a function of the seed");
+        assert!(a.iter().any(|&s| s == 1), "30 sweeps at beta 0.3 left the all-down state");
+        let c = sweep_open_grid(&gpu, 4, 1.0, 0.3, 30, 12).expect("seed 12");
+        assert_ne!(a, c, "a different seed must not reuse seed 11's stream");
     }
 }

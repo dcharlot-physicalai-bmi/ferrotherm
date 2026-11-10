@@ -1516,6 +1516,7 @@ mutations=(
   "src/autocorr.rs|        total += pi[f] * e[f] * zf[k] + zf[k] * wp[f];|        total += pi[f] * e[f] * zf[k];|autocorr::tests::a_cold_pair_has_its_closed_form_tau_by_the_route_that_can_reach_it|the censored functional without its sum over the rest"
   "src/autocorr.rs|            if quiet >= QUIET_LAGS {|            if quiet >= 1 {|autocorr::tests::the_lag_sum_does_not_stop_where_the_autocorrelation_crosses_zero|a lag sum that stops at its first quiet lag"
   "src/autocorr.rs|        c[i * nf + i] = (1.0 - off).max(0.0);|        c[i * nf + i] += 0.0 * off;|autocorr::tests::the_slow_scale_mass_time_is_the_pushed_one_where_both_run|a slow-scale product that never restores its diagonal"
+  "src/grid.rs|    p_up(j * f64::from(field_units), beta)|    p_up(-j * f64::from(field_units), beta)|each_lever_matches_the_boltzmann_law_on_a_2x2|the grid heat bath at minus the field"
 
 )
 
@@ -1588,7 +1589,7 @@ fi
 # THE COUNT IS PINNED. A row deleted in a merge, or commented out to get a build green, leaves a
 # suite that still says "all mutations caught" over a smaller set -- which reads exactly like
 # success. Nothing anywhere asserted how many rows there should be until an audit asked.
-expected_rows=375
+expected_rows=376
 if [ "${#mutations[@]}" -ne "$expected_rows" ]; then
   echo "the suite has ${#mutations[@]} rows and expects $expected_rows." >&2
   echo "adding rows is good -- raise expected_rows. Losing one silently is what this catches." >&2

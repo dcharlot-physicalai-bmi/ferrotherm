@@ -103,3 +103,179 @@ reason `host lock not held` and neither phase runs.
 
 Meters stay on their own scope inside `energy.summaries` and `energy.trials`.
 A missing counter is an absent joule, not a zero.
+
+## Large-grid sweep
+
+`--grid-scale` replaces the pinned workload list with open Ising grids, `J = 1`,
+`beta = 0.3`, sides 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096.
+`--sides` may name a subset of that list. A side not in the list is an error.
+It does not drop a side that was requested and then failed.
+
+The host lock, the quiet gate, the idle brackets, and the trial-window rule are
+the ones above. They are not relaxed for a large grid.
+
+Each side is its own workload. Each meter is its own summary. Package, core,
+SoC telemetry, `vin`, and `subrail:` scopes are not pooled, and two hosts are
+not pooled. Baseline A and baseline B are not pooled with each other, and the
+ferrotherm rows paired with A are not pooled with the ferrotherm rows paired
+with B.
+
+### What is measured, separately
+
+For a grid-scale trial the joule window runs sweeps only. It does not score
+the trace. After the post-trial idle bracket, the same seeds are run again and
+the energy trace is scored. That second run is not inside the counter window.
+
+| Field | Definition |
+| --- | --- |
+| `seconds_per_sweep` | per-repetition window time divided by `warmup + draws * thin` |
+| `joules_per_sweep` | attributable incremental joules divided by that same sweep count |
+| `ess_per_sweep` | `ess / (draws * thin)` from the trace measured outside the window |
+| `joules_per_ess` | attributable incremental joules divided by that `ess`, with `uncertainty_j_per_ess` |
+
+`joules_per_ess` is not `joules_per_sweep / ess_per_sweep`. The joule window
+includes warmup sweeps. `ess_per_sweep` counts only the sweeps between kept
+draws. Both numbers are on the receipt. The uncertainty budget is the existing
+one: Student-t half-width of the trial `joules_per_ess` values, plus the mean
+quantization, cadence-edge, and idle-bracket terms from `combine_uncertainty`.
+
+### Parity
+
+Each sampler is judged on its own. A is not B's reference, and B is not A's.
+
+Sides 8 and 16 have a transfer-matrix mean. The chain mean has to be strictly
+inside 0.05 per site of it. Larger sides have no finite-lattice mean on the
+receipt. The per-site gap to Onsager has to be strictly smaller than the exact
+16×16 gap, and two seeds have to agree to strictly less than 0.05 per site.
+Those are the gates in `oracle`'s Ising tests. A size that fails is
+`parity.ok = false` with the numbers in `reason`. The process exits non-zero.
+The other sampler's row is left as it measured.
+
+### Profile
+
+`--profile` requires `--grid-scale`. It takes the host lock and runs no energy
+phase. `profile.json` records, per side, elapsed `wall_ns` and the CPU time in
+reading spins (`memory_ns`), forming the field or the threshold (`field_ns`),
+and drawing accept bits (`rng_ns`). With more than one thread the three CPU
+times are summed across threads. They are not joules.
+
+### Levers
+
+`--lever` may be repeated. The names are `parallel`, `simd`, `tiled`,
+`sparse-rng`, and `gpu`. `gpu` does not combine with a CPU lever. Unknown
+names are an error. All off is the scalar checkerboard, one `f64` draw per
+site.
+
+`parallel` and `tiled` do not change the draws. `simd` packs 64 sites of one
+colour into a word and refuses an odd side instead of falling back. `sparse-rng`
+uses a nine-entry threshold table of `kernel::p_up` and compares from the high
+bit, stopping when every site has resolved. The table differs from `p_up` by
+at most `2^-32`. The leading bits are the high bits of the generator. The low
+bits of nearby streams are serially correlated, and using them as the leading
+bit biased a 2×2 chain off its Boltzmann law.
+
+`gpu` is `ferrotherm-gpu`'s wgpu sweep. The bench has to be built with
+`--features gpu`. No adapter is an error, not a CPU run. A software rasteriser
+is labelled not hardware.
+
+### Two THRML baselines
+
+A is `thrml==0.1.4`, `--python`. B is commit `2d96f4b4b67bfa2625d89ed79f0a22c08af3b992`
+(2026-11-03), `--python-b` or `THRML_PYTHON_B`, its own venv. The runner checks
+the shape of `IsingSamplingProgram` and, for B, `direct_url.json`'s commit. The
+wrong tree is an error. It is not relabelled.
+
+B is six commits past v0.1.4. The cost-relevant ones are #77 (`2d54cd84`,
+pluggable Ising backends; `IsingSamplingProgram` is a logical program), #78
+(`9cfe3303`, `BlockGibbsSpec` superblock tuples), #74 (`c6948767`, the
+categorical `inf*0` fix), and `5911729f` (Ising KL). B is re-measured. It is
+not assumed to match A.
+
+Receipt fields `thrml` and `thrml_main_2d96f4b4` are the two accuracy blocks.
+Energy rows carry `pairing` `A` or `B` and `fabric`:
+
+| Fabric | What ran |
+| --- | --- |
+| `ferrotherm-cpu` | the CPU levers |
+| `ferrotherm-gpu` | wgpu |
+| `thrml-0.1.4-jax-cpu` | A, `--device cpu` |
+| `thrml-0.1.4-jax-cuda` | A, `--device cuda` |
+| `thrml-main-2d96f4b4-jax-cpu` | B, `--device cpu` |
+| `thrml-main-2d96f4b4-jax-cuda` | B, `--device cuda` |
+
+`--device cuda` is a JAX platform `gpu`. A CPU device is not reported as CUDA.
+`--device auto` is labelled `jax-cpu` in the fabric field only when the flag
+was `cpu`. Operators running the sweep pass `cpu` or `cuda` explicitly. The
+runner's `META` line is the platform JAX actually bound.
+
+### Commands for the host drivers
+
+A, CPU, full side list, quiet gate, pinned cores. The venv is the pinned 0.1.4
+one. Repeat with `--device cuda` only in a venv whose JAX is `jax[cuda13]`.
+
+```sh
+cargo build --release -p ferrotherm-thrml-bench
+./target/release/ferrotherm-thrml-bench \
+  --out results/grid-scale-a-cpu \
+  --grid-scale --quiet-gate --cpus 0-7 \
+  --device cpu \
+  --python /path/to/thrml-0.1.4-venv/bin/python \
+  --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
+```
+
+B uses the same command. Both baselines are in that run. They are not a second
+invocation with A's numbers copied across.
+
+CUDA, on the machine that has `jax[cuda13]` (thor.local keeps one under
+`~/bench-scratch/thrml-venv-cuda`). Install B into a different venv that has
+the same CUDA JAX. Do not point `--python-b` at A's tree.
+
+```sh
+./target/release/ferrotherm-thrml-bench \
+  --out results/grid-scale-cuda \
+  --grid-scale --quiet-gate --cpus 0-7 \
+  --device cuda \
+  --python ~/bench-scratch/thrml-venv-cuda/bin/python \
+  --python-b ~/bench-scratch/thrml-main-2d96f4b4-cuda/bin/python
+```
+
+Ferrotherm GPU lever, built with wgpu, still against both THRML baselines:
+
+```sh
+cargo build --release -p ferrotherm-thrml-bench --features gpu
+./target/release/ferrotherm-thrml-bench \
+  --out results/grid-scale-ferrotherm-gpu \
+  --grid-scale --lever gpu --quiet-gate --cpus 0-7 \
+  --device cpu \
+  --python /path/to/thrml-0.1.4-venv/bin/python \
+  --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
+```
+
+One CPU lever at a time, so the effect is not confounded. `LEVER` is
+`parallel`, `simd`, `tiled`, or `sparse-rng`.
+
+```sh
+./target/release/ferrotherm-thrml-bench \
+  --out results/grid-scale-lever-$LEVER \
+  --grid-scale --lever $LEVER --threads 8 \
+  --quiet-gate --cpus 0-7 --device cpu \
+  --python /path/to/thrml-0.1.4-venv/bin/python \
+  --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
+```
+
+Profile, no joules, same levers:
+
+```sh
+./target/release/ferrotherm-thrml-bench \
+  --out results/grid-scale-profile-$LEVER \
+  --grid-scale --profile --lever $LEVER --threads 8 \
+  --device cpu \
+  --python /path/to/thrml-0.1.4-venv/bin/python \
+  --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
+```
+
+Install B beside A:
+
+```sh
+bash bench/thrml-tsp/python/install-baseline-b.sh /path/to/thrml-main-2d96f4b4-venv
+```

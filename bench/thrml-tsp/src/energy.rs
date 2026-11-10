@@ -157,10 +157,15 @@ pub fn paired_attributable(
 ///
 /// Five pairs therefore start A,B and then B,A, and each sampler runs five times.
 pub fn pair_order(pair: usize) -> [&'static str; 2] {
+    pair_order_against(pair, "thrml")
+}
+
+/// Same alternation as [`pair_order`], against one named sampler. A and B are separate pairings.
+pub fn pair_order_against(pair: usize, other: &'static str) -> [&'static str; 2] {
     if pair.is_multiple_of(2) {
-        ["ferrotherm", "thrml"]
+        ["ferrotherm", other]
     } else {
-        ["thrml", "ferrotherm"]
+        [other, "ferrotherm"]
     }
 }
 
@@ -1495,6 +1500,21 @@ pub struct EnergyTrial {
     pub trial_refusal: String,
     /// 1 Hz `load1` samples of the settle that preceded this pair's bracket.
     pub settle_load1: String,
+    /// Which THRML baseline this trial was paired with. `A` is 0.1.4, `B` is thrml-main-2d96f4b4.
+    /// Ferrotherm rows from the two pairings do not share a summary.
+    pub pairing: &'static str,
+    /// The machine that ran this side: `ferrotherm-cpu`, `ferrotherm-gpu`,
+    /// `thrml-0.1.4-jax-cpu`, `thrml-0.1.4-jax-cuda`, `thrml-main-2d96f4b4-jax-cpu`,
+    /// `thrml-main-2d96f4b4-jax-cuda`.
+    pub fabric: &'static str,
+    /// Sweeps in one repetition, including warmup. Zero when this trial is not a grid-scale row.
+    pub sweeps_per_rep: u64,
+    /// ESS per production sweep, measured outside the joule window on a grid-scale row.
+    pub ess_per_sweep: f64,
+    /// Wall seconds per sweep, from the joule window's per-repetition time.
+    pub seconds_per_sweep: f64,
+    /// Attributable joules per sweep. None when the joules were not attributable.
+    pub joules_per_sweep: Option<f64>,
     /// Raw samples inside the window. For a counter this is the number of reads, which is not
     /// the number of times the counter changed.
     pub samples: u32,
@@ -1518,6 +1538,8 @@ impl EnergyTrial {
         other_cpu_s: Option<f64>,
         grade: &'static str,
         rank: &'static str,
+        pairing: &'static str,
+        fabric: &'static str,
     ) -> EnergyTrial {
         let joules_per_ess = joules_per_ess(&joules, ess);
         EnergyTrial {
@@ -1552,6 +1574,12 @@ impl EnergyTrial {
             ps_attribution: String::new(),
             trial_refusal: String::new(),
             settle_load1: String::new(),
+            pairing,
+            fabric,
+            sweeps_per_rep: 0,
+            ess_per_sweep: f64::NAN,
+            seconds_per_sweep: f64::NAN,
+            joules_per_sweep: None,
         }
     }
 }
@@ -1607,6 +1635,8 @@ pub fn may_share_summary(a: &EnergyTrial, b: &EnergyTrial) -> bool {
         && a.joules.instrument == b.joules.instrument
         && scopes_may_share_a_table(&a.joules.scope, &b.joules.scope)
         && grades_may_share_a_table(a.grade, b.grade)
+        && a.pairing == b.pairing
+        && a.fabric == b.fabric
 }
 
 /// Intervals for one cell. Refuses a slice that mixes workload, sampler, scope, instrument, or grade.
@@ -1626,6 +1656,8 @@ pub fn summarise_one_grade(trials: &[EnergyTrial]) -> Result<GradeSummary, &'sta
         instrument: first.joules.instrument.clone(),
         scope: first.joules.scope.clone(),
         grade: first.grade,
+        pairing: first.pairing,
+        fabric: first.fabric,
         n: trials.len(),
         gross: mean_interval(&gross),
         incremental: mean_interval(&incremental),
@@ -1638,7 +1670,7 @@ pub fn summarise_one_grade(trials: &[EnergyTrial]) -> Result<GradeSummary, &'sta
 ///
 /// Package rows and SoC-telemetry rows stay in different summaries.
 pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
-    let mut keys: Vec<(&str, &str, &str, &str, &str)> = Vec::new();
+    let mut keys: Vec<(&str, &str, &str, &str, &str, &str, &str)> = Vec::new();
     for t in trials {
         let key = (
             t.workload,
@@ -1646,6 +1678,8 @@ pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
             t.joules.instrument.as_str(),
             t.joules.scope.as_str(),
             t.grade,
+            t.pairing,
+            t.fabric,
         );
         if !keys.contains(&key) {
             keys.push(key);
@@ -1662,6 +1696,8 @@ pub fn summarise_workloads(trials: &[EnergyTrial]) -> Vec<GradeSummary> {
                         t.joules.instrument.as_str(),
                         t.joules.scope.as_str(),
                         t.grade,
+                        t.pairing,
+                        t.fabric,
                     ) == key
                 })
                 .cloned()
@@ -1677,6 +1713,8 @@ pub struct GradeSummary {
     pub instrument: String,
     pub scope: String,
     pub grade: &'static str,
+    pub pairing: &'static str,
+    pub fabric: &'static str,
     pub n: usize,
     pub gross: Option<(f64, f64, f64, usize)>,
     pub incremental: Option<(f64, f64, f64, usize)>,
@@ -2978,6 +3016,8 @@ mod tests {
                 Some(0.1),
                 g,
                 "primary",
+                "A",
+                "ferrotherm-cpu",
             )
         };
         let quiet: Vec<_> = (0..5)
@@ -3116,6 +3156,8 @@ mod tests {
                 Some(0.2),
                 GRADE_CONTENDED,
                 "primary",
+                "A",
+                "ferrotherm-cpu",
             )
         };
         let package = row("thrml_readme_ising_chain_n5", "package");
