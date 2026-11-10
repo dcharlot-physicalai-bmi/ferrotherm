@@ -4543,15 +4543,14 @@ mod tests {
         let glass = grid_glass(3, 3, 5);
         let kernel = Kernel::ChromaticGibbs;
         let dense = tau_int_fundamental(&glass, 2.0, kernel, |s| glass.energy(s)).unwrap();
-        // rtol 1e-12 is under both estimates, so both the floored solver and the floorless one
-        // return AtFloor. What differs is the estimate they refuse with. Measured in release:
-        // with the floor, 4.04e-5; without it, 8.02e-6. On the CI host the floorless solver
-        // also refuses at 1e-10, so a test that only demanded AtFloor stayed green. 2e-5 sits
-        // between those two estimates.
+        // rtol 1e-12 is under both estimates, so both solvers return AtFloor. The absolute
+        // numbers move between hosts; the ratio does not. The solver records the raw residual
+        // estimate and the estimate it actually formed. With the floor the second is about five
+        // times the first. Without the floor they are the same number.
         let rtol = 1e-12;
         match tau_int_krylov(&glass, 2.0, kernel, |s| glass.energy(s), rtol, 5_000) {
             Err(AutocorrError::AtFloor { err_est, tau, .. }) => {
-                let (raw, used) = GMRES_EST.with(|c| c.get());
+                let (raw, used) = GMRES_EST.with(std::cell::Cell::get);
                 assert!(
                     (err_est - used).abs() <= 1e-9 * used.abs().max(1e-300),
                     "refused estimate {err_est:.6e} is not the estimate the solver just formed {used:.6e}"
