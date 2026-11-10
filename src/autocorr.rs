@@ -2137,6 +2137,14 @@ fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, c
     }
 }
 
+// `(raw, used)` from the last GMRES acceptance check. Raw is `||A^-1|| ||r|| / ||e||`; used is
+// that or the rounding floor, whichever the solver formed. Test-only, so the mutation row can
+// see which one came back.
+#[cfg(test)]
+std::thread_local! {
+    static GMRES_EST: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((0.0, 0.0)) };
+}
+
 /// Restarted GMRES([`GMRES_RESTART`]) on `A z = e` in `L^2(pi)`, classical Gram-Schmidt run twice,
 /// Givens rotations. The error of the tau of an iterate is `<e, A^-1 r> / C0`, bounded by
 /// `||A^-1|| ||r|| / ||e||`, and estimated as `max(||r||, u ||z||) / (sigma_min(R) ||e||)`:
@@ -2230,6 +2238,8 @@ fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>
         let floor = f64::EPSILON * norm_pi(pi, &z) / enorm;
         let tau = dot_pi(pi, e, &z) / c0 - 0.5;
         let est = inv_norm * true_rel.max(floor);
+        #[cfg(test)]
+        GMRES_EST.with(|c| c.set((inv_norm * true_rel, est)));
         if est <= rtol * (tau + 0.5) {
             return Ok((tau, est));
         }
@@ -4541,10 +4551,18 @@ mod tests {
         let rtol = 1e-12;
         match tau_int_krylov(&glass, 2.0, kernel, |s| glass.energy(s), rtol, 5_000) {
             Err(AutocorrError::AtFloor { err_est, tau, .. }) => {
+                let (raw, used) = GMRES_EST.with(|c| c.get());
                 assert!(
-                    err_est > 2e-5,
-                    "the rounding floor is missing from the estimate: {err_est:.3e} \
-                     (with the floor this is 4.0e-5; without it, 8.0e-6)"
+                    (err_est - used).abs() <= 1e-9 * used.abs().max(1e-300),
+                    "refused estimate {err_est:.6e} is not the estimate the solver just formed {used:.6e}"
+                );
+                // The absolute estimates move with libm. The ratio does not: the floor is about
+                // five times the raw residual here, and a solver that drops the floor reports the
+                // raw one. 1.5 is between those.
+                assert!(
+                    used > 1.5 * raw,
+                    "the refused estimate {used:.6e} did not take the rounding floor over the raw \
+                     residual estimate {raw:.6e}"
                 );
                 let diff = (tau - dense.tau_int).abs();
                 assert!(
