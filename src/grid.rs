@@ -299,7 +299,7 @@ impl OpenIsing {
         let sweep = self.sweep_idx;
         let mut prof = SweepProfile::default();
         let threads = if self.levers.parallel {
-            self.threads.min(self.side).max(1)
+            threads_for_side(self.side, self.threads)
         } else {
             1
         };
@@ -591,6 +591,18 @@ pub fn checkerboard(x: usize, y: usize) -> (usize, usize) {
 pub fn x_of(y: usize, color: usize, k: usize) -> usize {
     let x_parity = color ^ (y & 1);
     2 * k + x_parity
+}
+
+/// Threads to use when `parallel` is on.
+///
+/// On the host that compared them, 8 threads beat 4 only from side 512 up. Below that the
+/// cap is 4: the extra threads were spawn and cache traffic. An explicit offer below the cap
+/// is kept. One thread is the floor.
+#[must_use]
+pub fn threads_for_side(side: usize, offered: usize) -> usize {
+    let offered = offered.max(1);
+    let cap = if side < 512 { 4 } else { offered };
+    offered.min(cap).min(side.max(1)).max(1)
 }
 
 /// How many sites of `color` sit on row `y`.
@@ -1381,6 +1393,38 @@ pub fn sweep_packed_cpu(
     Ok(())
 }
 
+/// Energies of the packed checkerboard, on the same schedule as [`OpenIsing::energies`].
+///
+/// `warmup` sweeps are discarded. Then `draws` energies are kept, one every `thin` sweeps.
+/// The GPU shader's bond sum is this function: `E = −J` times the open-grid bond sum.
+///
+/// # Errors
+///
+/// The same as [`sweep_packed_cpu`].
+pub fn sweep_packed_energies_cpu(
+    side: usize,
+    spins: &mut [i8],
+    j: f64,
+    beta: f64,
+    seed: u64,
+    start_sweep: u32,
+    warmup: u32,
+    draws: u32,
+    thin: u32,
+) -> Result<Vec<f64>, String> {
+    let thin = thin.max(1);
+    let mut at = start_sweep;
+    sweep_packed_cpu(side, spins, j, beta, seed, at, warmup)?;
+    at = at.wrapping_add(warmup);
+    let mut out = Vec::with_capacity(draws as usize);
+    for _ in 0..draws {
+        sweep_packed_cpu(side, spins, j, beta, seed, at, thin)?;
+        at = at.wrapping_add(thin);
+        out.push(grid_energy(spins, side, j));
+    }
+    Ok(out)
+}
+
 fn pack_planes(plane: &mut [Vec<u32>; 2], spins: &[i8], side: usize, nw: usize) {
     for y in 0..side {
         for x in 0..side {
@@ -1456,14 +1500,19 @@ struct Params {
   sweep: u32,
   seed: u32,
   half: u32,
+  // 0 is a colour sweep. 2 is unused and exists so the sweep entry references `bonds`.
   pad0: u32,
+  // Kept-sample slot for the energy entry. Sweep entries leave it 0.
   pad1: u32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read_write> mine: array<u32>;
-@group(0) @binding(2) var<storage, read> other: array<u32>;
+@group(0) @binding(2) var<storage, read_write> other: array<u32>;
 @group(0) @binding(3) var<storage, read> thresh: array<u32>;
+@group(0) @binding(4) var<storage, read_write> bonds: array<atomic<i32>>;
+
+var<workgroup> scratch: array<i32, 64>;
 
 fn packed_hash(seed: u32, site: u32, sweep: u32) -> u32 {
   var x = seed + site * 0x9E3779B9u + sweep * 0x85EBCA6Bu;
@@ -1490,8 +1539,28 @@ fn spin_at(x: i32, y: i32) -> i32 {
   return -1;
 }
 
+fn site_spin(x: u32, y: u32) -> i32 {
+  let color = (x + y) & 1u;
+  let k = x / 2u;
+  var word: u32;
+  if (color == 0u) {
+    word = mine[y * p.nwords + (k / 32u)];
+  } else {
+    word = other[y * p.nwords + (k / 32u)];
+  }
+  let bit = (word >> (k % 32u)) & 1u;
+  if (bit == 1u) { return 1; }
+  return -1;
+}
+
+// One colour of the whole grid is one dispatch. A sweep is two dispatches, and the
+// whole chain is those dispatches in one submission: a workgroup cannot barrier
+// against another workgroup, so the colour barrier cannot move inside one dispatch.
 @compute @workgroup_size(64)
 fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (p.pad0 == 2u) {
+    atomicAdd(&bonds[0], 0);
+  }
   let word_i = gid.x;
   let total = p.side * p.nwords;
   if (word_i >= total) { return; }
@@ -1515,6 +1584,36 @@ fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (up) { word = word | mask; } else { word = word & ~mask; }
   }
   mine[word_i] = word;
+}
+
+// Bond sum of the open grid, one atomic per workgroup per kept sample.
+// The CPU mirror is grid_energy: E = -J * this sum.
+@compute @workgroup_size(8, 8)
+fn energy(
+  @builtin(global_invocation_id) gid: vec3<u32>,
+  @builtin(local_invocation_index) lid: u32,
+) {
+  var contrib: i32 = 0;
+  let x = gid.x;
+  let y = gid.y;
+  if (x < p.side && y < p.side) {
+    let s = site_spin(x, y);
+    if (x + 1u < p.side) {
+      contrib = contrib + s * site_spin(x + 1u, y);
+    }
+    if (y + 1u < p.side) {
+      contrib = contrib + s * site_spin(x, y + 1u);
+    }
+  }
+  scratch[lid] = contrib;
+  workgroupBarrier();
+  if (lid == 0u) {
+    var sum: i32 = 0;
+    for (var i: u32 = 0u; i < 64u; i = i + 1u) {
+      sum = sum + scratch[i];
+    }
+    atomicAdd(&bonds[p.pad1], sum);
+  }
 }
 "#;
 
@@ -1561,6 +1660,59 @@ mod proofs {
 mod tests {
     use super::*;
     use crate::ising::{exact_boltzmann, grid2d, tv};
+
+    fn tv_side(
+        levers: Levers,
+        side: usize,
+        beta: f64,
+        seed: u64,
+        burn: usize,
+        n: usize,
+    ) -> (f64, f64, f64) {
+        let j = 1.0;
+        let mut g = OpenIsing::try_new(side, j, beta, seed, levers, 1).unwrap();
+        g.sweeps(burn);
+        let graph = grid2d(side, side, j);
+        let exact = exact_boltzmann(&graph, beta);
+        let mut hist = vec![0.0f64; exact.len()];
+        let mut mean = 0.0;
+        for _ in 0..n {
+            g.sweep();
+            let mut mask = 0usize;
+            for (b, &s) in g.spins().iter().enumerate() {
+                if s == 1 {
+                    mask |= 1 << b;
+                }
+            }
+            hist[mask] += 1.0;
+            mean += g.energy();
+        }
+        for h in &mut hist {
+            *h /= n as f64;
+        }
+        let mut exact_mean = 0.0;
+        for (mask, &p) in exact.iter().enumerate() {
+            let mut s = vec![-1i8; side * side];
+            for b in 0..side * side {
+                if mask & (1 << b) != 0 {
+                    s[b] = 1;
+                }
+            }
+            exact_mean += p * grid_energy(&s, side, j);
+        }
+        (tv(&hist, &exact), mean / n as f64, exact_mean)
+    }
+
+    fn long_mean(levers: Levers, side: usize, seed: u64, burn: usize, n: usize) -> f64 {
+        let mut g = OpenIsing::try_new(side, 1.0, 0.3, seed, levers, 1).unwrap();
+        g.sweeps(burn);
+        let mut sum = 0.0;
+        for _ in 0..n {
+            g.sweep();
+            sum += g.energy();
+        }
+        sum / n as f64
+    }
 
     fn tv_of(levers: Levers, beta: f64, seed: u64, burn: usize, n: usize) -> (f64, f64, f64) {
         let side = 2usize;
@@ -1747,6 +1899,60 @@ mod tests {
     }
 
     #[test]
+    fn eight_threads_are_capped_at_four_below_side_512() {
+        assert_eq!(threads_for_side(8, 8), 4);
+        assert_eq!(threads_for_side(256, 8), 4);
+        assert_eq!(threads_for_side(511, 8), 4);
+        assert_eq!(threads_for_side(512, 8), 8);
+        assert_eq!(threads_for_side(1024, 8), 8);
+        assert_eq!(threads_for_side(64, 2), 2);
+        let mut small = OpenIsing::try_new(8, 1.0, 0.3, 1, Levers::COMBINED, 8).unwrap();
+        small.sweep();
+        assert_eq!(small.threads_used(), 4);
+        let mut large = OpenIsing::try_new(512, 1.0, 0.3, 1, Levers::COMBINED, 8).unwrap();
+        large.sweep();
+        assert_eq!(large.threads_used(), 8);
+    }
+
+    #[test]
+    fn incremental_matches_exact_enumeration_on_2x2_3x3_and_4x4() {
+        // The host refusal at side 8 was two seeds 0.05005 per site apart, after the
+        // transfer-matrix clause had passed. That line is sampling noise unless this
+        // stream's law is wrong. These counts resolve a per-site bias of that size.
+        let levers = Levers { incremental: true, ..Levers::SCALAR };
+        // 4×4 has 65536 states. 80k samples cannot drive TV under a few tenths even when the
+        // law is exact; the mean is the check that resolves a 0.05-per-site bias there.
+        let cases = [(2usize, 400, 80_000, 0.02), (3, 800, 100_000, 0.05), (4, 1_000, 80_000, 0.55)];
+        for (side, burn, n, tv_limit) in cases {
+            let (distance, mean, exact) = tv_side(levers, side, 0.3, 0x1C, burn, n);
+            let per_site = (mean - exact).abs() / (side * side) as f64;
+            assert!(
+                distance < tv_limit,
+                "side {side} incremental TV {distance} mean {mean} exact {exact}"
+            );
+            assert!(
+                per_site < 0.01,
+                "side {side} incremental per-site mean gap {per_site} (mean {mean}, exact {exact}, TV {distance})"
+            );
+        }
+        let (scalar_tv, scalar_mean, exact4) = tv_side(Levers::SCALAR, 4, 0.3, 0x1C, 1_000, 80_000);
+        let scalar_gap = (scalar_mean - exact4).abs() / 16.0;
+        assert!(
+            scalar_gap < 0.01 && (scalar_mean - exact4).abs() < 0.2,
+            "side 4 scalar mean {scalar_mean} exact {exact4} per site {scalar_gap} TV {scalar_tv}"
+        );
+        // Same seeds, long traces: incremental and the f64 scalar chain agree on an 8×8.
+        // A biased threshold would separate them by far more than 0.01 per site.
+        let inc = long_mean(levers, 8, 0x51, 2_000, 40_000);
+        let scalar = long_mean(Levers::SCALAR, 8, 0x51, 2_000, 40_000);
+        let gap = (inc - scalar).abs() / 64.0;
+        assert!(
+            gap < 0.01,
+            "side 8 incremental mean {inc} vs scalar {scalar}, per site {gap}"
+        );
+    }
+
+    #[test]
     fn popcount_field_matches_a_trit_sum_and_combined_matches_simd() {
         for a in 0..2u64 {
             for b in 0..2u64 {
@@ -1849,6 +2055,16 @@ mod tests {
         let mut c = vec![-1i8; 16];
         sweep_packed_cpu(4, &mut c, 1.0, 0.4, 10, 0, 8).unwrap();
         assert_ne!(a, c);
+        let mut state = vec![-1i8; 16];
+        let got = sweep_packed_energies_cpu(4, &mut state, 1.0, 0.4, 3, 0, 5, 4, 1).unwrap();
+        let mut again = vec![-1i8; 16];
+        sweep_packed_cpu(4, &mut again, 1.0, 0.4, 3, 0, 5).unwrap();
+        let mut expect = Vec::new();
+        for k in 0..4 {
+            sweep_packed_cpu(4, &mut again, 1.0, 0.4, 3, 5 + k, 1).unwrap();
+            expect.push(grid_energy(&again, 4, 1.0));
+        }
+        assert_eq!(got, expect);
         let err = sweep_packed_cpu(3, &mut vec![-1i8; 9], 1.0, 0.3, 1, 0, 1).unwrap_err();
         assert!(err.contains("even"), "{err}");
     }

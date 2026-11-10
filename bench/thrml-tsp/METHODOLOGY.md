@@ -186,8 +186,13 @@ bit biased a 2×2 chain off its Boltzmann law.
 
 `incremental` keeps an i8 neighbour sum per site, or, with `simd`, replaces the
 trit adder with a popcount of the four neighbour bit planes. The field value is
-the same number the trit adder produced. `combined` is `parallel`, `simd`,
-`tiled`, and `incremental` together. It is not a mix with `sparse-rng`.
+the same number the trit adder produced. The scalar i8 path draws with
+`next_u32() < threshold`. Its 2×2, 3×3 and 4×4 laws match exact enumeration,
+and a long 8×8 trace agrees with the scalar `f64` chain to under 0.01 per
+site. A two-seed gap of 0.05005 per site on a short side-8 chain is that
+chain's variance sitting on the 0.05 line. The gate is unchanged. `combined`
+is `parallel`, `simd`, `tiled`, and `incremental` together. It is not a mix
+with `sparse-rng`.
 
 `gpu` is a packed checkerboard compute shader: one colour's spins in `u32`
 words, one thread per word, and `grid::packed_hash` as the draw.
@@ -198,19 +203,34 @@ is labelled not hardware. The older CSR gather shader is not this lever.
 ### ESS per sweep and ESS per second
 
 `mixing.ess_per_sweep` is `ess / (draws * thin)`. `mixing.ess_per_second` is
-that rate divided by wall seconds. They are separate because a faster sweep
-and a better-mixing sweep are different claims. A higher THRML
-`ess_per_sweep` at a large side means its blocked sampler mixed better per
-sweep. The ratio is null when either side has no finite ESS. A null ratio is
-not a ferrotherm win.
+that rate divided by wall seconds. `mixing.wall_ns_per_sweep` is chain seconds
+times 1e9 divided by `warmup + draws * thin`. Those seconds exclude
+`jit_seconds`. The joule window's `seconds_per_sweep` is a different timer:
+on a THRML row, `wall_ns_per_sweep` is the DONE line, which starts after READY.
+They are separate because a faster sweep and a better-mixing sweep are
+different claims. A higher THRML `ess_per_sweep` at a large side means its
+blocked sampler mixed better per sweep. The ratio is null when either side
+has no finite ESS. A null ratio is not a ferrotherm win.
 
 ### THRML's own memory limit
 
-Grid-scale accuracy runs one THRML process per side. A SIGKILL (signal 9, or
-exit code 137) is recorded as `THRML_LIMIT oom` on that side. The ratio is
-null. Sides that finished stay in the receipt. The kill is THRML's memory
-limit. It is not a ferrotherm result and it is not a win. A Python
-`MemoryError` prints a `LIMIT` line and the runner continues.
+Grid-scale accuracy runs one THRML process per side, and so does the energy
+pairing. The label does not depend on `--device`: CPU and CUDA use the same
+exit check. A SIGKILL (signal 9, or exit code 137) is `THRML_LIMIT oom`. So is
+exit code 1 whose stderr names an allocator failure (`RESOURCE_EXHAUSTED`,
+`out of memory`, `CUDA_ERROR_OUT_OF_MEMORY`). The ratio is null. Sides that
+finished stay in the receipt. The kill is THRML's memory limit. It is not a
+ferrotherm result and it is not a win. A Python `MemoryError` or a JAX
+allocation error prints a `LIMIT` line and the runner continues.
+
+`parallel` offers whatever `--threads` says, then caps it at 4 below side 512.
+Eight threads beat four only from side 512 up on the host that compared them.
+
+The packed GPU chain is one submission. Each colour of one sweep is one
+dispatch, because a workgroup cannot barrier against another workgroup, so a
+sweep cannot be a single dispatch. `sweeps_per_submit` is the whole chain.
+`setup_ns` is pipeline and buffer creation and sits inside the trial's wall
+time. The bond sum is read once, not the spin array after every sweep.
 
 ### Two THRML baselines
 

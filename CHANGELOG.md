@@ -12,6 +12,9 @@ table of `kernel::p_up` from the high bit of the generator. Using the low bits
 of nearby streams biased a 2×2 chain off the Boltzmann law; that is the test
 `each_lever_matches_the_boltzmann_law_on_a_2x2`. The GPU lever is a packed
 `u32` checkerboard shader in `ferrotherm-gpu`, matched to `grid::sweep_packed_cpu`.
+A grid-scale chain on that shader is one submission: `wall_ns_per_sweep` on a
+THRML row excludes JIT, and a CUDA allocator failure is `THRML_LIMIT oom`.
+`parallel` caps itself at 4 threads below side 512.
 
 ### The committed wasm was three weeks behind its own ABI, and two pages called the old one
 

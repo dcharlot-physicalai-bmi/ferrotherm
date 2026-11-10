@@ -571,7 +571,7 @@ fn load_baseline(
                 ok = false;
                 notes.push(format!("{label} {}: {e}", w.id));
             }
-            Ok(status) if status.success() => match fs::read_to_string(&one_out) {
+            Ok((status, _err_text)) if status.success() => match fs::read_to_string(&one_out) {
                 Ok(text) => {
                     raw_all.push_str(&text);
                     if !raw_all.ends_with('\n') {
@@ -598,11 +598,11 @@ fn load_baseline(
                     notes.push(format!("{label} {}: {e}", w.id));
                 }
             },
-            Ok(status) => {
-                if let Some(kind) = limit_from_status(&status) {
-                    limits.insert(w.id.to_string(), kind.to_string());
-                    raw_all.push_str(&format!("LIMIT {} {kind}\n", w.id));
-                    eprintln!("{label} {} THRML_LIMIT {kind}: {status}", w.id);
+            Ok((status, err_text)) => {
+                if limit_from_status(&status).is_some() || thrml_oom_text(&err_text) {
+                    limits.insert(w.id.to_string(), "oom".to_string());
+                    raw_all.push_str(&format!("LIMIT {} oom\n", w.id));
+                    eprintln!("{label} {} THRML_LIMIT oom: {status}", w.id);
                 } else {
                     ok = false;
                     notes.push(format!("{label} {} exited {status}", w.id));
@@ -722,36 +722,60 @@ fn grid_gap16() -> f64 {
     (tm / 256.0 - onsager).abs()
 }
 
+#[cfg(feature = "gpu")]
+fn with_gpu<T>(f: impl FnOnce(&ferrotherm_gpu::Gpu) -> Result<T, String>) -> Result<T, String> {
+    thread_local! {
+        static GPU: std::cell::RefCell<Option<ferrotherm_gpu::Gpu>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    GPU.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let gpu = ferrotherm_gpu::Gpu::new().ok_or_else(|| {
+                "no wgpu adapter. The GPU lever is not run on the CPU.".to_string()
+            })?;
+            if !gpu.is_hardware() {
+                eprintln!(
+                    "wgpu adapter {} is not hardware. Timings from it are not a GPU result.",
+                    gpu.adapter().name
+                );
+            }
+            *slot = Some(gpu);
+        }
+        f(slot.as_ref().expect("gpu cached"))
+    })
+}
+
 fn run_gpu_chain(w: &Workload, seed: u64) -> Result<Chain, String> {
     #[cfg(feature = "gpu")]
     {
         let (side, j) = w
             .open_grid()
             .ok_or_else(|| format!("{} is not an open grid", w.id))?;
-        let gpu = ferrotherm_gpu::Gpu::new()
-            .ok_or_else(|| "no wgpu adapter. The GPU lever is not run on the CPU.".to_string())?;
-        if !gpu.is_hardware() {
-            eprintln!(
-                "wgpu adapter {} is not hardware. Timings from it are not a GPU result.",
-                gpu.adapter().name
-            );
-        }
         let thin = u32::try_from(w.thin.max(1)).map_err(|_| "thin does not fit u32")?;
         let warmup = u32::try_from(w.warmup).map_err(|_| "warmup does not fit u32")?;
-        let mut state = vec![-1i8; side * side];
-        let t0 = std::time::Instant::now();
-        // The first kept state is warmup + thin sweeps in, matching Sampler::collect.
-        gpu.sweep_packed(side, j, w.beta, &mut state, warmup + thin, seed, 0)?;
-        let mut energies = Vec::with_capacity(w.draws);
-        energies.push(ferrotherm::grid::grid_energy(&state, side, j));
-        let mut done = warmup + thin;
-        for _ in 1..w.draws {
-            gpu.sweep_packed(side, j, w.beta, &mut state, thin, seed, done)?;
-            done = done.saturating_add(thin);
-            energies.push(ferrotherm::grid::grid_energy(&state, side, j));
-        }
-        let seconds = t0.elapsed().as_secs_f64();
-        ft::score_energies(w, seconds, None, &energies)
+        let draws = u32::try_from(w.draws).map_err(|_| "draws does not fit u32")?;
+        with_gpu(|gpu| {
+            let mut state = vec![-1i8; side * side];
+            let t0 = std::time::Instant::now();
+            // One submission for warmup and every kept sample. The bond sum is read once.
+            let (energies, timing) = gpu.sweep_packed_energies(
+                side, j, w.beta, &mut state, seed, 0, warmup, draws, thin,
+            )?;
+            let seconds = t0.elapsed().as_secs_f64();
+            eprintln!(
+                "gpu side {side} submits {} dispatches {} sweeps/submit {:.1} setup_ns {} submit_ns {}",
+                timing.submits,
+                timing.dispatches,
+                timing.sweeps_per_submit(),
+                timing.setup_ns,
+                timing.submit_ns
+            );
+            let mut chain = ft::score_energies(w, seconds, None, &energies)?;
+            chain.submits = timing.submits;
+            chain.sweeps_per_submit = timing.sweeps_per_submit();
+            Ok(chain)
+        })
     }
     #[cfg(not(feature = "gpu"))]
     {
@@ -1035,9 +1059,11 @@ fn run_thrml(
     device: &str,
     baseline: &str,
 ) -> Result<(), String> {
-    let status = run_thrml_status(python, runner, spec, out, device, baseline)?;
+    let (status, err_text) = run_thrml_status(python, runner, spec, out, device, baseline)?;
     if status.success() {
         Ok(())
+    } else if limit_from_status(&status).is_some() || thrml_oom_text(&err_text) {
+        Err(thrml_limit_reason("oom"))
     } else {
         Err(format!("THRML runner exited {status}"))
     }
@@ -1050,13 +1076,13 @@ fn run_thrml_status(
     out: &Path,
     device: &str,
     baseline: &str,
-) -> Result<std::process::ExitStatus, String> {
+) -> Result<(std::process::ExitStatus, String), String> {
     eprintln!(
         "THRML via {} {} --device {device}",
         python.display(),
         runner.display()
     );
-    Command::new(python)
+    let mut child = Command::new(python)
         .arg(runner)
         .arg("--spec")
         .arg(spec)
@@ -1066,8 +1092,35 @@ fn run_thrml_status(
         .arg(device)
         .arg("--baseline")
         .arg(baseline)
-        .status()
-        .map_err(|e| format!("could not start {}: {e}", python.display()))
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start {}: {e}", python.display()))?;
+    let mut err_pipe = child.stderr.take().ok_or("THRML runner has no stderr")?;
+    let drained = std::thread::spawn(move || {
+        let mut buf = String::new();
+        use std::io::Read;
+        let _ = err_pipe.read_to_string(&mut buf);
+        buf
+    });
+    let status = child
+        .wait()
+        .map_err(|e| format!("THRML runner wait: {e}"))?;
+    let err_text = drained.join().unwrap_or_default();
+    if !err_text.is_empty() {
+        eprint!("{err_text}");
+    }
+    Ok((status, err_text))
+}
+
+/// JAX on CUDA reports a failed allocation as text and exit code 1. The kernel OOM killer
+/// is signal 9 or code 137. Either one is THRML's memory limit, on CPU and on CUDA.
+fn thrml_oom_text(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    t.contains("resource_exhausted")
+        || t.contains("out of memory")
+        || t.contains("cuda_error_out_of_memory")
+        || t.contains("cublas_status_alloc_failed")
+        || t.contains("failed to allocate")
 }
 
 struct RawChain {
@@ -1329,16 +1382,17 @@ fn workload_json(
     s.push_str(&format!("      \"draws\": {},\n", w.draws));
     s.push_str(&format!("      \"thin\": {},\n", w.thin));
     s.push_str(&format!("      \"oracle\": {},\n", json_str(w.oracle)));
+    let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
     s.push_str("      \"ferrotherm\": ");
-    s.push_str(&side_json(ft_trials, false));
+    s.push_str(&side_json(ft_trials, false, sweeps));
     s.push_str(",\n      \"thrml\": ");
     match thrml {
-        Some(t) => s.push_str(&side_json(t, true)),
+        Some(t) => s.push_str(&side_json(t, true, sweeps)),
         None => s.push_str("null"),
     }
     s.push_str(",\n      \"thrml_main_2d96f4b4\": ");
     match thrml_b {
-        Some(t) => s.push_str(&side_json(t, true)),
+        Some(t) => s.push_str(&side_json(t, true, sweeps)),
         None => s.push_str("null"),
     }
     s.push_str(",\n      \"parity\": [");
@@ -1383,17 +1437,18 @@ fn mixing_json(
         None => thrml_b.map_or((None, None), |t| mean_ess(t, prod)),
     };
     format!(
-        "{{\n        \"note\": {},\n        \"ferrotherm\": {{\"ess_per_sweep\": {}, \"ess_per_second\": {}}},\n        \
+        "{{\n        \"note\": {},\n        \"ferrotherm\": {{\"ess_per_sweep\": {}, \"ess_per_second\": {}, \"wall_ns_per_sweep\": {}}},\n        \
          \"thrml\": {},\n        \"thrml_main_2d96f4b4\": {},\n        \
          \"ess_per_sweep_ratio_ft_over_a\": {},\n        \"ess_per_second_ratio_ft_over_a\": {},\n        \
          \"ess_per_sweep_ratio_ft_over_b\": {},\n        \"ess_per_second_ratio_ft_over_b\": {}\n      }}",
         json_str(
-            "ess_per_sweep is mixing per production sweep, ess/(draws*thin). ess_per_second divides by wall seconds. A higher THRML ess_per_sweep means its blocked sampler mixed better per sweep. A null ratio is not a ferrotherm win."
+            "ess_per_sweep is mixing per production sweep, ess/(draws*thin). ess_per_second divides by wall seconds. wall_ns_per_sweep is chain seconds, which exclude jit_seconds, times 1e9, divided by warmup+draws*thin. A null ratio is not a ferrotherm win."
         ),
         fmt_num(ft_sw),
         fmt_num(ft_s),
-        side_mixing(limit_a, a_sw, a_s, thrml.is_some()),
-        side_mixing(limit_b, b_sw, b_s, thrml_b.is_some()),
+        fmt_num(mean_wall(ft, (w.warmup + w.draws * w.thin.max(1)) as u64)),
+        side_mixing(limit_a, a_sw, a_s, mean_wall(thrml.unwrap_or(&[]), (w.warmup + w.draws * w.thin.max(1)) as u64), thrml.is_some()),
+        side_mixing(limit_b, b_sw, b_s, mean_wall(thrml_b.unwrap_or(&[]), (w.warmup + w.draws * w.thin.max(1)) as u64), thrml_b.is_some()),
         ratio(ft_sw, a_sw),
         ratio(ft_s, a_s),
         ratio(ft_sw, b_sw),
@@ -1405,6 +1460,7 @@ fn side_mixing(
     limit: Option<&str>,
     per_sweep: Option<f64>,
     per_second: Option<f64>,
+    wall_ns: Option<f64>,
     present: bool,
 ) -> String {
     if let Some(kind) = limit {
@@ -1414,10 +1470,32 @@ fn side_mixing(
         return "null".into();
     }
     format!(
-        "{{\"ess_per_sweep\": {}, \"ess_per_second\": {}}}",
+        "{{\"ess_per_sweep\": {}, \"ess_per_second\": {}, \"wall_ns_per_sweep\": {}}}",
         fmt_num(per_sweep),
-        fmt_num(per_second)
+        fmt_num(per_second),
+        fmt_num(wall_ns)
     )
+}
+
+/// Chain seconds exclude `jit_seconds`. The divisor is warmup plus production sweeps.
+fn wall_ns_per_sweep(seconds: f64, sweeps: u64) -> Option<f64> {
+    if sweeps == 0 || !seconds.is_finite() || seconds < 0.0 {
+        None
+    } else {
+        Some(seconds * 1.0e9 / sweeps as f64)
+    }
+}
+
+fn mean_wall(trials: &[Chain], sweeps: u64) -> Option<f64> {
+    let mut sum = 0.0;
+    let mut n = 0.0;
+    for c in trials {
+        if let Some(v) = wall_ns_per_sweep(c.score.seconds, sweeps) {
+            sum += v;
+            n += 1.0;
+        }
+    }
+    if n > 0.0 { Some(sum / n) } else { None }
 }
 
 fn limit_kind<'a>(parity: &'a [(String, bool, String)], side: &str) -> Option<&'a str> {
@@ -1470,14 +1548,14 @@ fn ratio(num: Option<f64>, den: Option<f64>) -> String {
     }
 }
 
-fn side_json(trials: &[Chain], external: bool) -> String {
+fn side_json(trials: &[Chain], external: bool, sweeps: u64) -> String {
     let scores: Vec<&Score> = trials.iter().map(|c| &c.score).collect();
     let mut s = String::from("{\n");
     s.push_str("        \"summary\": ");
     s.push_str(&summary_json(&scores));
     s.push_str(",\n        \"trials\": [\n");
     for (i, c) in trials.iter().enumerate() {
-        s.push_str(&trial_json(c, external));
+        s.push_str(&trial_json(c, external, sweeps));
         if i + 1 != trials.len() {
             s.push_str(",\n");
         } else {
@@ -1523,7 +1601,7 @@ fn ci_json(xs: &[f64]) -> String {
     }
 }
 
-fn trial_json(c: &Chain, external: bool) -> String {
+fn trial_json(c: &Chain, external: bool, sweeps: u64) -> String {
     let sc = &c.score;
     let kl_rev = match sc.kl_exact_empirical {
         Some(v) => format!("{v:.8e}"),
@@ -1544,7 +1622,8 @@ fn trial_json(c: &Chain, external: bool) -> String {
          \"jit_excluded_from_seconds\": {jit_flag}, \
          \"tv\": {}, \"kl_empirical_exact\": {}, \"kl_exact_empirical\": {kl_rev}, \
          \"missed_states\": {}, \"tau_int_energy\": {:.8e}, \"ess_energy\": {:.8e}, \
-         \"ess_per_second\": {ess_s}, \"ess_per_sweep\": {}, \"mean_energy\": {}, \
+         \"ess_per_second\": {ess_s}, \"ess_per_sweep\": {}, \"wall_ns_per_sweep\": {}, \
+         \"submits\": {}, \"sweeps_per_submit\": {}, \"mean_energy\": {}, \
          \"exact_mean_energy\": {}, \"energy_abs_err\": {}, \"magnetization_mae\": {mag}, \
          \"gibbs_updates\": {}, \"reads\": {}, \
          \"measured_joules_per_ess\": null}}",
@@ -1560,6 +1639,9 @@ fn trial_json(c: &Chain, external: bool) -> String {
         } else {
             "null".into()
         },
+        fmt_num(wall_ns_per_sweep(sc.seconds, sweeps)),
+        if c.submits > 0 { c.submits.to_string() } else { "null".into() },
+        if c.submits > 0 { fmt_num(Some(c.sweeps_per_submit)) } else { "null".into() },
         fmt_finite(sc.mean_energy),
         fmt_finite(sc.exact_mean_energy),
         fmt_finite(sc.energy_abs_err),
@@ -1875,6 +1957,8 @@ fn energy_section(
         spec: spec.to_path_buf(),
         device: device.to_string(),
         enabled: thrml_ok,
+        ex_jit_ns: Vec::new(),
+        oom: false,
     };
     let mut slot_b = ThrmlSlot {
         session: None,
@@ -1885,6 +1969,8 @@ fn energy_section(
         spec: spec.to_path_buf(),
         device: device.to_string(),
         enabled: thrml_ok && !python_b.as_os_str().is_empty(),
+        ex_jit_ns: Vec::new(),
+        oom: false,
     };
     let baseline_settle = match settle_for_bracket(contended) {
         Ok(samples) => samples,
@@ -1957,6 +2043,18 @@ fn energy_section(
     let mut rows = Vec::new();
     let mut phase_refused = String::new();
     'pairs: for w in work {
+        if w.open_grid().is_some() {
+            // One THRML process per side. A CUDA OOM on 4096 must not be an unlabeled
+            // death of the process that also held the smaller sides, and it must not
+            // be scored as a ferrotherm win.
+            let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("spec");
+            let dir = spec.parent().unwrap_or_else(|| Path::new("."));
+            let one = dir.join(format!("{stem}.{}.spec", w.id));
+            if fs::write(&one, spec::write_spec(std::slice::from_ref(w))).is_ok() {
+                slot_a.restart(&one);
+                slot_b.restart(&one);
+            }
+        }
         for pass in 0..2 {
             let (pairing, other_side, slot) = match pass {
                 0 => ("A", spec::THRML_A_SIDE, &mut slot_a),
@@ -2155,6 +2253,28 @@ fn energy_section(
                                 .incremental
                                 .filter(|j| sweeps > 0 && j.is_finite())
                                 .map(|j| j / sweeps as f64);
+                            if *side == "ferrotherm" {
+                                row.wall_ns_per_sweep = if sweeps > 0 {
+                                    row.joules.seconds * 1.0e9 / sweeps as f64
+                                } else {
+                                    f64::NAN
+                                };
+                            } else if slot.oom {
+                                let limit = thrml_limit_reason("oom");
+                                row.trial_refusal = if row.trial_refusal.is_empty() {
+                                    limit
+                                } else {
+                                    format!("{limit} {}", row.trial_refusal)
+                                };
+                                row.wall_ns_per_sweep = f64::NAN;
+                            } else {
+                                let n = slot.ex_jit_ns.len();
+                                row.wall_ns_per_sweep = if n == 0 {
+                                    f64::NAN
+                                } else {
+                                    slot.ex_jit_ns.iter().sum::<f64>() / n as f64
+                                };
+                            }
                         }
                         if !measured.trial_refusal.is_empty() {
                             row.joules.attributable = false;
@@ -2563,6 +2683,12 @@ fn measure_side(
     pinned: &[usize],
     rule: &energy::TrialWindowRule,
 ) -> Vec<SideMeasure> {
+    if side != "ferrotherm" {
+        slot.ex_jit_ns.clear();
+        slot.oom = false;
+        EXJIT_NS.with(|v| v.borrow_mut().clear());
+        EXJIT_OOM.with(|c| c.set(false));
+    }
     let t0 = std::time::Instant::now();
     let cuda_vin =
         device == "cuda" && probe.nvml.is_none() && probe.nvml_note.contains("NOT_SUPPORTED");
@@ -2616,6 +2742,11 @@ fn measure_side(
         for series in &probe.subrails {
             out.push(integrate_logged(series, t0, reps, ess_sum, window_s));
         }
+    }
+    if side != "ferrotherm" {
+        slot.ex_jit_ns = EXJIT_NS.with(|v| v.borrow().clone());
+        // arm() may have set oom when the process died before READY. cost() sets the thread-local.
+        slot.oom = slot.oom || EXJIT_OOM.with(|c| c.get());
     }
     let load_txt = fmt_series(&watch.load1);
     let signal_txt = fmt_series(&watch.signal);
@@ -3076,6 +3207,9 @@ struct ThrmlSlot {
     spec: PathBuf,
     device: String,
     enabled: bool,
+    /// Ex-jit nanoseconds per sweep from DONE lines in this side's window.
+    ex_jit_ns: Vec<f64>,
+    oom: bool,
 }
 
 impl ThrmlSlot {
@@ -3090,9 +3224,23 @@ impl ThrmlSlot {
                 self.baseline,
             ) {
                 Ok(child) => self.session = Some(child),
-                Err(e) => eprintln!("THRML start inside the trial window failed: {e}"),
+                Err(e) => {
+                    if e.contains("THRML_LIMIT") {
+                        self.oom = true;
+                    }
+                    eprintln!("THRML start inside the trial window failed: {e}");
+                }
             }
         }
+    }
+
+    /// Drop the running process and point the next start at `spec`. The process is not
+    /// started here; `arm` starts it inside the trial window.
+    fn restart(&mut self, spec: &Path) {
+        self.session = None;
+        self.spec = spec.to_path_buf();
+        self.oom = false;
+        self.ex_jit_ns.clear();
     }
 }
 
@@ -3107,7 +3255,14 @@ fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe
                 let _ = ft::cost_sweeps(w, seed, Some(ft::GridChoice { levers, threads }));
             }
         } else if let Some(s) = session {
-            let _ = s.cost(w, seed);
+            match s.cost(w, seed) {
+                Ok(Some((seconds, sweeps))) if sweeps > 0 && seconds.is_finite() => {
+                    EXJIT_NS.with(|v| v.borrow_mut().push(seconds * 1.0e9 / sweeps as f64));
+                }
+                Ok(_) => {}
+                Err(e) if e.contains("THRML_LIMIT") => EXJIT_OOM.with(|c| c.set(true)),
+                Err(e) => eprintln!("THRML cost: {e}"),
+            }
         }
         return f64::NAN;
     }
@@ -3123,6 +3278,8 @@ fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe
 thread_local! {
     static GRID_CHOICE: std::cell::Cell<(ferrotherm::grid::Levers, usize, bool)> =
         std::cell::Cell::new((ferrotherm::grid::Levers::SCALAR, 1, false));
+    static EXJIT_NS: std::cell::RefCell<Vec<f64>> = const { std::cell::RefCell::new(Vec::new()) };
+    static EXJIT_OOM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn remix_ess(side: &str, w: &Workload, seed: u64, reps: u32, slot: &mut ThrmlSlot) -> f64 {
@@ -3165,10 +3322,9 @@ fn gpu_cost(w: &Workload, seed: u64) -> Result<(), String> {
         let (side, j) = w
             .open_grid()
             .ok_or_else(|| format!("{} is not an open grid", w.id))?;
-        let gpu = ferrotherm_gpu::Gpu::new().ok_or_else(|| "no wgpu adapter".to_string())?;
         let sweeps = u32::try_from(w.warmup + w.draws * w.thin.max(1)).unwrap_or(u32::MAX);
         let mut state = vec![-1i8; side * side];
-        gpu.sweep_packed(side, j, w.beta, &mut state, sweeps, seed, 0)?;
+        with_gpu(|gpu| gpu.sweep_packed(side, j, w.beta, &mut state, sweeps, seed, 0))?;
         Ok(())
     }
     #[cfg(not(feature = "gpu"))]
@@ -3195,7 +3351,7 @@ fn profile_json(
         if gpu {
             s.push_str(&format!(
                 "    {{\"workload\": {}, \"side\": {side}, \"fabric\": \"ferrotherm-gpu\", \
-                 \"note\": \"profile timings are the CPU stencil. The GPU lever's wall time is the accuracy chain.\"}}",
+                 \"note\": \"The chain is one submission. sweeps_per_submit and wall_ns_per_sweep are on the accuracy trial. setup_ns is pipeline creation and is inside that wall time. Not joules.\"}}",
                 json_str(w.id)
             ));
             continue;
@@ -3417,7 +3573,7 @@ fn trial_line(t: &EnergyTrial) -> String {
          \"idle_before_w\": {}, \"idle_after_w\": {}, \"baseline_drift_w\": {}, \
          \"paired_delta_j\": {}, \"paired_attributable\": {}, \"ess\": {}, \
          \"joules_per_ess\": {}, \"sweeps_per_rep\": {}, \"ess_per_sweep\": {}, \
-         \"seconds_per_sweep\": {}, \"joules_per_sweep\": {}, \
+         \"seconds_per_sweep\": {}, \"wall_ns_per_sweep\": {}, \"joules_per_sweep\": {}, \
          \"pairing\": {}, \"fabric\": {}, \
          \"window_load1\": {}, \"window_signal\": {}, \
          \"ps_attribution\": {}, \"trial_refusal\": {}, \"settle_load1\": {}, \
@@ -3452,6 +3608,7 @@ fn trial_line(t: &EnergyTrial) -> String {
         t.sweeps_per_rep,
         fmt_f64(Some(t.ess_per_sweep)),
         fmt_f64(Some(t.seconds_per_sweep)),
+        fmt_f64(Some(t.wall_ns_per_sweep)),
         fmt_f64(t.joules_per_sweep),
         json_str(t.pairing),
         json_str(t.fabric),
@@ -3496,9 +3653,13 @@ impl ThrmlServe {
         let stdout = child.stdout.take().ok_or("THRML serve has no stdout")?;
         let mut out = BufReader::new(stdout);
         let mut line = String::new();
-        out.read_line(&mut line)
-            .map_err(|e| format!("THRML serve ready: {e}"))?;
-        if !line.starts_with("READY") {
+        let ready_read = out.read_line(&mut line);
+        if ready_read.map(|n| n == 0).unwrap_or(true) || !line.starts_with("READY") {
+            let status = child.wait().ok();
+            let killed = status.as_ref().and_then(limit_from_status).is_some();
+            if killed || thrml_oom_text(&line) {
+                return Err(thrml_limit_reason("oom"));
+            }
             return Err(format!("THRML serve said {line:?}"));
         }
         Ok(ThrmlServe { child, stdin, out })
@@ -3520,7 +3681,14 @@ impl ThrmlServe {
                 .read_line(&mut line)
                 .map_err(|e| format!("THRML serve read: {e}"))?;
             if n == 0 {
+                let status = self.child.try_wait().ok().flatten();
+                if status.as_ref().and_then(limit_from_status).is_some() {
+                    return Err(thrml_limit_reason("oom"));
+                }
                 return Err("THRML serve closed".into());
+            }
+            if line.starts_with("LIMIT") || thrml_oom_text(&line) {
+                return Err(thrml_limit_reason("oom"));
             }
             if line.starts_with("ERR") {
                 return Err(line.trim().to_string());
@@ -3545,18 +3713,42 @@ impl ThrmlServe {
         Ok(chain.score.ess_energy)
     }
 
-    fn cost(&mut self, w: &Workload, seed: u64) -> Result<(), String> {
+    /// Seconds and sweeps from the DONE line. Seconds exclude JIT: the serve process
+    /// compiled before READY, and this timer starts at the sweep.
+    fn cost(&mut self, w: &Workload, seed: u64) -> Result<Option<(f64, u64)>, String> {
         writeln!(self.stdin, "COST {} {seed}", w.id)
             .map_err(|e| format!("THRML cost write: {e}"))?;
         self.stdin.flush().ok();
         let mut line = String::new();
-        self.out
+        let n = self
+            .out
             .read_line(&mut line)
             .map_err(|e| format!("THRML cost read: {e}"))?;
-        if line.starts_with("DONE") {
-            Ok(())
-        } else {
-            Err(format!("THRML cost said {}", line.trim()))
+        if n == 0 {
+            let status = self.child.wait().ok();
+            if status.as_ref().and_then(limit_from_status).is_some() {
+                return Err(thrml_limit_reason("oom"));
+            }
+            return Err("THRML serve closed".into());
+        }
+        if line.starts_with("LIMIT") || thrml_oom_text(&line) {
+            return Err(thrml_limit_reason("oom"));
+        }
+        if !line.starts_with("DONE") {
+            return Err(format!("THRML cost said {}", line.trim()));
+        }
+        let mut seconds = None;
+        let mut sweeps = None;
+        for part in line.split_whitespace() {
+            if let Some(v) = part.strip_prefix("seconds=") {
+                seconds = v.parse().ok();
+            } else if let Some(v) = part.strip_prefix("sweeps=") {
+                sweeps = v.parse().ok();
+            }
+        }
+        match (seconds, sweeps) {
+            (Some(seconds), Some(sweeps)) => Ok(Some((seconds, sweeps))),
+            _ => Err(format!("THRML cost line had no seconds and sweeps: {}", line.trim())),
         }
     }
 }
@@ -3803,6 +3995,11 @@ mod tests {
         assert_eq!(super::limit_from_exit(Some(137), None), Some("oom"));
         assert_eq!(super::limit_from_exit(None, Some(9)), Some("oom"));
         assert_eq!(super::limit_from_exit(Some(1), None), None);
+        assert!(super::thrml_oom_text(
+            "jax.errors.JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate"
+        ));
+        assert!(super::thrml_oom_text("CUDA_ERROR_OUT_OF_MEMORY"));
+        assert!(!super::thrml_oom_text("THRML runner exited exit status: 1"));
         assert_eq!(super::limit_from_exit(Some(0), Some(15)), None);
         let text =
             "META thrml=0.1.4\nLIMIT grid_scale_ising_4096 oom\nLIMIT grid_scale_ising_2048 oom\n";
