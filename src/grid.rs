@@ -60,6 +60,10 @@ pub struct Levers {
     pub tiled: bool,
     /// Threshold table and early-exit bit draws.
     pub sparse_rng: bool,
+    /// Neighbour sums from a bitwise popcount, or a kept i8 field, instead of a fresh gather
+    /// plus an exponential. With `simd`, the field is the popcount of the four neighbour bit
+    /// planes. Without it, each colour keeps an i8 neighbour sum and the next colour reads it.
+    pub incremental: bool,
 }
 
 impl Levers {
@@ -69,14 +73,25 @@ impl Levers {
         simd: false,
         tiled: false,
         sparse_rng: false,
+        incremental: false,
+    };
+
+    /// Checkerboard rows across threads, bit-packed spins, cache tiles, and a popcount field.
+    pub const COMBINED: Self = Self {
+        parallel: true,
+        simd: true,
+        tiled: true,
+        sparse_rng: false,
+        incremental: true,
     };
 
     /// One lever by name. Anything else is an error naming the token that arrived.
     ///
     /// # Errors
     ///
-    /// The name is not `parallel`, `simd`, `tiled`, or `sparse-rng`. `gpu` is not a lever
-    /// on this struct.
+    /// The name is not `parallel`, `simd`, `tiled`, `sparse-rng`, `incremental`, or `combined`.
+    /// `gpu` is not a lever on this struct. `combined` is the four of parallel, simd, tiled, and
+    /// incremental together, not a silent mix with `sparse-rng`.
     pub fn one(name: &str) -> Result<Self, String> {
         let mut levers = Self::SCALAR;
         match name {
@@ -84,10 +99,12 @@ impl Levers {
             "simd" => levers.simd = true,
             "tiled" => levers.tiled = true,
             "sparse-rng" => levers.sparse_rng = true,
+            "incremental" => levers.incremental = true,
+            "combined" => return Ok(Self::COMBINED),
             other => {
                 return Err(format!(
-                    "unknown grid lever {other}. The names are parallel, simd, tiled, sparse-rng. \
-                     gpu is a separate path and is not a flag on this struct"
+                    "unknown grid lever {other}. The names are parallel, simd, tiled, sparse-rng, \
+                     incremental, combined. gpu is a separate path and is not a flag on this struct"
                 ));
             }
         }
@@ -158,6 +175,8 @@ pub struct OpenIsing {
     bits: Vec<Vec<Vec<u64>>>,
     packed_dirty: bool,
     thresh: [u32; 9],
+    /// Neighbour-spin sums kept for the i8 incremental path. Empty when that path is off.
+    fields: Vec<i8>,
     profile: bool,
 }
 
@@ -177,10 +196,14 @@ impl OpenIsing {
         threads: usize,
     ) -> Result<Self, GridError> {
         if side == 0 {
-            return Err(GridError { message: "open grid side is 0".into() });
+            return Err(GridError {
+                message: "open grid side is 0".into(),
+            });
         }
         if !j.is_finite() {
-            return Err(GridError { message: format!("open grid J is not finite: {j}") });
+            return Err(GridError {
+                message: format!("open grid J is not finite: {j}"),
+            });
         }
         if !beta.is_finite() || beta < 0.0 {
             return Err(GridError {
@@ -201,7 +224,20 @@ impl OpenIsing {
         }
         let n = side * side;
         let spins = vec![-1i8; n];
-        let bits = if levers.simd { pack_all(&spins, side) } else { Vec::new() };
+        let bits = if levers.simd {
+            pack_all(&spins, side)
+        } else {
+            Vec::new()
+        };
+        let mut fields = Vec::new();
+        if levers.incremental && !levers.simd {
+            fields = vec![0i8; n];
+            for y in 0..side {
+                for x in 0..side {
+                    fields[y * side + x] = neighbor_sum(&spins, side, x, y) as i8;
+                }
+            }
+        }
         Ok(Self {
             side,
             j,
@@ -215,6 +251,7 @@ impl OpenIsing {
             bits,
             packed_dirty: false,
             thresh: threshold_table(j, beta),
+            fields,
             profile: false,
         })
     }
@@ -270,6 +307,8 @@ impl OpenIsing {
         if self.levers.simd {
             self.sweep_simd(sweep, threads, &mut prof);
             self.packed_dirty = true;
+        } else if self.levers.incremental {
+            self.sweep_fields(sweep, threads, &mut prof);
         } else {
             self.sweep_scalar(sweep, threads, &mut prof);
         }
@@ -326,7 +365,11 @@ impl OpenIsing {
             let sparse = self.levers.sparse_rng;
             let profile = self.profile;
             let ptr = self.spins.as_mut_ptr() as usize;
-            let band = if threads == 1 { side } else { side.div_ceil(threads) };
+            let band = if threads == 1 {
+                side
+            } else {
+                side.div_ceil(threads)
+            };
             let acc = std::thread::scope(|scope| {
                 let mut joins = Vec::with_capacity(threads);
                 for t in 0..threads {
@@ -342,8 +385,20 @@ impl OpenIsing {
                         // of this colour is writing. The other colour is only read.
                         unsafe {
                             scalar_rows(
-                                ptr as *mut i8, side, j, beta, &thresh, seed, sweep, color, y0, y1,
-                                tiled, sparse, profile, &mut local,
+                                ptr as *mut i8,
+                                side,
+                                j,
+                                beta,
+                                &thresh,
+                                seed,
+                                sweep,
+                                color,
+                                y0,
+                                y1,
+                                tiled,
+                                sparse,
+                                profile,
+                                &mut local,
                             );
                         }
                         local
@@ -359,6 +414,65 @@ impl OpenIsing {
         }
     }
 
+    fn sweep_fields(&mut self, sweep: u64, threads: usize, prof: &mut SweepProfile) {
+        for color in 0..2 {
+            let side = self.side;
+            let thresh = self.thresh;
+            let seed = self.seed;
+            let tiled = self.levers.tiled;
+            let profile = self.profile;
+            let spins = self.spins.as_mut_ptr() as usize;
+            let fields = self.fields.as_ptr() as usize;
+            let band = if threads == 1 {
+                side
+            } else {
+                side.div_ceil(threads)
+            };
+            let acc = std::thread::scope(|scope| {
+                let mut joins = Vec::new();
+                for t in 0..threads {
+                    let y0 = t * band;
+                    if y0 >= side {
+                        break;
+                    }
+                    let y1 = (y0 + band).min(side);
+                    joins.push(scope.spawn(move || {
+                        let mut local = SweepProfile::default();
+                        // SAFETY: rows y0..y1 of this colour are disjoint. The field vector is
+                        // only read. Neighbour fields belong to the other colour and are refreshed
+                        // after every thread has finished this colour.
+                        unsafe {
+                            field_rows(
+                                spins as *mut i8,
+                                fields as *const i8,
+                                side,
+                                &thresh,
+                                seed,
+                                sweep,
+                                color,
+                                y0,
+                                y1,
+                                tiled,
+                                profile,
+                                &mut local,
+                            );
+                        }
+                        local
+                    }));
+                }
+                let mut acc = SweepProfile::default();
+                for jn in joins {
+                    acc.add(&jn.join().expect("grid field worker"));
+                }
+                acc
+            });
+            prof.add(&acc);
+            let mut tfield = clock(self.profile);
+            refresh_color_fields(&self.spins, &mut self.fields, self.side, color ^ 1);
+            stop_clock(&mut tfield, &mut prof.field_ns);
+        }
+    }
+
     fn sweep_simd(&mut self, sweep: u64, threads: usize, prof: &mut SweepProfile) {
         for color in 0..2 {
             let side = self.side;
@@ -367,9 +481,14 @@ impl OpenIsing {
             let sparse = self.levers.sparse_rng;
             let tiled = self.levers.tiled;
             let profile = self.profile;
+            let fast_field = self.levers.incremental;
             let write_ptr = self.bits[color].as_mut_ptr() as usize;
             let read_ptr = self.bits[color ^ 1].as_ptr() as usize;
-            let band = if threads == 1 { side } else { side.div_ceil(threads) };
+            let band = if threads == 1 {
+                side
+            } else {
+                side.div_ceil(threads)
+            };
             let acc = std::thread::scope(|scope| {
                 let mut joins = Vec::new();
                 for t in 0..threads {
@@ -396,6 +515,7 @@ impl OpenIsing {
                                 y1,
                                 tiled,
                                 sparse,
+                                fast_field,
                                 profile,
                                 &mut local,
                             );
@@ -484,7 +604,9 @@ pub fn row_sites(side: usize, y: usize, color: usize) -> usize {
     }
 }
 
-fn threshold_table(j: f64, beta: f64) -> [u32; 9] {
+/// `round(p_up(J * field, beta) * 2^32)`, clamped to `u32::MAX`. Index is `field + 4`.
+#[must_use]
+pub fn threshold_table(j: f64, beta: f64) -> [u32; 9] {
     let mut t = [0u32; 9];
     for c in -4..=4 {
         let p = accept_probability(j, beta, c);
@@ -528,7 +650,10 @@ unsafe fn scalar_rows(
     prof: &mut SweepProfile,
 ) {
     let step = if tiled { TILE_ROWS } else { (y1 - y0).max(1) };
-    let widest = (y0..y1).map(|y| row_sites(side, y, color)).max().unwrap_or(0);
+    let widest = (y0..y1)
+        .map(|y| row_sites(side, y, color))
+        .max()
+        .unwrap_or(0);
     let mut fields = vec![0i32; widest];
     let mut probs = vec![0.0f64; widest];
     let mut y_base = y0;
@@ -586,6 +711,65 @@ unsafe fn scalar_rows(
     }
 }
 
+fn refresh_color_fields(spins: &[i8], fields: &mut [i8], side: usize, color: usize) {
+    for y in 0..side {
+        let n = row_sites(side, y, color);
+        for k in 0..n {
+            let x = x_of(y, color, k);
+            fields[y * side + x] = neighbor_sum(spins, side, x, y) as i8;
+        }
+    }
+}
+
+/// # Safety
+///
+/// `spins` is `side * side` initialised spins. Rows `y0..y1` of `color` are written only by this
+/// call. `fields` is only read.
+unsafe fn field_rows(
+    spins: *mut i8,
+    fields: *const i8,
+    side: usize,
+    thresh: &[u32; 9],
+    seed: u64,
+    sweep: u64,
+    color: usize,
+    y0: usize,
+    y1: usize,
+    tiled: bool,
+    profile: bool,
+    prof: &mut SweepProfile,
+) {
+    let step = if tiled { TILE_ROWS } else { (y1 - y0).max(1) };
+    let mut y_base = y0;
+    while y_base < y1 {
+        let y_hi = (y_base + step).min(y1);
+        for y in y_base..y_hi {
+            let n = row_sites(side, y, color);
+            let mut rng = row_rng(seed, sweep, color, y);
+            let mut tmem = clock(profile);
+            let mut kept = vec![0i8; n];
+            for k in 0..n {
+                let x = x_of(y, color, k);
+                kept[k] = unsafe { *fields.add(y * side + x) };
+            }
+            stop_clock(&mut tmem, &mut prof.memory_ns);
+            let mut trng = clock(profile);
+            for k in 0..n {
+                let x = x_of(y, color, k);
+                let f = kept[k] as i32;
+                let draw = rng.next_u32();
+                prof.rng_words += 1;
+                let up = draw < thresh[(f + 4) as usize];
+                unsafe {
+                    *spins.add(y * side + x) = if up { 1 } else { -1 };
+                }
+            }
+            stop_clock(&mut trng, &mut prof.rng_ns);
+        }
+        y_base = y_hi;
+    }
+}
+
 /// # Safety
 ///
 /// `spins` points at `side * side` initialised spins. Only reads.
@@ -607,7 +791,11 @@ unsafe fn neighbor_sum_ptr(spins: *const i8, side: usize, x: usize, y: usize) ->
 }
 
 fn clock(on: bool) -> Option<std::time::Instant> {
-    if on { Some(std::time::Instant::now()) } else { None }
+    if on {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    }
 }
 
 fn stop_clock(t: &mut Option<std::time::Instant>, acc: &mut u128) {
@@ -620,7 +808,12 @@ fn stop_clock(t: &mut Option<std::time::Instant>, acc: &mut u128) {
 ///
 /// `up[s]` is true when the uniform integer is strictly below `thresh[s]`. Unresolved ties
 /// (all 32 bits equal) stay down, which is `draw < thresh` and not `draw <= thresh`.
-pub fn decide_group(thresh: &[u32; RNG_GROUP], n: usize, rng: &mut Pcg, words: &mut u64) -> [bool; RNG_GROUP] {
+pub fn decide_group(
+    thresh: &[u32; RNG_GROUP],
+    n: usize,
+    rng: &mut Pcg,
+    words: &mut u64,
+) -> [bool; RNG_GROUP] {
     let mut up = [false; RNG_GROUP];
     let mut open = if n >= 8 { 0xffu8 } else { (1u8 << n) - 1 };
     let mut b = 31i32;
@@ -656,6 +849,54 @@ pub fn decide_group(thresh: &[u32; RNG_GROUP], n: usize, rng: &mut Pcg, words: &
 ///
 /// `write` and `read` each point at `side` rows. This call writes only rows `y0..y1` of `write`
 /// and does not resize those vectors' callers. `read` is not written.
+/// Popcount of four bit-planes. Lane value is in `0..=4`, little-endian in the three words.
+fn sum4(a: u64, b: u64, c: u64, d: u64) -> [u64; 3] {
+    let s0 = a ^ b;
+    let s1 = a & b;
+    let t0 = s0 ^ c;
+    let t1 = s1 ^ (s0 & c);
+    let t2 = s1 & s0 & c;
+    let u0 = t0 ^ d;
+    let u1 = t1 ^ (t0 & d);
+    let u2 = t2 ^ (t1 & t0 & d);
+    [u0, u1, u2]
+}
+
+fn sub_from_plane(acc: &mut [u64; 4], plane: usize, mut bits: u64) {
+    for p in plane..4 {
+        if bits == 0 {
+            return;
+        }
+        let next = !acc[p] & bits;
+        acc[p] ^= bits;
+        bits = next;
+    }
+}
+
+/// Neighbour-spin sum, `-4..=4`, as 4-bit two's complement planes.
+///
+/// Each neighbour is a bit (`1` is `+1`) and a present mask. A missing neighbour adds nothing.
+/// The count of `+1` neighbours minus the count of `−1` neighbours is a popcount of those planes,
+/// not a fresh walk of four scalar loads and not an exponential.
+fn field_planes(
+    up: u64,
+    up_p: u64,
+    down: u64,
+    down_p: u64,
+    left: u64,
+    left_p: u64,
+    right: u64,
+    right_p: u64,
+) -> [u64; 4] {
+    let plus = sum4(up & up_p, down & down_p, left & left_p, right & right_p);
+    let minus = sum4(!up & up_p, !down & down_p, !left & left_p, !right & right_p);
+    let mut acc = [plus[0], plus[1], plus[2], 0];
+    sub_from_plane(&mut acc, 0, minus[0]);
+    sub_from_plane(&mut acc, 1, minus[1]);
+    sub_from_plane(&mut acc, 2, minus[2]);
+    acc
+}
+
 unsafe fn simd_rows(
     write: *mut Vec<u64>,
     read: *const Vec<u64>,
@@ -668,6 +909,7 @@ unsafe fn simd_rows(
     y1: usize,
     tiled: bool,
     sparse: bool,
+    fast_field: bool,
     profile: bool,
     prof: &mut SweepProfile,
 ) {
@@ -696,14 +938,22 @@ unsafe fn simd_rows(
             for w in 0..nwords {
                 let lo = w * SIMD_LANES;
                 let keep = (nbits - lo).min(SIMD_LANES);
-                let valid = if keep == 64 { u64::MAX } else { (1u64 << keep) - 1 };
+                let valid = if keep == 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << keep) - 1
+                };
                 let same = unsafe { &*read.add(y) };
                 let h = horizontal(same, nbits, lo, valid, missing_left);
                 left[w] = h.left;
                 right[w] = h.right;
                 left_p[w] = h.left_present;
                 right_p[w] = h.right_present;
-                let up_row = if y > 0 { Some(unsafe { &*read.add(y - 1) }.as_slice()) } else { None };
+                let up_row = if y > 0 {
+                    Some(unsafe { &*read.add(y - 1) }.as_slice())
+                } else {
+                    None
+                };
                 let (ub, up) = vertical(up_row, lo, nbits, valid);
                 up_b[w] = ub;
                 up_p[w] = up;
@@ -719,12 +969,19 @@ unsafe fn simd_rows(
             stop_clock(&mut tmem, &mut prof.memory_ns);
             let mut tfield = clock(profile);
             for w in 0..nwords {
-                let mut acc = [0u64; 4];
-                add_trit(&mut acc, up_b[w], up_p[w]);
-                add_trit(&mut acc, dn_b[w], dn_p[w]);
-                add_trit(&mut acc, left[w], left_p[w]);
-                add_trit(&mut acc, right[w], right_p[w]);
-                accs[w] = acc;
+                accs[w] = if fast_field {
+                    field_planes(
+                        up_b[w], up_p[w], dn_b[w], dn_p[w], left[w], left_p[w], right[w],
+                        right_p[w],
+                    )
+                } else {
+                    let mut acc = [0u64; 4];
+                    add_trit(&mut acc, up_b[w], up_p[w]);
+                    add_trit(&mut acc, dn_b[w], dn_p[w]);
+                    add_trit(&mut acc, left[w], left_p[w]);
+                    add_trit(&mut acc, right[w], right_p[w]);
+                    acc
+                };
             }
             stop_clock(&mut tfield, &mut prof.field_ns);
             let mut rng = row_rng(seed, sweep, color, y);
@@ -732,8 +989,19 @@ unsafe fn simd_rows(
             for w in 0..nwords {
                 let lo = w * SIMD_LANES;
                 let keep = (nbits - lo).min(SIMD_LANES);
-                let valid = if keep == 64 { u64::MAX } else { (1u64 << keep) - 1 };
-                let up = decide_word(&accs[w], valid, thresh, &mut rng, sparse, &mut prof.rng_words);
+                let valid = if keep == 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << keep) - 1
+                };
+                let up = decide_word(
+                    &accs[w],
+                    valid,
+                    thresh,
+                    &mut rng,
+                    sparse,
+                    &mut prof.rng_words,
+                );
                 let idx = lo / SIMD_LANES;
                 let row = unsafe { &mut *write.add(y) };
                 let cur = row[idx];
@@ -833,7 +1101,12 @@ fn horizontal(other: &[u64], nbits: usize, lo: usize, valid: u64, missing_left: 
         if lo == 0 {
             left_present &= !1;
         }
-        HBits { left, right, left_present, right_present: valid }
+        HBits {
+            left,
+            right,
+            left_present,
+            right_present: valid,
+        }
     } else {
         let left = extract64(other, lo as isize, nbits);
         let right = extract64(other, lo as isize + 1, nbits);
@@ -844,7 +1117,12 @@ fn horizontal(other: &[u64], nbits: usize, lo: usize, valid: u64, missing_left: 
                 right_present &= !(1u64 << (last - lo));
             }
         }
-        HBits { left, right, left_present: valid, right_present }
+        HBits {
+            left,
+            right,
+            left_present: valid,
+            right_present,
+        }
     }
 }
 
@@ -952,11 +1230,28 @@ pub fn packed_neighbor_sums(spins: &[i8], side: usize, color: usize) -> Vec<Vec<
                 break;
             }
             let keep = (nbits - lo).min(SIMD_LANES);
-            let valid = if keep == 64 { u64::MAX } else { (1u64 << keep) - 1 };
+            let valid = if keep == 64 {
+                u64::MAX
+            } else {
+                (1u64 << keep) - 1
+            };
             let h = horizontal(&read[y], nbits, lo, valid, missing_left);
-            let (ub, up) = vertical(if y > 0 { Some(read[y - 1].as_slice()) } else { None }, lo, nbits, valid);
+            let (ub, up) = vertical(
+                if y > 0 {
+                    Some(read[y - 1].as_slice())
+                } else {
+                    None
+                },
+                lo,
+                nbits,
+                valid,
+            );
             let (db, dp) = vertical(
-                if y + 1 < side { Some(read[y + 1].as_slice()) } else { None },
+                if y + 1 < side {
+                    Some(read[y + 1].as_slice())
+                } else {
+                    None
+                },
                 lo,
                 nbits,
                 valid,
@@ -982,8 +1277,246 @@ fn lane_i4(acc: &[u64; 4], lane: usize) -> i32 {
             u |= 1 << p;
         }
     }
-    if u & 0x8 != 0 { i32::from(u) - 16 } else { i32::from(u) }
+    if u & 0x8 != 0 {
+        i32::from(u) - 16
+    } else {
+        i32::from(u)
+    }
 }
+
+/// Counter hash shared with the packed checkerboard shader. The whole `u32` is the draw.
+/// Low bits of a nearby PCG stream are not the leading bit.
+#[must_use]
+pub fn packed_hash(seed: u32, site: u32, sweep: u32) -> u32 {
+    let mut x = seed
+        .wrapping_add(site.wrapping_mul(0x9E37_79B9))
+        .wrapping_add(sweep.wrapping_mul(0x85EB_CA6B));
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7FEB_352D);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846C_A68B);
+    x ^= x >> 16;
+    x
+}
+
+/// Both halves of the seed reach the shader. A `u64` truncated to `as u32` would drop the top.
+#[must_use]
+pub fn packed_seed(seed: u64) -> u32 {
+    (seed as u32) ^ ((seed >> 32) as u32)
+}
+
+/// Checkerboard Gibbs on spins packed into `u32` words, one bit per site of that colour.
+///
+/// Even side only. Bit 1 is `+1` and bit 0 is `−1`. Sites of one colour do not share an edge, so
+/// a word is updated from the other colour's words and the result does not depend on thread
+/// order. The acceptance test is `packed_hash < threshold_table[field + 4]`, the same comparison
+/// the shader runs.
+///
+/// # Errors
+///
+/// An odd or zero side, a state whose length is not `side²`, or a non-finite coupling or a
+/// negative temperature.
+pub fn sweep_packed_cpu(
+    side: usize,
+    spins: &mut [i8],
+    j: f64,
+    beta: f64,
+    seed: u64,
+    start_sweep: u32,
+    sweeps: u32,
+) -> Result<(), String> {
+    if side == 0 || !side.is_multiple_of(2) {
+        return Err(format!(
+            "packed checkerboard needs an even side, got {side}"
+        ));
+    }
+    if spins.len() != side * side {
+        return Err(format!(
+            "packed checkerboard expected {} spins for side {side}, got {}",
+            side * side,
+            spins.len()
+        ));
+    }
+    if !j.is_finite() || !beta.is_finite() || beta < 0.0 {
+        return Err(format!(
+            "packed checkerboard J {j} beta {beta} is not usable"
+        ));
+    }
+    let half = side / 2;
+    let nw = half.div_ceil(32);
+    let mut plane = [vec![0u32; side * nw], vec![0u32; side * nw]];
+    pack_planes(&mut plane, spins, side, nw);
+    let thresh = threshold_table(j, beta);
+    let seed32 = packed_seed(seed);
+    for s in 0..sweeps {
+        let sweep = start_sweep.wrapping_add(s);
+        for color in 0..2 {
+            for y in 0..side {
+                for w in 0..nw {
+                    let mut word = plane[color][y * nw + w];
+                    let k0 = w * 32;
+                    for b in 0..32 {
+                        let k = k0 + b;
+                        if k >= half {
+                            break;
+                        }
+                        let x = 2 * k + ((y + color) & 1);
+                        let field = packed_field(&plane, side, nw, color, x, y);
+                        let site = (y * side + x) as u32;
+                        let draw = packed_hash(seed32, site, sweep);
+                        let up = draw < thresh[(field + 4) as usize];
+                        let mask = 1u32 << b;
+                        if up {
+                            word |= mask;
+                        } else {
+                            word &= !mask;
+                        }
+                    }
+                    plane[color][y * nw + w] = word;
+                }
+            }
+        }
+    }
+    unpack_planes(&plane, spins, side, nw);
+    Ok(())
+}
+
+fn pack_planes(plane: &mut [Vec<u32>; 2], spins: &[i8], side: usize, nw: usize) {
+    for y in 0..side {
+        for x in 0..side {
+            if spins[y * side + x] > 0 {
+                let (color, k) = checkerboard(x, y);
+                plane[color][y * nw + k / 32] |= 1u32 << (k % 32);
+            }
+        }
+    }
+}
+
+fn unpack_planes(plane: &[Vec<u32>; 2], spins: &mut [i8], side: usize, nw: usize) {
+    for y in 0..side {
+        for x in 0..side {
+            let (color, k) = checkerboard(x, y);
+            let word = plane[color][y * nw + k / 32];
+            spins[y * side + x] = if (word >> (k % 32)) & 1 == 1 { 1 } else { -1 };
+        }
+    }
+}
+
+fn packed_spin(words: &[u32], side: usize, nw: usize, color: usize, x: usize, y: usize) -> i32 {
+    if y >= side || x >= side {
+        return 0;
+    }
+    let parity = (y + color) & 1;
+    if (x & 1) != parity {
+        return 0;
+    }
+    let k = (x - parity) / 2;
+    let word = words[y * nw + k / 32];
+    if (word >> (k % 32)) & 1 == 1 { 1 } else { -1 }
+}
+
+fn packed_field(
+    plane: &[Vec<u32>; 2],
+    side: usize,
+    nw: usize,
+    color: usize,
+    x: usize,
+    y: usize,
+) -> i32 {
+    let other = color ^ 1;
+    let words = plane[other].as_slice();
+    let mut sum = 0;
+    if y > 0 {
+        sum += packed_spin(words, side, nw, other, x, y - 1);
+    }
+    if y + 1 < side {
+        sum += packed_spin(words, side, nw, other, x, y + 1);
+    }
+    if x > 0 {
+        sum += packed_spin(words, side, nw, other, x - 1, y);
+    }
+    if x + 1 < side {
+        sum += packed_spin(words, side, nw, other, x + 1, y);
+    }
+    sum
+}
+
+/// WGSL for [`sweep_packed_cpu`]. The gpu crate compiles this string. A second copy of the
+/// update rule would drift the first time one side was tuned.
+#[must_use]
+pub fn packed_checkerboard_shader() -> &'static str {
+    PACKED_SHADER
+}
+
+const PACKED_SHADER: &str = r#"
+struct Params {
+  side: u32,
+  nwords: u32,
+  color: u32,
+  sweep: u32,
+  seed: u32,
+  half: u32,
+  pad0: u32,
+  pad1: u32,
+}
+
+@group(0) @binding(0) var<uniform> p: Params;
+@group(0) @binding(1) var<storage, read_write> mine: array<u32>;
+@group(0) @binding(2) var<storage, read> other: array<u32>;
+@group(0) @binding(3) var<storage, read> thresh: array<u32>;
+
+fn packed_hash(seed: u32, site: u32, sweep: u32) -> u32 {
+  var x = seed + site * 0x9E3779B9u + sweep * 0x85EBCA6Bu;
+  x = x ^ (x >> 16u);
+  x = x * 0x7FEB352Du;
+  x = x ^ (x >> 15u);
+  x = x * 0x846CA68Bu;
+  x = x ^ (x >> 16u);
+  return x;
+}
+
+fn spin_at(x: i32, y: i32) -> i32 {
+  if (y < 0 || x < 0 || u32(y) >= p.side || u32(x) >= p.side) {
+    return 0;
+  }
+  let parity = (u32(y) + (p.color ^ 1u)) & 1u;
+  if ((u32(x) & 1u) != parity) {
+    return 0;
+  }
+  let k = (u32(x) - parity) / 2u;
+  let word = other[u32(y) * p.nwords + (k / 32u)];
+  let bit = (word >> (k % 32u)) & 1u;
+  if (bit == 1u) { return 1; }
+  return -1;
+}
+
+@compute @workgroup_size(64)
+fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let word_i = gid.x;
+  let total = p.side * p.nwords;
+  if (word_i >= total) { return; }
+  let y = word_i / p.nwords;
+  let w = word_i % p.nwords;
+  var word = mine[word_i];
+  let k0 = w * 32u;
+  for (var b: u32 = 0u; b < 32u; b = b + 1u) {
+    let k = k0 + b;
+    if (k >= p.half) { break; }
+    let x = 2u * k + ((y + p.color) & 1u);
+    var f: i32 = 0;
+    f = f + spin_at(i32(x), i32(y) - 1);
+    f = f + spin_at(i32(x), i32(y) + 1);
+    f = f + spin_at(i32(x) - 1, i32(y));
+    f = f + spin_at(i32(x) + 1, i32(y));
+    let site = y * p.side + x;
+    let draw = packed_hash(p.seed, site, p.sweep);
+    let up = draw < thresh[u32(f + 4)];
+    let mask = 1u << b;
+    if (up) { word = word | mask; } else { word = word & ~mask; }
+  }
+  mine[word_i] = word;
+}
+"#;
 
 // ---- machine-checked ---------------------------------------------------------------------------
 //
@@ -1068,15 +1601,33 @@ mod tests {
     fn each_lever_matches_the_boltzmann_law_on_a_2x2() {
         let configs = [
             Levers::SCALAR,
-            Levers { parallel: true, ..Levers::SCALAR },
-            Levers { simd: true, ..Levers::SCALAR },
-            Levers { tiled: true, ..Levers::SCALAR },
-            Levers { sparse_rng: true, ..Levers::SCALAR },
+            Levers {
+                parallel: true,
+                ..Levers::SCALAR
+            },
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
+            Levers {
+                tiled: true,
+                ..Levers::SCALAR
+            },
+            Levers {
+                sparse_rng: true,
+                ..Levers::SCALAR
+            },
             Levers {
                 parallel: true,
                 simd: true,
                 tiled: true,
                 sparse_rng: true,
+                incremental: false,
+            },
+            Levers::COMBINED,
+            Levers {
+                incremental: true,
+                ..Levers::SCALAR
             },
         ];
         for (i, levers) in configs.iter().enumerate() {
@@ -1091,8 +1642,14 @@ mod tests {
         // that fails if the field sign is wrong.
         for (i, levers) in [
             Levers::SCALAR,
-            Levers { sparse_rng: true, ..Levers::SCALAR },
-            Levers { simd: true, ..Levers::SCALAR },
+            Levers {
+                sparse_rng: true,
+                ..Levers::SCALAR
+            },
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
         ]
         .iter()
         .enumerate()
@@ -1127,17 +1684,61 @@ mod tests {
 
     #[test]
     fn simd_matches_its_own_repeat_and_odd_sides_are_refused() {
-        let mut a = OpenIsing::try_new(8, 1.0, 0.4, 7, Levers { simd: true, ..Levers::SCALAR }, 2).unwrap();
-        let mut b = OpenIsing::try_new(8, 1.0, 0.4, 7, Levers { simd: true, sparse_rng: true, ..Levers::SCALAR }, 2).unwrap();
+        let mut a = OpenIsing::try_new(
+            8,
+            1.0,
+            0.4,
+            7,
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
+            2,
+        )
+        .unwrap();
+        let mut b = OpenIsing::try_new(
+            8,
+            1.0,
+            0.4,
+            7,
+            Levers {
+                simd: true,
+                sparse_rng: true,
+                ..Levers::SCALAR
+            },
+            2,
+        )
+        .unwrap();
         a.sweeps(10);
         let first = a.spins().to_vec();
-        let mut again = OpenIsing::try_new(8, 1.0, 0.4, 7, Levers { simd: true, ..Levers::SCALAR }, 2).unwrap();
+        let mut again = OpenIsing::try_new(
+            8,
+            1.0,
+            0.4,
+            7,
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
+            2,
+        )
+        .unwrap();
         again.sweeps(10);
         assert_eq!(first, again.spins());
         // sparse-rng changes the encoding, so it must be allowed to differ, and it must still move.
         b.sweeps(10);
         assert_ne!(b.spins(), &vec![-1i8; 64]);
-        let err = match OpenIsing::try_new(5, 1.0, 0.3, 1, Levers { simd: true, ..Levers::SCALAR }, 1) {
+        let err = match OpenIsing::try_new(
+            5,
+            1.0,
+            0.3,
+            1,
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
+            1,
+        ) {
             Err(err) => err,
             Ok(_) => panic!("simd accepted an odd side"),
         };
@@ -1146,12 +1747,123 @@ mod tests {
     }
 
     #[test]
+    fn popcount_field_matches_a_trit_sum_and_combined_matches_simd() {
+        for a in 0..2u64 {
+            for b in 0..2u64 {
+                for c in 0..2u64 {
+                    for d in 0..2u64 {
+                        let planes = sum4(a, b, c, d);
+                        let got = lane_i4(&[planes[0], planes[1], planes[2], 0], 0);
+                        assert_eq!(got, (a + b + c + d) as i32);
+                    }
+                }
+            }
+        }
+        let mut plain = OpenIsing::try_new(
+            8,
+            1.0,
+            0.4,
+            7,
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
+            1,
+        )
+        .unwrap();
+        let mut combined = OpenIsing::try_new(8, 1.0, 0.4, 7, Levers::COMBINED, 3).unwrap();
+        plain.sweeps(12);
+        combined.sweeps(12);
+        assert_eq!(
+            plain.spins(),
+            combined.spins(),
+            "popcount field must be the same chain as the trit adder"
+        );
+        assert_eq!(combined.threads_used(), 3);
+        let mut one = OpenIsing::try_new(
+            8,
+            1.0,
+            0.4,
+            7,
+            Levers {
+                incremental: true,
+                parallel: true,
+                tiled: true,
+                ..Levers::SCALAR
+            },
+            1,
+        )
+        .unwrap();
+        let mut many = OpenIsing::try_new(
+            8,
+            1.0,
+            0.4,
+            7,
+            Levers {
+                incremental: true,
+                parallel: true,
+                tiled: true,
+                ..Levers::SCALAR
+            },
+            3,
+        )
+        .unwrap();
+        one.sweeps(12);
+        many.sweeps(12);
+        assert_eq!(
+            one.spins(),
+            many.spins(),
+            "kept fields of one colour are not written by two threads"
+        );
+    }
+
+    #[test]
+    fn packed_words_match_boltzmann_and_repeat_for_a_fixed_seed() {
+        let beta = 0.3;
+        let exact = exact_boltzmann(&grid2d(2, 2, 1.0), beta);
+        let mut hist = vec![0.0; exact.len()];
+        let mut state = vec![-1i8; 4];
+        let burn = 200u32;
+        let draws = 20_000u32;
+        sweep_packed_cpu(2, &mut state, 1.0, beta, 0x51, 0, burn).unwrap();
+        for i in 0..draws {
+            sweep_packed_cpu(2, &mut state, 1.0, beta, 0x51, burn + i, 1).unwrap();
+            let mut mask = 0usize;
+            for (b, &s) in state.iter().enumerate() {
+                if s == 1 {
+                    mask |= 1 << b;
+                }
+            }
+            hist[mask] += 1.0;
+        }
+        for h in &mut hist {
+            *h /= f64::from(draws);
+        }
+        let distance = tv(&hist, &exact);
+        assert!(distance < 0.03, "packed checkerboard TV {distance}");
+        let mut a = vec![-1i8; 16];
+        let mut b = vec![-1i8; 16];
+        sweep_packed_cpu(4, &mut a, 1.0, 0.4, 9, 0, 8).unwrap();
+        sweep_packed_cpu(4, &mut b, 1.0, 0.4, 9, 0, 8).unwrap();
+        assert_eq!(a, b);
+        let mut c = vec![-1i8; 16];
+        sweep_packed_cpu(4, &mut c, 1.0, 0.4, 10, 0, 8).unwrap();
+        assert_ne!(a, c);
+        let err = sweep_packed_cpu(3, &mut vec![-1i8; 9], 1.0, 0.3, 1, 0, 1).unwrap_err();
+        assert!(err.contains("even"), "{err}");
+    }
+
+    #[test]
     fn packed_fields_match_the_scalar_neighbour_sum_including_edges() {
         for side in [2usize, 4, 8, 18] {
             let mut spins = vec![0i8; side * side];
             for y in 0..side {
                 for x in 0..side {
-                    spins[y * side + x] = if (x * 3 + y * 5).is_multiple_of(2) { 1 } else { -1 };
+                    spins[y * side + x] = if (x * 3 + y * 5).is_multiple_of(2) {
+                        1
+                    } else {
+                        -1
+                    };
                 }
             }
             for color in 0..2 {
@@ -1190,7 +1902,11 @@ mod tests {
         // p reconstructed from the table, not from a shared uniform.
         let thresh_of = |p: f64| -> u32 {
             let scaled = (p * 4_294_967_296.0).round();
-            if scaled >= 4_294_967_296.0 { u32::MAX } else { scaled as u32 }
+            if scaled >= 4_294_967_296.0 {
+                u32::MAX
+            } else {
+                scaled as u32
+            }
         };
         let p0 = 0.2f64;
         let p1 = 0.8f64;
@@ -1221,8 +1937,14 @@ mod tests {
         assert!((f0 - p0).abs() < 0.02, "site0 {f0}");
         assert!((f1 - p1).abs() < 0.02, "site1 {f1}");
         // A shared uniform would give min(p0, p1) = 0.2, not the product.
-        assert!((fb - p0 * p1).abs() < 0.02, "joint {fb}, shared-uniform would be near 0.2");
-        assert!(words < (n as u64) * 8, "early exit drew {words} words for {n} pairs");
+        assert!(
+            (fb - p0 * p1).abs() < 0.02,
+            "joint {fb}, shared-uniform would be near 0.2"
+        );
+        assert!(
+            words < (n as u64) * 8,
+            "early exit drew {words} words for {n} pairs"
+        );
     }
 
     #[test]

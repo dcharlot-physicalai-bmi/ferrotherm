@@ -172,9 +172,9 @@ and does not require the flag.
 ### Levers
 
 `--lever` may be repeated. The names are `parallel`, `simd`, `tiled`,
-`sparse-rng`, and `gpu`. `gpu` does not combine with a CPU lever. Unknown
-names are an error. All off is the scalar checkerboard, one `f64` draw per
-site.
+`sparse-rng`, `incremental`, `combined`, and `gpu`. `gpu` does not combine
+with a CPU lever. Unknown names are an error. All off is the scalar
+checkerboard, one `f64` draw per site.
 
 `parallel` and `tiled` do not change the draws. `simd` packs 64 sites of one
 colour into a word and refuses an odd side instead of falling back. `sparse-rng`
@@ -184,9 +184,33 @@ at most `2^-32`. The leading bits are the high bits of the generator. The low
 bits of nearby streams are serially correlated, and using them as the leading
 bit biased a 2×2 chain off its Boltzmann law.
 
-`gpu` is `ferrotherm-gpu`'s wgpu sweep. The bench has to be built with
+`incremental` keeps an i8 neighbour sum per site, or, with `simd`, replaces the
+trit adder with a popcount of the four neighbour bit planes. The field value is
+the same number the trit adder produced. `combined` is `parallel`, `simd`,
+`tiled`, and `incremental` together. It is not a mix with `sparse-rng`.
+
+`gpu` is a packed checkerboard compute shader: one colour's spins in `u32`
+words, one thread per word, and `grid::packed_hash` as the draw.
+The CPU mirror is `sweep_packed_cpu`. The bench has to be built with
 `--features gpu`. No adapter is an error, not a CPU run. A software rasteriser
-is labelled not hardware.
+is labelled not hardware. The older CSR gather shader is not this lever.
+
+### ESS per sweep and ESS per second
+
+`mixing.ess_per_sweep` is `ess / (draws * thin)`. `mixing.ess_per_second` is
+that rate divided by wall seconds. They are separate because a faster sweep
+and a better-mixing sweep are different claims. A higher THRML
+`ess_per_sweep` at a large side means its blocked sampler mixed better per
+sweep. The ratio is null when either side has no finite ESS. A null ratio is
+not a ferrotherm win.
+
+### THRML's own memory limit
+
+Grid-scale accuracy runs one THRML process per side. A SIGKILL (signal 9, or
+exit code 137) is recorded as `THRML_LIMIT oom` on that side. The ratio is
+null. Sides that finished stay in the receipt. The kill is THRML's memory
+limit. It is not a ferrotherm result and it is not a win. A Python
+`MemoryError` prints a `LIMIT` line and the runner continues.
 
 ### Two THRML baselines
 
@@ -262,7 +286,7 @@ cargo build --release -p ferrotherm-thrml-bench --features gpu
 ```
 
 One CPU lever at a time, so the effect is not confounded. `LEVER` is
-`parallel`, `simd`, `tiled`, or `sparse-rng`.
+`parallel`, `simd`, `tiled`, `sparse-rng`, `incremental`, or `combined`.
 
 ```sh
 ./target/release/ferrotherm-thrml-bench \

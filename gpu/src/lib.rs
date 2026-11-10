@@ -58,6 +58,7 @@
 
 use ferrotherm::wgsl::{sweep_shader, GpuModel};
 pub mod device;
+mod packed;
 pub use device::GpuDevice;
 
 use wgpu::util::DeviceExt;
@@ -655,6 +656,22 @@ pub(crate) mod tests {
             let e = gpu.sweep(&m, &mut s, bad, 1).unwrap_err();
             assert!(e.contains("beta"), "{bad} should be refused by name, got: {e}");
         }
+    }
+
+    #[test]
+    fn packed_shader_matches_the_cpu_mirror_for_a_fixed_seed() {
+        let (gpu, _own) = gpu_or_skip!();
+        let mut cpu = vec![-1i8; 64];
+        ferrotherm::grid::sweep_packed_cpu(8, &mut cpu, 1.0, 0.4, 9, 0, 6).expect("cpu mirror");
+        let mut on_gpu = vec![-1i8; 64];
+        gpu.sweep_packed(8, 1.0, 0.4, &mut on_gpu, 6, 9, 0).expect("packed shader");
+        assert_eq!(cpu, on_gpu, "the shader and the CPU mirror share the counter and the field");
+        let mut again = vec![-1i8; 64];
+        gpu.sweep_packed(8, 1.0, 0.4, &mut again, 6, 9, 0).expect("repeat");
+        assert_eq!(on_gpu, again);
+        let mut other = vec![-1i8; 64];
+        gpu.sweep_packed(8, 1.0, 0.4, &mut other, 6, 10, 0).expect("other seed");
+        assert_ne!(on_gpu, other);
     }
 
     #[test]
