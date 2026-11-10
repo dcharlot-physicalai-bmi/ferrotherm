@@ -34,7 +34,7 @@ B_COMMIT = "2d96f4b4b67bfa2625d89ed79f0a22c08af3b992"
 BASELINE = "A"
 from thrml import Block, CategoricalNode, SamplingSchedule, SpinNode, sample_states
 from thrml.block_management import block_state_to_global, from_global_state
-from thrml.block_sampling import BlockGibbsSpec
+from thrml.block_sampling import BlockGibbsSpec, sample_with_observation
 from thrml.factor import FactorSamplingProgram
 from thrml.observers import AbstractObserver
 from thrml.models.discrete_ebm import (
@@ -192,6 +192,8 @@ def serve(workloads: list[dict], device, platform: str) -> int:
                 built = _build(w)
                 _warmup_program(w, built)
                 ready[w["id"]] = (w, built)
+            except MemoryError as err:
+                failed[w["id"]] = f"LIMIT oom {err}"
             except Exception as err:
                 failed[w["id"]] = f"{type(err).__name__}: {err}"
         print(f"READY platform={platform} baseline={BASELINE}", flush=True)
@@ -207,7 +209,11 @@ def serve(workloads: list[dict], device, platform: str) -> int:
                 continue
             wid, seed_s = parts[1], parts[2]
             if wid in failed:
-                print(f"ERR {wid} {failed[wid]}", flush=True)
+                msg = failed[wid]
+                if msg.startswith("LIMIT "):
+                    print(f"LIMIT {wid} oom", flush=True)
+                else:
+                    print(f"ERR {wid} {msg}", flush=True)
                 continue
             if wid not in ready:
                 print(f"ERR unknown workload {wid}", flush=True)
@@ -217,6 +223,9 @@ def serve(workloads: list[dict], device, platform: str) -> int:
             mode = {"RUN": "trace", "COST": "cost", "ESS": "ess"}[parts[0]]
             try:
                 lines = _dispatch(w, built, seed, mode)
+            except MemoryError as err:
+                print(f"LIMIT {wid} oom {err}", flush=True)
+                continue
             except Exception as err:
                 print(f"ERR {wid} {type(err).__name__}: {err}", flush=True)
                 continue
@@ -260,6 +269,8 @@ def run_workload(w: dict) -> list[str]:
     try:
         built = _build(w)
         jit_s = _warmup_program(w, built)
+    except MemoryError as err:
+        return [f"LIMIT {w['id']} oom {err}"]
     except Exception as err:
         raise SystemExit(f"{w['id']}: {type(err).__name__}: {err}") from err
     lines = []

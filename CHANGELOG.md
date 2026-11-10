@@ -5,11 +5,13 @@
 ### Open-grid levers
 
 `grid::OpenIsing` is the checkerboard stencil for an open Ising grid. `parallel`,
-`simd`, `tiled`, and `sparse_rng` are separate flags. `simd` on an odd side is an
-error. The sparse-rng path compares a threshold table of `kernel::p_up` from the
-high bit of the generator. Using the low bits of nearby streams biased a 2×2
-chain off the Boltzmann law; that is the test `each_lever_matches_the_boltzmann_law_on_a_2x2`.
-The GPU sweep stays in `ferrotherm-gpu`.
+`simd`, `tiled`, `sparse_rng`, and `incremental` are separate flags. `combined`
+is the first four of those with the popcount field, without `sparse_rng`.
+`simd` on an odd side is an error. The sparse-rng path compares a threshold
+table of `kernel::p_up` from the high bit of the generator. Using the low bits
+of nearby streams biased a 2×2 chain off the Boltzmann law; that is the test
+`each_lever_matches_the_boltzmann_law_on_a_2x2`. The GPU lever is a packed
+`u32` checkerboard shader in `ferrotherm-gpu`, matched to `grid::sweep_packed_cpu`.
 
 ### The committed wasm was three weeks behind its own ABI, and two pages called the old one
 

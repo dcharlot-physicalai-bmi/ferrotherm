@@ -134,7 +134,7 @@ fn main() {
         );
         let profile = profile_json(&work, args.grid_choice(), args.profile_sweeps, args.gpu);
         fs::write(args.out.join("profile.json"), &profile).expect("write profile");
-        let parity_failed = accuracy.done.iter().any(|row| row.4.iter().any(|(_, ok, _)| !*ok));
+        let parity_failed = accuracy.done.iter().any(|row| parity_blocks_exit(&row.4));
         let lock_json = release_lock_json(host_lock);
         let mut body = String::new();
         for (index, ft_trials, thrml_trials, thrml_b, parity) in &accuracy.done {
@@ -162,8 +162,16 @@ fn main() {
             lock = lock_json,
             meta = json_str(&accuracy.thrml_meta),
             meta_b = json_str(&accuracy.thrml_b_meta),
-            err = if accuracy.thrml_note.is_empty() { "null".into() } else { json_str(&accuracy.thrml_note) },
-            err_b = if accuracy.thrml_b_note.is_empty() { "null".into() } else { json_str(&accuracy.thrml_b_note) },
+            err = if accuracy.thrml_note.is_empty() {
+                "null".into()
+            } else {
+                json_str(&accuracy.thrml_note)
+            },
+            err_b = if accuracy.thrml_b_note.is_empty() {
+                "null".into()
+            } else {
+                json_str(&accuracy.thrml_b_note)
+            },
         );
         fs::write(args.out.join("report.json"), &report).expect("write report");
         if !accuracy.thrml_ok || !accuracy.thrml_b_ok || parity_failed {
@@ -309,20 +317,39 @@ fn main() {
     );
     fs::write(args.out.join("report.json"), &report).expect("write report");
     eprintln!("wrote {}", args.out.join("report.json").display());
-    let parity_failed = accuracy.done.iter().any(|row| row.4.iter().any(|(_, ok, _)| !*ok));
+    let parity_failed = accuracy.done.iter().any(|row| parity_blocks_exit(&row.4));
     if !accuracy.thrml_ok || !accuracy.thrml_b_ok || parity_failed {
         std::process::exit(1);
     }
 }
 
 struct AccuracyRun {
-    done: Vec<(usize, Vec<Chain>, Option<Vec<Chain>>, Option<Vec<Chain>>, Vec<(String, bool, String)>)>,
+    done: Vec<(
+        usize,
+        Vec<Chain>,
+        Option<Vec<Chain>>,
+        Option<Vec<Chain>>,
+        Vec<(String, bool, String)>,
+    )>,
     thrml_ok: bool,
     thrml_note: String,
     thrml_meta: String,
     thrml_b_ok: bool,
     thrml_b_note: String,
     thrml_b_meta: String,
+}
+
+/// A `THRML_LIMIT` row is the baseline's own ceiling. It refuses the comparison and it does
+/// not fail the sizes that ran.
+fn parity_blocks_exit(rows: &[(String, bool, String)]) -> bool {
+    rows.iter()
+        .any(|(_, ok, reason)| !*ok && !reason.starts_with("THRML_LIMIT"))
+}
+
+fn thrml_limit_reason(kind: &str) -> String {
+    format!(
+        "THRML_LIMIT {kind}: the THRML process was SIGKILLed. This is THRML's memory limit, not a ferrotherm result."
+    )
 }
 
 fn run_accuracy(
@@ -339,22 +366,53 @@ fn run_accuracy(
     gpu: bool,
 ) -> AccuracyRun {
     let mut done = Vec::new();
-    let (thrml_ok, thrml_note, thrml_meta, thrml_by_id) = if skip_thrml {
-        (true, "THRML runner skipped on request".to_string(), String::new(), None)
+    let (thrml_ok, thrml_note, thrml_meta, thrml_by_id, limits_a) = if skip_thrml {
+        (
+            true,
+            "THRML runner skipped on request".to_string(),
+            String::new(),
+            None,
+            std::collections::BTreeMap::new(),
+        )
     } else {
-        load_baseline(python, runner, spec, &out.join("thrml_raw.txt"), device, "A", "baseline A")
+        load_baseline(
+            python,
+            runner,
+            spec,
+            &out.join("thrml_raw.txt"),
+            device,
+            "A",
+            "baseline A",
+            work,
+        )
     };
-    let (thrml_b_ok, thrml_b_note, thrml_b_meta, thrml_b_by_id) = if skip_thrml {
-        (true, "THRML runner skipped on request".to_string(), String::new(), None)
+    let (thrml_b_ok, thrml_b_note, thrml_b_meta, thrml_b_by_id, limits_b) = if skip_thrml {
+        (
+            true,
+            "THRML runner skipped on request".to_string(),
+            String::new(),
+            None,
+            std::collections::BTreeMap::new(),
+        )
     } else if python_b.as_os_str().is_empty() {
         (
             false,
             "baseline B interpreter was not set. Pass --python-b or THRML_PYTHON_B. A is not used in its place.".into(),
             String::new(),
             None,
+            std::collections::BTreeMap::new(),
         )
     } else {
-        load_baseline(python_b, runner, spec, &out.join("thrml_b_raw.txt"), device, "B", "baseline B")
+        load_baseline(
+            python_b,
+            runner,
+            spec,
+            &out.join("thrml_b_raw.txt"),
+            device,
+            "B",
+            "baseline B",
+            work,
+        )
     };
     let mut thrml_ok = thrml_ok;
     let mut thrml_note = thrml_note;
@@ -381,8 +439,16 @@ fn run_accuracy(
             );
             ft_trials.push(chain);
         }
-        let thrml_trials = take_side(w, &thrml_by_id, &mut thrml_note, &mut thrml_ok);
-        let thrml_b_trials = take_side(w, &thrml_b_by_id, &mut thrml_b_note, &mut thrml_b_ok);
+        let thrml_trials = if limits_a.contains_key(w.id) {
+            None
+        } else {
+            take_side(w, &thrml_by_id, &mut thrml_note, &mut thrml_ok)
+        };
+        let thrml_b_trials = if limits_b.contains_key(w.id) {
+            None
+        } else {
+            take_side(w, &thrml_b_by_id, &mut thrml_b_note, &mut thrml_b_ok)
+        };
         if let Some(trials) = &thrml_trials
             && let Some(first) = trials.first()
         {
@@ -393,14 +459,27 @@ fn run_accuracy(
         {
             write_trace(traces, w.id, spec::THRML_B_SIDE, first);
         }
-        let parity = parity_for(w, &ft_trials, thrml_trials.as_deref(), thrml_b_trials.as_deref());
+        let mut parity = parity_for(
+            w,
+            &ft_trials,
+            thrml_trials.as_deref(),
+            thrml_b_trials.as_deref(),
+        );
+        if let Some(kind) = limits_a.get(w.id) {
+            parity.push(("thrml".into(), false, thrml_limit_reason(kind)));
+        }
+        if let Some(kind) = limits_b.get(w.id) {
+            parity.push((spec::THRML_B_SIDE.into(), false, thrml_limit_reason(kind)));
+        }
         for (side, ok, reason) in &parity {
             if !ok {
                 eprintln!("parity refused {side} {}: {reason}", w.id);
             }
         }
         done.push((
-            work.iter().position(|item| item.id == w.id).expect("workload id"),
+            work.iter()
+                .position(|item| item.id == w.id)
+                .expect("workload id"),
             ft_trials,
             thrml_trials,
             thrml_b_trials,
@@ -426,14 +505,133 @@ fn load_baseline(
     device: &str,
     baseline: &str,
     label: &str,
-) -> (bool, String, String, Option<std::collections::BTreeMap<String, Vec<RawChain>>>) {
-    match run_thrml(python, runner, spec, out, device, baseline) {
-        Ok(()) => match fs::read_to_string(out).ok().as_deref().map(parse_thrml).transpose() {
-            Ok(Some((meta, map))) => (true, String::new(), meta, Some(map)),
-            Ok(None) => (false, format!("{label} produced no output"), String::new(), None),
-            Err(e) => (false, format!("{label}: {e}"), String::new(), None),
-        },
-        Err(e) => (false, format!("{label}: {e}"), String::new(), None),
+    work: &[Workload],
+) -> (
+    bool,
+    String,
+    String,
+    Option<std::collections::BTreeMap<String, Vec<RawChain>>>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let split = !work.is_empty() && work.iter().all(|w| w.open_grid().is_some());
+    if !split {
+        return match run_thrml(python, runner, spec, out, device, baseline) {
+            Ok(()) => match fs::read_to_string(out)
+                .ok()
+                .as_deref()
+                .map(parse_thrml)
+                .transpose()
+            {
+                Ok(Some((meta, map, limits))) => (true, String::new(), meta, Some(map), limits),
+                Ok(None) => (
+                    false,
+                    format!("{label} produced no output"),
+                    String::new(),
+                    None,
+                    std::collections::BTreeMap::new(),
+                ),
+                Err(e) => (
+                    false,
+                    format!("{label}: {e}"),
+                    String::new(),
+                    None,
+                    std::collections::BTreeMap::new(),
+                ),
+            },
+            Err(e) => (
+                false,
+                format!("{label}: {e}"),
+                String::new(),
+                None,
+                std::collections::BTreeMap::new(),
+            ),
+        };
+    }
+    // One process per side. A SIGKILL on side 4096 must not throw away sides that already
+    // finished, and the kill is THRML's memory limit, not a ferrotherm result.
+    let mut merged: std::collections::BTreeMap<String, Vec<RawChain>> =
+        std::collections::BTreeMap::new();
+    let mut limits = std::collections::BTreeMap::new();
+    let mut meta = String::new();
+    let mut notes = Vec::new();
+    let mut ok = true;
+    let mut raw_all = String::new();
+    let stem = out.file_stem().and_then(|s| s.to_str()).unwrap_or("thrml");
+    let dir = out.parent().unwrap_or_else(|| Path::new("."));
+    for w in work {
+        let spec_path = dir.join(format!("{stem}.{}.spec", w.id));
+        let one_out = dir.join(format!("{stem}.{}.txt", w.id));
+        if let Err(e) = fs::write(&spec_path, spec::write_spec(std::slice::from_ref(w))) {
+            ok = false;
+            notes.push(format!("{label} {}: could not write spec: {e}", w.id));
+            continue;
+        }
+        match run_thrml_status(python, runner, &spec_path, &one_out, device, baseline) {
+            Err(e) => {
+                ok = false;
+                notes.push(format!("{label} {}: {e}", w.id));
+            }
+            Ok(status) if status.success() => match fs::read_to_string(&one_out) {
+                Ok(text) => {
+                    raw_all.push_str(&text);
+                    if !raw_all.ends_with('\n') {
+                        raw_all.push('\n');
+                    }
+                    match parse_thrml(&text) {
+                        Ok((m, map, lim)) => {
+                            if meta.is_empty() {
+                                meta = m;
+                            }
+                            for (k, v) in map {
+                                merged.entry(k).or_default().extend(v);
+                            }
+                            limits.extend(lim);
+                        }
+                        Err(e) => {
+                            ok = false;
+                            notes.push(format!("{label} {}: {e}", w.id));
+                        }
+                    }
+                }
+                Err(e) => {
+                    ok = false;
+                    notes.push(format!("{label} {}: {e}", w.id));
+                }
+            },
+            Ok(status) => {
+                if let Some(kind) = limit_from_status(&status) {
+                    limits.insert(w.id.to_string(), kind.to_string());
+                    raw_all.push_str(&format!("LIMIT {} {kind}\n", w.id));
+                    eprintln!("{label} {} THRML_LIMIT {kind}: {status}", w.id);
+                } else {
+                    ok = false;
+                    notes.push(format!("{label} {} exited {status}", w.id));
+                }
+            }
+        }
+    }
+    let _ = fs::write(out, raw_all);
+    (ok, notes.join("; "), meta, Some(merged), limits)
+}
+
+/// `137` is `128 + SIGKILL`. Either the signal or that code is the kernel's OOM kill.
+fn limit_from_exit(code: Option<i32>, signal: Option<i32>) -> Option<&'static str> {
+    if signal == Some(9) || code == Some(137) {
+        Some("oom")
+    } else {
+        None
+    }
+}
+
+fn limit_from_status(status: &std::process::ExitStatus) -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        limit_from_exit(status.code(), status.signal())
+    }
+    #[cfg(not(unix))]
+    {
+        limit_from_exit(status.code(), None)
     }
 }
 
@@ -468,12 +666,33 @@ fn parity_for(
     let gap = grid_gap16();
     let onsager = ferrotherm::free_energy::onsager_energy_density(w.beta, 1.0);
     let mut out = Vec::new();
-    out.push(judge_side("ferrotherm", side, ft, w.exact_energy, onsager, gap));
+    out.push(judge_side(
+        "ferrotherm",
+        side,
+        ft,
+        w.exact_energy,
+        onsager,
+        gap,
+    ));
     if let Some(chains) = a {
-        out.push(judge_side("thrml", side, chains, w.exact_energy, onsager, gap));
+        out.push(judge_side(
+            "thrml",
+            side,
+            chains,
+            w.exact_energy,
+            onsager,
+            gap,
+        ));
     }
     if let Some(chains) = b {
-        out.push(judge_side(spec::THRML_B_SIDE, side, chains, w.exact_energy, onsager, gap));
+        out.push(judge_side(
+            spec::THRML_B_SIDE,
+            side,
+            chains,
+            w.exact_energy,
+            onsager,
+            gap,
+        ));
     }
     out
 }
@@ -490,19 +709,15 @@ fn judge_side(
         return (name.into(), false, format!("{name} produced no chain"));
     };
     let other = chains.get(1).map(|c| c.score.mean_energy);
-    let verdict = parity::judge_ising_open(
-        side,
-        first.score.mean_energy,
-        other,
-        exact,
-        onsager,
-        gap16,
-    );
+    let verdict =
+        parity::judge_ising_open(side, first.score.mean_energy, other, exact, onsager, gap16);
     (name.into(), verdict.ok, verdict.reason)
 }
 
 fn grid_gap16() -> f64 {
-    let tm = oracle::ising_open_transfer(16, 1.0, 0.3).expect("16x16 transfer matrix").mean_energy;
+    let tm = oracle::ising_open_transfer(16, 1.0, 0.3)
+        .expect("16x16 transfer matrix")
+        .mean_energy;
     let onsager = ferrotherm::free_energy::onsager_energy_density(0.3, 1.0);
     (tm / 256.0 - onsager).abs()
 }
@@ -510,7 +725,9 @@ fn grid_gap16() -> f64 {
 fn run_gpu_chain(w: &Workload, seed: u64) -> Result<Chain, String> {
     #[cfg(feature = "gpu")]
     {
-        let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
+        let (side, j) = w
+            .open_grid()
+            .ok_or_else(|| format!("{} is not an open grid", w.id))?;
         let gpu = ferrotherm_gpu::Gpu::new()
             .ok_or_else(|| "no wgpu adapter. The GPU lever is not run on the CPU.".to_string())?;
         if !gpu.is_hardware() {
@@ -524,12 +741,12 @@ fn run_gpu_chain(w: &Workload, seed: u64) -> Result<Chain, String> {
         let mut state = vec![-1i8; side * side];
         let t0 = std::time::Instant::now();
         // The first kept state is warmup + thin sweeps in, matching Sampler::collect.
-        ferrotherm_gpu::sweep_open_grid_from(&gpu, side, j, w.beta, &mut state, 0, warmup + thin, seed)?;
+        gpu.sweep_packed(side, j, w.beta, &mut state, warmup + thin, seed, 0)?;
         let mut energies = Vec::with_capacity(w.draws);
         energies.push(ferrotherm::grid::grid_energy(&state, side, j));
         let mut done = warmup + thin;
         for _ in 1..w.draws {
-            ferrotherm_gpu::sweep_open_grid_from(&gpu, side, j, w.beta, &mut state, done, thin, seed)?;
+            gpu.sweep_packed(side, j, w.beta, &mut state, thin, seed, done)?;
             done = done.saturating_add(thin);
             energies.push(ferrotherm::grid::grid_energy(&state, side, j));
         }
@@ -593,7 +810,9 @@ impl Args {
         let mut profile_sweeps = 4usize;
         let mut levers = ferrotherm::grid::Levers::SCALAR;
         let mut gpu = false;
-        let mut threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let mut threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let mut sides = Vec::new();
         let mut device = "auto".to_string();
         let mut cpus = String::new();
@@ -620,13 +839,16 @@ impl Args {
                 "--grid-scale" => grid_scale = true,
                 "--profile" => profile = true,
                 "--profile-sweeps" => {
-                    profile_sweeps = parse_usize(&need(&mut it, "--profile-sweeps")?, "--profile-sweeps")?;
+                    profile_sweeps =
+                        parse_usize(&need(&mut it, "--profile-sweeps")?, "--profile-sweeps")?;
                 }
                 "--lever" => {
                     let name = need(&mut it, "--lever")?;
                     if name == "gpu" {
                         if levers != ferrotherm::grid::Levers::SCALAR {
-                            return Err("gpu does not combine with a CPU lever. Run it on its own.".into());
+                            return Err(
+                                "gpu does not combine with a CPU lever. Run it on its own.".into(),
+                            );
                         }
                         gpu = true;
                     } else if gpu {
@@ -639,6 +861,7 @@ impl Args {
                         levers.simd |= one.simd;
                         levers.tiled |= one.tiled;
                         levers.sparse_rng |= one.sparse_rng;
+                        levers.incremental |= one.incremental;
                     }
                 }
                 "--threads" => threads = parse_usize(&need(&mut it, "--threads")?, "--threads")?,
@@ -662,16 +885,20 @@ impl Args {
                     lock_wait_s = parse_f64(&need(&mut it, "--lock-wait-s")?, "--lock-wait-s")?;
                 }
                 "--other-core-mean" => {
-                    other_core_mean = parse_f64(&need(&mut it, "--other-core-mean")?, "--other-core-mean")?;
+                    other_core_mean =
+                        parse_f64(&need(&mut it, "--other-core-mean")?, "--other-core-mean")?;
                 }
                 "--other-core-max" => {
-                    other_core_max = parse_f64(&need(&mut it, "--other-core-max")?, "--other-core-max")?;
+                    other_core_max =
+                        parse_f64(&need(&mut it, "--other-core-max")?, "--other-core-max")?;
                 }
                 "--foreign-cpu-mean" => {
-                    foreign_cpu_mean = parse_f64(&need(&mut it, "--foreign-cpu-mean")?, "--foreign-cpu-mean")?;
+                    foreign_cpu_mean =
+                        parse_f64(&need(&mut it, "--foreign-cpu-mean")?, "--foreign-cpu-mean")?;
                 }
                 "--foreign-cpu-max" => {
-                    foreign_cpu_max = parse_f64(&need(&mut it, "--foreign-cpu-max")?, "--foreign-cpu-max")?;
+                    foreign_cpu_max =
+                        parse_f64(&need(&mut it, "--foreign-cpu-max")?, "--foreign-cpu-max")?;
                 }
                 "--help" | "-h" => return Err("help".into()),
                 other => return Err(format!("unknown argument {other}")),
@@ -773,7 +1000,10 @@ impl Args {
         if self.gpu {
             None
         } else {
-            Some(ft::GridChoice { levers: self.levers, threads: self.threads })
+            Some(ft::GridChoice {
+                levers: self.levers,
+                threads: self.threads,
+            })
         }
     }
 
@@ -805,12 +1035,28 @@ fn run_thrml(
     device: &str,
     baseline: &str,
 ) -> Result<(), String> {
+    let status = run_thrml_status(python, runner, spec, out, device, baseline)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("THRML runner exited {status}"))
+    }
+}
+
+fn run_thrml_status(
+    python: &Path,
+    runner: &Path,
+    spec: &Path,
+    out: &Path,
+    device: &str,
+    baseline: &str,
+) -> Result<std::process::ExitStatus, String> {
     eprintln!(
         "THRML via {} {} --device {device}",
         python.display(),
         runner.display()
     );
-    let status = Command::new(python)
+    Command::new(python)
         .arg(runner)
         .arg("--spec")
         .arg(spec)
@@ -821,12 +1067,7 @@ fn run_thrml(
         .arg("--baseline")
         .arg(baseline)
         .status()
-        .map_err(|e| format!("could not start {}: {e}", python.display()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("THRML runner exited {status}"))
-    }
+        .map_err(|e| format!("could not start {}: {e}", python.display()))
 }
 
 struct RawChain {
@@ -840,10 +1081,18 @@ struct RawChain {
 
 fn parse_thrml(
     text: &str,
-) -> Result<(String, std::collections::BTreeMap<String, Vec<RawChain>>), String> {
+) -> Result<
+    (
+        String,
+        std::collections::BTreeMap<String, Vec<RawChain>>,
+        std::collections::BTreeMap<String, String>,
+    ),
+    String,
+> {
     let mut meta = String::new();
     let mut map: std::collections::BTreeMap<String, Vec<RawChain>> =
         std::collections::BTreeMap::new();
+    let mut limits: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let mut cur: Option<RawChainBuild> = None;
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("META ") {
@@ -855,11 +1104,27 @@ fn parse_thrml(
             cur = Some(RawChainBuild::parse(rest)?);
         } else if let Some(rest) = line.strip_prefix("ENERGY ") {
             let c = cur.as_mut().ok_or("ENERGY outside WORK")?;
-            let v: f64 = rest.trim().parse().map_err(|_| format!("bad ENERGY {rest}"))?;
+            let v: f64 = rest
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad ENERGY {rest}"))?;
             c.energies.push(v);
         } else if let Some(rest) = line.strip_prefix("STATE ") {
             let c = cur.as_mut().ok_or("STATE outside WORK")?;
             c.push_state(rest)?;
+        } else if let Some(rest) = line.strip_prefix("LIMIT ") {
+            if cur.is_some() {
+                return Err("LIMIT inside an open WORK".into());
+            }
+            let mut parts = rest.split_whitespace();
+            let id = parts.next().ok_or("LIMIT without a workload id")?;
+            let kind = parts.next().unwrap_or("oom");
+            if kind != "oom" {
+                return Err(format!(
+                    "LIMIT {id} has kind {kind}; the recorded kind is oom"
+                ));
+            }
+            limits.insert(id.to_string(), kind.to_string());
         } else if line == "END" {
             let c = cur.take().ok_or("END outside WORK")?;
             map.entry(c.id.clone()).or_default().push(c.finish()?);
@@ -870,7 +1135,7 @@ fn parse_thrml(
     if cur.is_some() {
         return Err("THRML output ended inside a workload".into());
     }
-    Ok((meta, map))
+    Ok((meta, map, limits))
 }
 
 struct RawChainBuild {
@@ -1085,11 +1350,124 @@ fn workload_json(
             "{{\"side\": {}, \"ok\": {}, \"reason\": {}}}",
             json_str(side),
             if *ok { "true" } else { "false" },
-            if reason.is_empty() { "null".into() } else { json_str(reason) },
+            if reason.is_empty() {
+                "null".into()
+            } else {
+                json_str(reason)
+            },
         ));
     }
-    s.push_str("]\n    }");
+    s.push_str("],\n      \"mixing\": ");
+    s.push_str(&mixing_json(w, ft_trials, thrml, thrml_b, parity));
+    s.push_str("\n    }");
     s
+}
+
+fn mixing_json(
+    w: &Workload,
+    ft: &[Chain],
+    thrml: Option<&[Chain]>,
+    thrml_b: Option<&[Chain]>,
+    parity: &[(String, bool, String)],
+) -> String {
+    let prod = (w.draws * w.thin.max(1)) as f64;
+    let (ft_sw, ft_s) = mean_ess(ft, prod);
+    let limit_a = limit_kind(parity, "thrml");
+    let limit_b = limit_kind(parity, spec::THRML_B_SIDE);
+    let (a_sw, a_s) = match limit_a {
+        Some(_) => (None, None),
+        None => thrml.map_or((None, None), |t| mean_ess(t, prod)),
+    };
+    let (b_sw, b_s) = match limit_b {
+        Some(_) => (None, None),
+        None => thrml_b.map_or((None, None), |t| mean_ess(t, prod)),
+    };
+    format!(
+        "{{\n        \"note\": {},\n        \"ferrotherm\": {{\"ess_per_sweep\": {}, \"ess_per_second\": {}}},\n        \
+         \"thrml\": {},\n        \"thrml_main_2d96f4b4\": {},\n        \
+         \"ess_per_sweep_ratio_ft_over_a\": {},\n        \"ess_per_second_ratio_ft_over_a\": {},\n        \
+         \"ess_per_sweep_ratio_ft_over_b\": {},\n        \"ess_per_second_ratio_ft_over_b\": {}\n      }}",
+        json_str(
+            "ess_per_sweep is mixing per production sweep, ess/(draws*thin). ess_per_second divides by wall seconds. A higher THRML ess_per_sweep means its blocked sampler mixed better per sweep. A null ratio is not a ferrotherm win."
+        ),
+        fmt_num(ft_sw),
+        fmt_num(ft_s),
+        side_mixing(limit_a, a_sw, a_s, thrml.is_some()),
+        side_mixing(limit_b, b_sw, b_s, thrml_b.is_some()),
+        ratio(ft_sw, a_sw),
+        ratio(ft_s, a_s),
+        ratio(ft_sw, b_sw),
+        ratio(ft_s, b_s),
+    )
+}
+
+fn side_mixing(
+    limit: Option<&str>,
+    per_sweep: Option<f64>,
+    per_second: Option<f64>,
+    present: bool,
+) -> String {
+    if let Some(kind) = limit {
+        return format!("{{\"limit\": {}}}", json_str(kind));
+    }
+    if !present {
+        return "null".into();
+    }
+    format!(
+        "{{\"ess_per_sweep\": {}, \"ess_per_second\": {}}}",
+        fmt_num(per_sweep),
+        fmt_num(per_second)
+    )
+}
+
+fn limit_kind<'a>(parity: &'a [(String, bool, String)], side: &str) -> Option<&'a str> {
+    parity.iter().find_map(|(name, _, reason)| {
+        if name == side && reason.starts_with("THRML_LIMIT") {
+            reason
+                .strip_prefix("THRML_LIMIT ")
+                .and_then(|rest| rest.split(':').next())
+                .map(str::trim)
+        } else {
+            None
+        }
+    })
+}
+
+fn mean_ess(trials: &[Chain], production_sweeps: f64) -> (Option<f64>, Option<f64>) {
+    let mut sw = 0.0;
+    let mut n_sw = 0.0;
+    let mut sec = 0.0;
+    let mut n_sec = 0.0;
+    for c in trials {
+        if production_sweeps > 0.0 && c.score.ess_energy.is_finite() {
+            sw += c.score.ess_energy / production_sweeps;
+            n_sw += 1.0;
+        }
+        if let Some(v) = c.score.ess_per_second.filter(|v| v.is_finite()) {
+            sec += v;
+            n_sec += 1.0;
+        }
+    }
+    (
+        if n_sw > 0.0 { Some(sw / n_sw) } else { None },
+        if n_sec > 0.0 { Some(sec / n_sec) } else { None },
+    )
+}
+
+fn fmt_num(v: Option<f64>) -> String {
+    match v {
+        Some(v) if v.is_finite() => format!("{v:.8e}"),
+        _ => "null".into(),
+    }
+}
+
+fn ratio(num: Option<f64>, den: Option<f64>) -> String {
+    match (num, den) {
+        (Some(n), Some(d)) if n.is_finite() && d.is_finite() && d != 0.0 => {
+            format!("{:.8e}", n / d)
+        }
+        _ => "null".into(),
+    }
 }
 
 fn side_json(trials: &[Chain], external: bool) -> String {
@@ -1580,212 +1958,223 @@ fn energy_section(
     let mut phase_refused = String::new();
     'pairs: for w in work {
         for pass in 0..2 {
-        let (pairing, other_side, slot) = match pass {
-            0 => ("A", spec::THRML_A_SIDE, &mut slot_a),
-            _ => ("B", spec::THRML_B_SIDE, &mut slot_b),
-        };
-        if pass == 1 && python_b.as_os_str().is_empty() {
-            // No B interpreter. Do not time an empty window and call it B's joules.
-            continue;
-        }
-        for pair in 0..trials {
-            let settle_samples = match settle_for_bracket(contended) {
-                Ok(samples) => samples,
-                Err(reason) => {
-                    phase_refused = reason;
-                    break 'pairs;
-                }
+            let (pairing, other_side, slot) = match pass {
+                0 => ("A", spec::THRML_A_SIDE, &mut slot_a),
+                _ => ("B", spec::THRML_B_SIDE, &mut slot_b),
             };
-            let settle_txt = fmt_series(&settle_samples);
-            let before_b = match watched_bracket(probe, contended) {
-                Ok(v) => v,
-                Err(e) => {
-                    phase_refused = e;
-                    break 'pairs;
-                }
-            };
-            let mut got: Vec<(
-                &'static str,
-                Vec<SideMeasure>,
-                energy::CpuSnap,
-                energy::CpuSnap,
-            )> = Vec::new();
-            let order = if pass == 0 {
-                energy::pair_order(pair)
-            } else {
-                energy::pair_order_against(pair, other_side)
-            };
-            for side in order {
-                let seed = w.seed0 + pair as u64 + 10_000;
-                let before = read_cpu_snap();
-                let mut measured = measure_side(
-                    probe,
-                    side,
-                    w,
-                    seed,
-                    &mut *slot,
-                    device,
-                    pinned,
-                    &window_rule,
-                );
-                if measured.first().map(|m| m.instrument) != Some("nvml") && probe.nvml.is_some() {
-                    measured.extend(measure_counter(
+            if pass == 1 && python_b.as_os_str().is_empty() {
+                // No B interpreter. Do not time an empty window and call it B's joules.
+                continue;
+            }
+            for pair in 0..trials {
+                let settle_samples = match settle_for_bracket(contended) {
+                    Ok(samples) => samples,
+                    Err(reason) => {
+                        phase_refused = reason;
+                        break 'pairs;
+                    }
+                };
+                let settle_txt = fmt_series(&settle_samples);
+                let before_b = match watched_bracket(probe, contended) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        phase_refused = e;
+                        break 'pairs;
+                    }
+                };
+                let mut got: Vec<(
+                    &'static str,
+                    Vec<SideMeasure>,
+                    energy::CpuSnap,
+                    energy::CpuSnap,
+                )> = Vec::new();
+                let order = if pass == 0 {
+                    energy::pair_order(pair)
+                } else {
+                    energy::pair_order_against(pair, other_side)
+                };
+                for side in order {
+                    let seed = w.seed0 + pair as u64 + 10_000;
+                    let before = read_cpu_snap();
+                    let mut measured = measure_side(
                         probe,
                         side,
                         w,
                         seed,
                         &mut *slot,
-                        CounterKind::Nvml,
-                    ));
-                }
-                let after = read_cpu_snap();
-                got.push((side, measured, before, after));
-            }
-            let after_b = match watched_bracket(probe, contended) {
-                Ok(v) => v,
-                Err(e) => {
-                    phase_refused = e;
-                    break 'pairs;
-                }
-            };
-            let (mean_w, sigma, _drift, drift_ok) = energy::combine_bracket(
-                before_b.watts,
-                before_b.sigma,
-                after_b.watts,
-                after_b.sigma,
-            );
-            if !contended && energy::macos_drift_refuses_quiet(std::env::consts::OS, drift_ok) {
-                phase_refused = "bracket drift exceeded 3 sigma".into();
-            }
-            let (core_mean, core_sigma, core_drift, core_ok) = match (
-                before_b.core_watts,
-                before_b.core_sigma,
-                after_b.core_watts,
-                after_b.core_sigma,
-            ) {
-                (Some(a), Some(asg), Some(b), Some(bsg)) => energy::combine_bracket(a, asg, b, bsg),
-                _ => (f64::NAN, f64::NAN, f64::NAN, false),
-            };
-            let stat_after = fs::read_to_string("/proc/stat").unwrap_or_default();
-            let other = energy::other_core_busy(&stat_before_run, &stat_after, pinned);
-            let other_txt = other
-                .iter()
-                .map(|(c, f)| format!("{c}:{f:.4}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            if w.open_grid().is_some() {
-                let seed0 = w.seed0 + pair as u64 + 10_000;
-                for (side, measures, _, _) in &mut got {
-                    let reps = measures.first().map(|m| m.repetitions).unwrap_or(0);
-                    let ess = remix_ess(side, w, seed0, reps, slot);
-                    for m in measures.iter_mut() {
-                        m.ess = ess;
-                    }
-                }
-            }
-            for (side, measures, before, after) in &got {
-                for measured in measures {
-                    let rank = energy_rank(measured.instrument, &probe.hostname);
-                    let core_row = measured.scope == "core";
-                    let (row_idle, row_sigma, row_drift_ok) = if core_row {
-                        (core_mean, core_sigma, core_ok)
-                    } else if let Some((before_w, before_s, after_w, after_s)) =
-                        subrail_bracket(&before_b, &after_b, &measured.scope)
+                        device,
+                        pinned,
+                        &window_rule,
+                    );
+                    if measured.first().map(|m| m.instrument) != Some("nvml")
+                        && probe.nvml.is_some()
                     {
-                        let (mean, sig, _, ok) =
-                            energy::combine_bracket(before_w, before_s, after_w, after_s);
-                        (mean, sig, ok)
-                    } else {
-                        (mean_w, sigma, drift_ok)
-                    };
-                    let joules = trial_joules(
-                        measured.gross,
-                        row_idle,
-                        row_sigma,
-                        measured.seconds,
-                        measured.instrument,
-                        &measured.scope,
-                        grade,
-                        measured.counter_updates,
-                        row_drift_ok,
-                    );
-                    let mut row = EnergyTrial::from_parts(
-                        w.id,
-                        side,
-                        pair,
-                        measured.repetitions,
-                        measured.counter_updates,
-                        measured.window_seconds,
-                        joules,
-                        measured.ess,
-                        after.load1,
-                        snap_other_cpu(before, after),
-                        grade,
-                        rank,
-                        pairing,
-                        fabric_name(side, pairing, device, gpu),
-                    );
-                    row.idle_before_w = Some(if core_row {
-                        before_b.core_watts.unwrap_or(f64::NAN)
-                    } else {
-                        subrail_level(&before_b, &measured.scope).unwrap_or(before_b.watts)
-                    });
-                    row.idle_after_w = Some(if core_row {
-                        after_b.core_watts.unwrap_or(f64::NAN)
-                    } else {
-                        subrail_level(&after_b, &measured.scope).unwrap_or(after_b.watts)
-                    });
-                    row.baseline_drift_w = Some(if core_row {
-                        core_drift
-                    } else {
-                        (row.idle_before_w.unwrap_or(0.0) - row.idle_after_w.unwrap_or(0.0)).abs()
-                    });
-                    row.other_core_busy = other_txt.clone();
-                    row.cadence_s = measured.cadence_s;
-                    row.left_edge = measured.left_edge.to_string();
-                    row.right_edge = measured.right_edge.to_string();
-                    row.uncovered_s = measured.uncovered_s;
-                    row.samples = measured.samples;
-                    row.quantization_window_j = measured.quantization_j;
-                    row.cadence_edge_window_j = measured.cadence_edge_j;
-                    row.window_load1 = measured.window_load1.clone();
-                    row.window_signal = measured.window_signal.clone();
-                    row.ps_attribution = measured.ps_attribution.clone();
-                    row.trial_refusal = measured.trial_refusal.clone();
-                    row.settle_load1 = settle_txt.clone();
-                    if w.open_grid().is_some() {
-                        let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
-                        let produced = (w.draws * w.thin.max(1)) as f64;
-                        row.sweeps_per_rep = sweeps;
-                        row.ess_per_sweep = if produced > 0.0 && row.ess.is_finite() {
-                            row.ess / produced
-                        } else {
-                            f64::NAN
-                        };
-                        row.seconds_per_sweep = if sweeps > 0 {
-                            row.joules.seconds / sweeps as f64
-                        } else {
-                            f64::NAN
-                        };
-                        row.joules_per_sweep = row.joules.incremental.filter(|j| sweeps > 0 && j.is_finite()).map(|j| j / sweeps as f64);
+                        measured.extend(measure_counter(
+                            probe,
+                            side,
+                            w,
+                            seed,
+                            &mut *slot,
+                            CounterKind::Nvml,
+                        ));
                     }
-                    if !measured.trial_refusal.is_empty() {
-                        row.joules.attributable = false;
-                        row.joules.evidence = "load_gated";
-                        row.joules.note = measured.trial_refusal.clone();
-                        row.joules_per_ess = None;
-                        if phase_refused.is_empty() {
-                            phase_refused = measured.trial_refusal.clone();
+                    let after = read_cpu_snap();
+                    got.push((side, measured, before, after));
+                }
+                let after_b = match watched_bracket(probe, contended) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        phase_refused = e;
+                        break 'pairs;
+                    }
+                };
+                let (mean_w, sigma, _drift, drift_ok) = energy::combine_bracket(
+                    before_b.watts,
+                    before_b.sigma,
+                    after_b.watts,
+                    after_b.sigma,
+                );
+                if !contended && energy::macos_drift_refuses_quiet(std::env::consts::OS, drift_ok) {
+                    phase_refused = "bracket drift exceeded 3 sigma".into();
+                }
+                let (core_mean, core_sigma, core_drift, core_ok) = match (
+                    before_b.core_watts,
+                    before_b.core_sigma,
+                    after_b.core_watts,
+                    after_b.core_sigma,
+                ) {
+                    (Some(a), Some(asg), Some(b), Some(bsg)) => {
+                        energy::combine_bracket(a, asg, b, bsg)
+                    }
+                    _ => (f64::NAN, f64::NAN, f64::NAN, false),
+                };
+                let stat_after = fs::read_to_string("/proc/stat").unwrap_or_default();
+                let other = energy::other_core_busy(&stat_before_run, &stat_after, pinned);
+                let other_txt = other
+                    .iter()
+                    .map(|(c, f)| format!("{c}:{f:.4}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if w.open_grid().is_some() {
+                    let seed0 = w.seed0 + pair as u64 + 10_000;
+                    for (side, measures, _, _) in &mut got {
+                        let reps = measures.first().map(|m| m.repetitions).unwrap_or(0);
+                        let ess = remix_ess(side, w, seed0, reps, slot);
+                        for m in measures.iter_mut() {
+                            m.ess = ess;
                         }
                     }
-                    rows.push(row);
+                }
+                for (side, measures, before, after) in &got {
+                    for measured in measures {
+                        let rank = energy_rank(measured.instrument, &probe.hostname);
+                        let core_row = measured.scope == "core";
+                        let (row_idle, row_sigma, row_drift_ok) = if core_row {
+                            (core_mean, core_sigma, core_ok)
+                        } else if let Some((before_w, before_s, after_w, after_s)) =
+                            subrail_bracket(&before_b, &after_b, &measured.scope)
+                        {
+                            let (mean, sig, _, ok) =
+                                energy::combine_bracket(before_w, before_s, after_w, after_s);
+                            (mean, sig, ok)
+                        } else {
+                            (mean_w, sigma, drift_ok)
+                        };
+                        let joules = trial_joules(
+                            measured.gross,
+                            row_idle,
+                            row_sigma,
+                            measured.seconds,
+                            measured.instrument,
+                            &measured.scope,
+                            grade,
+                            measured.counter_updates,
+                            row_drift_ok,
+                        );
+                        let mut row = EnergyTrial::from_parts(
+                            w.id,
+                            side,
+                            pair,
+                            measured.repetitions,
+                            measured.counter_updates,
+                            measured.window_seconds,
+                            joules,
+                            measured.ess,
+                            after.load1,
+                            snap_other_cpu(before, after),
+                            grade,
+                            rank,
+                            pairing,
+                            fabric_name(side, pairing, device, gpu),
+                        );
+                        row.idle_before_w = Some(if core_row {
+                            before_b.core_watts.unwrap_or(f64::NAN)
+                        } else {
+                            subrail_level(&before_b, &measured.scope).unwrap_or(before_b.watts)
+                        });
+                        row.idle_after_w = Some(if core_row {
+                            after_b.core_watts.unwrap_or(f64::NAN)
+                        } else {
+                            subrail_level(&after_b, &measured.scope).unwrap_or(after_b.watts)
+                        });
+                        row.baseline_drift_w = Some(if core_row {
+                            core_drift
+                        } else {
+                            (row.idle_before_w.unwrap_or(0.0) - row.idle_after_w.unwrap_or(0.0))
+                                .abs()
+                        });
+                        row.other_core_busy = other_txt.clone();
+                        row.cadence_s = measured.cadence_s;
+                        row.left_edge = measured.left_edge.to_string();
+                        row.right_edge = measured.right_edge.to_string();
+                        row.uncovered_s = measured.uncovered_s;
+                        row.samples = measured.samples;
+                        row.quantization_window_j = measured.quantization_j;
+                        row.cadence_edge_window_j = measured.cadence_edge_j;
+                        row.window_load1 = measured.window_load1.clone();
+                        row.window_signal = measured.window_signal.clone();
+                        row.ps_attribution = measured.ps_attribution.clone();
+                        row.trial_refusal = measured.trial_refusal.clone();
+                        row.settle_load1 = settle_txt.clone();
+                        if w.open_grid().is_some() {
+                            let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
+                            let produced = (w.draws * w.thin.max(1)) as f64;
+                            row.sweeps_per_rep = sweeps;
+                            row.ess_per_sweep = if produced > 0.0 && row.ess.is_finite() {
+                                row.ess / produced
+                            } else {
+                                f64::NAN
+                            };
+                            row.seconds_per_sweep = if sweeps > 0 {
+                                row.joules.seconds / sweeps as f64
+                            } else {
+                                f64::NAN
+                            };
+                            row.joules_per_sweep = row
+                                .joules
+                                .incremental
+                                .filter(|j| sweeps > 0 && j.is_finite())
+                                .map(|j| j / sweeps as f64);
+                        }
+                        if !measured.trial_refusal.is_empty() {
+                            row.joules.attributable = false;
+                            row.joules.evidence = "load_gated";
+                            row.joules.note = measured.trial_refusal.clone();
+                            row.joules_per_ess = None;
+                            if phase_refused.is_empty() {
+                                phase_refused = measured.trial_refusal.clone();
+                            }
+                        }
+                        rows.push(row);
+                    }
+                }
+                stamp_pairs(
+                    &mut rows, w.id, pair, pairing, sigma, drift_ok, core_sigma, core_ok,
+                );
+                if !phase_refused.is_empty() {
+                    break 'pairs;
                 }
             }
-            stamp_pairs(&mut rows, w.id, pair, pairing, sigma, drift_ok, core_sigma, core_ok);
-            if !phase_refused.is_empty() {
-                break 'pairs;
-            }
-        }
         }
     }
     if !phase_refused.is_empty() && !contended {
@@ -2041,7 +2430,7 @@ fn stamp_pairs(
 ) {
     let scopes: Vec<String> = rows
         .iter()
-                .filter(|r| r.workload == workload && r.trial == pair && r.pairing == pairing)
+        .filter(|r| r.workload == workload && r.trial == pair && r.pairing == pairing)
         .map(|r| r.joules.scope.clone())
         .collect();
     let mut uniq = scopes;
@@ -2066,7 +2455,11 @@ fn stamp_pairs(
         let Some((a, sa, ua)) = pick("ferrotherm") else {
             continue;
         };
-        let Some((b, sb, ub)) = pick(if pairing == "B" { spec::THRML_B_SIDE } else { spec::THRML_A_SIDE }) else {
+        let Some((b, sb, ub)) = pick(if pairing == "B" {
+            spec::THRML_B_SIDE
+        } else {
+            spec::THRML_A_SIDE
+        }) else {
             continue;
         };
         let delta = energy::paired_delta(a, b);
@@ -2074,7 +2467,11 @@ fn stamp_pairs(
         let gate = if scope == "core" { core_ok } else { drift_ok };
         let ok = energy::paired_attributable(delta, sig, sa, sb, gate, ua, ub);
         for row in rows.iter_mut() {
-            if row.workload == workload && row.trial == pair && row.pairing == pairing && row.joules.scope == scope {
+            if row.workload == workload
+                && row.trial == pair
+                && row.pairing == pairing
+                && row.joules.scope == scope
+            {
                 row.paired_delta_j = Some(delta);
                 row.paired_attributable = ok;
             }
@@ -2685,7 +3082,13 @@ impl ThrmlSlot {
     /// Start THRML on the first B-arm call. The caller invokes this inside the timed window.
     fn arm(&mut self, side: &str) {
         if side == self.side && self.enabled && self.session.is_none() {
-            match ThrmlServe::start(&self.python, &self.runner, &self.spec, &self.device, self.baseline) {
+            match ThrmlServe::start(
+                &self.python,
+                &self.runner,
+                &self.spec,
+                &self.device,
+                self.baseline,
+            ) {
                 Ok(child) => self.session = Some(child),
                 Err(e) => eprintln!("THRML start inside the trial window failed: {e}"),
             }
@@ -2733,7 +3136,9 @@ fn remix_ess(side: &str, w: &Workload, seed: u64, reps: u32, slot: &mut ThrmlSlo
         let ess = if side == "ferrotherm" {
             let (levers, threads, gpu_on) = GRID_CHOICE.with(|c| c.get());
             if gpu_on {
-                run_gpu_chain(w, s).map(|c| c.score.ess_energy).unwrap_or(f64::NAN)
+                run_gpu_chain(w, s)
+                    .map(|c| c.score.ess_energy)
+                    .unwrap_or(f64::NAN)
             } else {
                 ft::run_with(w, s, Some(ft::GridChoice { levers, threads }))
                     .map(|c| c.score.ess_energy)
@@ -2757,10 +3162,13 @@ fn remix_ess(side: &str, w: &Workload, seed: u64, reps: u32, slot: &mut ThrmlSlo
 fn gpu_cost(w: &Workload, seed: u64) -> Result<(), String> {
     #[cfg(feature = "gpu")]
     {
-        let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
+        let (side, j) = w
+            .open_grid()
+            .ok_or_else(|| format!("{} is not an open grid", w.id))?;
         let gpu = ferrotherm_gpu::Gpu::new().ok_or_else(|| "no wgpu adapter".to_string())?;
         let sweeps = u32::try_from(w.warmup + w.draws * w.thin.max(1)).unwrap_or(u32::MAX);
-        let _ = ferrotherm_gpu::sweep_open_grid(&gpu, side, j, w.beta, sweeps, seed)?;
+        let mut state = vec![-1i8; side * side];
+        gpu.sweep_packed(side, j, w.beta, &mut state, sweeps, seed, 0)?;
         Ok(())
     }
     #[cfg(not(feature = "gpu"))]
@@ -2770,10 +3178,17 @@ fn gpu_cost(w: &Workload, seed: u64) -> Result<(), String> {
     }
 }
 
-fn profile_json(work: &[Workload], choice: Option<ft::GridChoice>, sweeps: usize, gpu: bool) -> String {
+fn profile_json(
+    work: &[Workload],
+    choice: Option<ft::GridChoice>,
+    sweeps: usize,
+    gpu: bool,
+) -> String {
     let mut s = String::from("[\n");
     for (i, w) in work.iter().enumerate() {
-        let Some((side, j)) = w.open_grid() else { continue };
+        let Some((side, j)) = w.open_grid() else {
+            continue;
+        };
         if i > 0 && !s.ends_with("[\n") {
             s.push_str(",\n");
         }
@@ -2789,7 +3204,14 @@ fn profile_json(work: &[Workload], choice: Option<ft::GridChoice>, sweeps: usize
             levers: ferrotherm::grid::Levers::SCALAR,
             threads: 1,
         });
-        let mut g = match ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, w.seed0, choice.levers, choice.threads) {
+        let mut g = match ferrotherm::grid::OpenIsing::try_new(
+            side,
+            j,
+            w.beta,
+            w.seed0,
+            choice.levers,
+            choice.threads,
+        ) {
             Ok(g) => g,
             Err(e) => {
                 s.push_str(&format!(
@@ -2802,10 +3224,14 @@ fn profile_json(work: &[Workload], choice: Option<ft::GridChoice>, sweeps: usize
         };
         g.set_profile(true);
         let prof = g.sweeps(sweeps);
-        let wall_per = if prof.sweeps > 0 { prof.wall_ns as f64 / prof.sweeps as f64 } else { f64::NAN };
+        let wall_per = if prof.sweeps > 0 {
+            prof.wall_ns as f64 / prof.sweeps as f64
+        } else {
+            f64::NAN
+        };
         s.push_str(&format!(
             "    {{\"workload\": {}, \"side\": {side}, \"fabric\": \"ferrotherm-cpu\", \
-             \"levers\": {{\"parallel\": {}, \"simd\": {}, \"tiled\": {}, \"sparse_rng\": {}}}, \
+             \"levers\": {{\"parallel\": {}, \"simd\": {}, \"tiled\": {}, \"sparse_rng\": {}, \"incremental\": {}}}, \
              \"threads_used\": {}, \"sweeps\": {}, \"wall_ns\": {}, \"wall_ns_per_sweep\": {:.4}, \
              \"memory_ns\": {}, \"field_ns\": {}, \"rng_ns\": {}, \"rng_words\": {}, \
              \"note\": \"memory_ns, field_ns and rng_ns are CPU time summed across threads. wall_ns is elapsed. Not joules.\"}}",
@@ -2814,6 +3240,7 @@ fn profile_json(work: &[Workload], choice: Option<ft::GridChoice>, sweeps: usize
             if choice.levers.simd { "true" } else { "false" },
             if choice.levers.tiled { "true" } else { "false" },
             if choice.levers.sparse_rng { "true" } else { "false" },
+            if choice.levers.incremental { "true" } else { "false" },
             prof.threads_used,
             prof.sweeps,
             prof.wall_ns,
@@ -2831,9 +3258,17 @@ fn profile_json(work: &[Workload], choice: Option<ft::GridChoice>, sweeps: usize
 fn fabric_name(side: &str, pairing: &str, device: &str, gpu: bool) -> &'static str {
     let cuda = device == "cuda";
     if side == "ferrotherm" {
-        if gpu { "ferrotherm-gpu" } else { "ferrotherm-cpu" }
+        if gpu {
+            "ferrotherm-gpu"
+        } else {
+            "ferrotherm-cpu"
+        }
     } else if pairing == "B" {
-        if cuda { "thrml-main-2d96f4b4-jax-cuda" } else { "thrml-main-2d96f4b4-jax-cpu" }
+        if cuda {
+            "thrml-main-2d96f4b4-jax-cuda"
+        } else {
+            "thrml-main-2d96f4b4-jax-cpu"
+        }
     } else if cuda {
         "thrml-0.1.4-jax-cuda"
     } else {
@@ -3070,7 +3505,8 @@ impl ThrmlServe {
     }
 
     fn run(&mut self, w: &Workload, seed: u64) -> Result<Chain, String> {
-        writeln!(self.stdin, "RUN {} {seed}", w.id).map_err(|e| format!("THRML serve write: {e}"))?;
+        writeln!(self.stdin, "RUN {} {seed}", w.id)
+            .map_err(|e| format!("THRML serve write: {e}"))?;
         self.stdin.flush().ok();
         self.read_chain(w)
     }
@@ -3094,7 +3530,7 @@ impl ThrmlServe {
                 break;
             }
         }
-        let (_, mut map) = parse_thrml(&buf)?;
+        let (_, mut map, _) = parse_thrml(&buf)?;
         let raw = map
             .remove(w.id)
             .and_then(|mut v| v.pop())
@@ -3110,10 +3546,13 @@ impl ThrmlServe {
     }
 
     fn cost(&mut self, w: &Workload, seed: u64) -> Result<(), String> {
-        writeln!(self.stdin, "COST {} {seed}", w.id).map_err(|e| format!("THRML cost write: {e}"))?;
+        writeln!(self.stdin, "COST {} {seed}", w.id)
+            .map_err(|e| format!("THRML cost write: {e}"))?;
         self.stdin.flush().ok();
         let mut line = String::new();
-        self.out.read_line(&mut line).map_err(|e| format!("THRML cost read: {e}"))?;
+        self.out
+            .read_line(&mut line)
+            .map_err(|e| format!("THRML cost read: {e}"))?;
         if line.starts_with("DONE") {
             Ok(())
         } else {
@@ -3360,30 +3799,74 @@ fn json_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn sigkill_is_a_thrml_limit_and_not_a_result() {
+        assert_eq!(super::limit_from_exit(Some(137), None), Some("oom"));
+        assert_eq!(super::limit_from_exit(None, Some(9)), Some("oom"));
+        assert_eq!(super::limit_from_exit(Some(1), None), None);
+        assert_eq!(super::limit_from_exit(Some(0), Some(15)), None);
+        let text =
+            "META thrml=0.1.4\nLIMIT grid_scale_ising_4096 oom\nLIMIT grid_scale_ising_2048 oom\n";
+        let (meta, map, limits) = super::parse_thrml(text).expect("limit lines parse");
+        assert!(meta.contains("0.1.4"));
+        assert!(map.is_empty());
+        assert_eq!(
+            limits.get("grid_scale_ising_4096").map(String::as_str),
+            Some("oom")
+        );
+        assert_eq!(
+            limits.get("grid_scale_ising_2048").map(String::as_str),
+            Some("oom")
+        );
+        let reason = super::thrml_limit_reason("oom");
+        assert!(reason.starts_with("THRML_LIMIT oom"));
+        assert!(!super::parity_blocks_exit(&[(
+            "thrml".into(),
+            false,
+            reason
+        )]));
+        assert!(super::parity_blocks_exit(&[(
+            "thrml".into(),
+            false,
+            "per-site gap is past the line".into()
+        )]));
+    }
+
+    #[test]
     fn grid_scale_flags_name_what_they_refuse() {
         let err = match super::Args::parse(
-            ["--out", "out", "--scale", "--grid-scale"].into_iter().map(str::to_string),
+            ["--out", "out", "--scale", "--grid-scale"]
+                .into_iter()
+                .map(str::to_string),
         ) {
             Err(err) => err,
             Ok(_) => panic!("both workload sets were accepted"),
         };
-        assert!(err.contains("--scale") && err.contains("--grid-scale"), "{err}");
+        assert!(
+            err.contains("--scale") && err.contains("--grid-scale"),
+            "{err}"
+        );
         let err = match super::Args::parse(
-            ["--out", "out", "--profile"].into_iter().map(str::to_string),
+            ["--out", "out", "--profile"]
+                .into_iter()
+                .map(str::to_string),
         ) {
             Err(err) => err,
             Ok(_) => panic!("profile alone was accepted"),
         };
         assert!(err.contains("--profile"), "{err}");
         let err = match super::Args::parse(
-            ["--out", "out", "--grid-scale", "--lever", "cuda"].into_iter().map(str::to_string),
+            ["--out", "out", "--grid-scale", "--lever", "cuda"]
+                .into_iter()
+                .map(str::to_string),
         ) {
             Err(err) => err,
             Ok(_) => panic!("unknown lever was accepted"),
         };
         assert!(err.contains("cuda"), "{err}");
         let err = match super::Args::parse(
-            ["--out", "out", "--grid-scale", "--sides", "7"].into_iter().map(str::to_string),
+            ["--out", "out", "--grid-scale", "--sides", "7"]
+                .into_iter()
+                .map(str::to_string),
         ) {
             Err(err) => err,
             Ok(_) => panic!("side 7 was accepted"),
@@ -3391,14 +3874,24 @@ mod tests {
         assert!(err.contains('7'), "{err}");
         assert!(
             super::Args::parse(
-                ["--out", "out", "--grid-scale", "--profile", "--sides", "8,64", "--skip-thrml"]
-                    .into_iter()
-                    .map(str::to_string),
+                [
+                    "--out",
+                    "out",
+                    "--grid-scale",
+                    "--profile",
+                    "--sides",
+                    "8,64",
+                    "--skip-thrml"
+                ]
+                .into_iter()
+                .map(str::to_string),
             )
             .is_ok()
         );
         let err = match super::Args::parse(
-            ["--out", "out", "--grid-scale"].into_iter().map(str::to_string),
+            ["--out", "out", "--grid-scale"]
+                .into_iter()
+                .map(str::to_string),
         ) {
             Err(err) => err,
             Ok(_) => panic!("grid-scale energy without --cpus was accepted"),
