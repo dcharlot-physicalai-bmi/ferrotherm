@@ -4555,11 +4555,11 @@ mod tests {
                     (err_est - used).abs() <= 1e-9 * used.abs().max(1e-300),
                     "refused estimate {err_est:.6e} is not the estimate the solver just formed {used:.6e}"
                 );
-                // The absolute estimates move with libm. The ratio does not: the floor is about
-                // five times the raw residual here, and a solver that drops the floor reports the
-                // raw one. 1.5 is between those.
+                // On the CI host the raw residual estimate is 3.62e-5 and the floored one is
+                // 4.04e-5: a factor of five locally, a factor of 1.12 there, the same floor.
+                // Dropping the floor makes the two recorded numbers equal.
                 assert!(
-                    used > 1.5 * raw,
+                    used > raw,
                     "the refused estimate {used:.6e} did not take the rounding floor over the raw \
                      residual estimate {raw:.6e}"
                 );
