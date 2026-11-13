@@ -4,6 +4,69 @@ This is the rule the harness applies, and the fields a receipt has to carry.
 Joules come from a hardware counter or they are absent. A process id attributes
 or refuses. It is never subtracted from joules.
 
+## Rules v3
+
+Frozen before any campaign uses them. Every receipt carries `rules_version`
+`v3`. The lock (`/tmp/bmi-energy.lock` from the preflight through the last
+bracket), the load1 settle (60 samples at or under 2), the trial-window
+other-core rule, the RSS uncertainty budget, the 0.05 parity line, and
+`parity_design` are unchanged. The 3σ bracket test is the existing
+`combine_bracket`. It is not a calibration drift model.
+
+### Scoring is outside the window
+
+The metered window is warmup plus draws, and nothing else, on ferrotherm and
+on THRML. Exact-law enumeration, the transfer-matrix precompute, `ESS`,
+`tau_int`, and the accuracy score run after the bracket that closes the
+window. A 4×4 Ising enumeration is 2^16 states and used to run inside
+`ft::run` while the counter was open. It does not. The receipt's
+`window_audit` lists, per workload and side, the steps that ran inside and
+outside, each with a timer.
+
+### One bracket per meter
+
+NVML, RAPL package, RAPL core, macmon, and tegrastats or INA238 each keep
+their own idle samples and their own 3σ test. A meter that does not have both
+adjacent brackets is `ungraded`. It is not graded on another meter's bracket.
+NVML used to store the package bracket. It does not.
+
+### Interleaved brackets
+
+Trials run in ABBA order: ferrotherm, THRML, THRML, ferrotherm. A settled
+bracket stands between every trial. A trial's baseline is the bracket before
+it and the bracket after it, under the same 3σ test. The bracket after a
+trial is not taken on the thermal tail. The load1 settle runs before every
+bracket, including that one.
+
+### Bracket length and settle, from attempt 037
+
+Source: `jetsonhub-c82c1e9-quiet-attempt-037-publish.tar.gz`, sha256
+`1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613`, commit
+`c82c1e96`. Three hundred RAPL package rows, fifteen workloads. The counter
+bracket is four 0.25 s windows, 1.0 s. Its median sigma is 0.316246947 W, so
+3σ is 0.948740841 W.
+
+The brackets taken immediately after a pair sit 1.967373933 W above the
+brackets taken after the 60-sample settle (sd 0.231989316 W). Zero of the 300
+rows pass 3σ. That gap is the tail, not a slow drift to fit and subtract.
+
+The settled before-brackets, in campaign order, 149 successive steps: median
+absolute step 0.151394850 W, p95 0.398473900 W, max 0.806957860 W. All 149 are
+inside 0.948740841 W.
+
+The bracket stays 1.0 s. Lengthening it shrinks sigma. The max settled step
+would miss 3σ once the bracket exceeded (0.948740841/0.806957860)^2 seconds,
+about 1.38 s. A longer bracket is not the repair. The repair is the
+interleaved settled bracket. The settle stays 60 samples at load1 ≤ 2, and it
+runs before every bracket.
+
+### Where v3 runs
+
+The fifteen-workload quiet suite from `c82c1e96` (the four canonical workloads
+plus the eleven in `--scale`) and `--grid-energy` (GPU lever and CPU
+`combined`, each against THRML A and B on JAX CUDA, sides 64 to 4096).
+`--campaign` runs both under one hold of the lock.
+
 Grades are per phase and per meter. Package, core, `soc-telemetry`, `vin`, and
 each `subrail:` scope stay in their own tables. Two hosts are not pooled.
 
@@ -25,11 +88,13 @@ measured.
 `load1` is the 1-minute load average. The quiet threshold is 2 and is not
 changed.
 
-Before the baseline and before each pair's brackets, the harness waits until
-`load1` has stayed at or under 2 for 60 consecutive samples at 1 Hz. The wait
-is bounded at 600 samples. The samples are `energy.baseline_settle_load1` for
-the baseline and `settle_load1` on each trial. If the streak never completes,
-the energy phase is `load_gated` and the receipt says why.
+Before the baseline and before every bracket, including the bracket after a
+trial, the harness waits until `load1` has stayed at or under 2 for 60
+consecutive samples at 1 Hz. The wait is bounded at 600 samples. The samples
+are `energy.baseline_settle_load1` for the baseline and `settle_load1` on each
+trial. If the streak never completes, the energy phase is `load_gated` and
+the receipt says why. Rules v3 does not change this streak. It runs it before
+every bracket, not only the first of a pair.
 
 After that wait, every 1 Hz sample through the bracket has to be finite and at
 or under 2. An empty series is a refusal. The first sample that fails is
