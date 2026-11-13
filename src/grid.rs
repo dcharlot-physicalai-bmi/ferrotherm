@@ -1898,6 +1898,41 @@ mod tests {
         assert!(err.message.contains('5'), "{}", err.message);
     }
 
+    fn side8_mean(levers: Levers, seed: u64, warmup: usize, draws: usize) -> f64 {
+        let mut g = OpenIsing::try_new(8, 1.0, 0.3, seed, levers, 1).unwrap();
+        let e = g.energies(warmup, draws, 1);
+        e.iter().sum::<f64>() / e.len() as f64
+    }
+
+    #[test]
+    fn side8_short_trace_is_the_host_pair_and_the_powered_count_passes_every_lever() {
+        // Gate seeds. Warmup 64 and 256 draws is the schedule that prints the host's
+        // identical refusal. It is deterministic, and it is over 0.05. The powered
+        // count is warmup 400 and 4096 draws, chosen from a 24-pair pilot on other
+        // seeds and applied to every lever.
+        let gate = 260_801_615u64 + 9_000 * 8;
+        let incremental = Levers { incremental: true, ..Levers::SCALAR };
+        let short_a = side8_mean(incremental, gate, 64, 256);
+        let short_b = side8_mean(incremental, gate + 1, 64, 256);
+        assert!((short_a - -36.375).abs() < 1e-9, "{short_a}");
+        assert!((short_b - -39.578125).abs() < 1e-9, "{short_b}");
+        assert!((short_a - short_b).abs() / 64.0 >= 0.05);
+        let levers = [
+            Levers::SCALAR,
+            Levers { simd: true, ..Levers::SCALAR },
+            incremental,
+        ];
+        for levers in levers {
+            let a = side8_mean(levers, gate, 400, 4096);
+            let b = side8_mean(levers, gate + 1, 400, 4096);
+            let per_site = (a - b).abs() / 64.0;
+            assert!(
+                per_site < 0.05,
+                "levers {levers:?} per site {per_site} ({a} vs {b})"
+            );
+        }
+    }
+
     #[test]
     fn eight_threads_are_capped_at_four_below_side_512() {
         assert_eq!(threads_for_side(8, 8), 4);

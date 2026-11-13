@@ -187,12 +187,30 @@ bit biased a 2×2 chain off its Boltzmann law.
 `incremental` keeps an i8 neighbour sum per site, or, with `simd`, replaces the
 trit adder with a popcount of the four neighbour bit planes. The field value is
 the same number the trit adder produced. The scalar i8 path draws with
-`next_u32() < threshold`. Its 2×2, 3×3 and 4×4 laws match exact enumeration,
-and a long 8×8 trace agrees with the scalar `f64` chain to under 0.01 per
-site. A two-seed gap of 0.05005 per site on a short side-8 chain is that
-chain's variance sitting on the 0.05 line. The gate is unchanged. `combined`
-is `parallel`, `simd`, `tiled`, and `incremental` together. It is not a mix
-with `sparse-rng`.
+`next_u32() < threshold`. Its 2×2, 3×3 and 4×4 laws match exact enumeration.
+`combined` is `parallel`, `simd`, `tiled`, and `incremental` together. It is
+not a mix with `sparse-rng`.
+
+### Side-8 two-seed sample
+
+The 0.05 per-site line is unchanged. On an 8×8 it is an absolute gap of 3.2 in
+the mean energy. Warmup 64 and 256 draws, on seeds `seed0` and `seed0+1`,
+makes incremental print exactly −36.375 and −39.578125 (0.050048828125 per
+site) on every host, because the sampler is deterministic. Scalar on that same
+short trace is 0.040 per site and simd is 0.025. A 24-pair pilot on seeds
+`seed0+10000` upward, warmup 400, all three levers, had a worst gap of 0.0527
+at 1024 draws, 0.0217 at 2048, and 0.0133 at 4096. Side 8 therefore uses warmup
+400 and 4096 draws, the smallest power of two whose pilot worst gap is below
+0.02. A shorter `--draws` or `--warmup` does not shrink side 8. The same count
+is used for every lever. The pilot seeds are not the gate seeds. `parity_design`
+on the receipt records the rule and the pilot gaps.
+
+### Receipt hashes
+
+`spec_sha256` is SHA-256 of `spec.txt`. `receipt_sha256` is SHA-256 of that
+receipt file with the `receipt_sha256` field set to 64 zeros. Replacing the
+published hash with those zeros and hashing the file again reproduces it.
+`report.json`, `profile.json`, and `quiet-gate.json` each carry both.
 
 `gpu` is a packed checkerboard compute shader: one colour's spins in `u32`
 words, one thread per word, and `grid::packed_hash` as the draw.

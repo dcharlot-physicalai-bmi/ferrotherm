@@ -14,7 +14,9 @@ of nearby streams biased a 2×2 chain off the Boltzmann law; that is the test
 `u32` checkerboard shader in `ferrotherm-gpu`, matched to `grid::sweep_packed_cpu`.
 A grid-scale chain on that shader is one submission: `wall_ns_per_sweep` on a
 THRML row excludes JIT, and a CUDA allocator failure is `THRML_LIMIT oom`.
-`parallel` caps itself at 4 threads below side 512.
+`parallel` caps itself at 4 threads below side 512. Side 8 parity uses warmup
+400 and 4096 draws so the unchanged 0.05 two-seed line has the pilot behind it.
+Each receipt carries `spec_sha256` and `receipt_sha256`.
 
 ### The committed wasm was three weeks behind its own ABI, and two pages called the old one
 
