@@ -1,6 +1,6 @@
 # Bracket drift, version 2
 
-Superseded by rules v3, with interleaved idle in ABBA. Rules v3 scores outside the window for both sides, gives each meter its own idle bracket, and interleaves idle in ABBA. It is being implemented on `perf/large-grid`. The rule text is `bench/thrml-tsp/METHODOLOGY.md` on that branch, read here at `83dbb616cd9e5395f5f3d77f685fb146fc8a92d5`. Grid-scale trials already keep the score out of the joule window; see "What is measured, separately" in that file.
+Superseded by rules v3, with interleaved idle in ABBA. Rules v3 are frozen on `perf/large-grid`. The rule text is `bench/thrml-tsp/METHODOLOGY.md` at `dbf9653a6091543df420f9ab8a3fe5da9b00a758`. The harness that applies them is `777f0417340788428cf0525003277f9829ca6e3a`. Rules v3 scores outside the window for both sides, gives each meter its own idle bracket, and interleaves idle in ABBA. See "What is measured, separately" in that methodology file.
 
 This note is not applied to attempt 037 or to any published grade. The 3σ test on that receipt stays as it ran. NVML for attempt 037 is ungraded: the traces have no raw NVML idle samples, so no `regrade-v3 (per-meter bracket)` was published beside the as-measured refusal.
 

@@ -6,6 +6,6 @@ Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per worklo
 
 Core is the only scope with J/ESS. Package and NVML joules are published without J/ESS. `ising_open_4x4` is under investigation. The open 64×64 core-domain quotient is about 9× on that lattice only. This is not a large-grid energy claim.
 
-Attempt 037 stays as measured. Scoring ran inside the metered energy window on both sides. That defect is in ferrotherm's disfavour. `jetson-hub/attempt-037/SCORING-AUDIT.md` lists the affected workloads. The published means are not recomputed.
+Attempt 037 stays as measured. Scoring ran inside the metered energy window on both sides. That defect is in ferrotherm's disfavour. `jetson-hub/attempt-037/SCORING-AUDIT.md` lists the affected workloads. The published means are not recomputed. The replacement rule is `bench/thrml-tsp/METHODOLOGY.md` at `dbf9653a6091543df420f9ab8a3fe5da9b00a758` on `perf/large-grid`. The harness is `777f0417340788428cf0525003277f9829ca6e3a`.
 
 NVML for attempt 037 is ungraded. The traces are chain energies and states, not raw NVML idle samples, so there is no `regrade-v3 (per-meter bracket)` beside the as-measured rows. Those rows stay the package-bracket refusal: gross and incremental joules, no J/ESS.
