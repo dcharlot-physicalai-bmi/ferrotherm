@@ -4,7 +4,7 @@ Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per worklo
 
 These are the small accuracy-suite workloads, from the 5-spin chain through the open 64×64 (n=4096). This is not a large-grid energy claim. The open 64×64 core-domain quotient is 8.952 ± 0.762, about 9×, on that lattice only. `ising_open_4x4` is under investigation and is not a cited quotient.
 
-Attempt 037 is published as measured. Scoring ran inside the metered energy window on both sides. That defect is in ferrotherm's disfavour. The affected workloads are in `jetson-hub/attempt-037/SCORING-AUDIT.md`. These means are not recomputed.
+Attempt 037 is published as measured. Scoring ran inside the metered energy window on both sides. That defect is in ferrotherm's disfavour. The affected workloads are in `jetson-hub/attempt-037/SCORING-AUDIT.md`. These means are not recomputed. The replacement rule is `bench/thrml-tsp/METHODOLOGY.md` at `dbf9653a6091543df420f9ab8a3fe5da9b00a758` on `perf/large-grid`. The harness is `777f0417340788428cf0525003277f9829ca6e3a`.
 
 NVML for attempt 037 is ungraded. The traces do not record raw NVML idle samples, so no `regrade-v3 (per-meter bracket)` is published beside the as-measured grade. The as-measured NVML rows stay attribution-refused.
 
