@@ -26,7 +26,7 @@ Combined uncertainty is the root-sum-square of the receipt's Student-t half-widt
 
 ## `ising_open_4x4`
 
-The ferrotherm core mean is `1.22954420e-4`, above the open 8×8 mean `5.19702797e-5`. The row stays marked under investigation. The cause is in `UNCERTAINTY.md`: each metered repetition enumerates the 2^16 law because `exact_energy` is unset for side ≤ 4, while the 8×8 scores the transfer-matrix mean. Energy-window ESS is higher on the 4×4 (1273 vs 1045) and `tau_int` is lower (0.780 vs 1.087), so the integrated autocorrelation is not the cause. The 4×4 repetition takes 7.92 ms and 0.157 core-joules; the sampler timer alone, which stops before the score, records 0.88 ms. The 8×8 sampler timer (2.59 ms) and the metered repetition (2.67 ms) agree.
+The ferrotherm core mean is `1.22954420e-4`, above the open 8×8 mean `5.19702797e-5`. The row stays marked under investigation. The cause is in `UNCERTAINTY.md`: each metered repetition enumerates the 2^16 law because `exact_energy` is unset for side ≤ 4, while the 8×8 scores the transfer-matrix mean. Energy-window ESS is higher on the 4×4 (1273 vs 1045) and `tau_int` is lower (0.780 vs 1.087), so the integrated autocorrelation is not the cause. The 4×4 repetition takes 7.92 ms and 0.157 core-joules; the sampler timer alone, which stops before the score, records 0.88 ms. The 8×8 sampler timer (2.59 ms) and the metered repetition (2.67 ms) agree. The same window on all 15 workloads is audited in `jetson-hub/attempt-037/SCORING-AUDIT.md`. That audit does not change these grades.
 
 ## Package and NVML
 
