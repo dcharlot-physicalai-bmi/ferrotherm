@@ -15,6 +15,16 @@ pub const THIN: usize = 1;
 pub const TRIALS: usize = 5;
 pub const SEED0: u64 = 260_801_615;
 
+/// Side-8 two-seed parity sample. The 0.05 per-site line is not a knob.
+///
+/// A 24-pair pilot on seeds `seed0 + 10_000`, `+ 10_002`, … (not the gate seeds `seed0` and
+/// `seed0 + 1`), warmup 400, levers scalar, simd, and incremental, had worst per-site gaps
+/// 0.0527 at 1024 draws, 0.0217 at 2048, and 0.0133 at 4096. The fixed count is the smallest
+/// power of two whose pilot worst gap is below 0.02, half of 0.05. A shorter `--draws` or
+/// `--warmup` does not shrink side 8 below this. Larger sides keep the requested count.
+pub const GRID_SIDE8_PARITY_WARMUP: usize = 400;
+pub const GRID_SIDE8_PARITY_DRAWS: usize = 4096;
+
 /// Inverse-temperature and topology of one pinned case.
 #[derive(Clone, Debug)]
 pub struct Workload {
@@ -309,7 +319,11 @@ fn grid_scale_id(side: usize) -> &'static str {
     }
 }
 
-fn grid_scale_one(side: usize, trials: usize, warmup: usize, draws: usize) -> Workload {
+fn grid_scale_one(side: usize, trials: usize, mut warmup: usize, mut draws: usize) -> Workload {
+    if side == 8 {
+        warmup = warmup.max(GRID_SIDE8_PARITY_WARMUP);
+        draws = draws.max(GRID_SIDE8_PARITY_DRAWS);
+    }
     let j = 1.0;
     let beta = 0.3;
     let n = side * side;
@@ -840,6 +854,11 @@ mod tests {
         );
         let eight = grids.iter().find(|w| w.id == "grid_scale_ising_8").unwrap();
         assert!(eight.exact_energy.is_some());
+        assert_eq!(eight.warmup, GRID_SIDE8_PARITY_WARMUP);
+        assert_eq!(eight.draws, GRID_SIDE8_PARITY_DRAWS);
+        let sixteen = grids.iter().find(|w| w.id == "grid_scale_ising_16").unwrap();
+        assert_eq!(sixteen.warmup, 40);
+        assert_eq!(sixteen.draws, 64);
         assert!(eight.edges.is_empty(), "the spec is the GRID line, not an edge dump");
         assert_eq!(eight.open_grid(), Some((8, 1.0)));
         let big = grids.iter().find(|w| w.id == "grid_scale_ising_4096").unwrap();

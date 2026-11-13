@@ -11,6 +11,7 @@ mod ft;
 mod oracle;
 mod parity;
 mod score;
+mod sha256;
 mod spec;
 
 use energy::{
@@ -26,6 +27,44 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
+
+/// Put `spec_sha256` and `receipt_sha256` on a JSON object or array.
+///
+/// The receipt hash is SHA-256 of the file with `receipt_sha256` set to 64 zeros.
+fn stamped_receipt(spec_sha: &str, payload: &str) -> String {
+    let payload = payload.trim_start();
+    let with = if let Some(rest) = payload.strip_prefix('{') {
+        format!(
+            "{{\"spec_sha256\": \"{spec_sha}\", \"receipt_sha256\": \"{}\",{rest}",
+            sha256::SLOT
+        )
+    } else {
+        format!(
+            "{{\"spec_sha256\": \"{spec_sha}\", \"receipt_sha256\": \"{}\", \"rows\": {payload}}}",
+            sha256::SLOT
+        )
+    };
+    sha256::stamp(&with)
+}
+
+fn spec_sha256(out: &Path) -> String {
+    match fs::read(out.join("spec.txt")) {
+        Ok(bytes) => sha256::hex(&bytes),
+        Err(_) => sha256::hex(b""),
+    }
+}
+
+fn parity_design_json() -> String {
+    format!(
+        "{{\"side\": 8, \"threshold_per_site\": 0.05, \"warmup\": {}, \"draws\": {}, \"thin\": 1, \
+          \"seeds\": \"seed0 and seed0+1, the same pair for every lever\", \
+          \"pilot_pairs\": 24, \"pilot_seed_offset\": 10000, \
+          \"pilot_worst_per_site\": {{\"1024\": 5.270e-2, \"2048\": 2.174e-2, \"4096\": 1.329e-2}}, \
+          \"rule\": \"Smallest power-of-two draw count whose 24-pair pilot, warmup 400, over scalar, simd and incremental, had a worst per-site gap below 0.02. The pilot seeds are seed0+10000 and are not the gate seeds. The 0.05 line is not moved. Side 8 uses at least this warmup and draws.\"}}",
+        spec::GRID_SIDE8_PARITY_WARMUP,
+        spec::GRID_SIDE8_PARITY_DRAWS
+    )
+}
 
 fn main() {
     let args = match Args::parse(std::env::args().skip(1)) {
@@ -73,6 +112,7 @@ fn main() {
     let traces = args.out.join("traces");
     fs::create_dir_all(&traces).unwrap_or_else(|e| panic!("create {}: {e}", traces.display()));
     fs::write(args.out.join("spec.txt"), &spec_text).expect("write spec");
+    let spec_hash = sha256::hex(spec_text.as_bytes());
 
     let lock_wait = Instant::now();
     let Ok(host_lock) = energy::HostLock::acquire(&args.lock, args.lock_wait_s) else {
@@ -92,6 +132,7 @@ fn main() {
         eprintln!("quiet-gate preflight: {} s", energy::QUIET_GATE_SECONDS);
         let gate = energy::sample_quiet_gate(&args.cpus);
         let receipt = quiet_gate_json(&gate);
+        let receipt = stamped_receipt(&spec_hash, &receipt);
         fs::write(args.out.join("quiet-gate.json"), &receipt)
             .unwrap_or_else(|e| panic!("quiet-gate: {e}"));
         if !gate.held {
@@ -107,6 +148,7 @@ fn main() {
                 prov = provenance_json(&probe, "load_gated"),
                 gate = receipt,
             );
+            let report = stamped_receipt(&spec_hash, &report);
             fs::write(args.out.join("report.json"), &report).expect("write report");
             eprintln!("quiet gate refused the run; max load1 {:?}", gate.max_load1);
             std::process::exit(1);
@@ -133,6 +175,7 @@ fn main() {
             args.gpu,
         );
         let profile = profile_json(&work, args.grid_choice(), args.profile_sweeps, args.gpu);
+        let profile = stamped_receipt(&spec_hash, &profile);
         fs::write(args.out.join("profile.json"), &profile).expect("write profile");
         let parity_failed = accuracy.done.iter().any(|row| parity_blocks_exit(&row.4));
         let lock_json = release_lock_json(host_lock);
@@ -155,6 +198,7 @@ fn main() {
         let report = format!(
             "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": \"not_run\",\n  \
              \"profile_note\": \"no energy was measured. wall_ns is VM or host elapsed time, not joules.\",\n  \
+             \"parity_design\": {design},\n  \
              \"host_lock\": {lock},\n  \"profile\": {profile},\n  \
              \"thrml_meta\": {meta},\n  \"thrml_b_meta\": {meta_b},\n  \
              \"thrml_error\": {err},\n  \"thrml_b_error\": {err_b},\n  \
@@ -172,7 +216,9 @@ fn main() {
             } else {
                 json_str(&accuracy.thrml_b_note)
             },
+            design = parity_design_json(),
         );
+        let report = stamped_receipt(&spec_hash, &report);
         fs::write(args.out.join("report.json"), &report).expect("write report");
         if !accuracy.thrml_ok || !accuracy.thrml_b_ok || parity_failed {
             std::process::exit(1);
@@ -289,7 +335,7 @@ fn main() {
     let lock_json = release_lock_json(host_lock);
     let report = format!(
         "{{\n  \"schema\": \"ferrotherm-thrml-bench/1\",\n  \"evidence_grade\": {grade},\n  \
-         \"phases\": {phases},\n  \"host_lock\": {lock},\n  \
+         \"phases\": {phases},\n  \"parity_design\": {design},\n  \"host_lock\": {lock},\n  \
          \"phase_order\": {order},\n  \"settle_note\": {settle},\n  \
          \"provenance\": {prov},\n  \"quiet_gate\": {gate},\n  \
          \"energy\": {energy},\n  \"thrml_meta\": {meta},\n  \"thrml_b_meta\": {meta_b},\n  \
@@ -314,7 +360,9 @@ fn main() {
         } else {
             json_str(&accuracy.thrml_b_note)
         },
+        design = if args.grid_scale { parity_design_json() } else { "null".into() },
     );
+    let report = stamped_receipt(&spec_hash, &report);
     fs::write(args.out.join("report.json"), &report).expect("write report");
     eprintln!("wrote {}", args.out.join("report.json").display());
     let parity_failed = accuracy.done.iter().any(|row| parity_blocks_exit(&row.4));
@@ -3855,6 +3903,7 @@ fn write_lock_refusal(out: &Path, path: &Path, wait_s: f64) {
         phases = phases_json("not_run", "load_gated", "not_run"),
         lock = host_lock_json(path, None, None, wait_s, None, false, Some(reason)),
     );
+    let report = stamped_receipt(&spec_sha256(out), &report);
     fs::write(out.join("report.json"), report).expect("write report");
     eprintln!("{reason}");
 }
