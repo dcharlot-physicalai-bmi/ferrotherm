@@ -1,0 +1,22 @@
+Mon Nov  9 11:35:30 PM UTC 2026
+ 18:35:30 up 3 days,  5:53,  3 users,  load average: 31.37, 28.38, 16.92
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+root     3182987 Mon Nov  9 18:29:49 2026 1525 29.5  14 wai_quantum-c52 /workspace/Transaction-Science/open-standards/wai/wai-quantum/target/debug/deps/wai_quantum-c52abe18b2d512a8
+root     3333962 Mon Nov  9 18:35:28 2026  373  0.2  13 staged-3b0414c2 /workspace/Transaction-Science/open-standards/wai/wai-pack/target/release/deps/staged-3b0414c2df60ee38
+txhw     3117884 Mon Nov  9 18:17:54 2026  111 11.0  16 webgpu_member-8 /home/txhw/hw-target/wai-quantum/debug/deps/webgpu_member-86fefc6331b43000 --nocapture --test-threads=1
+dcharlot 3334030 Mon Nov  9 18:35:29 2026 62.5  0.1   4 python3         python3 -u /home/dcharlot/bench-scratch/quiet24-driver-c82c1e9.py --sha c82c1e96c24d6f6c292af1196cd72199b0838257 --out /home/dcharlot/bench-scratch/evidence-c82c1e9-quiet24-jetsonhub --deadline-utc 2026-11-10T21:30:00Z --cpus 8-11 --python /home/dcharlot/bench-scratch/thrml-venv/bin/python
+root     3333976 Mon Nov  9 18:35:29 2026  4.5  0.0   2 sshd            sshd: dcharlot [priv]
+root        1776 Fri Nov  6 12:42:07 2026  1.0  0.1  14 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+dcharlot 2650874 Mon Nov  9 17:12:19 2026  0.7  0.1  19 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/dcharlot/forgejo-runner-gate/config.yaml
+root     2650964 Mon Nov  9 17:12:21 2026  0.3  0.0   1 kworker/u80:3-f [kworker/u80:3-flush-259:0]
+root     3288824 Mon Nov  9 18:32:29 2026  0.3  0.3   2 cargo           /root/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin/cargo test --release --locked
+root     2652202 Mon Nov  9 17:12:30 2026  0.3  0.0  19 kworker/u80:6-e [kworker/u80:6-events_unbound]
+root     2652203 Mon Nov  9 17:12:30 2026  0.2  0.0   8 kworker/u80:7-e [kworker/u80:7-ext4-rsv-conversion]
+nx       4096848 Sat Nov  7 11:25:51 2026  0.2  0.3  14 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root        2287 Fri Nov  6 12:42:11 2026  0.2  0.3   9 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root     2746765 Mon Nov  9 17:20:59 2026  0.2  0.0  14 kworker/u80:4-e [kworker/u80:4-events_power_efficient]
+root     3151366 Mon Nov  9 18:28:03 2026  0.2  0.0  15 kworker/u80:2-e [kworker/u80:2-events_unbound]
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0  18 kswapd0         [kswapd0]
+root     3049308 Mon Nov  9 17:59:55 2026  0.2  0.0   2 kworker/u81:0-r [kworker/u81:0-rb_allocator]
+root     3143406 Mon Nov  9 18:25:01 2026  0.2  0.0   3 kworker/u81:1-r [kworker/u81:1-rb_allocator]
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.1   6 containerd      /usr/bin/containerd

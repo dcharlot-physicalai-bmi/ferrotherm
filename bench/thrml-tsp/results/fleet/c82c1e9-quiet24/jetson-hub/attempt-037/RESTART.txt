@@ -1,0 +1,21 @@
+RESTART of quiet24 driver on jetson-hub
+UTC: 2026-11-10T02:37:09.944178+00:00
+
+Why: attempt-012 stopped with joules_stop=true because the stop rule fired on any
+attributable workload. That attempt's energy_grade was load_gated (72 trials, 27
+attributable, 26 paired) on only ising_grid2d_open_3x3 and thrml_readme_ising_chain_n5.
+An idle bracket was refused at load1 2.24. That is not a quiet-grade result.
+
+Fix: keep going until an attempt has energy_grade == "quiet" AND host_lock_held == true
+AND a non-null energy section with attributable workloads. The script was backed up to
+~/bench-scratch/quiet24-driver-c82c1e9.py.bak and patched in place. Attempt numbering
+resumes from the highest existing attempt-NNN in this directory (currently 012, so the
+next attempt is 013). Earlier attempts are not overwritten.
+
+The previous driver had already exited after attempt-012. The premature exit.txt was
+copied to exit-premature-attempt-012.txt. Identical flags were reused:
+  python3 -u /home/dcharlot/bench-scratch/quiet24-driver-c82c1e9.py \
+    --sha c82c1e96c24d6f6c292af1196cd72199b0838257 \
+    --out /home/dcharlot/bench-scratch/evidence-c82c1e9-quiet24-jetsonhub \
+    --deadline-utc 2026-11-10T21:30:00Z --cpus 8-11 \
+    --python /home/dcharlot/bench-scratch/thrml-venv/bin/python

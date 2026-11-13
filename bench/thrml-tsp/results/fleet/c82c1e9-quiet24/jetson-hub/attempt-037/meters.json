@@ -1,0 +1,34 @@
+{
+  "rapl": [
+    {
+      "path": "/sys/class/powercap/intel-rapl:0",
+      "name": "package-0",
+      "key": "intel-rapl:0/package-0",
+      "max_energy_range_uj": 262143328850,
+      "kind": "rapl"
+    },
+    {
+      "path": "/sys/class/powercap/intel-rapl:0:0",
+      "name": "core",
+      "key": "intel-rapl:0:0/core",
+      "max_energy_range_uj": 262143328850,
+      "kind": "rapl"
+    },
+    {
+      "path": "/sys/class/powercap/intel-rapl:0:1",
+      "name": "uncore",
+      "key": "intel-rapl:0:1/uncore",
+      "max_energy_range_uj": 262143328850,
+      "kind": "rapl"
+    },
+    {
+      "path": "/sys/class/powercap/intel-rapl:1",
+      "name": "psys",
+      "key": "intel-rapl:1/psys",
+      "max_energy_range_uj": 262143328850,
+      "kind": "rapl"
+    }
+  ],
+  "ina238": [],
+  "note": "RAPL package/core are never summed. ina238 VIN is module input (not wall). tegrastats VIN is harness-side fallback when ina238 is absent."
+}

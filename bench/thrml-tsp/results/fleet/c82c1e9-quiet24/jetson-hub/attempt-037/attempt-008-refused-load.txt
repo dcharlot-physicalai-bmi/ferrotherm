@@ -1,0 +1,22 @@
+Tue Nov 10 01:04:56 AM UTC 2026
+ 20:04:56 up 3 days,  7:22,  3 users,  load average: 3.14, 4.36, 4.56
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+txhw      284656 Mon Nov  9 19:47:30 2026  111  7.6  14 webgpu_member-8 /home/txhw/hw-target/wai-quantum/debug/deps/webgpu_member-86fefc6331b43000 --nocapture --test-threads=1
+root        1776 Fri Nov  6 12:42:07 2026  1.0  0.2  18 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+dcharlot 2650874 Mon Nov  9 17:12:19 2026  0.4  0.0  19 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/dcharlot/forgejo-runner-gate/config.yaml
+dcharlot 3334030 Mon Nov  9 18:35:29 2026  0.4  0.0  12 python3         python3 -u /home/dcharlot/bench-scratch/quiet24-driver-c82c1e9.py --sha c82c1e96c24d6f6c292af1196cd72199b0838257 --out /home/dcharlot/bench-scratch/evidence-c82c1e9-quiet24-jetsonhub --deadline-utc 2026-11-10T21:30:00Z --cpus 8-11 --python /home/dcharlot/bench-scratch/thrml-venv/bin/python
+nx       4096848 Sat Nov  7 11:25:51 2026  0.2  0.3   8 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root        2287 Fri Nov  6 12:42:11 2026  0.2  0.2   2 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0  12 kswapd0         [kswapd0]
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.1   6 containerd      /usr/bin/containerd
+root         710 Fri Nov  6 12:42:05 2026  0.1  0.0   9 irq/194-iwlwifi [irq/194-iwlwifi:queue_10]
+root      320943 Mon Nov  9 19:56:51 2026  0.1  0.0  10 kworker/u81:1-r [kworker/u81:1-rb_allocator]
+root         147 Fri Nov  6 12:41:59 2026  0.1  0.0   2 kcompactd0      [kcompactd0]
+dcharlot    5221 Fri Nov  6 12:43:17 2026  0.1  0.0  16 forgejo-runner  /home/dcharlot/.local/bin/forgejo-runner daemon --config /home/dcharlot/forgejo-runner/config.yaml
+dcharlot    3804 Fri Nov  6 12:42:22 2026  0.0  0.5   6 gnome-shell     /usr/bin/gnome-shell
+txhw        5770 Fri Nov  6 12:43:21 2026  0.0  0.1   2 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/txhw/runner/config.yaml
+root         699 Fri Nov  6 12:42:05 2026  0.0  0.0  19 irq/184-iwlwifi [irq/184-iwlwifi:default_queue]
+root     3398497 Mon Nov  9 19:06:47 2026  0.0  0.0   4 kworker/u80:1-p [kworker/u80:1-pm]
+root          15 Fri Nov  6 12:41:59 2026  0.0  0.0   5 rcu_preempt     [rcu_preempt]
+root     3473754 Mon Nov  9 19:22:21 2026  0.0  0.0  15 kworker/15:0-ev [kworker/15:0-events]
+root     3423131 Mon Nov  9 19:16:31 2026  0.0  0.0   4 kworker/u80:5-f [kworker/u80:5-flush-259:0]

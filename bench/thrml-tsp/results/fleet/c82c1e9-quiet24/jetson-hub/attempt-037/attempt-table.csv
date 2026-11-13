@@ -1,0 +1,38 @@
+attempt,exit_code,top_grade,phase_preflight,phase_energy,phase_accuracy,energy_grade,host_lock_held,n_attributable_trials,n_trials,joules_stop,refusal_note
+1,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+2,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+3,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+4,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+5,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+6,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+7,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+8,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+9,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+10,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+11,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+12,0,load_gated,quiet,load_gated,measured,load_gated,True,27,72,True,"idle bracket refused: a 1 Hz load1 sample was 2.24, above 2. The threshold is unchanged. THRML, when it runs, is started inside the first THRML trial window. Its CPU is the B arm, not foreign load, and it is not subtracted from joules."
+13,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+14,0,load_gated,quiet,load_gated,measured,load_gated,True,53,162,False,"a sample exceeded the maximum THRML, when it runs, is started inside the first THRML trial window. Its CPU is the B arm, not foreign load, and it is not subtracted from joules."
+15,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+16,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+17,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+18,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+19,0,load_gated,quiet,load_gated,measured,load_gated,True,1,6,False,"a sample exceeded the maximum THRML, when it runs, is started inside the first THRML trial window. Its CPU is the B arm, not foreign load, and it is not subtracted from joules."
+20,0,load_gated,quiet,load_gated,measured,load_gated,True,46,144,False,"the mean exceeded the maximum THRML, when it runs, is started inside the first THRML trial window. Its CPU is the B arm, not foreign load, and it is not subtracted from joules."
+21,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+22,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+23,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+24,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+25,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+26,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+27,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+28,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+29,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+30,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+31,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+32,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+33,0,load_gated,quiet,load_gated,measured,load_gated,True,0,6,False,"a sample exceeded the maximum THRML, when it runs, is started inside the first THRML trial window. Its CPU is the B arm, not foreign load, and it is not subtracted from joules."
+34,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+35,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+36,1,load_gated,load_gated,not_run,not_run,,True,,,False,
+37,0,quiet,quiet,quiet,measured,quiet,True,300,900,True,"Evidence grade quiet. The host cleared the unchanged load gate (at or under 2). Each trial repeats the sampler for at least 2 s and reports joules per repetition. Attribution needs 8 counter updates. Summaries are per workload. RAPL package, RAPL core, and macmon SoC telemetry are not combined. RAPL on framework-128gb-0000 reads package energy_uj without root and is primary; macmon sys_power is se"

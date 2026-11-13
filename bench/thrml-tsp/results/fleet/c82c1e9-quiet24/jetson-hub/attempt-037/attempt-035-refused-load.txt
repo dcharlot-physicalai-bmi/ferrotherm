@@ -1,0 +1,22 @@
+Tue Nov 10 08:18:18 AM UTC 2026
+ 03:18:18 up 3 days, 14:36,  3 users,  load average: 4.48, 3.42, 4.91
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+root     3028340 Tue Nov 10 03:15:15 2026  211  0.6   6 wai-quantum     wai-quantum lab tdvp --chain heisenberg -n 100 --bond 64 --t 3
+txhw     3311900 Tue Nov 10 03:17:40 2026  106  3.5  12 landscape_devic /home/txhw/hw-target/wai-quantum-landscape/release/deps/landscape_devices-62d059165418e184 --test-threads=1
+root        1776 Fri Nov  6 12:42:07 2026  1.0  0.2   7 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+nx       4096848 Sat Nov  7 11:25:51 2026  0.2  0.3  11 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root        2287 Fri Nov  6 12:42:11 2026  0.2  0.3   8 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0  14 kswapd0         [kswapd0]
+dcharlot 2650874 Mon Nov  9 17:12:19 2026  0.2  0.1  19 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/dcharlot/forgejo-runner-gate/config.yaml
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.2   6 containerd      /usr/bin/containerd
+root         710 Fri Nov  6 12:42:05 2026  0.1  0.0   9 irq/194-iwlwifi [irq/194-iwlwifi:queue_10]
+root     3235249 Tue Nov 10 03:17:07 2026  0.1  0.0  15 kworker/u80:3-e [kworker/u80:3-events_power_efficient]
+root     2035032 Tue Nov 10 02:51:08 2026  0.1  0.0  19 kworker/u80:0-e [kworker/u80:0-events_power_efficient]
+root     1949042 Tue Nov 10 02:30:30 2026  0.1  0.0  13 kworker/u80:4-f [kworker/u80:4-flush-259:0]
+txhw     3286541 Tue Nov 10 03:17:29 2026  0.1  0.2   8 cargo           /home/txhw/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin/cargo test --locked --release --features quantum_landscape_webgpu,quantum_landscape_cuda --test landscape_devices -- --test-threads=1
+root         147 Fri Nov  6 12:41:59 2026  0.1  0.0  10 kcompactd0      [kcompactd0]
+dcharlot 1834194 Mon Nov  9 21:37:11 2026  0.1  0.0  17 python3         python3 -u /home/dcharlot/bench-scratch/quiet24-driver-c82c1e9.py --sha c82c1e96c24d6f6c292af1196cd72199b0838257 --out /home/dcharlot/bench-scratch/evidence-c82c1e9-quiet24-jetsonhub --deadline-utc 2026-11-10T21:30:00Z --cpus 8-11 --python /home/dcharlot/bench-scratch/thrml-venv/bin/python
+root     2054359 Tue Nov 10 03:00:40 2026  0.1  0.0  12 kworker/u80:8-e [kworker/u80:8-events_power_efficient]
+dcharlot    5221 Fri Nov  6 12:43:17 2026  0.1  0.1  16 forgejo-runner  /home/dcharlot/.local/bin/forgejo-runner daemon --config /home/dcharlot/forgejo-runner/config.yaml
+dcharlot    3804 Fri Nov  6 12:42:22 2026  0.0  0.5   3 gnome-shell     /usr/bin/gnome-shell
+txhw        5770 Fri Nov  6 12:43:21 2026  0.0  0.1   2 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/txhw/runner/config.yaml
