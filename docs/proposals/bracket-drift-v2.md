@@ -1,6 +1,8 @@
 # Bracket drift, version 2
 
-Proposal only. It is not applied to attempt 037 or to any published grade. The 3σ test stays as it ran.
+Superseded by rules v3, with interleaved idle in ABBA. Rules v3 scores outside the window for both sides, gives each meter its own idle bracket, and interleaves idle in ABBA. It is being implemented on `perf/large-grid`. The rule text is `bench/thrml-tsp/METHODOLOGY.md` on that branch, read here at `83dbb616cd9e5395f5f3d77f685fb146fc8a92d5`. Grid-scale trials already keep the score out of the joule window; see "What is measured, separately" in that file.
+
+This note is not applied to attempt 037 or to any published grade. The 3σ test on that receipt stays as it ran. NVML for attempt 037 is ungraded: the traces have no raw NVML idle samples, so no `regrade-v3 (per-meter bracket)` was published beside the as-measured refusal.
 
 Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload, is the energy this note is about. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit 22d3e720714c76e73389998d36e5b8159e89fe96. The drift numbers below are `baseline_drift_w` on the 300 trials of each meter in that receipt. They are not a new grade.
 

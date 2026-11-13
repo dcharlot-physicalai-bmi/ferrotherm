@@ -4,6 +4,8 @@ Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per worklo
 
 Small accuracy-suite workloads through the open 64×64 (n=4096). Not a large-grid energy claim. Meters stay separate. The open 64×64 core-domain quotient is 8.952 ± 0.762, about 9×, on that lattice only. `ising_open_4x4` is under investigation and is not a cited quotient.
 
+These tables are as measured. Scoring ran inside the metered energy window on both sides. That defect is in ferrotherm's disfavour. `jetson-hub/attempt-037/SCORING-AUDIT.md` lists the affected workloads. No cell below is recomputed.
+
 ## Intel RAPL core J/ESS
 
 | workload | size | ferrotherm core J/ESS ± combined | THRML core J/ESS ± combined | THRML / ferrotherm | status |
@@ -63,7 +65,7 @@ Small accuracy-suite workloads through the open 64×64 (n=4096). Not a large-gri
 
 ## NVML RTX 4050, joules only
 
-300 of 300 trials refused attribution. The idle bracket on these rows is the package bracket. No J/ESS.
+As measured, 300 of 300 trials refused attribution. The idle bracket on these rows is the package bracket. No J/ESS. NVML for attempt 037 is ungraded: the traces have no raw NVML idle samples, and there is no `regrade-v3 (per-meter bracket)` beside these rows.
 
 | workload | side | gross J mean | incremental J mean |
 | --- | --- | --- | --- |
