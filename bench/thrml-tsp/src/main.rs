@@ -54,16 +54,8 @@ fn spec_sha256(out: &Path) -> String {
     }
 }
 
-fn parity_design_json() -> String {
-    format!(
-        "{{\"side\": 8, \"threshold_per_site\": 0.05, \"warmup\": {}, \"draws\": {}, \"thin\": 1, \
-          \"seeds\": \"seed0 and seed0+1, the same pair for every lever\", \
-          \"pilot_pairs\": 24, \"pilot_seed_offset\": 10000, \
-          \"pilot_worst_per_site\": {{\"1024\": 5.270e-2, \"2048\": 2.174e-2, \"4096\": 1.329e-2}}, \
-          \"rule\": \"Smallest power-of-two draw count whose 24-pair pilot, warmup 400, over scalar, simd and incremental, had a worst per-site gap below 0.02. The pilot seeds are seed0+10000 and are not the gate seeds. The 0.05 line is not moved. Side 8 uses at least this warmup and draws.\"}}",
-        spec::GRID_SIDE8_PARITY_WARMUP,
-        spec::GRID_SIDE8_PARITY_DRAWS
-    )
+fn parity_design_json() -> &'static str {
+    include_str!("side8_parity.json")
 }
 
 fn main() {
@@ -74,7 +66,7 @@ fn main() {
             eprintln!(
                 "usage: ferrotherm-thrml-bench --out DIR [--trials N] [--warmup N] [--draws N] \
                  [--python PY] [--python-b PY] [--skip-thrml] [--contended] [--quiet-gate] [--scale] \
-                 [--grid-scale] [--profile] [--profile-sweeps N] [--lever NAME] [--threads N] \
+                 [--grid-scale] [--grid-energy] [--profile] [--profile-sweeps N] [--lever NAME] [--threads N] \
                  [--sides LIST] [--device auto|cpu|cuda] [--cpus LIST] [--lock PATH] \
                  [--lock-wait-s SECONDS] [--other-core-mean F] [--other-core-max F] \
                  [--foreign-cpu-mean F] [--foreign-cpu-max F]"
@@ -228,7 +220,38 @@ fn main() {
     let order = energy::phase_order(held);
     let spec_path = args.out.join("spec.txt");
     let rule = args.window_rule();
-    let (energy, grade, accuracy) = match order {
+    let fabrics = if args.grid_energy {
+        vec![
+            (ferrotherm::grid::Levers::SCALAR, true),
+            (ferrotherm::grid::Levers::COMBINED, false),
+        ]
+    } else {
+        vec![(args.levers, args.gpu)]
+    };
+    let (energy, grade, accuracy) = if args.grid_energy {
+        eprintln!(
+            "grid-energy: ferrotherm-gpu and cpu combined, each against THRML A and B, JAX CUDA"
+        );
+        let (energy, grade) = energy_section(
+            &mut probe,
+            &work,
+            args.contended,
+            args.trials,
+            &args.python,
+            &args.python_b,
+            &args.runner,
+            &spec_path,
+            !args.skip_thrml,
+            &args.device,
+            &args.cpus,
+            held,
+            &rule,
+            &fabrics,
+            args.threads,
+        );
+        (energy, grade, accuracy_not_run())
+    } else {
+        match order {
         ["energy", "accuracy"] => {
             eprintln!("phase order: energy, then accuracy");
             let (energy, grade) = energy_section(
@@ -245,8 +268,8 @@ fn main() {
                 &args.cpus,
                 held,
                 &rule,
-                args.grid_choice(),
-                args.gpu,
+                &fabrics,
+                args.threads,
             );
             let accuracy = run_accuracy(
                 &work,
@@ -292,12 +315,13 @@ fn main() {
                 &args.cpus,
                 held,
                 &rule,
-                args.grid_choice(),
-                args.gpu,
+                &fabrics,
+                args.threads,
             );
             (energy, grade, accuracy)
         }
         other => panic!("phase_order returned {other:?}"),
+        }
     };
     let accuracy_grade = if accuracy.done.is_empty() {
         "not_run"
@@ -360,7 +384,7 @@ fn main() {
         } else {
             json_str(&accuracy.thrml_b_note)
         },
-        design = if args.grid_scale { parity_design_json() } else { "null".into() },
+        design = if args.grid_scale { parity_design_json() } else { "null" },
     );
     let report = stamped_receipt(&spec_hash, &report);
     fs::write(args.out.join("report.json"), &report).expect("write report");
@@ -368,6 +392,18 @@ fn main() {
     let parity_failed = accuracy.done.iter().any(|row| parity_blocks_exit(&row.4));
     if !accuracy.thrml_ok || !accuracy.thrml_b_ok || parity_failed {
         std::process::exit(1);
+    }
+}
+
+fn accuracy_not_run() -> AccuracyRun {
+    AccuracyRun {
+        done: Vec::new(),
+        thrml_ok: true,
+        thrml_note: "accuracy was not run. This is a grid-energy receipt.".into(),
+        thrml_meta: String::new(),
+        thrml_b_ok: true,
+        thrml_b_note: "accuracy was not run. This is a grid-energy receipt.".into(),
+        thrml_b_meta: String::new(),
     }
 }
 
@@ -849,6 +885,8 @@ struct Args {
     quiet_gate: bool,
     scale: bool,
     grid_scale: bool,
+    /// Quiet energy only: GPU and CPU combined, each against THRML A and B.
+    grid_energy: bool,
     profile: bool,
     profile_sweeps: usize,
     levers: ferrotherm::grid::Levers,
@@ -878,6 +916,7 @@ impl Args {
         let mut quiet_gate = false;
         let mut scale = false;
         let mut grid_scale = false;
+        let mut grid_energy = false;
         let mut profile = false;
         let mut profile_sweeps = 4usize;
         let mut levers = ferrotherm::grid::Levers::SCALAR;
@@ -909,6 +948,11 @@ impl Args {
                 "--quiet-gate" => quiet_gate = true,
                 "--scale" => scale = true,
                 "--grid-scale" => grid_scale = true,
+                "--grid-energy" => {
+                    grid_energy = true;
+                    grid_scale = true;
+                    quiet_gate = true;
+                }
                 "--profile" => profile = true,
                 "--profile-sweeps" => {
                     profile_sweeps =
@@ -997,6 +1041,37 @@ impl Args {
         if profile && !grid_scale {
             return Err("--profile is the no-energy sub-mode of --grid-scale".into());
         }
+        if grid_energy && profile {
+            return Err("--grid-energy measures joules. --profile does not.".into());
+        }
+        if grid_energy && contended {
+            return Err("--grid-energy is a quiet-gate run. --contended is a different grade.".into());
+        }
+        if grid_energy && device != "cuda" {
+            return Err(
+                "--grid-energy pairs against THRML on JAX CUDA. Pass --device cuda. \
+                 CPU is not labelled CUDA."
+                    .into(),
+            );
+        }
+        if grid_energy && python_b.is_empty() {
+            return Err(
+                "--grid-energy needs --python-b for baseline B. A is not used in its place.".into(),
+            );
+        }
+        if grid_energy && !cfg!(feature = "gpu") {
+            return Err(
+                "--grid-energy includes the GPU lever. Rebuild with --features gpu.".into(),
+            );
+        }
+        if grid_energy && sides.is_empty() {
+            sides = spec::GRID_ENERGY_SIDES.to_vec();
+        }
+        if grid_energy && trials < 5 {
+            return Err(
+                "--grid-energy needs at least 5 trials so a 95% interval exists".into(),
+            );
+        }
         if grid_scale && !profile && cpus.is_empty() {
             return Err(
                 "--cpus is required for a grid-scale energy run. There is no default list. \
@@ -1037,6 +1112,7 @@ impl Args {
             quiet_gate,
             scale,
             grid_scale,
+            grid_energy,
             profile,
             profile_sweeps,
             levers,
@@ -1889,8 +1965,8 @@ fn energy_section(
     pinned: &[usize],
     preflight_held: bool,
     rule: &energy::TrialWindowRule,
-    grid: Option<ft::GridChoice>,
-    gpu: bool,
+    fabrics: &[(ferrotherm::grid::Levers, bool)],
+    threads: usize,
 ) -> (String, &'static str) {
     let poll = if contended {
         poll_quiet(&[ferrotherm::host::load_average()])
@@ -1995,7 +2071,6 @@ fn energy_section(
     }
     // THRML is not started until the first arm sample, inside that trial window.
     // A and B are separate pairings. Their ferrotherm rows do not share a summary.
-    let _ = (&grid, gpu);
     let mut slot_a = ThrmlSlot {
         session: None,
         side: spec::THRML_A_SIDE,
@@ -2103,6 +2178,8 @@ fn energy_section(
                 slot_b.restart(&one);
             }
         }
+        for (fi, &(levers, gpu_on)) in fabrics.iter().enumerate() {
+            GRID_CHOICE.with(|c| c.set((levers, threads, gpu_on)));
         for pass in 0..2 {
             let (pairing, other_side, slot) = match pass {
                 0 => ("A", spec::THRML_A_SIDE, &mut slot_a),
@@ -2113,6 +2190,7 @@ fn energy_section(
                 continue;
             }
             for pair in 0..trials {
+                let trial_no = fi * trials + pair;
                 let settle_samples = match settle_for_bracket(contended) {
                     Ok(samples) => samples,
                     Err(reason) => {
@@ -2240,7 +2318,7 @@ fn energy_section(
                         let mut row = EnergyTrial::from_parts(
                             w.id,
                             side,
-                            pair,
+                            trial_no,
                             measured.repetitions,
                             measured.counter_updates,
                             measured.window_seconds,
@@ -2251,7 +2329,7 @@ fn energy_section(
                             grade,
                             rank,
                             pairing,
-                            fabric_name(side, pairing, device, gpu),
+                            fabric_name(side, pairing, device, gpu_on),
                         );
                         row.idle_before_w = Some(if core_row {
                             before_b.core_watts.unwrap_or(f64::NAN)
@@ -2333,16 +2411,23 @@ fn energy_section(
                                 phase_refused = measured.trial_refusal.clone();
                             }
                         }
+                        if row.trial_refusal.starts_with("THRML_LIMIT") {
+                            row.joules.attributable = false;
+                            row.joules.evidence = "thrml_limit";
+                            row.joules.note = row.trial_refusal.clone();
+                            row.joules_per_ess = None;
+                        }
                         rows.push(row);
                     }
                 }
                 stamp_pairs(
-                    &mut rows, w.id, pair, pairing, sigma, drift_ok, core_sigma, core_ok,
+                    &mut rows, w.id, trial_no, pairing, sigma, drift_ok, core_sigma, core_ok,
                 );
                 if !phase_refused.is_empty() {
                     break 'pairs;
                 }
             }
+        }
         }
     }
     if !phase_refused.is_empty() && !contended {
@@ -2356,6 +2441,11 @@ fn energy_section(
     if device == "cuda" && probe.nvml_note.contains("NOT_SUPPORTED") {
         note.push(' ');
         note.push_str(&probe.nvml_note);
+    }
+    if fabrics.len() > 1 {
+        note.push_str(
+            " Grid-energy runs ferrotherm-gpu and ferrotherm-cpu combined as separate fabrics, each paired with THRML A and with THRML B. NVML total energy, RAPL package and RAPL core are separate meters and are not pooled. J/ESS is absent when that meter is not attributable. THRML_LIMIT is THRML's memory limit, not a ferrotherm result.",
+        );
     }
     note.push_str(
         " THRML, when it runs, is started inside the first THRML trial window. Its CPU is the B arm, not foreign load, and it is not subtracted from joules.",
@@ -4078,6 +4168,17 @@ mod tests {
     }
 
     #[test]
+    fn the_side8_receipt_keeps_the_incremental_failure_and_the_pilot_pair_that_missed() {
+        let text = include_str!("side8_parity.json");
+        assert_eq!(text.matches("\"pair\":").count(), 216);
+        assert!(text.contains("\"lever\":\"incremental\",\"design\":\"old\""));
+        assert!(text.contains("0.050048828125"));
+        assert!(text.contains("\"passed\":false"));
+        assert!(text.contains("\"draws\":1024,\"lever\":\"scalar\",\"pair\":7"));
+        assert!(text.contains("0.052703857422"));
+    }
+
+    #[test]
     fn grid_scale_flags_name_what_they_refuse() {
         let err = match super::Args::parse(
             ["--out", "out", "--scale", "--grid-scale"]
@@ -4109,6 +4210,34 @@ mod tests {
             Ok(_) => panic!("unknown lever was accepted"),
         };
         assert!(err.contains("cuda"), "{err}");
+        let err = match super::Args::parse(
+            ["--out", "out", "--grid-energy", "--device", "cpu", "--cpus", "0", "--python-b", "b"]
+                .into_iter()
+                .map(str::to_string),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("grid-energy accepted a CPU device"),
+        };
+        assert!(err.contains("cuda"), "{err}");
+        let parsed = super::Args::parse(
+            [
+                "--out", "out", "--grid-energy", "--device", "cuda", "--cpus", "0",
+                "--python-b", "b",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+        if cfg!(feature = "gpu") {
+            let ok = parsed.expect("grid-energy");
+            assert!(ok.quiet_gate && ok.grid_scale && !ok.profile);
+            assert_eq!(ok.sides, super::spec::GRID_ENERGY_SIDES);
+        } else {
+            let err = match parsed {
+                Err(err) => err,
+                Ok(_) => panic!("grid-energy without the gpu feature was accepted"),
+            };
+            assert!(err.contains("gpu"), "{err}");
+        }
         let err = match super::Args::parse(
             ["--out", "out", "--grid-scale", "--sides", "7"]
                 .into_iter()

@@ -16,7 +16,10 @@ A grid-scale chain on that shader is one submission: `wall_ns_per_sweep` on a
 THRML row excludes JIT, and a CUDA allocator failure is `THRML_LIMIT oom`.
 `parallel` caps itself at 4 threads below side 512. Side 8 parity uses warmup
 400 and 4096 draws so the unchanged 0.05 two-seed line has the pilot behind it.
-Each receipt carries `spec_sha256` and `receipt_sha256`.
+Each receipt carries `spec_sha256` and `receipt_sha256`. `--grid-energy` is the
+quiet large-grid energy run: GPU and CPU combined, each against THRML A and B
+on JAX CUDA, sides 64 to 4096, with NVML, RAPL package and RAPL core kept
+separate.
 
 ### The committed wasm was three weeks behind its own ABI, and two pages called the old one
 
