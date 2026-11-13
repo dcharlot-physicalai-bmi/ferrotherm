@@ -1,0 +1,11 @@
+2026-11-10T08:27:12.284922+00:00 driver: attempt 36 utc_start 2026-11-10T08:27:12.284922+00:00 repo_head c82c1e96c24d6f6c292af1196cd72199b0838257
+2026-11-10T08:27:12.312898+00:00 pinned cpus: 8,9,10,11
+2026-11-10T08:27:17.442923+00:00 wall: no macmon and no INA3221 rail
+2026-11-10T08:27:17.442936+00:00 rapl: package-0 (package)
+2026-11-10T08:27:17.442939+00:00 rapl core: core subdomain, reported separately from package
+2026-11-10T08:27:17.442941+00:00 perf: not opened; RAPL powercap is the CPU counter
+2026-11-10T08:27:17.442943+00:00 nvml: 1 device(s): NVIDIA GeForce RTX 4050 Laptop GPU via nvmlDeviceGetTotalEnergyConsumption
+2026-11-10T08:27:17.442945+00:00 load1: Some(7.52) quiet: false
+2026-11-10T08:27:17.442947+00:00 quiet-gate preflight: 60 s
+2026-11-10T08:28:17.469643+00:00 quiet gate refused the run; max load1 Some(7.16)
+2026-11-10T08:28:17.472329+00:00 driver: attempt 36 utc_end 2026-11-10T08:28:17.472329+00:00 exit 1

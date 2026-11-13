@@ -1,0 +1,22 @@
+Tue Nov 10 12:16:36 AM UTC 2026
+ 19:16:36 up 3 days,  6:34,  3 users,  load average: 8.48, 8.44, 9.98
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+root     3422972 Mon Nov  9 19:16:26 2026  338  5.7  14 rustc           /root/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin/rustc --crate-name wai_quantum --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C embed-bitcode=no --cfg feature="default" --cfg feature="providers" --cfg feature="service" --cfg feature="wasmq" --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values("cuda", "default", "hip", "metal", "opencl", "providers", "service", "wasmq")) -C metadata=eb6ccf0b0d688280 -C extra-filename=-7c62ae1c307d01f1 --out-dir /tmp/wai-quantum-py/target/release/deps -C strip=debuginfo -L dependency=/tmp/wai-quantum-py/target/release/deps --extern clap=/tmp/wai-quantum-py/target/release/deps/libclap-ea061ceda34beb77.rlib --extern clap_complete=/tmp/wai-quantum-py/target/release/deps/libclap_complete-ab28bf5f9099de3a.rlib --extern getrandom=/tmp/wai-quantum-py/target/release/deps/libgetrandom-898236ee65570365.rlib --extern serde_json=/tmp/wai-quantum-py/target/release/deps/libserde_json-d3f7a1bfb4334215.rlib --extern ureq=/tmp/wai-quantum-py/target/release/deps/libureq-43673c7325134f9d.rlib --extern wai_quantum=/tmp/wai-quantum-py/target/release/deps/libwai_quantum-3472c679dfa24ddd.rlib --extern wai_quantum_cli=/tmp/wai-quantum-py/target/release/deps/libwai_quantum_cli-f828e51aef31b901.rlib --extern wai_quantum_qpu=/tmp/wai-quantum-py/target/release/deps/libwai_quantum_qpu-3c33f02713446790.rlib --extern wai_wasmq=/tmp/wai-quantum-py/target/release/deps/libwai_wasmq-58ff52569f537d26.rlib -L native=/tmp/wai-quantum-py/target/release/build/ring-e77a7000ae99ea89/out -L native=/tmp/wai-quantum-py/target/release/build/blake3-8acbd71b57be5c73/out -L native=/tmp/wai-quantum-py/target/release/build/blake3-8acbd71b57be5c73/out -L native=/tmp/wai-quantum-py/target/release/build/wasmtime-59999105fd1a920e/out
+root     3423271 Mon Nov  9 19:16:33 2026 28.1  0.4  13 cargo           cargo test --locked --release --features full --lib -- engine::verdict:: engine::repair:: engine::refusal:: engine::job::
+root     3423265 Mon Nov  9 19:16:33 2026  1.0  0.0  15 bash            bash --noprofile --norc -e -o pipefail /var/run/act/workflow/2.sh
+root        1776 Fri Nov  6 12:42:07 2026  1.0  0.2  12 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+root     3417785 Mon Nov  9 19:14:48 2026  0.8  0.0  13 cargo           /root/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin/cargo build --locked --release
+dcharlot 2650874 Mon Nov  9 17:12:19 2026  0.5  0.0  19 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/dcharlot/forgejo-runner-gate/config.yaml
+nx       4096848 Sat Nov  7 11:25:51 2026  0.2  0.3  12 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root        2287 Fri Nov  6 12:42:11 2026  0.2  0.4   2 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root     2652202 Mon Nov  9 17:12:30 2026  0.2  0.0  18 kworker/u80:6-e [kworker/u80:6-events_power_efficient]
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0  13 kswapd0         [kswapd0]
+root     3417219 Mon Nov  9 19:14:34 2026  0.2  0.0  17 kworker/u81:0-r [kworker/u81:0-rb_allocator]
+root     3398862 Mon Nov  9 19:06:53 2026  0.2  0.0  16 kworker/u81:1-r [kworker/u81:1-rb_allocator]
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.1   6 containerd      /usr/bin/containerd
+root         710 Fri Nov  6 12:42:05 2026  0.1  0.0   9 irq/194-iwlwifi [irq/194-iwlwifi:queue_10]
+root     3398497 Mon Nov  9 19:06:47 2026  0.1  0.0   5 kworker/u80:1-e [kworker/u80:1-ext4-rsv-conversion]
+root     2842030 Mon Nov  9 17:33:19 2026  0.1  0.0   7 kworker/u80:12- [kworker/u80:12-writeback]
+root         147 Fri Nov  6 12:41:59 2026  0.1  0.0  10 kcompactd0      [kcompactd0]
+root     3422545 Mon Nov  9 19:16:18 2026  0.1  0.0  13 tail            tail -f /dev/null
+root     3422520 Mon Nov  9 19:16:18 2026  0.1  0.0  13 containerd-shim /usr/bin/containerd-shim-runc-v2 -namespace moby -id 59fe25ca35dae056a9396f08cc74d18c65e0d27f929bd6f78cea9df923de8af0 -address /run/containerd/containerd.sock

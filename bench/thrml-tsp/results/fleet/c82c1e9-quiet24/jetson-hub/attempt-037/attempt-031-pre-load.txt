@@ -1,0 +1,22 @@
+Tue Nov 10 07:37:12 AM UTC 2026
+ 02:37:12 up 3 days, 13:55,  3 users,  load average: 3.10, 7.14, 10.14
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+root     1956135 Tue Nov 10 02:35:38 2026  206  1.6  14 zstdmt          zstdmt
+root     1956133 Tue Nov 10 02:35:38 2026 43.8  0.2  13 tar             /usr/bin/tar --posix -cf cache.tzst --exclude cache.tzst -P -C /workspace/Transaction-Science/invisible-network --files-from manifest.txt --use-compress-program zstdmt
+root        1776 Fri Nov  6 12:42:07 2026  1.0  0.1  12 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+nx       4096848 Sat Nov  7 11:25:51 2026  0.3  0.3  17 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root        2287 Fri Nov  6 12:42:11 2026  0.2  0.2   8 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0  14 kswapd0         [kswapd0]
+dcharlot 2650874 Mon Nov  9 17:12:19 2026  0.2  0.0  19 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/dcharlot/forgejo-runner-gate/config.yaml
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.1   6 containerd      /usr/bin/containerd
+root         710 Fri Nov  6 12:42:05 2026  0.1  0.0   9 irq/194-iwlwifi [irq/194-iwlwifi:queue_10]
+root     1949042 Tue Nov 10 02:30:30 2026  0.1  0.0  12 kworker/u80:4-e [kworker/u80:4-events_unbound]
+dcharlot 1834194 Mon Nov  9 21:37:11 2026  0.1  0.0  18 python3         python3 -u /home/dcharlot/bench-scratch/quiet24-driver-c82c1e9.py --sha c82c1e96c24d6f6c292af1196cd72199b0838257 --out /home/dcharlot/bench-scratch/evidence-c82c1e9-quiet24-jetsonhub --deadline-utc 2026-11-10T21:30:00Z --cpus 8-11 --python /home/dcharlot/bench-scratch/thrml-venv/bin/python
+root         147 Fri Nov  6 12:41:59 2026  0.1  0.0   4 kcompactd0      [kcompactd0]
+root     1725462 Tue Nov 10 01:17:16 2026  0.1  0.0  17 kworker/u80:7-e [kworker/u80:7-ext4-rsv-conversion]
+dcharlot    5221 Fri Nov  6 12:43:17 2026  0.1  0.0  16 forgejo-runner  /home/dcharlot/.local/bin/forgejo-runner daemon --config /home/dcharlot/forgejo-runner/config.yaml
+dcharlot    3804 Fri Nov  6 12:42:22 2026  0.0  0.5   2 gnome-shell     /usr/bin/gnome-shell
+txhw        5770 Fri Nov  6 12:43:21 2026  0.0  0.0   2 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/txhw/runner/config.yaml
+root         699 Fri Nov  6 12:42:05 2026  0.0  0.0  19 irq/184-iwlwifi [irq/184-iwlwifi:default_queue]
+root     1956115 Tue Nov 10 02:35:38 2026  0.0  0.0  12 MainThread      node /var/run/act/actions/b9/5106d0648351fb758e44e004fe8587ae12d4a0da0a0fdd9b597c1d1e0c1487/dist/save/index.js
+root          15 Fri Nov  6 12:41:59 2026  0.0  0.0  12 rcu_preempt     [rcu_preempt]

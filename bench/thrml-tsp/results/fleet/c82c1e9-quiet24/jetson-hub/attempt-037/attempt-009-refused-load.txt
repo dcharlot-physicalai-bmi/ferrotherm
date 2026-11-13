@@ -1,0 +1,22 @@
+Tue Nov 10 01:06:01 AM UTC 2026
+ 20:06:01 up 3 days,  7:24,  3 users,  load average: 2.41, 3.88, 4.38
+USER         PID                  STARTED %CPU %MEM PSR COMMAND         COMMAND
+txhw      284656 Mon Nov  9 19:47:30 2026  110  7.6  14 webgpu_member-8 /home/txhw/hw-target/wai-quantum/debug/deps/webgpu_member-86fefc6331b43000 --nocapture --test-threads=1
+dcharlot  336646 Mon Nov  9 20:06:01 2026  100  0.0   2 ps              ps -eo user,pid,lstart,pcpu,pmem,psr,comm,args --sort=-pcpu
+root      336340 Mon Nov  9 20:06:00 2026 96.2  0.5   5 git             /usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+root      336552 Mon Nov  9 20:06:01 2026 95.0  0.3   7 git             /usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+dcharlot  336437 Mon Nov  9 20:06:00 2026  4.7  0.1  12 git-remote-http /usr/lib/git-core/git-remote-https origin https://data.forgejo.org/actions/checkout
+root      336342 Mon Nov  9 20:06:00 2026  1.8  0.0  16 tail            tail -f /dev/null
+root      336311 Mon Nov  9 20:06:00 2026  1.8  0.0  12 containerd-shim /usr/bin/containerd-shim-runc-v2 -namespace moby -id b8151c9774fddfa8d45c45b4d477199135aab8b35e60818c8616274c44cfdf21 -address /run/containerd/containerd.sock
+root      335427 Mon Nov  9 20:05:53 2026  1.4  0.4   1 MainThread      node /var/run/act/actions/40/8523d2a4bf60029ba135c624ea2fcf71ecda66cd698984341d158689091fab/dist/index.js
+root        1776 Fri Nov  6 12:42:07 2026  1.0  0.3  15 tailscaled      /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+root      334945 Mon Nov  9 20:05:41 2026  0.5  0.4   2 MainThread      node /var/run/act/actions/3e/ea143b4f418c01f5c95b003db6aac968f1bfc998b9c0125b4e09190cc03cf3/dist/index.js
+root      334423 Mon Nov  9 20:05:38 2026  0.4  0.0   0 kworker/u80:8-e [kworker/u80:8-ext4-rsv-conversion]
+dcharlot 2650874 Mon Nov  9 17:12:19 2026  0.4  0.1  19 forgejo-runner- /usr/local/bin/forgejo-runner-hw daemon --config /home/dcharlot/forgejo-runner-gate/config.yaml
+dcharlot 3334030 Mon Nov  9 18:35:29 2026  0.4  0.0  12 python3         python3 -u /home/dcharlot/bench-scratch/quiet24-driver-c82c1e9.py --sha c82c1e96c24d6f6c292af1196cd72199b0838257 --out /home/dcharlot/bench-scratch/evidence-c82c1e9-quiet24-jetsonhub --deadline-utc 2026-11-10T21:30:00Z --cpus 8-11 --python /home/dcharlot/bench-scratch/thrml-venv/bin/python
+nx       4096848 Sat Nov  7 11:25:51 2026  0.2  0.3   0 nxserver.bin    /usr/NX/bin/nxserver.bin --daemon
+root        2287 Fri Nov  6 12:42:11 2026  0.2  0.4   2 dockerd         /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root         182 Fri Nov  6 12:42:00 2026  0.2  0.0  12 kswapd0         [kswapd0]
+root      335289 Mon Nov  9 20:05:52 2026  0.2  0.0  12 tail            tail -f /dev/null
+root      320943 Mon Nov  9 19:56:51 2026  0.2  0.0   4 kworker/u81:1-r [kworker/u81:1-rb_allocator]
+root        1807 Fri Nov  6 12:42:07 2026  0.1  0.2   6 containerd      /usr/bin/containerd

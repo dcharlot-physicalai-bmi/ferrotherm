@@ -1,0 +1,22 @@
+{
+  "schema": "ferrotherm-thrml-bench/1",
+  "evidence_grade": "load_gated",
+  "phases": {"preflight": {"grade": "load_gated"}, "energy": {"grade": "not_run"}, "accuracy": {"grade": "not_run"}},
+  "host_lock": {"path": "/tmp/bmi-energy.lock", "acquired_utc": "2026-11-09T23:35:35.851Z", "released_utc": "2026-11-09T23:36:38.428Z", "wait_s": 0.000, "holder_pid": 3334040, "held": true, "reason": null},
+  "provenance": {
+    "evidence_grade": "load_gated",
+    "git_rev": "c82c1e96c24d6f6c292af1196cd72199b0838257",
+    "git_dirty": false,
+    "host_cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+    "os": "linux",
+    "rustc": "unknown",
+    "thrml_pin": "thrml==0.1.4",
+    "thrml_wheel_sha256": "6e2f38cecb562589d230ca063b5fcb5d2a6533201e37bb70c1f2dac4a63a0858",
+    "load1_at_start": 30.9300,
+    "what_this_machine_measured": "wall: no macmon and no INA3221 rail. nvml: 1 device(s): NVIDIA GeForce RTX 4050 Laptop GPU via nvmlDeviceGetTotalEnergyConsumption.",
+    "what_still_needs_fleet_hardware": "A quiet machine with a live RAPL domain (or a whole-board rail) for CPU joules; an NVIDIA GPU with libnvidia-ml.so.1 for GPU joules; an Apple silicon host with macmon on PATH for the SoC counter. None of those counters were a substitute for the others, and none of them is a Z1 device. BMI fleet hardware is what would meter a sustained run and, separately, any future silicon."
+  },
+  "quiet_gate": {"seconds": 60.010, "threshold": 2, "held": false, "evidence_grade": "load_gated", "max_load1": 3.09300000e1, "busy_readable": true, "load1": [30.9300, 30.9300, 30.9300, 30.5300, 30.5300, 30.5300, 30.5300, 30.5300, 30.1700, 30.1700, 30.1700, 30.1700, 30.1700, 29.8300, 29.8300, 29.8300, 29.8300, 29.8300, 29.5300, 29.5300, 29.5300, 29.5300, 29.5300, 29.9700, 29.9700, 29.9700, 29.9700, 29.9700, 29.4900, 29.4900, 29.4900, 29.4900, 29.4900, 29.6100, 29.6100, 29.6100, 29.6100, 29.6100, 29.4000, 29.4000, 29.4000, 29.4000, 29.4000, 29.4500, 29.4500, 29.4500, 29.4500, 29.4500, 28.9300, 28.9300, 28.9300, 28.9300, 28.9300, 28.4600, 28.4600, 28.4600, 28.4600, 28.4600, 28.1800, 28.1800, 28.1800], "other_core_busy": [{"cpu": 0, "busy": 0.985495}, {"cpu": 1, "busy": 0.979990}, {"cpu": 2, "busy": 0.978326}, {"cpu": 3, "busy": 0.992332}, {"cpu": 4, "busy": 0.981333}, {"cpu": 5, "busy": 0.994666}, {"cpu": 6, "busy": 0.986664}, {"cpu": 7, "busy": 0.991668}, {"cpu": 12, "busy": 0.989163}, {"cpu": 13, "busy": 0.991832}, {"cpu": 14, "busy": 0.993835}, {"cpu": 15, "busy": 0.989667}, {"cpu": 16, "busy": 0.990667}, {"cpu": 17, "busy": 0.992501}, {"cpu": 18, "busy": 0.995333}, {"cpu": 19, "busy": 0.994833}]},
+  "energy": null,
+  "workloads": []
+}
