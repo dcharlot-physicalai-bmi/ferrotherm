@@ -12,7 +12,10 @@ fn rejects(src: &str, line: usize, needle: &str) {
     match Program::from_ftp(src) {
         Ok(_) => panic!("spec requires rejection of:\n{src}"),
         Err(e) => {
-            assert_eq!(e.line, line, "spec requires line {line} for:\n{src}\ngot: {e}");
+            assert_eq!(
+                e.line, line,
+                "spec requires line {line} for:\n{src}\ngot: {e}"
+            );
             assert!(
                 e.message.to_lowercase().contains(&needle.to_lowercase()),
                 "message should mention {needle:?}, got: {e}"
@@ -54,7 +57,11 @@ fn vector_6_an_unknown_directive_is_rejected() {
 
 #[test]
 fn vector_7_an_unknown_encoding_is_rejected() {
-    rejects("ftp 1\nspins 4\nencode 0 3 trinary\n", 3, "unknown encoding");
+    rejects(
+        "ftp 1\nspins 4\nencode 0 3 trinary\n",
+        3,
+        "unknown encoding",
+    );
 }
 
 #[test]
@@ -82,7 +89,10 @@ fn vector_10_the_documented_example_parses_and_has_ground_energy_minus_three() {
     assert_eq!(p.schedule.len(), 2);
     let g = p.to_graph().unwrap();
     let e = ferrotherm::oracle::Solver::solve(&ferrotherm::oracle::Exhaustive, &g).1;
-    assert_eq!(e, -3.0, "an odd antiferromagnetic ring cannot do better than -3");
+    assert_eq!(
+        e, -3.0,
+        "an odd antiferromagnetic ring cannot do better than -3"
+    );
 }
 
 #[test]
@@ -90,12 +100,23 @@ fn vector_11_repeated_biases_accumulate() {
     let p = Program::from_ftp("ftp 1\nspins 4\nbias 2 0.1\nbias 2 0.1\n").unwrap();
     let g = p.to_graph().unwrap();
     // the meaning accumulates, whatever the document's line structure
-    assert!((g.h[2] - 0.2).abs() < 1e-12, "biases must sum, got {}", g.h[2]);
+    assert!(
+        (g.h[2] - 0.2).abs() < 1e-12,
+        "biases must sum, got {}",
+        g.h[2]
+    );
 }
 
 #[test]
 fn vector_12_awkward_floats_round_trip_bit_identically() {
-    let awkward = [0.1, 1.0 / 3.0, 1e-300, 1e300, core::f64::consts::PI, -2.220446049250313e-16];
+    let awkward = [
+        0.1,
+        1.0 / 3.0,
+        1e-300,
+        1e300,
+        core::f64::consts::PI,
+        -2.220446049250313e-16,
+    ];
     let mut src = format!("ftp 1\nspins {}\n", awkward.len() + 1);
     for (i, w) in awkward.iter().enumerate() {
         src.push_str(&format!("factor {w} {i} {}\n", i + 1));
@@ -114,8 +135,15 @@ fn vector_13_comments_and_blank_lines_do_not_change_the_digest() {
     let clean = "ftp 1\nspins 5\nfactor -1 0 1\nfactor -1 1 2\nstage 0.05 40 1 1\n";
     let noisy = "# a program\n\nftp 1\n\n  spins 5   # five spins\nfactor -1 0 1\n\n\
                  factor -1 1 2\nstage 0.05 40 1 1\n\n# end\n";
-    let (a, b) = (Program::from_ftp(clean).unwrap(), Program::from_ftp(noisy).unwrap());
-    assert_eq!(a.digest(), b.digest(), "comments must not change the digest");
+    let (a, b) = (
+        Program::from_ftp(clean).unwrap(),
+        Program::from_ftp(noisy).unwrap(),
+    );
+    assert_eq!(
+        a.digest(),
+        b.digest(),
+        "comments must not change the digest"
+    );
     assert_eq!(a, b);
 }
 

@@ -55,14 +55,20 @@ fn main() {
     // the nodes actually are.
     let dials: [(&str, Option<usize>); 2] = [("cheap", None), ("sdp d12", Some(12))];
     println!("branch-and-bound reach, node budget {BUDGET}, tabu incumbent, 3 seeds per size\n");
-    println!("  {:>7} {:>7} {:>6} {:>7} {:>14} {:>9} {:>12} {:>10}",
-             "family", "spins", "deg", "bound", "median nodes", "proved", "sdp fired", "median s");
+    println!(
+        "  {:>7} {:>7} {:>6} {:>7} {:>14} {:>9} {:>12} {:>10}",
+        "family", "spins", "deg", "bound", "median nodes", "proved", "sdp fired", "median s"
+    );
     let mut dirty: Option<String> = None;
 
     for (family, degree) in [("sparse", 6.0f64), ("dense", 0.0)] {
         let mut n = 16usize;
         loop {
-            let p = if degree > 0.0 { (degree / (n - 1) as f64).min(1.0) } else { 0.5 };
+            let p = if degree > 0.0 {
+                (degree / (n - 1) as f64).min(1.0)
+            } else {
+                0.5
+            };
             let mean_deg = 2.0 * instance(n, p, 0).n_edges as f64 / n as f64;
             let mut best_proved = 0usize;
             for (dial, sdp_depth) in dials {
@@ -75,16 +81,24 @@ fn main() {
                     let g = instance(n, p, seed);
                     let inc = tabu::search(
                         &g,
-                        &tabu::Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000) , start: None },
+                        &tabu::Params {
+                            iterations: 20_000,
+                            tenure: 0,
+                            restart_after: Some(2_000),
+                            start: None,
+                        },
                         seed,
                     );
                     let (out, t) = Timing::around(|| {
-                        branch::solve(&g, &branch::Params {
-                            max_nodes: BUDGET,
-                            incumbent: Some(inc.state.clone()),
-                            sdp_depth,
-                            ..branch::Params::default()
-                        })
+                        branch::solve(
+                            &g,
+                            &branch::Params {
+                                max_nodes: BUDGET,
+                                incumbent: Some(inc.state.clone()),
+                                sdp_depth,
+                                ..branch::Params::default()
+                            },
+                        )
                     });
                     nodes.push(out.nodes);
                     secs.push(t.seconds);
@@ -109,19 +123,25 @@ fn main() {
                 } else {
                     format!("{bit}/{fired}")
                 };
-                println!("  {family:>7} {n:>7} {mean_deg:>6.1} {dial:>7} {:>14} {proved:>6}/3 {sdp:>12} {clock}",
-                         nodes[1]);
+                println!(
+                    "  {family:>7} {n:>7} {mean_deg:>6.1} {dial:>7} {:>14} {proved:>6}/3 {sdp:>12} {clock}",
+                    nodes[1]
+                );
                 best_proved = best_proved.max(proved);
             }
             // Stop at the first size NEITHER dial can prove for a majority of seeds: past that the
             // numbers are about the budget rather than about the solver.
             if best_proved < 2 {
-                println!("  {family:>7} stops here -- neither bound proved a majority at {n} spins\n");
+                println!(
+                    "  {family:>7} stops here -- neither bound proved a majority at {n} spins\n"
+                );
                 break;
             }
             n += 4;
             if n > 96 {
-                println!("  {family:>7} still proving at 96 spins; raise the ceiling to see more\n");
+                println!(
+                    "  {family:>7} still proving at 96 spins; raise the ceiling to see more\n"
+                );
                 break;
             }
         }
@@ -130,9 +150,15 @@ fn main() {
     if let Some(c) = &dirty {
         println!("NOTE ON THE `median s` COLUMN: {c}\n");
     }
-    println!("READING: the cheap bound is `decoupled` on the residual, and it charges for every edge");
-    println!("with both ends still FREE. A sparse graph has O(n) of those, so a few fixings retire");
-    println!("most of them and the bound becomes informative early; a dense one has O(n^2), so the");
+    println!(
+        "READING: the cheap bound is `decoupled` on the residual, and it charges for every edge"
+    );
+    println!(
+        "with both ends still FREE. A sparse graph has O(n) of those, so a few fixings retire"
+    );
+    println!(
+        "most of them and the bound becomes informative early; a dense one has O(n^2), so the"
+    );
     println!("root bound sits far below the optimum and stays loose for many levels. That is why");
     println!("density costs so much more here than node count does.");
     println!();

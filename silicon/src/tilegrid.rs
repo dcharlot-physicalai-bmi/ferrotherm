@@ -22,7 +22,7 @@
 //! correctly" if the reader shares the bug. Physical placement is checked against an outside
 //! witness, never against our own readback.
 
-use crate::json::{parse, Json};
+use crate::json::{Json, parse};
 use crate::segbits::SegBit;
 use std::collections::HashMap;
 
@@ -120,9 +120,19 @@ impl TileGrid {
         let j = parse(text)?;
         let mut tiles = HashMap::new();
         for (name, v) in j.entries() {
-            let kind = v.get("type").and_then(super::json::Json::as_str).unwrap_or("").to_string();
-            let grid_x = v.get("grid_x").and_then(super::json::Json::as_u64).unwrap_or(0) as u32;
-            let grid_y = v.get("grid_y").and_then(super::json::Json::as_u64).unwrap_or(0) as u32;
+            let kind = v
+                .get("type")
+                .and_then(super::json::Json::as_str)
+                .unwrap_or("")
+                .to_string();
+            let grid_x = v
+                .get("grid_x")
+                .and_then(super::json::Json::as_u64)
+                .unwrap_or(0) as u32;
+            let grid_y = v
+                .get("grid_y")
+                .and_then(super::json::Json::as_u64)
+                .unwrap_or(0) as u32;
             let mut bits = Vec::new();
             if let Some(Json::Obj(blocks)) = v.get("bits") {
                 for (bname, b) in blocks {
@@ -135,9 +145,18 @@ impl TileGrid {
                             bname.to_string(),
                             BitsBlock {
                                 baseaddr,
-                                frames: b.get("frames").and_then(super::json::Json::as_u64).unwrap_or(0) as u16,
-                                offset: b.get("offset").and_then(super::json::Json::as_u64).unwrap_or(0) as u16,
-                                words: b.get("words").and_then(super::json::Json::as_u64).unwrap_or(0) as u16,
+                                frames: b
+                                    .get("frames")
+                                    .and_then(super::json::Json::as_u64)
+                                    .unwrap_or(0) as u16,
+                                offset: b
+                                    .get("offset")
+                                    .and_then(super::json::Json::as_u64)
+                                    .unwrap_or(0) as u16,
+                                words: b
+                                    .get("words")
+                                    .and_then(super::json::Json::as_u64)
+                                    .unwrap_or(0) as u16,
                             },
                         ));
                     }
@@ -151,7 +170,14 @@ impl TileGrid {
             }
             tiles.insert(
                 name.to_string(),
-                Tile { name: name.to_string(), kind, grid_x, grid_y, bits, sites },
+                Tile {
+                    name: name.to_string(),
+                    kind,
+                    grid_x,
+                    grid_y,
+                    bits,
+                    sites,
+                },
             );
         }
         if tiles.is_empty() {
@@ -165,7 +191,9 @@ impl TileGrid {
     /// Find the tile containing a given site (e.g. "`SLICE_X0Y0`").
     #[must_use]
     pub fn tile_of_site(&self, site: &str) -> Option<&Tile> {
-        self.tiles.values().find(|t| t.sites.iter().any(|(n, _)| n == site))
+        self.tiles
+            .values()
+            .find(|t| t.sites.iter().any(|(n, _)| n == site))
     }
 
     /// Every tile of one type.
@@ -235,7 +263,15 @@ mod tests {
         assert_eq!(t.kind, "CLBLL_L");
         assert_eq!(t.sites.len(), 2);
         let b = t.logic_block().unwrap();
-        assert_eq!(b, BitsBlock { baseaddr: 0x0042_0100, frames: 36, offset: 0, words: 2 });
+        assert_eq!(
+            b,
+            BitsBlock {
+                baseaddr: 0x0042_0100,
+                frames: 36,
+                offset: 0,
+                words: 2
+            }
+        );
         assert_eq!(g.tile_of_site("SLICE_X1Y0").unwrap().name, "CLBLL_L_X2Y0");
     }
 
@@ -245,11 +281,39 @@ mod tests {
     fn resolves_a_segbit_to_a_physical_position() {
         let g = TileGrid::parse(REAL).unwrap();
         let b = g.tiles["CLBLL_L_X2Y0"].logic_block().unwrap();
-        let a = b.resolve(SegBit { frame: 32, bit: 15, set: true }).unwrap();
-        assert_eq!(a, BitAddr { frame: 0x0042_0120, word: 0, bit: 15, set: true });
+        let a = b
+            .resolve(SegBit {
+                frame: 32,
+                bit: 15,
+                set: true,
+            })
+            .unwrap();
+        assert_eq!(
+            a,
+            BitAddr {
+                frame: 0x0042_0120,
+                word: 0,
+                bit: 15,
+                set: true
+            }
+        );
         // a bit in the tile's second word
-        let a2 = b.resolve(SegBit { frame: 0, bit: 40, set: true }).unwrap();
-        assert_eq!(a2, BitAddr { frame: 0x0042_0100, word: 1, bit: 8, set: true });
+        let a2 = b
+            .resolve(SegBit {
+                frame: 0,
+                bit: 40,
+                set: true,
+            })
+            .unwrap();
+        assert_eq!(
+            a2,
+            BitAddr {
+                frame: 0x0042_0100,
+                word: 1,
+                bit: 8,
+                set: true
+            }
+        );
     }
 
     /// Out-of-extent segbits must be refused, not silently folded into a neighbouring tile.
@@ -257,10 +321,23 @@ mod tests {
     fn out_of_range_segbits_are_refused() {
         let g = TileGrid::parse(REAL).unwrap();
         let b = g.tiles["CLBLL_L_X2Y0"].logic_block().unwrap();
-        assert!(b.resolve(SegBit { frame: 36, bit: 0, set: true }).is_none());
-        assert!(b.resolve(SegBit { frame: 0, bit: 64, set: true }).is_none());
+        assert!(
+            b.resolve(SegBit {
+                frame: 36,
+                bit: 0,
+                set: true
+            })
+            .is_none()
+        );
+        assert!(
+            b.resolve(SegBit {
+                frame: 0,
+                bit: 64,
+                set: true
+            })
+            .is_none()
+        );
     }
-
 
     /// THE MULTI-WORD TRAP. prjxray's second coordinate is a bit index across the tile's whole
     /// word window, not a bit within one word. The naive reading (word = offset, bit = MM)
@@ -270,16 +347,46 @@ mod tests {
     #[test]
     fn multi_word_tiles_split_correctly() {
         // a BRAM-shaped block: 10 words starting at word offset 20
-        let b = BitsBlock { baseaddr: 0x0000_1000, frames: 28, offset: 20, words: 10 };
+        let b = BitsBlock {
+            baseaddr: 0x0000_1000,
+            frames: 28,
+            offset: 20,
+            words: 10,
+        };
         // MM = 100 -> absolute bit 20*32 + 100 = 740 -> word 23, bit 4
-        let a = b.resolve(SegBit { frame: 5, bit: 100, set: true }).unwrap();
-        assert_eq!(a, BitAddr { frame: 0x0000_1005, word: 23, bit: 4, set: true });
+        let a = b
+            .resolve(SegBit {
+                frame: 5,
+                bit: 100,
+                set: true,
+            })
+            .unwrap();
+        assert_eq!(
+            a,
+            BitAddr {
+                frame: 0x0000_1005,
+                word: 23,
+                bit: 4,
+                set: true
+            }
+        );
         // the naive reading would have said word 20, bit 100 (which is not even a valid bit)
         assert_ne!(a.word, b.offset);
 
         // MM well beyond 63 must work too (cfg_center_mid reaches 2213)
-        let wide = BitsBlock { baseaddr: 0x0000_2000, frames: 4, offset: 0, words: 101 };
-        let a2 = wide.resolve(SegBit { frame: 0, bit: 2213, set: true }).unwrap();
+        let wide = BitsBlock {
+            baseaddr: 0x0000_2000,
+            frames: 4,
+            offset: 0,
+            words: 101,
+        };
+        let a2 = wide
+            .resolve(SegBit {
+                frame: 0,
+                bit: 2213,
+                set: true,
+            })
+            .unwrap();
         assert_eq!((a2.word, a2.bit), (2213 / 32, 2213 % 32));
         assert_eq!((a2.word, a2.bit), (69, 5));
     }
@@ -289,17 +396,46 @@ mod tests {
     /// control bits must not clobber routing already placed in minors 0-1.
     #[test]
     fn int_and_clb_share_a_column_without_clobbering() {
-        let shared = BitsBlock { baseaddr: 0x0042_0600, frames: 36, offset: 0, words: 2 };
-        let int_bit = shared.resolve(SegBit { frame: 1, bit: 39, set: true }).unwrap();
-        let clb_bit = shared.resolve(SegBit { frame: 1, bit: 40, set: true }).unwrap();
+        let shared = BitsBlock {
+            baseaddr: 0x0042_0600,
+            frames: 36,
+            offset: 0,
+            words: 2,
+        };
+        let int_bit = shared
+            .resolve(SegBit {
+                frame: 1,
+                bit: 39,
+                set: true,
+            })
+            .unwrap();
+        let clb_bit = shared
+            .resolve(SegBit {
+                frame: 1,
+                bit: 40,
+                set: true,
+            })
+            .unwrap();
         assert_eq!(int_bit.frame, clb_bit.frame, "same physical frame");
-        assert_ne!((int_bit.word, int_bit.bit), (clb_bit.word, clb_bit.bit), "disjoint positions");
+        assert_ne!(
+            (int_bit.word, int_bit.bit),
+            (clb_bit.word, clb_bit.bit),
+            "disjoint positions"
+        );
         let mut fb = crate::framebuf::FrameBuf::new();
         fb.apply(int_bit).unwrap();
         fb.apply(clb_bit).unwrap();
         let f = &fb.frames[&int_bit.frame];
-        assert_eq!(f[int_bit.word as usize] >> int_bit.bit & 1, 1, "routing bit survived");
-        assert_eq!(f[clb_bit.word as usize] >> clb_bit.bit & 1, 1, "logic bit landed");
+        assert_eq!(
+            f[int_bit.word as usize] >> int_bit.bit & 1,
+            1,
+            "routing bit survived"
+        );
+        assert_eq!(
+            f[clb_bit.word as usize] >> clb_bit.bit & 1,
+            1,
+            "logic bit landed"
+        );
     }
 
     /// FAR round-trip, and the decode of a real base address.

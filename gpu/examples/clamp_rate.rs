@@ -36,7 +36,9 @@ fn fit(points: &[(f64, f64)]) -> (f64, f64) {
     let sxx: f64 = points.iter().map(|p| p.0 * p.0).sum();
     let sxy: f64 = points.iter().map(|p| p.0 * p.1).sum();
     let d = n * sxx - sx * sx;
-    if d.abs() < 1e-12 { return (sy / n, 0.0); }
+    if d.abs() < 1e-12 {
+        return (sy / n, 0.0);
+    }
     let b = (n * sxy - sx * sy) / d;
     ((sy - b * sx) / n, b)
 }
@@ -44,7 +46,8 @@ fn fit(points: &[(f64, f64)]) -> (f64, f64) {
 /// Worst relative residual of the fit, as a fraction. A line that does not describe the data makes
 /// the intercept meaningless, so this is printed beside every intercept rather than kept back.
 fn worst_residual(points: &[(f64, f64)], a: f64, b: f64) -> f64 {
-    points.iter()
+    points
+        .iter()
         .map(|&(k, ms)| ((a + b * k) - ms).abs() / ms.max(1e-9))
         .fold(0.0f64, f64::max)
 }
@@ -54,7 +57,9 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
-fn minimum(v: &[f64]) -> f64 { v.iter().copied().fold(f64::INFINITY, f64::min) }
+fn minimum(v: &[f64]) -> f64 {
+    v.iter().copied().fold(f64::INFINITY, f64::min)
+}
 
 /// This machine runs other work. A first pass at this bench took five samples per point and
 /// produced a fit whose worst residual was 47 percent, with k=256 timing FASTER than the line
@@ -69,8 +74,15 @@ fn minimum(v: &[f64]) -> f64 { v.iter().copied().fold(f64::INFINITY, f64::min) }
 fn load_average() -> Option<f64> {
     let out = std::process::Command::new("uptime").output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
-    let tail = s.rsplit("load averages:").next().or_else(|| s.rsplit("load average:").next())?;
-    tail.split_whitespace().next()?.trim_end_matches(',').parse().ok()
+    let tail = s
+        .rsplit("load averages:")
+        .next()
+        .or_else(|| s.rsplit("load average:").next())?;
+    tail.split_whitespace()
+        .next()?
+        .trim_end_matches(',')
+        .parse()
+        .ok()
 }
 
 fn main() {
@@ -86,7 +98,9 @@ fn main() {
         println!("be a GPU, so they are printed and NOT reported as a fabric measurement.");
     }
     println!();
-    println!("PREDICTED before measuring: the intercept is milliseconds, dominates at small k, and");
+    println!(
+        "PREDICTED before measuring: the intercept is milliseconds, dominates at small k, and"
+    );
     println!("implies a resident clamp rate at least 10x the rate a single call achieves.");
     println!();
 
@@ -95,11 +109,16 @@ fn main() {
     let beta = 0.7;
     match load_average() {
         Some(la) if la > 1.5 => {
-            println!("load average {la:.2}: this machine is running other work. The minimum column");
+            println!(
+                "load average {la:.2}: this machine is running other work. The minimum column"
+            );
             println!("is the figure to read; the median column is what it managed while sharing.");
             println!();
         }
-        Some(la) => { println!("load average {la:.2}"); println!(); }
+        Some(la) => {
+            println!("load average {la:.2}");
+            println!();
+        }
         None => {}
     }
 
@@ -126,7 +145,16 @@ fn main() {
     println!();
     println!(
         "{:>6}  {:>8}  {:>12}  {:>12}  {:>9}  {:>11}  {:>13}  {:>7}  {:>9}  {:>9}",
-        "l", "nodes", "restream ms", "clamp ms", "ratio", "call Hz", "resident Hz", "fit err", "med/min", "pass/pass"
+        "l",
+        "nodes",
+        "restream ms",
+        "clamp ms",
+        "ratio",
+        "call Hz",
+        "resident Hz",
+        "fit err",
+        "med/min",
+        "pass/pass"
     );
 
     let mut rows = Vec::new();
@@ -163,7 +191,9 @@ fn main() {
             // asking to be believed rather than checked, and the first version of this one had a
             // 47 percent residual that only the raw column explained.
             print!("  min l={:<4} p{}", l, pass + 1);
-            for &(k, ms) in &lo { print!("  {}:{:.3}", k as u32, ms); }
+            for &(k, ms) in &lo {
+                print!("  {}:{:.3}", k as u32, ms);
+            }
             println!();
             let (restream, clamp) = fit(&lo);
             let err = worst_residual(&lo, restream, clamp);
@@ -186,7 +216,16 @@ fn main() {
         rows.push((l, n, restream, clamp, call_hz, resident_hz));
         println!(
             "{:>6}  {:>8}  {:>12.3}  {:>12.4}  {:>8.1}x  {:>11.1}  {:>13.1}  {:>6.1}%  {:>8.2}x  {:>8.2}x",
-            l, n, restream, clamp, ratio, call_hz, resident_hz, err * 100.0, sp, agree
+            l,
+            n,
+            restream,
+            clamp,
+            ratio,
+            call_hz,
+            resident_hz,
+            err * 100.0,
+            sp,
+            agree
         );
     }
 
@@ -195,7 +234,10 @@ fn main() {
     println!("A controller with a small model may not need the fabric at all, and a fabric figure");
     println!("that never asks this question is comparing against nothing.");
     println!();
-    println!("{:>6}  {:>8}  {:>14}  {:>14}", "l", "nodes", "cpu ms/sweep", "gpu ms/sweep");
+    println!(
+        "{:>6}  {:>8}  {:>14}  {:>14}",
+        "l", "nodes", "cpu ms/sweep", "gpu ms/sweep"
+    );
     for &(l, n, _, clamp, _, _) in &rows {
         let g = lattice2d(l, 1.0);
         let cpu_ms = median(
@@ -217,8 +259,12 @@ fn main() {
     println!("resident. A count of zero means the tick is spent before a single sweep runs.");
     println!();
     print!("{:>6}  {:>8}", "l", "nodes");
-    for hz in [10, 30, 50, 100] { print!("  {:>8}", format!("{hz} Hz now")); }
-    for hz in [10, 30, 50, 100] { print!("  {:>10}", format!("{hz} Hz res")); }
+    for hz in [10, 30, 50, 100] {
+        print!("  {:>8}", format!("{hz} Hz now"));
+    }
+    for hz in [10, 30, 50, 100] {
+        print!("  {:>10}", format!("{hz} Hz res"));
+    }
     println!();
     for &(l, n, restream, clamp, _, _) in &rows {
         print!("{l:>6}  {n:>8}");

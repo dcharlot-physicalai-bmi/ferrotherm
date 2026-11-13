@@ -97,11 +97,7 @@ impl FixedFabric {
         let seeds: Vec<u32> = (0..g.n)
             .map(|i| {
                 let s = splitmix(seed ^ (i as u64).wrapping_mul(0xD6E8FEB86659FD93)) as u32;
-                if s == 0 {
-                    1
-                } else {
-                    s
-                }
+                if s == 0 { 1 } else { s }
             })
             .collect();
         let init_s: Vec<bool> = (0..g.n)
@@ -764,7 +760,9 @@ mod tests {
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed on this machine; the AXI shell gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the AXI shell gate did not run, skipping"
+            );
             return;
         }
         let sweeps = 25usize;
@@ -791,7 +789,10 @@ mod tests {
         for _ in 0..=sweeps {
             one_more.sweep();
         }
-        assert_ne!(one_more.s, fab.s, "the gate is vacuous if one more sweep changes nothing");
+        assert_ne!(
+            one_more.s, fab.s,
+            "the gate is vacuous if one more sweep changes nothing"
+        );
 
         let tb = format!(
             r#"`timescale 1ns/1ps
@@ -906,7 +907,9 @@ endmodule
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed on this machine; the RTL bit-exactness gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the RTL bit-exactness gate did not run, skipping"
+            );
             return;
         }
         let mut g = lattice2d(6, 0.9);

@@ -197,7 +197,11 @@ impl core::fmt::Display for Error {
                 write!(f, "a coupled system needs at least 2 oscillators, got {n}")
             }
             Error::ShapeMismatch { n, got } => {
-                write!(f, "coupling matrix must be {n}x{n} = {} entries, got {got}", n * n)
+                write!(
+                    f,
+                    "coupling matrix must be {n}x{n} = {} entries, got {got}",
+                    n * n
+                )
             }
             Error::OmegaMismatch { n, got } => {
                 write!(f, "natural frequencies must be length {n}, got {got}")
@@ -294,7 +298,11 @@ impl Kuramoto {
     /// If either index is out of range.
     #[must_use]
     pub fn coupling(&self, i: usize, j: usize) -> f64 {
-        assert!(i < self.n && j < self.n, "index out of range for {} oscillators", self.n);
+        assert!(
+            i < self.n && j < self.n,
+            "index out of range for {} oscillators",
+            self.n
+        );
         self.k[i * self.n + j]
     }
 
@@ -361,7 +369,11 @@ impl Kuramoto {
     /// If `phi` is not length `n`.
     #[must_use]
     pub fn xy_energy(&self, phi: &[f64]) -> f64 {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let n = self.n;
         let mut terms = Vec::with_capacity(n * (n - 1) / 2);
         for i in 0..n {
@@ -379,8 +391,16 @@ impl Kuramoto {
     ///
     /// If either slice is the wrong length.
     pub fn xy_grad(&self, phi: &[f64], out: &mut [f64]) {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
-        assert_eq!(out.len(), self.n, "gradient buffer must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
+        assert_eq!(
+            out.len(),
+            self.n,
+            "gradient buffer must have one entry per oscillator"
+        );
         let n = self.n;
         for i in 0..n {
             let mut g = 0.0;
@@ -401,8 +421,16 @@ impl Kuramoto {
     ///
     /// If either slice is the wrong length.
     pub fn drift(&self, phi: &[f64], out: &mut [f64]) {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
-        assert_eq!(out.len(), self.n, "drift buffer must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
+        assert_eq!(
+            out.len(),
+            self.n,
+            "drift buffer must have one entry per oscillator"
+        );
         let n = self.n;
         for i in 0..n {
             let mut f = self.omega[i];
@@ -423,7 +451,11 @@ impl Kuramoto {
     /// If `phi` is not length `n`.
     #[must_use]
     pub fn jacobian(&self, phi: &[f64]) -> Vec<f64> {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let n = self.n;
         let mut jac = vec![0.0; n * n];
         for i in 0..n {
@@ -453,7 +485,11 @@ impl Kuramoto {
     /// If `phi` is not length `n`.
     #[must_use]
     pub fn xy_hessian(&self, phi: &[f64]) -> Vec<f64> {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let n = self.n;
         let mut h = vec![0.0; n * n];
         for i in 0..n {
@@ -523,7 +559,11 @@ impl Kuramoto {
     /// If `phi` is not length `n`.
     #[must_use]
     pub fn solenoidal_divergence(&self, phi: &[f64]) -> f64 {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let n = self.n;
         let a = self.antisymmetric_part();
         let mut terms = Vec::with_capacity(n * n);
@@ -633,7 +673,9 @@ impl Kuramoto {
         ledger: Option<&mut Ledger>,
     ) -> Result<(), Error> {
         if !self.is_gradient() {
-            return Err(Error::NotFinite { what: "a non-gradient system has no energy to descend" });
+            return Err(Error::NotFinite {
+                what: "a non-gradient system has no energy to descend",
+            });
         }
         let l = self.lipschitz();
         let limit = if l > 0.0 { 1.0 / l } else { f64::INFINITY };
@@ -659,7 +701,11 @@ impl Kuramoto {
     /// If `phi` is not length `n`.
     #[must_use]
     pub fn order_parameter(&self, phi: &[f64]) -> (f64, f64) {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let c: Vec<f64> = phi.iter().map(|t| t.cos()).collect();
         let s: Vec<f64> = phi.iter().map(|t| t.sin()).collect();
         let cm = sum_up(&c) / self.n as f64;
@@ -805,7 +851,9 @@ impl Kuramoto {
                 }
             }
             order.sort_by(|a, b| {
-                b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal).then(a.1.cmp(&b.1))
+                b.0.partial_cmp(&a.0)
+                    .unwrap_or(core::cmp::Ordering::Equal)
+                    .then(a.1.cmp(&b.1))
             });
             for &(_, j) in order.iter().take(d) {
                 top[i * n + j] = true;
@@ -848,7 +896,11 @@ impl Kuramoto {
                 }
             }
         }
-        let system = Kuramoto { n, omega: vec![0.0; n], k };
+        let system = Kuramoto {
+            n,
+            omega: vec![0.0; n],
+            k,
+        };
         Truncated {
             system,
             dropped_mass: sum_up(&dropped_terms),
@@ -926,7 +978,10 @@ pub fn grid_phases(a: &[u8], q: usize) -> Vec<f64> {
 /// If `q` is below 2 or above 256.
 #[must_use]
 pub fn round_to_grid(phi: &[f64], q: usize) -> Vec<u8> {
-    assert!((2..=256).contains(&q), "grid size must be in 2..=256, got {q}");
+    assert!(
+        (2..=256).contains(&q),
+        "grid size must be in 2..=256, got {q}"
+    );
     phi.iter()
         .map(|&t| {
             let scaled = t.rem_euclid(TAU) / TAU * q as f64;
@@ -1001,7 +1056,8 @@ impl<'k> Pushforward<'k> {
     pub fn phases(&self, seed: u64, mut ledger: Option<&mut Ledger>) -> Vec<f64> {
         let mut phi = self.seed_phases(seed);
         for _ in 0..self.steps {
-            self.sys.step_euler(&mut phi, self.dt, ledger.as_deref_mut());
+            self.sys
+                .step_euler(&mut phi, self.dt, ledger.as_deref_mut());
         }
         phi
     }
@@ -1054,7 +1110,10 @@ mod tests {
     #[test]
     fn a_nonzero_diagonal_is_refused_rather_than_ignored() {
         let k = vec![0.5, 1.0, 1.0, 0.0];
-        assert_eq!(Kuramoto::new(vec![0.0, 0.0], k).unwrap_err(), Error::NonzeroDiagonal { i: 0 });
+        assert_eq!(
+            Kuramoto::new(vec![0.0, 0.0], k).unwrap_err(),
+            Error::NonzeroDiagonal { i: 0 }
+        );
     }
 
     #[test]
@@ -1130,7 +1189,10 @@ mod tests {
                 worst = worst.max(sys.gibbs_defect(&phi).abs());
             }
         }
-        assert!(worst > 1e-2, "expected a substantial Gibbs defect somewhere, worst was {worst}");
+        assert!(
+            worst > 1e-2,
+            "expected a substantial Gibbs defect somewhere, worst was {worst}"
+        );
     }
 
     #[test]
@@ -1140,9 +1202,13 @@ mod tests {
         let mut phi = vec![0.9, -2.2, 1.4];
         let mut last = sys.xy_energy(&phi);
         for step in 0..200 {
-            sys.step_descent(&mut phi, dt, None).expect("gradient system at the limit step");
+            sys.step_descent(&mut phi, dt, None)
+                .expect("gradient system at the limit step");
             let e = sys.xy_energy(&phi);
-            assert!(e <= last + 1e-12, "energy rose at step {step}: {last} -> {e}");
+            assert!(
+                e <= last + 1e-12,
+                "energy rose at step {step}: {last} -> {e}"
+            );
             last = e;
         }
     }
@@ -1173,7 +1239,10 @@ mod tests {
         if delta > core::f64::consts::PI {
             delta -= TAU;
         }
-        assert!((delta - want).abs() < 1e-6, "locked at {delta}, closed form says {want}");
+        assert!(
+            (delta - want).abs() < 1e-6,
+            "locked at {delta}, closed form says {want}"
+        );
         // At threshold and above there is no fixed point at all.
         assert!(two_oscillator_locked(2.0 * k + 1e-9, k).is_none());
         assert!(two_oscillator_period(2.5, 1.0).is_some());
@@ -1215,9 +1284,15 @@ mod tests {
                 let gap = (sys.xy_energy(&phi) - sys.xy_energy(&grid_phases(&a, q))).abs();
                 worst = worst.max(gap);
             }
-            assert!(worst <= bound, "measured {worst} exceeded the bound {bound} at q = {q}");
+            assert!(
+                worst <= bound,
+                "measured {worst} exceeded the bound {bound} at q = {q}"
+            );
             // And the bound is not vacuous: it is within an order of magnitude of what happens.
-            assert!(worst > 0.02 * bound, "bound {bound} is loose against measured {worst}");
+            assert!(
+                worst > 0.02 * bound,
+                "bound {bound} is loose against measured {worst}"
+            );
         }
     }
 
@@ -1239,19 +1314,29 @@ mod tests {
         let mut l2 = Ledger::default();
         let f1 = map.features(11, Some(&mut l1));
         let f2 = map.features(11, Some(&mut l2));
-        assert_eq!(f1, f2, "the same seed must give the same features, bit for bit");
+        assert_eq!(
+            f1, f2,
+            "the same seed must give the same features, bit for bit"
+        );
         assert_eq!(l1, l2);
         // 50 steps x 3 oscillators updated, 3 phases read out.
         assert_eq!(l1.samples, 150);
         assert_eq!(l1.reads, 3);
-        assert_ne!(map.features(12, None), f1, "a different seed must move the output");
+        assert_ne!(
+            map.features(12, None),
+            f1,
+            "a different seed must move the output"
+        );
     }
 
     #[test]
     fn the_order_parameter_is_one_when_locked_and_zero_when_spread() {
         let sys = symmetric_fixture();
         let (r, _) = sys.order_parameter(&[0.5, 0.5, 0.5]);
-        assert!((r - 1.0).abs() < 1e-15, "identical phases must give r = 1, got {r}");
+        assert!(
+            (r - 1.0).abs() < 1e-15,
+            "identical phases must give r = 1, got {r}"
+        );
         let third = TAU / 3.0;
         let (r, _) = sys.order_parameter(&[0.0, third, 2.0 * third]);
         assert!(r < 1e-15, "evenly spread phases must give r = 0, got {r}");
@@ -1299,7 +1384,11 @@ mod tests {
                 "at degree {d} the measured KL {measured} exceeded its bound {bound}"
             );
             if t.dropped > 0 {
-                assert!(measured > 0.0, "dropping {} pairs cost nothing at all", t.dropped);
+                assert!(
+                    measured > 0.0,
+                    "dropping {} pairs cost nothing at all",
+                    t.dropped
+                );
                 saw_a_real_cost = true;
             }
             // Not vacuous: the bound is within three orders of what happens, at every degree.
@@ -1308,7 +1397,10 @@ mod tests {
                 "the bound {bound} says nothing about a measured {measured} at degree {d}"
             );
         }
-        assert!(saw_a_real_cost, "the fixture never dropped a coupling, so nothing was tested");
+        assert!(
+            saw_a_real_cost,
+            "the fixture never dropped a coupling, so nothing was tested"
+        );
     }
 
     /// The mutual rule is what makes the degree bound true; the union rule does not.
@@ -1372,7 +1464,10 @@ mod tests {
         for d in 1..=4usize {
             let t = sys.truncate_to_degree(d);
             assert!(t.degree <= d, "degree {} exceeds the budget {d}", t.degree);
-            assert!(t.kept > 0, "a flat coupling truncated to degree {d} kept no pairs at all");
+            assert!(
+                t.kept > 0,
+                "a flat coupling truncated to degree {d} kept no pairs at all"
+            );
             assert!(t.mass_kept() > 0.0, "and therefore none of its mass");
         }
         // And it is a real truncation, not the identity: degree 1 keeps far fewer than all 28.
@@ -1390,8 +1485,14 @@ mod tests {
         let cut = t.kl_bound(beta);
         // Both are 2 beta times a mass in energy units, so the total is 2 beta times their sum.
         let total = 2.0 * beta * (t.system.covering_gap(q) + t.dropped_mass);
-        assert!((grid + cut - total).abs() < 1e-12, "{grid} + {cut} != {total}");
-        assert!(cut > 0.0 && grid > 0.0, "both gaps must be real on this fixture");
+        assert!(
+            (grid + cut - total).abs() < 1e-12,
+            "{grid} + {cut} != {total}"
+        );
+        assert!(
+            cut > 0.0 && grid > 0.0,
+            "both gaps must be real on this fixture"
+        );
     }
 
     /// A threshold of zero keeps everything and costs nothing; a threshold above every coupling

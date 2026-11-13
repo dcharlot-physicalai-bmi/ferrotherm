@@ -267,7 +267,11 @@ pub struct Tensor<S: Semiring = SumProduct> {
 // a semiring can be a unit struct without deriving anything.
 impl<S: Semiring> Clone for Tensor<S> {
     fn clone(&self) -> Self {
-        Tensor { idx: self.idx.clone(), dims: self.dims.clone(), data: self.data.clone() }
+        Tensor {
+            idx: self.idx.clone(),
+            dims: self.dims.clone(),
+            data: self.data.clone(),
+        }
     }
 }
 
@@ -290,7 +294,10 @@ impl<S: Semiring> PartialEq for Tensor<S> {
 
 impl<S: Semiring> Clone for Network<S> {
     fn clone(&self) -> Self {
-        Network { tensors: self.tensors.clone(), open: self.open.clone() }
+        Network {
+            tensors: self.tensors.clone(),
+            open: self.open.clone(),
+        }
     }
 }
 
@@ -356,7 +363,10 @@ impl core::fmt::Display for Malformed {
                  wire and both ends must be the same width"
             ),
             Malformed::ZeroDimension(i) => {
-                write!(f, "index {i} has dimension zero, so every contraction through it is empty")
+                write!(
+                    f,
+                    "index {i} has dimension zero, so every contraction through it is empty"
+                )
             }
         }
     }
@@ -378,7 +388,10 @@ impl<S: Semiring> Tensor<S> {
         data: Vec<S::Elem>,
     ) -> Result<Tensor<S>, Malformed> {
         if idx.len() != dims.len() {
-            return Err(Malformed::Size { got: idx.len(), want: dims.len() });
+            return Err(Malformed::Size {
+                got: idx.len(),
+                want: dims.len(),
+            });
         }
         let mut seen = BTreeSet::new();
         for &i in &idx {
@@ -393,7 +406,10 @@ impl<S: Semiring> Tensor<S> {
         }
         let want: usize = dims.iter().product();
         if data.len() != want {
-            return Err(Malformed::Size { got: data.len(), want });
+            return Err(Malformed::Size {
+                got: data.len(),
+                want,
+            });
         }
         Ok(Tensor { idx, dims, data })
     }
@@ -401,7 +417,11 @@ impl<S: Semiring> Tensor<S> {
     /// A rank-0 tensor holding one number. What a fully contracted network reduces to.
     #[must_use]
     pub fn scalar(v: S::Elem) -> Tensor<S> {
-        Tensor { idx: Vec::new(), dims: Vec::new(), data: vec![v] }
+        Tensor {
+            idx: Vec::new(),
+            dims: Vec::new(),
+            data: vec![v],
+        }
     }
 
     /// Its indices, in layout order.
@@ -459,8 +479,9 @@ impl<S: Semiring> Tensor<S> {
     /// Sum this tensor over every index not in `keep`.
     #[must_use]
     fn marginalise(&self, keep: &BTreeSet<Index>) -> Tensor<S> {
-        let out_pos: Vec<usize> =
-            (0..self.idx.len()).filter(|&k| keep.contains(&self.idx[k])).collect();
+        let out_pos: Vec<usize> = (0..self.idx.len())
+            .filter(|&k| keep.contains(&self.idx[k]))
+            .collect();
         if out_pos.len() == self.idx.len() {
             return self.clone();
         }
@@ -482,7 +503,11 @@ impl<S: Semiring> Tensor<S> {
             }
             data[o] = S::add(data[o], self.data[flat]);
         }
-        Tensor { idx: out_idx, dims: out_dims, data }
+        Tensor {
+            idx: out_idx,
+            dims: out_dims,
+            data,
+        }
     }
 }
 
@@ -587,14 +612,19 @@ type Shape = Vec<(Index, usize)>;
 /// saturated peak refuses. It is reachable — 128 binary indices on one intermediate — through the
 /// open-index mode, where nothing is summed and the final tensor carries every index at once.
 fn extent(shape: &[(Index, usize)]) -> u128 {
-    shape.iter().fold(1u128, |acc, &(_, d)| acc.saturating_mul(d as u128))
+    shape
+        .iter()
+        .fold(1u128, |acc, &(_, d)| acc.saturating_mul(d as u128))
 }
 
 impl<S: Semiring> Network<S> {
     /// An empty network.
     #[must_use]
     pub fn new() -> Network<S> {
-        Network { tensors: Vec::new(), open: BTreeSet::new() }
+        Network {
+            tensors: Vec::new(),
+            open: BTreeSet::new(),
+        }
     }
 
     /// Add a tensor.
@@ -635,7 +665,11 @@ impl<S: Semiring> Network<S> {
                         out.insert(i, d);
                     }
                     Some(&prev) if prev != d => {
-                        return Err(Malformed::DimensionMismatch { index: i, a: prev, b: d });
+                        return Err(Malformed::DimensionMismatch {
+                            index: i,
+                            a: prev,
+                            b: d,
+                        });
                     }
                     Some(_) => {}
                 }
@@ -672,8 +706,7 @@ impl<S: Semiring> Network<S> {
                     let mut best_size = u128::MAX;
                     for a in 0..shapes.len() {
                         for b in (a + 1)..shapes.len() {
-                            let (res, _) =
-                                merge(&shapes[a], &shapes[b], &counts, &self.open);
+                            let (res, _) = merge(&shapes[a], &shapes[b], &counts, &self.open);
                             let size: u128 = extent(&res);
                             if size < best_size {
                                 best_size = size;
@@ -696,7 +729,11 @@ impl<S: Semiring> Network<S> {
             steps.push((lo, hi));
         }
 
-        Ok(Plan { order: steps, peak_entries: peak, flops })
+        Ok(Plan {
+            order: steps,
+            peak_entries: peak,
+            flops,
+        })
     }
 
     /// Contract to a single tensor, choosing the order and refusing above `max_entries`.
@@ -719,7 +756,10 @@ impl<S: Semiring> Network<S> {
     ) -> Result<Tensor<S>, Uncontractable> {
         let plan = self.plan(order)?;
         if plan.peak_entries > max_entries {
-            return Err(Uncontractable::TooWide { entries: plan.peak_entries, max: max_entries });
+            return Err(Uncontractable::TooWide {
+                entries: plan.peak_entries,
+                max: max_entries,
+            });
         }
         if self.tensors.is_empty() {
             // An empty network contracts to the multiplicative identity, which is what makes this
@@ -732,14 +772,22 @@ impl<S: Semiring> Network<S> {
             let counts = live_counts(
                 &live
                     .iter()
-                    .map(|t| t.idx.iter().copied().zip(t.dims.iter().copied()).collect::<Shape>())
+                    .map(|t| {
+                        t.idx
+                            .iter()
+                            .copied()
+                            .zip(t.dims.iter().copied())
+                            .collect::<Shape>()
+                    })
                     .collect::<Vec<_>>(),
             );
             let b = live.remove(j);
             let a = live.remove(i);
             live.push(contract_pair(&a, &b, &counts, &self.open));
         }
-        let last = live.pop().expect("a non-empty network leaves exactly one tensor");
+        let last = live
+            .pop()
+            .expect("a non-empty network leaves exactly one tensor");
         // A network of ONE tensor never enters the loop, and the final tensor may still carry
         // indices nothing else claimed. Summing them here is what makes `contract` mean "multiply
         // and sum everything not open" for every network rather than only for the ones with an
@@ -758,7 +806,6 @@ impl<S: Semiring> Network<S> {
     pub fn contract(&self) -> Result<Tensor<S>, Uncontractable> {
         self.contract_with(Order::default(), 1 << 26)
     }
-
 }
 
 /// A graph's factors, listed once: the site term for each spin that needs one, then each edge.
@@ -849,7 +896,11 @@ impl Network<SumProduct> {
     /// [`crate::exact::Elimination::log_partition`] rather than asserted.
     #[must_use]
     pub fn from_ising(g: &Graph, beta: f64) -> Network<SumProduct> {
-        ising_network(g, |h, s| (beta * h * s).exp(), |w, a, b| (beta * w * a * b).exp())
+        ising_network(
+            g,
+            |h, s| (beta * h * s).exp(),
+            |w, a, b| (beta * w * a * b).exp(),
+        )
     }
 }
 
@@ -912,7 +963,8 @@ fn merge(
         m
     };
     let summed = |i: Index| -> bool {
-        !open.contains(&i) && here.get(&i).copied().unwrap_or(0) == counts.get(&i).copied().unwrap_or(0)
+        !open.contains(&i)
+            && here.get(&i).copied().unwrap_or(0) == counts.get(&i).copied().unwrap_or(0)
     };
 
     let mut out: Shape = Vec::new();
@@ -992,14 +1044,22 @@ fn contract_pair<S: Semiring>(
             for (k, &i) in b.idx.iter().enumerate() {
                 pos_b[k] = coord(i);
             }
-            let va = a.at(&pos_a).expect("a coordinate built from a's own dimensions is in range");
-            let vb = b.at(&pos_b).expect("a coordinate built from b's own dimensions is in range");
+            let va = a
+                .at(&pos_a)
+                .expect("a coordinate built from a's own dimensions is in range");
+            let vb = b
+                .at(&pos_b)
+                .expect("a coordinate built from b's own dimensions is in range");
             acc = S::add(acc, S::mul(va, vb));
         }
         data[flat] = acc;
     }
 
-    Tensor { idx: out_idx, dims: out_dims, data }
+    Tensor {
+        idx: out_idx,
+        dims: out_dims,
+        data,
+    }
 }
 
 #[cfg(test)]
@@ -1090,8 +1150,9 @@ mod tests {
             let beta = 0.6;
             let (mut e0, mut deg, mut z) = (f64::INFINITY, 0u128, 0.0f64);
             for m in 0u64..(1u64 << g.n) {
-                let st: Vec<i8> =
-                    (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let st: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 let e = g.energy(&st);
                 z += (-beta * e).exp();
                 if e < e0 - 1e-9 {
@@ -1103,7 +1164,11 @@ mod tests {
             }
 
             // sum-product -> Z
-            let got_z = Network::<SumProduct>::from_ising(&g, beta).contract().unwrap().value().unwrap();
+            let got_z = Network::<SumProduct>::from_ising(&g, beta)
+                .contract()
+                .unwrap()
+                .value()
+                .unwrap();
             assert!(
                 (got_z.ln() - z.ln()).abs() < 1e-9,
                 "{name}: sum-product log Z {} vs enumeration {}",
@@ -1112,17 +1177,30 @@ mod tests {
             );
 
             // tropical -> the ground energy
-            let got_e0 = Network::<Tropical>::from_ising(&g).contract().unwrap().value().unwrap();
+            let got_e0 = Network::<Tropical>::from_ising(&g)
+                .contract()
+                .unwrap()
+                .value()
+                .unwrap();
             assert!(
                 (got_e0 - e0).abs() < 1e-9,
                 "{name}: tropical ground energy {got_e0} vs enumeration {e0}"
             );
 
             // min-count -> the ground energy AND its degeneracy, in one contraction
-            let (mc_e, mc_n) =
-                Network::<MinCount>::from_ising(&g).contract().unwrap().value().unwrap();
-            assert!((mc_e - e0).abs() < 1e-9, "{name}: min-count energy {mc_e} vs {e0}");
-            assert_eq!(mc_n, deg, "{name}: min-count counted {mc_n} ground states, there are {deg}");
+            let (mc_e, mc_n) = Network::<MinCount>::from_ising(&g)
+                .contract()
+                .unwrap()
+                .value()
+                .unwrap();
+            assert!(
+                (mc_e - e0).abs() < 1e-9,
+                "{name}: min-count energy {mc_e} vs {e0}"
+            );
+            assert_eq!(
+                mc_n, deg,
+                "{name}: min-count counted {mc_n} ground states, there are {deg}"
+            );
 
             // counting -> how many configurations there are at all, which for a network of
             // all-ones tensors is 2^n. A control: it is the only one of the four whose answer does
@@ -1132,7 +1210,11 @@ mod tests {
             for i in 0..g.n {
                 ones.push(Tensor::new(vec![i as Index], vec![2], vec![1u128, 1]).unwrap());
             }
-            assert_eq!(ones.contract().unwrap().value(), Some(1u128 << g.n), "{name}: counting");
+            assert_eq!(
+                ones.contract().unwrap().value(),
+                Some(1u128 << g.n),
+                "{name}: counting"
+            );
         }
     }
 
@@ -1145,15 +1227,19 @@ mod tests {
     fn counting_by_contraction_agrees_with_counting_by_cold_limit() {
         for n in [9usize, 11, 13] {
             let g = crate::ising::ring(n, -1.0, 0.0);
-            let (_, by_contraction) =
-                Network::<MinCount>::from_ising(&g).contract().unwrap().value().unwrap();
+            let (_, by_contraction) = Network::<MinCount>::from_ising(&g)
+                .contract()
+                .unwrap()
+                .value()
+                .unwrap();
             let by_cold_limit = crate::exact::Elimination::default()
                 .ground_degeneracy(&g, (20.0, 40.0))
                 .unwrap()
                 .count
                 .expect("a ring converges");
             assert_eq!(
-                by_contraction, u128::from(by_cold_limit),
+                by_contraction,
+                u128::from(by_cold_limit),
                 "odd AF ring {n}: contraction counted {by_contraction}, cold limit {by_cold_limit}"
             );
             // And the closed form both should be reproducing.
@@ -1171,9 +1257,24 @@ mod tests {
     fn every_semiring_has_the_identities_contraction_relies_on() {
         fn check<S: Semiring>(vals: &[S::Elem]) {
             for &v in vals {
-                assert_eq!(S::add(S::zero(), v), v, "{}: zero is not the additive identity", S::NAME);
-                assert_eq!(S::mul(S::one(), v), v, "{}: one is not the multiplicative identity", S::NAME);
-                assert_eq!(S::mul(S::zero(), v), S::zero(), "{}: zero does not annihilate", S::NAME);
+                assert_eq!(
+                    S::add(S::zero(), v),
+                    v,
+                    "{}: zero is not the additive identity",
+                    S::NAME
+                );
+                assert_eq!(
+                    S::mul(S::one(), v),
+                    v,
+                    "{}: one is not the multiplicative identity",
+                    S::NAME
+                );
+                assert_eq!(
+                    S::mul(S::zero(), v),
+                    S::zero(),
+                    "{}: zero does not annihilate",
+                    S::NAME
+                );
             }
         }
         check::<SumProduct>(&[0.0, 1.0, 2.5, -3.25]);
@@ -1192,7 +1293,9 @@ mod tests {
     fn an_open_index_contracts_to_the_marginal_exact_inference_reports() {
         let g = crate::ising::ring(10, 0.8, 0.2);
         let beta = 0.7;
-        let exact = Elimination::default().marginals(&g, beta).expect("a ring is narrow");
+        let exact = Elimination::default()
+            .marginals(&g, beta)
+            .expect("a ring is narrow");
 
         for spin in [0usize, 3, 7] {
             let mut net = Network::<SumProduct>::from_ising(&g, beta);
@@ -1217,8 +1320,12 @@ mod tests {
         let g = crate::ising::lattice2d(4, 1.0);
         let net = Network::<SumProduct>::from_ising(&g, 0.7);
 
-        let greedy = net.plan(Order::GreedySize).expect("a small lattice is contractable");
-        let naive = net.plan(Order::Sequential).expect("a small lattice is contractable");
+        let greedy = net
+            .plan(Order::GreedySize)
+            .expect("a small lattice is contractable");
+        let naive = net
+            .plan(Order::Sequential)
+            .expect("a small lattice is contractable");
         assert!(
             greedy.peak_entries <= naive.peak_entries,
             "the greedy order should not build a wider intermediate: {} vs {}",
@@ -1226,8 +1333,16 @@ mod tests {
             naive.peak_entries
         );
 
-        let a = net.contract_with(Order::GreedySize, 1 << 26).unwrap().value().unwrap();
-        let b = net.contract_with(Order::Sequential, 1 << 26).unwrap().value().unwrap();
+        let a = net
+            .contract_with(Order::GreedySize, 1 << 26)
+            .unwrap()
+            .value()
+            .unwrap();
+        let b = net
+            .contract_with(Order::Sequential, 1 << 26)
+            .unwrap()
+            .value()
+            .unwrap();
         assert!(
             (a - b).abs() < 1e-9 * a.abs().max(1.0),
             "two orders gave two answers: {a} and {b}"
@@ -1239,7 +1354,9 @@ mod tests {
     fn the_cost_is_reported_before_it_is_incurred_and_can_be_refused() {
         let g = crate::ising::lattice2d(5, 1.0);
         let net = Network::<SumProduct>::from_ising(&g, 0.5);
-        let plan = net.plan(Order::default()).expect("a 5x5 lattice is contractable");
+        let plan = net
+            .plan(Order::default())
+            .expect("a 5x5 lattice is contractable");
         assert!(plan.peak_entries >= 2);
         assert!(plan.flops > 0);
 
@@ -1305,7 +1422,9 @@ mod tests {
         }
         // Neither order may panic, and both must report something a budget can refuse.
         for order in [Order::Sequential, Order::GreedySize] {
-            let plan = net.plan(order).expect("a shape-only plan does not allocate");
+            let plan = net
+                .plan(order)
+                .expect("a shape-only plan does not allocate");
             assert_eq!(
                 plan.peak_entries,
                 u128::MAX,
@@ -1324,7 +1443,10 @@ mod tests {
     /// An empty network contracts to one, so adding a tensor to it gives that tensor back.
     #[test]
     fn the_empty_network_is_the_multiplicative_identity() {
-        assert_eq!(Network::<SumProduct>::new().contract().unwrap().value(), Some(1.0));
+        assert_eq!(
+            Network::<SumProduct>::new().contract().unwrap().value(),
+            Some(1.0)
+        );
     }
 
     /// A single tensor still has its indices summed, which is what "contract" means here.

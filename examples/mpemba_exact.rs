@@ -16,7 +16,9 @@
 //! ```text
 //! cargo run --release --example mpemba_exact
 //! ```
-use ferrotherm::mpemba::{cholesky_inverse, covariance_error, ensemble, lanczos_smallest, thermalization_time};
+use ferrotherm::mpemba::{
+    cholesky_inverse, covariance_error, ensemble, lanczos_smallest, thermalization_time,
+};
 use ferrotherm::rng::Pcg;
 
 fn wishart(d: usize, m: usize, seed: u64) -> Vec<f64> {
@@ -40,9 +42,15 @@ fn wishart(d: usize, m: usize, seed: u64) -> Vec<f64> {
 
 fn main() {
     let k = 10;
-    println!("K = {k}; Lanczos to a Ritz residual of tol * |A|, full reorthogonalisation; flops counted as performed.");
-    println!("\n=== linearly spaced spectrum (lambda_min 0.5, delta 0.5) under a Haar basis: the paper's Eqs. 27-28");
-    println!("     d     tol   Lanczos steps   Lanczos flops   Cholesky-inverse flops   ratio   init holds   speedup@1e-2  @1e-4  limit");
+    println!(
+        "K = {k}; Lanczos to a Ritz residual of tol * |A|, full reorthogonalisation; flops counted as performed."
+    );
+    println!(
+        "\n=== linearly spaced spectrum (lambda_min 0.5, delta 0.5) under a Haar basis: the paper's Eqs. 27-28"
+    );
+    println!(
+        "     d     tol   Lanczos steps   Lanczos flops   Cholesky-inverse flops   ratio   init holds   speedup@1e-2  @1e-4  limit"
+    );
     for &d in &[100usize, 200, 500, 1000, 2000] {
         let (a, _, lam) = ensemble(d, 0.5, 0.5, 3);
         let (_, chol) = cholesky_inverse(&a, d).expect("SPD");
@@ -63,7 +71,9 @@ fn main() {
             );
         }
     }
-    println!("\n=== positive Wishart, A = X^T X / m, m = 1.1 d: the paper's Eq. 29 (eigenvalues crowd at the lower edge)");
+    println!(
+        "\n=== positive Wishart, A = X^T X / m, m = 1.1 d: the paper's Eq. 29 (eigenvalues crowd at the lower edge)"
+    );
     println!("     d     tol   Lanczos steps   Lanczos flops   Cholesky-inverse flops   ratio");
     for &d in &[100usize, 200, 500, 1000] {
         let a = wishart(d, (1.1 * d as f64).round() as usize, 5);
@@ -75,7 +85,11 @@ fn main() {
                 r.steps,
                 r.flops as f64,
                 r.flops as f64 / chol as f64,
-                if r.converged { "" } else { "  (NOT converged within d steps)" }
+                if r.converged {
+                    ""
+                } else {
+                    "  (NOT converged within d steps)"
+                }
             );
         }
     }

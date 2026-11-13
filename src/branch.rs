@@ -131,7 +131,10 @@ impl Default for Params {
             // 40 spins it is 2,181,007 nodes against 2,451, and it moves the size that can be
             // PROVED from 44 to 52. Off would be the conservative choice and the wrong one.
             sdp_depth: Some(64),
-            sdp: crate::sdp::Params { sweeps: 60, ..crate::sdp::Params::default() },
+            sdp: crate::sdp::Params {
+                sweeps: 60,
+                ..crate::sdp::Params::default()
+            },
             sdp_min_free: 24,
             sdp_max_free: 192,
         }
@@ -206,7 +209,8 @@ pub fn solve(g: &Graph, p: &Params) -> Outcome {
 
     // Slack for the accumulated rounding along one root-to-node path. Scaled by the total weight,
     // because that is what the accumulators are made of, and by `n` for the path length.
-    let total: f64 = g.w.iter().map(|v| v.abs()).sum::<f64>() + g.h.iter().map(|v| v.abs()).sum::<f64>();
+    let total: f64 =
+        g.w.iter().map(|v| v.abs()).sum::<f64>() + g.h.iter().map(|v| v.abs()).sum::<f64>();
     let slack = (total * n as f64 * f64::EPSILON * 8.0).max(1e-12);
 
     let mut best_state: Vec<i8> = p
@@ -348,11 +352,12 @@ impl Search<'_> {
         // large and the nodes are still few, it is worth asking a much more expensive question.
         if depth < self.sdp_depth
             && let Some(lb2) = self.sdp_bound(fixed_energy)
-                && lb2 - self.slack >= self.best {
-                    self.pruned += 1;
-                    self.sdp_prunes += 1;
-                    return;
-                }
+            && lb2 - self.slack >= self.best
+        {
+            self.pruned += 1;
+            self.sdp_prunes += 1;
+            return;
+        }
 
         let i = self.order[depth];
         // Greedy value first: the sign that lowers `−s·λ` is the one more likely to hold the
@@ -432,7 +437,9 @@ impl Search<'_> {
         // Re-verified before it is used to discard a subtree. The cost is one more Cholesky against
         // the cost of a wrong prune, which is a false "proved optimal" that nothing downstream can
         // tell from a real one.
-        cert.verify(&residual).ok().map(|v| fixed_energy + v.min(b.value))
+        cert.verify(&residual)
+            .ok()
+            .map(|v| fixed_energy + v.min(b.value))
     }
 
     fn fix(&mut self, i: usize, v: i8, depth: usize, fixed_energy: f64) {
@@ -526,7 +533,11 @@ mod tests {
                 "seed {seed} (fields {fields}): branch-and-bound {:.9}, enumeration {min:.9}",
                 o.energy
             );
-            assert_eq!(o.energy, g.energy(&o.state), "energy must match the state returned");
+            assert_eq!(
+                o.energy,
+                g.energy(&o.state),
+                "energy must match the state returned"
+            );
         }
     }
 
@@ -561,7 +572,13 @@ mod tests {
             );
 
             // Truncated: still a bracket, and a valid one.
-            let cut = solve(&g, &Params { max_nodes: 60, ..Params::default() });
+            let cut = solve(
+                &g,
+                &Params {
+                    max_nodes: 60,
+                    ..Params::default()
+                },
+            );
             assert!(
                 cut.bound <= min + 1e-9,
                 "seed {seed}: bound {:.9} is ABOVE the true minimum {min:.9} -- not a bound",
@@ -641,7 +658,13 @@ mod tests {
     #[test]
     fn a_search_that_runs_out_of_budget_does_not_claim_a_proof() {
         let g = random_graph(40, 0.3, 5, true);
-        let o = solve(&g, &Params { max_nodes: 500, ..Params::default() });
+        let o = solve(
+            &g,
+            &Params {
+                max_nodes: 500,
+                ..Params::default()
+            },
+        );
         assert!(o.hit_limit, "500 nodes should not exhaust a 40-spin tree");
         assert!(!o.proved_optimal);
         assert!(o.nodes <= 501, "nodes {}", o.nodes);
@@ -660,8 +683,15 @@ mod tests {
         // that many. A tighter threshold would be a claim about this instance rather than about
         // the bound, and would go flaky the first time the generator changed.
         let full = 1u64 << 18;
-        assert!(o.nodes < full, "visited {} nodes of a {full}-leaf tree", o.nodes);
-        assert!(o.pruned > 0, "no branch was ever cut off, so the bound did nothing");
+        assert!(
+            o.nodes < full,
+            "visited {} nodes of a {full}-leaf tree",
+            o.nodes
+        );
+        assert!(
+            o.pruned > 0,
+            "no branch was ever cut off, so the bound did nothing"
+        );
     }
 
     /// A supplied incumbent may speed the search up; it may never change the answer.
@@ -674,7 +704,13 @@ mod tests {
         for seed in 0..4u64 {
             let g = random_graph(12, 0.4, 40 + seed, seed % 2 == 0);
             let plain = solve(&g, &Params::default());
-            let seeded = solve(&g, &Params { incumbent: Some(plain.state.clone()), ..Params::default() });
+            let seeded = solve(
+                &g,
+                &Params {
+                    incumbent: Some(plain.state.clone()),
+                    ..Params::default()
+                },
+            );
             assert!(seeded.proved_optimal);
             assert!(
                 (seeded.energy - plain.energy).abs() < 1e-12,
@@ -682,12 +718,27 @@ mod tests {
                 seeded.energy,
                 plain.energy
             );
-            assert!(seeded.nodes <= plain.nodes, "a known-optimal incumbent should not cost nodes");
+            assert!(
+                seeded.nodes <= plain.nodes,
+                "a known-optimal incumbent should not cost nodes"
+            );
 
             // Garbage in: wrong length, and non-spin values. Both must be ignored, not trusted.
-            let bad = solve(&g, &Params { incumbent: Some(vec![0i8; g.n]), ..Params::default() });
+            let bad = solve(
+                &g,
+                &Params {
+                    incumbent: Some(vec![0i8; g.n]),
+                    ..Params::default()
+                },
+            );
             assert!((bad.energy - plain.energy).abs() < 1e-12);
-            let short = solve(&g, &Params { incumbent: Some(vec![1i8; g.n - 1]), ..Params::default() });
+            let short = solve(
+                &g,
+                &Params {
+                    incumbent: Some(vec![1i8; g.n - 1]),
+                    ..Params::default()
+                },
+            );
             assert!((short.energy - plain.energy).abs() < 1e-12);
         }
     }
@@ -709,8 +760,15 @@ mod tests {
         let g = random_graph(14, 0.4, 6, true);
         let o = solve(&g, &Params::default());
         let scale: f64 = g.w.iter().map(|v| v.abs()).sum::<f64>();
-        assert!(o.slack > 0.0, "a zero slack cannot absorb the accumulated rounding");
-        assert!(o.slack < scale * 1e-9, "slack {} against a weight scale of {scale}", o.slack);
+        assert!(
+            o.slack > 0.0,
+            "a zero slack cannot absorb the accumulated rounding"
+        );
+        assert!(
+            o.slack < scale * 1e-9,
+            "slack {} against a weight scale of {scale}",
+            o.slack
+        );
     }
     /// THE TEST THE SDP DIAL EXISTS TO SURVIVE: a tighter bound may visit fewer nodes and may
     /// never change the answer.
@@ -736,7 +794,13 @@ mod tests {
                 }
             }
             let g = gb.build();
-            let cheap = solve(&g, &Params { sdp_depth: None, ..Params::default() });
+            let cheap = solve(
+                &g,
+                &Params {
+                    sdp_depth: None,
+                    ..Params::default()
+                },
+            );
             let strong = solve(&g, &Params::default());
             assert!(cheap.proved_optimal && strong.proved_optimal, "seed {seed}");
             assert!(
@@ -746,7 +810,10 @@ mod tests {
                 cheap.energy,
                 strong.energy
             );
-            assert!(strong.sdp_calls > 0, "seed {seed}: the dial was set and never fired");
+            assert!(
+                strong.sdp_calls > 0,
+                "seed {seed}: the dial was set and never fired"
+            );
             assert!(
                 strong.nodes <= cheap.nodes,
                 "seed {seed}: a TIGHTER bound visited MORE nodes ({} vs {})",
@@ -759,7 +826,10 @@ mod tests {
         }
         // Not required per seed -- a bound that happens not to bite on one instance is fine -- but
         // if it never bites on any of them the dial is decoration.
-        assert!(agreed > 0, "the SDP bound pruned nothing on any of six dense instances");
+        assert!(
+            agreed > 0,
+            "the SDP bound pruned nothing on any of six dense instances"
+        );
     }
 
     /// The size guards are what actually decide, and both ends have to hold.
@@ -781,13 +851,30 @@ mod tests {
         };
         // Under the floor: on by default, and it still never fires.
         let small = dense(14);
-        assert_eq!(solve(&small, &Params::default()).sdp_calls, 0, "14 spins is under the floor");
+        assert_eq!(
+            solve(&small, &Params::default()).sdp_calls,
+            0,
+            "14 spins is under the floor"
+        );
 
         // Over the ceiling: a low `sdp_max_free` must silence it on a graph that would otherwise
         // use it, which is the guard a large model depends on.
         let big = dense(30);
-        let on = solve(&big, &Params { max_nodes: 20_000, ..Params::default() });
-        let capped = solve(&big, &Params { sdp_max_free: 8, max_nodes: 20_000, ..Params::default() });
+        let on = solve(
+            &big,
+            &Params {
+                max_nodes: 20_000,
+                ..Params::default()
+            },
+        );
+        let capped = solve(
+            &big,
+            &Params {
+                sdp_max_free: 8,
+                max_nodes: 20_000,
+                ..Params::default()
+            },
+        );
         assert!(on.sdp_calls > 0, "30 spins is inside the default window");
         assert_eq!(capped.sdp_calls, 0, "the ceiling must silence it");
         // And silencing a SOUND bound may only cost nodes, never the answer.
@@ -795,5 +882,4 @@ mod tests {
             assert!((on.energy - capped.energy).abs() < 1e-9);
         }
     }
-
 }

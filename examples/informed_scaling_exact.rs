@@ -28,7 +28,7 @@
 //
 // run: cargo run --release --example informed_scaling_exact
 
-use ferrotherm::autocorr::{tau_int_fundamental, tau_int_solved, Autocorrelation, Kernel, Route};
+use ferrotherm::autocorr::{Autocorrelation, Kernel, Route, tau_int_fundamental, tau_int_solved};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::informed::Balance;
 use ferrotherm::rng::Pcg;
@@ -41,7 +41,10 @@ fn frustrated(n: usize, seed: u64) -> Graph {
         b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
     }
     for _ in 0..n / 4 {
-        let (i, j) = ((rng.f64() * n as f64) as usize % n, (rng.f64() * n as f64) as usize % n);
+        let (i, j) = (
+            (rng.f64() * n as f64) as usize % n,
+            (rng.f64() * n as f64) as usize % n,
+        );
         if i != j {
             b.couple(i, j, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
         }
@@ -66,14 +69,34 @@ fn main() {
     let beta = 2.0;
     let seeds = 4u64;
     let rtol = 1e-8;
-    println!("EXACT tau_int: BARKER-INFORMED AGAINST CHROMATIC GIBBS, IN FLIPS, ON ALL 2^n STATES\n");
-    println!("  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}");
-    println!("  solve     autocorr::tau_int_solved: (I - P + 1 pi^T) z = e matrix-free, CG for the informed chain and GMRES");
-    println!("            for the sweep, to an estimated relative error of {rtol:.0e}, the censored solve where f64 cannot");
-    println!("            certify that; {seeds} seeds averaged; no sampling, no window. dense = tau_int_fundamental, n <= 10\n");
+    println!(
+        "EXACT tau_int: BARKER-INFORMED AGAINST CHROMATIC GIBBS, IN FLIPS, ON ALL 2^n STATES\n"
+    );
+    println!(
+        "  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}"
+    );
+    println!(
+        "  solve     autocorr::tau_int_solved: (I - P + 1 pi^T) z = e matrix-free, CG for the informed chain and GMRES"
+    );
+    println!(
+        "            for the sweep, to an estimated relative error of {rtol:.0e}, the censored solve where f64 cannot"
+    );
+    println!(
+        "            certify that; {seeds} seeds averaged; no sampling, no window. dense = tau_int_fundamental, n <= 10\n"
+    );
     println!(
         "  {:>4} {:>5}   {:>12} {:>12} {:>6}   {:>8} {:>8}   {:>15} {:>6} {:>9} {:>9}",
-        "n", "deg", "tau G flips", "tau B flips", "G/B", "adv:scan", "adv:tree", "routes G / B", "apps", "est rel", "vs dense"
+        "n",
+        "deg",
+        "tau G flips",
+        "tau B flips",
+        "G/B",
+        "adv:scan",
+        "adv:tree",
+        "routes G / B",
+        "apps",
+        "est rel",
+        "vs dense"
     );
     let mut ratios = Vec::new();
     for n in (6usize..=20).step_by(2) {
@@ -83,11 +106,16 @@ fn main() {
         for seed in 0..seeds {
             let g = frustrated(n, seed);
             deg += 2.0 * g.n_edges as f64 / n as f64;
-            for (arm, kernel) in [Kernel::ChromaticGibbs, Kernel::Informed(Balance::Barker)].into_iter().enumerate() {
-                let a: Autocorrelation = tau_int_solved(&g, beta, kernel, |s| g.energy(s), rtol, 20_000)
-                    .unwrap_or_else(|e| panic!("n {n} seed {seed} {kernel:?}: {e}"));
+            for (arm, kernel) in [Kernel::ChromaticGibbs, Kernel::Informed(Balance::Barker)]
+                .into_iter()
+                .enumerate()
+            {
+                let a: Autocorrelation =
+                    tau_int_solved(&g, beta, kernel, |s| g.energy(s), rtol, 20_000)
+                        .unwrap_or_else(|e| panic!("n {n} seed {seed} {kernel:?}: {e}"));
                 if n <= 10 {
-                    let d = tau_int_fundamental(&g, beta, kernel, |s| g.energy(s)).expect("n is under the dense cap");
+                    let d = tau_int_fundamental(&g, beta, kernel, |s| g.energy(s))
+                        .expect("n is under the dense cap");
                     dense_gap = dense_gap.max((a.tau_int - d.tau_int).abs() / (d.tau_int + 0.5));
                 }
                 apps = apps.max(a.matvecs);
@@ -110,7 +138,11 @@ fn main() {
         let per_g = deg + 1.0;
         let per_b_scan = deg + 1.0 + n as f64;
         let per_b_tree = deg + 1.0 + (n as f64).log2();
-        let gap = if n <= 10 { format!("{dense_gap:.1e}") } else { "-".to_string() };
+        let gap = if n <= 10 {
+            format!("{dense_gap:.1e}")
+        } else {
+            "-".to_string()
+        };
         println!(
             "  {n:>4} {deg:>5.2}   {tg:>12.1} {tb:>12.1} {:>6.2}   {:>8.2} {:>8.2}   {:>15} {apps:>6} {est:>9.1e} {gap:>9}",
             tg / tb,
@@ -120,8 +152,18 @@ fn main() {
         );
         ratios.push(tg / tb);
     }
-    println!("\n  Every number above is exact for its model to the estimate beside it: the ratio column is a fact about the two");
-    println!("  kernels at that size, not an estimate of one. Where the sampled table (`informed_scaling`) and this one disagree");
-    println!("  at a shared size, the sampled one is the one that was wrong. Four seeds a row, and one glassy seed can dominate");
-    println!("  a row's mean, so the trend in n is not smooth: G/B from {:.2} to {:.2}.", ratios.iter().copied().fold(f64::INFINITY, f64::min), ratios.iter().copied().fold(0.0, f64::max));
+    println!(
+        "\n  Every number above is exact for its model to the estimate beside it: the ratio column is a fact about the two"
+    );
+    println!(
+        "  kernels at that size, not an estimate of one. Where the sampled table (`informed_scaling`) and this one disagree"
+    );
+    println!(
+        "  at a shared size, the sampled one is the one that was wrong. Four seeds a row, and one glassy seed can dominate"
+    );
+    println!(
+        "  a row's mean, so the trend in n is not smooth: G/B from {:.2} to {:.2}.",
+        ratios.iter().copied().fold(f64::INFINITY, f64::min),
+        ratios.iter().copied().fold(0.0, f64::max)
+    );
 }

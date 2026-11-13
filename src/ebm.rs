@@ -181,10 +181,16 @@ impl core::fmt::Display for Error {
             ),
             Error::NoData => write!(f, "no data rows; there is nothing to fit"),
             Error::RowWidth { row, len, want } => {
-                write!(f, "row {row} has {len} visible entries, and the dataset declares {want}")
+                write!(
+                    f,
+                    "row {row} has {len} visible entries, and the dataset declares {want}"
+                )
             }
             Error::NotASpin { row, at, value } => {
-                write!(f, "row {row} position {at} is {value}, and a spin is -1 or +1")
+                write!(
+                    f,
+                    "row {row} position {at} is {value}, and a spin is -1 or +1"
+                )
             }
             Error::TooLarge { spins, limit } => write!(
                 f,
@@ -195,7 +201,10 @@ impl core::fmt::Display for Error {
                  something other than the exact likelihood."
             ),
             Error::TooSmall { spins, visible } => {
-                write!(f, "the model has {spins} spins and the data needs {visible} visible")
+                write!(
+                    f,
+                    "the model has {spins} spins and the data needs {visible} visible"
+                )
             }
         }
     }
@@ -268,7 +277,14 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { epochs: 300, k: 5, positive_sweeps: 5, learning_rate: 0.05, batch: 8, persistent: false }
+        Params {
+            epochs: 300,
+            k: 5,
+            positive_sweeps: 5,
+            learning_rate: 0.05,
+            batch: 8,
+            persistent: false,
+        }
     }
 }
 
@@ -352,7 +368,9 @@ pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result
         (0..p.batch.max(1))
             .map(|s| {
                 (
-                    (0..n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect(),
+                    (0..n)
+                        .map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 })
+                        .collect(),
                     Pcg::new(seed ^ 0xF0F0_0000 ^ s as u64, 0x9E37),
                 )
             })
@@ -378,7 +396,6 @@ pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result
         for chunk in order.chunks(p.batch.max(1)) {
             let mut d_edge = vec![0.0f64; edges.len()];
             let mut d_bias = vec![0.0f64; n];
-
 
             for (slot_in_batch, &r) in chunk.iter().enumerate() {
                 let row = &data.rows[r];
@@ -433,7 +450,11 @@ pub fn train(structure: &Graph, data: &Dataset, p: &Params, seed: u64) -> Result
 
     let graph = build(&edges, &bias);
     let log_likelihood = exact_log_likelihood(&graph, data).ok();
-    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+    Ok(Trained {
+        graph,
+        log_likelihood,
+        epochs_run: p.epochs,
+    })
 }
 
 /// How many spins [`exact_log_likelihood`] will enumerate before refusing.
@@ -456,7 +477,10 @@ pub const MAX_ENUMERATED: usize = 22;
 pub fn exact_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     check(g, data)?;
     if g.n > MAX_ENUMERATED {
-        return Err(Error::TooLarge { spins: g.n, limit: MAX_ENUMERATED });
+        return Err(Error::TooLarge {
+            spins: g.n,
+            limit: MAX_ENUMERATED,
+        });
     }
     // log-sum-exp over every state, and over the states agreeing with each row on the visible part.
     let mut max_neg_e = f64::NEG_INFINITY;
@@ -516,7 +540,8 @@ impl AisLikelihood {
     /// upper bound on the numerator is reverse AIS's conditional business.
     #[must_use]
     pub fn upper_bound(&self, delta: f64) -> Option<f64> {
-        self.numerator_exact.then(|| self.mean_log_numerator - self.log_z.lower_bound(delta))
+        self.numerator_exact
+            .then(|| self.mean_log_numerator - self.log_z.lower_bound(delta))
     }
 }
 
@@ -543,7 +568,10 @@ pub fn log_likelihood_ais(
     check(g, data)?;
     let hidden = g.n - data.visible;
     if hidden > MAX_ENUMERATED {
-        return Err(Error::TooLarge { spins: hidden, limit: MAX_ENUMERATED });
+        return Err(Error::TooLarge {
+            spins: hidden,
+            limit: MAX_ENUMERATED,
+        });
     }
     let mut s = vec![-1i8; g.n];
     let mut total = 0.0;
@@ -561,7 +589,12 @@ pub fn log_likelihood_ais(
     }
     let mean_log_numerator = total / data.rows.len() as f64;
     let log_z = crate::free_energy::ais(g, ladder, sweeps, runs, seed);
-    Ok(AisLikelihood { estimate: mean_log_numerator - log_z.log_z, mean_log_numerator, log_z, numerator_exact: true })
+    Ok(AisLikelihood {
+        estimate: mean_log_numerator - log_z.log_z,
+        mean_log_numerator,
+        log_z,
+        numerator_exact: true,
+    })
 }
 
 /// [`log_likelihood_ais`] for a hidden part too large to enumerate: the numerator of every row by
@@ -585,11 +618,24 @@ pub fn log_likelihood_ais_clamped(
     let mut total = 0.0;
     for (r, row) in data.rows.iter().enumerate() {
         let fixed: Vec<(usize, i8)> = row.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-        total += crate::free_energy::ais_clamped(g, &fixed, ladder, sweeps, runs, seed.wrapping_add(1 + r as u64)).log_z;
+        total += crate::free_energy::ais_clamped(
+            g,
+            &fixed,
+            ladder,
+            sweeps,
+            runs,
+            seed.wrapping_add(1 + r as u64),
+        )
+        .log_z;
     }
     let mean_log_numerator = total / data.rows.len() as f64;
     let log_z = crate::free_energy::ais(g, ladder, sweeps, runs, seed);
-    Ok(AisLikelihood { estimate: mean_log_numerator - log_z.log_z, mean_log_numerator, log_z, numerator_exact: false })
+    Ok(AisLikelihood {
+        estimate: mean_log_numerator - log_z.log_z,
+        mean_log_numerator,
+        log_z,
+        numerator_exact: false,
+    })
 }
 
 fn check(g: &Graph, data: &Dataset) -> Result<(), Error> {
@@ -597,14 +643,25 @@ fn check(g: &Graph, data: &Dataset) -> Result<(), Error> {
         return Err(Error::NoData);
     }
     if g.n < data.visible {
-        return Err(Error::TooSmall { spins: g.n, visible: data.visible });
+        return Err(Error::TooSmall {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     for (r, row) in data.rows.iter().enumerate() {
         if row.len() != data.visible {
-            return Err(Error::RowWidth { row: r, len: row.len(), want: data.visible });
+            return Err(Error::RowWidth {
+                row: r,
+                len: row.len(),
+                want: data.visible,
+            });
         }
         if let Some(at) = row.iter().position(|&v| v != 1 && v != -1) {
-            return Err(Error::NotASpin { row: r, at, value: row[at] });
+            return Err(Error::NotASpin {
+                row: r,
+                at,
+                value: row[at],
+            });
         }
     }
     Ok(())
@@ -671,7 +728,10 @@ pub fn bars_and_stripes(side: usize) -> Dataset {
             }
         }
     }
-    Dataset { visible: n, rows: seen }
+    Dataset {
+        visible: n,
+        rows: seen,
+    }
 }
 
 // ---- the Jarzynski-reweighted negative phase --------------------------------------------------
@@ -826,7 +886,9 @@ pub fn train_jarzynski(
     let mut wrng: Vec<Pcg> = Vec::with_capacity(walkers);
     let mut lw: Vec<f64> = Vec::with_capacity(walkers);
     for w in 0..walkers {
-        let s: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect();
+        let s: Vec<i8> = (0..n)
+            .map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 })
+            .collect();
         lw.push(-g.energy(&s));
         x.push(s);
         // Each walker carries its own stream, as `Params::persistent`'s chains do: one shared seed
@@ -968,16 +1030,23 @@ pub fn train_jarzynski(
     let graph = wt.build();
     let log_likelihood = exact_log_likelihood(&graph, data).ok();
     Ok(JarzynskiFit {
-        trained: Trained { graph, log_likelihood, epochs_run: p.epochs },
+        trained: Trained {
+            graph,
+            log_likelihood,
+            epochs_run: p.epochs,
+        },
         ess,
         min_ess: if updates == 0 { ess } else { min_ess },
-        mean_ess: if updates == 0 { ess } else { ess_sum / updates as f64 },
+        mean_ess: if updates == 0 {
+            ess
+        } else {
+            ess_sum / updates as f64
+        },
         resamples,
         log_z: n as f64 * core::f64::consts::LN_2 + log_z_accum + log_mean_w,
         updates,
     })
 }
-
 
 #[cfg(test)]
 mod likelihood_tests {
@@ -991,19 +1060,34 @@ mod likelihood_tests {
         let g = rbm(9, 6); // 15 spins: enumerable, so the exact likelihood exists
         let exact = exact_log_likelihood(&g, &data).unwrap();
         let a = log_likelihood_ais(&g, &data, &linear_ladder(1.0, 64), 2, 128, 4).unwrap();
-        assert!((a.estimate - exact).abs() < 0.1, "ais {} vs exact {exact}", a.estimate);
-        let ub = a.upper_bound(1e-6).expect("enumerated numerator carries a bound");
+        assert!(
+            (a.estimate - exact).abs() < 0.1,
+            "ais {} vs exact {exact}",
+            a.estimate
+        );
+        let ub = a
+            .upper_bound(1e-6)
+            .expect("enumerated numerator carries a bound");
         assert!(exact <= ub, "exact {exact} above the bound {ub}");
         assert!(a.log_z.ess > 8.0);
         // Too many hidden units is refused by the enumerating route, not approximated...
         let wide = rbm(9, 30);
-        assert!(matches!(log_likelihood_ais(&wide, &data, &linear_ladder(1.0, 8), 1, 4, 1), Err(Error::TooLarge { .. })));
+        assert!(matches!(
+            log_likelihood_ais(&wide, &data, &linear_ladder(1.0, 8), 1, 4, 1),
+            Err(Error::TooLarge { .. })
+        ));
         // ...and the clamped route takes it, with a point estimate and no bound.
-        let c = log_likelihood_ais_clamped(&wide, &data, &linear_ladder(1.0, 32), 2, 16, 2).unwrap();
+        let c =
+            log_likelihood_ais_clamped(&wide, &data, &linear_ladder(1.0, 32), 2, 16, 2).unwrap();
         assert!(c.estimate.is_finite() && c.upper_bound(0.05).is_none());
         // Where both routes apply they agree.
-        let c_small = log_likelihood_ais_clamped(&g, &data, &linear_ladder(1.0, 64), 2, 64, 3).unwrap();
-        assert!((c_small.estimate - exact).abs() < 0.15, "clamped {} vs exact {exact}", c_small.estimate);
+        let c_small =
+            log_likelihood_ais_clamped(&g, &data, &linear_ladder(1.0, 64), 2, 64, 3).unwrap();
+        assert!(
+            (c_small.estimate - exact).abs() < 0.15,
+            "clamped {} vs exact {exact}",
+            c_small.estimate
+        );
     }
 }
 
@@ -1032,7 +1116,11 @@ pub type PlParams = FitParams;
 
 impl Default for FitParams {
     fn default() -> Self {
-        FitParams { epochs: 400, lr: 0.1, l2: 0.0 }
+        FitParams {
+            epochs: 400,
+            lr: 0.1,
+            l2: 0.0,
+        }
     }
 }
 
@@ -1063,7 +1151,11 @@ impl Weights {
                 }
             }
         }
-        Weights { n, edges, bias: structure.h.clone() }
+        Weights {
+            n,
+            edges,
+            bias: structure.h.clone(),
+        }
     }
 
     fn build(&self) -> Graph {
@@ -1273,7 +1365,10 @@ pub fn train_flip(
 ) -> Result<Trained, Error> {
     check(structure, data)?;
     if structure.n != data.visible {
-        return Err(Error::HasLatent { spins: structure.n, visible: data.visible });
+        return Err(Error::HasLatent {
+            spins: structure.n,
+            visible: data.visible,
+        });
     }
     let mut wt = Weights::of(structure);
     for _ in 0..p.epochs {
@@ -1283,7 +1378,11 @@ pub fn train_flip(
     }
     let graph = wt.build();
     let log_likelihood = exact_log_likelihood(&graph, data).ok();
-    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+    Ok(Trained {
+        graph,
+        log_likelihood,
+        epochs_run: p.epochs,
+    })
 }
 
 /// Mean pseudo-log-likelihood per row: `(1/D) Σ_d Σ_i log P(s_i | rest)`.
@@ -1297,7 +1396,10 @@ pub fn train_flip(
 pub fn pseudo_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     check(g, data)?;
     if g.n != data.visible {
-        return Err(Error::HasLatent { spins: g.n, visible: data.visible });
+        return Err(Error::HasLatent {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     Ok(flip_score(g, data, FlipLoss::Log))
 }
@@ -1330,7 +1432,10 @@ pub fn pseudo_log_likelihood(g: &Graph, data: &Dataset) -> Result<f64, Error> {
 pub fn minimum_probability_flow(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     check(g, data)?;
     if g.n != data.visible {
-        return Err(Error::HasLatent { spins: g.n, visible: data.visible });
+        return Err(Error::HasLatent {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     Ok(flip_score(g, data, FlipLoss::Flow))
 }
@@ -1361,7 +1466,10 @@ pub fn minimum_probability_flow(g: &Graph, data: &Dataset) -> Result<f64, Error>
 pub fn ratio_matching(g: &Graph, data: &Dataset) -> Result<f64, Error> {
     check(g, data)?;
     if g.n != data.visible {
-        return Err(Error::HasLatent { spins: g.n, visible: data.visible });
+        return Err(Error::HasLatent {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     Ok(flip_score(g, data, FlipLoss::Ratio))
 }
@@ -1553,7 +1661,9 @@ pub fn train_variational(
     let mut fantasy: Vec<(Vec<i8>, Pcg)> = (0..p.batch.max(1))
         .map(|s| {
             (
-                (0..n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect(),
+                (0..n)
+                    .map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 })
+                    .collect(),
                 Pcg::new(seed ^ 0x5F5F_0000 ^ s as u64, 0x9E37),
             )
         })
@@ -1606,7 +1716,11 @@ pub fn train_variational(
                     let nseed = (u64::from(rng.next_u32()) << 32) | u64::from(rng.next_u32());
                     let mut fs = Sampler::new(&g, 1.0, nseed);
                     for i in 0..n {
-                        fs.s[i] = if rng.f64() < (1.0 + mf.m[i]) / 2.0 { 1 } else { -1 };
+                        fs.s[i] = if rng.f64() < (1.0 + mf.m[i]) / 2.0 {
+                            1
+                        } else {
+                            -1
+                        };
                     }
                     for (i, &v) in row.iter().enumerate() {
                         fs.s[i] = v;
@@ -1616,8 +1730,7 @@ pub fn train_variational(
                 };
 
                 for (e, &(i, j, _)) in wt.edges.iter().enumerate() {
-                    d_edge[e] += mf.m[i] * mf.m[j]
-                        - f64::from(neg[i]) * f64::from(neg[j]);
+                    d_edge[e] += mf.m[i] * mf.m[j] - f64::from(neg[i]) * f64::from(neg[j]);
                 }
                 for i in 0..n {
                     d_bias[i] += mf.m[i] - f64::from(neg[i]);
@@ -1636,7 +1749,11 @@ pub fn train_variational(
 
     let graph = wt.build();
     let log_likelihood = exact_log_likelihood(&graph, data).ok();
-    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+    Ok(Trained {
+        graph,
+        log_likelihood,
+        epochs_run: p.epochs,
+    })
 }
 
 /// The TRUE maximum-likelihood gradient, by enumeration.
@@ -1682,7 +1799,11 @@ fn exact_gradient(
             *acc += if mask >> i & 1 == 1 { p } else { -p };
         }
         for (k, &(i, j, _)) in edges.iter().enumerate() {
-            model_w[k] += if (mask >> i & 1) == (mask >> j & 1) { p } else { -p };
+            model_w[k] += if (mask >> i & 1) == (mask >> j & 1) {
+                p
+            } else {
+                -p
+            };
         }
     }
 
@@ -1716,7 +1837,11 @@ fn exact_gradient(
                 *acc += if mask >> i & 1 == 1 { p } else { -p };
             }
             for (k, &(i, j, _)) in edges.iter().enumerate() {
-                row_w[k] += if (mask >> i & 1) == (mask >> j & 1) { p } else { -p };
+                row_w[k] += if (mask >> i & 1) == (mask >> j & 1) {
+                    p
+                } else {
+                    -p
+                };
             }
         }
         for (acc, x) in data_h.iter_mut().zip(&row_h) {
@@ -1729,7 +1854,9 @@ fn exact_gradient(
 
     let d = data.rows.len() as f64;
     let dh = (0..n).map(|i| data_h[i] / d - model_h[i] / z).collect();
-    let dw = (0..edges.len()).map(|k| data_w[k] / d - model_w[k] / z).collect();
+    let dw = (0..edges.len())
+        .map(|k| data_w[k] / d - model_w[k] / z)
+        .collect();
     (dw, dh)
 }
 
@@ -1764,7 +1891,10 @@ fn exact_gradient(
 pub fn train_exact(structure: &Graph, data: &Dataset, p: &FitParams) -> Result<Trained, Error> {
     check(structure, data)?;
     if structure.n > MAX_ENUMERATED {
-        return Err(Error::TooLarge { spins: structure.n, limit: MAX_ENUMERATED });
+        return Err(Error::TooLarge {
+            spins: structure.n,
+            limit: MAX_ENUMERATED,
+        });
     }
     let mut wt = Weights::of(structure);
     for _ in 0..p.epochs {
@@ -1774,7 +1904,11 @@ pub fn train_exact(structure: &Graph, data: &Dataset, p: &FitParams) -> Result<T
     }
     let graph = wt.build();
     let log_likelihood = exact_log_likelihood(&graph, data).ok();
-    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+    Ok(Trained {
+        graph,
+        log_likelihood,
+        epochs_run: p.epochs,
+    })
 }
 
 /// Which deterministic free energy supplies the model's own moments in the negative phase.
@@ -1820,7 +1954,10 @@ pub struct Solve {
 
 impl Default for Solve {
     fn default() -> Self {
-        Solve { iters: 500, damping: 0.5 }
+        Solve {
+            iters: 500,
+            damping: 0.5,
+        }
     }
 }
 
@@ -1897,19 +2034,24 @@ pub fn model_moments(g: &Graph, which: Moments, s: &Solve) -> ModelMoments {
             let j = g.nbr[e] as usize;
             pair[e] = match which {
                 Moments::MeanField => m[i] * m[j],
-                Moments::Tap => {
-                    m[i] * m[j] + g.w[e] * (1.0 - m[i] * m[i]) * (1.0 - m[j] * m[j])
-                }
+                Moments::Tap => m[i] * m[j] + g.w[e] * (1.0 - m[i] * m[i]) * (1.0 - m[j] * m[j]),
                 Moments::Bethe => bethe_pair(m[i], m[j], g.w[e]),
             };
         }
     }
-    ModelMoments { m, pair, log_z, residual }
+    ModelMoments {
+        m,
+        pair,
+        log_z,
+        residual,
+    }
 }
 
 /// The CSR slot holding edge `(i, j)`.
 fn slot_of(g: &Graph, i: usize, j: usize) -> usize {
-    (g.offset[i]..g.offset[i + 1]).find(|&e| g.nbr[e] as usize == j).expect("edge is in the CSR")
+    (g.offset[i]..g.offset[i + 1])
+        .find(|&e| g.nbr[e] as usize == j)
+        .expect("edge is in the CSR")
 }
 
 /// The model with spins `0..row.len()` pinned to `row`, over the same node set.
@@ -1981,7 +2123,13 @@ fn clamped_moments(
     for row in &data.rows {
         let gc = clamped_graph(g, row);
         let mc = model_moments(&gc, which, s);
-        let at = |i: usize| if i < fixed { f64::from(row[i]) } else { mc.m[i] };
+        let at = |i: usize| {
+            if i < fixed {
+                f64::from(row[i])
+            } else {
+                mc.m[i]
+            }
+        };
         for i in 0..g.n {
             m[i] += at(i);
         }
@@ -2096,7 +2244,11 @@ pub fn train_free_energy(
     }
     let graph = wt.build();
     let log_likelihood = exact_log_likelihood(&graph, data).ok();
-    Ok(Trained { graph, log_likelihood, epochs_run: p.epochs })
+    Ok(Trained {
+        graph,
+        log_likelihood,
+        epochs_run: p.epochs,
+    })
 }
 
 /// [`train_free_energy`] with the TAP negative phase (Gabrié, Tramel & Krzakala 2015).
@@ -2154,15 +2306,23 @@ mod tests {
             vec![-1, -1, 1],
             vec![-1, -1, -1],
         ];
-        let data = Dataset { visible: 3, rows: rows.clone() };
-        let p = Params { epochs: 4_000, k: 20, learning_rate: 0.05, batch: 6, positive_sweeps: 1, persistent: false };
+        let data = Dataset {
+            visible: 3,
+            rows: rows.clone(),
+        };
+        let p = Params {
+            epochs: 4_000,
+            k: 20,
+            learning_rate: 0.05,
+            batch: 6,
+            positive_sweeps: 1,
+            persistent: false,
+        };
         let t = train(&structure, &data, &p, 7).unwrap();
 
         // Data moments.
         let m = rows.len() as f64;
-        let dc = |i: usize, j: usize| {
-            rows.iter().map(|r| (r[i] * r[j]) as f64).sum::<f64>() / m
-        };
+        let dc = |i: usize, j: usize| rows.iter().map(|r| (r[i] * r[j]) as f64).sum::<f64>() / m;
         let dm = |i: usize| rows.iter().map(|r| r[i] as f64).sum::<f64>() / m;
 
         // Model moments, by enumeration.
@@ -2171,7 +2331,9 @@ mod tests {
         let mut corr = [[0.0f64; 3]; 3];
         let mut mag = [0.0f64; 3];
         for mask in 0..8usize {
-            let s: Vec<i8> = (0..3).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..3)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             let w = (-g.energy(&s)).exp();
             z += w;
             for i in 0..3 {
@@ -2211,19 +2373,34 @@ mod tests {
         let data = bars_and_stripes(3);
         let g = rbm(9, 6);
         let untrained = exact_log_likelihood(&g, &data).unwrap();
-        let base = Params { epochs: 400, k: 5, positive_sweeps: 5, learning_rate: 0.05, batch: 8, persistent: false };
+        let base = Params {
+            epochs: 400,
+            k: 5,
+            positive_sweeps: 5,
+            learning_rate: 0.05,
+            batch: 8,
+            persistent: false,
+        };
         let mut pp = base;
         pp.persistent = true;
 
         let (mut cd_sum, mut pcd_sum) = (0.0, 0.0);
         for seed in 0..4u64 {
-            let lc = exact_log_likelihood(&train(&g, &data, &base, seed).unwrap().graph, &data).unwrap();
-            let lp = exact_log_likelihood(&train(&g, &data, &pp, seed).unwrap().graph, &data).unwrap();
-            assert!(lp > untrained, "seed {seed}: PCD must train at all, {lp} vs untrained {untrained}");
+            let lc =
+                exact_log_likelihood(&train(&g, &data, &base, seed).unwrap().graph, &data).unwrap();
+            let lp =
+                exact_log_likelihood(&train(&g, &data, &pp, seed).unwrap().graph, &data).unwrap();
+            assert!(
+                lp > untrained,
+                "seed {seed}: PCD must train at all, {lp} vs untrained {untrained}"
+            );
             cd_sum += lc;
             pcd_sum += lp;
         }
-        assert!(cd_sum > pcd_sum, "at lr 0.05 CD should win here: CD {cd_sum}, PCD {pcd_sum}");
+        assert!(
+            cd_sum > pcd_sum,
+            "at lr 0.05 CD should win here: CD {cd_sum}, PCD {pcd_sum}"
+        );
     }
 
     /// The likelihood must be a likelihood: negative, and improved by training.
@@ -2237,10 +2414,17 @@ mod tests {
         // therefore exactly -4 ln 2, which is the only value it can be and is worth pinning.
         assert!((before - (-4.0 * 2f64.ln())).abs() < 1e-9, "{before}");
 
-        let p = Params { epochs: 600, k: 10, ..Params::default() };
+        let p = Params {
+            epochs: 600,
+            k: 10,
+            ..Params::default()
+        };
         let t = train(&structure, &data, &p, 3).unwrap();
         let after = t.log_likelihood.unwrap();
-        assert!(after > before + 0.05, "training must help: {before:.4} -> {after:.4}");
+        assert!(
+            after > before + 0.05,
+            "training must help: {before:.4} -> {after:.4}"
+        );
         // And a likelihood is a log of something at most 1.
         assert!(after < 0.0, "a log-likelihood is negative: {after}");
     }
@@ -2284,25 +2468,54 @@ mod tests {
         let g = rbm(3, 2);
         let p = Params::default();
         let err = |d: Dataset| train(&g, &d, &p, 1).unwrap_err();
-        assert_eq!(err(Dataset { visible: 3, rows: vec![] }), Error::NoData);
         assert_eq!(
-            err(Dataset { visible: 3, rows: vec![vec![1, 1]] }),
-            Error::RowWidth { row: 0, len: 2, want: 3 }
+            err(Dataset {
+                visible: 3,
+                rows: vec![]
+            }),
+            Error::NoData
         );
         assert_eq!(
-            err(Dataset { visible: 3, rows: vec![vec![1, 0, 1]] }),
-            Error::NotASpin { row: 0, at: 1, value: 0 }
+            err(Dataset {
+                visible: 3,
+                rows: vec![vec![1, 1]]
+            }),
+            Error::RowWidth {
+                row: 0,
+                len: 2,
+                want: 3
+            }
         );
         assert_eq!(
-            err(Dataset { visible: 9, rows: vec![vec![1; 9]] }),
-            Error::TooSmall { spins: 5, visible: 9 }
+            err(Dataset {
+                visible: 3,
+                rows: vec![vec![1, 0, 1]]
+            }),
+            Error::NotASpin {
+                row: 0,
+                at: 1,
+                value: 0
+            }
+        );
+        assert_eq!(
+            err(Dataset {
+                visible: 9,
+                rows: vec![vec![1; 9]]
+            }),
+            Error::TooSmall {
+                spins: 5,
+                visible: 9
+            }
         );
     }
 
     #[test]
     fn an_enumeration_too_large_is_refused_rather_than_attempted() {
         let g = rbm(20, 10);
-        let d = Dataset { visible: 20, rows: vec![vec![1i8; 20]] };
+        let d = Dataset {
+            visible: 20,
+            rows: vec![vec![1i8; 20]],
+        };
         match exact_log_likelihood(&g, &d) {
             Err(Error::TooLarge { spins, limit }) => {
                 assert_eq!((spins, limit), (30, MAX_ENUMERATED));
@@ -2312,7 +2525,10 @@ mod tests {
                 // visible" -- is true, irrelevant, and says the opposite of what went wrong.
                 assert!(msg.contains("30 spins"), "names the size: {msg}");
                 assert!(msg.contains(&limit.to_string()), "and the limit: {msg}");
-                assert!(msg.contains("refused"), "and that it refused rather than estimated: {msg}");
+                assert!(
+                    msg.contains("refused"),
+                    "and that it refused rather than estimated: {msg}"
+                );
             }
             other => panic!("an oversized model must be TooLarge, got {other:?}"),
         }
@@ -2331,7 +2547,9 @@ mod tests {
             .map(|_| {
                 let u = rng.f64() * acc;
                 let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-                (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect()
+                (0..g.n)
+                    .map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
             })
             .collect();
         Dataset { visible: g.n, rows }
@@ -2424,7 +2642,11 @@ mod tests {
         let truth = crate::ising::ring(6, 0.8, 0.3);
         let data = draw_from(&truth, 300, 5);
         let blank = crate::ising::ring(6, 0.0, 0.0);
-        let p = PlParams { epochs: 1, lr: 0.05, l2: 0.0 };
+        let p = PlParams {
+            epochs: 1,
+            lr: 0.05,
+            l2: 0.0,
+        };
 
         let mut model = blank;
         let mut prev = f64::NEG_INFINITY;
@@ -2469,7 +2691,11 @@ mod tests {
             let t = train_pseudolikelihood(
                 &blank,
                 &data,
-                &PlParams { epochs: 400, lr: 0.1, l2: 0.0 },
+                &PlParams {
+                    epochs: 400,
+                    lr: 0.1,
+                    l2: 0.0,
+                },
             )
             .unwrap();
             // Mean absolute parameter error, over edges and biases alike.
@@ -2500,14 +2726,20 @@ mod tests {
             "twenty times the data should at least halve the parameter error: {small:.4} at 150 \
              rows against {large:.4} at 3000"
         );
-        assert!(large < 0.1, "and the fit should land near the truth: {large:.4}");
+        assert!(
+            large < 0.1,
+            "and the fit should land near the truth: {large:.4}"
+        );
     }
 
     /// A model with latent units is refused by name, because the conditional does not exist.
     #[test]
     fn pseudolikelihood_refuses_a_model_with_hidden_units() {
         let structure = rbm(4, 3);
-        let data = Dataset { visible: 4, rows: vec![vec![1, -1, 1, -1]; 8] };
+        let data = Dataset {
+            visible: 4,
+            rows: vec![vec![1, -1, 1, -1]; 8],
+        };
         match train_pseudolikelihood(&structure, &data, &PlParams::default()) {
             Err(Error::HasLatent { spins, visible }) => {
                 assert_eq!((spins, visible), (7, 4));
@@ -2519,7 +2751,6 @@ mod tests {
             Err(Error::HasLatent { .. })
         ));
     }
-
 
     /// EVERY ONE OF THE THREE LOSSES IS DECREASING IN THE FLIP MARGIN. That is the property that
     /// makes all three of them fits rather than loops: the margin is how firmly the model holds a
@@ -2537,7 +2768,11 @@ mod tests {
             while u <= 8.0 {
                 let s = loss.score(u);
                 assert!(s > prev, "{loss:?}: score fell to {s} from {prev} at u={u}");
-                assert!(loss.slope(u) > 0.0, "{loss:?}: slope {} at u={u}", loss.slope(u));
+                assert!(
+                    loss.slope(u) > 0.0,
+                    "{loss:?}: slope {} at u={u}",
+                    loss.slope(u)
+                );
                 let h = 1e-5;
                 let fd = (loss.score(u + h) - loss.score(u - h)) / (2.0 * h);
                 let tol = 1e-5 + 1e-4 * loss.slope(u).abs();
@@ -2712,14 +2947,26 @@ mod tests {
             b.couple(0, 3, 0.0);
             b.build()
         };
-        let t = train_exact(&start, &data, &FitParams { epochs: 4_000, lr: 0.2, l2: 0.0 }).unwrap();
+        let t = train_exact(
+            &start,
+            &data,
+            &FitParams {
+                epochs: 4_000,
+                lr: 0.2,
+                l2: 0.0,
+            },
+        )
+        .unwrap();
 
         // The gradient IS the moment difference, so its size is the moment mismatch in the units
         // the claim is made in.
         let wt = Weights::of(&t.graph);
         let (dw, dh) = exact_gradient(&t.graph, &data, &wt.edges);
         let worst = dw.iter().chain(&dh).fold(0.0f64, |m, x| m.max(x.abs()));
-        assert!(worst < 1e-6, "the exact fit should match every moment: worst residual {worst:e}");
+        assert!(
+            worst < 1e-6,
+            "the exact fit should match every moment: worst residual {worst:e}"
+        );
     }
 
     /// NOTHING BEATS MAXIMUM LIKELIHOOD, and that is what makes it a ceiling rather than a sixth
@@ -2753,10 +3000,18 @@ mod tests {
         };
 
         let ep = 1_500;
-        let ceiling = train_exact(&start, &data, &FitParams { epochs: ep, lr: 0.2, l2: 0.0 })
-            .unwrap()
-            .log_likelihood
-            .unwrap();
+        let ceiling = train_exact(
+            &start,
+            &data,
+            &FitParams {
+                epochs: ep,
+                lr: 0.2,
+                l2: 0.0,
+            },
+        )
+        .unwrap()
+        .log_likelihood
+        .unwrap();
         let floor = exact_log_likelihood(&start, &data).unwrap();
 
         let cd = Params {
@@ -2771,21 +3026,55 @@ mod tests {
             ("CD-10", train(&start, &data, &cd, 7).unwrap()),
             (
                 "PCD-10",
-                train(&start, &data, &Params { persistent: true, ..cd }, 7).unwrap(),
+                train(
+                    &start,
+                    &data,
+                    &Params {
+                        persistent: true,
+                        ..cd
+                    },
+                    7,
+                )
+                .unwrap(),
             ),
             (
                 "pseudolikelihood",
-                train_pseudolikelihood(&start, &data, &FitParams { epochs: ep, lr: 0.1, l2: 0.0 })
-                    .unwrap(),
+                train_pseudolikelihood(
+                    &start,
+                    &data,
+                    &FitParams {
+                        epochs: ep,
+                        lr: 0.1,
+                        l2: 0.0,
+                    },
+                )
+                .unwrap(),
             ),
             (
                 "min prob flow",
-                train_mpf(&start, &data, &FitParams { epochs: ep, lr: 0.02, l2: 0.0 }).unwrap(),
+                train_mpf(
+                    &start,
+                    &data,
+                    &FitParams {
+                        epochs: ep,
+                        lr: 0.02,
+                        l2: 0.0,
+                    },
+                )
+                .unwrap(),
             ),
             (
                 "ratio matching",
-                train_ratio_matching(&start, &data, &FitParams { epochs: ep, lr: 0.2, l2: 0.0 })
-                    .unwrap(),
+                train_ratio_matching(
+                    &start,
+                    &data,
+                    &FitParams {
+                        epochs: ep,
+                        lr: 0.2,
+                        l2: 0.0,
+                    },
+                )
+                .unwrap(),
             ),
         ];
         for (name, t) in &rivals {
@@ -2841,7 +3130,16 @@ mod tests {
         for (name, fit, lr) in methods {
             let err = |rows: usize, seed: u64| -> f64 {
                 let data = draw_from(&truth, rows, seed);
-                let t = fit(&blank(), &data, &FitParams { epochs: 800, lr, l2: 0.0 }).unwrap();
+                let t = fit(
+                    &blank(),
+                    &data,
+                    &FitParams {
+                        epochs: 800,
+                        lr,
+                        l2: 0.0,
+                    },
+                )
+                .unwrap();
                 let mut sum = 0.0;
                 let mut cnt = 0.0;
                 for i in 0..truth.n {
@@ -2868,7 +3166,10 @@ mod tests {
                 "{name}: twenty times the data should at least halve the parameter error, \
                  {small:.4} at 150 rows against {large:.4} at 3000"
             );
-            assert!(large < 0.1, "{name}: and the fit should land near the truth, {large:.4}");
+            assert!(
+                large < 0.1,
+                "{name}: and the fit should land near the truth, {large:.4}"
+            );
         }
     }
 
@@ -2881,10 +3182,16 @@ mod tests {
     #[test]
     fn the_flip_losses_refuse_hidden_units_and_the_exact_gradient_does_not() {
         let structure = rbm(4, 3);
-        let data = Dataset { visible: 4, rows: bars_and_stripes(2).rows };
+        let data = Dataset {
+            visible: 4,
+            rows: bars_and_stripes(2).rows,
+        };
         for (name, r) in [
             ("mpf", train_mpf(&structure, &data, &FitParams::default())),
-            ("ratio matching", train_ratio_matching(&structure, &data, &FitParams::default())),
+            (
+                "ratio matching",
+                train_ratio_matching(&structure, &data, &FitParams::default()),
+            ),
         ] {
             match r {
                 Err(Error::HasLatent { spins, visible }) => assert_eq!((spins, visible), (7, 4)),
@@ -2895,7 +3202,10 @@ mod tests {
             minimum_probability_flow(&structure, &data),
             Err(Error::HasLatent { .. })
         ));
-        assert!(matches!(ratio_matching(&structure, &data), Err(Error::HasLatent { .. })));
+        assert!(matches!(
+            ratio_matching(&structure, &data),
+            Err(Error::HasLatent { .. })
+        ));
 
         // And the exact method fits the same model rather than refusing it, raising the true
         // likelihood as it goes. Started AWAY FROM ZERO WEIGHTS, which is not a convenience —
@@ -2906,8 +3216,16 @@ mod tests {
         }
         let seeded = wt.build();
         let before = exact_log_likelihood(&seeded, &data).unwrap();
-        let t = train_exact(&seeded, &data, &FitParams { epochs: 400, lr: 0.1, l2: 0.0 })
-            .expect("the exact gradient integrates latent units out");
+        let t = train_exact(
+            &seeded,
+            &data,
+            &FitParams {
+                epochs: 400,
+                lr: 0.1,
+                l2: 0.0,
+            },
+        )
+        .expect("the exact gradient integrates latent units out");
         assert!(
             t.log_likelihood.unwrap() > before + 0.1,
             "the exact fit should learn something: {before} to {:?}",
@@ -2949,24 +3267,42 @@ mod tests {
         let wt = Weights::of(&structure);
         let (dw, dh) = exact_gradient(&wt.build(), &data, &wt.edges);
         for (e, &(i, j, _)) in wt.edges.iter().enumerate() {
-            assert_eq!(dw[e], 0.0, "edge {i}-{j} crosses the bipartition and must be exactly flat");
+            assert_eq!(
+                dw[e], 0.0,
+                "edge {i}-{j} crosses the bipartition and must be exactly flat"
+            );
         }
         for h in data.visible..structure.n {
             assert_eq!(dh[h], 0.0, "hidden bias {h} must be exactly flat");
         }
         // The visible biases are the exception, and they are the data means exactly.
         for v in 0..data.visible {
-            let mean = data.rows.iter().map(|r| f64::from(r[v])).sum::<f64>()
-                / data.rows.len() as f64;
-            assert!((dh[v] - mean).abs() < 1e-12, "visible bias {v}: {} against {mean}", dh[v]);
+            let mean =
+                data.rows.iter().map(|r| f64::from(r[v])).sum::<f64>() / data.rows.len() as f64;
+            assert!(
+                (dh[v] - mean).abs() < 1e-12,
+                "visible bias {v}: {} against {mean}",
+                dh[v]
+            );
         }
-        assert!(dh[..data.visible].iter().any(|x| x.abs() > 0.1), "the fixture must not be even");
+        assert!(
+            dh[..data.visible].iter().any(|x| x.abs() > 0.1),
+            "the fixture must not be even"
+        );
 
         // And bars-and-stripes IS complement-symmetric, so there the whole gradient vanishes and
         // training is a no-op that no likelihood curve would flag as one.
         let bas = bars_and_stripes(2);
-        let flat = train_exact(&structure, &bas, &FitParams { epochs: 200, lr: 0.1, l2: 0.0 })
-            .unwrap();
+        let flat = train_exact(
+            &structure,
+            &bas,
+            &FitParams {
+                epochs: 200,
+                lr: 0.1,
+                l2: 0.0,
+            },
+        )
+        .unwrap();
         assert_eq!(
             flat.log_likelihood.unwrap(),
             exact_log_likelihood(&structure, &bas).unwrap(),
@@ -2993,11 +3329,20 @@ mod tests {
         let row = [1i8, 1, -1];
         let mf = crate::meanfield::naive_mean_field_clamped(&g, 1.0, &row, 500, 0.5);
         for (i, &v) in row.iter().enumerate() {
-            assert_eq!(mf.m[i], f64::from(v), "spin {i} was not pinned: {}", mf.m[i]);
+            assert_eq!(
+                mf.m[i],
+                f64::from(v),
+                "spin {i} was not pinned: {}",
+                mf.m[i]
+            );
         }
         // The free ones must have moved off the initial 0.01 and stayed inside [-1, 1].
         for i in row.len()..g.n {
-            assert!(mf.m[i].abs() <= 1.0, "magnetisation {i} left the interval: {}", mf.m[i]);
+            assert!(
+                mf.m[i].abs() <= 1.0,
+                "magnetisation {i} left the interval: {}",
+                mf.m[i]
+            );
             assert!((mf.m[i] - 0.01).abs() > 1e-6, "free spin {i} never moved");
         }
         assert!(mf.converged(1e-12), "residual {:e}", mf.residual);
@@ -3006,8 +3351,15 @@ mod tests {
         // to the cap with the initial infinity still in `residual`.
         let all = [1i8, -1, 1, 1, -1, -1];
         let full = crate::meanfield::naive_mean_field_clamped(&g, 1.0, &all, 500, 0.5);
-        assert!(full.converged(1e-12), "a fully pinned field is converged by construction");
-        assert!(full.iterations <= 1, "and costs no iteration: {}", full.iterations);
+        assert!(
+            full.converged(1e-12),
+            "a fully pinned field is converged by construction"
+        );
+        assert!(
+            full.iterations <= 1,
+            "and costs no iteration: {}",
+            full.iterations
+        );
         for (i, &v) in all.iter().enumerate() {
             assert_eq!(full.m[i], f64::from(v));
         }
@@ -3036,7 +3388,10 @@ mod tests {
             vec![-1, -1, 1],
             vec![-1, -1, -1],
         ];
-        let data = Dataset { visible: 3, rows: rows.clone() };
+        let data = Dataset {
+            visible: 3,
+            rows: rows.clone(),
+        };
         let mut gb = GraphBuilder::new(3);
         gb.couple(0, 1, 0.0);
         gb.couple(0, 2, 0.0);
@@ -3059,17 +3414,32 @@ mod tests {
         let spin = |mask: usize, i: usize| if (mask >> i) & 1 == 1 { 1.0 } else { -1.0 };
         let seeds = 5u64;
         let fits: Vec<Vec<f64>> = (0..seeds)
-            .map(|sd| crate::ising::exact_boltzmann(&train_variational(&structure, &data, &p, sd).unwrap().graph, 1.0))
+            .map(|sd| {
+                crate::ising::exact_boltzmann(
+                    &train_variational(&structure, &data, &p, sd).unwrap().graph,
+                    1.0,
+                )
+            })
             .collect();
         let mc = |i: usize, j: usize| {
             fits.iter()
-                .map(|pr| pr.iter().enumerate().map(|(k, &q)| q * spin(k, i) * spin(k, j)).sum::<f64>())
+                .map(|pr| {
+                    pr.iter()
+                        .enumerate()
+                        .map(|(k, &q)| q * spin(k, i) * spin(k, j))
+                        .sum::<f64>()
+                })
                 .sum::<f64>()
                 / f64::from(u32::try_from(seeds).unwrap())
         };
         let mm = |i: usize| {
             fits.iter()
-                .map(|pr| pr.iter().enumerate().map(|(k, &q)| q * spin(k, i)).sum::<f64>())
+                .map(|pr| {
+                    pr.iter()
+                        .enumerate()
+                        .map(|(k, &q)| q * spin(k, i))
+                        .sum::<f64>()
+                })
                 .sum::<f64>()
                 / f64::from(u32::try_from(seeds).unwrap())
         };
@@ -3082,7 +3452,12 @@ mod tests {
             );
         }
         for i in 0..3 {
-            assert!((mm(i) - dm(i)).abs() < 0.05, "bias {i}: model {:.4} against data {:.4}", mm(i), dm(i));
+            assert!(
+                (mm(i) - dm(i)).abs() < 0.05,
+                "bias {i}: model {:.4} against data {:.4}",
+                mm(i),
+                dm(i)
+            );
         }
     }
 
@@ -3113,16 +3488,27 @@ mod tests {
             persistent: true,
         };
         let t = train_variational(&start, &data, &p, 7).unwrap();
-        let after = t.log_likelihood.expect("nine spins is inside the enumeration limit");
-        assert!(after > before + 0.3, "the variational fit should learn: {before:.4} to {after:.4}");
-        assert_eq!(t.graph.n_edges, structure.n_edges, "only weights move, never the edge set");
+        let after = t
+            .log_likelihood
+            .expect("nine spins is inside the enumeration limit");
+        assert!(
+            after > before + 0.3,
+            "the variational fit should learn: {before:.4} to {after:.4}"
+        );
+        assert_eq!(
+            t.graph.n_edges, structure.n_edges,
+            "only weights move, never the edge set"
+        );
     }
 
     /// Enumeration is refused past the size it is affordable at, rather than attempted.
     #[test]
     fn training_by_enumeration_is_refused_past_the_limit() {
         let structure = rbm(MAX_ENUMERATED, 1);
-        let data = Dataset { visible: MAX_ENUMERATED, rows: vec![vec![1i8; MAX_ENUMERATED]; 4] };
+        let data = Dataset {
+            visible: MAX_ENUMERATED,
+            rows: vec![vec![1i8; MAX_ENUMERATED]; 4],
+        };
         match train_exact(&structure, &data, &FitParams::default()) {
             Err(Error::TooLarge { spins, limit }) => {
                 assert_eq!((spins, limit), (MAX_ENUMERATED + 1, MAX_ENUMERATED));
@@ -3190,7 +3576,9 @@ mod tests {
                         break;
                     }
                 }
-                (0..g.n).map(|i| if pick >> i & 1 == 1 { 1i8 } else { -1 }).collect()
+                (0..g.n)
+                    .map(|i| if pick >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
             })
             .collect()
     }
@@ -3228,11 +3616,18 @@ mod tests {
     fn the_moments_are_the_derivative_of_the_free_energy() {
         let g0 = chorded_ring(8, 0.35, 4);
         let wt = Weights::of(&g0);
-        let s = Solve { iters: 20_000, damping: 0.5 };
+        let s = Solve {
+            iters: 20_000,
+            damping: 0.5,
+        };
         let eps = 1e-5;
         for which in [Moments::MeanField, Moments::Tap, Moments::Bethe] {
             let base = model_moments(&g0, which, &s);
-            assert!(base.residual < 1e-12, "{which:?} did not converge: {}", base.residual);
+            assert!(
+                base.residual < 1e-12,
+                "{which:?} did not converge: {}",
+                base.residual
+            );
 
             for (k, &(i, j, w)) in wt.edges.iter().enumerate() {
                 let mut e = wt.edges.clone();
@@ -3271,13 +3666,19 @@ mod tests {
     /// were so weakly coupled that everything matched, this would prove nothing.
     #[test]
     fn bethe_pair_beliefs_are_exact_on_a_tree() {
-        let s = Solve { iters: 4000, damping: 0.0 };
+        let s = Solve {
+            iters: 4000,
+            damping: 0.0,
+        };
         for seed in 0..6u64 {
             let g = random_tree_model(10, 0.8, seed);
             let (m_true, pair_true) = exact_moments(&g);
             let bethe = model_moments(&g, Moments::Bethe, &s);
             for i in 0..g.n {
-                assert!((bethe.m[i] - m_true[i]).abs() < 1e-9, "seed {seed} site {i}");
+                assert!(
+                    (bethe.m[i] - m_true[i]).abs() < 1e-9,
+                    "seed {seed} site {i}"
+                );
             }
             for e in 0..g.nbr.len() {
                 assert!(
@@ -3287,11 +3688,35 @@ mod tests {
                     pair_true[e]
                 );
             }
-            let mf = model_moments(&g, Moments::MeanField, &Solve { iters: 4000, damping: 0.5 });
-            let tap = model_moments(&g, Moments::Tap, &Solve { iters: 4000, damping: 0.5 });
-            let worst = |a: &[f64]| (0..g.nbr.len()).map(|e| (a[e] - pair_true[e]).abs()).fold(0.0, f64::max);
-            assert!(worst(&mf.pair) > 1e-3, "seed {seed}: a tree this weak proves nothing");
-            assert!(worst(&tap.pair) > 1e-4, "seed {seed}: a tree this weak proves nothing");
+            let mf = model_moments(
+                &g,
+                Moments::MeanField,
+                &Solve {
+                    iters: 4000,
+                    damping: 0.5,
+                },
+            );
+            let tap = model_moments(
+                &g,
+                Moments::Tap,
+                &Solve {
+                    iters: 4000,
+                    damping: 0.5,
+                },
+            );
+            let worst = |a: &[f64]| {
+                (0..g.nbr.len())
+                    .map(|e| (a[e] - pair_true[e]).abs())
+                    .fold(0.0, f64::max)
+            };
+            assert!(
+                worst(&mf.pair) > 1e-3,
+                "seed {seed}: a tree this weak proves nothing"
+            );
+            assert!(
+                worst(&tap.pair) > 1e-4,
+                "seed {seed}: a tree this weak proves nothing"
+            );
         }
     }
 
@@ -3305,7 +3730,10 @@ mod tests {
     #[test]
     fn bethe_learning_is_exact_maximum_likelihood_on_a_tree() {
         let truth = random_tree_model(9, 0.7, 21);
-        let data = Dataset { visible: 9, rows: draw_rows(&truth, 400, 5) };
+        let data = Dataset {
+            visible: 9,
+            rows: draw_rows(&truth, 400, 5),
+        };
         let mut structure = Weights::of(&truth);
         for x in &mut structure.edges {
             x.2 = 0.0;
@@ -3313,9 +3741,22 @@ mod tests {
         structure.bias.fill(0.0);
         let structure = structure.build();
 
-        let p = FitParams { epochs: 300, lr: 0.1, l2: 0.0 };
+        let p = FitParams {
+            epochs: 300,
+            lr: 0.1,
+            l2: 0.0,
+        };
         let exact = train_exact(&structure, &data, &p).unwrap();
-        let bethe = train_bethe(&structure, &data, &p, &Solve { iters: 4000, damping: 0.0 }).unwrap();
+        let bethe = train_bethe(
+            &structure,
+            &data,
+            &p,
+            &Solve {
+                iters: 4000,
+                damping: 0.0,
+            },
+        )
+        .unwrap();
 
         let we = Weights::of(&exact.graph);
         let wb = Weights::of(&bethe.graph);
@@ -3344,14 +3785,25 @@ mod tests {
         // Means strictly inside (-1, 1) and different at every site: 1/2, 2/3, ... 6/7 of the
         // rows are +1, so `atanh` has an answer and it is a different one per spin.
         let rows: Vec<Vec<i8>> = (0..420usize)
-            .map(|r| (0..n).map(|i| if (r + i) % (i + 2) == 0 { -1i8 } else { 1 }).collect())
+            .map(|r| {
+                (0..n)
+                    .map(|i| if (r + i) % (i + 2) == 0 { -1i8 } else { 1 })
+                    .collect()
+            })
             .collect();
-        let data = Dataset { visible: n, rows: rows.clone() };
+        let data = Dataset {
+            visible: n,
+            rows: rows.clone(),
+        };
         let means: Vec<f64> = (0..n)
             .map(|i| rows.iter().map(|r| f64::from(r[i])).sum::<f64>() / rows.len() as f64)
             .collect();
 
-        let p = FitParams { epochs: 4000, lr: 0.2, l2: 0.0 };
+        let p = FitParams {
+            epochs: 4000,
+            lr: 0.2,
+            l2: 0.0,
+        };
         for which in [Moments::MeanField, Moments::Tap, Moments::Bethe] {
             let t = train_free_energy(&structure, &data, &p, which, &Solve::default()).unwrap();
             for i in 0..n {
@@ -3376,7 +3828,9 @@ mod tests {
         let g = chorded_ring(10, 0.9, 3);
         let fixed = 4;
         for r in 0..8usize {
-            let row: Vec<i8> = (0..fixed).map(|i| if (r >> i) & 1 == 1 { 1i8 } else { -1 }).collect();
+            let row: Vec<i8> = (0..fixed)
+                .map(|i| if (r >> i) & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let gc = clamped_graph(&g, &row);
             let free = g.n - fixed;
             let mut ref0 = f64::NAN;
@@ -3413,7 +3867,10 @@ mod tests {
     #[test]
     fn a_deterministic_fit_matches_the_data_moments_under_its_own_estimator() {
         let truth = chorded_ring(8, 0.5, 9);
-        let data = Dataset { visible: 8, rows: draw_rows(&truth, 512, 11) };
+        let data = Dataset {
+            visible: 8,
+            rows: draw_rows(&truth, 512, 11),
+        };
         let mut structure = Weights::of(&truth);
         for x in &mut structure.edges {
             x.2 = 0.0;
@@ -3421,17 +3878,40 @@ mod tests {
         structure.bias.fill(0.0);
         let structure = structure.build();
 
-        let s = Solve { iters: 5000, damping: 0.5 };
-        let t = train_tap(&structure, &data, &FitParams { epochs: 4000, lr: 0.1, l2: 0.0 }, &s).unwrap();
+        let s = Solve {
+            iters: 5000,
+            damping: 0.5,
+        };
+        let t = train_tap(
+            &structure,
+            &data,
+            &FitParams {
+                epochs: 4000,
+                lr: 0.1,
+                l2: 0.0,
+            },
+            &s,
+        )
+        .unwrap();
         let wt = Weights::of(&t.graph);
         let (dm, dp) = data_moments(t.graph.n, &data, &wt.edges);
         let got = model_moments(&t.graph, Moments::Tap, &s);
         for i in 0..t.graph.n {
-            assert!((dm[i] - got.m[i]).abs() < 1e-4, "site {i}: data {} against TAP {}", dm[i], got.m[i]);
+            assert!(
+                (dm[i] - got.m[i]).abs() < 1e-4,
+                "site {i}: data {} against TAP {}",
+                dm[i],
+                got.m[i]
+            );
         }
         for (k, &(i, j, _)) in wt.edges.iter().enumerate() {
             let a = got.pair[slot_of(&t.graph, i, j)];
-            assert!((dp[k] - a).abs() < 1e-4, "edge {i}-{j}: data {} against TAP {}", dp[k], a);
+            assert!(
+                (dp[k] - a).abs() < 1e-4,
+                "edge {i}-{j}: data {} against TAP {}",
+                dp[k],
+                a
+            );
         }
     }
 
@@ -3445,7 +3925,10 @@ mod tests {
     fn the_deterministic_negative_phase_against_the_exact_ceiling() {
         for (coupling, label) in [(0.6, "weak"), (1.4, "strong")] {
             let truth = chorded_ring(8, coupling, 9);
-            let data = Dataset { visible: 8, rows: draw_rows(&truth, 512, 11) };
+            let data = Dataset {
+                visible: 8,
+                rows: draw_rows(&truth, 512, 11),
+            };
             let mut w0 = Weights::of(&truth);
             for x in &mut w0.edges {
                 x.2 = 0.0;
@@ -3454,19 +3937,35 @@ mod tests {
             let structure = w0.build();
 
             let before = exact_log_likelihood(&structure, &data).unwrap();
-            let p = FitParams { epochs: 2_000, lr: 0.05, l2: 0.0 };
-            let ceiling = train_exact(&structure, &data, &p).unwrap().log_likelihood.unwrap();
+            let p = FitParams {
+                epochs: 2_000,
+                lr: 0.05,
+                l2: 0.0,
+            };
+            let ceiling = train_exact(&structure, &data, &p)
+                .unwrap()
+                .log_likelihood
+                .unwrap();
             let pct = |ll: f64| 100.0 * (ll - before) / (ceiling - before);
 
-            let s = Solve { iters: 2000, damping: 0.5 };
+            let s = Solve {
+                iters: 2000,
+                damping: 0.5,
+            };
             let mf = pct(
                 train_free_energy(&structure, &data, &p, Moments::MeanField, &s)
                     .unwrap()
                     .log_likelihood
                     .unwrap(),
             );
-            let tap = pct(train_tap(&structure, &data, &p, &s).unwrap().log_likelihood.unwrap());
-            let bethe = pct(train_bethe(&structure, &data, &p, &s).unwrap().log_likelihood.unwrap());
+            let tap = pct(train_tap(&structure, &data, &p, &s)
+                .unwrap()
+                .log_likelihood
+                .unwrap());
+            let bethe = pct(train_bethe(&structure, &data, &p, &s)
+                .unwrap()
+                .log_likelihood
+                .unwrap());
 
             let cdp = Params {
                 epochs: 2_000,
@@ -3477,7 +3976,12 @@ mod tests {
                 persistent: false,
             };
             let cd = (0..6u64)
-                .map(|seed| pct(train(&structure, &data, &cdp, seed).unwrap().log_likelihood.unwrap()))
+                .map(|seed| {
+                    pct(train(&structure, &data, &cdp, seed)
+                        .unwrap()
+                        .log_likelihood
+                        .unwrap())
+                })
                 .sum::<f64>()
                 / 6.0;
 
@@ -3489,8 +3993,14 @@ mod tests {
             // Bethe carries the loops mean field drops and TAP only corrects to second order, so
             // the ordering is not a tie to be broken by noise.
             assert!(mf > 0.0, "{label}: mean field should still climb: {mf:.1}");
-            assert!(tap > mf + 5.0, "{label}: TAP {tap:.1} against mean field {mf:.1}");
-            assert!(bethe > mf + 5.0, "{label}: Bethe {bethe:.1} against mean field {mf:.1}");
+            assert!(
+                tap > mf + 5.0,
+                "{label}: TAP {tap:.1} against mean field {mf:.1}"
+            );
+            assert!(
+                bethe > mf + 5.0,
+                "{label}: Bethe {bethe:.1} against mean field {mf:.1}"
+            );
             // WHERE IT LOSES, and it loses in BOTH regimes here: a sampled negative phase is
             // ahead of every deterministic one on this model, by 0.4 points at J = 0.6 and by
             // 7.7 at J = 1.4. The deterministic methods buy their determinism, they do not get
@@ -3515,23 +4025,39 @@ mod tests {
         let data = Dataset {
             visible: 6,
             rows: (0..32)
-                .map(|r: usize| (0..6).map(|i| if (r >> (i / 2)) & 1 == 1 { 1i8 } else { -1 }).collect())
+                .map(|r: usize| {
+                    (0..6)
+                        .map(|i| if (r >> (i / 2)) & 1 == 1 { 1i8 } else { -1 })
+                        .collect()
+                })
                 .collect(),
         };
         let before = exact_log_likelihood(&start, &data).unwrap();
         let t = train_tap(
             &start,
             &data,
-            &FitParams { epochs: 300, lr: 0.05, l2: 0.0 },
-            &Solve { iters: 200, damping: 0.5 },
+            &FitParams {
+                epochs: 300,
+                lr: 0.05,
+                l2: 0.0,
+            },
+            &Solve {
+                iters: 200,
+                damping: 0.5,
+            },
         )
         .unwrap();
         let after = t.log_likelihood.unwrap();
-        assert!(after > before + 0.2, "TAP with latent units should learn: {before:.4} to {after:.4}");
-        assert_eq!(t.graph.n_edges, structure.n_edges, "only weights move, never the edge set");
+        assert!(
+            after > before + 0.2,
+            "TAP with latent units should learn: {before:.4} to {after:.4}"
+        );
+        assert_eq!(
+            t.graph.n_edges, structure.n_edges,
+            "only weights move, never the edge set"
+        );
     }
 }
-
 
 #[cfg(test)]
 mod jarzynski_tests {
@@ -3555,7 +4081,9 @@ mod jarzynski_tests {
             .map(|_| {
                 let u = rng.f64() * acc;
                 let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-                (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect()
+                (0..g.n)
+                    .map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
             })
             .collect();
         Dataset { visible: g.n, rows }
@@ -3641,8 +4169,13 @@ mod jarzynski_tests {
 
         let rows = data.rows.len() as f64;
         let dm = |i: usize| data.rows.iter().map(|r| f64::from(r[i])).sum::<f64>() / rows;
-        let dc =
-            |i: usize, j: usize| data.rows.iter().map(|r| f64::from(r[i] * r[j])).sum::<f64>() / rows;
+        let dc = |i: usize, j: usize| {
+            data.rows
+                .iter()
+                .map(|r| f64::from(r[i] * r[j]))
+                .sum::<f64>()
+                / rows
+        };
         let (mag, corr) = exact_moments(&fit.trained.graph);
         for i in 0..6 {
             assert!(
@@ -3696,15 +4229,25 @@ mod jarzynski_tests {
             "frozen run priced {} against the enumerated {want}",
             fit.log_z
         );
-        assert!(fit.resamples > 0, "uniform weights on a coupled model must decay at least once");
+        assert!(
+            fit.resamples > 0,
+            "uniform weights on a coupled model must decay at least once"
+        );
 
         // Nothing moved, so the fitted likelihood is the starting model's, exactly.
         let before = exact_log_likelihood(&truth, &data).unwrap();
         assert!((fit.trained.log_likelihood.unwrap() - before).abs() < 1e-12);
 
-        let never =
-            train_jarzynski(&truth, &data, &JarzynskiParams { resample_at: 0.0, ..base }, 13)
-                .unwrap();
+        let never = train_jarzynski(
+            &truth,
+            &data,
+            &JarzynskiParams {
+                resample_at: 0.0,
+                ..base
+            },
+            13,
+        )
+        .unwrap();
         assert_eq!(never.resamples, 0, "resampling was switched off");
         assert!(
             (never.log_z - fit.log_z).abs() < 1e-9,
@@ -3752,7 +4295,10 @@ mod jarzynski_tests {
             errs[1].abs() < errs[0].abs() * 0.6 && errs[2].abs() < errs[1].abs() * 0.6,
             "four times the walkers must cut the error at least in half: {errs:?}"
         );
-        assert!(errs[2].abs() < 0.06, "4096 walkers should be within 0.06 nats: {errs:?}");
+        assert!(
+            errs[2].abs() < 0.06,
+            "4096 walkers should be within 0.06 nats: {errs:?}"
+        );
     }
 
     /// Exact maximum likelihood is the ceiling: this does not pass it, and gets to within 0.5%.
@@ -3766,10 +4312,18 @@ mod jarzynski_tests {
         let (truth, blank) = fixture();
         let data = draw_exact(&truth, 4_000, 3);
         let floor = exact_log_likelihood(&blank, &data).unwrap();
-        let ceiling = train_exact(&blank, &data, &FitParams { epochs: 1_500, lr: 0.2, l2: 0.0 })
-            .unwrap()
-            .log_likelihood
-            .unwrap();
+        let ceiling = train_exact(
+            &blank,
+            &data,
+            &FitParams {
+                epochs: 1_500,
+                lr: 0.2,
+                l2: 0.0,
+            },
+        )
+        .unwrap()
+        .log_likelihood
+        .unwrap();
 
         let p = JarzynskiParams {
             epochs: 900,
@@ -3784,7 +4338,10 @@ mod jarzynski_tests {
         for seed in 0..3u64 {
             let fit = train_jarzynski(&blank, &data, &p, seed).unwrap();
             let got = fit.trained.log_likelihood.unwrap();
-            assert!(got <= ceiling + 1e-9, "seed {seed} reached {got} above the ceiling {ceiling}");
+            assert!(
+                got <= ceiling + 1e-9,
+                "seed {seed} reached {got} above the ceiling {ceiling}"
+            );
             let reached = (got - floor) / (ceiling - floor);
             assert!(
                 reached > 0.995,
@@ -3816,14 +4373,31 @@ mod jarzynski_tests {
             resample_at: 0.0,
         };
         let slow = train_jarzynski(&blank, &data, &base, 4).unwrap();
-        let fast =
-            train_jarzynski(&blank, &data, &JarzynskiParams { learning_rate: 0.5, ..base }, 4)
-                .unwrap();
+        let fast = train_jarzynski(
+            &blank,
+            &data,
+            &JarzynskiParams {
+                learning_rate: 0.5,
+                ..base
+            },
+            4,
+        )
+        .unwrap();
 
         for f in [&slow, &fast] {
-            assert!(f.ess > 0.0 && f.ess <= 128.0 + 1e-9, "ess out of range: {}", f.ess);
-            assert!(f.min_ess <= f.mean_ess + 1e-9, "the minimum is above the mean: {f:?}");
-            assert!(f.mean_ess <= 128.0 + 1e-9, "mean ess above the walker count: {f:?}");
+            assert!(
+                f.ess > 0.0 && f.ess <= 128.0 + 1e-9,
+                "ess out of range: {}",
+                f.ess
+            );
+            assert!(
+                f.min_ess <= f.mean_ess + 1e-9,
+                "the minimum is above the mean: {f:?}"
+            );
+            assert!(
+                f.mean_ess <= 128.0 + 1e-9,
+                "mean ess above the walker count: {f:?}"
+            );
             assert_eq!(f.updates, 60 * data.rows.len().div_ceil(64));
             assert_eq!(f.resamples, 0, "resampling was switched off");
         }
@@ -3853,25 +4427,58 @@ mod jarzynski_tests {
         };
         let fit = train_jarzynski(&structure, &data, &p, 2).unwrap();
         let after = fit.trained.log_likelihood.unwrap();
-        assert!(after > before + 0.05, "training must help: {before:.4} -> {after:.4}");
+        assert!(
+            after > before + 0.05,
+            "training must help: {before:.4} -> {after:.4}"
+        );
         assert!(after < 0.0, "a log-likelihood is negative: {after}");
         // The work identity still prices a model with latent units, to the same accuracy.
         let want = exact_log_z(&fit.trained.graph, 1.0);
-        assert!((fit.log_z - want).abs() < 0.25, "priced {} against {want}", fit.log_z);
+        assert!(
+            (fit.log_z - want).abs() < 0.25,
+            "priced {} against {want}",
+            fit.log_z
+        );
 
         let err = |d: Dataset| train_jarzynski(&structure, &d, &p, 1).unwrap_err();
-        assert_eq!(err(Dataset { visible: 4, rows: vec![] }), Error::NoData);
         assert_eq!(
-            err(Dataset { visible: 4, rows: vec![vec![1, 1]] }),
-            Error::RowWidth { row: 0, len: 2, want: 4 }
+            err(Dataset {
+                visible: 4,
+                rows: vec![]
+            }),
+            Error::NoData
         );
         assert_eq!(
-            err(Dataset { visible: 4, rows: vec![vec![1, 0, 1, 1]] }),
-            Error::NotASpin { row: 0, at: 1, value: 0 }
+            err(Dataset {
+                visible: 4,
+                rows: vec![vec![1, 1]]
+            }),
+            Error::RowWidth {
+                row: 0,
+                len: 2,
+                want: 4
+            }
         );
         assert_eq!(
-            err(Dataset { visible: 9, rows: vec![vec![1i8; 9]] }),
-            Error::TooSmall { spins: 7, visible: 9 }
+            err(Dataset {
+                visible: 4,
+                rows: vec![vec![1, 0, 1, 1]]
+            }),
+            Error::NotASpin {
+                row: 0,
+                at: 1,
+                value: 0
+            }
+        );
+        assert_eq!(
+            err(Dataset {
+                visible: 9,
+                rows: vec![vec![1i8; 9]]
+            }),
+            Error::TooSmall {
+                spins: 7,
+                visible: 9
+            }
         );
     }
 }

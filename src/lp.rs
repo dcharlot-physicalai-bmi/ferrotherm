@@ -55,7 +55,10 @@ impl core::fmt::Display for LpError {
 }
 
 fn err<T>(line: usize, message: impl Into<String>) -> Result<T, LpError> {
-    Err(LpError { line, message: message.into() })
+    Err(LpError {
+        line,
+        message: message.into(),
+    })
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -124,7 +127,7 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
 
         match section {
             Section::None => {
-                return err(line, format!("{text:?} appears before any section header"))
+                return err(line, format!("{text:?} appears before any section header"));
             }
             Section::Objective(_) => {
                 let body = strip_label(text);
@@ -162,23 +165,27 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
         // did not write and cannot check by eye. Anything other than the implied 0..1 is refused by
         // name rather than silently dropped.
         if let Some((lo, hi)) = bounds.get(name)
-            && (*lo, *hi) != (0, 1) {
-                return err(
-                    0,
-                    format!(
-                        "'{name}' is declared Binary and also has Bounds {lo}..{hi}. A \
+            && (*lo, *hi) != (0, 1)
+        {
+            return err(
+                0,
+                format!(
+                    "'{name}' is declared Binary and also has Bounds {lo}..{hi}. A \
                          bound on a binary either says nothing or fixes it, and this \
                          reader will not guess which you meant: drop the bound, or move \
                          '{name}' to General"
-                    ),
-                );
-            }
+                ),
+            );
+        }
         vars.insert(name.clone(), m.binary(name));
     }
     for name in &generals {
         let (lo, hi) = bounds.get(name).copied().unwrap_or((0, 1));
         if hi <= lo {
-            return err(0, format!("'{name}' is a general variable with bounds {lo}..{hi}"));
+            return err(
+                0,
+                format!("'{name}' is a general variable with bounds {lo}..{hi}"),
+            );
         }
         // Refused HERE, before anything walks the domain.
         //
@@ -223,7 +230,7 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
     // cannot take.
     let mut e = Expr::zero();
     for a in &objective {
-        let Some(nm) = &a.name else { continue };  // a constant shifts every state equally
+        let Some(nm) = &a.name else { continue }; // a constant shifts every state equally
         let v = find(nm, 0)?;
         if is_general(nm) {
             let (lo, hi) = bounds.get(nm).copied().unwrap_or((0, 1));
@@ -286,9 +293,15 @@ pub fn parse(src: &str) -> Result<Model, LpError> {
         if unit && target >= 0.0 && target.fract() == 0.0 && target as usize <= lits.len() {
             let k = target as usize;
             match relation {
-                Rel::Le => { m.at_most(lits, k); }
-                Rel::Ge => { m.at_least(lits, k); }
-                Rel::Eq => { m.cardinality(lits, k); }
+                Rel::Le => {
+                    m.at_most(lits, k);
+                }
+                Rel::Ge => {
+                    m.at_least(lits, k);
+                }
+                Rel::Eq => {
+                    m.cardinality(lits, k);
+                }
             }
             continue;
         }
@@ -402,9 +415,10 @@ fn relation(s: &str, line: usize) -> Result<(&str, String, f64), LpError> {
         if let Some(i) = s.find(rel) {
             let lhs = &s[..i];
             let rhs_text = s[i + rel.len()..].trim();
-            let rhs: f64 = rhs_text
-                .parse()
-                .map_err(|_| LpError { line, message: format!("{rhs_text:?} is not a number") })?;
+            let rhs: f64 = rhs_text.parse().map_err(|_| LpError {
+                line,
+                message: format!("{rhs_text:?} is not a number"),
+            })?;
             let norm = match rel {
                 "=<" | "<" => "<=",
                 "=>" | ">" => ">=",
@@ -424,7 +438,10 @@ fn bound(s: &str, line: usize) -> Result<(i64, String, i64), LpError> {
             .ok()
             .filter(|v| v.fract() == 0.0)
             .map(|v| v as i64)
-            .ok_or_else(|| LpError { line, message: format!("{t:?} is not a whole bound") })
+            .ok_or_else(|| LpError {
+                line,
+                message: format!("{t:?} is not a whole bound"),
+            })
     };
     match parts.as_slice() {
         [lo, "<=", name, "<=", hi] => Ok((num(lo)?, name.to_string(), num(hi)?)),
@@ -478,10 +495,16 @@ fn atoms(s: &str, line: usize) -> Result<Vec<Atom>, LpError> {
             _ => {
                 if let Ok(v) = tok.parse::<f64>() {
                     if let Some(p) = pending.replace(v) {
-                        out.push(Atom { coeff: sign * p, name: None });
+                        out.push(Atom {
+                            coeff: sign * p,
+                            name: None,
+                        });
                     }
                 } else {
-                    out.push(Atom { coeff: sign * pending.take().unwrap_or(1.0), name: Some(tok.to_string()) });
+                    out.push(Atom {
+                        coeff: sign * pending.take().unwrap_or(1.0),
+                        name: Some(tok.to_string()),
+                    });
                     sign = 1.0;
                 }
             }
@@ -493,7 +516,10 @@ fn atoms(s: &str, line: usize) -> Result<Vec<Atom>, LpError> {
 
 fn flush(out: &mut Vec<Atom>, pending: &mut Option<f64>, sign: f64) {
     if let Some(v) = pending.take() {
-        out.push(Atom { coeff: sign * v, name: None });
+        out.push(Atom {
+            coeff: sign * v,
+            name: None,
+        });
     }
 }
 
@@ -520,15 +546,26 @@ End
             .into_iter()
             .filter(|d| s.value(d) == 1)
             .collect();
-        assert_eq!(picked, vec!["mon", "tue", "wed"], "the three most valuable, and no more: {s}");
+        assert_eq!(
+            picked,
+            vec!["mon", "tue", "wed"],
+            "the three most valuable, and no more: {s}"
+        );
     }
 
     #[test]
     fn minimise_and_maximise_are_opposite() {
         let up = parse(SHIFTS).unwrap().compile().unwrap().solve_best_of(24);
-        let down = parse(&SHIFTS.replace("Maximize", "Minimize")).unwrap()
-            .compile().unwrap().solve_best_of(24);
-        assert_eq!(up.value("mon"), 1, "the most valuable day is taken when maximising");
+        let down = parse(&SHIFTS.replace("Maximize", "Minimize"))
+            .unwrap()
+            .compile()
+            .unwrap()
+            .solve_best_of(24);
+        assert_eq!(
+            up.value("mon"),
+            1,
+            "the most valuable day is taken when maximising"
+        );
         assert_eq!(down.value("mon"), 0, "and dropped when minimising: {down}");
     }
 
@@ -550,7 +587,10 @@ End
         assert!(s.feasible(), "{s}");
         let on = ["a", "b", "c"].iter().filter(|v| s.value(v) == 1).count();
         assert!(on <= 2, "at most two: {s}");
-        assert!(s.value("a") + s.value("b") >= 1, "at least one of a, b: {s}");
+        assert!(
+            s.value("a") + s.value("b") >= 1,
+            "at least one of a, b: {s}"
+        );
         assert_eq!(s.value("c"), 0, "c is fixed off: {s}");
     }
 
@@ -560,13 +600,21 @@ End
         // does not read it. `x <= 0` fixes x OFF, and the model solved as though x were free -- a
         // confident answer to a different problem, from a file the caller did not write.
         let src = "Maximize\n  obj: x + y\nSubject To\n  c: x + y <= 2\nBounds\n  x <= 0\nBinary\n  x y\nEnd\n";
-        let Err(e) = parse(src) else { panic!("a bound that fixes a binary must not be dropped") };
-        assert!(e.message.contains("declared Binary"), "says what is wrong: {e}");
+        let Err(e) = parse(src) else {
+            panic!("a bound that fixes a binary must not be dropped")
+        };
+        assert!(
+            e.message.contains("declared Binary"),
+            "says what is wrong: {e}"
+        );
         assert!(e.message.contains("General"), "and offers the fix: {e}");
 
         // A redundant 0..1 bound says nothing new and stays legal.
         let ok = "Maximize\n  obj: x\nSubject To\n  c: x <= 1\nBounds\n  0 <= x <= 1\nBinary\n  x\nEnd\n";
-        assert!(parse(ok).is_ok(), "0..1 on a binary is redundant, not contradictory");
+        assert!(
+            parse(ok).is_ok(),
+            "0..1 on a binary is redundant, not contradictory"
+        );
     }
 
     #[test]
@@ -576,7 +624,9 @@ End
         // two-sided form, so nothing looked here.
         let src = "Maximize\n  obj: t\nBounds\n  t >= 10\nGeneral\n  t\nEnd\n";
         // `expect_err` needs `Model: Debug`, which it deliberately is not.
-        let Err(e) = parse(src) else { panic!("an unbounded-above variable has no spin domain") };
+        let Err(e) = parse(src) else {
+            panic!("an unbounded-above variable has no spin domain")
+        };
         assert!(e.message.contains("not above"), "says what is wrong: {e}");
         assert!(e.message.contains("10 <= t <= "), "and shows the fix: {e}");
 
@@ -601,11 +651,22 @@ General
 End
 ";
         let s = parse(src).unwrap().compile().unwrap().solve_best_of(16);
-        assert_eq!(s.value("t"), 20, "maximising a value takes the top of its range: {s}");
+        assert_eq!(
+            s.value("t"),
+            20,
+            "maximising a value takes the top of its range: {s}"
+        );
 
-        let down = parse(&src.replace("Maximize", "Minimize")).unwrap()
-            .compile().unwrap().solve_best_of(16);
-        assert_eq!(down.value("t"), 10, "and minimising takes the bottom: {down}");
+        let down = parse(&src.replace("Maximize", "Minimize"))
+            .unwrap()
+            .compile()
+            .unwrap()
+            .solve_best_of(16);
+        assert_eq!(
+            down.value("t"),
+            10,
+            "and minimising takes the bottom: {down}"
+        );
 
         // an arithmetic constraint on that value is refused, with the distinction spelled out
         let bounded = "\
@@ -621,7 +682,10 @@ End
 ";
         let e = refusal(bounded);
         assert!(e.message.contains("not a count"), "{e}");
-        assert!(e.message.contains("Bounds"), "and says where it belongs: {e}");
+        assert!(
+            e.message.contains("Bounds"),
+            "and says where it belongs: {e}"
+        );
     }
 
     /// `Model` has no `Debug`, so `unwrap_err` will not do.
@@ -647,7 +711,10 @@ Binary
 End
 ";
         let e = refusal(undeclared);
-        assert!(e.message.contains("'y'") && e.message.contains("never declared"), "{e}");
+        assert!(
+            e.message.contains("'y'") && e.message.contains("never declared"),
+            "{e}"
+        );
 
         let quadratic = "\
 Maximize
@@ -706,7 +773,11 @@ End
         let s = compiled.solve_best_of(24);
         assert!(s.feasible(), "{:?}", s.violated);
         assert!(s.value("a") * 3 + s.value("b") * 4 + s.value("c") * 5 <= 7);
-        assert_eq!(s.objective, Some(2.0), "3 + 4 = 7 fits and nothing better does: {s}");
+        assert_eq!(
+            s.objective,
+            Some(2.0),
+            "3 + 4 = 7 fits and nothing better does: {s}"
+        );
 
         // A fractional coefficient on an inequality is refused WITH ITS LINE, because a slack over
         // a non-integer residual is not a thing.
@@ -749,7 +820,11 @@ Binary
 End
 ";
         let c = parse(vacuous).unwrap().compile().unwrap();
-        assert!(c.caveats.iter().any(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
+        assert!(
+            c.caveats.iter().any(|w| w.contains("constrains nothing")),
+            "{:?}",
+            c.caveats
+        );
         assert_eq!(c.linear_slack, 0);
     }
 

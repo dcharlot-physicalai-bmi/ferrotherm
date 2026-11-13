@@ -95,8 +95,14 @@ pub fn score_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<Outsi
         return Ok((
             chain_from(sampled, sc),
             vec![
-                OutsideStep { step: "transfer_matrix_precompute", seconds: 0.0 },
-                OutsideStep { step: "ess_tau", seconds: ess_s },
+                OutsideStep {
+                    step: "transfer_matrix_precompute",
+                    seconds: 0.0,
+                },
+                OutsideStep {
+                    step: "ess_tau",
+                    seconds: ess_s,
+                },
             ],
         ));
     }
@@ -130,21 +136,25 @@ pub fn cost_sweeps(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<
         levers: ferrotherm::grid::Levers::SCALAR,
         threads: 1,
     });
-    let mut g = ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, seed, choice.levers, choice.threads)
-        .map_err(|e| e.message)?;
+    let mut g =
+        ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, seed, choice.levers, choice.threads)
+            .map_err(|e| e.message)?;
     let n = w.warmup + w.draws * w.thin.max(1);
     g.sweeps(n);
     Ok(n as u64)
 }
 
 fn sample_open_grid(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Sampled, String> {
-    let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
+    let (side, j) = w
+        .open_grid()
+        .ok_or_else(|| format!("{} is not an open grid", w.id))?;
     let choice = grid.unwrap_or(GridChoice {
         levers: ferrotherm::grid::Levers::SCALAR,
         threads: 1,
     });
-    let mut g = ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, seed, choice.levers, choice.threads)
-        .map_err(|e| e.message)?;
+    let mut g =
+        ferrotherm::grid::OpenIsing::try_new(side, j, w.beta, seed, choice.levers, choice.threads)
+            .map_err(|e| e.message)?;
     let t0 = Instant::now();
     let energies = g.energies(w.warmup, w.draws, w.thin);
     let seconds = t0.elapsed().as_secs_f64();
@@ -169,7 +179,10 @@ fn sample_ising(w: &Workload, seed: u64) -> Result<Sampled, String> {
     for (got, want) in g.classes.iter().zip(&w.blocks) {
         let got: Vec<usize> = got.iter().map(|&i| i as usize).collect();
         if &got != want {
-            return Err(format!("{} block {want:?} is not the graph colour class {got:?}", w.id));
+            return Err(format!(
+                "{} block {want:?} is not the graph colour class {got:?}",
+                w.id
+            ));
         }
     }
     let mut smp = ferrotherm::gibbs::Sampler::new(&g, w.beta, seed);
@@ -189,7 +202,10 @@ fn sample_ising(w: &Workload, seed: u64) -> Result<Sampled, String> {
     })
 }
 
-fn score_ising_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<OutsideStep>), String> {
+fn score_ising_outside(
+    w: &Workload,
+    sampled: Sampled,
+) -> Result<(Chain, Vec<OutsideStep>), String> {
     let g = ising_graph(w);
     if let Some(mean) = w.exact_energy {
         let t0 = Instant::now();
@@ -198,8 +214,14 @@ fn score_ising_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<Out
         return Ok((
             chain_from(sampled, sc),
             vec![
-                OutsideStep { step: "transfer_matrix_precompute", seconds: 0.0 },
-                OutsideStep { step: "ess_tau", seconds: ess_s },
+                OutsideStep {
+                    step: "transfer_matrix_precompute",
+                    seconds: 0.0,
+                },
+                OutsideStep {
+                    step: "ess_tau",
+                    seconds: ess_s,
+                },
             ],
         ));
     }
@@ -210,13 +232,26 @@ fn score_ising_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<Out
     let hist = score::histogram_spins(&sampled.states_spin);
     let (e_mean, mag) = exact_spin_observables(&g, &exact);
     let mae = score::mae(&score::empirical_magnetization(&sampled.states_spin), &mag);
-    let sc = score::score_chain(&hist, &exact, &sampled.energies, e_mean, Some(mae), sampled.seconds);
+    let sc = score::score_chain(
+        &hist,
+        &exact,
+        &sampled.energies,
+        e_mean,
+        Some(mae),
+        sampled.seconds,
+    );
     let ess_s = t1.elapsed().as_secs_f64();
     Ok((
         chain_from(sampled, sc),
         vec![
-            OutsideStep { step: "exact_enumeration", seconds: enum_s },
-            OutsideStep { step: "ess_tau", seconds: ess_s },
+            OutsideStep {
+                step: "exact_enumeration",
+                seconds: enum_s,
+            },
+            OutsideStep {
+                step: "ess_tau",
+                seconds: ess_s,
+            },
         ],
     ))
 }
@@ -224,7 +259,9 @@ fn score_ising_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<Out
 fn sample_potts(w: &Workload, seed: u64) -> Result<Sampled, String> {
     let m = potts_model(w);
     let zeros = vec![0u8; w.n];
-    let mut smp = potts::Sampler::new(&m, w.beta, seed).from_state(&zeros).map_err(|e| format!("{e:?}"))?;
+    let mut smp = potts::Sampler::new(&m, w.beta, seed)
+        .from_state(&zeros)
+        .map_err(|e| format!("{e:?}"))?;
     let mut led = Ledger::default();
     let plan = Plan::new(w.warmup, w.draws, w.thin);
     let t0 = Instant::now();
@@ -240,15 +277,24 @@ fn sample_potts(w: &Workload, seed: u64) -> Result<Sampled, String> {
     })
 }
 
-fn score_potts_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<OutsideStep>), String> {
+fn score_potts_outside(
+    w: &Workload,
+    sampled: Sampled,
+) -> Result<(Chain, Vec<OutsideStep>), String> {
     if let Some(mean) = w.exact_energy {
         let t0 = Instant::now();
         let sc = score::score_mean_only(&sampled.energies, mean, sampled.seconds);
         return Ok((
             chain_from(sampled, sc),
             vec![
-                OutsideStep { step: "transfer_matrix_precompute", seconds: 0.0 },
-                OutsideStep { step: "ess_tau", seconds: t0.elapsed().as_secs_f64() },
+                OutsideStep {
+                    step: "transfer_matrix_precompute",
+                    seconds: 0.0,
+                },
+                OutsideStep {
+                    step: "ess_tau",
+                    seconds: t0.elapsed().as_secs_f64(),
+                },
             ],
         ));
     }
@@ -269,8 +315,14 @@ fn score_potts_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<Out
     Ok((
         chain_from(sampled, sc),
         vec![
-            OutsideStep { step: "exact_enumeration", seconds: enum_s },
-            OutsideStep { step: "ess_tau", seconds: t1.elapsed().as_secs_f64() },
+            OutsideStep {
+                step: "exact_enumeration",
+                seconds: enum_s,
+            },
+            OutsideStep {
+                step: "ess_tau",
+                seconds: t1.elapsed().as_secs_f64(),
+            },
         ],
     ))
 }
@@ -329,8 +381,14 @@ fn score_hubo_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<Outs
     Ok((
         chain_from(sampled, sc),
         vec![
-            OutsideStep { step: "exact_enumeration", seconds: enum_s },
-            OutsideStep { step: "ess_tau", seconds: t1.elapsed().as_secs_f64() },
+            OutsideStep {
+                step: "exact_enumeration",
+                seconds: enum_s,
+            },
+            OutsideStep {
+                step: "ess_tau",
+                seconds: t1.elapsed().as_secs_f64(),
+            },
         ],
     ))
 }
@@ -443,7 +501,14 @@ pub fn score_observed(
     }
 }
 
-fn hubo_sweep(h: &Hubo, s: &mut [i8], beta: f64, rng: &mut Pcg, blocks: &[Vec<usize>], updates: &mut u64) {
+fn hubo_sweep(
+    h: &Hubo,
+    s: &mut [i8],
+    beta: f64,
+    rng: &mut Pcg,
+    blocks: &[Vec<usize>],
+    updates: &mut u64,
+) {
     for block in blocks {
         let mut next = Vec::with_capacity(block.len());
         for &i in block {
@@ -472,7 +537,14 @@ fn score_ising(
     let hist = score::histogram_spins(states);
     let (e_mean, mag) = exact_spin_observables(g, &exact);
     let mae = score::mae(&score::empirical_magnetization(states), &mag);
-    Ok(score::score_chain(&hist, &exact, energies, e_mean, Some(mae), seconds))
+    Ok(score::score_chain(
+        &hist,
+        &exact,
+        energies,
+        e_mean,
+        Some(mae),
+        seconds,
+    ))
 }
 
 fn score_potts(
@@ -487,7 +559,14 @@ fn score_potts(
     }
     let exact = potts::enumerate(m, w.beta).map_err(|e| format!("{e:?}"))?;
     let hist = score::histogram_potts(states, w.q);
-    Ok(score::score_chain(&hist, &exact.p, energies, exact.mean_energy, None, seconds))
+    Ok(score::score_chain(
+        &hist,
+        &exact.p,
+        energies,
+        exact.mean_energy,
+        None,
+        seconds,
+    ))
 }
 
 fn ising_graph(w: &Workload) -> ferrotherm::graph::Graph {
@@ -592,8 +671,16 @@ mod tests {
         w.trials = 1;
         let chain = run(&w, 7).unwrap();
         assert!(chain.score.tv < 0.06, "tv {}", chain.score.tv);
-        assert!(chain.score.energy_abs_err < 0.08, "energy err {}", chain.score.energy_abs_err);
-        assert!(chain.score.kl_empirical_exact < 0.02, "kl {}", chain.score.kl_empirical_exact);
+        assert!(
+            chain.score.energy_abs_err < 0.08,
+            "energy err {}",
+            chain.score.energy_abs_err
+        );
+        assert!(
+            chain.score.kl_empirical_exact < 0.02,
+            "kl {}",
+            chain.score.kl_empirical_exact
+        );
         assert!(chain.reads > 0, "keeping a state has to charge a read");
         assert!(chain.updates > 0);
     }
@@ -623,6 +710,10 @@ mod tests {
         };
         let chain = run(&w, 3).unwrap();
         assert!(chain.score.tv < 0.05, "tv {}", chain.score.tv);
-        assert!(chain.score.energy_abs_err < 0.05, "dE {}", chain.score.energy_abs_err);
+        assert!(
+            chain.score.energy_abs_err < 0.05,
+            "dE {}",
+            chain.score.energy_abs_err
+        );
     }
 }

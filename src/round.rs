@@ -58,7 +58,11 @@ fn compensated(v: &[f64]) -> (f64, f64) {
     let mut exact = true;
     for &x in v {
         let t = s + x;
-        let e = if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+        let e = if s.abs() >= x.abs() {
+            (s - t) + x
+        } else {
+            (x - t) + s
+        };
         exact &= e == 0.0;
         c += e;
         s = t;
@@ -136,9 +140,20 @@ mod tests {
         let lo = 1.0f64.next_up(); // 1 + 2⁻⁵², strictly below the exact sum
         let hi = lo.next_up(); // 1 + 2·2⁻⁵², strictly above it
         let naive: f64 = v.iter().sum();
-        assert_eq!(naive, hi, "the fixture must actually round up, or it tests nothing");
-        assert!(sum_down(&v) <= lo, "sum_down {:e} is above the exact sum", sum_down(&v));
-        assert!(sum_up(&v) >= hi, "sum_up {:e} is below the exact sum", sum_up(&v));
+        assert_eq!(
+            naive, hi,
+            "the fixture must actually round up, or it tests nothing"
+        );
+        assert!(
+            sum_down(&v) <= lo,
+            "sum_down {:e} is above the exact sum",
+            sum_down(&v)
+        );
+        assert!(
+            sum_up(&v) >= hi,
+            "sum_up {:e} is below the exact sum",
+            sum_up(&v)
+        );
     }
 
     /// UNDER CANCELLATION THE GUARD MUST FOLLOW THE ANSWER, not the arithmetic. This is the input
@@ -149,7 +164,11 @@ mod tests {
         let v = [1e16, 1.0, -1e16];
         let (lo, hi) = (sum_down(&v), sum_up(&v));
         assert!(lo <= 1.0 && hi >= 1.0, "must bracket 1: [{lo}, {hi}]");
-        assert!(hi - lo < 1e-9, "and must stay useful under cancellation: width {}", hi - lo);
+        assert!(
+            hi - lo < 1e-9,
+            "and must stay useful under cancellation: width {}",
+            hi - lo
+        );
     }
 
     /// The bracket holds on many shapes, and is never inverted.
@@ -189,23 +208,39 @@ mod tests {
     fn a_sum_with_no_rounding_has_a_bracket_of_zero_width_against_i128() {
         let mut rng = crate::rng::Pcg::new(9, 0x51);
         for n in [1usize, 2, 3, 16, 257, 4096] {
-            let ints: Vec<i64> =
-                (0..n).map(|_| (rng.next_u32() as i64 % 2_000_001) - 1_000_000).collect();
+            let ints: Vec<i64> = (0..n)
+                .map(|_| (rng.next_u32() as i64 % 2_000_001) - 1_000_000)
+                .collect();
             let v: Vec<f64> = ints.iter().map(|&i| i as f64).collect();
             let exact: i128 = ints.iter().map(|&i| i as i128).sum();
             let want = exact as f64;
-            assert_eq!(sum_down(&v), want, "n={n}: sum_down is not the exact integer sum");
-            assert_eq!(sum_up(&v), want, "n={n}: sum_up is not the exact integer sum");
+            assert_eq!(
+                sum_down(&v),
+                want,
+                "n={n}: sum_down is not the exact integer sum"
+            );
+            assert_eq!(
+                sum_up(&v),
+                want,
+                "n={n}: sum_up is not the exact integer sum"
+            );
             // Half-integers are exact too; so are their sums.
             let h: Vec<f64> = v.iter().map(|x| x + 0.5).collect();
             let want_h = exact as f64 + 0.5 * n as f64;
-            assert_eq!(sum_down(&h), want_h, "n={n}: half-integer sum_down not exact");
+            assert_eq!(
+                sum_down(&h),
+                want_h,
+                "n={n}: half-integer sum_down not exact"
+            );
             assert_eq!(sum_up(&h), want_h, "n={n}: half-integer sum_up not exact");
         }
         // The other direction: append a term that cannot be added exactly and the width must
         // reappear, or a guard that is unconditionally zero would pass every line above.
         let v = [1_000_000.0, 3.0 * 2.0f64.powi(-54)];
-        assert!(sum_up(&v) > sum_down(&v), "a rounded addition must still carry a guard");
+        assert!(
+            sum_up(&v) > sum_down(&v),
+            "a rounded addition must still carry a guard"
+        );
     }
 
     /// An empty sum is zero and a one-element sum is that element, both exactly — the guard must
@@ -215,7 +250,10 @@ mod tests {
         assert_eq!(sum_down(&[]), 0.0);
         assert_eq!(sum_up(&[]), 0.0);
         for x in [0.0f64, 1.0, -3.5, 1e300] {
-            assert!(sum_down(&[x]) <= x && sum_up(&[x]) >= x, "{x} not bracketed");
+            assert!(
+                sum_down(&[x]) <= x && sum_up(&[x]) >= x,
+                "{x} not bracketed"
+            );
         }
     }
 

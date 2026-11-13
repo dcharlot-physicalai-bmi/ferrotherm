@@ -22,10 +22,16 @@ fn main() {
         eprintln!("no power backend; the timing comparison lives in bench.rs");
         return;
     };
-    println!("adapter : {} ({:?})", gpu.adapter().name, gpu.adapter().device_type);
+    println!(
+        "adapter : {} ({:?})",
+        gpu.adapter().name,
+        gpu.adapter().device_type
+    );
     println!("machine : {}", meter.machine());
     if !gpu.is_hardware() {
-        println!("\nSoftware rasteriser. Numbers below describe a CPU twice over; not reported as a ratio.");
+        println!(
+            "\nSoftware rasteriser. Numbers below describe a CPU twice over; not reported as a ratio."
+        );
     }
     println!("\nsettling...");
     std::thread::sleep(Duration::from_secs(5));
@@ -42,8 +48,10 @@ fn main() {
     let n = (l * l) as u64;
     let sweeps = 200u32;
     let window = Duration::from_secs(4);
-    println!("model   : {l}x{l} = {n} nodes; each path repeats {sweeps}-sweep passes for {:.0} s\n",
-             window.as_secs_f64());
+    println!(
+        "model   : {l}x{l} = {n} nodes; each path repeats {sweeps}-sweep passes for {:.0} s\n",
+        window.as_secs_f64()
+    );
 
     // A longer baseline: sigma is what the noise guard compares against, and a baseline measured
     // over 1.5 s on a machine with fans reports a spread that is mostly its own shortness.
@@ -55,7 +63,10 @@ fn main() {
         std::thread::sleep(Duration::from_secs(10));
         let idle = match meter.idle(Duration::from_secs(3)) {
             Ok(w) => w,
-            Err(e) => { eprintln!("{label}: {e}"); return None; }
+            Err(e) => {
+                eprintln!("{label}: {e}");
+                return None;
+            }
         };
         let mut passes = 0u64;
         let m = match meter.measure(idle, || {
@@ -66,7 +77,10 @@ fn main() {
             }
         }) {
             Ok(m) => m,
-            Err(e) => { eprintln!("{label}: {e}"); return None; }
+            Err(e) => {
+                eprintln!("{label}: {e}");
+                return None;
+            }
         };
         let updates = passes * n * sweeps as u64;
         let per = m.joules_above_idle / updates as f64;
@@ -81,7 +95,9 @@ fn main() {
     let gm = GpuModel::from_graph(&g);
     let mut spins = vec![1i8; n as usize];
     gpu.sweep(&gm, &mut spins, 0.7, 1).unwrap(); // warm the pipeline, off the clock
-    let g_res = row("gpu", &mut || { gpu.sweep(&gm, &mut spins, 0.7, sweeps).unwrap(); });
+    let g_res = row("gpu", &mut || {
+        gpu.sweep(&gm, &mut spins, 0.7, sweeps).unwrap();
+    });
 
     // ALL cores, not one.
     //
@@ -92,7 +108,9 @@ fn main() {
     // signal was inside the noise. Using the machine fairly and being able to measure it turn out
     // to be the same fix.
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    println!("  (cpu uses all {threads} cores; comparing a whole GPU to one core is not a comparison)\n");
+    println!(
+        "  (cpu uses all {threads} cores; comparing a whole GPU to one core is not a comparison)\n"
+    );
     let mut led = Ledger::default();
     let c_res = row("cpu", &mut || {
         let mut s = Sampler::new(&g, 0.7, 1);
@@ -105,21 +123,35 @@ fn main() {
     };
     // The ledger counted the CPU's updates independently of the pass arithmetic above. If those
     // disagree, one of the two numbers in the ratio is not what it says it is.
-    assert_eq!(led.samples, cu, "the ledger and the pass count must agree on the CPU's work");
+    assert_eq!(
+        led.samples, cu,
+        "the ledger and the pass count must agree on the CPU's work"
+    );
 
-    println!("\n  throughput : gpu {:.3e} vs cpu {:.3e} updates/s  ->  {:.1}x faster",
-             gu as f64 / window.as_secs_f64(), cu as f64 / window.as_secs_f64(),
-             gu as f64 / cu as f64);
-    println!("  energy     : gpu {gj:.1} J for {gu} updates, cpu {cj:.1} J for {cu}  ->  {:.1}x cheaper per update",
-             cp / gp);
+    println!(
+        "\n  throughput : gpu {:.3e} vs cpu {:.3e} updates/s  ->  {:.1}x faster",
+        gu as f64 / window.as_secs_f64(),
+        cu as f64 / window.as_secs_f64(),
+        gu as f64 / cu as f64
+    );
+    println!(
+        "  energy     : gpu {gj:.1} J for {gu} updates, cpu {cj:.1} J for {cu}  ->  {:.1}x cheaper per update",
+        cp / gp
+    );
     println!("  per op : gpu {gp:.3e} vs cpu {cp:.3e} J/update");
     println!();
     if cp / gp < gu as f64 / cu as f64 {
-        println!("  The speedup is larger than the saving, so the GPU is drawing more power while it");
-        println!("  works -- which is the expected shape. Time and joules are different questions and");
+        println!(
+            "  The speedup is larger than the saving, so the GPU is drawing more power while it"
+        );
+        println!(
+            "  works -- which is the expected shape. Time and joules are different questions and"
+        );
         println!("  a stack that prices in joules has to answer the second one on its own terms.");
     }
     println!("  Both sides: the meter's scope above idle, divided by counted node updates, on");
-    println!("  one machine. On Apple silicon that scope is macmon sys_power (SoC telemetry, not wall).");
+    println!(
+        "  one machine. On Apple silicon that scope is macmon sys_power (SoC telemetry, not wall)."
+    );
     println!("  Neither side is a datasheet.");
 }

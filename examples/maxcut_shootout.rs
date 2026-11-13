@@ -64,9 +64,16 @@ fn main() {
     });
     let name = path.rsplit('/').next().unwrap_or(&path);
     let n = inst.nodes;
-    println!("{name}: {n} nodes, {} edges, mean degree {:.1}", inst.edges, 2.0 * inst.edges as f64 / n as f64);
+    println!(
+        "{name}: {n} nodes, {} edges, mean degree {:.1}",
+        inst.edges,
+        2.0 * inst.edges as f64 / n as f64
+    );
     println!("budget {budget} SPIN FLIPS per solver, 8 seeds each\n");
-    println!("  {:>22} {:>10} {:>10} {:>12}", "solver", "best cut", "mean cut", "note");
+    println!(
+        "  {:>22} {:>10} {:>10} {:>12}",
+        "solver", "best cut", "mean cut", "note"
+    );
 
     let mut rows: Vec<(String, f64, f64, String)> = Vec::new();
     let mut dirty: Option<String> = None;
@@ -99,9 +106,16 @@ fn main() {
     // measuring a different thing. See the note at the top.
     let iters = budget.max(1);
     {
-        let p = tabu::Params { iterations: iters, tenure: 0, restart_after: Some(iters / 10 + 1) , start: None };
+        let p = tabu::Params {
+            iterations: iters,
+            tenure: 0,
+            restart_after: Some(iters / 10 + 1),
+            start: None,
+        };
         let (cuts, t) = Timing::around(|| {
-            (0..8u64).map(|seed| inst.cut(&tabu::search(&inst.graph, &p, seed).state)).collect::<Vec<f64>>()
+            (0..8u64)
+                .map(|seed| inst.cut(&tabu::search(&inst.graph, &p, seed).state))
+                .collect::<Vec<f64>>()
         });
         dirty = dirty.or_else(|| t.caveat());
         rows.push((
@@ -112,7 +126,10 @@ fn main() {
         ));
     }
     {
-        let p = bls::Params { iterations: iters, ..bls::Params::default() };
+        let p = bls::Params {
+            iterations: iters,
+            ..bls::Params::default()
+        };
         let (out, t) = Timing::around(|| {
             (0..8u64)
                 .map(|seed| {
@@ -132,160 +149,187 @@ fn main() {
             format!("{descents} descents, L<={jump}"),
         ));
 
-    // Isoenergetic cluster moves: two replica SETS over one ladder, so the budget divides by twice
-    // the ladder length. Charging it the same total as a single-ladder method would hand it 2r
-    // times the work and the table would read as a win for the cluster move.
-    {
-        let betas = tempering::geometric_ladder(0.05, 6.0, 8);
-        let replicas = 2 * betas.len();
-        let rounds = 200usize;
-        let per = (budget / (rounds * replicas * n)).max(1);
-        let p = icm::Params {
-            betas: betas.clone(),
-            rounds,
-            sweeps_per_round: per,
-            swap_every: 4,
-            icm_every: 4,
-        };
-        let (cuts, t2) = Timing::around(|| {
-            (0..8u64)
-                .filter_map(|seed| icm::run(&inst.graph, &p, seed).ok().map(|o| inst.cut(&o.state)))
-                .collect::<Vec<f64>>()
-        });
-        dirty = dirty.or_else(|| t2.caveat());
-        if cuts.is_empty() {
-            // `icm` refuses a graph with fields, and a G-set instance has none -- but an empty row
-            // reads as a zero cut, which is a much worse lie than a stated refusal.
-            rows.push(("isoenergetic cluster".into(), f64::NAN, f64::NAN, "refused: fields".into()));
-        } else {
+        // Isoenergetic cluster moves: two replica SETS over one ladder, so the budget divides by twice
+        // the ladder length. Charging it the same total as a single-ladder method would hand it 2r
+        // times the work and the table would read as a win for the cluster move.
+        {
+            let betas = tempering::geometric_ladder(0.05, 6.0, 8);
+            let replicas = 2 * betas.len();
+            let rounds = 200usize;
+            let per = (budget / (rounds * replicas * n)).max(1);
+            let p = icm::Params {
+                betas: betas.clone(),
+                rounds,
+                sweeps_per_round: per,
+                swap_every: 4,
+                icm_every: 4,
+            };
+            let (cuts, t2) = Timing::around(|| {
+                (0..8u64)
+                    .filter_map(|seed| {
+                        icm::run(&inst.graph, &p, seed)
+                            .ok()
+                            .map(|o| inst.cut(&o.state))
+                    })
+                    .collect::<Vec<f64>>()
+            });
+            dirty = dirty.or_else(|| t2.caveat());
+            if cuts.is_empty() {
+                // `icm` refuses a graph with fields, and a G-set instance has none -- but an empty row
+                // reads as a zero cut, which is a much worse lie than a stated refusal.
+                rows.push((
+                    "isoenergetic cluster".into(),
+                    f64::NAN,
+                    f64::NAN,
+                    "refused: fields".into(),
+                ));
+            } else {
+                rows.push((
+                    "isoenergetic cluster".into(),
+                    cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                    cuts.iter().sum::<f64>() / cuts.len() as f64,
+                    format!("{replicas} replicas x {rounds} x {per}"),
+                ));
+            }
+        }
+
+        // Simulated quantum annealing: the system is M x n spins, so a sweep costs M times a classical
+        // one and the budget divides by the Trotter count as well.
+        {
+            let trotter = 20usize;
+            let steps = 200usize;
+            let per = (budget / (steps * trotter * n)).max(1);
+            let p = sqa::Params {
+                trotter,
+                beta: 4.0,
+                gamma_max: 3.0,
+                gamma_min: 0.05,
+                steps,
+                sweeps_per_step: per,
+            };
+            let (cuts, t2) = Timing::around(|| {
+                (0..8u64)
+                    .map(|seed| inst.cut(&sqa::run(&inst.graph, &p, seed).state))
+                    .collect::<Vec<f64>>()
+            });
+            dirty = dirty.or_else(|| t2.caveat());
             rows.push((
-                "isoenergetic cluster".into(),
+                "simulated quantum".into(),
                 cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
                 cuts.iter().sum::<f64>() / cuts.len() as f64,
-                format!("{replicas} replicas x {rounds} x {per}"),
+                format!("M={trotter}, {steps} steps x {per}"),
+            ));
+        }
+
+        // Simulated bifurcation, both variants. A step updates every oscillator, so a step is a sweep.
+        for (variant, label) in [
+            (sbm::Variant::Ballistic, "sim. bifurcation bSB"),
+            (sbm::Variant::Discrete, "sim. bifurcation dSB"),
+        ] {
+            let steps = (budget / n).max(1);
+            let (cuts, t2) = Timing::around(|| {
+                (0..8u64)
+                    .map(|seed| inst.cut(&sbm::run(&inst.graph, variant, steps, 0.5, seed).0))
+                    .collect::<Vec<f64>>()
+            });
+            dirty = dirty.or_else(|| t2.caveat());
+            rows.push((
+                label.into(),
+                cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                cuts.iter().sum::<f64>() / cuts.len() as f64,
+                format!("{steps} steps"),
+            ));
+        }
+
+        // Population annealing: R replicas swept at every rung, so the budget divides by both.
+        {
+            let stages = 40usize;
+            let population = 32usize;
+            let per = (budget / (stages * population * n)).max(1);
+            let p = popanneal::Params::linear_from_zero(population, per, 6.0, stages);
+            let (cuts, t2) = Timing::around(|| {
+                (0..8u64)
+                    .map(|seed| inst.cut(&popanneal::run(&inst.graph, &p, seed).state))
+                    .collect::<Vec<f64>>()
+            });
+            dirty = dirty.or_else(|| t2.caveat());
+            rows.push((
+                "population annealing".into(),
+                cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                cuts.iter().sum::<f64>() / cuts.len() as f64,
+                format!("R={population}, {stages} rungs x {per}"),
+            ));
+        }
+
+        // HFS block descent, charged one flip per spin in every block -- which understates a block
+        // move's arithmetic and is therefore generous to it here, the opposite of the direction an
+        // author's own algorithm usually gets flattered in.
+        {
+            let block = 64usize.min(n);
+            let steps = (budget / block).max(1);
+            let p = hfs::Params {
+                steps,
+                block,
+                ..hfs::Params::default()
+            };
+            let (out, t2) = Timing::around(|| {
+                (0..8u64)
+                    .map(|seed| {
+                        let o = hfs::run(&inst.graph, &p, seed);
+                        (inst.cut(&o.state), o.improving)
+                    })
+                    .collect::<Vec<(f64, usize)>>()
+            });
+            dirty = dirty.or_else(|| t2.caveat());
+            let cuts: Vec<f64> = out.iter().map(|o| o.0).collect();
+            let improving: usize = out.iter().map(|o| o.1).sum::<usize>() / out.len();
+            rows.push((
+                "HFS block descent".into(),
+                cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                cuts.iter().sum::<f64>() / cuts.len() as f64,
+                format!("{steps} blocks of {block}, {improving} improving"),
+            ));
+        }
+
+        // And the composition, because the warm start that makes it possible is new and because a
+        // stack's best answer is usually not one method. Tabu with a tenth of its budget handed to a
+        // block polish.
+        {
+            let short = iters - iters / 10;
+            let tp = tabu::Params {
+                iterations: short,
+                tenure: 0,
+                restart_after: Some(short / 10 + 1),
+                start: None,
+            };
+            let block = 64usize.min(n);
+            let (cuts, t2) = Timing::around(|| {
+                (0..8u64)
+                    .map(|seed| {
+                        let warm = tabu::search(&inst.graph, &tp, seed);
+                        let hp = hfs::Params {
+                            steps: ((iters / 10) / block).max(1),
+                            block,
+                            ..hfs::Params::default()
+                        };
+                        inst.cut(&hfs::run_from(&inst.graph, warm.state, &hp, seed).state)
+                    })
+                    .collect::<Vec<f64>>()
+            });
+            dirty = dirty.or_else(|| t2.caveat());
+            rows.push((
+                "tabu then HFS polish".into(),
+                cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                cuts.iter().sum::<f64>() / cuts.len() as f64,
+                "90% tabu, 10% blocks".into(),
             ));
         }
     }
 
-    // Simulated quantum annealing: the system is M x n spins, so a sweep costs M times a classical
-    // one and the budget divides by the Trotter count as well.
-    {
-        let trotter = 20usize;
-        let steps = 200usize;
-        let per = (budget / (steps * trotter * n)).max(1);
-        let p = sqa::Params {
-            trotter,
-            beta: 4.0,
-            gamma_max: 3.0,
-            gamma_min: 0.05,
-            steps,
-            sweeps_per_step: per,
-        };
-        let (cuts, t2) = Timing::around(|| {
-            (0..8u64).map(|seed| inst.cut(&sqa::run(&inst.graph, &p, seed).state)).collect::<Vec<f64>>()
-        });
-        dirty = dirty.or_else(|| t2.caveat());
-        rows.push((
-            "simulated quantum".into(),
-            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            cuts.iter().sum::<f64>() / cuts.len() as f64,
-            format!("M={trotter}, {steps} steps x {per}"),
-        ));
-    }
-
-    // Simulated bifurcation, both variants. A step updates every oscillator, so a step is a sweep.
-    for (variant, label) in [(sbm::Variant::Ballistic, "sim. bifurcation bSB"),
-                             (sbm::Variant::Discrete, "sim. bifurcation dSB")] {
-        let steps = (budget / n).max(1);
-        let (cuts, t2) = Timing::around(|| {
-            (0..8u64)
-                .map(|seed| inst.cut(&sbm::run(&inst.graph, variant, steps, 0.5, seed).0))
-                .collect::<Vec<f64>>()
-        });
-        dirty = dirty.or_else(|| t2.caveat());
-        rows.push((
-            label.into(),
-            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            cuts.iter().sum::<f64>() / cuts.len() as f64,
-            format!("{steps} steps"),
-        ));
-    }
-
-    // Population annealing: R replicas swept at every rung, so the budget divides by both.
-    {
-        let stages = 40usize;
-        let population = 32usize;
-        let per = (budget / (stages * population * n)).max(1);
-        let p = popanneal::Params::linear_from_zero(population, per, 6.0, stages);
-        let (cuts, t2) = Timing::around(|| {
-            (0..8u64).map(|seed| inst.cut(&popanneal::run(&inst.graph, &p, seed).state)).collect::<Vec<f64>>()
-        });
-        dirty = dirty.or_else(|| t2.caveat());
-        rows.push((
-            "population annealing".into(),
-            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            cuts.iter().sum::<f64>() / cuts.len() as f64,
-            format!("R={population}, {stages} rungs x {per}"),
-        ));
-    }
-
-    // HFS block descent, charged one flip per spin in every block -- which understates a block
-    // move's arithmetic and is therefore generous to it here, the opposite of the direction an
-    // author's own algorithm usually gets flattered in.
-    {
-        let block = 64usize.min(n);
-        let steps = (budget / block).max(1);
-        let p = hfs::Params { steps, block, ..hfs::Params::default() };
-        let (out, t2) = Timing::around(|| {
-            (0..8u64)
-                .map(|seed| {
-                    let o = hfs::run(&inst.graph, &p, seed);
-                    (inst.cut(&o.state), o.improving)
-                })
-                .collect::<Vec<(f64, usize)>>()
-        });
-        dirty = dirty.or_else(|| t2.caveat());
-        let cuts: Vec<f64> = out.iter().map(|o| o.0).collect();
-        let improving: usize = out.iter().map(|o| o.1).sum::<usize>() / out.len();
-        rows.push((
-            "HFS block descent".into(),
-            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            cuts.iter().sum::<f64>() / cuts.len() as f64,
-            format!("{steps} blocks of {block}, {improving} improving"),
-        ));
-    }
-
-    // And the composition, because the warm start that makes it possible is new and because a
-    // stack's best answer is usually not one method. Tabu with a tenth of its budget handed to a
-    // block polish.
-    {
-        let short = iters - iters / 10;
-        let tp = tabu::Params { iterations: short, tenure: 0, restart_after: Some(short / 10 + 1), start: None };
-        let block = 64usize.min(n);
-        let (cuts, t2) = Timing::around(|| {
-            (0..8u64)
-                .map(|seed| {
-                    let warm = tabu::search(&inst.graph, &tp, seed);
-                    let hp = hfs::Params {
-                        steps: ((iters / 10) / block).max(1),
-                        block,
-                        ..hfs::Params::default()
-                    };
-                    inst.cut(&hfs::run_from(&inst.graph, warm.state, &hp, seed).state)
-                })
-                .collect::<Vec<f64>>()
-        });
-        dirty = dirty.or_else(|| t2.caveat());
-        rows.push((
-            "tabu then HFS polish".into(),
-            cuts.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            cuts.iter().sum::<f64>() / cuts.len() as f64,
-            "90% tabu, 10% blocks".into(),
-        ));
-    }
-    }
-
-    let winner = rows.iter().cloned().fold(("".to_string(), f64::NEG_INFINITY, 0.0, String::new()), |a, b| if b.1 > a.1 { b } else { a });
+    let winner = rows.iter().cloned().fold(
+        ("".to_string(), f64::NEG_INFINITY, 0.0, String::new()),
+        |a, b| if b.1 > a.1 { b } else { a },
+    );
     for (solver, best, mean, note) in &rows {
         let mark = if *best >= winner.1 - 1e-9 { " *" } else { "  " };
         println!("  {solver:>22} {best:>10.0} {mean:>10.1} {note:>12}{mark}");
@@ -303,8 +347,12 @@ fn main() {
         // The published figure is a LOWER bound -- somebody achieved it -- so beating it is
         // possible and worth saying loudly rather than quietly printing over 100%.
         if winner.1 > bk + 1e-9 {
-            println!("\n  ** {} EXCEEDS the best-known cut by {:.0}. Check the instance file before \
-                      believing it. **", winner.0, winner.1 - bk);
+            println!(
+                "\n  ** {} EXCEEDS the best-known cut by {:.0}. Check the instance file before \
+                      believing it. **",
+                winner.0,
+                winner.1 - bk
+            );
         }
     }
     if best_known.is_some_and(|b| b <= 0.0) {
@@ -317,7 +365,9 @@ fn main() {
     }
     if let Some(c) = &dirty {
         println!("\nNOTE: {c}");
-        println!("The CUTS above are unaffected -- a search outcome is the same number whoever else \
-                  is on the CPU. Only a timing would have been spoiled, and none is reported.");
+        println!(
+            "The CUTS above are unaffected -- a search outcome is the same number whoever else \
+                  is on the CPU. Only a timing would have been spoiled, and none is reported."
+        );
     }
 }

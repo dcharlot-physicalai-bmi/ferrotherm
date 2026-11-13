@@ -152,7 +152,12 @@ pub fn rs_entropy(alpha: f64) -> (f64, f64, f64) {
     let (nodes, weights) = crate::hopfield::gauss_hermite(96);
     let root_pi = core::f64::consts::PI.sqrt();
     let avg = |f: &dyn Fn(f64) -> f64| -> f64 {
-        nodes.iter().zip(&weights).map(|(&t, &w)| w * f(core::f64::consts::SQRT_2 * t)).sum::<f64>() / root_pi
+        nodes
+            .iter()
+            .zip(&weights)
+            .map(|(&t, &w)| w * f(core::f64::consts::SQRT_2 * t))
+            .sum::<f64>()
+            / root_pi
     };
     let big_h = |u: f64| 0.5 * (1.0 - crate::hopfield::erf(u / core::f64::consts::SQRT_2));
     let ln_h_avg = |q: f64| {
@@ -173,7 +178,9 @@ pub fn rs_entropy(alpha: f64) -> (f64, f64, f64) {
             break;
         }
     }
-    let s = -0.5 * qh * (1.0 - q) + avg(&|z| (2.0 * (qh.max(0.0).sqrt() * z).cosh()).ln()) + alpha * ln_h_avg(q);
+    let s = -0.5 * qh * (1.0 - q)
+        + avg(&|z| (2.0 * (qh.max(0.0).sqrt() * z).cosh()).ln())
+        + alpha * ln_h_avg(q);
     (s, q, qh)
 }
 
@@ -205,7 +212,11 @@ pub fn capacity_replica() -> f64 {
 pub fn threshold_at(n: usize, sets: u64, seed: u64) -> Option<f64> {
     let solvable = |p: usize| -> f64 {
         (0..sets)
-            .filter(|&s| Perceptron::random(n, p, seed + s * 7 + n as u64 * 131).solution_count().is_ok_and(|c| c > 0))
+            .filter(|&s| {
+                Perceptron::random(n, p, seed + s * 7 + n as u64 * 131)
+                    .solution_count()
+                    .is_ok_and(|c| c > 0)
+            })
             .count() as f64
             / sets as f64
     };
@@ -238,7 +249,10 @@ pub fn threshold_at(n: usize, sets: u64, seed: u64) -> Option<f64> {
 /// something this crate quotes into something it has confirmed.
 #[must_use]
 pub fn capacity_by_enumeration(sizes: &[usize], sets: u64, seed: u64) -> Option<(f64, f64)> {
-    let pts: Vec<(f64, f64)> = sizes.iter().filter_map(|&n| threshold_at(n, sets, seed).map(|a| (1.0 / n as f64, a))).collect();
+    let pts: Vec<(f64, f64)> = sizes
+        .iter()
+        .filter_map(|&n| threshold_at(n, sets, seed).map(|a| (1.0 / n as f64, a)))
+        .collect();
     if pts.len() < 3 {
         return None;
     }
@@ -294,7 +308,10 @@ impl Perceptron {
     /// The stabilities `J·ξ^μ`, one per pattern.
     #[must_use]
     pub fn stabilities(&self, j: &[i8]) -> Vec<i32> {
-        self.patterns.iter().map(|p| p.iter().zip(j).map(|(&a, &b)| a as i32 * b as i32).sum()).collect()
+        self.patterns
+            .iter()
+            .map(|p| p.iter().zip(j).map(|(&a, &b)| a as i32 * b as i32).sum())
+            .collect()
     }
 
     /// How many patterns `j` misclassifies. A tie counts as an error.
@@ -320,7 +337,10 @@ impl Perceptron {
     /// coupling vectors.
     pub fn solution_count(&self) -> Result<u64, String> {
         if self.n > MAX_ENUMERATED {
-            return Err(format!("enumeration refuses {} spins, the limit is {MAX_ENUMERATED}", self.n));
+            return Err(format!(
+                "enumeration refuses {} spins, the limit is {MAX_ENUMERATED}",
+                self.n
+            ));
         }
         let p = self.patterns.len();
         let mut j = vec![-1i8; self.n];
@@ -372,9 +392,18 @@ impl Perceptron {
 
     /// Anneal from a random start and return the best coupling vector found and its error count.
     #[must_use]
-    pub fn solve(&self, beta_min: f64, beta_max: f64, stages: usize, sweeps_per: usize, seed: u64) -> (Vec<i8>, usize) {
+    pub fn solve(
+        &self,
+        beta_min: f64,
+        beta_max: f64,
+        stages: usize,
+        sweeps_per: usize,
+        seed: u64,
+    ) -> (Vec<i8>, usize) {
         let mut rng = Pcg::new(seed, 23);
-        let mut j: Vec<i8> = (0..self.n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
+        let mut j: Vec<i8> = (0..self.n)
+            .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+            .collect();
         let mut best = j.clone();
         let mut best_e = self.errors(&j);
         for k in 0..stages {
@@ -482,14 +511,24 @@ impl SphericalPerceptron {
     /// The normalised stabilities `(J·ξ^μ) / (|J| √N)`, which is what `κ` is measured in.
     #[must_use]
     pub fn stabilities(&self, j: &[f64]) -> Vec<f64> {
-        let norm = j.iter().map(|v| v * v).sum::<f64>().sqrt().max(f64::MIN_POSITIVE);
+        let norm = j
+            .iter()
+            .map(|v| v * v)
+            .sum::<f64>()
+            .sqrt()
+            .max(f64::MIN_POSITIVE);
         let scale = 1.0 / (norm * (self.n as f64).sqrt());
-        self.patterns.iter().map(|p| scale * p.iter().zip(j).map(|(&a, &b)| a as f64 * b).sum::<f64>()).collect()
+        self.patterns
+            .iter()
+            .map(|p| scale * p.iter().zip(j).map(|(&a, &b)| a as f64 * b).sum::<f64>())
+            .collect()
     }
 
     /// The smallest normalised stability: positive iff `j` classifies every pattern.
     pub fn margin(&self, j: &[f64]) -> f64 {
-        self.stabilities(j).into_iter().fold(f64::INFINITY, f64::min)
+        self.stabilities(j)
+            .into_iter()
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// **Minover** (Krauth & Mézard 1987): repeatedly add the worst-classified pattern to the
@@ -507,7 +546,12 @@ impl SphericalPerceptron {
         }
         for _ in 0..iters {
             let st = self.stabilities(&j);
-            let (worst, _) = st.iter().enumerate().fold((0usize, f64::INFINITY), |(bi, bv), (i, &v)| if v < bv { (i, v) } else { (bi, bv) });
+            let (worst, _) =
+                st.iter()
+                    .enumerate()
+                    .fold((0usize, f64::INFINITY), |(bi, bv), (i, &v)| {
+                        if v < bv { (i, v) } else { (bi, bv) }
+                    });
             for (v, &x) in j.iter_mut().zip(&self.patterns[worst]) {
                 *v += x as f64;
             }
@@ -525,14 +569,25 @@ mod tests {
     #[test]
     fn p_sat_is_exact_at_both_parities() {
         for n in [1usize, 3, 5, 9, 21, 101] {
-            assert!((p_sat(n) - 0.5).abs() < 1e-15, "odd N has no ties: p_sat({n}) = {}", p_sat(n));
+            assert!(
+                (p_sat(n) - 0.5).abs() < 1e-15,
+                "odd N has no ties: p_sat({n}) = {}",
+                p_sat(n)
+            );
             assert!((annealed_capacity(n) - 1.0).abs() < 1e-12);
         }
         // N = 10: C(10,5)/2^10 = 252/1024 = 0.24609375, so p_sat = 0.376953125
-        assert!((p_sat(10) - 0.376_953_125).abs() < 1e-12, "p_sat(10) = {}", p_sat(10));
+        assert!(
+            (p_sat(10) - 0.376_953_125).abs() < 1e-12,
+            "p_sat(10) = {}",
+            p_sat(10)
+        );
         assert!((p_sat(4) - (1.0 - 6.0 / 16.0) / 2.0).abs() < 1e-15);
         for n in [2usize, 4, 10, 20] {
-            assert!(p_sat(n) < 0.5 && annealed_capacity(n) < 1.0, "even N is strictly harder: {n}");
+            assert!(
+                p_sat(n) < 0.5 && annealed_capacity(n) < 1.0,
+                "even N is strictly harder: {n}"
+            );
         }
     }
 
@@ -541,11 +596,16 @@ mod tests {
     fn the_annealed_count_is_the_mean_of_the_enumerated_ones() {
         for (n, p) in [(9usize, 5usize), (11, 11), (10, 5)] {
             let sets = 400;
-            let total: u64 = (0..sets).map(|s| Perceptron::random(n, p, 900 + s).solution_count().unwrap()).sum();
+            let total: u64 = (0..sets)
+                .map(|s| Perceptron::random(n, p, 900 + s).solution_count().unwrap())
+                .sum();
             let mean = total as f64 / sets as f64;
             let want = annealed_log_z(n, p).exp();
             // 400 pattern sets: the mean of a heavy-tailed count, so this is a loose but real check
-            assert!(mean > 0.6 * want && mean < 1.6 * want, "N={n} P={p}: mean {mean} vs annealed {want}");
+            assert!(
+                mean > 0.6 * want && mean < 1.6 * want,
+                "N={n} P={p}: mean {mean} vs annealed {want}"
+            );
         }
     }
 
@@ -555,11 +615,20 @@ mod tests {
     fn the_annealed_entropy_exceeds_the_typical_one() {
         let (n, p) = (11usize, 4usize); // low load, so nearly every set has solutions
         let sets = 300;
-        let counts: Vec<u64> = (0..sets).map(|s| Perceptron::random(n, p, 1300 + s).solution_count().unwrap()).collect();
-        assert!(counts.iter().all(|&c| c > 0), "at alpha = 0.36 every set should be solvable");
+        let counts: Vec<u64> = (0..sets)
+            .map(|s| Perceptron::random(n, p, 1300 + s).solution_count().unwrap())
+            .collect();
+        assert!(
+            counts.iter().all(|&c| c > 0),
+            "at alpha = 0.36 every set should be solvable"
+        );
         let annealed = (counts.iter().sum::<u64>() as f64 / sets as f64).ln() / n as f64;
-        let quenched = counts.iter().map(|&c| (c as f64).ln()).sum::<f64>() / sets as f64 / n as f64;
-        assert!(annealed > quenched, "annealed {annealed} must exceed quenched {quenched}");
+        let quenched =
+            counts.iter().map(|&c| (c as f64).ln()).sum::<f64>() / sets as f64 / n as f64;
+        assert!(
+            annealed > quenched,
+            "annealed {annealed} must exceed quenched {quenched}"
+        );
         assert!((annealed - annealed_log_z(n, p) / n as f64).abs() < 0.05);
     }
 
@@ -568,13 +637,21 @@ mod tests {
     fn no_solutions_survive_past_the_first_moment_bound() {
         let n = 13;
         let solvable = |p: usize, sets: u64| {
-            (0..sets).filter(|&s| Perceptron::random(n, p, 2000 + s).solution_count().unwrap() > 0).count()
+            (0..sets)
+                .filter(|&s| Perceptron::random(n, p, 2000 + s).solution_count().unwrap() > 0)
+                .count()
         };
         // alpha = 1.5 * annealed capacity: E[Z] = 2^13 * 2^-19 = 1/64, so by Markov at most 1.6%
         let above = solvable(19, 200);
-        assert!(above <= 6, "{above} of 200 sets solvable at alpha 1.46, Markov allows about 3");
+        assert!(
+            above <= 6,
+            "{above} of 200 sets solvable at alpha 1.46, Markov allows about 3"
+        );
         // and well below it they nearly all are
-        assert!(solvable(4, 100) >= 95, "at alpha 0.3 nearly every set is solvable");
+        assert!(
+            solvable(4, 100) >= 95,
+            "at alpha 0.3 nearly every set is solvable"
+        );
     }
 
     /// At enumerable sizes annealing finds a solution whenever one exists: no gap here.
@@ -587,15 +664,24 @@ mod tests {
                 let per = Perceptron::random(n, p, 5000 + s + 97 * n as u64);
                 let exists = per.solution_count().unwrap() > 0;
                 let found = (0..3).any(|r| per.solve(0.05, 12.0, 60, 40, 700 + s * 10 + r).1 == 0);
-                assert!(!found || exists, "the annealer returned a solution enumeration says is not there");
+                assert!(
+                    !found || exists,
+                    "the annealer returned a solution enumeration says is not there"
+                );
                 if exists {
                     solvable += 1;
                     agreed += usize::from(found);
                 }
             }
         }
-        assert!(solvable >= 20, "the loads should leave plenty of solvable instances: {solvable}");
-        assert!(agreed * 20 >= solvable * 19, "found {agreed} of {solvable} solvable instances");
+        assert!(
+            solvable >= 20,
+            "the loads should leave plenty of solvable instances: {solvable}"
+        );
+        assert!(
+            agreed * 20 >= solvable * 19,
+            "found {agreed} of {solvable} solvable instances"
+        );
     }
 
     /// ...and the gap opens with N: the same load goes from always-solved to never-solved.
@@ -614,28 +700,46 @@ mod tests {
         // The load is 0.5, well under the capacity, so a failure here is the ALGORITHM's limit and
         // not the model's -- which is the whole content of the test.
         let load = 0.5;
-        assert!(load < KRAUTH_MEZARD_CAPACITY, "the test load must sit below the capacity");
-        assert_eq!(small, 12, "at N = 21, alpha = {load} is easy: {small} of 12");
-        assert!(large <= 3, "at N = 201 the same load should be mostly out of reach: {large} of 12");
+        assert!(
+            load < KRAUTH_MEZARD_CAPACITY,
+            "the test load must sit below the capacity"
+        );
+        assert_eq!(
+            small, 12,
+            "at N = 21, alpha = {load} is easy: {small} of 12"
+        );
+        assert!(
+            large <= 3,
+            "at N = 201 the same load should be mostly out of reach: {large} of 12"
+        );
     }
 
     /// Gardner's closed form is exactly 2 at zero margin, and matches quadrature elsewhere.
     #[test]
     fn the_gardner_capacity_is_two_and_matches_quadrature() {
-        assert!((gardner_capacity(0.0) - 2.0).abs() < 1e-12, "alpha_c(0) = {}", gardner_capacity(0.0));
+        assert!(
+            (gardner_capacity(0.0) - 2.0).abs() < 1e-12,
+            "alpha_c(0) = {}",
+            gardner_capacity(0.0)
+        );
         // midpoint quadrature of 1/alpha_c = int_{-k}^inf Dz (z+k)^2
         let quad = |k: f64| {
             let (lo, hi, m) = (-k, -k + 40.0, 400_000);
             let h = (hi - lo) / m as f64;
-            let s: f64 = (0..m).map(|i| {
-                let z = lo + (i as f64 + 0.5) * h;
-                normal_pdf(z) * (z + k) * (z + k) * h
-            }).sum();
+            let s: f64 = (0..m)
+                .map(|i| {
+                    let z = lo + (i as f64 + 0.5) * h;
+                    normal_pdf(z) * (z + k) * (z + k) * h
+                })
+                .sum();
             1.0 / s
         };
         for k in [-0.5, 0.0, 0.25, 0.5, 1.0, 2.0] {
             let (c, q) = (gardner_capacity(k), quad(k));
-            assert!((c - q).abs() < 1e-4 * q.max(1.0), "kappa {k}: closed {c} vs quadrature {q}");
+            assert!(
+                (c - q).abs() < 1e-4 * q.max(1.0),
+                "kappa {k}: closed {c} vs quadrature {q}"
+            );
         }
         // it falls with the margin demanded, and the binary capacity is far below the spherical one
         for w in [(-0.5, 0.0), (0.0, 0.5), (0.5, 1.0)] {
@@ -652,21 +756,42 @@ mod tests {
         let n = 120;
         let margins = |alpha: f64, iters: usize| -> Vec<f64> {
             let p = (alpha * n as f64).round() as usize;
-            (0..6u64).map(|s| SphericalPerceptron::random(n, p, 4000 + s).minover(iters).1).collect()
+            (0..6u64)
+                .map(|s| SphericalPerceptron::random(n, p, 4000 + s).minover(iters).1)
+                .collect()
         };
         // below the capacity: more iterations only ever help, and every instance is solved
         let cheap = margins(1.5, 2_000);
         let rich = margins(1.5, 20_000);
-        assert!(rich.iter().zip(&cheap).all(|(r, c)| r >= c), "more iterations never hurt below the capacity");
-        assert!(rich.iter().all(|&m| m > 0.0), "alpha 1.5 < 2 is solvable, and minover gets there: {rich:?}");
+        assert!(
+            rich.iter().zip(&cheap).all(|(r, c)| r >= c),
+            "more iterations never hurt below the capacity"
+        );
+        assert!(
+            rich.iter().all(|&m| m > 0.0),
+            "alpha 1.5 < 2 is solvable, and minover gets there: {rich:?}"
+        );
         // above it: the converged margin is negative on every instance, and a 10x budget does not
         // move it across zero, because there is nothing to find
         let above = margins(2.2, 5_000);
         let above_rich = margins(2.2, 50_000);
-        assert!(above.iter().all(|&m| m < 0.0) && above_rich.iter().all(|&m| m < 0.0), "alpha 2.2 > 2 has no solutions: {above_rich:?}");
+        assert!(
+            above.iter().all(|&m| m < 0.0) && above_rich.iter().all(|&m| m < 0.0),
+            "alpha 2.2 > 2 has no solutions: {above_rich:?}"
+        );
         // the binary sampler at a load FAR below its own capacity fails for the other reason
-        let bin = (0..8u64).filter(|&s| Perceptron::random(n, (0.5 * n as f64) as usize, 4100 + s).solve(0.05, 12.0, 60, 25, s).1 == 0).count();
-        assert!(bin < 8, "binary annealing at alpha 0.5, N = {n} should already be missing some: {bin} of 8");
+        let bin = (0..8u64)
+            .filter(|&s| {
+                Perceptron::random(n, (0.5 * n as f64) as usize, 4100 + s)
+                    .solve(0.05, 12.0, 60, 25, s)
+                    .1
+                    == 0
+            })
+            .count();
+        assert!(
+            bin < 8,
+            "binary annealing at alpha 0.5, N = {n} should already be missing some: {bin} of 8"
+        );
     }
 
     /// The capacity is DERIVED here, and it agrees with Krauth and Mézard to four digits.
@@ -684,8 +809,14 @@ mod tests {
         );
         // the saddle at the capacity is genuinely interior, not the collapsed q -> 0 branch
         let (s, q, qh) = rs_entropy(alpha_c);
-        assert!(s.abs() < 1e-3, "the entropy must vanish at the capacity: {s}");
-        assert!((0.4..0.8).contains(&q), "the saddle must be interior: q = {q}");
+        assert!(
+            s.abs() < 1e-3,
+            "the entropy must vanish at the capacity: {s}"
+        );
+        assert!(
+            (0.4..0.8).contains(&q),
+            "the saddle must be interior: q = {q}"
+        );
         assert!(qh > 1.0, "and its conjugate positive: qhat = {qh}");
         // the entropy is positive below and negative above
         assert!(rs_entropy(0.5).0 > 0.0 && rs_entropy(0.95).0 < 0.0);
@@ -701,17 +832,24 @@ mod tests {
     /// that it does so to four digits on a laptop in a second.
     #[test]
     fn exact_counting_confirms_the_krauth_mezard_capacity() {
-        let (alpha_c, _slope) = capacity_by_enumeration(&[11, 13, 15, 17], 60, 90_000).expect("thresholds exist");
+        let (alpha_c, _slope) =
+            capacity_by_enumeration(&[11, 13, 15, 17], 60, 90_000).expect("thresholds exist");
         assert!(
             (alpha_c - KRAUTH_MEZARD_CAPACITY).abs() < 0.09,
             "enumeration extrapolates to {alpha_c}, replica theory says {KRAUTH_MEZARD_CAPACITY}"
         );
         // and it must sit strictly below the first-moment bound, which is the whole point
-        assert!(alpha_c < annealed_capacity(15), "the capacity must be under the annealed bound");
+        assert!(
+            alpha_c < annealed_capacity(15),
+            "the capacity must be under the annealed bound"
+        );
         // thresholds fall with n toward the limit
         let a11 = threshold_at(11, 60, 90_000).unwrap();
         let a17 = threshold_at(17, 60, 90_000).unwrap();
-        assert!(a17 < a11 + 0.05, "thresholds should trend down with n: {a11} -> {a17}");
+        assert!(
+            a17 < a11 + 0.05,
+            "thresholds should trend down with n: {a11} -> {a17}"
+        );
     }
 
     /// The flip cost the sampler uses is the true energy difference.
@@ -719,7 +857,9 @@ mod tests {
     fn the_cached_flip_cost_is_the_error_difference() {
         let per = Perceptron::random(15, 12, 77);
         let mut rng = Pcg::new(3, 0);
-        let j: Vec<i8> = (0..15).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
+        let j: Vec<i8> = (0..15)
+            .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+            .collect();
         let h = per.stabilities(&j);
         for i in 0..15 {
             let mut t = j.clone();

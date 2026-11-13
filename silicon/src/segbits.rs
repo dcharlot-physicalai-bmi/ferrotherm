@@ -50,7 +50,11 @@ pub fn parse_bit(tok: &str) -> Option<SegBit> {
         None => (true, tok),
     };
     let (f, b) = body.split_once('_')?;
-    Some(SegBit { frame: f.parse().ok()?, bit: b.parse().ok()?, set })
+    Some(SegBit {
+        frame: f.parse().ok()?,
+        bit: b.parse().ok()?,
+        set,
+    })
 }
 
 impl SegBits {
@@ -97,7 +101,10 @@ impl SegBits {
 
     /// Every feature name sharing a prefix (for discovery/inspection).
     pub fn with_prefix<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.features.keys().filter(move |k| k.starts_with(prefix)).map(std::string::String::as_str)
+        self.features
+            .keys()
+            .filter(move |k| k.starts_with(prefix))
+            .map(std::string::String::as_str)
     }
 }
 
@@ -122,14 +129,34 @@ CLBLL_L.SLICEL_X0.ALUT.INIT[03] 33_14
         let db = SegBits::parse(SAMPLE);
         assert_eq!(
             db.get("CLBLL_L.SLICEL_X0.A5FF.ZINI"),
-            Some(&[SegBit { frame: 31, bit: 6, set: true }][..])
+            Some(
+                &[SegBit {
+                    frame: 31,
+                    bit: 6,
+                    set: true
+                }][..]
+            )
         );
         let ax = db.get("CLBLL_L.SLICEL_X0.AFFMUX.AX").unwrap();
         assert_eq!(ax.len(), 4);
         // the inverted bits must survive parsing — dropping them would emit a different mux
         assert_eq!(ax.iter().filter(|b| b.set).count(), 1);
-        assert_eq!(ax[0], SegBit { frame: 30, bit: 0, set: false });
-        assert_eq!(ax[1], SegBit { frame: 30, bit: 1, set: true });
+        assert_eq!(
+            ax[0],
+            SegBit {
+                frame: 30,
+                bit: 0,
+                set: false
+            }
+        );
+        assert_eq!(
+            ax[1],
+            SegBit {
+                frame: 30,
+                bit: 1,
+                set: true
+            }
+        );
     }
 
     /// Two mux settings that share coordinates must differ in polarity, not position — the
@@ -149,9 +176,33 @@ CLBLL_L.SLICEL_X0.ALUT.INIT[03] 33_14
 
     #[test]
     fn word_split_is_32_bits() {
-        assert_eq!(SegBit { frame: 0, bit: 15, set: true }.word_and_pos(), (0, 15));
-        assert_eq!(SegBit { frame: 0, bit: 32, set: true }.word_and_pos(), (1, 0));
-        assert_eq!(SegBit { frame: 0, bit: 63, set: true }.word_and_pos(), (1, 31));
+        assert_eq!(
+            SegBit {
+                frame: 0,
+                bit: 15,
+                set: true
+            }
+            .word_and_pos(),
+            (0, 15)
+        );
+        assert_eq!(
+            SegBit {
+                frame: 0,
+                bit: 32,
+                set: true
+            }
+            .word_and_pos(),
+            (1, 0)
+        );
+        assert_eq!(
+            SegBit {
+                frame: 0,
+                bit: 63,
+                set: true
+            }
+            .word_and_pos(),
+            (1, 31)
+        );
     }
 
     /// An incomplete INIT map must be refused rather than returned with holes.
@@ -174,8 +225,29 @@ CLBLL_L.SLICEL_X0.ALUT.INIT[03] 33_14
         let db = SegBits::parse(&text);
         let bits = db.lut_init_bits("T.SLICEL_X0.ALUT").expect("complete map");
         assert_eq!(bits.len(), 64);
-        assert_eq!(bits[0], SegBit { frame: 32, bit: 15, set: true });
-        assert_eq!(bits[1], SegBit { frame: 33, bit: 15, set: true });
-        assert_eq!(bits[2], SegBit { frame: 32, bit: 14, set: true });
+        assert_eq!(
+            bits[0],
+            SegBit {
+                frame: 32,
+                bit: 15,
+                set: true
+            }
+        );
+        assert_eq!(
+            bits[1],
+            SegBit {
+                frame: 33,
+                bit: 15,
+                set: true
+            }
+        );
+        assert_eq!(
+            bits[2],
+            SegBit {
+                frame: 32,
+                bit: 14,
+                set: true
+            }
+        );
     }
 }

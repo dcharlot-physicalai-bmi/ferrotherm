@@ -64,7 +64,7 @@
 //! this code belief propagation, run forty rounds, sits within a bit of the exact posterior.
 
 use crate::gf2::Matrix;
-use crate::het::{exact_boltzmann, HetBuilder, HetGraph, Kind};
+use crate::het::{HetBuilder, HetGraph, Kind, exact_boltzmann};
 use crate::sourlas::nishimori_beta;
 
 /// The most noise bits the exact posterior enumerates: `2^16` patterns.
@@ -267,11 +267,7 @@ pub fn bsc(word: &[u8], p: f64, seed: u64) -> Vec<u8> {
         .map(|(i, &b)| {
             let u = (splitmix(seed ^ (i as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)) >> 11) as f64
                 / (1u64 << 53) as f64;
-            if u < p {
-                b ^ 1
-            } else {
-                b
-            }
+            if u < p { b ^ 1 } else { b }
         })
         .collect()
 }
@@ -612,9 +608,19 @@ mod tests {
             let inflow: f64 = (0..256).map(|x| law[x] * kernel[x * 256 + y]).sum();
             worst = worst.max((inflow - law[y]).abs() / law[y]);
         }
-        let smallest = law.iter().copied().filter(|&v| v >= 1e-280).fold(1.0f64, f64::min);
-        assert!(smallest < 1e-16, "the fixture must reach masses below 1e-16 to test anything: {smallest:e}");
-        assert!(worst < 1e-12, "the kernel moves some state's Boltzmann mass by {worst:e} of itself");
+        let smallest = law
+            .iter()
+            .copied()
+            .filter(|&v| v >= 1e-280)
+            .fold(1.0f64, f64::min);
+        assert!(
+            smallest < 1e-16,
+            "the fixture must reach masses below 1e-16 to test anything: {smallest:e}"
+        );
+        assert!(
+            worst < 1e-12,
+            "the kernel moves some state's Boltzmann mass by {worst:e} of itself"
+        );
     }
 
     /// The sequential chain over the relaxed model has its Boltzmann law as stationary law, and
@@ -638,7 +644,10 @@ mod tests {
                 }
             }
             let drift = crate::autocorr::total_variation(&pushed, &law);
-            assert!(drift < 1e-14, "gamma {gamma}: the kernel moves the Boltzmann law by TV {drift}");
+            assert!(
+                drift < 1e-14,
+                "gamma {gamma}: the kernel moves the Boltzmann law by TV {drift}"
+            );
             // A stiff chain (large gamma) conditions the direct solve, and its answer carries the
             // conditioning times the rounding: at gamma 6 it was 1.7e-7 from Boltzmann, and 1.3e-6
             // once the sweep's down-flips were computed without `1 - p_up` (2026-09-28), while the

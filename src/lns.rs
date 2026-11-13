@@ -476,7 +476,13 @@ pub struct Lns {
 
 impl Default for Lns {
     fn default() -> Self {
-        Lns { steps: 200, fraction: 0.25, max_width: 12, destroy: Destroy::Related, start: None }
+        Lns {
+            steps: 200,
+            fraction: 0.25,
+            max_width: 12,
+            destroy: Destroy::Related,
+            start: None,
+        }
     }
 }
 
@@ -523,10 +529,17 @@ pub fn lns(g: &Graph, p: &Lns, seed: u64) -> Result<LnsOutcome, Invalid> {
     let mut rng = Pcg::new(seed, 0x004C_4E53);
     let mut s: Vec<i8> = match &p.start {
         Some(st) if st.len() == g.n => st.clone(),
-        Some(st) => return Err(Invalid::StartLength { got: st.len(), want: g.n }),
+        Some(st) => {
+            return Err(Invalid::StartLength {
+                got: st.len(),
+                want: g.n,
+            });
+        }
         None => (0..g.n).map(|_| rng.spin(0.5)).collect(),
     };
-    let el = Elimination { max_width: p.max_width.max(1) };
+    let el = Elimination {
+        max_width: p.max_width.max(1),
+    };
     let (mut moves, mut improving, mut refused) = (0usize, 0usize, 0usize);
 
     for _ in 0..p.steps {
@@ -545,7 +558,14 @@ pub fn lns(g: &Graph, p: &Lns, seed: u64) -> Result<LnsOutcome, Invalid> {
         }
     }
 
-    Ok(LnsOutcome { energy: g.energy(&s), state: s, freed: count, moves, improving, refused })
+    Ok(LnsOutcome {
+        energy: g.energy(&s),
+        state: s,
+        freed: count,
+        moves,
+        improving,
+        refused,
+    })
 }
 
 // ---- variable neighbourhood search --------------------------------------------------------------
@@ -568,7 +588,12 @@ pub struct Vns {
 
 impl Default for Vns {
     fn default() -> Self {
-        Vns { rounds: 400, k_min: 1, k_max: 8, start: None }
+        Vns {
+            rounds: 400,
+            k_min: 1,
+            k_max: 8,
+            start: None,
+        }
     }
 }
 
@@ -600,12 +625,20 @@ pub struct VnsOutcome {
 /// for a supplied start that is not one spin per node.
 pub fn vns(g: &Graph, p: &Vns, seed: u64) -> Result<VnsOutcome, Invalid> {
     if p.k_min == 0 || p.k_max < p.k_min {
-        return Err(Invalid::Ladder { k_min: p.k_min, k_max: p.k_max });
+        return Err(Invalid::Ladder {
+            k_min: p.k_min,
+            k_max: p.k_max,
+        });
     }
     let mut rng = Pcg::new(seed, 0x0056_4E53);
     let mut s: Vec<i8> = match &p.start {
         Some(st) if st.len() == g.n => st.clone(),
-        Some(st) => return Err(Invalid::StartLength { got: st.len(), want: g.n }),
+        Some(st) => {
+            return Err(Invalid::StartLength {
+                got: st.len(),
+                want: g.n,
+            });
+        }
         None => (0..g.n).map(|_| rng.spin(0.5)).collect(),
     };
     let mut descent_flips = descend(g, &mut s);
@@ -742,7 +775,10 @@ pub struct Grasp {
 
 impl Default for Grasp {
     fn default() -> Self {
-        Grasp { iterations: 64, alpha: 0.3 }
+        Grasp {
+            iterations: 64,
+            alpha: 0.3,
+        }
     }
 }
 
@@ -833,8 +869,16 @@ mod tests {
         let at = |x: usize, y: usize| (y % l) * l + (x % l);
         for y in 0..l {
             for x in 0..l {
-                b.couple(at(x, y), at(x + 1, y), if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-                b.couple(at(x, y), at(x, y + 1), if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                b.couple(
+                    at(x, y),
+                    at(x + 1, y),
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
+                b.couple(
+                    at(x, y),
+                    at(x, y + 1),
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
             }
         }
         b.build()
@@ -846,7 +890,9 @@ mod tests {
     fn worst_trap(g: &Graph, optimum: f64) -> Option<(Vec<i8>, f64)> {
         let mut worst: Option<(Vec<i8>, f64)> = None;
         for mask in 0..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             let e = g.energy(&s);
             if e <= optimum + 1e-9 {
                 continue;
@@ -893,7 +939,10 @@ mod tests {
                     let exact = Exhaustive.solve(&p.graph).1;
                     for op in [Destroy::Random, Destroy::Related, Destroy::Worst] {
                         let o = lns(&p.graph, &whole(op), seed).unwrap();
-                        assert!(o.exact(), "l={l} loops={loops} {op:?}: not a whole-model solve");
+                        assert!(
+                            o.exact(),
+                            "l={l} loops={loops} {op:?}: not a whole-model solve"
+                        );
                         assert_eq!(
                             o.energy, exact,
                             "l={l} loops={loops} seed={seed} {op:?}: {} vs enumerated {exact}",
@@ -928,17 +977,31 @@ mod tests {
             let p = frustrated_loops(4, 16, iseed);
             let exact = Exhaustive.solve(&p.graph).1;
             for sseed in 1..=4u64 {
-                let part = Lns { steps: 8, fraction: 0.125, ..whole(Destroy::Related) };
+                let part = Lns {
+                    steps: 8,
+                    fraction: 0.125,
+                    ..whole(Destroy::Related)
+                };
                 let o = lns(&p.graph, &part, sseed).unwrap();
                 total += 1;
                 if o.energy > exact + 1e-9 {
                     miss += 1;
                 }
-                assert!(o.energy >= exact - 1e-9, "below the enumerated optimum: {}", o.energy);
-                assert!(!o.exact(), "an eighth of the variables is not the whole model");
+                assert!(
+                    o.energy >= exact - 1e-9,
+                    "below the enumerated optimum: {}",
+                    o.energy
+                );
+                assert!(
+                    !o.exact(),
+                    "an eighth of the variables is not the whole model"
+                );
             }
         }
-        assert!(miss >= 25, "measured 34 of 40 misses at an eighth; got {miss} of {total}");
+        assert!(
+            miss >= 25,
+            "measured 34 of 40 misses at an eighth; got {miss} of {total}"
+        );
     }
 
     /// A freed set is a SET, is the size the fraction asks for, and at `1.0` is everything.
@@ -959,9 +1022,17 @@ mod tests {
                 let want = freed_count(g.n, frac).unwrap();
                 let f = free(&g, &s, op, want, &mut rng);
                 let uniq: std::collections::BTreeSet<usize> = f.iter().copied().collect();
-                assert_eq!(f.len(), want, "{op:?} at {frac} freed {} of {want}", f.len());
+                assert_eq!(
+                    f.len(),
+                    want,
+                    "{op:?} at {frac} freed {} of {want}",
+                    f.len()
+                );
                 assert_eq!(uniq.len(), f.len(), "{op:?} at {frac} repeated a variable");
-                assert!(uniq.iter().all(|&i| i < g.n), "{op:?} freed a node off the graph");
+                assert!(
+                    uniq.iter().all(|&i| i < g.n),
+                    "{op:?} freed a node off the graph"
+                );
                 if frac == 1.0 {
                     assert_eq!(uniq.len(), g.n, "{op:?} at 1.0 must free every node");
                 }
@@ -995,9 +1066,15 @@ mod tests {
             match repair(&g, &mut s, &block, &el) {
                 Ok(d) => {
                     moves += 1;
-                    assert!(d <= 1e-12, "step {step} {op:?}: the repair raised the energy by {d}");
+                    assert!(
+                        d <= 1e-12,
+                        "step {step} {op:?}: the repair raised the energy by {d}"
+                    );
                     let now = g.energy(&s);
-                    assert!(now <= prev + 1e-9, "step {step} {op:?}: energy rose {prev} -> {now}");
+                    assert!(
+                        now <= prev + 1e-9,
+                        "step {step} {op:?}: energy rose {prev} -> {now}"
+                    );
                     if d < -1e-12 {
                         improving += 1;
                     }
@@ -1007,25 +1084,56 @@ mod tests {
             }
         }
 
-        assert_eq!(moves, 2000, "every 12-node block on a lattice is narrow enough to solve");
+        assert_eq!(
+            moves, 2000,
+            "every 12-node block on a lattice is narrow enough to solve"
+        );
         assert_eq!(refused, 0);
-        assert!(improving > 0, "a run in which nothing improved proves nothing about monotonicity");
-        assert!(prev < started - 40.0, "the run must actually descend: {started} -> {prev}");
+        assert!(
+            improving > 0,
+            "a run in which nothing improved proves nothing about monotonicity"
+        );
+        assert!(
+            prev < started - 40.0,
+            "the run must actually descend: {started} -> {prev}"
+        );
 
         // THE GUARD BITES, and where it bites was measured rather than guessed. A random HALF of
         // this torus still eliminates under width 12 and is never refused; the whole torus measures
         // 16 and is refused every time. So the refusal is a property of the freed set's induced
         // width, which is what `max_width` claims to be about.
-        assert_eq!(Elimination::default().width(&g), 16, "the 8x8 torus eliminates at 16");
-        let half = Lns { steps: 20, fraction: 0.5, max_width: 12, destroy: Destroy::Random, start: None };
+        assert_eq!(
+            Elimination::default().width(&g),
+            16,
+            "the 8x8 torus eliminates at 16"
+        );
+        let half = Lns {
+            steps: 20,
+            fraction: 0.5,
+            max_width: 12,
+            destroy: Destroy::Random,
+            start: None,
+        };
         let o = lns(&g, &half, 1).unwrap();
-        assert_eq!(o.refused, 0, "a random half of a torus is sparse enough to solve");
+        assert_eq!(
+            o.refused, 0,
+            "a random half of a torus is sparse enough to solve"
+        );
 
-        let whole = Lns { fraction: 1.0, ..half };
+        let whole = Lns {
+            fraction: 1.0,
+            ..half
+        };
         let o = lns(&g, &whole, 1).unwrap();
-        assert_eq!(o.refused, 20, "width 16 against a cap of 12 must be refused, not approximated");
+        assert_eq!(
+            o.refused, 20,
+            "width 16 against a cap of 12 must be refused, not approximated"
+        );
         assert_eq!(o.moves, 0);
-        assert!(!o.exact(), "a run that refused every repair has solved nothing");
+        assert!(
+            !o.exact(),
+            "a run that refused every repair has solved nothing"
+        );
     }
 
     /// ORACLE 3: on instances whose optimum is known by construction, never report below it.
@@ -1072,11 +1180,20 @@ mod tests {
 
         let (related, total, worst) = rate(Destroy::Related, 0.25);
         assert_eq!(total, 36);
-        assert!(related >= 30, "measured 34/36 for related removal at 25%, got {related}");
-        assert!(worst < 0.06, "measured a worst excess of 0.047, got {worst}");
+        assert!(
+            related >= 30,
+            "measured 34/36 for related removal at 25%, got {related}"
+        );
+        assert!(
+            worst < 0.06,
+            "measured a worst excess of 0.047, got {worst}"
+        );
 
         let (random, _, _) = rate(Destroy::Random, 0.25);
-        assert!(random <= 20, "measured 9/36 for random removal at 25%, got {random}");
+        assert!(
+            random <= 20,
+            "measured 9/36 for random removal at 25%, got {random}"
+        );
         assert!(
             related > 2 * random,
             "Shaw's relatedness is the method, not a refinement: {related} vs {random} of 36"
@@ -1110,23 +1227,50 @@ mod tests {
                 0,
                 "seed {seed}: enumeration says no single flip descends from {trap_e}"
             );
-            assert_eq!(g.energy(&t), trap_e, "a descent that moves nothing must change nothing");
+            assert_eq!(
+                g.energy(&t),
+                trap_e,
+                "a descent that moves nothing must change nothing"
+            );
 
-            let ladder = Vns { rounds: 200, k_min: 1, k_max: 6, start: Some(trap.clone()) };
+            let ladder = Vns {
+                rounds: 200,
+                k_min: 1,
+                k_max: 6,
+                start: Some(trap.clone()),
+            };
             let o = vns(&g, &ladder, 3).unwrap();
-            assert!(o.energy >= optimum - 1e-9, "seed {seed}: below the enumerated optimum");
-            assert!(o.energy <= trap_e + 1e-12, "VNS must never end above where it started");
+            assert!(
+                o.energy >= optimum - 1e-9,
+                "seed {seed}: below the enumerated optimum"
+            );
+            assert!(
+                o.energy <= trap_e + 1e-12,
+                "VNS must never end above where it started"
+            );
             escaped += usize::from(o.energy <= optimum + 1e-9);
-            assert!(o.deepest > 1, "seed {seed}: a ladder that never climbed is not a ladder");
+            assert!(
+                o.deepest > 1,
+                "seed {seed}: a ladder that never climbed is not a ladder"
+            );
 
             let one_rung = Vns { k_max: 1, ..ladder };
             let p = vns(&g, &one_rung, 3).unwrap();
-            assert_eq!(p.deepest, 1, "a one-rung ladder shakes at radius 1 and nowhere else");
+            assert_eq!(
+                p.deepest, 1,
+                "a one-rung ladder shakes at radius 1 and nowhere else"
+            );
             pinned_escaped += usize::from(p.energy <= optimum + 1e-9);
         }
 
-        assert_eq!(traps, 6, "every one of these instances has a strict non-global local minimum");
-        assert_eq!(escaped, 6, "the full ladder reached the enumerated optimum on all six");
+        assert_eq!(
+            traps, 6,
+            "every one of these instances has a strict non-global local minimum"
+        );
+        assert_eq!(
+            escaped, 6,
+            "the full ladder reached the enumerated optimum on all six"
+        );
         assert!(
             pinned_escaped <= 3,
             "measured 2 of 6 for a ladder pinned at radius 1; got {pinned_escaped}, so the ladder \
@@ -1144,7 +1288,17 @@ mod tests {
     fn a_one_rung_ladder_wraps_once_per_non_improving_round() {
         let g = glass2d(6, 4);
         for seed in 1..=4u64 {
-            let o = vns(&g, &Vns { rounds: 150, k_min: 3, k_max: 3, start: None }, seed).unwrap();
+            let o = vns(
+                &g,
+                &Vns {
+                    rounds: 150,
+                    k_min: 3,
+                    k_max: 3,
+                    start: None,
+                },
+                seed,
+            )
+            .unwrap();
             assert_eq!(o.shakes, 150);
             assert_eq!(o.deepest, 3);
             assert_eq!(
@@ -1156,7 +1310,17 @@ mod tests {
             );
         }
         // And a ladder with room climbs: same instance, same budget, a radius above the bottom.
-        let wide = vns(&g, &Vns { rounds: 150, k_min: 1, k_max: 9, start: None }, 1).unwrap();
+        let wide = vns(
+            &g,
+            &Vns {
+                rounds: 150,
+                k_min: 1,
+                k_max: 9,
+                start: None,
+            },
+            1,
+        )
+        .unwrap();
         assert!(wide.deepest > 1, "the ladder never left the bottom rung");
         assert!(wide.deepest <= 9, "and never went above the top one");
     }
@@ -1188,7 +1352,11 @@ mod tests {
         for seed in 1..=20u64 {
             let mut r = Pcg::new(seed, 77);
             let s = construct(&g, 0.0, &mut r).unwrap();
-            assert_eq!(g.energy(&s), closed_form, "seed {seed}: greedy missed the closed form");
+            assert_eq!(
+                g.energy(&s),
+                closed_form,
+                "seed {seed}: greedy missed the closed form"
+            );
             greedy_hits += 1;
 
             let mut r = Pcg::new(seed, 77);
@@ -1198,7 +1366,10 @@ mod tests {
             random_hits += usize::from((e - closed_form).abs() < 1e-12);
         }
         assert_eq!(greedy_hits, 20);
-        assert_eq!(random_hits, 0, "a uniform construction must not reach the closed form");
+        assert_eq!(
+            random_hits, 0,
+            "a uniform construction must not reach the closed form"
+        );
         assert!(
             random_mean / 20.0 > closed_form + 5.0,
             "measured a mean of +0.087 against a closed form of {closed_form}, got {}",
@@ -1216,7 +1387,10 @@ mod tests {
             total / 20.0
         };
         assert!(mean(0.0) < mean(0.7), "greedier must construct better");
-        assert!(mean(0.7) < mean(1.0), "and every rung of alpha must cost something");
+        assert!(
+            mean(0.7) < mean(1.0),
+            "and every rung of alpha must cost something"
+        );
     }
 
     /// Same greedy rule, opposite outcome, and the difference is the ORDER it is applied in.
@@ -1240,14 +1414,24 @@ mod tests {
                 let mut r = Pcg::new(sseed, 0xC0FFEE);
                 let s = construct(&p.graph, 0.0, &mut r).unwrap();
                 built += usize::from(p.solved(&s));
-                let (d, _) = SteepestDescent { restarts: 50, seed: sseed }.solve(&p.graph);
+                let (d, _) = SteepestDescent {
+                    restarts: 50,
+                    seed: sseed,
+                }
+                .solve(&p.graph);
                 descended += usize::from(p.solved(&d));
                 total += 1;
             }
         }
         assert_eq!(total, 36);
-        assert!(built >= 22, "measured 26/36 for one greedy construction, got {built}");
-        assert!(descended <= 12, "measured 6/36 for 50-restart descent, got {descended}");
+        assert!(
+            built >= 22,
+            "measured 26/36 for one greedy construction, got {built}"
+        );
+        assert!(
+            descended <= 12,
+            "measured 6/36 for 50-restart descent, got {descended}"
+        );
         assert!(
             built > 2 * descended,
             "the comparison is the point: construction {built}, descent {descended} of {total}"
@@ -1268,13 +1452,29 @@ mod tests {
             let g = glass2d(6, seed);
             let exact = Elimination::default().ground_state(&g).unwrap();
             let e0 = exact.ground_energy.expect("min-sum was run");
-            assert!(exact.width <= 14, "seed {seed} eliminated at width {}", exact.width);
+            assert!(
+                exact.width <= 14,
+                "seed {seed} eliminated at width {}",
+                exact.width
+            );
 
-            let a = lns(&g, &Lns { steps: 200, ..Lns::default() }, 7).unwrap().energy;
+            let a = lns(
+                &g,
+                &Lns {
+                    steps: 200,
+                    ..Lns::default()
+                },
+                7,
+            )
+            .unwrap()
+            .energy;
             let b = vns(&g, &Vns::default(), 7).unwrap().energy;
             let c = grasp(&g, &Grasp::default(), 7).unwrap().energy;
             for (k, e) in [a, b, c].into_iter().enumerate() {
-                assert!(e >= e0 - 1e-9, "seed {seed} arm {k}: {e} is BELOW the exact optimum {e0}");
+                assert!(
+                    e >= e0 - 1e-9,
+                    "seed {seed} arm {k}: {e} is BELOW the exact optimum {e0}"
+                );
                 hits[k] += usize::from(e <= e0 + 1e-9);
             }
             runs += 1;
@@ -1305,7 +1505,10 @@ mod tests {
                 let flips = descend(&g, &mut s);
                 longest = longest.max(flips);
                 let after = g.energy(&s);
-                assert!(after <= before + 1e-12, "a descent rose: {before} -> {after}");
+                assert!(
+                    after <= before + 1e-12,
+                    "a descent rose: {before} -> {after}"
+                );
                 for i in 0..g.n {
                     let mut t = s.clone();
                     t[i] = -t[i];
@@ -1323,7 +1526,10 @@ mod tests {
             "the longest descent was {longest} flips against a cap of {}",
             DESCENT_CAP * 36
         );
-        assert!(longest > 0, "a descent that never moves is not being exercised");
+        assert!(
+            longest > 0,
+            "a descent that never moves is not being exercised"
+        );
     }
 
     /// The directed-rounding energy bounds the EXACT energy, which is not what `Graph::energy` is.
@@ -1351,7 +1557,10 @@ mod tests {
             for _ in 0..50 {
                 let s: Vec<i8> = (0..g.n).map(|_| r.spin(0.5)).collect();
                 let (e, up) = (g.energy(&s), energy_upper(&g, &s));
-                assert_eq!(up, e, "integer energies are exact, so the upper bound must equal {e}");
+                assert_eq!(
+                    up, e,
+                    "integer energies are exact, so the upper bound must equal {e}"
+                );
                 runs += 1;
             }
         }
@@ -1368,26 +1577,67 @@ mod tests {
                 let magnitude: f64 = g.h.iter().map(|h| h.abs()).sum::<f64>()
                     + g.w.iter().map(|w| w.abs()).sum::<f64>() / 2.0;
                 let slack = crate::round::accumulation_guard(g.n + g.n_edges, magnitude.max(1.0));
-                assert!(up >= e - slack, "the bound {up} is below {e} by more than {slack}");
-                assert!(up - e < 1e-9 * e.abs().max(1.0), "and is loose by {}", up - e);
+                assert!(
+                    up >= e - slack,
+                    "the bound {up} is below {e} by more than {slack}"
+                );
+                assert!(
+                    up - e < 1e-9 * e.abs().max(1.0),
+                    "and is loose by {}",
+                    up - e
+                );
                 looser += usize::from(up < e);
             }
         }
         // The measured fact this test exists to pin: it really does happen.
-        assert!(looser > 0, "no continuous state put the naive sum above the bound, so the doc lies");
+        assert!(
+            looser > 0,
+            "no continuous state put the naive sum above the bound, so the doc lies"
+        );
     }
 
     /// The three destroy operators are three different searches, so `destroy` is not decorative.
     #[test]
     fn the_three_destroy_operators_are_three_different_searches() {
         let g = glass2d(8, 9);
-        let base = Lns { steps: 30, fraction: 0.125, max_width: 12, destroy: Destroy::Random, start: None };
+        let base = Lns {
+            steps: 30,
+            fraction: 0.125,
+            max_width: 12,
+            destroy: Destroy::Random,
+            start: None,
+        };
         let r = lns(&g, &base, 5).unwrap();
-        let a = lns(&g, &Lns { destroy: Destroy::Related, ..base.clone() }, 5).unwrap();
-        let w = lns(&g, &Lns { destroy: Destroy::Worst, ..base.clone() }, 5).unwrap();
-        assert!(r.state != a.state, "random and related removal chose the same path");
-        assert!(a.state != w.state, "related and worst removal chose the same path");
-        assert!(r.state != w.state, "random and worst removal chose the same path");
+        let a = lns(
+            &g,
+            &Lns {
+                destroy: Destroy::Related,
+                ..base.clone()
+            },
+            5,
+        )
+        .unwrap();
+        let w = lns(
+            &g,
+            &Lns {
+                destroy: Destroy::Worst,
+                ..base.clone()
+            },
+            5,
+        )
+        .unwrap();
+        assert!(
+            r.state != a.state,
+            "random and related removal chose the same path"
+        );
+        assert!(
+            a.state != w.state,
+            "related and worst removal chose the same path"
+        );
+        assert!(
+            r.state != w.state,
+            "random and worst removal chose the same path"
+        );
     }
 
     /// A seed reproduces a run, and a different seed does not. Every arm, since each has its own
@@ -1395,17 +1645,35 @@ mod tests {
     #[test]
     fn a_seed_reproduces_a_run_and_a_different_seed_does_not() {
         let g = glass2d(6, 6);
-        let lp = Lns { steps: 40, ..Lns::default() };
+        let lp = Lns {
+            steps: 40,
+            ..Lns::default()
+        };
         assert_eq!(lns(&g, &lp, 4).unwrap(), lns(&g, &lp, 4).unwrap());
-        assert_ne!(lns(&g, &lp, 4).unwrap().state, lns(&g, &lp, 5).unwrap().state);
+        assert_ne!(
+            lns(&g, &lp, 4).unwrap().state,
+            lns(&g, &lp, 5).unwrap().state
+        );
 
-        let vp = Vns { rounds: 40, ..Vns::default() };
+        let vp = Vns {
+            rounds: 40,
+            ..Vns::default()
+        };
         assert_eq!(vns(&g, &vp, 4).unwrap(), vns(&g, &vp, 4).unwrap());
-        assert_ne!(vns(&g, &vp, 4).unwrap().state, vns(&g, &vp, 5).unwrap().state);
+        assert_ne!(
+            vns(&g, &vp, 4).unwrap().state,
+            vns(&g, &vp, 5).unwrap().state
+        );
 
-        let gp = Grasp { iterations: 8, alpha: 0.5 };
+        let gp = Grasp {
+            iterations: 8,
+            alpha: 0.5,
+        };
         assert_eq!(grasp(&g, &gp, 4).unwrap(), grasp(&g, &gp, 4).unwrap());
-        assert_ne!(grasp(&g, &gp, 4).unwrap().state, grasp(&g, &gp, 5).unwrap().state);
+        assert_ne!(
+            grasp(&g, &gp, 4).unwrap().state,
+            grasp(&g, &gp, 5).unwrap().state
+        );
     }
 
     /// An input none of these can interpret is an error naming what it saw, never a default.
@@ -1413,7 +1681,10 @@ mod tests {
     fn an_unreadable_parameter_is_an_error_naming_what_it_was_given() {
         let g = glass2d(4, 1);
         for bad in [0.0f64, -0.5, 1.5, f64::NAN, f64::INFINITY] {
-            let p = Lns { fraction: bad, ..Lns::default() };
+            let p = Lns {
+                fraction: bad,
+                ..Lns::default()
+            };
             match lns(&g, &p, 1) {
                 Err(Invalid::Fraction(x)) => {
                     assert!(x.is_nan() || x == bad);
@@ -1426,27 +1697,61 @@ mod tests {
         for bad in [-0.1f64, 1.5, f64::NAN] {
             // Matched rather than compared: `Alpha(NaN) == Alpha(NaN)` is FALSE, which would make
             // an `assert_eq!` here fail on the very input the rejection is most important for.
-            match grasp(&g, &Grasp { iterations: 4, alpha: bad }, 1) {
-                Err(Invalid::Alpha(x)) => assert!(x.is_nan() == bad.is_nan() && (x.is_nan() || x == bad)),
+            match grasp(
+                &g,
+                &Grasp {
+                    iterations: 4,
+                    alpha: bad,
+                },
+                1,
+            ) {
+                Err(Invalid::Alpha(x)) => {
+                    assert!(x.is_nan() == bad.is_nan() && (x.is_nan() || x == bad));
+                }
                 other => panic!("an alpha of {bad} was accepted: {other:?}"),
             }
             let mut r = Pcg::new(1, 1);
             assert!(construct(&g, bad, &mut r).is_err());
         }
         for (k_min, k_max) in [(0usize, 4usize), (0, 0), (5, 3)] {
-            let p = Vns { rounds: 4, k_min, k_max, start: None };
+            let p = Vns {
+                rounds: 4,
+                k_min,
+                k_max,
+                start: None,
+            };
             assert_eq!(vns(&g, &p, 1), Err(Invalid::Ladder { k_min, k_max }));
         }
         // A start of the wrong length is refused with both lengths, rather than silently replaced
         // by noise -- which is how a composed pipeline comes to report the wrong stage's work.
         let short = Some(vec![1i8; g.n - 1]);
         assert_eq!(
-            lns(&g, &Lns { start: short.clone(), ..Lns::default() }, 1),
-            Err(Invalid::StartLength { got: g.n - 1, want: g.n })
+            lns(
+                &g,
+                &Lns {
+                    start: short.clone(),
+                    ..Lns::default()
+                },
+                1
+            ),
+            Err(Invalid::StartLength {
+                got: g.n - 1,
+                want: g.n
+            })
         );
         assert_eq!(
-            vns(&g, &Vns { start: short, ..Vns::default() }, 1),
-            Err(Invalid::StartLength { got: g.n - 1, want: g.n })
+            vns(
+                &g,
+                &Vns {
+                    start: short,
+                    ..Vns::default()
+                },
+                1
+            ),
+            Err(Invalid::StartLength {
+                got: g.n - 1,
+                want: g.n
+            })
         );
         let msg = format!("{}", Invalid::StartLength { got: 3, want: 16 });
         assert!(msg.contains('3') && msg.contains("16"), "{msg}");
@@ -1461,15 +1766,39 @@ mod tests {
 
         let l = lns(
             &p.graph,
-            &Lns { steps: 50, start: Some(opt.clone()), ..Lns::default() },
+            &Lns {
+                steps: 50,
+                start: Some(opt.clone()),
+                ..Lns::default()
+            },
             3,
         )
         .unwrap();
-        assert!(l.energy <= e0 + 1e-9, "handed the optimum, returned {}", l.energy);
-        assert_eq!(l.improving, 0, "there is nothing left to improve from the optimum");
+        assert!(
+            l.energy <= e0 + 1e-9,
+            "handed the optimum, returned {}",
+            l.energy
+        );
+        assert_eq!(
+            l.improving, 0,
+            "there is nothing left to improve from the optimum"
+        );
 
-        let v = vns(&p.graph, &Vns { rounds: 50, start: Some(opt), ..Vns::default() }, 3).unwrap();
-        assert!(v.energy <= e0 + 1e-9, "handed the optimum, returned {}", v.energy);
+        let v = vns(
+            &p.graph,
+            &Vns {
+                rounds: 50,
+                start: Some(opt),
+                ..Vns::default()
+            },
+            3,
+        )
+        .unwrap();
+        assert!(
+            v.energy <= e0 + 1e-9,
+            "handed the optimum, returned {}",
+            v.energy
+        );
         assert_eq!(v.improvements, 0);
     }
 
@@ -1479,7 +1808,10 @@ mod tests {
         let g = GraphBuilder::new(0).build();
         let l = lns(&g, &Lns::default(), 1).unwrap();
         assert_eq!((l.energy, l.moves, l.freed), (0.0, 0, 0));
-        assert!(!l.exact(), "a model with no variables was not solved, there was nothing to solve");
+        assert!(
+            !l.exact(),
+            "a model with no variables was not solved, there was nothing to solve"
+        );
         let v = vns(&g, &Vns::default(), 1).unwrap();
         assert_eq!((v.energy, v.shakes), (0.0, 0));
         let q = grasp(&g, &Grasp::default(), 1).unwrap();

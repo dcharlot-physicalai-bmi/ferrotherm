@@ -212,13 +212,20 @@ pub enum NestedError {
 impl core::fmt::Display for NestedError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
-            NestedError::DidNotTerminate { iterations, log_remaining_fraction } => write!(
+            NestedError::DidNotTerminate {
+                iterations,
+                log_remaining_fraction,
+            } => write!(
                 f,
                 "nested sampling did not terminate in {iterations} deletions: the unexplored \
                  region could still hold exp({log_remaining_fraction:.3}) of the evidence found \
                  so far, which is above the tolerance"
             ),
-            NestedError::Stuck { iteration, proposals, energy } => write!(
+            NestedError::Stuck {
+                iteration,
+                proposals,
+                energy,
+            } => write!(
                 f,
                 "no replacement could be drawn at deletion {iteration}: the walk accepted none of \
                  {proposals} proposals from energy {energy}, and the fallback did not hit the \
@@ -424,7 +431,14 @@ fn rejection(g: &Graph, threshold: (f64, f64), log_x: f64, rng: &mut Pcg) -> Opt
         let energy = g.energy(&s);
         let tiebreak = rng.f64();
         if better_than((energy, tiebreak), threshold) {
-            return Some((Point { s, energy, tiebreak }, t + 1));
+            return Some((
+                Point {
+                    s,
+                    energy,
+                    tiebreak,
+                },
+                t + 1,
+            ));
         }
     }
     None
@@ -506,17 +520,30 @@ fn run(
     seed: u64,
     enforce: bool,
 ) -> Result<Nested, NestedError> {
-    assert!(live >= 2, "nested sampling needs at least two live points; got {live}");
+    assert!(
+        live >= 2,
+        "nested sampling needs at least two live points; got {live}"
+    );
     assert!(max_iterations >= 1, "a run needs at least one deletion");
-    assert!(beta >= 0.0 && beta.is_finite(), "beta must be finite and non-negative; got {beta}");
-    assert!(tol > 0.0 && tol < 1.0, "the tolerance is a fraction of the evidence; got {tol}");
+    assert!(
+        beta >= 0.0 && beta.is_finite(),
+        "beta must be finite and non-negative; got {beta}"
+    );
+    assert!(
+        tol > 0.0 && tol < 1.0,
+        "the tolerance is a fraction of the evidence; got {tol}"
+    );
 
     let mut rng = Pcg::new(seed, STREAM);
     let mut pts: Vec<Point> = (0..live)
         .map(|_| {
             let s: Vec<i8> = (0..g.n).map(|_| rng.spin(0.5)).collect();
             let energy = g.energy(&s);
-            Point { s, energy, tiebreak: rng.f64() }
+            Point {
+                s,
+                energy,
+                tiebreak: rng.f64(),
+            }
         })
         .collect();
 
@@ -629,8 +656,11 @@ fn run(
     // H = Σ pᵢ ln(Lᵢ/Z), pᵢ = wᵢLᵢ/Z. It is a Kullback–Leibler divergence and so non-negative;
     // rounding can put it a hair below zero when the posterior IS the prior (β = 0), and the
     // square root is taken from the clamped value rather than reporting a NaN error bar.
-    let information: f64 =
-        terms.iter().zip(&log_ls).map(|(t, l)| (t - log_evidence).exp() * (l - log_evidence)).sum();
+    let information: f64 = terms
+        .iter()
+        .zip(&log_ls)
+        .map(|(t, l)| (t - log_evidence).exp() * (l - log_evidence))
+        .sum();
 
     Ok(Nested {
         n: g.n,
@@ -652,7 +682,6 @@ fn run(
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,7 +691,9 @@ mod tests {
     /// so the constrained region fragments and the walk has somewhere to get trapped.
     fn fixture() -> Graph {
         let mut b = crate::graph::GraphBuilder::new(12);
-        let js = [1.0, -0.7, 1.0, 0.6, -1.0, 0.8, 1.0, -0.5, 0.9, 1.0, -0.8, 0.4];
+        let js = [
+            1.0, -0.7, 1.0, 0.6, -1.0, 0.8, 1.0, -0.5, 0.9, 1.0, -0.8, 0.4,
+        ];
         for i in 0..12 {
             b.couple(i, (i + 1) % 12, js[i]);
         }
@@ -720,7 +751,10 @@ mod tests {
     fn mean_var(v: &[f64]) -> (f64, f64) {
         let m = v.len() as f64;
         let mean = v.iter().sum::<f64>() / m;
-        (mean, v.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (m - 1.0))
+        (
+            mean,
+            v.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (m - 1.0),
+        )
     }
 
     /// ORACLE: exhaustive enumeration of all 4096 states, over twenty seeds.
@@ -743,7 +777,10 @@ mod tests {
         let mut sigmas = Vec::new();
         for seed in 0..20u64 {
             let r = nested(&g, beta, 100, 12, 0.1, 500_000, seed).unwrap();
-            assert!(r.information > 0.0, "seed {seed}: the posterior is narrower than the prior");
+            assert!(
+                r.information > 0.0,
+                "seed {seed}: the posterior is narrower than the prior"
+            );
             zs.push((r.log_partition() - exact) / r.log_evidence_stderr);
             sigmas.push(r.log_evidence_stderr);
         }
@@ -757,13 +794,23 @@ mod tests {
              mean sigma {sigma:.4} nats, exact ln Z = {exact:.4}",
             zs.len()
         );
-        assert!(bias.abs() < 0.8, "systematic offset of {bias:.3} sigma, sigma = {sigma:.4}");
-        assert!(within(2.0) >= 16, "only {} of 20 seeds inside two sigma", within(2.0));
+        assert!(
+            bias.abs() < 0.8,
+            "systematic offset of {bias:.3} sigma, sigma = {sigma:.4}"
+        );
+        assert!(
+            within(2.0) >= 16,
+            "only {} of 20 seeds inside two sigma",
+            within(2.0)
+        );
         assert_eq!(within(3.5), 20, "a seed landed past 3.5 sigma; z = {zs:?}");
         // And the bar is a real number of nats rather than a shrug: a hundred live points on this
         // model must buy better than a quarter of a nat, or the coverage was bought by inflating
         // the very quantity the coverage is measured in.
-        assert!(sigma < 0.25, "sigma = {sigma:.4} nats is too loose to have tested anything");
+        assert!(
+            sigma < 0.25,
+            "sigma = {sigma:.4} nats is too loose to have tested anything"
+        );
     }
 
     /// ORACLE: the Beta(N, 1) shrinkage law, against prior volumes computed by enumeration — a test
@@ -786,7 +833,11 @@ mod tests {
             let mut want_mean = 0.0;
             for seed in 0..6u64 {
                 let r = nested(&g, 0.9, live, 0, 0.1, 500_000, seed).unwrap();
-                assert_eq!(r.fallbacks, r.iterations(), "sweeps = 0 is the exact sampler");
+                assert_eq!(
+                    r.fallbacks,
+                    r.iterations(),
+                    "sweeps = 0 is the exact sampler"
+                );
                 assert_eq!(r.proposals, 0, "and it makes no walk proposals at all");
                 // The law is asserted against what the RUN says its schedule is, not against a
                 // number retyped here, so a schedule that drifted from `-1/N` would be caught.
@@ -794,7 +845,10 @@ mod tests {
                 assert_eq!(want_mean, -1.0 / live as f64);
                 lnt.extend(realised_shrinkage(&spec, &r));
             }
-            assert!(lnt.iter().all(|&x| x < 0.0), "the enclosed region can only shrink");
+            assert!(
+                lnt.iter().all(|&x| x < 0.0),
+                "the enclosed region can only shrink"
+            );
             let m = lnt.len() as f64;
             let (mean, var) = mean_var(&lnt);
             let want_var = want_mean * want_mean;
@@ -837,12 +891,22 @@ mod tests {
         let mut stalls = 0usize;
         for seed in 0..6u64 {
             let r = nested(&g, 0.9, live, 20, 0.1, 500_000, seed).unwrap();
-            assert!(r.accept_rate() > 0.1, "the walk must be moving: {}", r.accept_rate());
+            assert!(
+                r.accept_rate() > 0.1,
+                "the walk must be moving: {}",
+                r.accept_rate()
+            );
             stalls += r.fallbacks;
             lnt.extend(realised_shrinkage(&spec, &r));
         }
-        assert!(lnt.iter().all(|&x| x < 0.0), "the enclosed region can only shrink");
-        assert!(stalls > 0, "this fixture is meant to trap the walk sometimes");
+        assert!(
+            lnt.iter().all(|&x| x < 0.0),
+            "the enclosed region can only shrink"
+        );
+        assert!(
+            stalls > 0,
+            "this fixture is meant to trap the walk sometimes"
+        );
         let (mean, var) = mean_var(&lnt);
         let n_eff_mean = -1.0 / mean;
         let n_eff_var = 1.0 / var.sqrt();
@@ -897,7 +961,11 @@ mod tests {
             // Sharper still, and it needs no statistics: the enclosed prior mass GREW at some
             // deletions. A correct run cannot do that once, and this one does it often.
             let grew = lnt.iter().filter(|&&x| x > 0.0).count();
-            assert!(grew > lnt.len() / 20, "only {grew} of {} shells grew", lnt.len());
+            assert!(
+                grew > lnt.len() / 20,
+                "only {grew} of {} shells grew",
+                lnt.len()
+            );
             // And the same fixture with the constraint ON passes both, or this test proves nothing
             // about the checks and only that the broken run is broken.
             let good = nested(&g, beta, live, 20, 0.1, 500_000, seed).unwrap();
@@ -907,7 +975,10 @@ mod tests {
                 good.log_partition()
             );
             let (good_mean, _) = mean_var(&realised_shrinkage(&spec, &good));
-            assert!(good_mean < 0.5 * want, "seed {seed}: and its shrinkage: {good_mean:.5}");
+            assert!(
+                good_mean < 0.5 * want,
+                "seed {seed}: and its shrinkage: {good_mean:.5}"
+            );
         }
     }
 
@@ -925,13 +996,23 @@ mod tests {
         let mut hits = 0;
         for seed in 0..6u64 {
             let r = nested(&g, beta, 120, 16, 0.1, 500_000, seed).unwrap();
-            assert_eq!(r.fallbacks, 0, "on a model this size the walk never needs rescuing");
-            assert!(r.log_evidence_stderr < 0.25, "sigma = {}", r.log_evidence_stderr);
+            assert_eq!(
+                r.fallbacks, 0,
+                "on a model this size the walk never needs rescuing"
+            );
+            assert!(
+                r.log_evidence_stderr < 0.25,
+                "sigma = {}",
+                r.log_evidence_stderr
+            );
             if (r.log_partition() - exact).abs() < 2.5 * r.log_evidence_stderr {
                 hits += 1;
             }
         }
-        assert!(hits >= 5, "only {hits} of 6 seeds inside 2.5 sigma of the transfer matrix");
+        assert!(
+            hits >= 5,
+            "only {hits} of 6 seeds inside 2.5 sigma of the transfer matrix"
+        );
     }
 
     /// At `β = 0` the likelihood is one everywhere and the evidence is EXACTLY one, so
@@ -944,12 +1025,24 @@ mod tests {
     fn at_beta_zero_the_evidence_is_exactly_the_prior_and_ln_z_is_n_ln_2() {
         let g = fixture();
         let r = nested(&g, 0.0, 32, 4, 0.1, 500_000, 3).unwrap();
-        assert!(r.log_evidence.abs() < 1e-12, "ln evidence = {:e}", r.log_evidence);
+        assert!(
+            r.log_evidence.abs() < 1e-12,
+            "ln evidence = {:e}",
+            r.log_evidence
+        );
         let want = g.n as f64 * core::f64::consts::LN_2;
-        assert!((r.log_partition() - want).abs() < 1e-12, "{} vs {want}", r.log_partition());
+        assert!(
+            (r.log_partition() - want).abs() < 1e-12,
+            "{} vs {want}",
+            r.log_partition()
+        );
         // The posterior IS the prior, so there is no information and no error bar to report.
         assert!(r.information.abs() < 1e-12, "H = {:e}", r.information);
-        assert!(r.log_evidence_stderr < 1e-6, "sigma = {:e}", r.log_evidence_stderr);
+        assert!(
+            r.log_evidence_stderr < 1e-6,
+            "sigma = {:e}",
+            r.log_evidence_stderr
+        );
     }
 
     /// ORACLE: exhaustive enumeration again, but of a BOUND rather than an estimate — the floor is
@@ -988,8 +1081,15 @@ mod tests {
         let g = fixture();
         let gs = spectrum(&g)[0];
         let r = nested(&g, 2.0, 60, 12, 0.1, 500_000, 7).unwrap();
-        assert_eq!(r.best_energy, gs, "nested sampling walks down to the ground state");
-        assert_eq!(g.energy(&r.best), r.best_energy, "and the state it reports is that state");
+        assert_eq!(
+            r.best_energy, gs,
+            "nested sampling walks down to the ground state"
+        );
+        assert_eq!(
+            g.energy(&r.best),
+            r.best_energy,
+            "and the state it reports is that state"
+        );
     }
 
     /// Deterministic by seed, which is this crate's headline: the same seed reproduces the run bit
@@ -1003,7 +1103,11 @@ mod tests {
         assert_eq!(a.shells.len(), b.shells.len());
         assert_eq!(a.best, b.best);
         let c = nested(&g, 0.9, 30, 6, 0.1, 500_000, 22).unwrap();
-        assert_ne!(a.log_evidence.to_bits(), c.log_evidence.to_bits(), "seeds must not collude");
+        assert_ne!(
+            a.log_evidence.to_bits(),
+            c.log_evidence.to_bits(),
+            "seeds must not collude"
+        );
     }
 
     /// The iteration cap is an error rather than a truncated answer, and it says how far short it
@@ -1014,7 +1118,10 @@ mod tests {
         let g = fixture();
         let e = nested(&g, 1.5, 20, 4, 1e-6, 30, 1).unwrap_err();
         match e {
-            NestedError::DidNotTerminate { iterations, log_remaining_fraction } => {
+            NestedError::DidNotTerminate {
+                iterations,
+                log_remaining_fraction,
+            } => {
                 assert_eq!(iterations, 30, "every deletion up to the cap was made");
                 assert!(
                     log_remaining_fraction > 1e-6f64.ln(),
@@ -1026,7 +1133,11 @@ mod tests {
         assert!(e.to_string().contains("did not terminate"), "{e}");
         assert!(core::error::Error::source(&e).is_none());
         // The Stuck variant renders too, and says what to change.
-        let stuck = NestedError::Stuck { iteration: 4, proposals: 96, energy: -12.0 };
+        let stuck = NestedError::Stuck {
+            iteration: 4,
+            proposals: 96,
+            energy: -12.0,
+        };
         assert!(stuck.to_string().contains("96 proposals"), "{stuck}");
         assert_ne!(stuck, e);
     }
@@ -1038,9 +1149,15 @@ mod tests {
     /// half was wrong.
     #[test]
     fn the_order_is_energy_first_then_the_tiebreak_with_no_point_better_than_itself() {
-        assert!(better_than((-1.0, 0.1), (0.0, 0.9)), "lower energy wins whatever the tie-break");
+        assert!(
+            better_than((-1.0, 0.1), (0.0, 0.9)),
+            "lower energy wins whatever the tie-break"
+        );
         assert!(!better_than((0.0, 0.9), (-1.0, 0.1)));
-        assert!(better_than((0.0, 0.9), (0.0, 0.1)), "at equal energy the larger tie-break wins");
+        assert!(
+            better_than((0.0, 0.9), (0.0, 0.1)),
+            "at equal energy the larger tie-break wins"
+        );
         assert!(!better_than((0.0, 0.1), (0.0, 0.9)));
         assert!(!better_than((0.0, 0.5), (0.0, 0.5)), "the order is strict");
     }
@@ -1063,7 +1180,9 @@ mod tests {
         let g = b.build();
         let mut worst_gap = 0.0f64;
         for mask in 0..(1usize << 10) {
-            let s: Vec<i8> = (0..10).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..10)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             // E = -sum J s s - sum h s, in integers, with no rounding anywhere.
             let mut exact: i64 = 0;
             for i in 0..10 {
@@ -1071,10 +1190,16 @@ mod tests {
                 exact -= hs[i] * i64::from(s[i]);
             }
             let up = energy_up(&g, &s);
-            assert!(up >= exact as f64, "mask {mask}: {up} is below the exact energy {exact}");
+            assert!(
+                up >= exact as f64,
+                "mask {mask}: {up} is below the exact energy {exact}"
+            );
             worst_gap = worst_gap.max(up - exact as f64);
         }
-        assert!(worst_gap < 1e-12, "the guard has drifted to {worst_gap}, which is not a rounding");
+        assert!(
+            worst_gap < 1e-12,
+            "the guard has drifted to {worst_gap}, which is not a rounding"
+        );
         // And on the real fixture, where the couplings are not exact in binary, the direction still
         // holds against every one of the 4096 states.
         let f = fixture();
@@ -1100,10 +1225,20 @@ mod tests {
         terms.push(r.log_x_final.exp());
         let total: f64 = crate::round::sum_up(&terms);
         let floor: f64 = crate::round::sum_down(&terms);
-        assert!(floor <= 1.0 && total >= 1.0, "the prior mass is not bracketed: [{floor}, {total}]");
-        assert!(total - floor < 1e-12, "and the bracket must be tight: {}", total - floor);
+        assert!(
+            floor <= 1.0 && total >= 1.0,
+            "the prior mass is not bracketed: [{floor}, {total}]"
+        );
+        assert!(
+            total - floor < 1e-12,
+            "and the bracket must be tight: {}",
+            total - floor
+        );
         // The last shell's recorded X is the same number the live block is weighed by.
         let last = r.shells.last().unwrap();
-        assert_eq!(last.log_x, r.log_x_final, "the schedule must be one sequence, not two");
+        assert_eq!(
+            last.log_x, r.log_x_final,
+            "the schedule must be one sequence, not two"
+        );
     }
 }

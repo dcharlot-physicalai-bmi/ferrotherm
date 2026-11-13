@@ -56,7 +56,7 @@
 //! # Ok(()) }
 //! ```
 
-use ferrotherm::wgsl::{sweep_shader, GpuModel};
+use ferrotherm::wgsl::{GpuModel, sweep_shader};
 pub mod device;
 mod packed;
 pub use device::GpuDevice;
@@ -106,7 +106,11 @@ impl Gpu {
             trace: wgpu::Trace::Off,
         }))
         .ok()?;
-        Some(Gpu { device, queue, info })
+        Some(Gpu {
+            device,
+            queue,
+            info,
+        })
     }
 
     /// What the driver says this is.
@@ -122,7 +126,10 @@ impl Gpu {
     /// True when the adapter is real silicon rather than a software rasteriser.
     #[must_use = "false means a software rasteriser, whose timings say nothing about a GPU. Quoting a speedup without checking this reports the wrong machine"]
     pub fn is_hardware(&self) -> bool {
-        !matches!(self.info.device_type, wgpu::DeviceType::Cpu | wgpu::DeviceType::Other)
+        !matches!(
+            self.info.device_type,
+            wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
+        )
     }
 
     /// Run `sweeps` chromatic sweeps over `spins`, in place.
@@ -235,7 +242,6 @@ impl Gpu {
             .map(|c| (c.len() as u32, mk_u32("cls", c, storage)))
             .collect();
 
-
         let readback = dev.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
             size: (state.len() * 4) as u64,
@@ -270,11 +276,14 @@ impl Gpu {
         let layout = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sweep"),
             entries: &[
-                entry(0, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(PARAMS_BYTES),
-                }),
+                entry(
+                    0,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(PARAMS_BYTES),
+                    },
+                ),
                 entry(1, sto(true)),
                 entry(2, sto(true)),
                 entry(3, sto(true)),
@@ -301,7 +310,10 @@ impl Gpu {
         // requires, then selected by dynamic offset. The step counter advances per dispatch --
         // it feeds the shader's counter-based RNG, and repeating it would make every class
         // resample with the same draws and the chain stop mixing.
-        let stride = align_up(PARAMS_BYTES, dev.limits().min_uniform_buffer_offset_alignment as u64);
+        let stride = align_up(
+            PARAMS_BYTES,
+            dev.limits().min_uniform_buffer_offset_alignment as u64,
+        );
         let live: Vec<usize> = (0..classes.len()).filter(|&i| classes[i].0 > 0).collect();
         if live.is_empty() {
             return Err("every colour class is empty; there is nothing to sample".into());
@@ -314,7 +326,8 @@ impl Gpu {
                 // maps 0 to 0, which is what keeps the unseeded path exactly where it was.
                 let offset = (seed as u32).wrapping_mul(0x9E37_79B9);
                 let step = offset.wrapping_add(
-                    ((u64::from(start_sweep) + s as u64) * live.len() as u64 + li as u64 + 1) as u32,
+                    ((u64::from(start_sweep) + s as u64) * live.len() as u64 + li as u64 + 1)
+                        as u32,
                 );
                 let at = (s * live.len() + li) * stride as usize;
                 let p = &mut params[at..at + PARAMS_BYTES as usize];
@@ -348,12 +361,30 @@ impl Gpu {
                                 size: wgpu::BufferSize::new(PARAMS_BYTES),
                             }),
                         },
-                        wgpu::BindGroupEntry { binding: 1, resource: b_nbr.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 2, resource: b_w.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 3, resource: b_h.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 4, resource: classes[ci].1.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 5, resource: b_spin.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 6, resource: b_dbg.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: b_nbr.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: b_w.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: b_h.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: classes[ci].1.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: b_spin.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: b_dbg.as_entire_binding(),
+                        },
                     ],
                 })
             })
@@ -382,20 +413,26 @@ impl Gpu {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| format!("device poll failed: {e:?}"))?;
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| format!("device poll failed: {e:?}"))?;
         rx.recv()
             .map_err(|_| "the readback never completed".to_string())?
             .map_err(|e| format!("the readback failed: {e:?}"))?;
 
         {
-            let data = slice.get_mapped_range().map_err(|e| format!("mapping failed: {e:?}"))?;
+            let data = slice
+                .get_mapped_range()
+                .map_err(|e| format!("mapping failed: {e:?}"))?;
             for (i, &chunk) in data.as_chunks::<4>().0.iter().enumerate().take(spins.len()) {
                 let v = i32::from_le_bytes(chunk);
                 // Not `if v > 0 { 1 } else { -1 }`. That coercion turns any garbage — a dropped
                 // dispatch, a short copy — into a valid-looking state which is then scored with
                 // full confidence. The browser had exactly this bug; refusing is the whole point.
                 if v != 1 && v != -1 {
-                    return Err(format!("the GPU returned {v} at spin {i}; states are +1/-1"));
+                    return Err(format!(
+                        "the GPU returned {v} at spin {i}; states are +1/-1"
+                    ));
                 }
                 spins[i] = v as i8;
             }
@@ -493,9 +530,9 @@ pub fn sweep_open_grid_from(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use ferrotherm::wgsl::GpuModel;
     use ferrotherm::gibbs::Sampler;
     use ferrotherm::ising::lattice2d;
+    use ferrotherm::wgsl::GpuModel;
 
     /// ONE VULKAN DEVICE AT A TIME.
     ///
@@ -561,7 +598,10 @@ pub(crate) mod tests {
 
         let cold = mag(1.0);
         let hot = mag(0.05);
-        assert!(cold > 0.8, "a ferromagnet at beta=1 should be ordered, got |m| = {cold:.3}");
+        assert!(
+            cold > 0.8,
+            "a ferromagnet at beta=1 should be ordered, got |m| = {cold:.3}"
+        );
         assert!(hot < 0.4, "and disordered at beta=0.05, got |m| = {hot:.3}");
     }
 
@@ -581,7 +621,13 @@ pub(crate) mod tests {
         let n = 16.0;
         let solver = ferrotherm::exact::Elimination { max_width: 20 };
 
-        let ln_z = |beta: f64| solver.log_partition(&g, beta).unwrap().log_z.expect("log_partition returns log_z");
+        let ln_z = |beta: f64| {
+            solver
+                .log_partition(&g, beta)
+                .unwrap()
+                .log_z
+                .expect("log_partition returns log_z")
+        };
         let beta = 0.7; // well below T_c: fast mixing, so a finite chain is actually equilibrated
         let h = 1e-3;
         let exact_per_site = -(ln_z(beta + h) - ln_z(beta - h)) / (2.0 * h) / n;
@@ -593,7 +639,9 @@ pub(crate) mod tests {
         for r in 0..runs {
             let m = GpuModel::from_graph(&g);
             // Start from a different state each run so the average is not anchored to one basin.
-            let mut s: Vec<i8> = (0..16).map(|i| if (i + r) % 2 == 0 { 1 } else { -1 }).collect();
+            let mut s: Vec<i8> = (0..16)
+                .map(|i| if (i + r) % 2 == 0 { 1 } else { -1 })
+                .collect();
             gpu.sweep(&m, &mut s, beta, 400).unwrap();
             total += g.energy(&s);
         }
@@ -643,7 +691,10 @@ pub(crate) mod tests {
         let m = GpuModel::from_graph(&g);
         let mut wrong = vec![1i8; 9];
         let e = gpu.sweep(&m, &mut wrong, 0.5, 1).unwrap_err();
-        assert!(e.contains("16 nodes") && e.contains('9'), "must name both counts: {e}");
+        assert!(
+            e.contains("16 nodes") && e.contains('9'),
+            "must name both counts: {e}"
+        );
     }
 
     #[test]
@@ -654,7 +705,10 @@ pub(crate) mod tests {
         let mut s = vec![1i8; 16];
         for bad in [f64::NAN, f64::INFINITY, -1.0] {
             let e = gpu.sweep(&m, &mut s, bad, 1).unwrap_err();
-            assert!(e.contains("beta"), "{bad} should be refused by name, got: {e}");
+            assert!(
+                e.contains("beta"),
+                "{bad} should be refused by name, got: {e}"
+            );
         }
     }
 
@@ -664,13 +718,19 @@ pub(crate) mod tests {
         let mut cpu = vec![-1i8; 64];
         ferrotherm::grid::sweep_packed_cpu(8, &mut cpu, 1.0, 0.4, 9, 0, 6).expect("cpu mirror");
         let mut on_gpu = vec![-1i8; 64];
-        gpu.sweep_packed(8, 1.0, 0.4, &mut on_gpu, 6, 9, 0).expect("packed shader");
-        assert_eq!(cpu, on_gpu, "the shader and the CPU mirror share the counter and the field");
+        gpu.sweep_packed(8, 1.0, 0.4, &mut on_gpu, 6, 9, 0)
+            .expect("packed shader");
+        assert_eq!(
+            cpu, on_gpu,
+            "the shader and the CPU mirror share the counter and the field"
+        );
         let mut again = vec![-1i8; 64];
-        gpu.sweep_packed(8, 1.0, 0.4, &mut again, 6, 9, 0).expect("repeat");
+        gpu.sweep_packed(8, 1.0, 0.4, &mut again, 6, 9, 0)
+            .expect("repeat");
         assert_eq!(on_gpu, again);
         let mut other = vec![-1i8; 64];
-        gpu.sweep_packed(8, 1.0, 0.4, &mut other, 6, 10, 0).expect("other seed");
+        gpu.sweep_packed(8, 1.0, 0.4, &mut other, 6, 10, 0)
+            .expect("other seed");
         assert_ne!(on_gpu, other);
     }
 
@@ -680,7 +740,10 @@ pub(crate) mod tests {
         let a = sweep_open_grid(&gpu, 4, 1.0, 0.3, 30, 11).expect("seed 11");
         let b = sweep_open_grid(&gpu, 4, 1.0, 0.3, 30, 11).expect("seed 11 again");
         assert_eq!(a, b, "the GPU stream is a function of the seed");
-        assert!(a.iter().any(|&s| s == 1), "30 sweeps at beta 0.3 left the all-down state");
+        assert!(
+            a.contains(&1),
+            "30 sweeps at beta 0.3 left the all-down state"
+        );
         let c = sweep_open_grid(&gpu, 4, 1.0, 0.3, 30, 12).expect("seed 12");
         assert_ne!(a, c, "a different seed must not reuse seed 11's stream");
     }

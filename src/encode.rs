@@ -117,7 +117,11 @@ impl Slot {
     ///
     /// If `value` is outside the variable's range, or `s` is too short for the slot.
     pub fn encode(&self, value: usize, s: &mut [i8]) {
-        assert!(value < self.k, "value {value} out of range for a {}-valued variable", self.k);
+        assert!(
+            value < self.k,
+            "value {value} out of range for a {}-valued variable",
+            self.k
+        );
         let w = self.width();
         match self.encoding {
             Encoding::OneHot => {
@@ -277,13 +281,18 @@ mod tests {
         // every k, so a `false` here means the construction regressed -- and the whole point of the
         // `#[must_use]` is that discarding this once already shipped a k=6 binary variable whose
         // invalid codewords cost exactly what valid ones cost, for three releases.
-        assert!(slot.add_penalty(&mut b, p), "{enc:?} k={k} must be exactly encodable");
+        assert!(
+            slot.add_penalty(&mut b, p),
+            "{enc:?} k={k} must be exactly encodable"
+        );
         let g = b.build();
 
         let mut best = f64::INFINITY;
         let mut at_best = Vec::new();
         for mask in 0..(1usize << w) {
-            let s: Vec<i8> = (0..w).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..w)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             let e = g.energy(&s);
             if e < best - 1e-9 {
                 best = e;
@@ -301,15 +310,22 @@ mod tests {
         for k in 2..=8 {
             let slot = Slot::new(0, k, Encoding::DomainWall);
             let g = ground_states(Encoding::DomainWall, k, 2.0);
-            assert_eq!(g.len(), k, "k={k}: expected {k} degenerate ground states, got {}", g.len());
+            assert_eq!(
+                g.len(),
+                k,
+                "k={k}: expected {k} degenerate ground states, got {}",
+                g.len()
+            );
             // and each one decodes to a distinct value
             let w = slot.width();
             let mut seen: Vec<usize> = g
                 .iter()
                 .map(|&mask| {
-                    let s: Vec<i8> =
-                        (0..w).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
-                    slot.decode(&s).expect("a ground state must be a valid codeword")
+                    let s: Vec<i8> = (0..w)
+                        .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                        .collect();
+                    slot.decode(&s)
+                        .expect("a ground state must be a valid codeword")
                 })
                 .collect();
             seen.sort_unstable();
@@ -332,12 +348,19 @@ mod tests {
         assert_eq!(slot.width(), 3);
         assert!(!Encoding::Binary.is_exact(6));
         let mut b = GraphBuilder::new(3);
-        assert!(!slot.add_penalty(&mut b, 1.0), "must report that it cannot be exact");
+        assert!(
+            !slot.add_penalty(&mut b, 1.0),
+            "must report that it cannot be exact"
+        );
 
         let mut s = vec![-1i8; 3];
         s[1] = 1;
         s[2] = 1; // code 6
-        assert_eq!(slot.decode(&s), None, "a surplus code must decode to None, not a guess");
+        assert_eq!(
+            slot.decode(&s),
+            None,
+            "a surplus code must decode to None, not a guess"
+        );
 
         // powers of two have no surplus and are exact
         assert!(Encoding::Binary.is_exact(8));
@@ -350,7 +373,11 @@ mod tests {
         // two hot
         let oh = Slot::new(0, 4, Encoding::OneHot);
         assert_eq!(oh.decode(&[1, 1, -1, -1]), None);
-        assert_eq!(oh.decode(&[-1, -1, -1, -1]), None, "none hot is also invalid");
+        assert_eq!(
+            oh.decode(&[-1, -1, -1, -1]),
+            None,
+            "none hot is also invalid"
+        );
         // two walls
         let dw = Slot::new(0, 5, Encoding::DomainWall);
         assert_eq!(dw.decode(&[1, -1, 1, -1]), None);

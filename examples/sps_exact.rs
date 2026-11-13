@@ -46,7 +46,7 @@
 use core::f64::consts::{PI, TAU};
 use ferrotherm::autocorr::total_variation;
 use ferrotherm::pdit::stationary_of;
-use ferrotherm::potts::{enumerate, Interaction, Potts, PottsBuilder};
+use ferrotherm::potts::{Interaction, Potts, PottsBuilder, enumerate};
 use ferrotherm::rng::Pcg;
 
 #[derive(Clone, Copy)]
@@ -85,7 +85,11 @@ fn update(rule: Rule, beta: f64, f: (f64, f64)) -> [f64; 3] {
         }
         let top = w.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let z: f64 = w.iter().map(|x| (x - top).exp()).sum();
-        return [(w[0] - top).exp() / z, (w[1] - top).exp() / z, (w[2] - top).exp() / z];
+        return [
+            (w[0] - top).exp() / z,
+            (w[1] - top).exp() / z,
+            (w[2] - top).exp() / z,
+        ];
     }
     // No field, no preferred direction: every rule is uniform here, as the heat bath is.
     if mag < 1e-12 {
@@ -173,7 +177,11 @@ fn nearest_beta(m: &Potts, pi: &[f64]) -> (f64, f64) {
 fn ground_mass(m: &Potts, beta_for_energies: f64, pi: &[f64]) -> f64 {
     let e = enumerate(m, beta_for_energies).expect("small").energies;
     let min = e.iter().copied().fold(f64::INFINITY, f64::min);
-    e.iter().zip(pi).filter(|(x, _)| **x < min + 1e-9).map(|(_, p)| *p).sum()
+    e.iter()
+        .zip(pi)
+        .filter(|(x, _)| **x < min + 1e-9)
+        .map(|(_, p)| *p)
+        .sum()
 }
 
 fn build(n: usize, edges: &[(usize, usize, f64)]) -> (Potts, Vec<Vec<(usize, f64)>>) {
@@ -202,14 +210,22 @@ fn main() {
             }
         }
     }
-    let systems = [("random couplings, n = 6", glass), ("Max-3-Cut, 50% density, n = 6", cut)];
+    let systems = [
+        ("random couplings, n = 6", glass),
+        ("Max-3-Cut, 50% density, n = 6", cut),
+    ];
 
-    println!("IS SEGMENTED PROBABILISTIC SAMPLING A BOLTZMANN SAMPLER?  (3^{n} = {} states, exact)", 3usize.pow(n as u32));
+    println!(
+        "IS SEGMENTED PROBABILISTIC SAMPLING A BOLTZMANN SAMPLER?  (3^{n} = {} states, exact)",
+        3usize.pow(n as u32)
+    );
     for (name, edges) in &systems {
         let (m, adj) = build(n, edges);
         println!();
         println!("== {name}, {} edges", edges.len());
-        println!("   rule                         beta    TV to Boltzmann(beta)   nearest beta   TV there   ground mass (exact)");
+        println!(
+            "   rule                         beta    TV to Boltzmann(beta)   nearest beta   TV there   ground mass (exact)"
+        );
         for &beta in &[0.5f64, 1.0, 2.0, 4.0] {
             let exact = enumerate(&m, beta).expect("small");
             let g_exact = ground_mass(&m, beta, &exact.p);
@@ -227,7 +243,9 @@ fn main() {
                 );
             }
         }
-        println!("   -- angle only: the device curve is fixed, so there is no beta to hold it to; nearest beta is the fair test");
+        println!(
+            "   -- angle only: the device curve is fixed, so there is no beta to hold it to; nearest beta is the fair test"
+        );
         for &sharp in &[2.0f64, 4.0, 8.0, 16.0] {
             for (label, rule) in [
                 ("K1 angle only", Rule::AngleOnly(sharp)),
@@ -252,10 +270,19 @@ fn main() {
         let grounds: Vec<usize> = (0..e.len()).filter(|&k| e[k] < min + 1e-9).collect();
         let k1 = law(&m, &adj, Rule::AngleOnly(16.0), 0.0);
         let k5 = law(&m, &adj, Rule::AngleOnlyNearest(16.0), 0.0);
-        println!("   -- mass on each of the {} ground states at s = 16 (Boltzmann shares them EQUALLY: {:.4} each)", grounds.len(), 1.0 / grounds.len() as f64);
+        println!(
+            "   -- mass on each of the {} ground states at s = 16 (Boltzmann shares them EQUALLY: {:.4} each)",
+            grounds.len(),
+            1.0 / grounds.len() as f64
+        );
         println!("      state          K1 angle only     K5 ordinal, nearest");
         for &k in grounds.iter().take(9) {
-            println!("      {:?}   {:>12.4}      {:>12.4}", m.state_at(k), k1[k], k5[k]);
+            println!(
+                "      {:?}   {:>12.4}      {:>12.4}",
+                m.state_at(k),
+                k1[k],
+                k5[k]
+            );
         }
     }
 }

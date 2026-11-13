@@ -89,7 +89,12 @@ impl System {
     }
 
     /// Total cost of driving `x0` for `steps` under a controller.
-    pub fn rollout<F: FnMut(f64, usize) -> f64>(&self, x0: f64, steps: usize, mut policy: F) -> f64 {
+    pub fn rollout<F: FnMut(f64, usize) -> f64>(
+        &self,
+        x0: f64,
+        steps: usize,
+        mut policy: F,
+    ) -> f64 {
         let mut x = x0;
         let mut total = 0.0;
         for k in 0..steps {
@@ -315,14 +320,18 @@ impl MatLqr {
     pub fn action(&self, x: &[f64]) -> Vec<f64> {
         let n = x.len();
         let m = self.k.len() / n.max(1);
-        (0..m).map(|i| -(0..n).map(|j| self.k[i * n + j] * x[j]).sum::<f64>()).collect()
+        (0..m)
+            .map(|i| -(0..n).map(|j| self.k[i * n + j] * x[j]).sum::<f64>())
+            .collect()
     }
 
     /// Exact infinite-horizon cost from `x₀`, which is `x₀ᵀ P x₀`.
     #[must_use]
     pub fn cost_to_go(&self, x: &[f64]) -> f64 {
         let n = x.len();
-        (0..n).map(|i| x[i] * (0..n).map(|j| self.p[i * n + j] * x[j]).sum::<f64>()).sum()
+        (0..n)
+            .map(|i| x[i] * (0..n).map(|j| self.p[i * n + j] * x[j]).sum::<f64>())
+            .sum()
     }
 }
 
@@ -332,8 +341,12 @@ impl MatSystem {
     pub fn step(&self, x: &[f64], u: &[f64]) -> Vec<f64> {
         (0..self.n)
             .map(|i| {
-                (0..self.n).map(|j| self.a[i * self.n + j] * x[j]).sum::<f64>()
-                    + (0..self.m).map(|j| self.b[i * self.m + j] * u[j]).sum::<f64>()
+                (0..self.n)
+                    .map(|j| self.a[i * self.n + j] * x[j])
+                    .sum::<f64>()
+                    + (0..self.m)
+                        .map(|j| self.b[i * self.m + j] * u[j])
+                        .sum::<f64>()
             })
             .collect()
     }
@@ -342,10 +355,18 @@ impl MatSystem {
     #[must_use]
     pub fn cost(&self, x: &[f64], u: &[f64]) -> f64 {
         let xq: f64 = (0..self.n)
-            .map(|i| x[i] * (0..self.n).map(|j| self.q[i * self.n + j] * x[j]).sum::<f64>())
+            .map(|i| {
+                x[i] * (0..self.n)
+                    .map(|j| self.q[i * self.n + j] * x[j])
+                    .sum::<f64>()
+            })
             .sum();
         let ur: f64 = (0..self.m)
-            .map(|i| u[i] * (0..self.m).map(|j| self.r[i * self.m + j] * u[j]).sum::<f64>())
+            .map(|i| {
+                u[i] * (0..self.m)
+                    .map(|j| self.r[i * self.m + j] * u[j])
+                    .sum::<f64>()
+            })
             .sum();
         xq + ur
     }
@@ -430,7 +451,11 @@ impl Mppi {
     ///
     /// If `nominal` is not the horizon length.
     pub fn action(&self, s: &System, x: f64, nominal: &mut [f64], rng: &mut Pcg) -> f64 {
-        assert_eq!(nominal.len(), self.horizon, "nominal must cover the horizon");
+        assert_eq!(
+            nominal.len(),
+            self.horizon,
+            "nominal must cover the horizon"
+        );
         for _ in 0..self.iters.max(1) {
             self.refine(s, x, nominal, rng);
         }
@@ -512,22 +537,56 @@ mod tests {
     use super::*;
 
     /// Stable plant. The unstable one is exercised separately and its limits are documented.
-    const SYS: System = System { a: 0.9, b: 1.0, q: 1.0, r: 0.5 };
-    const UNSTABLE: System = System { a: 1.1, b: 1.0, q: 1.0, r: 0.5 };
-    const TUNED: Mppi = Mppi { horizon: 5, rollouts: 300, sigma: 0.2, lambda: 0.3, iters: 10 };
+    const SYS: System = System {
+        a: 0.9,
+        b: 1.0,
+        q: 1.0,
+        r: 0.5,
+    };
+    const UNSTABLE: System = System {
+        a: 1.1,
+        b: 1.0,
+        q: 1.0,
+        r: 0.5,
+    };
+    const TUNED: Mppi = Mppi {
+        horizon: 5,
+        rollouts: 300,
+        sigma: 0.2,
+        lambda: 0.3,
+        iters: 10,
+    };
 
     #[test]
     fn the_riccati_solution_actually_solves_the_equation() {
         // The oracle must be checked before anything is scored against it.
         for s in [
-            System { a: 1.1, b: 1.0, q: 1.0, r: 0.5 },
-            System { a: 0.9, b: 0.5, q: 2.0, r: 1.0 },
-            System { a: 1.5, b: 1.0, q: 1.0, r: 0.1 },
+            System {
+                a: 1.1,
+                b: 1.0,
+                q: 1.0,
+                r: 0.5,
+            },
+            System {
+                a: 0.9,
+                b: 0.5,
+                q: 2.0,
+                r: 1.0,
+            },
+            System {
+                a: 1.5,
+                b: 1.0,
+                q: 1.0,
+                r: 0.1,
+            },
         ] {
             let l = Lqr::solve(&s);
             let residual =
                 s.q + s.a * s.a * l.p - (s.a * s.b * l.p).powi(2) / (s.r + s.b * s.b * l.p) - l.p;
-            assert!(residual.abs() < 1e-9, "Riccati residual {residual} for {s:?}");
+            assert!(
+                residual.abs() < 1e-9,
+                "Riccati residual {residual} for {s:?}"
+            );
             assert!(l.p > 0.0, "the cost-to-go coefficient must be positive");
         }
     }
@@ -572,13 +631,24 @@ mod tests {
         // And the growth itself is the claim the docs now make, so it is the claim under test.
         // Monotone in run length, because the noise MPPI injects never stops and the oracle's
         // cost-to-go is finite.
-        let series: Vec<f64> = [25usize, 50, 100, 200, 400, 800].iter().map(|&s| excess(s)).collect();
+        let series: Vec<f64> = [25usize, 50, 100, 200, 400, 800]
+            .iter()
+            .map(|&s| excess(s))
+            .collect();
         assert!(
             series.windows(2).all(|w| w[1] > w[0]),
             "excess must grow with run length, and it went {series:?}"
         );
-        assert!(series[0] < 0.02, "1.0% at 25 steps: {:.1}%", series[0] * 100.0);
-        assert!(series[5] > 0.20, "22.6% at 800 steps: {:.1}%", series[5] * 100.0);
+        assert!(
+            series[0] < 0.02,
+            "1.0% at 25 steps: {:.1}%",
+            series[0] * 100.0
+        );
+        assert!(
+            series[5] > 0.20,
+            "22.6% at 800 steps: {:.1}%",
+            series[5] * 100.0
+        );
     }
 
     #[test]
@@ -591,7 +661,10 @@ mod tests {
             (m.run(&SYS, 1.0, 200, 7) - opt) / opt
         };
         let (one, ten) = (ex(1), ex(10));
-        assert!(ten < one / 2.0, "10 passes ({ten:.3}) should halve 1 pass ({one:.3})");
+        assert!(
+            ten < one / 2.0,
+            "10 passes ({ten:.3}) should halve 1 pass ({one:.3})"
+        );
     }
 
     #[test]
@@ -601,10 +674,16 @@ mod tests {
         // improve this should find out here rather than in a robot.
         let opt = Lqr::solve(&SYS).cost_to_go(1.0);
         let ex = |h: usize| {
-            let m = Mppi { horizon: h, ..TUNED };
+            let m = Mppi {
+                horizon: h,
+                ..TUNED
+            };
             (m.run(&SYS, 1.0, 200, 7) - opt) / opt
         };
-        assert!(ex(15) > ex(5), "the open-loop horizon penalty should be visible");
+        assert!(
+            ex(15) > ex(5),
+            "the open-loop horizon penalty should be visible"
+        );
     }
 
     #[test]
@@ -612,10 +691,17 @@ mod tests {
         // Also documented rather than hidden: the state grows like a^H inside every rollout.
         let opt = Lqr::solve(&UNSTABLE).cost_to_go(1.0);
         let ex = |h: usize| {
-            let m = Mppi { horizon: h, iters: 30, ..TUNED };
+            let m = Mppi {
+                horizon: h,
+                iters: 30,
+                ..TUNED
+            };
             (m.run(&UNSTABLE, 1.0, 200, 7) - opt) / opt
         };
-        assert!(ex(10) < ex(30), "a long horizon on an unstable plant should be far worse");
+        assert!(
+            ex(10) < ex(30),
+            "a long horizon on an unstable plant should be far worse"
+        );
         // A BAND ROUND THE PUBLISHED NUMBERS, because `> 1.0` was how a wrong one survived.
         //
         // This used to assert only that horizon 30 exceeded 100%. The docs published 729% for that
@@ -640,9 +726,18 @@ mod tests {
         // gives zero weight everywhere and the controller silently returns its nominal sequence,
         // which looks like a working controller that ignores its samples.
         let l = Lqr::solve(&SYS);
-        let m = Mppi { horizon: 200, rollouts: 100, sigma: 0.2, lambda: 0.3, iters: 1 };
+        let m = Mppi {
+            horizon: 200,
+            rollouts: 100,
+            sigma: 0.2,
+            lambda: 0.3,
+            iters: 1,
+        };
         let cost = m.run(&SYS, 1.0, 100, 5);
-        assert!(cost.is_finite(), "the weights must not all underflow to zero");
+        assert!(
+            cost.is_finite(),
+            "the weights must not all underflow to zero"
+        );
         assert!(cost > 0.0);
         let _ = l;
     }
@@ -658,10 +753,16 @@ mod tests {
         // An unstable plant diverges without control, so beating "do nothing" by orders of
         // magnitude is the floor, not the achievement.
         let uncontrolled = UNSTABLE.rollout(1.0, 40, |_, _| 0.0);
-        let m = Mppi { horizon: 8, iters: 20, ..TUNED };
+        let m = Mppi {
+            horizon: 8,
+            iters: 20,
+            ..TUNED
+        };
         let controlled = m.run(&UNSTABLE, 1.0, 200, 9);
-        assert!(controlled < uncontrolled / 100.0,
-                "controlled {controlled} vs uncontrolled {uncontrolled}");
+        assert!(
+            controlled < uncontrolled / 100.0,
+            "controlled {controlled} vs uncontrolled {uncontrolled}"
+        );
     }
     /// A stable-ish random system with symmetric positive-definite weights.
     fn rand_system(n: usize, m: usize, seed: u64) -> MatSystem {
@@ -728,10 +829,27 @@ mod tests {
             (0.2, 0.8, 0.3, 3.0),
         ] {
             let scalar = Lqr::solve(&System { a, b, q, r });
-            let m = MatSystem { n: 1, m: 1, a: vec![a], b: vec![b], q: vec![q], r: vec![r] };
+            let m = MatSystem {
+                n: 1,
+                m: 1,
+                a: vec![a],
+                b: vec![b],
+                q: vec![q],
+                r: vec![r],
+            };
             let mat = MatLqr::solve(&m).unwrap();
-            assert!((mat.p[0] - scalar.p).abs() < 1e-9, "P: {} vs {}", mat.p[0], scalar.p);
-            assert!((mat.k[0] - scalar.k).abs() < 1e-9, "K: {} vs {}", mat.k[0], scalar.k);
+            assert!(
+                (mat.p[0] - scalar.p).abs() < 1e-9,
+                "P: {} vs {}",
+                mat.p[0],
+                scalar.p
+            );
+            assert!(
+                (mat.k[0] - scalar.k).abs() < 1e-9,
+                "K: {} vs {}",
+                mat.k[0],
+                scalar.k
+            );
         }
     }
 
@@ -785,8 +903,7 @@ mod tests {
         let best = roll(&l.k);
         let mut rng = crate::rng::Pcg::new(9, 1);
         for trial in 0..200 {
-            let perturbed: Vec<f64> =
-                l.k.iter().map(|v| v + 0.15 * (rng.f64() - 0.5)).collect();
+            let perturbed: Vec<f64> = l.k.iter().map(|v| v + 0.15 * (rng.f64() - 0.5)).collect();
             let cost = roll(&perturbed);
             assert!(
                 cost >= best - 1e-9,
@@ -800,12 +917,18 @@ mod tests {
     fn the_dense_solve_is_exact_on_a_known_system_and_refuses_a_singular_one() {
         // [[2,1],[1,3]] x = [[1],[2]]  ->  x = [1/5, 3/5]
         let x = solve(&[2.0, 1.0, 1.0, 3.0], &[1.0, 2.0], 2, 1).unwrap();
-        assert!((x[0] - 0.2).abs() < 1e-12 && (x[1] - 0.6).abs() < 1e-12, "{x:?}");
+        assert!(
+            (x[0] - 0.2).abs() < 1e-12 && (x[1] - 0.6).abs() < 1e-12,
+            "{x:?}"
+        );
         // A singular matrix has no solve, and saying so beats returning infinities.
         assert!(solve(&[1.0, 2.0, 2.0, 4.0], &[1.0, 1.0], 2, 1).is_none());
         // Pivoting: a zero leading entry must not stop it.
         let y = solve(&[0.0, 1.0, 1.0, 0.0], &[3.0, 4.0], 2, 1).unwrap();
-        assert!((y[0] - 4.0).abs() < 1e-12 && (y[1] - 3.0).abs() < 1e-12, "{y:?}");
+        assert!(
+            (y[0] - 4.0).abs() < 1e-12 && (y[1] - 3.0).abs() < 1e-12,
+            "{y:?}"
+        );
     }
 
     /// `matmul` and `transpose` on shapes that are not square, where an index slip shows.
@@ -820,5 +943,4 @@ mod tests {
         let t = transpose(&a, 2, 3);
         assert_eq!(transpose(&t, 3, 2), a.to_vec());
     }
-
 }

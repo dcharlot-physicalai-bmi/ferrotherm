@@ -217,10 +217,16 @@ impl core::fmt::Display for Error {
                 nodes.1, edges.1, nodes.0, edges.0
             ),
             Error::NotFinite { what, value } => {
-                write!(f, "{what} is {value}, and a matrix entry cannot be built from it")
+                write!(
+                    f,
+                    "{what} is {value}, and a matrix entry cannot be built from it"
+                )
             }
             Error::NoSuchFace { given, faces } => {
-                write!(f, "face {given} was requested as the outer face; the embedding traces {faces}")
+                write!(
+                    f,
+                    "face {given} was requested as the outer face; the embedding traces {faces}"
+                )
             }
             Error::AnglesInconsistent { residual } => write!(
                 f,
@@ -299,7 +305,10 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { internal_energy: true, outer_face: None }
+        Params {
+            internal_energy: true,
+            outer_face: None,
+        }
     }
 }
 
@@ -321,7 +330,10 @@ pub fn solve(g: &Graph, beta: f64) -> Result<Solution, Error> {
 ///
 /// As [`solve`].
 pub fn log_partition(g: &Graph, beta: f64) -> Result<f64, Error> {
-    let p = Params { internal_energy: false, outer_face: None };
+    let p = Params {
+        internal_energy: false,
+        outer_face: None,
+    };
     solve_with(g, beta, &p).map(|s| s.log_z)
 }
 
@@ -358,7 +370,10 @@ pub fn with_embedding(
         }
     }
     if !beta.is_finite() {
-        return Err(Error::NotFinite { what: "beta", value: beta });
+        return Err(Error::NotFinite {
+            what: "beta",
+            value: beta,
+        });
     }
     let model = Model::new(g, emb)?;
     if model.darts == 0 {
@@ -377,7 +392,12 @@ pub fn with_embedding(
     let outer = match p.outer_face {
         None => model.largest_face(),
         Some(k) if k < model.faces.len() => k,
-        Some(k) => return Err(Error::NoSuchFace { given: k, faces: model.faces.len() }),
+        Some(k) => {
+            return Err(Error::NoSuchFace {
+                given: k,
+                faces: model.faces.len(),
+            });
+        }
     };
     let angles = model.corner_angles(outer)?;
     let nd = model.darts;
@@ -460,7 +480,10 @@ impl Model {
                     nbr[u].push(v);
                 }
                 if !g.w[k].is_finite() {
-                    return Err(Error::NotFinite { what: "a coupling", value: g.w[k] });
+                    return Err(Error::NotFinite {
+                        what: "a coupling",
+                        value: g.w[k],
+                    });
                 }
                 wmap.insert((u, v), g.w[k]);
             }
@@ -508,8 +531,10 @@ impl Model {
             }
         }
         let rev: Vec<usize> = (0..darts).map(|d| id[&(head[d], tail[d])]).collect();
-        let edge_weight: Vec<f64> =
-            (0..darts).filter(|&d| tail[d] < head[d]).map(|d| weight[d]).collect();
+        let edge_weight: Vec<f64> = (0..darts)
+            .filter(|&d| tail[d] < head[d])
+            .map(|d| weight[d])
+            .collect();
 
         let traced = emb.faces();
         let mut faces: Vec<Vec<usize>> = Vec::with_capacity(traced.len());
@@ -566,7 +591,11 @@ impl Model {
         let mut demand = vec![2.0 * PI; nodes];
         for (fi, f) in self.faces.iter().enumerate() {
             let c = f.len() as f64;
-            demand[self.n + fi] = if fi == outer { (c + 2.0) * PI } else { (c - 2.0) * PI };
+            demand[self.n + fi] = if fi == outer {
+                (c + 2.0) * PI
+            } else {
+                (c - 2.0) * PI
+            };
         }
         // Radial graph: corner d joins tail(d) to n + face_of(d).
         let ends = |d: usize| (self.tail[d], self.n + self.face_of[d]);
@@ -599,7 +628,11 @@ impl Model {
         let mut theta = vec![0.0f64; self.darts];
         for &u in order.iter().skip(1).rev() {
             let d = parent_corner[u];
-            let rest: f64 = incident[u].iter().filter(|&&c| c != d).map(|&c| theta[c]).sum();
+            let rest: f64 = incident[u]
+                .iter()
+                .filter(|&&c| c != d)
+                .map(|&c| theta[c])
+                .sum();
             theta[d] = demand[u] - rest;
         }
         let root: f64 = incident[0].iter().map(|&c| theta[c]).sum::<f64>() - demand[0];
@@ -650,7 +683,13 @@ impl Model {
                 // sum is 2 pi times its turning number, and it is the HALF of that which reads off
                 // as the sign (-1)^turning that Sherman's identity needs.
                 let turn = 0.5 * (wedge - PI);
-                out.insert((e, f), Cx { re: turn.cos(), im: turn.sin() });
+                out.insert(
+                    (e, f),
+                    Cx {
+                        re: turn.cos(),
+                        im: turn.sin(),
+                    },
+                );
             }
         }
         out
@@ -680,7 +719,13 @@ impl Model {
         if arg.abs() > 1e-12 * nd as f64 {
             return Err(Error::DeterminantNotReal { arg });
         }
-        Ok(Factored { lu: m, perm, log_det, arg, phases })
+        Ok(Factored {
+            lu: m,
+            perm,
+            log_det,
+            arg,
+            phases,
+        })
     }
 }
 
@@ -712,19 +757,31 @@ impl Cx {
     const ONE: Cx = Cx { re: 1.0, im: 0.0 };
 
     fn add(self, o: Cx) -> Cx {
-        Cx { re: self.re + o.re, im: self.im + o.im }
+        Cx {
+            re: self.re + o.re,
+            im: self.im + o.im,
+        }
     }
 
     fn sub(self, o: Cx) -> Cx {
-        Cx { re: self.re - o.re, im: self.im - o.im }
+        Cx {
+            re: self.re - o.re,
+            im: self.im - o.im,
+        }
     }
 
     fn mul(self, o: Cx) -> Cx {
-        Cx { re: self.re * o.re - self.im * o.im, im: self.re * o.im + self.im * o.re }
+        Cx {
+            re: self.re * o.re - self.im * o.im,
+            im: self.re * o.im + self.im * o.re,
+        }
     }
 
     fn scale(self, k: f64) -> Cx {
-        Cx { re: self.re * k, im: self.im * k }
+        Cx {
+            re: self.re * k,
+            im: self.im * k,
+        }
     }
 
     /// Smith's division, which scales by the larger denominator part so neither branch squares a
@@ -733,11 +790,17 @@ impl Cx {
         if o.im.abs() <= o.re.abs() {
             let r = o.im / o.re;
             let d = o.re + o.im * r;
-            Cx { re: (self.re + self.im * r) / d, im: (self.im - self.re * r) / d }
+            Cx {
+                re: (self.re + self.im * r) / d,
+                im: (self.im - self.re * r) / d,
+            }
         } else {
             let r = o.re / o.im;
             let d = o.re * r + o.im;
-            Cx { re: (self.re * r + self.im) / d, im: (self.im * r - self.re) / d }
+            Cx {
+                re: (self.re * r + self.im) / d,
+                im: (self.im * r - self.re) / d,
+            }
         }
     }
 
@@ -854,7 +917,12 @@ pub fn corner_angles(g: &Graph, emb: &Embedding, outer: Option<usize>) -> Result
     let face = match outer {
         None => model.largest_face(),
         Some(k) if k < model.faces.len() => k,
-        Some(k) => return Err(Error::NoSuchFace { given: k, faces: model.faces.len() }),
+        Some(k) => {
+            return Err(Error::NoSuchFace {
+                given: k,
+                faces: model.faces.len(),
+            });
+        }
     };
     model.corner_angles(face)
 }
@@ -922,7 +990,11 @@ mod tests {
         for (name, g) in &graphs {
             for &beta in &[0.05f64, 0.3, 0.75, 1.6] {
                 let got = solve(g, beta).unwrap_or_else(|e| panic!("{name} at {beta}: {e}"));
-                let want = elim.log_partition(g, beta).expect("narrow enough").log_z.unwrap();
+                let want = elim
+                    .log_partition(g, beta)
+                    .expect("narrow enough")
+                    .log_z
+                    .unwrap();
                 assert!(
                     (got.log_z - want).abs() < 1e-9 * want.abs().max(1.0),
                     "{name} at beta {beta}: Kac-Ward {} vs elimination {want}",
@@ -982,7 +1054,11 @@ mod tests {
         }
         let g = b.build();
         let got = solve(&g, 0.4).expect("K5 minus an edge is planar");
-        assert!((got.log_z - exact_log_z(&g, 0.4)).abs() < 1e-12, "{}", got.log_z);
+        assert!(
+            (got.log_z - exact_log_z(&g, 0.4)).abs() < 1e-12,
+            "{}",
+            got.log_z
+        );
     }
 
     /// A torus is not a plane, and the embedding says so. `lattice2d` is periodic, so
@@ -991,7 +1067,10 @@ mod tests {
     #[test]
     fn a_toroidal_embedding_is_refused_by_its_euler_characteristic() {
         let g = lattice2d(4, 1.0);
-        assert!(matches!(solve(&g, 0.3), Err(Error::NotEmbeddable(_))), "periodic is not planar");
+        assert!(
+            matches!(solve(&g, 0.3), Err(Error::NotEmbeddable(_))),
+            "periodic is not planar"
+        );
         let torus = planar::torus_grid(4, 4).expect("4x4 torus");
         let err = with_embedding(&g, &torus, 0.3, &Params::default()).expect_err("genus 1");
         assert_eq!(err, Error::NotPlanarEmbedding { euler: 0 });
@@ -1049,15 +1128,32 @@ mod tests {
         }] {
             let emb = planar::embed(&g).expect("planar");
             let nf = emb.faces().len();
-            let base = with_embedding(&g, &emb, 0.45, &Params::default()).unwrap().log_z;
+            let base = with_embedding(&g, &emb, 0.45, &Params::default())
+                .unwrap()
+                .log_z;
             for k in 0..nf {
-                let p = Params { internal_energy: false, outer_face: Some(k) };
+                let p = Params {
+                    internal_energy: false,
+                    outer_face: Some(k),
+                };
                 let got = with_embedding(&g, &emb, 0.45, &p).unwrap().log_z;
-                assert!((got - base).abs() < 1e-12, "outer face {k}: {got} vs {base}");
+                assert!(
+                    (got - base).abs() < 1e-12,
+                    "outer face {k}: {got} vs {base}"
+                );
             }
-            let p = Params { internal_energy: false, outer_face: Some(nf) };
+            let p = Params {
+                internal_energy: false,
+                outer_face: Some(nf),
+            };
             let err = with_embedding(&g, &emb, 0.45, &p).expect_err("there is no face nf");
-            assert_eq!(err, Error::NoSuchFace { given: nf, faces: nf });
+            assert_eq!(
+                err,
+                Error::NoSuchFace {
+                    given: nf,
+                    faces: nf
+                }
+            );
         }
     }
 
@@ -1076,8 +1172,15 @@ mod tests {
         }
         for (fi, f) in model.faces.iter().enumerate() {
             let s: f64 = f.iter().map(|&d| theta[d]).sum();
-            let want = if fi == outer { f.len() as f64 + 2.0 } else { f.len() as f64 - 2.0 } * PI;
-            assert!((s - want).abs() < 1e-9, "face {fi} sums to {s}, wanted {want}");
+            let want = if fi == outer {
+                f.len() as f64 + 2.0
+            } else {
+                f.len() as f64 - 2.0
+            } * PI;
+            assert!(
+                (s - want).abs() < 1e-9,
+                "face {fi} sums to {s}, wanted {want}"
+            );
         }
     }
 
@@ -1123,14 +1226,23 @@ mod tests {
         );
         // The raw densities are BELOW the infinite lattice, because a finite lattice is missing
         // bonds. Asserting the direction as well as the size is what makes this a physics test.
-        assert!(small < onsager && large < onsager, "{small} {large} vs {onsager}");
-        assert!(e_large < e_small, "a bigger lattice must be closer: {e_large} vs {e_small}");
+        assert!(
+            small < onsager && large < onsager,
+            "{small} {large} vs {onsager}"
+        );
+        assert!(
+            e_large < e_small,
+            "a bigger lattice must be closer: {e_large} vs {e_small}"
+        );
         assert!(
             e_rich < 0.1 * e_large,
             "Richardson {richardson} (err {e_rich:.2e}) must beat L=12 (err {e_large:.2e}) by an \
              order of magnitude; if it does not, the finite-size law is not 1/L"
         );
-        assert!(e_rich < 2.5e-4, "extrapolated {richardson} vs Onsager {onsager}");
+        assert!(
+            e_rich < 2.5e-4,
+            "extrapolated {richardson} vs Onsager {onsager}"
+        );
     }
 
     /// THE THEOREM ITSELF, against an enumeration that shares no line of code with it.
@@ -1160,7 +1272,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!(edges.len(), 14, "the fixture must be the wheel it claims to be");
+        assert_eq!(
+            edges.len(),
+            14,
+            "the fixture must be the wheel it claims to be"
+        );
         let mut sums = Vec::new();
         for &beta in &[0.15f64, 0.55, 1.2] {
             let mut want = 0.0f64;
@@ -1190,7 +1306,10 @@ mod tests {
         // from 1.06 to 6.8, and they must also be increasing, because a colder model weights the
         // loops more heavily.
         assert!(sums[2] > 2.0, "the fixture must have live loops: {sums:?}");
-        assert!(sums[0] < sums[1] && sums[1] < sums[2], "colder must weight loops more: {sums:?}");
+        assert!(
+            sums[0] < sums[1] && sums[1] < sums[2],
+            "colder must weight loops more: {sums:?}"
+        );
     }
 
     /// ONSAGER AGAIN, on the internal energy this time, which is the derivative rather than the
@@ -1205,17 +1324,29 @@ mod tests {
     fn the_internal_energy_extrapolates_to_onsagers_closed_form() {
         let beta = 0.3;
         let want = onsager_energy_density(beta, 1.0);
-        let small = solve(&grid2d(8, 8, 1.0), beta).unwrap().energy_density().unwrap();
-        let large = solve(&grid2d(16, 16, 1.0), beta).unwrap().energy_density().unwrap();
+        let small = solve(&grid2d(8, 8, 1.0), beta)
+            .unwrap()
+            .energy_density()
+            .unwrap();
+        let large = solve(&grid2d(16, 16, 1.0), beta)
+            .unwrap()
+            .energy_density()
+            .unwrap();
         let rich = 2.0 * large - small;
         // A finite lattice is missing boundary bonds, so its energy per site is LESS negative.
         assert!(small > want && large > want, "{small} {large} vs {want}");
-        assert!((large - want).abs() < (small - want).abs(), "a bigger lattice must be closer");
+        assert!(
+            (large - want).abs() < (small - want).abs(),
+            "a bigger lattice must be closer"
+        );
         assert!(
             (rich - want).abs() < 0.1 * (large - want).abs(),
             "Richardson {rich} must beat L=16 ({large}) by an order of magnitude against {want}"
         );
-        assert!((rich - want).abs() < 2.5e-3, "extrapolated {rich} vs Onsager {want}");
+        assert!(
+            (rich - want).abs() < 2.5e-3,
+            "extrapolated {rich} vs Onsager {want}"
+        );
     }
 
     /// THE ALARM MUST BITE. `Error::DeterminantNotReal` is unreachable through the public API by
@@ -1232,8 +1363,14 @@ mod tests {
         let model = Model::new(&g, &emb).expect("of this graph");
         let theta = model.corner_angles(model.largest_face()).expect("solvable");
         let x: Vec<f64> = model.weight.iter().map(|&j| (0.4 * j).tanh()).collect();
-        let good = model.factor(&theta, &x).expect("correct angles are accepted");
-        assert!(good.arg.abs() < 1e-14, "a correct determinant is real: {}", good.arg);
+        let good = model
+            .factor(&theta, &x)
+            .expect("correct angles are accepted");
+        assert!(
+            good.arg.abs() < 1e-14,
+            "a correct determinant is real: {}",
+            good.arg
+        );
 
         let mut bad = theta.clone();
         bad[3] += 0.1;
@@ -1297,8 +1434,14 @@ mod tests {
     #[test]
     fn on_a_tree_the_determinant_is_exactly_one() {
         let mut b = GraphBuilder::new(7);
-        for (i, j, w) in [(0, 1, 0.5), (0, 2, -0.9), (1, 3, 1.2), (1, 4, 0.3), (2, 5, 0.7), (2, 6, -0.2)]
-        {
+        for (i, j, w) in [
+            (0, 1, 0.5),
+            (0, 2, -0.9),
+            (1, 3, 1.2),
+            (1, 4, 0.3),
+            (2, 5, 0.7),
+            (2, 6, -0.2),
+        ] {
             b.couple(i, j, w);
         }
         let g = b.build();
@@ -1326,9 +1469,20 @@ mod tests {
     fn beta_zero_is_n_ln_two() {
         let g = random_grid(4, 4, 41);
         let s = solve(&g, 0.0).expect("planar");
-        assert!((s.log_z - 16.0 * std::f64::consts::LN_2).abs() < 1e-12, "{}", s.log_z);
-        assert!(s.energy.unwrap().abs() < 1e-12, "no correlation at infinite temperature");
-        assert_eq!(s.free_energy_density(), None, "free energy diverges at beta = 0");
+        assert!(
+            (s.log_z - 16.0 * std::f64::consts::LN_2).abs() < 1e-12,
+            "{}",
+            s.log_z
+        );
+        assert!(
+            s.energy.unwrap().abs() < 1e-12,
+            "no correlation at infinite temperature"
+        );
+        assert_eq!(
+            s.free_energy_density(),
+            None,
+            "free energy diverges at beta = 0"
+        );
     }
 
     /// How far an exact check REACHES is one question; how much it DISCRIMINATES is another, and
@@ -1364,8 +1518,12 @@ mod tests {
             let g = crate::ising::grid2d(l, l, 1.0);
             let truth = solve(&g, beta).expect("a grid is planar");
             let colder = solve(&g, beta * detune).expect("same grid, colder");
-            let e_true = truth.energy_density().expect("Params::default asks for the energy");
-            let e_cold = colder.energy_density().expect("Params::default asks for the energy");
+            let e_true = truth
+                .energy_density()
+                .expect("Params::default asks for the energy");
+            let e_cold = colder
+                .energy_density()
+                .expect("Params::default asks for the energy");
 
             // The premise the comparison rests on: the two lattices really are different. If the
             // detuned energy equalled the true one there would be nothing to resolve and the test

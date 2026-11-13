@@ -36,7 +36,7 @@
 //
 // run: cargo run --release --example device_train_exact
 
-use ferrotherm::autocorr::{boltzmann, spins, stationary, Kernel};
+use ferrotherm::autocorr::{Kernel, boltzmann, spins, stationary};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -103,7 +103,14 @@ fn moments(law: &[f64]) -> Vec<f64> {
 /// The Boltzmann learning rule with the negative phase from the device's exact law and the step
 /// `lr0 / (1 + t / decay)`. Returns the KL at the final parameters and the largest moment gap
 /// there -- the mismatch the device's arithmetic leaves at that cell of its lattice.
-fn moment_rule(target: &[f64], kernel: Kernel, start: &[f64], steps: usize, lr0: f64, decay: f64) -> (f64, f64) {
+fn moment_rule(
+    target: &[f64],
+    kernel: Kernel,
+    start: &[f64],
+    steps: usize,
+    lr0: f64,
+    decay: f64,
+) -> (f64, f64) {
     let m_target = moments(target);
     let mut theta = start.to_vec();
     for t in 0..steps {
@@ -114,14 +121,27 @@ fn moment_rule(target: &[f64], kernel: Kernel, start: &[f64], steps: usize, lr0:
         }
     }
     let law = device_law(&theta, kernel);
-    let gap = m_target.iter().zip(&moments(&law)).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+    let gap = m_target
+        .iter()
+        .zip(&moments(&law))
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f64::max);
     (kl(target, &law), gap)
 }
 
 /// Coordinate search on the device's parameter lattice: one quantum per move, accept each
 /// improving move, stop when a pass improves nothing. Returns the KL and the accepted moves.
-fn lattice_search(target: &[f64], kernel: Kernel, start: &[f64], quantum: f64, max_passes: usize) -> (f64, usize) {
-    let mut theta: Vec<f64> = start.iter().map(|t| (t / quantum).round() * quantum).collect();
+fn lattice_search(
+    target: &[f64],
+    kernel: Kernel,
+    start: &[f64],
+    quantum: f64,
+    max_passes: usize,
+) -> (f64, usize) {
+    let mut theta: Vec<f64> = start
+        .iter()
+        .map(|t| (t / quantum).round() * quantum)
+        .collect();
     let mut best = kl(target, &device_law(&theta, kernel));
     let mut moves = 0usize;
     for _ in 0..max_passes {
@@ -165,21 +185,66 @@ fn main() {
     let e = edges();
     let kernels = [
         ("exact (Boltzmann)", Kernel::ChromaticGibbs, None),
-        ("{12, 12, 16}", Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: 16 }, Some(12u32)),
+        (
+            "{12, 12, 16}",
+            Kernel::Quantised {
+                frac_bits: 12,
+                lut_bits: 12,
+                prob_bits: 16,
+            },
+            Some(12u32),
+        ),
         ("{8, 10, 16} shipped", Kernel::FixedFabric, Some(8)),
-        ("{6, 10, 16}", Kernel::Quantised { frac_bits: 6, lut_bits: 10, prob_bits: 16 }, Some(6)),
-        ("{4, 8, 16}", Kernel::Quantised { frac_bits: 4, lut_bits: 8, prob_bits: 16 }, Some(4)),
-        ("{4, 6, 8}", Kernel::Quantised { frac_bits: 4, lut_bits: 6, prob_bits: 8 }, Some(4)),
+        (
+            "{6, 10, 16}",
+            Kernel::Quantised {
+                frac_bits: 6,
+                lut_bits: 10,
+                prob_bits: 16,
+            },
+            Some(6),
+        ),
+        (
+            "{4, 8, 16}",
+            Kernel::Quantised {
+                frac_bits: 4,
+                lut_bits: 8,
+                prob_bits: 16,
+            },
+            Some(4),
+        ),
+        (
+            "{4, 6, 8}",
+            Kernel::Quantised {
+                frac_bits: 4,
+                lut_bits: 6,
+                prob_bits: 8,
+            },
+            Some(4),
+        ),
     ];
 
     // ONE TARGET, IN FULL.
     let (true_theta, target) = target_from(11);
-    let entropy: f64 = -target.iter().filter(|p| **p > 0.0).map(|p| p * p.ln()).sum::<f64>();
+    let entropy: f64 = -target
+        .iter()
+        .filter(|p| **p > 0.0)
+        .map(|p| p * p.ln())
+        .sum::<f64>();
     println!("TRAINING THROUGH THE DEVICE'S ARITHMETIC, EXACTLY, ON AN {N}-SPIN RING\n");
-    println!("  target     +-1 couplings on a ring with two chords, fields in [-0.3, 0.3], beta 1; entropy {entropy:.4} nats");
-    println!("  precision  Quantised {{frac, rom, prob}} kernels; the shipped fabric is {{8, 10, 16}}; ChromaticGibbs is the exact ceiling");
-    println!("  rule       Boltzmann learning rule, negative phase = device's exact law, 600 steps, lr 0.5/(1+t/100)");
-    println!("  lattice    coordinate search at one quantum (2^-frac) per move from the loaded couplings, {} parameters\n", e.len() + N);
+    println!(
+        "  target     +-1 couplings on a ring with two chords, fields in [-0.3, 0.3], beta 1; entropy {entropy:.4} nats"
+    );
+    println!(
+        "  precision  Quantised {{frac, rom, prob}} kernels; the shipped fabric is {{8, 10, 16}}; ChromaticGibbs is the exact ceiling"
+    );
+    println!(
+        "  rule       Boltzmann learning rule, negative phase = device's exact law, 600 steps, lr 0.5/(1+t/100)"
+    );
+    println!(
+        "  lattice    coordinate search at one quantum (2^-frac) per move from the loaded couplings, {} parameters\n",
+        e.len() + N
+    );
     println!(
         "  {:<18}   {:>11} {:>11} {:>9} {:>9}   {:>11} {:>6} {:>9}",
         "device", "KL loaded", "KL rule", "mom. gap", "recov.", "KL lattice", "moves", "recov."
@@ -187,10 +252,21 @@ fn main() {
     for (name, k, frac) in kernels {
         let kl_loaded = kl(&target, &device_law(&true_theta, k));
         let (kl_rule, gap) = moment_rule(&target, k, &true_theta, 600, 0.5, 100.0);
-        let recov = |k_after: f64| if kl_loaded > 0.0 { 100.0 * (kl_loaded - k_after) / kl_loaded } else { 0.0 };
-        let lattice = frac.map(|f| lattice_search(&target, k, &true_theta, 1.0 / f64::from(1u32 << f), 40));
+        let recov = |k_after: f64| {
+            if kl_loaded > 0.0 {
+                100.0 * (kl_loaded - k_after) / kl_loaded
+            } else {
+                0.0
+            }
+        };
+        let lattice =
+            frac.map(|f| lattice_search(&target, k, &true_theta, 1.0 / f64::from(1u32 << f), 40));
         let (lat, moves, lat_recov) = match lattice {
-            Some((kl_lat, moves)) => (format!("{kl_lat:.3e}"), moves.to_string(), format!("{:.1}%", recov(kl_lat))),
+            Some((kl_lat, moves)) => (
+                format!("{kl_lat:.3e}"),
+                moves.to_string(),
+                format!("{:.1}%", recov(kl_lat)),
+            ),
             None => ("-".to_string(), "-".to_string(), "-".to_string()),
         };
         println!(
@@ -203,7 +279,11 @@ fn main() {
     // land in, or of training through a quantised device?
     let seeds = [11u64, 12, 13, 14];
     let schedules = [(600usize, 0.5f64, 100.0f64), (2000, 0.1, 500.0)];
-    println!("\n  ROBUSTNESS -- {} targets x {} schedules per device; 'beats loading' counts (target, schedule) pairs", seeds.len(), schedules.len());
+    println!(
+        "\n  ROBUSTNESS -- {} targets x {} schedules per device; 'beats loading' counts (target, schedule) pairs",
+        seeds.len(),
+        schedules.len()
+    );
     println!("  schedules  600 steps at 0.5/(1+t/100); 2000 steps at 0.1/(1+t/500)\n");
     println!(
         "  {:<18}   {:>13} {:>13} {:>13}   {:>13} {:>13}",
@@ -250,13 +330,31 @@ fn main() {
         );
     }
     println!("\n  WHAT THE TABLES SAY.\n");
-    println!("  'KL loaded' is the likelihood the arithmetic costs when the exact couplings are simply loaded --");
-    println!("  the train-in-software, run-on-hardware path. 'KL rule' is where the Boltzmann learning rule");
-    println!("  settles when its negative phase is the device; 'mom. gap' is the moment mismatch the device has");
-    println!("  at that cell, which no cell can close. 'KL lattice' is the best the device can do with any");
-    println!("  loadable couplings (a local optimum on its own lattice) and 'moves' how many quanta from the");
-    println!("  loaded couplings it lies. Each 'recov.' is the fraction of the loaded loss that path wins back;");
-    println!("  negative means the path made the device WORSE than loading the truth. The exact row is the");
-    println!("  control: nothing lost, nothing to recover, no lattice. A KL ratio below 1 in the second table");
-    println!("  is a path that beat loading; 'rule worst' is the largest ratio the rule produced anywhere.");
+    println!(
+        "  'KL loaded' is the likelihood the arithmetic costs when the exact couplings are simply loaded --"
+    );
+    println!(
+        "  the train-in-software, run-on-hardware path. 'KL rule' is where the Boltzmann learning rule"
+    );
+    println!(
+        "  settles when its negative phase is the device; 'mom. gap' is the moment mismatch the device has"
+    );
+    println!(
+        "  at that cell, which no cell can close. 'KL lattice' is the best the device can do with any"
+    );
+    println!(
+        "  loadable couplings (a local optimum on its own lattice) and 'moves' how many quanta from the"
+    );
+    println!(
+        "  loaded couplings it lies. Each 'recov.' is the fraction of the loaded loss that path wins back;"
+    );
+    println!(
+        "  negative means the path made the device WORSE than loading the truth. The exact row is the"
+    );
+    println!(
+        "  control: nothing lost, nothing to recover, no lattice. A KL ratio below 1 in the second table"
+    );
+    println!(
+        "  is a path that beat loading; 'rule worst' is the largest ratio the rule produced anywhere."
+    );
 }

@@ -207,7 +207,11 @@ impl Pairs {
     /// zero — and silently folding it onto some other index would corrupt a row of the relaxation.
     #[must_use]
     pub fn index(self, a: usize, b: usize) -> usize {
-        assert!(a != b && a < self.n && b < self.n, "pair ({a},{b}) is not a pair of {} nodes", self.n);
+        assert!(
+            a != b && a < self.n && b < self.n,
+            "pair ({a},{b}) is not a pair of {} nodes",
+            self.n
+        );
         let (lo, hi) = if a < b { (a, b) } else { (b, a) };
         lo * self.n - lo * (lo + 1) / 2 + (hi - lo - 1)
     }
@@ -227,7 +231,11 @@ impl Pairs {
             }
             off += row;
         }
-        panic!("pair index {k} is past the {} variables of {} nodes", self.len(), self.n);
+        panic!(
+            "pair index {k} is past the {} variables of {} nodes",
+            self.len(),
+            self.n
+        );
     }
 }
 
@@ -289,8 +297,14 @@ impl TriangleCut {
     /// node", so accepting an unsorted triple would silently name a different inequality.
     #[must_use]
     pub fn new(a: u32, b: u32, c: u32, facet: Facet) -> Self {
-        assert!(a < b && b < c, "a triple must be strictly increasing, got ({a},{b},{c})");
-        TriangleCut { nodes: [a, b, c], facet }
+        assert!(
+            a < b && b < c,
+            "a triple must be strictly increasing, got ({a},{b},{c})"
+        );
+        TriangleCut {
+            nodes: [a, b, c],
+            facet,
+        }
     }
 
     /// The variable indices of `(x_ab, x_ac, x_bc)`, in the order [`Facet::row`] expects.
@@ -495,7 +509,10 @@ impl Relax {
         }
         let pairs = variables(g);
         if pairs.nodes() > MAX_NODES {
-            return Err(CutsError::TooLarge { nodes: pairs.nodes(), limit: MAX_NODES });
+            return Err(CutsError::TooLarge {
+                nodes: pairs.nodes(),
+                limit: MAX_NODES,
+            });
         }
         let mut c = vec![0.0; pairs.len()];
         let mut consts = Vec::with_capacity(g.n_edges + g.n);
@@ -520,7 +537,15 @@ impl Relax {
             }
         }
         let terms = (0..pairs.len()).map(|_| Vec::with_capacity(4)).collect();
-        Ok(Relax { pairs, c, consts, cuts: Vec::new(), lambda: Vec::new(), terms, outer: Vec::new() })
+        Ok(Relax {
+            pairs,
+            c,
+            consts,
+            cuts: Vec::new(),
+            lambda: Vec::new(),
+            terms,
+            outer: Vec::new(),
+        })
     }
 
     /// `L(λ)` at the current multipliers, with `x` left holding the box minimiser.
@@ -580,7 +605,11 @@ impl Relax {
         let mut norm = 0.0;
         for (k, cut) in self.cuts.iter().enumerate() {
             let v = cut.violation(self.pairs, x);
-            let d = if self.lambda[k] <= 0.0 && v < 0.0 { 0.0 } else { v };
+            let d = if self.lambda[k] <= 0.0 && v < 0.0 {
+                0.0
+            } else {
+                v
+            };
             gr[k] = d;
             norm += d * d;
         }
@@ -759,7 +788,12 @@ pub fn cutting_plane(g: &Graph, p: &Params) -> Result<Tightened, CutsError> {
             best_round = r + 1;
         }
         xsep = xbar;
-        rounds.push(Round { round: r + 1, added, worst_violation: worst, value: best });
+        rounds.push(Round {
+            round: r + 1,
+            added,
+            worst_violation: worst,
+            value: best,
+        });
     }
 
     let bound = Bound {
@@ -769,7 +803,14 @@ pub fn cutting_plane(g: &Graph, p: &Params) -> Result<Tightened, CutsError> {
         rounds: rounds.len(),
         best_round,
     };
-    Ok(Tightened { bound, base, pairs: relax.pairs, incumbent, cuts: relax.cuts, rounds })
+    Ok(Tightened {
+        bound,
+        base,
+        pairs: relax.pairs,
+        incumbent,
+        cuts: relax.cuts,
+        rounds,
+    })
 }
 
 #[cfg(test)]
@@ -826,11 +867,23 @@ mod tests {
         let t = cutting_plane(&g, &Params::default()).unwrap();
 
         // Loose before: the box gives up every edge, -Σ|J| = -6.
-        assert!(t.base <= -6.0, "the box bound must be -6 or below, got {}", t.base);
-        assert!(t.base < exact - 3.9, "the box must be strictly loose: {} vs {exact}", t.base);
+        assert!(
+            t.base <= -6.0,
+            "the box bound must be -6 or below, got {}",
+            t.base
+        );
+        assert!(
+            t.base < exact - 3.9,
+            "the box must be strictly loose: {} vs {exact}",
+            t.base
+        );
 
         // Exact after, and never past it.
-        assert!(t.bound.value <= exact + 1e-14, "UNSOUND: {} > {exact}", t.bound.value);
+        assert!(
+            t.bound.value <= exact + 1e-14,
+            "UNSOUND: {} > {exact}",
+            t.bound.value
+        );
         // 8.9e-16 measured, so 1e-12 is three orders of margin on an ascent that lands on the
         // vertex itself rather than near it.
         assert!(
@@ -864,14 +917,34 @@ mod tests {
             let met = -(n as f64) * (n as f64 - 1.0) / 6.0;
             let t = cutting_plane(&g, &Params::default()).unwrap();
 
-            assert!(t.base <= box_bound, "K_{n} box must be {box_bound}, got {}", t.base);
-            assert!(t.base > box_bound - 1e-12, "K_{n} box must be {box_bound}, got {}", t.base);
+            assert!(
+                t.base <= box_bound,
+                "K_{n} box must be {box_bound}, got {}",
+                t.base
+            );
+            assert!(
+                t.base > box_bound - 1e-12,
+                "K_{n} box must be {box_bound}, got {}",
+                t.base
+            );
             // Both sides of the closed form. Measured error over n = 3..=10 is 4.4e-16 to 1.1e-14.
-            assert!(t.bound.value <= met + 1e-12, "K_{n} UNSOUND vs MET: {} > {met}", t.bound.value);
-            assert!(t.bound.value > met - 1e-12, "K_{n} short of MET: {} vs {met}", t.bound.value);
+            assert!(
+                t.bound.value <= met + 1e-12,
+                "K_{n} UNSOUND vs MET: {} > {met}",
+                t.bound.value
+            );
+            assert!(
+                t.bound.value > met - 1e-12,
+                "K_{n} short of MET: {} vs {met}",
+                t.bound.value
+            );
             // Never above the true optimum either, which for n >= 5 is a far weaker statement than
             // the line above and for n <= 4 is the same one.
-            assert!(t.bound.value <= exact + 1e-14, "K_{n} UNSOUND: {} > {exact}", t.bound.value);
+            assert!(
+                t.bound.value <= exact + 1e-14,
+                "K_{n} UNSOUND: {} > {exact}",
+                t.bound.value
+            );
 
             if n <= 4 {
                 assert!(
@@ -900,7 +973,11 @@ mod tests {
             let exact = enumerate(&g);
             let t = cutting_plane(&g, &Params::default()).unwrap();
             assert!(t.base <= -(m as f64), "box on C_{m}: {}", t.base);
-            assert!(t.bound.value <= exact + 1e-14, "UNSOUND on C_{m}: {} > {exact}", t.bound.value);
+            assert!(
+                t.bound.value <= exact + 1e-14,
+                "UNSOUND on C_{m}: {} > {exact}",
+                t.bound.value
+            );
             // 1.3e-15, 1.1e-12 and 6.7e-9 measured at m = 5, 7, 9: the ascent has more rows to
             // move on the longer cycle and lands nearer rather than on the vertex.
             assert!(
@@ -924,8 +1001,19 @@ mod tests {
         let exact = enumerate(&g);
         assert_eq!(exact, -9.0);
         for per_round in [32usize, 64, 128, 256] {
-            let t = cutting_plane(&g, &Params { per_round, ..Params::default() }).unwrap();
-            assert!(t.bound.value <= exact + 1e-14, "UNSOUND at {per_round}: {}", t.bound.value);
+            let t = cutting_plane(
+                &g,
+                &Params {
+                    per_round,
+                    ..Params::default()
+                },
+            )
+            .unwrap();
+            assert!(
+                t.bound.value <= exact + 1e-14,
+                "UNSOUND at {per_round}: {}",
+                t.bound.value
+            );
             assert!(
                 t.bound.value > exact - 0.1,
                 "{per_round} rows per round left the bound at {} for an optimum of {exact}",
@@ -942,7 +1030,13 @@ mod tests {
     #[test]
     fn no_bound_over_240_random_instances_exceeds_the_enumerated_optimum() {
         let mut rng = Pcg::new(0xB1A5, 0x2C);
-        let p = Params { rounds: 6, per_round: 32, ascent: 120, restarts: 8, ..Params::default() };
+        let p = Params {
+            rounds: 6,
+            per_round: 32,
+            ascent: 120,
+            restarts: 8,
+            ..Params::default()
+        };
         let mut worst = f64::NEG_INFINITY;
         let mut tightened = 0usize;
         for trial in 0..240 {
@@ -970,7 +1064,10 @@ mod tests {
                 t.bound.value,
                 t.bound.value - exact
             );
-            assert!(t.bound.value >= t.base, "trial {trial}: cuts loosened the box bound");
+            assert!(
+                t.bound.value >= t.base,
+                "trial {trial}: cuts loosened the box bound"
+            );
             if t.bound.value > t.base + 1e-9 {
                 tightened += 1;
             }
@@ -978,7 +1075,10 @@ mod tests {
         // 205 of 240 measured. The floor is a coverage ratchet: below it something has stopped
         // separating, which is a failure a per-instance soundness check cannot see -- a relaxation
         // that added no row at all would pass every assertion above.
-        assert!(tightened >= 180, "only {tightened} of 240 instances were tightened at all");
+        assert!(
+            tightened >= 180,
+            "only {tightened} of 240 instances were tightened at all"
+        );
         assert!(worst <= 0.0, "worst margin above the optimum was {worst:e}");
     }
 
@@ -1001,13 +1101,30 @@ mod tests {
                 }
             }
             let g = b.build();
-            let t = cutting_plane(&g, &Params { rounds: 8, ascent: 60, ..Params::default() }).unwrap();
+            let t = cutting_plane(
+                &g,
+                &Params {
+                    rounds: 8,
+                    ascent: 60,
+                    ..Params::default()
+                },
+            )
+            .unwrap();
             let mut prev = t.base;
             for r in &t.rounds {
-                assert!(r.value >= prev, "round {} loosened {} to {}", r.round, prev, r.value);
+                assert!(
+                    r.value >= prev,
+                    "round {} loosened {} to {}",
+                    r.round,
+                    prev,
+                    r.value
+                );
                 prev = r.value;
             }
-            assert_eq!(t.bound.value, prev, "the reported bound must be the last round's value");
+            assert_eq!(
+                t.bound.value, prev,
+                "the reported bound must be the last round's value"
+            );
         }
     }
 
@@ -1027,13 +1144,19 @@ mod tests {
                 s[i] = if mask >> i & 1 == 1 { 1 } else { -1 };
             }
             let x = cut_vector(p, &s);
-            assert!(separate(p, &x, 0.0, 64).is_empty(), "a cut vector was separated: {x:?}");
+            assert!(
+                separate(p, &x, 0.0, 64).is_empty(),
+                "a cut vector was separated: {x:?}"
+            );
             for a in 0..5 {
                 for b in (a + 1)..5 {
                     for c in (b + 1)..5 {
                         for f in Facet::ALL {
                             let cut = TriangleCut::new(a as u32, b as u32, c as u32, f);
-                            assert!(cut.violation(p, &x) <= 0.0, "{cut:?} broken by a cut vector");
+                            assert!(
+                                cut.violation(p, &x) <= 0.0,
+                                "{cut:?} broken by a cut vector"
+                            );
                         }
                     }
                 }
@@ -1092,8 +1215,16 @@ mod tests {
                     assert_eq!(p.ends(k), (a, b), "ends must invert index");
                 }
             }
-            assert!(seen.iter().all(|&v| v), "n={n}: {} variables, some unused", p.len());
-            assert_eq!(p.is_empty(), seen.is_empty(), "is_empty must agree with the variable count");
+            assert!(
+                seen.iter().all(|&v| v),
+                "n={n}: {} variables, some unused",
+                p.len()
+            );
+            assert_eq!(
+                p.is_empty(),
+                seen.is_empty(),
+                "is_empty must agree with the variable count"
+            );
         }
     }
 
@@ -1128,7 +1259,13 @@ mod tests {
                 let mut lifted = s.clone();
                 lifted.resize(relax.pairs.nodes(), 1);
                 let x = cut_vector(relax.pairs, &lifted);
-                let lin: f64 = base + relax.c.iter().zip(x.iter()).map(|(c, x)| c * x).sum::<f64>();
+                let lin: f64 = base
+                    + relax
+                        .c
+                        .iter()
+                        .zip(x.iter())
+                        .map(|(c, x)| c * x)
+                        .sum::<f64>();
                 assert!(
                     (lin - g.energy(&s)).abs() < 1e-12,
                     "encoding {lin} vs energy {}",
@@ -1159,10 +1296,24 @@ mod tests {
                 b.bias(i, 4.0 * rng.f64() - 2.0);
             }
             let g = b.build();
-            let t = cutting_plane(&g, &Params { rounds: 0, ..Params::default() }).unwrap();
+            let t = cutting_plane(
+                &g,
+                &Params {
+                    rounds: 0,
+                    ..Params::default()
+                },
+            )
+            .unwrap();
             let d = crate::bound::decoupled(&g).value;
-            assert!((t.base - d).abs() < 1e-9, "base {} vs decoupled {d}", t.base);
-            assert_eq!(t.bound.value, t.base, "zero rounds must report the box bound");
+            assert!(
+                (t.base - d).abs() < 1e-9,
+                "base {} vs decoupled {d}",
+                t.base
+            );
+            assert_eq!(
+                t.bound.value, t.base,
+                "zero rounds must report the box bound"
+            );
             assert!(t.rounds.is_empty());
         }
     }
@@ -1180,9 +1331,20 @@ mod tests {
         let g = b.build();
         let exact = enumerate(&g);
         let t = cutting_plane(&g, &Params::default()).unwrap();
-        assert!(t.rounds.is_empty(), "nothing is violated on a ferromagnet: {:?}", t.rounds);
-        assert!(t.bound.value > exact - 1e-9 && t.bound.value <= exact, "{} vs {exact}", t.bound.value);
-        assert!(t.bound.proves_optimal(&g, &t.incumbent, 1e-9), "and the quench found it");
+        assert!(
+            t.rounds.is_empty(),
+            "nothing is violated on a ferromagnet: {:?}",
+            t.rounds
+        );
+        assert!(
+            t.bound.value > exact - 1e-9 && t.bound.value <= exact,
+            "{} vs {exact}",
+            t.bound.value
+        );
+        assert!(
+            t.bound.proves_optimal(&g, &t.incumbent, 1e-9),
+            "and the quench found it"
+        );
     }
 
     /// The refusals are refusals, not approximations.
@@ -1193,12 +1355,18 @@ mod tests {
         let big = b.build();
         assert_eq!(
             cutting_plane(&big, &Params::default()).unwrap_err(),
-            CutsError::TooLarge { nodes: MAX_NODES + 1, limit: MAX_NODES }
+            CutsError::TooLarge {
+                nodes: MAX_NODES + 1,
+                limit: MAX_NODES
+            }
         );
         let mut b = GraphBuilder::new(3);
         b.couple(0, 1, f64::NAN);
         let nan = b.build();
-        assert_eq!(cutting_plane(&nan, &Params::default()).unwrap_err(), CutsError::NotFinite);
+        assert_eq!(
+            cutting_plane(&nan, &Params::default()).unwrap_err(),
+            CutsError::NotFinite
+        );
         assert!(!CutsError::NotFinite.to_string().is_empty());
     }
 }

@@ -38,7 +38,7 @@
 // every other, the proposal is nearly uniform, and this is Gibbs with extra arithmetic. The sweep
 // below is over inverse temperature for that reason: the interesting column is the cold end.
 
-use ferrotherm::certify::{tau_estimate, RESOLVED_TAUS};
+use ferrotherm::certify::{RESOLVED_TAUS, tau_estimate};
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::informed::{Balance, Informed};
@@ -58,7 +58,10 @@ fn frustrated(n: usize, seed: u64) -> Graph {
         b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
     }
     for _ in 0..n / 4 {
-        let (i, j) = ((rng.f64() * n as f64) as usize % n, (rng.f64() * n as f64) as usize % n);
+        let (i, j) = (
+            (rng.f64() * n as f64) as usize % n,
+            (rng.f64() * n as f64) as usize % n,
+        );
         if i != j {
             b.couple(i, j, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
         }
@@ -130,14 +133,20 @@ fn main() {
                         let g = frustrated(n, seed);
                         let (t, d, ok) = gibbs_tau(&g, beta, seed);
                         let mut out = [(t, d, ok, f64::NAN); 4];
-                        for (k, b) in [Balance::Sqrt, Balance::Barker, Balance::Metropolis].iter().enumerate() {
+                        for (k, b) in [Balance::Sqrt, Balance::Barker, Balance::Metropolis]
+                            .iter()
+                            .enumerate()
+                        {
                             out[k + 1] = informed_tau(&g, beta, seed, *b);
                         }
                         out
                     })
                 })
                 .collect();
-            handles.into_iter().map(|h| h.join().expect("a chain panicked")).collect()
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("a chain panicked"))
+                .collect()
         });
         let mut row = [0.0f64; 4];
         let mut short = [f64::INFINITY; 4];
@@ -152,11 +161,22 @@ fn main() {
             acc += c[1].3 / seeds as f64;
         }
         let cell = |k: usize| {
-            if all_ok[k] { format!("{:.0}", row[k]) } else { format!(">={:.0}", row[k]) }
+            if all_ok[k] {
+                format!("{:.0}", row[k])
+            } else {
+                format!(">={:.0}", row[k])
+            }
         };
         println!(
             "{beta:>6.1} {:>12} {:>12} {:>12} {:>12} {acc:>10.3}   {:>6.0} {:>6.0} {:>6.0} {:>6.0}",
-            cell(0), cell(1), cell(2), cell(3), short[0], short[1], short[2], short[3]
+            cell(0),
+            cell(1),
+            cell(2),
+            cell(3),
+            short[0],
+            short[1],
+            short[2],
+            short[3]
         );
     }
     println!(

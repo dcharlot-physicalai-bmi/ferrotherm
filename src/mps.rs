@@ -178,7 +178,10 @@ impl core::fmt::Display for MpsError {
                 write!(f, "{parameter} is {value}, which is not a finite number")
             }
             MpsError::ZeroBond => {
-                write!(f, "a maximum bond dimension of 0 describes no state; the smallest is 1")
+                write!(
+                    f,
+                    "a maximum bond dimension of 0 describes no state; the smallest is 1"
+                )
             }
             MpsError::BadCutoff { cutoff } => write!(
                 f,
@@ -326,7 +329,11 @@ impl Tfim {
         // because the last column of K has no sub-diagonal partner, and gJ off it.
         let mut gram = vec![0.0; n * n];
         for i in 0..n {
-            gram[i * n + i] = if i + 1 == n { self.g * self.g } else { self.g * self.g + self.j * self.j };
+            gram[i * n + i] = if i + 1 == n {
+                self.g * self.g
+            } else {
+                self.g * self.g + self.j * self.j
+            };
         }
         for i in 0..n - 1 {
             gram[i * n + i + 1] = self.g * self.j;
@@ -358,7 +365,12 @@ impl Tfim {
         let mut terms = Vec::with_capacity(self.n);
         for m in 0..self.n {
             let k = (2.0 * m as f64 + 1.0) * core::f64::consts::PI / self.n as f64;
-            terms.push(-self.j.abs() * (1.0 + ratio * ratio - 2.0 * ratio * k.cos()).max(0.0).sqrt());
+            terms.push(
+                -self.j.abs()
+                    * (1.0 + ratio * ratio - 2.0 * ratio * k.cos())
+                        .max(0.0)
+                        .sqrt(),
+            );
         }
         Some(sum_up(&terms))
     }
@@ -399,7 +411,11 @@ impl Mps {
         assert!(max_bond >= 1, "a bond dimension of 0 describes no state");
         let mut rng = Pcg::new(seed, 0x4D_50_53);
         let cap = |k: usize| -> usize {
-            if k >= 63 { max_bond } else { max_bond.min(1usize << k) }
+            if k >= 63 {
+                max_bond
+            } else {
+                max_bond.min(1usize << k)
+            }
         };
         let dims: Vec<usize> = (0..=n).map(|i| cap(i).min(cap(n - i))).collect();
         let mut a = Vec::with_capacity(n);
@@ -413,7 +429,13 @@ impl Mps {
             a.push(t);
         }
         let schmidt = (0..=n).map(|_| vec![1.0]).collect();
-        let mut mps = Mps { n, dims, a, schmidt, centre: n - 1 };
+        let mut mps = Mps {
+            n,
+            dims,
+            a,
+            schmidt,
+            centre: n - 1,
+        };
         for i in (1..n).rev() {
             mps.shift_left(i, usize::MAX, 0.0);
         }
@@ -484,7 +506,12 @@ impl Mps {
     /// what canonical form buys, and is only true while the isometries hold.
     #[must_use]
     pub fn norm_squared(&self) -> f64 {
-        sum_up(&self.a[self.centre].iter().map(|x| x * x).collect::<Vec<f64>>())
+        sum_up(
+            &self.a[self.centre]
+                .iter()
+                .map(|x| x * x)
+                .collect::<Vec<f64>>(),
+        )
     }
 
     /// The largest violation of the canonical form anywhere: isometry defects off the centre, and
@@ -586,7 +613,8 @@ impl Mps {
                     }
                     for s in 0..PHYS {
                         for b in 0..dr {
-                            next[(c * PHYS + s) * dr + b] += v * self.a[i][(aa * PHYS + s) * dr + b];
+                            next[(c * PHYS + s) * dr + b] +=
+                                v * self.a[i][(aa * PHYS + s) * dr + b];
                         }
                     }
                 }
@@ -687,7 +715,10 @@ fn truncate(s: &[f64], rank: usize, max_bond: usize, cutoff: f64) -> (usize, f64
     }
     let floor = s[0] * 1e-14;
     let mut keep = 0;
-    while keep < rank && keep < max_bond && s[keep] > floor && (keep == 0 || s[keep] > cutoff * s[0])
+    while keep < rank
+        && keep < max_bond
+        && s[keep] > floor
+        && (keep == 0 || s[keep] > cutoff * s[0])
     {
         keep += 1;
     }
@@ -730,7 +761,11 @@ fn matmul(a: &[f64], ar: usize, ac: usize, b: &[f64], br: usize, bc: usize) -> V
 fn orthonormalise_rows(x: &mut [f64], k: usize, cols: usize) -> usize {
     let mut rank = 0;
     for t in 0..k {
-        let before: f64 = x[t * cols..(t + 1) * cols].iter().map(|v| v * v).sum::<f64>().sqrt();
+        let before: f64 = x[t * cols..(t + 1) * cols]
+            .iter()
+            .map(|v| v * v)
+            .sum::<f64>()
+            .sqrt();
         for _pass in 0..2 {
             for u in 0..rank {
                 let mut dot = 0.0;
@@ -742,7 +777,11 @@ fn orthonormalise_rows(x: &mut [f64], k: usize, cols: usize) -> usize {
                 }
             }
         }
-        let nrm: f64 = x[t * cols..(t + 1) * cols].iter().map(|v| v * v).sum::<f64>().sqrt();
+        let nrm: f64 = x[t * cols..(t + 1) * cols]
+            .iter()
+            .map(|v| v * v)
+            .sum::<f64>()
+            .sqrt();
         if nrm <= 1e-13 * before || nrm == 0.0 {
             for c in 0..cols {
                 x[t * cols + c] = 0.0;
@@ -1048,7 +1087,8 @@ impl LinearOp for Effective<'_> {
                         let mut acc = 0.0;
                         for wb in 0..MPO_BOND {
                             for bp in 0..dr {
-                                acc += self.r[(b * MPO_BOND + wb) * dr + bp] * t3[src + wb * dr + bp];
+                                acc +=
+                                    self.r[(b * MPO_BOND + wb) * dr + bp] * t3[src + wb * dr + bp];
                             }
                         }
                         out[dst + b] = acc;
@@ -1156,7 +1196,13 @@ impl Default for Options {
     /// count**, and neither is visible from the energy trace, which at 10 sweeps is still drifting
     /// by `3.5e-6` and at 20 by `2.3e-6`. A starting point, not a claim about any Hamiltonian.
     fn default() -> Options {
-        Options { max_bond: 32, cutoff: 1e-12, sweeps: 30, krylov: 20, polish: 2 }
+        Options {
+            max_bond: 32,
+            cutoff: 1e-12,
+            sweeps: 30,
+            krylov: 20,
+            polish: 2,
+        }
     }
 }
 
@@ -1181,7 +1227,10 @@ impl Options {
             return Err(MpsError::ZeroBond);
         }
         if !cutoff.is_finite() {
-            return Err(MpsError::NotFinite { parameter: Parameter::Cutoff, value: cutoff });
+            return Err(MpsError::NotFinite {
+                parameter: Parameter::Cutoff,
+                value: cutoff,
+            });
         }
         if !(0.0..1.0).contains(&cutoff) {
             return Err(MpsError::BadCutoff { cutoff });
@@ -1192,7 +1241,13 @@ impl Options {
         if krylov < 2 {
             return Err(MpsError::BadKrylov { krylov });
         }
-        Ok(Options { max_bond, cutoff, sweeps, krylov, polish })
+        Ok(Options {
+            max_bond,
+            cutoff,
+            sweeps,
+            krylov,
+            polish,
+        })
     }
 
     /// The bond-dimension cap.
@@ -1450,7 +1505,13 @@ pub fn ground_state(h: &Tfim, opts: &Options, seed: u64) -> Result<Ground, MpsEr
             let e = update_pair(&mut mps, &l_env[i], &r_env[i + 2], &w, opts, i, false);
             worst_trunc = worst_trunc.max(e.1);
             local.push(e.0);
-            r_env[i + 1] = right_env(&r_env[i + 2], &mps.a[i + 1], &w, mps.dims[i + 1], mps.dims[i + 2]);
+            r_env[i + 1] = right_env(
+                &r_env[i + 2],
+                &mps.a[i + 1],
+                &w,
+                mps.dims[i + 1],
+                mps.dims[i + 2],
+            );
         }
         let energy = *local.last().unwrap_or(&f64::NAN);
         sweeps.push(Sweep {
@@ -1468,7 +1529,14 @@ pub fn ground_state(h: &Tfim, opts: &Options, seed: u64) -> Result<Ground, MpsEr
     for _s in 0..opts.polish {
         let mut local = Vec::with_capacity(2 * n);
         for i in 0..n {
-            local.push(optimise_site(&mut mps, &l_env[i], &r_env[i + 1], &w, opts, i));
+            local.push(optimise_site(
+                &mut mps,
+                &l_env[i],
+                &r_env[i + 1],
+                &w,
+                opts,
+                i,
+            ));
             if i + 1 < n {
                 mps.shift_right(i, usize::MAX, 0.0);
                 l_env[i + 1] = left_env(&l_env[i], &mps.a[i], &w, mps.dims[i], mps.dims[i + 1]);
@@ -1476,9 +1544,21 @@ pub fn ground_state(h: &Tfim, opts: &Options, seed: u64) -> Result<Ground, MpsEr
         }
         for i in (0..n - 1).rev() {
             mps.shift_left(i + 1, usize::MAX, 0.0);
-            r_env[i + 1] =
-                right_env(&r_env[i + 2], &mps.a[i + 1], &w, mps.dims[i + 1], mps.dims[i + 2]);
-            local.push(optimise_site(&mut mps, &l_env[i], &r_env[i + 1], &w, opts, i));
+            r_env[i + 1] = right_env(
+                &r_env[i + 2],
+                &mps.a[i + 1],
+                &w,
+                mps.dims[i + 1],
+                mps.dims[i + 2],
+            );
+            local.push(optimise_site(
+                &mut mps,
+                &l_env[i],
+                &r_env[i + 1],
+                &w,
+                opts,
+                i,
+            ));
         }
         let energy = *local.last().unwrap_or(&f64::NAN);
         sweeps.push(Sweep {
@@ -1494,7 +1574,12 @@ pub fn ground_state(h: &Tfim, opts: &Options, seed: u64) -> Result<Ground, MpsEr
 
     let energy = sweeps.last().map_or(f64::NAN, |s| s.energy);
     let certified = certified_energy(&mps, h);
-    Ok(Ground { energy, certified, sweeps, mps })
+    Ok(Ground {
+        energy,
+        certified,
+        sweeps,
+        mps,
+    })
 }
 
 /// One two-site update. Returns `(energy after truncation, discarded weight)`.
@@ -1512,7 +1597,14 @@ fn update_pair(
 ) -> (f64, f64) {
     let (dl, dm, dr) = (mps.dims[i], mps.dims[i + 1], mps.dims[i + 2]);
     let theta = matmul(&mps.a[i], dl * PHYS, dm, &mps.a[i + 1], dm, PHYS * dr);
-    let eff = Effective { l, r, w_left: w, w_right: w, dl, dr };
+    let eff = Effective {
+        l,
+        r,
+        w_left: w,
+        w_right: w,
+        dl,
+        dr,
+    };
     let (_ritz, opt) = lanczos(&eff, &theta, opts.krylov);
 
     let (rows, cols) = (dl * PHYS, PHYS * dr);
@@ -1562,14 +1654,7 @@ fn update_pair(
 /// Nothing is discarded and no bond dimension moves, so the returned sequence is monotone by
 /// construction: Lanczos starts from the tensor already there and minimises over a space containing
 /// it.
-fn optimise_site(
-    mps: &mut Mps,
-    l: &[f64],
-    r: &[f64],
-    w: &[f64],
-    opts: &Options,
-    i: usize,
-) -> f64 {
+fn optimise_site(mps: &mut Mps, l: &[f64], r: &[f64], w: &[f64], opts: &Options, i: usize) -> f64 {
     let (dl, dr) = (mps.dims[i], mps.dims[i + 1]);
     let op = Site { l, r, w, dl, dr };
     let (_ritz, opt) = lanczos(&op, &mps.a[i], opts.krylov);
@@ -1602,7 +1687,10 @@ fn certified_energy(mps: &Mps, h: &Tfim) -> f64 {
     let mut norm_hi = f64::NEG_INFINITY;
 
     for i in 0..n {
-        debug_assert_eq!(work.centre, i, "every local expectation is read at the centre");
+        debug_assert_eq!(
+            work.centre, i,
+            "every local expectation is read at the centre"
+        );
         let (dl, dr) = (work.dims[i], work.dims[i + 1]);
         let t = &work.a[i];
         let sq: Vec<f64> = t.iter().map(|x| x * x).collect();
@@ -1615,8 +1703,9 @@ fn certified_energy(mps: &Mps, h: &Tfim) -> f64 {
         for aa in 0..dl {
             for b in 0..dr {
                 for s in 0..PHYS {
-                    zt.push(-h.h * z_of(s) * t[(aa * PHYS + s) * dr + b]
-                        * t[(aa * PHYS + s) * dr + b]);
+                    zt.push(
+                        -h.h * z_of(s) * t[(aa * PHYS + s) * dr + b] * t[(aa * PHYS + s) * dr + b],
+                    );
                 }
                 xt.push(-2.0 * h.g * t[aa * PHYS * dr + b] * t[(aa * PHYS + 1) * dr + b]);
             }
@@ -1703,7 +1792,11 @@ mod tests {
         }
         for idx in 0..dim {
             let bit = |i: usize| -> f64 {
-                if (idx >> (n - 1 - i)) & 1 == 0 { 1.0 } else { -1.0 }
+                if (idx >> (n - 1 - i)) & 1 == 0 {
+                    1.0
+                } else {
+                    -1.0
+                }
             };
             let mut diag = 0.0;
             let last = if periodic { n } else { n - 1 };
@@ -2065,7 +2158,10 @@ mod tests {
             squeezed.sweeps.iter().any(|s| s.truncation > 1e-6),
             "the squeezed run must actually discard weight"
         );
-        assert!(worst > 1e-6, "the worst rise was only {worst}, too small to be the truncation");
+        assert!(
+            worst > 1e-6,
+            "the worst rise was only {worst}, too small to be the truncation"
+        );
     }
 
     /// ORACLE: at bond dimension 1 the ansatz IS a product state, so DMRG must land on the
@@ -2149,7 +2245,10 @@ mod tests {
                 );
                 previous = sw.local[k];
             }
-            assert!(sw.isometry_defect < 1e-13, "polish sweep {si} broke the canonical form");
+            assert!(
+                sw.isometry_defect < 1e-13,
+                "polish sweep {si} broke the canonical form"
+            );
         }
     }
 
@@ -2224,7 +2323,11 @@ mod tests {
         assert!((out.mps.norm_squared() - 1.0).abs() < 1e-13);
 
         let mut damaged = out.mps.clone();
-        let far = if damaged.centre() == 0 { damaged.n() - 1 } else { 0 };
+        let far = if damaged.centre() == 0 {
+            damaged.n() - 1
+        } else {
+            0
+        };
         damaged.a[far][0] += 1e-6;
         assert!(
             damaged.isometry_defect() > 1e-9,
@@ -2259,7 +2362,9 @@ mod tests {
             }
         }
         let _ = jacobi_eig(&mut gram, half);
-        let mut want: Vec<f64> = (0..half).map(|i| gram[i * half + i].max(0.0).sqrt()).collect();
+        let mut want: Vec<f64> = (0..half)
+            .map(|i| gram[i * half + i].max(0.0).sqrt())
+            .collect();
         want.sort_by(|a, b| b.total_cmp(a));
 
         let got = out.mps.schmidt(n / 2).unwrap();
@@ -2271,8 +2376,10 @@ mod tests {
             );
         }
         let entropy = out.mps.entanglement_entropy(n / 2).unwrap();
-        let want_entropy: f64 =
-            -want.iter().map(|&s| if s > 0.0 { s * s * (s * s).ln() } else { 0.0 }).sum::<f64>();
+        let want_entropy: f64 = -want
+            .iter()
+            .map(|&s| if s > 0.0 { s * s * (s * s).ln() } else { 0.0 })
+            .sum::<f64>();
         assert!(
             (entropy - want_entropy).abs() < 1e-7,
             "entanglement entropy {entropy} vs {want_entropy}"
@@ -2325,9 +2432,16 @@ mod tests {
         let opts = Options::new(16, 1e-12, 12, 14, 2).unwrap();
         let a = ground_state(&h, &opts, 99).unwrap();
         let b = ground_state(&h, &opts, 99).unwrap();
-        assert_eq!(a.energy.to_bits(), b.energy.to_bits(), "same seed must give the same bits");
+        assert_eq!(
+            a.energy.to_bits(),
+            b.energy.to_bits(),
+            "same seed must give the same bits"
+        );
         let c = ground_state(&h, &opts, 100).unwrap();
-        assert!(a.energy.to_bits() != c.energy.to_bits(), "two seeds produced identical bits");
+        assert!(
+            a.energy.to_bits() != c.energy.to_bits(),
+            "two seeds produced identical bits"
+        );
         assert!(
             (a.energy - c.energy).abs() < 1e-9,
             "two seeds must find the same ground energy: {} vs {}",
@@ -2339,33 +2453,57 @@ mod tests {
     /// Bad input is a typed error naming what it saw, never a substituted default.
     #[test]
     fn bad_input_is_a_typed_error_naming_what_it_saw() {
-        assert_eq!(Tfim::new(1, 1.0, 1.0, 0.0), Err(MpsError::TooFewSites { n: 1 }));
+        assert_eq!(
+            Tfim::new(1, 1.0, 1.0, 0.0),
+            Err(MpsError::TooFewSites { n: 1 })
+        );
         // NaN != NaN, so the coupling case is matched rather than compared -- an `assert_eq!` on an
         // error carrying a NaN can never hold, and writing one is how a test comes to assert
         // nothing.
         match Tfim::new(4, f64::NAN, 1.0, 0.0) {
-            Err(MpsError::NotFinite { parameter: Parameter::Coupling, value }) => {
+            Err(MpsError::NotFinite {
+                parameter: Parameter::Coupling,
+                value,
+            }) => {
                 assert!(value.is_nan());
             }
             other => panic!("expected a named coupling error, got {other:?}"),
         }
         match Tfim::new(4, 1.0, f64::INFINITY, 0.0) {
-            Err(MpsError::NotFinite { parameter: Parameter::TransverseField, value }) => {
+            Err(MpsError::NotFinite {
+                parameter: Parameter::TransverseField,
+                value,
+            }) => {
                 assert!(value.is_infinite());
             }
             other => panic!("expected a named transverse-field error, got {other:?}"),
         }
         assert_eq!(Options::new(0, 1e-12, 4, 8, 1), Err(MpsError::ZeroBond));
-        assert_eq!(Options::new(4, 1.0, 4, 8, 1), Err(MpsError::BadCutoff { cutoff: 1.0 }));
-        assert_eq!(Options::new(4, -0.1, 4, 8, 1), Err(MpsError::BadCutoff { cutoff: -0.1 }));
+        assert_eq!(
+            Options::new(4, 1.0, 4, 8, 1),
+            Err(MpsError::BadCutoff { cutoff: 1.0 })
+        );
+        assert_eq!(
+            Options::new(4, -0.1, 4, 8, 1),
+            Err(MpsError::BadCutoff { cutoff: -0.1 })
+        );
         assert_eq!(Options::new(4, 1e-12, 0, 8, 1), Err(MpsError::NoSweeps));
-        assert_eq!(Options::new(4, 1e-12, 4, 1, 1), Err(MpsError::BadKrylov { krylov: 1 }));
+        assert_eq!(
+            Options::new(4, 1e-12, 4, 1, 1),
+            Err(MpsError::BadKrylov { krylov: 1 })
+        );
         let msg = MpsError::TooFewSites { n: 1 }.to_string();
-        assert!(msg.contains('1') && msg.contains("two-site"), "unhelpful message: {msg}");
         assert!(
-            MpsError::NotFinite { parameter: Parameter::LongitudinalField, value: f64::NAN }
-                .to_string()
-                .contains("longitudinal"),
+            msg.contains('1') && msg.contains("two-site"),
+            "unhelpful message: {msg}"
+        );
+        assert!(
+            MpsError::NotFinite {
+                parameter: Parameter::LongitudinalField,
+                value: f64::NAN
+            }
+            .to_string()
+            .contains("longitudinal"),
             "the message must name the parameter"
         );
     }
@@ -2381,10 +2519,19 @@ mod tests {
         assert!(m.tensor(6).is_none());
         assert!(m.schmidt(7).is_none());
         assert!(m.entanglement_entropy(7).is_none());
-        assert!(m.amplitude(&[0, 0, 0, 0, 0]).is_none(), "a short configuration is not a state");
-        assert!(m.amplitude(&[0, 1, 0, 1, 0, 2]).is_none(), "a spin index of 2 is not a spin");
+        assert!(
+            m.amplitude(&[0, 0, 0, 0, 0]).is_none(),
+            "a short configuration is not a state"
+        );
+        assert!(
+            m.amplitude(&[0, 1, 0, 1, 0, 2]).is_none(),
+            "a spin index of 2 is not a spin"
+        );
         assert!(m.amplitude(&[0, 1, 0, 1, 0, 1]).is_some());
-        assert!(m.isometry_defect() < 1e-13, "a fresh random state must be canonical too");
+        assert!(
+            m.isometry_defect() < 1e-13,
+            "a fresh random state must be canonical too"
+        );
 
         // The amplitudes and the dense vector are the same object seen two ways.
         let dense = m.to_dense().unwrap();
@@ -2394,6 +2541,9 @@ mod tests {
             assert!((m.amplitude(&cfg).unwrap() - dense[idx]).abs() < 1e-14);
         }
         let norm: f64 = dense.iter().map(|x| x * x).sum();
-        assert!((norm - 1.0).abs() < 1e-12, "a canonical state is normalised, got {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-12,
+            "a canonical state is normalised, got {norm}"
+        );
     }
 }

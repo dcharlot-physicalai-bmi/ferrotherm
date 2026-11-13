@@ -106,7 +106,12 @@ pub fn words(bytes: &[u8]) -> Vec<u32> {
     let mut out = Vec::with_capacity(whole);
     for i in 0..whole {
         let b = i * 4;
-        out.push(u32::from_le_bytes([bytes[b], bytes[b + 1], bytes[b + 2], bytes[b + 3]]));
+        out.push(u32::from_le_bytes([
+            bytes[b],
+            bytes[b + 1],
+            bytes[b + 2],
+            bytes[b + 3],
+        ]));
     }
     out
 }
@@ -152,7 +157,11 @@ mod tests {
     #[test]
     fn real_addresses_round_trip() {
         for far in REAL_FARS {
-            assert_eq!(Far::decode(far).encode(), far, "0x{far:08X} did not survive decode");
+            assert_eq!(
+                Far::decode(far).encode(),
+                far,
+                "0x{far:08X} did not survive decode"
+            );
         }
     }
 
@@ -170,12 +179,20 @@ mod tests {
     /// 255 must come back as 255 and must not disturb the column.
     #[test]
     fn the_minor_field_is_eight_bits() {
-        let deep = Far { block_type: 1, row: 3, column: 2, minor: 255 };
+        let deep = Far {
+            block_type: 1,
+            row: 3,
+            column: 2,
+            minor: 255,
+        };
         let round = Far::decode(deep.encode());
         assert_eq!(round, deep);
         assert_eq!(round.minor, 255);
         // the 7-series mask would fold this frame onto minor 121 and change nothing else
-        let folded = Far { minor: (255u32 & 0x7F) as u8, ..deep };
+        let folded = Far {
+            minor: (255u32 & 0x7F) as u8,
+            ..deep
+        };
         assert_ne!(folded.encode(), deep.encode());
         // and a whole block-RAM column is 256 frames deep, so the fold loses half of it
         assert_eq!(deep.column_base(), Far { minor: 0, ..deep }.encode());
@@ -204,7 +221,11 @@ mod tests {
         image.push(crate::bitstream::SYNC);
         image.push(NOOP);
         assert_eq!(config_start(&image), Some(real));
-        assert_ne!(config_start(&image), Some(8), "matched the boot header's decoy");
+        assert_ne!(
+            config_start(&image),
+            Some(8),
+            "matched the boot header's decoy"
+        );
     }
 
     /// An image with no configuration stream is refused rather than answered with zero.
@@ -224,7 +245,10 @@ mod tests {
         assert_eq!(w, vec![crate::bitstream::SYNC, NOOP]);
         assert_eq!(to_bytes(&w), raw);
         // read big-endian, as a 7-series stream is, the same bytes are not the sync word
-        assert_ne!(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]), crate::bitstream::SYNC);
+        assert_ne!(
+            u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]),
+            crate::bitstream::SYNC
+        );
     }
 
     /// A trailing partial word is dropped, not padded into a false one.

@@ -178,13 +178,20 @@ mod tests {
             src.contains("1.0 / (1.0 + exp(-2.0 * P.ctl.x * f))"),
             "the sigmoid must be sigma(2*beta*f); anything else samples a different temperature"
         );
-        assert!(src.contains("spin[i] = 1;") && src.contains("spin[i] = -1;"), "states are -1/+1");
+        assert!(
+            src.contains("spin[i] = 1;") && src.contains("spin[i] = -1;"),
+            "states are -1/+1"
+        );
     }
 
     #[test]
     fn the_emitted_shader_is_syntactically_plausible() {
         let src = sweep_shader();
-        assert_eq!(src.matches('{').count(), src.matches('}').count(), "unbalanced braces");
+        assert_eq!(
+            src.matches('{').count(),
+            src.matches('}').count(),
+            "unbalanced braces"
+        );
         for needed in [
             "vec4<u32>",
             "@compute",
@@ -226,7 +233,9 @@ mod tests {
         let m = GpuModel::from_graph(&g);
         let d = crate::dense::Padded::from_graph(&g);
         let mut rng = crate::rng::Pcg::new(4, 0);
-        let s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+            .collect();
 
         let mut worst: f64 = 0.0;
         for i in 0..g.n {
@@ -241,7 +250,10 @@ mod tests {
             let pb = crate::kernel::p_up(f32_sum as f64, 1.0);
             worst = worst.max((pa - pb).abs());
         }
-        assert!(worst < 1e-6, "f32 accumulation shifted a probability by {worst}");
+        assert!(
+            worst < 1e-6,
+            "f32 accumulation shifted a probability by {worst}"
+        );
     }
 
     #[test]
@@ -271,23 +283,43 @@ mod wgsl_language_rules {
     /// WGSL reserved words that read like ordinary identifiers. Using one produces an invalid
     /// shader module, and an invalid module's dispatches silently do nothing rather than failing.
     const RESERVED: [&str; 12] = [
-        "class", "enum", "typedef", "union", "template", "interface", "private", "public",
-        "shared", "namespace", "static", "match",
+        "class",
+        "enum",
+        "typedef",
+        "union",
+        "template",
+        "interface",
+        "private",
+        "public",
+        "shared",
+        "namespace",
+        "static",
+        "match",
     ];
 
     #[test]
     fn no_binding_is_named_with_a_reserved_word() {
         let src = sweep_shader();
         for line in src.lines().filter(|l| l.contains("@binding")) {
-            let name = line.split_whitespace().last().unwrap_or("").trim_end_matches(':');
+            let name = line
+                .split_whitespace()
+                .last()
+                .unwrap_or("")
+                .trim_end_matches(':');
             let name = name.split(':').next().unwrap_or("");
             for r in RESERVED {
-                assert_ne!(name, r, "binding named with the reserved word `{r}`: {line}");
+                assert_ne!(
+                    name, r,
+                    "binding named with the reserved word `{r}`: {line}"
+                );
             }
         }
         // the specific one that shipped
         assert!(!src.contains(" class:"), "`class` is reserved in WGSL");
-        assert!(src.contains("cls"), "the colour-class binding should be `cls`");
+        assert!(
+            src.contains("cls"),
+            "the colour-class binding should be `cls`"
+        );
     }
 
     #[test]

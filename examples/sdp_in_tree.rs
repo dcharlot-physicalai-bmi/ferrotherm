@@ -48,9 +48,13 @@ fn main() {
     // whose cost is set exponentially deeper. The sweep runs until the ratio stops falling.
     let depths: [Option<usize>; 6] = [None, Some(4), Some(8), Some(12), Some(16), Some(20)];
 
-    println!("SDP-in-tree depth sweep, dense instances, node budget {BUDGET}, tabu incumbent, 3 seeds\n");
-    println!("  {:>6} {:>8} {:>14} {:>8} {:>12} {:>10}",
-             "spins", "depth", "median nodes", "vs cheap", "prunes/calls", "median s");
+    println!(
+        "SDP-in-tree depth sweep, dense instances, node budget {BUDGET}, tabu incumbent, 3 seeds\n"
+    );
+    println!(
+        "  {:>6} {:>8} {:>14} {:>8} {:>12} {:>10}",
+        "spins", "depth", "median nodes", "vs cheap", "prunes/calls", "median s"
+    );
 
     let mut dirty: Option<String> = None;
     for (n, p) in sizes {
@@ -62,16 +66,24 @@ fn main() {
                 let g = instance(n, p, seed);
                 let inc = tabu::search(
                     &g,
-                    &tabu::Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000) , start: None },
+                    &tabu::Params {
+                        iterations: 20_000,
+                        tenure: 0,
+                        restart_after: Some(2_000),
+                        start: None,
+                    },
                     seed,
                 );
                 let (out, t) = Timing::around(|| {
-                    branch::solve(&g, &branch::Params {
-                        max_nodes: BUDGET,
-                        incumbent: Some(inc.state.clone()),
-                        sdp_depth: depth,
-                        ..branch::Params::default()
-                    })
+                    branch::solve(
+                        &g,
+                        &branch::Params {
+                            max_nodes: BUDGET,
+                            incumbent: Some(inc.state.clone()),
+                            sdp_depth: depth,
+                            ..branch::Params::default()
+                        },
+                    )
                 });
                 nodes.push(out.nodes);
                 secs.push(t.seconds);
@@ -82,7 +94,10 @@ fn main() {
                     dirty = t.caveat();
                 }
             }
-            assert_eq!(proved, 3, "n={n} depth={depth:?} failed to prove within the budget");
+            assert_eq!(
+                proved, 3,
+                "n={n} depth={depth:?} failed to prove within the budget"
+            );
             nodes.sort_unstable();
             secs.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
             let med = nodes[1] as f64;
@@ -91,11 +106,26 @@ fn main() {
             }
             // Against the PAIRED baseline -- same instances, same incumbents, same seeds -- because
             // a ratio against some other run's numbers would measure the instances, not the dial.
-            let vs = if baseline > 0.0 { format!("{:.2}x", med / baseline) } else { "--".into() };
+            let vs = if baseline > 0.0 {
+                format!("{:.2}x", med / baseline)
+            } else {
+                "--".into()
+            };
             let label = depth.map_or("cheap".to_string(), |d| format!("d{d}"));
-            let sdp = if depth.is_none() { "--".to_string() } else { format!("{bit}/{fired}") };
-            let clock = if dirty.is_some() { " spoiled".to_string() } else { format!("{:>10.2}", secs[1]) };
-            println!("  {n:>6} {label:>8} {:>14} {vs:>8} {sdp:>12} {clock}", nodes[1]);
+            let sdp = if depth.is_none() {
+                "--".to_string()
+            } else {
+                format!("{bit}/{fired}")
+            };
+            let clock = if dirty.is_some() {
+                " spoiled".to_string()
+            } else {
+                format!("{:>10.2}", secs[1])
+            };
+            println!(
+                "  {n:>6} {label:>8} {:>14} {vs:>8} {sdp:>12} {clock}",
+                nodes[1]
+            );
         }
         println!();
     }
@@ -105,7 +135,9 @@ fn main() {
     }
     println!("READING: `vs cheap` below 1.00 is the dial working. It is the only column that can");
     println!("say so -- a bound that fires at every node and prunes at none leaves this at 1.00");
-    println!("while looking busy in `prunes/calls`, and the wall clock cannot separate the two on a");
+    println!(
+        "while looking busy in `prunes/calls`, and the wall clock cannot separate the two on a"
+    );
     println!("machine this contended. Where the ratio stops falling is where the extra Choleskys");
     println!("stop buying anything, and that depth is the answer this example exists to give.");
 }

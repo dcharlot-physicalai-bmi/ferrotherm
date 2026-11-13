@@ -8,15 +8,27 @@
 // reports match what a 7-series part expects, the encoder half is trustworthy too.
 //
 // usage: cargo run -p ferrotherm-silicon --example decode_bit -- <file.bit|file.bin>
-use ferrotherm_silicon::bitstream::{decode, find_sync, parse_bit, reg, to_words, Packet};
+use ferrotherm_silicon::bitstream::{Packet, decode, find_sync, parse_bit, reg, to_words};
 
 fn reg_name(r: u32) -> &'static str {
     match r {
-        reg::CRC => "CRC", reg::FAR => "FAR", reg::FDRI => "FDRI", reg::FDRO => "FDRO",
-        reg::CMD => "CMD", reg::CTL0 => "CTL0", reg::MASK => "MASK", reg::STAT => "STAT",
-        reg::LOUT => "LOUT", reg::COR0 => "COR0", reg::IDCODE => "IDCODE", reg::COR1 => "COR1",
-        reg::WBSTAR => "WBSTAR", reg::TIMER => "TIMER", reg::BOOTSTS => "BOOTSTS",
-        reg::CTL1 => "CTL1", _ => "?",
+        reg::CRC => "CRC",
+        reg::FAR => "FAR",
+        reg::FDRI => "FDRI",
+        reg::FDRO => "FDRO",
+        reg::CMD => "CMD",
+        reg::CTL0 => "CTL0",
+        reg::MASK => "MASK",
+        reg::STAT => "STAT",
+        reg::LOUT => "LOUT",
+        reg::COR0 => "COR0",
+        reg::IDCODE => "IDCODE",
+        reg::COR1 => "COR1",
+        reg::WBSTAR => "WBSTAR",
+        reg::TIMER => "TIMER",
+        reg::BOOTSTS => "BOOTSTS",
+        reg::CTL1 => "CTL1",
+        _ => "?",
     }
 }
 
@@ -25,7 +37,10 @@ fn main() {
     let raw = std::fs::read(&path).expect("read");
     let bit = parse_bit(&raw);
     if !bit.part.is_empty() {
-        println!("container: design={:?} part={:?} {} {}", bit.design, bit.part, bit.date, bit.time);
+        println!(
+            "container: design={:?} part={:?} {} {}",
+            bit.design, bit.part, bit.date, bit.time
+        );
     }
     let sync = find_sync(bit.config).expect("no sync word — not a configuration stream");
     println!("{} bytes, sync at offset {}", bit.config.len(), sync - 4);
@@ -53,14 +68,26 @@ fn main() {
                     _ => {}
                 }
                 if data.len() <= 1 && !matches!(*r, reg::FDRI) {
-                    println!("  {:>7} <= {}", reg_name(*r),
-                             data.first().map(|d| format!("0x{d:08X}")).unwrap_or_default());
+                    println!(
+                        "  {:>7} <= {}",
+                        reg_name(*r),
+                        data.first()
+                            .map(|d| format!("0x{d:08X}"))
+                            .unwrap_or_default()
+                    );
                 }
             }
         }
     }
-    println!("\npackets: {} ({} NOP, {} unknown)", packets.len(), nops, unknown);
-    println!("FAR writes: {far_writes}   frame data words: {frame_words}   CRC writes: {crc_writes}");
+    println!(
+        "\npackets: {} ({} NOP, {} unknown)",
+        packets.len(),
+        nops,
+        unknown
+    );
+    println!(
+        "FAR writes: {far_writes}   frame data words: {frame_words}   CRC writes: {crc_writes}"
+    );
     match idcode {
         Some(id) => println!("IDCODE stamped in stream: 0x{id:08X}"),
         None => println!("no IDCODE packet found"),

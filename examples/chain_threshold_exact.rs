@@ -22,7 +22,9 @@
 //
 // run: cargo run --release --example chain_threshold_exact
 
-use ferrotherm::embed::{apply_with, chimera_clique, embed_bounded, Embedding, DEFAULT_SEARCH_BUDGET};
+use ferrotherm::embed::{
+    DEFAULT_SEARCH_BUDGET, Embedding, apply_with, chimera_clique, embed_bounded,
+};
 use ferrotherm::exact::Elimination;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising::chimera;
@@ -53,7 +55,11 @@ fn regular(n: usize, d: usize, seed: u64) -> Graph {
         let mut edges: Vec<(usize, usize)> = Vec::new();
         for pair in stubs.chunks(2) {
             let (a, c) = (pair[0], pair[1]);
-            if a == c || edges.iter().any(|&(x, y)| (x == a && y == c) || (x == c && y == a)) {
+            if a == c
+                || edges
+                    .iter()
+                    .any(|&(x, y)| (x == a && y == c) || (x == c && y == a))
+            {
                 continue 'attempt;
             }
             edges.push((a, c));
@@ -85,7 +91,12 @@ fn chain_edges(e: &Embedding, hw: &Graph) -> usize {
 
 fn choi(logical: &Graph) -> f64 {
     (0..logical.n)
-        .map(|i| logical.h[i].abs() + (logical.offset[i]..logical.offset[i + 1]).map(|k| logical.w[k].abs()).sum::<f64>())
+        .map(|i| {
+            logical.h[i].abs()
+                + (logical.offset[i]..logical.offset[i + 1])
+                    .map(|k| logical.w[k].abs())
+                    .sum::<f64>()
+        })
         .fold(0.0f64, f64::max)
 }
 
@@ -101,17 +112,30 @@ fn threshold(logical: &Graph, hw: &Graph, emb: &Embedding) -> Option<Threshold> 
     let elim = Elimination::default();
     let e_star = elim.ground_state(logical).ok()?.ground_energy?;
     let n_ce = chain_edges(emb, hw) as f64;
-    let ground = |f: f64| -> Option<f64> { elim.ground_state(&apply_with(logical, hw, emb, f).graph).ok()?.ground_energy };
+    let ground = |f: f64| -> Option<f64> {
+        elim.ground_state(&apply_with(logical, hw, emb, f).graph)
+            .ok()?
+            .ground_energy
+    };
     let aligned_ok = |f: f64| -> Option<bool> { Some(ground(f)? >= e_star - f * n_ce - 1e-9) };
     let c = choi(logical);
     let mut hi = 2.0 * c.max(1.0);
     // The self-check that the rewrite preserved the logical energies: at a strength no broken
     // chain can beat, the embedded ground energy is exactly E_I* - F x chain edges.
     let g_hi = ground(hi)?;
-    assert!((g_hi - (e_star - hi * n_ce)).abs() < 1e-9, "the embedded model at F = {hi} is not the logical one: {g_hi} vs {}", e_star - hi * n_ce);
+    assert!(
+        (g_hi - (e_star - hi * n_ce)).abs() < 1e-9,
+        "the embedded model at F = {hi} is not the logical one: {g_hi} vs {}",
+        e_star - hi * n_ce
+    );
     let mut lo = 0.0;
     if aligned_ok(0.0)? {
-        return Some(Threshold { f_star: 0.0, choi: c, utc: torque::strength(logical), longest_chain: emb.longest_chain() });
+        return Some(Threshold {
+            f_star: 0.0,
+            choi: c,
+            utc: torque::strength(logical),
+            longest_chain: emb.longest_chain(),
+        });
     }
     for _ in 0..40 {
         let mid = 0.5 * (lo + hi);
@@ -124,16 +148,29 @@ fn threshold(logical: &Graph, hw: &Graph, emb: &Embedding) -> Option<Threshold> 
             break;
         }
     }
-    Some(Threshold { f_star: hi, choi: c, utc: torque::strength(logical), longest_chain: emb.longest_chain() })
+    Some(Threshold {
+        f_star: hi,
+        choi: c,
+        utc: torque::strength(logical),
+        longest_chain: emb.longest_chain(),
+    })
 }
 
-fn embed_or_clique(logical: &Graph, hw: &Graph, seed: u64, clique_m: Option<usize>) -> Option<Embedding> {
+fn embed_or_clique(
+    logical: &Graph,
+    hw: &Graph,
+    seed: u64,
+    clique_m: Option<usize>,
+) -> Option<Embedding> {
     if let Some(e) = embed_bounded(logical, hw, seed, 10, DEFAULT_SEARCH_BUDGET) {
         return Some(e);
     }
     let m = clique_m?;
     let e = chimera_clique(m, 4)?;
-    (e.chains.len() >= logical.n).then(|| Embedding { chains: e.chains[..logical.n].to_vec(), ..e })
+    (e.chains.len() >= logical.n).then(|| Embedding {
+        chains: e.chains[..logical.n].to_vec(),
+        ..e
+    })
 }
 
 fn slope(xs: &[f64], ys: &[f64]) -> f64 {
@@ -148,7 +185,16 @@ fn report(name: &str, rows: &[(f64, Vec<Threshold>)]) {
     println!("  {name}\n");
     println!(
         "  {:>6} {:>5}   {:>8} {:>8} {:>8} {:>5}   {:>8} {:>10}   {:>9} {:>6}",
-        "degree", "inst", "F* mean", "F* max", "F* min", "F*=0", "F*/Choi", "UTC/F* med", "UTC<F*", "chain"
+        "degree",
+        "inst",
+        "F* mean",
+        "F* max",
+        "F* min",
+        "F*=0",
+        "F*/Choi",
+        "UTC/F* med",
+        "UTC<F*",
+        "chain"
     );
     let (mut lx, mut ly) = (Vec::new(), Vec::new());
     for (d, ts) in rows {
@@ -164,9 +210,17 @@ fn report(name: &str, rows: &[(f64, Vec<Threshold>)]) {
         let zero = ts.iter().filter(|t| t.f_star == 0.0).count();
         // The ratio to UTC over the instances that need a chain at all, as a median: an instance
         // with F* = 0 has an infinite ratio and says nothing about the rule.
-        let mut ratios: Vec<f64> = ts.iter().filter(|t| t.f_star > 0.0).map(|t| t.utc / t.f_star).collect();
+        let mut ratios: Vec<f64> = ts
+            .iter()
+            .filter(|t| t.f_star > 0.0)
+            .map(|t| t.utc / t.f_star)
+            .collect();
         ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let utc = if ratios.is_empty() { f64::NAN } else { ratios[ratios.len() / 2] };
+        let utc = if ratios.is_empty() {
+            f64::NAN
+        } else {
+            ratios[ratios.len() / 2]
+        };
         let broke = ts.iter().filter(|t| t.utc < t.f_star).count();
         let chain = ts.iter().map(|t| t.longest_chain).max().unwrap_or(0);
         println!(
@@ -179,17 +233,28 @@ fn report(name: &str, rows: &[(f64, Vec<Threshold>)]) {
         ly.push(mean.ln());
     }
     if lx.len() >= 2 {
-        println!("\n  slope of log F*(mean) against log degree: {:.2}   (1 = Choi's linear rule, 0.5 = the torque rule)\n", slope(&lx, &ly));
+        println!(
+            "\n  slope of log F*(mean) against log degree: {:.2}   (1 = Choi's linear rule, 0.5 = the torque rule)\n",
+            slope(&lx, &ly)
+        );
     }
 }
 
 fn main() {
     let instances = 20u64;
     println!("THE EXACT MINIMAL CHAIN STRENGTH, BY BISECTION ON AN EXACT ELIMINATION\n");
-    println!("  F*       smallest F at which the embedded ground energy equals E_I* - F x (chain edges); relative 1e-4");
-    println!("  Choi     max_i (|h_i| + sum_j |J_ij|), the sufficient strength of Choi's Theorem 4.1 (the degree, at +-J and no field)");
-    println!("  UTC      torque::strength = 1.414 rms(J) sqrt(mean degree); 'UTC<F*' counts instances whose chains break at UTC");
-    println!("  hardware K_n on chimera(2,2,4) (32 sites); 12-vertex d-regular on chimera(3,3,4) (72 sites); {instances} instances each\n");
+    println!(
+        "  F*       smallest F at which the embedded ground energy equals E_I* - F x (chain edges); relative 1e-4"
+    );
+    println!(
+        "  Choi     max_i (|h_i| + sum_j |J_ij|), the sufficient strength of Choi's Theorem 4.1 (the degree, at +-J and no field)"
+    );
+    println!(
+        "  UTC      torque::strength = 1.414 rms(J) sqrt(mean degree); 'UTC<F*' counts instances whose chains break at UTC"
+    );
+    println!(
+        "  hardware K_n on chimera(2,2,4) (32 sites); 12-vertex d-regular on chimera(3,3,4) (72 sites); {instances} instances each\n"
+    );
 
     let hw2 = chimera(2, 2, 4, 1.0);
     let mut rows = Vec::new();
@@ -197,7 +262,9 @@ fn main() {
         let mut ts = Vec::new();
         for seed in 0..instances {
             let logical = complete(n, 100 + seed);
-            let Some(emb) = embed_or_clique(&logical, &hw2, seed, Some(2)) else { continue };
+            let Some(emb) = embed_or_clique(&logical, &hw2, seed, Some(2)) else {
+                continue;
+            };
             if let Some(t) = threshold(&logical, &hw2, &emb) {
                 ts.push(t);
             }
@@ -212,7 +279,9 @@ fn main() {
         let mut ts = Vec::new();
         for seed in 0..instances {
             let logical = regular(12, d, 200 + seed);
-            let Some(emb) = embed_or_clique(&logical, &hw3, seed, None) else { continue };
+            let Some(emb) = embed_or_clique(&logical, &hw3, seed, None) else {
+                continue;
+            };
             if let Some(t) = threshold(&logical, &hw3, &emb) {
                 ts.push(t);
             }
@@ -222,10 +291,20 @@ fn main() {
     report("random d-regular on 12 vertices, +-J, no fields", &rows);
 
     println!("  WHAT THE TABLE SAYS.\n");
-    println!("  F*/Choi is how much of Choi's sufficient strength the instance actually needs; the slope is how F*");
-    println!("  grows with degree when nothing else changes. UTC/F* above 1 is a chain that holds at the torque");
-    println!("  rule's strength, below 1 a chain that breaks in the ground state at that strength -- and the");
-    println!("  count says on how many instances the torque rule under-provisions. Every F* is exact for its");
-    println!("  instance and embedding: F* depends on the embedding (chain lengths, which edges carry which");
+    println!(
+        "  F*/Choi is how much of Choi's sufficient strength the instance actually needs; the slope is how F*"
+    );
+    println!(
+        "  grows with degree when nothing else changes. UTC/F* above 1 is a chain that holds at the torque"
+    );
+    println!(
+        "  rule's strength, below 1 a chain that breaks in the ground state at that strength -- and the"
+    );
+    println!(
+        "  count says on how many instances the torque rule under-provisions. Every F* is exact for its"
+    );
+    println!(
+        "  instance and embedding: F* depends on the embedding (chain lengths, which edges carry which"
+    );
     println!("  coupling), so the same logical graph has a different F* on a different placement.");
 }

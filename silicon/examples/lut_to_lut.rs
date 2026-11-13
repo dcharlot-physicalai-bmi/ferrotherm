@@ -12,7 +12,7 @@
 use ferrotherm_silicon::framebuf::FrameBuf;
 use ferrotherm_silicon::pips::PipDb;
 use ferrotherm_silicon::pips::Ppips;
-use ferrotherm_silicon::route::{interconnect_with_endpoints, parse_tileconn, Fabric};
+use ferrotherm_silicon::route::{Fabric, interconnect_with_endpoints, parse_tileconn};
 use ferrotherm_silicon::segbits::SegBits;
 use ferrotherm_silicon::tilegrid::TileGrid;
 use std::collections::HashMap;
@@ -28,7 +28,10 @@ fn main() {
     dbs.insert("INT_L".to_string(), PipDb::parse(&rd(2)).expect("INT_L"));
     dbs.insert("INT_R".to_string(), PipDb::parse(&rd(3)).expect("INT_R"));
     let clb = PipDb::parse(&rd(4)).expect("CLBLL_L");
-    dbs.insert("CLBLL_L".to_string(), PipDb::parse(&rd(4)).expect("CLBLL_L"));
+    dbs.insert(
+        "CLBLL_L".to_string(),
+        PipDb::parse(&rd(4)).expect("CLBLL_L"),
+    );
     let mut seg = HashMap::new();
     seg.insert("INT_L".to_string(), SegBits::parse(&rd(5)));
     seg.insert("INT_R".to_string(), SegBits::parse(&rd(6)));
@@ -37,7 +40,10 @@ fn main() {
     let site0 = &clb.sites[0];
     let out_wire = site0.pins.get("A").expect("A output pin").clone();
     let in_wire = site0.pins.get("A1").expect("A1 input pin").clone();
-    println!("slice pin map: {} / A -> {}   A1 -> {}", site0.name, out_wire, in_wire);
+    println!(
+        "slice pin map: {} / A -> {}   A1 -> {}",
+        site0.name, out_wire, in_wire
+    );
 
     // two CLB tiles in the same column, a few rows apart
     let mut clbs: Vec<_> = grid
@@ -46,8 +52,14 @@ fn main() {
         .collect();
     clbs.sort_by_key(|t| (t.grid_x, t.grid_y));
     let (src_tile, dst_tile) = (clbs[0], clbs[2]);
-    println!("source slice tile: {} ({},{})", src_tile.name, src_tile.grid_x, src_tile.grid_y);
-    println!("target slice tile: {} ({},{})", dst_tile.name, dst_tile.grid_x, dst_tile.grid_y);
+    println!(
+        "source slice tile: {} ({},{})",
+        src_tile.name, src_tile.grid_x, src_tile.grid_y
+    );
+    println!(
+        "target slice tile: {} ({},{})",
+        dst_tile.name, dst_tile.grid_x, dst_tile.grid_y
+    );
 
     // pseudo-PIP kinds: `always` entries are permanent wiring (the LUT-pin bridges), usable at
     // zero cost; anything else is not a conductor we may rely on.
@@ -78,7 +90,10 @@ fn main() {
     let mut ok = 0usize;
     for s in &path {
         let bits = seg.get(&s.tile_type).and_then(|d| d.get(&s.feature()));
-        let block = grid.tiles.get(&s.tile).and_then(ferrotherm_silicon::tilegrid::Tile::logic_block);
+        let block = grid
+            .tiles
+            .get(&s.tile)
+            .and_then(ferrotherm_silicon::tilegrid::Tile::logic_block);
         match (bits, block) {
             (Some(b), Some(blk)) => {
                 if fb.apply_feature(&blk, b).is_ok() {
@@ -88,8 +103,16 @@ fn main() {
             _ => println!("  unresolved: {}", s.feature()),
         }
     }
-    let set: usize = fb.frames.values().map(|f| f.iter().map(|w| w.count_ones() as usize).sum::<usize>()).sum();
-    println!("\n{ok}/{} PIPs written; {} frames, {set} bits set", path.len(), fb.len());
+    let set: usize = fb
+        .frames
+        .values()
+        .map(|f| f.iter().map(|w| w.count_ones() as usize).sum::<usize>())
+        .sum();
+    println!(
+        "\n{ok}/{} PIPs written; {} frames, {set} bits set",
+        path.len(),
+        fb.len()
+    );
     println!(
         "verdict: {}",
         if ok == path.len() && !path.is_empty() {

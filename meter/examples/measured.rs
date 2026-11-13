@@ -6,7 +6,11 @@
 //! replaces the borrowed number with a measured one and prints both, because the ratio is the
 //! interesting part and neither number means much alone.
 
-use ferrotherm::{gibbs::Sampler, ising::lattice2d, ledger::{Ledger, Z1_SPICE}};
+use ferrotherm::{
+    gibbs::Sampler,
+    ising::lattice2d,
+    ledger::{Ledger, Z1_SPICE},
+};
 use std::time::Duration;
 
 fn main() {
@@ -31,7 +35,10 @@ fn main() {
         // which is exactly what `Meter::idle`'s own documentation says to do about it.
         let idle = match meter.idle(Duration::from_millis(1500)) {
             Ok(w) => w,
-            Err(e) => { eprintln!("{e}"); return; }
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
         };
         let mut led = Ledger::default();
         let run = match meter.measure(idle, || {
@@ -39,14 +46,24 @@ fn main() {
             s.sweeps(3_000, Some(&mut led));
         }) {
             Ok(r) => r,
-            Err(e) => { eprintln!("run {r}: {e}"); return; }
+            Err(e) => {
+                eprintln!("run {r}: {e}");
+                return;
+            }
         };
-        let p = run.prices_from(&led).expect("a pure sampling run is sample-dominated");
+        let p = run
+            .prices_from(&led)
+            .expect("a pure sampling run is sample-dominated");
         println!(
             "  run {r}: {:.1} W idle -> {:.1} W for {:.2} s ({:.1} J above idle, {} readings) \
              over {} updates = {:.3e} J/update",
-            run.idle_watts, run.mean_watts, run.seconds, run.joules_above_idle, run.samples,
-            led.samples, p.e_sample
+            run.idle_watts,
+            run.mean_watts,
+            run.seconds,
+            run.joules_above_idle,
+            run.samples,
+            led.samples,
+            p.e_sample
         );
         per_sample.push(p.e_sample);
     }
@@ -54,12 +71,21 @@ fn main() {
     per_sample.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = per_sample[per_sample.len() / 2];
     println!("\nmedian measured : {median:.3e} J per node update, on this machine, at the wall");
-    println!("Z1_SPICE claims : {:.3e} J per node update", Z1_SPICE.e_sample);
+    println!(
+        "Z1_SPICE claims : {:.3e} J per node update",
+        Z1_SPICE.e_sample
+    );
     println!("ratio           : {:.0}x", median / Z1_SPICE.e_sample);
     println!();
     println!("Both numbers are real and they measure different things. The measured one is whole-");
-    println!("system wall power above idle divided by node updates, on a general-purpose CPU doing");
+    println!(
+        "system wall power above idle divided by node updates, on a general-purpose CPU doing"
+    );
     println!("everything a CPU does to run a sweep. The Z1 figure is a SPICE estimate for a");
-    println!("purpose-built device that has not been fabricated. The ratio is the size of the prize");
-    println!("being claimed, not a measurement of it -- and now at least one side of it is measured.");
+    println!(
+        "purpose-built device that has not been fabricated. The ratio is the size of the prize"
+    );
+    println!(
+        "being claimed, not a measurement of it -- and now at least one side of it is measured."
+    );
 }

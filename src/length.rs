@@ -68,7 +68,10 @@ pub fn exact_dos(g: &Graph) -> Result<Dos, Refused> {
     let scale =
         g.w.iter().map(|x| x.abs()).sum::<f64>() / 2.0 + g.h.iter().map(|x| x.abs()).sum::<f64>();
     let quantum = scale.max(1.0) * 1e-9;
-    let mut keyed: Vec<(i64, f64)> = energies.iter().map(|&e| ((e / quantum).round() as i64, e)).collect();
+    let mut keyed: Vec<(i64, f64)> = energies
+        .iter()
+        .map(|&e| ((e / quantum).round() as i64, e))
+        .collect();
     keyed.sort_by_key(|a| a.0);
     let (mut energy, mut log_g) = (Vec::new(), Vec::new());
     let mut i = 0;
@@ -81,12 +84,21 @@ pub fn exact_dos(g: &Graph) -> Result<Dos, Refused> {
         log_g.push(((j - i) as f64).ln());
         i = j;
     }
-    Ok(Dos { energy, log_g, steps: 0 })
+    Ok(Dos {
+        energy,
+        log_g,
+        steps: 0,
+    })
 }
 
 /// Normalised probability of each level at `beta`.
 fn probabilities(dos: &Dos, beta: f64) -> Vec<f64> {
-    let w: Vec<f64> = dos.log_g.iter().zip(&dos.energy).map(|(lg, e)| lg - beta * e).collect();
+    let w: Vec<f64> = dos
+        .log_g
+        .iter()
+        .zip(&dos.energy)
+        .map(|(lg, e)| lg - beta * e)
+        .collect();
     let m = w.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if !m.is_finite() {
         return vec![0.0; w.len()];
@@ -98,7 +110,11 @@ fn probabilities(dos: &Dos, beta: f64) -> Vec<f64> {
 /// `⟨E⟩` at `beta`, from the density of states.
 #[must_use]
 pub fn mean_energy(dos: &Dos, beta: f64) -> f64 {
-    probabilities(dos, beta).iter().zip(&dos.energy).map(|(p, e)| p * e).sum()
+    probabilities(dos, beta)
+        .iter()
+        .zip(&dos.energy)
+        .map(|(p, e)| p * e)
+        .sum()
 }
 
 /// `Var_β(E)` — the Fisher information of the Boltzmann family with respect to `β`, and the square
@@ -112,7 +128,11 @@ pub fn mean_energy(dos: &Dos, beta: f64) -> f64 {
 pub fn variance(dos: &Dos, beta: f64) -> f64 {
     let p = probabilities(dos, beta);
     let m: f64 = p.iter().zip(&dos.energy).map(|(p, e)| p * e).sum();
-    p.iter().zip(&dos.energy).map(|(p, e)| p * (e - m) * (e - m)).sum::<f64>().max(0.0)
+    p.iter()
+        .zip(&dos.energy)
+        .map(|(p, e)| p * (e - m) * (e - m))
+        .sum::<f64>()
+        .max(0.0)
 }
 
 /// `sqrt(Var_β(E))` — the metric's line element, the speed at which length accumulates in `β`.
@@ -144,7 +164,11 @@ impl LengthProfile {
     /// finite, are not strictly increasing in `β`, or carry a negative speed.
     pub fn from_speed(betas: &[f64], speeds: &[f64]) -> Result<LengthProfile, String> {
         if betas.len() != speeds.len() {
-            return Err(format!("{} betas against {} speeds", betas.len(), speeds.len()));
+            return Err(format!(
+                "{} betas against {} speeds",
+                betas.len(),
+                speeds.len()
+            ));
         }
         if betas.len() < 2 {
             return Err("a profile needs at least two grid points to integrate between".into());
@@ -157,9 +181,14 @@ impl LengthProfile {
         }
         let mut cumulative = vec![0.0; betas.len()];
         for i in 1..betas.len() {
-            cumulative[i] = cumulative[i - 1] + 0.5 * (speeds[i] + speeds[i - 1]) * (betas[i] - betas[i - 1]);
+            cumulative[i] =
+                cumulative[i - 1] + 0.5 * (speeds[i] + speeds[i - 1]) * (betas[i] - betas[i - 1]);
         }
-        Ok(LengthProfile { betas: betas.to_vec(), speeds: speeds.to_vec(), cumulative })
+        Ok(LengthProfile {
+            betas: betas.to_vec(),
+            speeds: speeds.to_vec(),
+            cumulative,
+        })
     }
 
     /// The metric of `dos` on a uniform grid of `grid` points spanning `beta_lo ..= beta_hi`.
@@ -170,10 +199,19 @@ impl LengthProfile {
     #[must_use]
     pub fn from_dos(dos: &Dos, beta_lo: f64, beta_hi: f64, grid: usize) -> LengthProfile {
         assert!(grid >= 2, "a profile needs at least two grid points");
-        assert!(beta_hi > beta_lo && beta_lo.is_finite() && beta_hi.is_finite(), "bad span");
+        assert!(
+            beta_hi > beta_lo && beta_lo.is_finite() && beta_hi.is_finite(),
+            "bad span"
+        );
         let k = (grid - 1) as f64;
         let betas: Vec<f64> = (0..grid)
-            .map(|i| if i + 1 == grid { beta_hi } else { beta_lo + (beta_hi - beta_lo) * i as f64 / k })
+            .map(|i| {
+                if i + 1 == grid {
+                    beta_hi
+                } else {
+                    beta_lo + (beta_hi - beta_lo) * i as f64 / k
+                }
+            })
             .collect();
         let speeds: Vec<f64> = betas.iter().map(|&b| speed(dos, b)).collect();
         LengthProfile::from_speed(&betas, &speeds).expect("a uniform grid of a real metric")
@@ -188,8 +226,18 @@ impl LengthProfile {
     /// # Panics
     ///
     /// If `grid` is below 2 or the span is not increasing and finite.
-    pub fn exact(g: &Graph, beta_lo: f64, beta_hi: f64, grid: usize) -> Result<LengthProfile, Refused> {
-        Ok(LengthProfile::from_dos(&exact_dos(g)?, beta_lo, beta_hi, grid))
+    pub fn exact(
+        g: &Graph,
+        beta_lo: f64,
+        beta_hi: f64,
+        grid: usize,
+    ) -> Result<LengthProfile, Refused> {
+        Ok(LengthProfile::from_dos(
+            &exact_dos(g)?,
+            beta_lo,
+            beta_hi,
+            grid,
+        ))
     }
 
     /// The same profile on a **planar** graph of any size, from [`crate::pfaffian`]'s exact `ln Z`.
@@ -218,11 +266,20 @@ impl LengthProfile {
         grid: usize,
     ) -> Result<LengthProfile, crate::pfaffian::Error> {
         assert!(grid >= 2, "a profile needs at least two grid points");
-        assert!(beta_hi > beta_lo && beta_lo.is_finite() && beta_hi.is_finite(), "bad span");
+        assert!(
+            beta_hi > beta_lo && beta_lo.is_finite() && beta_hi.is_finite(),
+            "bad span"
+        );
         const D: f64 = 1e-4;
         let k = (grid - 1) as f64;
         let betas: Vec<f64> = (0..grid)
-            .map(|i| if i + 1 == grid { beta_hi } else { beta_lo + (beta_hi - beta_lo) * i as f64 / k })
+            .map(|i| {
+                if i + 1 == grid {
+                    beta_hi
+                } else {
+                    beta_lo + (beta_hi - beta_lo) * i as f64 / k
+                }
+            })
             .collect();
         let mut speeds = Vec::with_capacity(grid);
         for &b in &betas {
@@ -309,7 +366,11 @@ impl LengthProfile {
             Err(i) => i - 1,
         };
         let span = self.betas[i + 1] - self.betas[i];
-        let frac = if span > 0.0 { (beta - self.betas[i]) / span } else { 0.0 };
+        let frac = if span > 0.0 {
+            (beta - self.betas[i]) / span
+        } else {
+            0.0
+        };
         self.cumulative[i] + frac * (self.cumulative[i + 1] - self.cumulative[i])
     }
 
@@ -329,7 +390,11 @@ impl LengthProfile {
             Err(i) => i - 1,
         };
         let span = self.cumulative[i + 1] - self.cumulative[i];
-        let frac = if span > 0.0 { (l - self.cumulative[i]) / span } else { 0.0 };
+        let frac = if span > 0.0 {
+            (l - self.cumulative[i]) / span
+        } else {
+            0.0
+        };
         self.betas[i] + frac * (self.betas[i + 1] - self.betas[i])
     }
 
@@ -348,7 +413,9 @@ impl LengthProfile {
         assert!(rungs >= 2, "a ladder needs two rungs to have a step");
         let k = (rungs - 1) as f64;
         let total = self.length();
-        let mut out: Vec<f64> = (0..rungs).map(|i| self.beta_at(total * i as f64 / k)).collect();
+        let mut out: Vec<f64> = (0..rungs)
+            .map(|i| self.beta_at(total * i as f64 / k))
+            .collect();
         out[0] = self.betas[0];
         out[rungs - 1] = *self.betas.last().unwrap();
         spread_ties(&mut out);
@@ -359,7 +426,10 @@ impl LengthProfile {
     /// [`expected_acceptance`] turns into a predicted swap rate.
     #[must_use]
     pub fn rung_lengths(&self, betas: &[f64]) -> Vec<f64> {
-        betas.windows(2).map(|w| self.length_at(w[1]) - self.length_at(w[0])).collect()
+        betas
+            .windows(2)
+            .map(|w| self.length_at(w[1]) - self.length_at(w[0]))
+            .collect()
     }
 }
 
@@ -404,7 +474,12 @@ fn spread_ties(out: &mut [f64]) {
 /// # Panics
 ///
 /// If `rungs` is below 2 or the span is not increasing and finite.
-pub fn equal_length_ladder(g: &Graph, beta_lo: f64, beta_hi: f64, rungs: usize) -> Result<Vec<f64>, Refused> {
+pub fn equal_length_ladder(
+    g: &Graph,
+    beta_lo: f64,
+    beta_hi: f64,
+    rungs: usize,
+) -> Result<Vec<f64>, Refused> {
     Ok(LengthProfile::exact(g, beta_lo, beta_hi, DEFAULT_GRID)?.ladder(rungs))
 }
 
@@ -441,7 +516,11 @@ pub fn exact_swap_acceptance(dos: &Dos, beta_a: f64, beta_b: f64) -> f64 {
     let mut acc = 0.0;
     let mut total = 0.0;
     for a in 0..n {
-        let below = if a == 0 { 0.0 } else { (d * (e[a - 1] - e[a])).exp() * acc };
+        let below = if a == 0 {
+            0.0
+        } else {
+            (d * (e[a - 1] - e[a])).exp() * acc
+        };
         total += p[a] * (suffix[a] + below);
         acc = below + q[a];
     }
@@ -492,15 +571,25 @@ mod tests {
     fn the_metric_is_the_closed_form_on_free_spins() {
         let (n, h) = (6usize, 0.7);
         let dos = exact_dos(&free_spins(n, h)).unwrap();
-        assert_eq!(dos.energy.len(), n + 1, "a free-spin spectrum has n+1 levels");
+        assert_eq!(
+            dos.energy.len(),
+            n + 1,
+            "a free-spin spectrum has n+1 levels"
+        );
         for k in 0..12 {
             let beta = 0.05 + 0.3 * k as f64;
             let (bh, nn) = (beta * h, n as f64);
             let want_var = nn * h * h / (bh.cosh() * bh.cosh());
             let want_mean = -nn * h * bh.tanh();
             let want_lz = nn * (2.0 * bh.cosh()).ln();
-            assert!((variance(&dos, beta) - want_var).abs() < 1e-12 * want_var.max(1.0), "beta {beta}");
-            assert!((mean_energy(&dos, beta) - want_mean).abs() < 1e-12, "beta {beta}");
+            assert!(
+                (variance(&dos, beta) - want_var).abs() < 1e-12 * want_var.max(1.0),
+                "beta {beta}"
+            );
+            assert!(
+                (mean_energy(&dos, beta) - want_mean).abs() < 1e-12,
+                "beta {beta}"
+            );
             assert!((dos.log_z(beta) - want_lz).abs() < 1e-12, "beta {beta}");
         }
     }
@@ -525,15 +614,25 @@ mod tests {
         for &beta in &[10.0, 15.0, 20.0, 30.0] {
             let want = n as f64 * h * h / (beta * h).cosh().powi(2);
             let got = variance(&dos, beta);
-            assert!((got - want).abs() < 1e-12 * want, "beta {beta}: {got:e} against {want:e}");
+            assert!(
+                (got - want).abs() < 1e-12 * want,
+                "beta {beta}: {got:e} against {want:e}"
+            );
         }
         // 1.02e-16 and 2.10e-25 are the truths at these two betas, and the short form returns zero
         assert!(variance(&dos, 20.0) > 1e-16 && variance(&dos, 30.0) > 2e-25);
-        assert_eq!(one_pass(20.0), 0.0, "the one-pass form is supposed to be destroyed here");
+        assert_eq!(
+            one_pass(20.0),
+            0.0,
+            "the one-pass form is supposed to be destroyed here"
+        );
         assert_eq!(one_pass(30.0), 0.0);
         // and it is already visibly wrong well before that
         let want15 = n as f64 * h * h / 15.0f64.cosh().powi(2);
-        assert!((one_pass(15.0) - want15).abs() > 1e-3 * want15, "one-pass at beta 15");
+        assert!(
+            (one_pass(15.0) - want15).abs() > 1e-3 * want15,
+            "one-pass at beta 15"
+        );
     }
 
     /// `Var(E) = −d⟨E⟩/dβ = d²lnZ/dβ²` — the identity that makes the Fisher information the metric.
@@ -554,9 +653,16 @@ mod tests {
             let beta = 0.1 + 0.35 * k as f64;
             let var = variance(&dos, beta);
             let dmean = -(mean_energy(&dos, beta + d) - mean_energy(&dos, beta - d)) / (2.0 * d);
-            let d2lz = (dos.log_z(beta + d) - 2.0 * dos.log_z(beta) + dos.log_z(beta - d)) / (d * d);
-            assert!((var - dmean).abs() < 1e-5 * var.max(1.0), "beta {beta}: {var} vs -dE/dbeta {dmean}");
-            assert!((var - d2lz).abs() < 1e-4 * var.max(1.0), "beta {beta}: {var} vs d2lnZ {d2lz}");
+            let d2lz =
+                (dos.log_z(beta + d) - 2.0 * dos.log_z(beta) + dos.log_z(beta - d)) / (d * d);
+            assert!(
+                (var - dmean).abs() < 1e-5 * var.max(1.0),
+                "beta {beta}: {var} vs -dE/dbeta {dmean}"
+            );
+            assert!(
+                (var - d2lz).abs() < 1e-4 * var.max(1.0),
+                "beta {beta}: {var} vs d2lnZ {d2lz}"
+            );
         }
     }
 
@@ -570,13 +676,21 @@ mod tests {
         let (n, h, top) = (4usize, 0.8, 3.0);
         let prof = LengthProfile::exact(&free_spins(n, h), 0.0, top, 100_001).unwrap();
         let want_l = (n as f64).sqrt() * gd(top * h);
-        assert!((prof.length() - want_l).abs() < 1e-8, "L = {} against {want_l}", prof.length());
+        assert!(
+            (prof.length() - want_l).abs() < 1e-8,
+            "L = {} against {want_l}",
+            prof.length()
+        );
 
         let rungs = 9;
         let got = prof.ladder(rungs);
         for k in 0..rungs {
             let want = gd_inv(k as f64 / (rungs - 1) as f64 * gd(top * h)) / h;
-            assert!((got[k] - want).abs() < 1e-7, "rung {k}: {} against {want}", got[k]);
+            assert!(
+                (got[k] - want).abs() < 1e-7,
+                "rung {k}: {} against {want}",
+                got[k]
+            );
         }
         assert_eq!(got[0], 0.0);
         assert_eq!(got[rungs - 1], top);
@@ -592,9 +706,15 @@ mod tests {
             let ladder = prof.ladder(rungs);
             let want = prof.length() / (rungs - 1) as f64;
             for (i, dl) in prof.rung_lengths(&ladder).iter().enumerate() {
-                assert!((dl - want).abs() < 1e-6 * want, "rungs {rungs}, pair {i}: {dl} against {want}");
+                assert!(
+                    (dl - want).abs() < 1e-6 * want,
+                    "rungs {rungs}, pair {i}: {dl} against {want}"
+                );
             }
-            assert!(ladder.windows(2).all(|w| w[1] > w[0]), "a ladder must increase strictly");
+            assert!(
+                ladder.windows(2).all(|w| w[1] > w[0]),
+                "a ladder must increase strictly"
+            );
         }
     }
 
@@ -614,12 +734,18 @@ mod tests {
                 }
             }
             let got = exact_swap_acceptance(&dos, ba, bb);
-            assert!((got - brute).abs() < 1e-12, "({ba},{bb}): {got} against {brute}");
+            assert!(
+                (got - brute).abs() < 1e-12,
+                "({ba},{bb}): {got} against {brute}"
+            );
             assert!((0.0..=1.0).contains(&got));
         }
         // identical rungs always swap, and the order of the pair cannot matter
         assert!((exact_swap_acceptance(&dos, 0.7, 0.7) - 1.0).abs() < 1e-12);
-        let (x, y) = (exact_swap_acceptance(&dos, 0.3, 1.4), exact_swap_acceptance(&dos, 1.4, 0.3));
+        let (x, y) = (
+            exact_swap_acceptance(&dos, 0.3, 1.4),
+            exact_swap_acceptance(&dos, 1.4, 0.3),
+        );
         assert_eq!(x.to_bits(), y.to_bits());
     }
 
@@ -633,8 +759,14 @@ mod tests {
     #[test]
     fn the_gaussian_prediction_is_first_order_in_the_rung_length() {
         assert_eq!(expected_acceptance(0.0), 1.0);
-        assert!((expected_acceptance(2.0) - 0.157_299_207_050_285_13).abs() < 1e-12, "erfc(1)");
-        assert!((expected_acceptance(1.0) - 0.479_500_122_186_953_5).abs() < 1e-12, "erfc(1/2)");
+        assert!(
+            (expected_acceptance(2.0) - 0.157_299_207_050_285_13).abs() < 1e-12,
+            "erfc(1)"
+        );
+        assert!(
+            (expected_acceptance(1.0) - 0.479_500_122_186_953_5).abs() < 1e-12,
+            "erfc(1/2)"
+        );
 
         let mut gb = GraphBuilder::new(13);
         let mut r = crate::rng::Pcg::new(7, 1);
@@ -647,7 +779,11 @@ mod tests {
             gb.bias(i, 0.5 * r.f64() - 0.25);
         }
         let dos = exact_dos(&gb.build()).unwrap();
-        assert_eq!(dos.energy.len(), 8192, "every state at its own energy: a dense spectrum");
+        assert_eq!(
+            dos.energy.len(),
+            8192,
+            "every state at its own energy: a dense spectrum"
+        );
         let prof = LengthProfile::from_dos(&dos, 0.0, 2.0, DEFAULT_GRID);
         let worst: Vec<(f64, f64)> = [16usize, 32, 64, 128]
             .iter()
@@ -657,16 +793,24 @@ mod tests {
                 let err = ladder
                     .windows(2)
                     .zip(&dl)
-                    .map(|(w, &l)| (exact_swap_acceptance(&dos, w[0], w[1]) - expected_acceptance(l)).abs())
+                    .map(|(w, &l)| {
+                        (exact_swap_acceptance(&dos, w[0], w[1]) - expected_acceptance(l)).abs()
+                    })
                     .fold(0.0f64, f64::max);
                 (prof.length() / (rungs - 1) as f64, err)
             })
             .collect();
         for w in worst.windows(2) {
             let ratio = w[1].1 / w[0].1;
-            assert!((0.4..0.6).contains(&ratio), "first order in dL, got a ratio of {ratio:.3}: {worst:?}");
+            assert!(
+                (0.4..0.6).contains(&ratio),
+                "first order in dL, got a ratio of {ratio:.3}: {worst:?}"
+            );
         }
-        assert!(worst.last().unwrap().1 < 0.005, "the residual at the finest ladder: {worst:?}");
+        assert!(
+            worst.last().unwrap().1 < 0.005,
+            "the residual at the finest ladder: {worst:?}"
+        );
     }
 
     /// **THE CLAIM, AGAINST AN EXACT ORACLE.**
@@ -683,18 +827,29 @@ mod tests {
             let geo = equal_length_ladder(&g, 0.0, top, rungs).unwrap();
             let lin = linear_ladder(top, rungs);
             let rates = |l: &[f64]| -> Vec<f64> {
-                l.windows(2).map(|w| exact_swap_acceptance(&dos, w[0], w[1])).collect()
+                l.windows(2)
+                    .map(|w| exact_swap_acceptance(&dos, w[0], w[1]))
+                    .collect()
             };
             let spread = |r: &[f64]| {
-                r.iter().copied().fold(f64::NEG_INFINITY, f64::max) - r.iter().copied().fold(f64::INFINITY, f64::min)
+                r.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    - r.iter().copied().fold(f64::INFINITY, f64::min)
             };
             let (rg, rl) = (rates(&geo), rates(&lin));
             let (sg, sl) = (spread(&rg), spread(&rl));
             // Measured ratios are 0.23 to 0.35 across these rung counts; the bar is 0.45, which is
             // above every one of them and still far below "no improvement".
-            assert!(sg < 0.45 * sl, "rungs {rungs}: equal-length spread {sg:.4} against linear {sl:.4}");
+            assert!(
+                sg < 0.45 * sl,
+                "rungs {rungs}: equal-length spread {sg:.4} against linear {sl:.4}"
+            );
             let worst = |r: &[f64]| r.iter().copied().fold(f64::INFINITY, f64::min);
-            assert!(worst(&rg) > worst(&rl) + 0.1, "rungs {rungs}: worst pair {:.4} vs {:.4}", worst(&rg), worst(&rl));
+            assert!(
+                worst(&rg) > worst(&rl) + 0.1,
+                "rungs {rungs}: worst pair {:.4} vs {:.4}",
+                worst(&rg),
+                worst(&rl)
+            );
         }
     }
 
@@ -713,7 +868,8 @@ mod tests {
         let lin = linear_ladder(top, rungs);
 
         let spread = |r: &[f64]| {
-            r.iter().copied().fold(f64::NEG_INFINITY, f64::max) - r.iter().copied().fold(f64::INFINITY, f64::min)
+            r.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - r.iter().copied().fold(f64::INFINITY, f64::min)
         };
         let (mut sg, mut sl, mut drift) = (0.0, 0.0, 0.0f64);
         let seeds = 8u64;
@@ -726,11 +882,17 @@ mod tests {
                 drift = drift.max((r - exact_swap_acceptance(&dos, geo[i], geo[i + 1])).abs());
             }
         }
-        assert!(sg < 0.3 * sl, "measured spread: equal-length {sg:.4} against linear {sl:.4}");
+        assert!(
+            sg < 0.3 * sl,
+            "measured spread: equal-length {sg:.4} against linear {sl:.4}"
+        );
         // The rungs of a tempering ladder are not quite independent equilibrium replicas -- the
         // swaps themselves correlate them -- so this is a tolerance, not an identity. It is what
         // says the measurement and the oracle are describing the same experiment.
-        assert!(drift < 0.05, "measured rates should sit on the exact acceptance: worst gap {drift:.4}");
+        assert!(
+            drift < 0.05,
+            "measured rates should sit on the exact acceptance: worst gap {drift:.4}"
+        );
     }
 
     /// The measured route recovers the exact metric — **on the rungs it measured it on**.
@@ -749,15 +911,26 @@ mod tests {
         let dos = exact_dos(&g).unwrap();
         let ladder = equal_length_ladder(&g, 0.0, 2.0, 12).unwrap();
         let on_rungs: Vec<f64> = ladder.iter().map(|&b| speed(&dos, b)).collect();
-        let oracle = LengthProfile::from_speed(&ladder, &on_rungs).unwrap().length();
+        let oracle = LengthProfile::from_speed(&ladder, &on_rungs)
+            .unwrap()
+            .length();
         for seed in 0..4u64 {
-            let (_, traces) =
-                crate::tempering::parallel_tempering_observed(&g, &ladder, 3000, 2, 500, seed, None);
-            let got = LengthProfile::from_traces(&traces.as_pairs()).unwrap().length();
-            assert!((got - oracle).abs() < 0.06 * oracle, "seed {seed}: {got:.3} against {oracle:.3}");
+            let (_, traces) = crate::tempering::parallel_tempering_observed(
+                &g, &ladder, 3000, 2, 500, seed, None,
+            );
+            let got = LengthProfile::from_traces(&traces.as_pairs())
+                .unwrap()
+                .length();
+            assert!(
+                (got - oracle).abs() < 0.06 * oracle,
+                "seed {seed}: {got:.3} against {oracle:.3}"
+            );
         }
         let fine = LengthProfile::from_dos(&dos, 0.0, 2.0, DEFAULT_GRID).length();
-        assert!(oracle - fine > 0.1 * fine, "the coarse trapezoid is the larger error: {oracle:.3} vs {fine:.3}");
+        assert!(
+            oracle - fine > 0.1 * fine,
+            "the coarse trapezoid is the larger error: {oracle:.3} vs {fine:.3}"
+        );
     }
 
     /// A metric that vanishes still yields a strictly increasing ladder.
@@ -775,7 +948,10 @@ mod tests {
         let ladder = dead.ladder(6);
         assert!(ladder.windows(2).all(|w| w[1] > w[0]), "{ladder:?}");
         for (k, b) in ladder.iter().enumerate() {
-            assert!((b - 2.0 * k as f64 / 5.0).abs() < 1e-12, "uniform in beta: {ladder:?}");
+            assert!(
+                (b - 2.0 * k as f64 / 5.0).abs() < 1e-12,
+                "uniform in beta: {ladder:?}"
+            );
         }
 
         let half = LengthProfile::from_speed(&betas, &[2.0, 2.0, 0.0, 0.0, 0.0]).unwrap();
@@ -783,20 +959,45 @@ mod tests {
         assert!(ladder.windows(2).all(|w| w[1] > w[0]), "{ladder:?}");
         assert_eq!((ladder[0], ladder[5]), (0.0, 2.0));
         // the metric dies at beta 1.0, and every rung but the pinned cold end is below it
-        assert!(ladder[4] < 1.0, "every rung with length in it is in the live stretch: {ladder:?}");
+        assert!(
+            ladder[4] < 1.0,
+            "every rung with length in it is in the live stretch: {ladder:?}"
+        );
     }
 
     /// The profile refuses what it cannot integrate, rather than returning a curve.
     #[test]
     fn a_profile_refuses_a_grid_it_cannot_integrate() {
-        assert!(LengthProfile::from_speed(&[0.0, 1.0], &[1.0]).unwrap_err().contains("against"));
-        assert!(LengthProfile::from_speed(&[0.0], &[1.0]).unwrap_err().contains("two grid points"));
-        assert!(LengthProfile::from_speed(&[1.0, 0.0], &[1.0, 1.0]).unwrap_err().contains("increasing"));
-        assert!(LengthProfile::from_speed(&[0.0, 1.0], &[1.0, -1.0]).unwrap_err().contains("negative"));
-        assert!(LengthProfile::from_speed(&[0.0, 1.0], &[1.0, f64::NAN]).unwrap_err().contains("negative"));
-        assert!(LengthProfile::from_traces(&[(0.0, vec![1.0]), (1.0, vec![1.0, 2.0])])
-            .unwrap_err()
-            .contains("two draws"));
+        assert!(
+            LengthProfile::from_speed(&[0.0, 1.0], &[1.0])
+                .unwrap_err()
+                .contains("against")
+        );
+        assert!(
+            LengthProfile::from_speed(&[0.0], &[1.0])
+                .unwrap_err()
+                .contains("two grid points")
+        );
+        assert!(
+            LengthProfile::from_speed(&[1.0, 0.0], &[1.0, 1.0])
+                .unwrap_err()
+                .contains("increasing")
+        );
+        assert!(
+            LengthProfile::from_speed(&[0.0, 1.0], &[1.0, -1.0])
+                .unwrap_err()
+                .contains("negative")
+        );
+        assert!(
+            LengthProfile::from_speed(&[0.0, 1.0], &[1.0, f64::NAN])
+                .unwrap_err()
+                .contains("negative")
+        );
+        assert!(
+            LengthProfile::from_traces(&[(0.0, vec![1.0]), (1.0, vec![1.0, 2.0])])
+                .unwrap_err()
+                .contains("two draws")
+        );
     }
 
     /// Enumeration has a limit and this says so rather than trying.
@@ -805,7 +1006,10 @@ mod tests {
         let g = ising::lattice2d(6, 1.0);
         assert_eq!(
             exact_dos(&g).unwrap_err(),
-            Refused::TooLargeToEnumerate { spins: 36, limit: crate::samples::ENUMERATION_LIMIT }
+            Refused::TooLargeToEnumerate {
+                spins: 36,
+                limit: crate::samples::ENUMERATION_LIMIT
+            }
         );
         assert!(equal_length_ladder(&g, 0.0, 1.0, 4).is_err());
     }
@@ -863,7 +1067,10 @@ mod tests {
                 worst_neighbour = worst_neighbour.min(off);
             }
         }
-        assert!(worst < tol, "planar vs enumeration: worst relative speed mismatch {worst:.2e}");
+        assert!(
+            worst < tol,
+            "planar vs enumeration: worst relative speed mismatch {worst:.2e}"
+        );
         assert!(
             ((e.length() - p.length()) / e.length()).abs() < tol,
             "total length {} vs {}",
@@ -878,22 +1085,40 @@ mod tests {
         // 2. beyond the ceiling, cross-checked by an independent exact route
         let g = ising::grid2d(8, 8, 1.0);
         assert!(
-            matches!(LengthProfile::exact(&g, lo, hi, grid), Err(Refused::TooLargeToEnumerate { .. })),
+            matches!(
+                LengthProfile::exact(&g, lo, hi, grid),
+                Err(Refused::TooLargeToEnumerate { .. })
+            ),
             "64 spins must be past the enumeration limit, or this test proves nothing about reach"
         );
         let p = LengthProfile::planar(&g, lo, hi, grid).expect("an 8x8 open grid is planar");
         let i = grid / 2;
         let b = p.betas()[i];
         let d = 1e-4;
-        let ep = crate::pfaffian::solve(&g, b + d).expect("planar").energy.expect("asked for");
-        let em = crate::pfaffian::solve(&g, b - d).expect("planar").energy.expect("asked for");
+        let ep = crate::pfaffian::solve(&g, b + d)
+            .expect("planar")
+            .energy
+            .expect("asked for");
+        let em = crate::pfaffian::solve(&g, b - d)
+            .expect("planar")
+            .energy
+            .expect("asked for");
         let var_from_energy = -(ep - em) / (2.0 * d);
         let var_planar = p.speeds()[i] * p.speeds()[i];
         let rel = ((var_planar - var_from_energy) / var_from_energy).abs();
-        assert!(rel < tol, "at n=64, beta {b}: d2 ln Z gives {var_planar}, -dE/dbeta gives {var_from_energy} ({rel:.2e})");
+        assert!(
+            rel < tol,
+            "at n=64, beta {b}: d2 ln Z gives {var_planar}, -dE/dbeta gives {var_from_energy} ({rel:.2e})"
+        );
         // and the ladder it places is usable: strictly increasing, inside the span
         let ladder = p.ladder(6);
-        assert!(ladder.windows(2).all(|w| w[1] > w[0]), "rungs must increase: {ladder:?}");
-        assert!(ladder[0] >= lo && *ladder.last().expect("six rungs") <= hi, "rungs inside the span");
+        assert!(
+            ladder.windows(2).all(|w| w[1] > w[0]),
+            "rungs must increase: {ladder:?}"
+        );
+        assert!(
+            ladder[0] >= lo && *ladder.last().expect("six rungs") <= hi,
+            "rungs inside the span"
+        );
     }
 }

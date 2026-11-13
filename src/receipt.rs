@@ -111,7 +111,10 @@ impl core::fmt::Display for Mismatch {
                  to {graph:016x}; nothing else about it can be checked"
             ),
             Mismatch::NotAState { got, want } => {
-                write!(f, "the receipt carries {got} spins and the model has {want}")
+                write!(
+                    f,
+                    "the receipt carries {got} spins and the model has {want}"
+                )
             }
             Mismatch::NotASpin { at, got } => {
                 write!(f, "position {at} holds {got}, which is not a spin")
@@ -213,8 +216,11 @@ impl Receipt {
     /// bits; `a_receipt_survives_a_round_trip_through_text` is what says so rather than the claim.
     #[must_use]
     pub fn to_text(&self) -> String {
-        let spins: String =
-            self.state.iter().map(|&v| if v > 0 { '+' } else { '-' }).collect();
+        let spins: String = self
+            .state
+            .iter()
+            .map(|&v| if v > 0 { '+' } else { '-' })
+            .collect();
         let mut out = String::new();
         out.push_str("receipt 1\n");
         out.push_str(&format!("model {:016x}\n", self.model));
@@ -257,7 +263,10 @@ impl Receipt {
             }
             let mut it = line.split_whitespace();
             let key = it.next().unwrap_or("");
-            let bad = |what: &str| ParseError { line: at, message: format!("bad {what}") };
+            let bad = |what: &str| ParseError {
+                line: at,
+                message: format!("bad {what}"),
+            };
             match key {
                 "receipt" => {
                     if it.next() != Some("1") {
@@ -270,27 +279,40 @@ impl Receipt {
                 }
                 "model" => {
                     let t = it.next().ok_or_else(|| bad("model"))?;
-                    model =
-                        Some(u64::from_str_radix(t, 16).map_err(|_| bad("model digest"))?);
+                    model = Some(u64::from_str_radix(t, 16).map_err(|_| bad("model digest"))?);
                 }
                 "method" => method = Some(it.collect::<Vec<_>>().join(" ")),
                 "seed" => {
-                    seed = Some(it.next().and_then(|t| t.parse().ok()).ok_or_else(|| bad("seed"))?);
+                    seed = Some(
+                        it.next()
+                            .and_then(|t| t.parse().ok())
+                            .ok_or_else(|| bad("seed"))?,
+                    );
                 }
                 "energy" => {
-                    energy =
-                        Some(it.next().and_then(|t| t.parse().ok()).ok_or_else(|| bad("energy"))?);
+                    energy = Some(
+                        it.next()
+                            .and_then(|t| t.parse().ok())
+                            .ok_or_else(|| bad("energy"))?,
+                    );
                 }
                 "bound" => {
-                    bound =
-                        Some(it.next().and_then(|t| t.parse().ok()).ok_or_else(|| bad("bound"))?);
+                    bound = Some(
+                        it.next()
+                            .and_then(|t| t.parse().ok())
+                            .ok_or_else(|| bad("bound"))?,
+                    );
                 }
                 "cost" => {
                     let mut next = || it.next().and_then(|t| t.parse::<u64>().ok());
                     let (Some(s), Some(r), Some(w)) = (next(), next(), next()) else {
                         return Err(bad("cost"));
                     };
-                    cost = Ledger { samples: s, reads: r, writes: w };
+                    cost = Ledger {
+                        samples: s,
+                        reads: r,
+                        writes: w,
+                    };
                 }
                 "state" => {
                     let t = it.next().ok_or_else(|| bad("state"))?;
@@ -318,9 +340,15 @@ impl Receipt {
             }
         }
         if !saw_header {
-            return Err(ParseError { line: 1, message: "no `receipt 1` header".into() });
+            return Err(ParseError {
+                line: 1,
+                message: "no `receipt 1` header".into(),
+            });
         }
-        let missing = |what: &str| ParseError { line: 0, message: format!("no {what}") };
+        let missing = |what: &str| ParseError {
+            line: 0,
+            message: format!("no {what}"),
+        };
         Ok(Receipt {
             model: model.ok_or_else(|| missing("model"))?,
             state: state.ok_or_else(|| missing("state"))?,
@@ -341,13 +369,22 @@ impl Receipt {
     pub fn verify(&self, g: &Graph) -> Result<Verified, Mismatch> {
         let d = digest(g);
         if d != self.model {
-            return Err(Mismatch::DifferentModel { receipt: self.model, graph: d });
+            return Err(Mismatch::DifferentModel {
+                receipt: self.model,
+                graph: d,
+            });
         }
         if self.state.len() != g.n {
-            return Err(Mismatch::NotAState { got: self.state.len(), want: g.n });
+            return Err(Mismatch::NotAState {
+                got: self.state.len(),
+                want: g.n,
+            });
         }
-        if let Some((at, &got)) =
-            self.state.iter().enumerate().find(|&(_, &v)| v != 1 && v != -1)
+        if let Some((at, &got)) = self
+            .state
+            .iter()
+            .enumerate()
+            .find(|&(_, &v)| v != 1 && v != -1)
         {
             return Err(Mismatch::NotASpin { at, got });
         }
@@ -356,14 +393,23 @@ impl Receipt {
         // bits it cannot carry.
         let tol = 1e-9 * actual.abs().max(1.0);
         if (actual - self.energy).abs() > tol {
-            return Err(Mismatch::Energy { claimed: self.energy, actual });
+            return Err(Mismatch::Energy {
+                claimed: self.energy,
+                actual,
+            });
         }
         if let Some(b) = self.bound
             && b > actual + tol
         {
-            return Err(Mismatch::BoundAboveAnswer { bound: b, energy: actual });
+            return Err(Mismatch::BoundAboveAnswer {
+                bound: b,
+                energy: actual,
+            });
         }
-        Ok(Verified { energy: actual, gap: self.bound.map(|b| actual - b) })
+        Ok(Verified {
+            energy: actual,
+            gap: self.bound.map(|b| actual - b),
+        })
     }
 }
 
@@ -373,7 +419,9 @@ mod tests {
 
     fn fixture() -> (Graph, Vec<i8>) {
         let g = crate::ising::ring(10, 1.0, 0.35);
-        let e = crate::exact::Elimination::default().ground_state(&g).unwrap();
+        let e = crate::exact::Elimination::default()
+            .ground_state(&g)
+            .unwrap();
         (g, e.ground_state.unwrap())
     }
 
@@ -385,11 +433,19 @@ mod tests {
     #[test]
     fn a_receipt_survives_a_round_trip_through_text() {
         let (g, st) = fixture();
-        let cost = Ledger { samples: 12_345, reads: 67, writes: 8 };
+        let cost = Ledger {
+            samples: 12_345,
+            reads: 67,
+            writes: 8,
+        };
         let r = Receipt::of(&g, st, "exact::ground_state", 7, cost).with_bound(-14.0);
         let back = Receipt::parse(&r.to_text()).expect("its own output must parse");
         assert_eq!(back, r);
-        assert_eq!(back.energy.to_bits(), r.energy.to_bits(), "the energy lost bits in transit");
+        assert_eq!(
+            back.energy.to_bits(),
+            r.energy.to_bits(),
+            "the energy lost bits in transit"
+        );
         assert_eq!(
             back.bound.unwrap().to_bits(),
             r.bound.unwrap().to_bits(),
@@ -404,7 +460,10 @@ mod tests {
         let r = Receipt::of(&g, st, "exact", 1, Ledger::default());
         let v = r.verify(&g).expect("its own model must check out");
         assert!((v.energy - r.energy).abs() < 1e-12);
-        assert_eq!(v.gap, None, "no bound claimed means no gap, not a gap of zero");
+        assert_eq!(
+            v.gap, None,
+            "no bound claimed means no gap, not a gap of zero"
+        );
 
         let with = r.clone().with_bound(r.energy - 0.5);
         let v2 = with.verify(&g).unwrap();
@@ -436,7 +495,10 @@ mod tests {
 
         // A "lower bound" that sits above the answer.
         let bad = good.clone().with_bound(good.energy + 1.0);
-        assert!(matches!(bad.verify(&g), Err(Mismatch::BoundAboveAnswer { .. })));
+        assert!(matches!(
+            bad.verify(&g),
+            Err(Mismatch::BoundAboveAnswer { .. })
+        ));
 
         // A state of the wrong width.
         let mut bad = good.clone();
@@ -446,7 +508,10 @@ mod tests {
         // Something that is not a spin.
         let mut bad = good.clone();
         bad.state[3] = 0;
-        assert!(matches!(bad.verify(&g), Err(Mismatch::NotASpin { at: 3, got: 0 })));
+        assert!(matches!(
+            bad.verify(&g),
+            Err(Mismatch::NotASpin { at: 3, got: 0 })
+        ));
     }
 
     /// A receipt for one model does not verify against another, even a similar one.
@@ -497,7 +562,10 @@ mod tests {
         let good = Receipt::of(&g, st, "exact", 1, Ledger::default()).to_text();
 
         assert!(Receipt::parse("model deadbeef\n").is_err(), "no header");
-        assert!(Receipt::parse("receipt 2\nmodel 0\n").is_err(), "a version this cannot read");
+        assert!(
+            Receipt::parse("receipt 2\nmodel 0\n").is_err(),
+            "a version this cannot read"
+        );
         assert!(
             Receipt::parse(&good.replace("state +", "state ?")).is_err(),
             "a spin that is not a spin"
@@ -515,8 +583,11 @@ mod tests {
             "and a required field renamed away is still missing"
         );
         // A missing required field is an error rather than a default.
-        let without_state: String =
-            good.lines().filter(|l| !l.starts_with("state")).collect::<Vec<_>>().join("\n");
+        let without_state: String = good
+            .lines()
+            .filter(|l| !l.starts_with("state"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(Receipt::parse(&without_state).is_err(), "no state");
         // Comments and blank lines are fine.
         let decorated = format!("# written by a test\n\n{good}\n");
@@ -527,7 +598,11 @@ mod tests {
     #[test]
     fn the_ledger_round_trips_with_the_answer() {
         let (g, st) = fixture();
-        let cost = Ledger { samples: 9_000_000_000, reads: 12, writes: 3 };
+        let cost = Ledger {
+            samples: 9_000_000_000,
+            reads: 12,
+            writes: 3,
+        };
         let r = Receipt::of(&g, st, "tempering", 42, cost);
         let back = Receipt::parse(&r.to_text()).unwrap();
         assert_eq!(back.cost.samples, 9_000_000_000);

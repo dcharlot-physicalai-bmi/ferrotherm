@@ -122,11 +122,7 @@ pub enum Rule {
 pub const MAX_BITS: usize = 12;
 
 fn spin(x: usize, i: usize) -> i8 {
-    if (x >> i) & 1 == 1 {
-        1
-    } else {
-        -1
-    }
+    if (x >> i) & 1 == 1 { 1 } else { -1 }
 }
 
 fn frame_spins(x: usize, n: usize) -> Vec<i8> {
@@ -156,7 +152,10 @@ fn tails(g: &Graph, beta: f64, rule: Rule, i: usize, current: i8, delayed: &[i8]
         // CURRENT value. Pinning the delayed value instead would make the new value a function of
         // the delayed frame alone, and the chain would split like the heat bath's.
         Rule::Sca { q } => {
-            assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
+            assert!(
+                q.is_finite() && q >= 0.0,
+                "SCA pinning q must be finite and non-negative, got {q}"
+            );
             crate::kernel::p_pair(0.5 * beta * f + q * f64::from(current), 1.0)
         }
     }
@@ -174,10 +173,20 @@ fn tails(g: &Graph, beta: f64, rule: Rule, i: usize, current: i8, delayed: &[i8]
 ///
 /// If `d` is zero, `n d` exceeds [`MAX_BITS`], or the graph carries a node count of zero.
 #[must_use]
-pub fn stationary_current(g: &Graph, beta: f64, rule: Rule, d: usize, tol: f64, max_steps: usize) -> (Vec<f64>, usize) {
+pub fn stationary_current(
+    g: &Graph,
+    beta: f64,
+    rule: Rule,
+    d: usize,
+    tol: f64,
+    max_steps: usize,
+) -> (Vec<f64>, usize) {
     let n = g.n;
     assert!(d >= 1 && n >= 1, "a delay is at least one tick");
-    assert!(n * d <= MAX_BITS, "{n} spins x {d} frames is more than {MAX_BITS} bits");
+    assert!(
+        n * d <= MAX_BITS,
+        "{n} spins x {d} frames is more than {MAX_BITS} bits"
+    );
     // State: frames f_0 (current), f_1, ..., f_{d-1}, each n bits; f_{d-1} is the frame read.
     let frames = d;
     let states = 1usize << (n * frames);
@@ -198,7 +207,9 @@ pub fn stationary_current(g: &Graph, beta: f64, rule: Rule, d: usize, tol: f64, 
             let delayed = (s >> (n * (frames - 1))) & mask;
             let cur = frame_spins(current, n);
             let del = frame_spins(delayed, n);
-            let ps: Vec<(f64, f64)> = (0..n).map(|i| tails(g, beta, rule, i, cur[i], &del)).collect();
+            let ps: Vec<(f64, f64)> = (0..n)
+                .map(|i| tails(g, beta, rule, i, cur[i], &del))
+                .collect();
             // Product law over the next frame, built by doubling.
             row[0] = 1.0;
             let mut len = 1usize;
@@ -210,7 +221,11 @@ pub fn stationary_current(g: &Graph, beta: f64, rule: Rule, d: usize, tol: f64, 
                 }
                 len <<= 1;
             }
-            let shifted = if frames > 1 { (s << n) & ((1usize << (n * frames)) - 1) } else { 0 };
+            let shifted = if frames > 1 {
+                (s << n) & ((1usize << (n * frames)) - 1)
+            } else {
+                0
+            };
             for (y, &w) in row.iter().enumerate() {
                 if w != 0.0 {
                     next[shifted | y] += mass * w;
@@ -218,7 +233,12 @@ pub fn stationary_current(g: &Graph, beta: f64, rule: Rule, d: usize, tol: f64, 
             }
         }
         steps += 1;
-        let moved = 0.5 * next.iter().zip(&mu).map(|(a, b)| (a - b).abs()).sum::<f64>();
+        let moved = 0.5
+            * next
+                .iter()
+                .zip(&mu)
+                .map(|(a, b)| (a - b).abs())
+                .sum::<f64>();
         mu = next;
         if moved < tol {
             break;
@@ -279,7 +299,10 @@ pub struct Settled {
 pub fn stationary_solved(g: &Graph, beta: f64, rule: Rule, d: usize) -> Settled {
     let n = g.n;
     assert!(d >= 1 && n >= 1, "a delay is at least one tick");
-    assert!(n * d <= MAX_BITS, "{n} spins x {d} frames is more than {MAX_BITS} bits");
+    assert!(
+        n * d <= MAX_BITS,
+        "{n} spins x {d} frames is more than {MAX_BITS} bits"
+    );
     let m = 1usize << (n * d);
     let mask = (1usize << n) - 1;
     let mut a = vec![0.0f64; m * m];
@@ -288,7 +311,9 @@ pub fn stationary_solved(g: &Graph, beta: f64, rule: Rule, d: usize) -> Settled 
     for st in 0..m {
         let cur = frame_spins(st & mask, n);
         let del = frame_spins((st >> (n * (d - 1))) & mask, n);
-        let ps: Vec<(f64, f64)> = (0..n).map(|i| tails(g, beta, rule, i, cur[i], &del)).collect();
+        let ps: Vec<(f64, f64)> = (0..n)
+            .map(|i| tails(g, beta, rule, i, cur[i], &del))
+            .collect();
         // A change is measured against the CURRENT value. Against the delayed one, a spin that has just
         // flipped would count as moving on every tick of the window, and at d = 1 the two agree.
         let mut changes = 0.0;
@@ -330,7 +355,10 @@ fn gth(a: &mut [f64], m: usize) -> Vec<f64> {
     // so no step subtracts; the diagonal is left holding whatever it holds.
     for k in (1..m).rev() {
         let out: f64 = a[k * m..k * m + k].iter().sum();
-        assert!(out > 0.0, "the chain is reducible: state {k} cannot reach any lower state");
+        assert!(
+            out > 0.0,
+            "the chain is reducible: state {k} cannot reach any lower state"
+        );
         let (top, rest) = a.split_at_mut(k * m);
         let row_k = &rest[..k];
         for i in 0..k {
@@ -384,7 +412,12 @@ pub struct ColouredSettled {
 /// If `d` is zero, `classes` is not a partition of `0..n` into non-empty classes, or `K 2^{n d}`
 /// exceeds `2^`[`MAX_BITS`].
 #[must_use]
-pub fn stationary_coloured(g: &Graph, beta: f64, classes: &[Vec<usize>], d: usize) -> ColouredSettled {
+pub fn stationary_coloured(
+    g: &Graph,
+    beta: f64,
+    classes: &[Vec<usize>],
+    d: usize,
+) -> ColouredSettled {
     let n = g.n;
     let k = classes.len();
     assert!(d >= 1 && n >= 1, "a delay is at least one tick");
@@ -396,9 +429,15 @@ pub fn stationary_coloured(g: &Graph, beta: f64, classes: &[Vec<usize>], d: usiz
             seen[i] += 1;
         }
     }
-    assert!(seen.iter().all(|&c| c == 1), "the classes must partition the spins, each exactly once: {seen:?}");
+    assert!(
+        seen.iter().all(|&c| c == 1),
+        "the classes must partition the spins, each exactly once: {seen:?}"
+    );
     let frames = 1usize << (n * d);
-    assert!(k * frames <= 1usize << MAX_BITS, "{k} phases x 2^({n} x {d}) states is more than 2^{MAX_BITS}");
+    assert!(
+        k * frames <= 1usize << MAX_BITS,
+        "{k} phases x 2^({n} x {d}) states is more than 2^{MAX_BITS}"
+    );
     let m = k * frames;
     let mask = (1usize << n) - 1;
     let mut a = vec![0.0f64; m * m];
@@ -410,14 +449,22 @@ pub fn stationary_coloured(g: &Graph, beta: f64, classes: &[Vec<usize>], d: usiz
             let st = c * frames + hist;
             let held = hist & mask;
             let read = frame_spins((hist >> (n * (d - 1))) & mask, n);
-            let t: Vec<(f64, f64)> = (0..n).map(|i| tails(g, beta, Rule::HeatBath, i, spin(held, i), &read)).collect();
-            flips[st] = class.iter().map(|&i| if spin(held, i) > 0 { t[i].1 } else { t[i].0 }).sum();
+            let t: Vec<(f64, f64)> = (0..n)
+                .map(|i| tails(g, beta, Rule::HeatBath, i, spin(held, i), &read))
+                .collect();
+            flips[st] = class
+                .iter()
+                .map(|&i| if spin(held, i) > 0 { t[i].1 } else { t[i].0 })
+                .sum();
             let older = if d > 1 { (hist << n) & (frames - 1) } else { 0 };
             for y in 0..=mask {
                 if y & !moving != held & !moving {
                     continue;
                 }
-                let w: f64 = class.iter().map(|&i| if spin(y, i) > 0 { t[i].0 } else { t[i].1 }).product();
+                let w: f64 = class
+                    .iter()
+                    .map(|&i| if spin(y, i) > 0 { t[i].0 } else { t[i].1 })
+                    .product();
                 a[st * m + next_phase * frames + (older | y)] += w;
             }
         }
@@ -456,10 +503,13 @@ pub fn stationary_coloured(g: &Graph, beta: f64, classes: &[Vec<usize>], d: usiz
 /// Poisson system is singular to floating point, which at finite `beta` it is not.
 #[must_use]
 pub fn sca_rate_constant(g: &Graph, beta: f64, d: usize) -> f64 {
-    use crate::autocorr::{boltzmann, lu_solve, MAX_DENSE_SPINS};
+    use crate::autocorr::{MAX_DENSE_SPINS, boltzmann, lu_solve};
     let n = g.n;
     assert!(d >= 1, "a delay is at least one tick");
-    assert!(n <= MAX_DENSE_SPINS, "{n} spins is more than the {MAX_DENSE_SPINS} a dense solve takes");
+    assert!(
+        n <= MAX_DENSE_SPINS,
+        "{n} spins is more than the {MAX_DENSE_SPINS} a dense solve takes"
+    );
     let m = 1usize << n;
     let pi = boltzmann(g, beta).expect("n is under MAX_DENSE_SPINS, which is under MAX_SPINS");
     // Solve (L + 1 pi^T) g = r: pi^T L = 0 (Boltzmann is L's reversible law), so the added rank one
@@ -468,7 +518,9 @@ pub fn sca_rate_constant(g: &Graph, beta: f64, d: usize) -> f64 {
     let mut r = vec![0.0f64; m];
     for x in 0..m {
         let s = frame_spins(x, n);
-        let phi: Vec<f64> = (0..n).map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp()).collect();
+        let phi: Vec<f64> = (0..n)
+            .map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp())
+            .collect();
         a[x * m..(x + 1) * m].copy_from_slice(&pi);
         for i in 0..n {
             a[x * m + x] += phi[i];
@@ -487,7 +539,10 @@ pub fn sca_rate_constant(g: &Graph, beta: f64, d: usize) -> f64 {
         }
         r[x] = self_term + (d as f64 - 0.5) * window;
     }
-    assert!(lu_solve(&mut a, m, &mut r, 1), "the Poisson system is singular");
+    assert!(
+        lu_solve(&mut a, m, &mut r, 1),
+        "the Poisson system is singular"
+    );
     0.5 * pi.iter().zip(&r).map(|(p, v)| p * v.abs()).sum::<f64>()
 }
 
@@ -558,7 +613,10 @@ mod tests {
     fn pinning_for(g: &Graph, d: usize, eps: f64) -> f64 {
         let guess = 0.5 * (sca_rate_constant(g, 1.0, d) / eps).ln();
         let (mut lo, mut hi) = (guess - 0.5, guess + 0.5);
-        assert!(distance(g, lo, d) > eps && distance(g, hi, d) <= eps, "q* is not within 0.5 of {guess}");
+        assert!(
+            distance(g, lo, d) > eps && distance(g, hi, d) <= eps,
+            "q* is not within 0.5 of {guess}"
+        );
         for _ in 0..40 {
             let mid = 0.5 * (lo + hi);
             if distance(g, mid, d) > eps {
@@ -590,7 +648,11 @@ mod tests {
             let g = b.build();
             let law = stationary_solved(&g, 1.0, rule, 1).law;
             let rel = (law[0] - want).abs() / want;
-            assert!(law[0] > 0.0 && rel < 1e-13, "{rule:?}: P(-1) = {:e} against {want:e}, rel {rel:e}", law[0]);
+            assert!(
+                law[0] > 0.0 && rel < 1e-13,
+                "{rule:?}: P(-1) = {:e} against {want:e}, rel {rel:e}",
+                law[0]
+            );
         }
     }
 
@@ -610,7 +672,10 @@ mod tests {
                 assert!(tv < 1e-10, "n {}, d {d}: TV {tv:e} from Peretto", g.n);
             }
             let bolt = boltzmann(&g, beta).expect("small");
-            assert!(total_variation(&sync, &bolt) > 0.05, "and it is not the Boltzmann law");
+            assert!(
+                total_variation(&sync, &bolt) > 0.05,
+                "and it is not the Boltzmann law"
+            );
         }
     }
 
@@ -630,16 +695,25 @@ mod tests {
             assert!(steps < 200_000, "d {d}: power iteration must settle");
             let a = aligned(&g, &law);
             series.push(a);
-            assert!(a < last, "alignment must fall with delay: d {d}, {a} after {last}");
+            assert!(
+                a < last,
+                "alignment must fall with delay: d {d}, {a} after {last}"
+            );
             assert!(a > 0.5, "and stay above uniform: {a}");
             last = a;
         }
-        assert!(series[0] - series[5] > 0.05, "a real fall, not rounding: {series:?}");
+        assert!(
+            series[0] - series[5] > 0.05,
+            "a real fall, not rounding: {series:?}"
+        );
         // A symmetry-breaking field restores structure the delay cannot remove.
         let biased = pair(1.0, 0.5);
         let (law, _) = stationary_current(&biased, 1.0, rule, 6, 1e-14, 200_000);
         let up = law[3];
-        assert!(up > 0.4, "with a field the delayed pair still sits mostly up: P(up,up) {up}");
+        assert!(
+            up > 0.4,
+            "with a field the delayed pair still sits mostly up: P(up,up) {up}"
+        );
         // Control: the same pair under the heat-bath rule does not move at all with delay.
         let (hb1, _) = stationary_current(&g, 1.0, Rule::HeatBath, 1, 1e-15, 20_000);
         let (hb6, _) = stationary_current(&g, 1.0, Rule::HeatBath, 6, 1e-15, 20_000);
@@ -652,15 +726,26 @@ mod tests {
     /// `q` where power iteration still settles, which is the regime the direct solve is not needed in.
     #[test]
     fn the_direct_solve_is_the_iterated_law_for_every_rule() {
-        let rules = [Rule::HeatBath, Rule::Arrhenius { p0: 0.2 }, Rule::Sca { q: 1.0 }];
+        let rules = [
+            Rule::HeatBath,
+            Rule::Arrhenius { p0: 0.2 },
+            Rule::Sca { q: 1.0 },
+        ];
         for (g, dmax) in [(pair(1.0, 0.3), 4), (triangle(), 2)] {
             for rule in rules {
                 for d in 1..=dmax {
                     let (iterated, steps) = stationary_current(&g, 1.0, rule, d, 1e-15, 500_000);
-                    assert!(steps < 500_000, "{rule:?} d {d}: power iteration must settle");
+                    assert!(
+                        steps < 500_000,
+                        "{rule:?} d {d}: power iteration must settle"
+                    );
                     let solved = stationary_solved(&g, 1.0, rule, d);
                     let gap = total_variation(&iterated, &solved.law);
-                    assert!(gap < 1e-10, "{rule:?} n {} d {d}: iterated vs solved TV {gap:e}", g.n);
+                    assert!(
+                        gap < 1e-10,
+                        "{rule:?} n {} d {d}: iterated vs solved TV {gap:e}",
+                        g.n
+                    );
                 }
             }
         }
@@ -677,11 +762,18 @@ mod tests {
             let n = g.n;
             for q in [0.0, 0.5, 2.0] {
                 let want = sca_law(&g, 1.0, q).expect("small");
-                let (iterated, steps) = stationary_current(&g, 1.0, Rule::Sca { q }, 1, 1e-15, 200_000);
+                let (iterated, steps) =
+                    stationary_current(&g, 1.0, Rule::Sca { q }, 1, 1e-15, 200_000);
                 assert!(steps < 200_000, "q {q}: power iteration must settle");
                 let solved = stationary_solved(&g, 1.0, Rule::Sca { q }, 1);
-                let (a, b) = (total_variation(&iterated, &want), total_variation(&solved.law, &want));
-                assert!(a < 1e-10 && b < 1e-10, "n {n} q {q}: iterated {a:e}, solved {b:e} from sca_law");
+                let (a, b) = (
+                    total_variation(&iterated, &want),
+                    total_variation(&solved.law, &want),
+                );
+                assert!(
+                    a < 1e-10 && b < 1e-10,
+                    "n {n} q {q}: iterated {a:e}, solved {b:e} from sca_law"
+                );
                 let moves: f64 = want
                     .iter()
                     .enumerate()
@@ -695,10 +787,17 @@ mod tests {
                             .sum::<f64>()
                     })
                     .sum();
-                assert!((solved.moves - moves).abs() < 1e-12, "q {q}: moves {} vs {moves}", solved.moves);
+                assert!(
+                    (solved.moves - moves).abs() < 1e-12,
+                    "q {q}: moves {} vs {moves}",
+                    solved.moves
+                );
             }
             let bolt = boltzmann(&g, 1.0).expect("small");
-            assert!(total_variation(&sca_law(&g, 1.0, 0.0).expect("small"), &bolt) > 0.1, "unpinned is far off");
+            assert!(
+                total_variation(&sca_law(&g, 1.0, 0.0).expect("small"), &bolt) > 0.1,
+                "unpinned is far off"
+            );
         }
     }
 
@@ -717,8 +816,14 @@ mod tests {
         for d in 2..=4 {
             let dev3 = (distance(&g, 3.0, d) / one3 - d as f64).abs();
             let dev5 = (distance(&g, 5.0, d) / one5 - d as f64).abs();
-            assert!(dev5 < 1e-3, "d {d}: TV ratio misses {d} by {dev5:e} at q = 5");
-            assert!(dev5 < 0.05 * dev3, "d {d}: the miss must shrink as e^-2q: {dev3:e} -> {dev5:e}");
+            assert!(
+                dev5 < 1e-3,
+                "d {d}: TV ratio misses {d} by {dev5:e} at q = 5"
+            );
+            assert!(
+                dev5 < 0.05 * dev3,
+                "d {d}: the miss must shrink as e^-2q: {dev3:e} -> {dev5:e}"
+            );
         }
     }
 
@@ -738,22 +843,39 @@ mod tests {
             let phi: Vec<f64> = (0..bolt.len())
                 .map(|x| {
                     let s = frame_spins(x, n);
-                    (0..n).map(|i| (-g.field(i, &s) * f64::from(s[i])).exp()).sum()
+                    (0..n)
+                        .map(|i| (-g.field(i, &s) * f64::from(s[i])).exp())
+                        .sum()
                 })
                 .collect();
             let mean: f64 = bolt.iter().zip(&phi).map(|(p, f)| p * f).sum();
-            let c1: f64 = 0.5 * bolt.iter().zip(&phi).map(|(p, f)| p * (f - mean).abs()).sum::<f64>();
+            let c1: f64 = 0.5
+                * bolt
+                    .iter()
+                    .zip(&phi)
+                    .map(|(p, f)| p * (f - mean).abs())
+                    .sum::<f64>();
             let got = sca_rate_constant(&g, 1.0, 1);
-            assert!((got - c1).abs() < 1e-12 * c1, "n {n}: c_1 {got} vs E|Phi - <Phi>|/2 = {c1}");
+            assert!(
+                (got - c1).abs() < 1e-12 * c1,
+                "n {n}: c_1 {got} vs E|Phi - <Phi>|/2 = {c1}"
+            );
             for d in 1..=dmax {
                 let c = sca_rate_constant(&g, 1.0, d);
                 let scaled = distance(&g, 6.0, d) * 12f64.exp();
-                assert!((scaled / c - 1.0).abs() < 5e-4, "n {n} d {d}: e^2q TV {scaled} vs c_d {c}");
+                assert!(
+                    (scaled / c - 1.0).abs() < 5e-4,
+                    "n {n} d {d}: e^2q TV {scaled} vs c_d {c}"
+                );
             }
         }
-        let ratio = |g: &Graph, d: usize| sca_rate_constant(g, 1.0, d) / sca_rate_constant(g, 1.0, 1);
+        let ratio =
+            |g: &Graph, d: usize| sca_rate_constant(g, 1.0, d) / sca_rate_constant(g, 1.0, 1);
         let (tri, biased) = (ratio(&frustrated(), 3), ratio(&pair(1.0, 0.3), 3));
-        assert!(tri > 3.1 && biased < 2.7, "c_3/c_1: triangle {tri} (measured 3.177), biased pair {biased} (2.647)");
+        assert!(
+            tri > 3.1 && biased < 2.7,
+            "c_3/c_1: triangle {tri} (measured 3.177), biased pair {biased} (2.647)"
+        );
     }
 
     /// **Pin harder, or wait? It depends on the graph, and by a few percent.** A fabric whose reads
@@ -766,17 +888,43 @@ mod tests {
     #[test]
     fn pinning_beats_waiting_on_a_biased_pair_and_loses_on_a_frustrated_triangle() {
         let pin_over_wait = |g: &Graph, d: usize, eps: f64| {
-            let pin = stationary_solved(g, 1.0, Rule::Sca { q: pinning_for(g, d, eps) }, d).moves;
-            let wait = stationary_solved(g, 1.0, Rule::Sca { q: pinning_for(g, 1, eps) }, 1).moves / d as f64;
+            let pin = stationary_solved(
+                g,
+                1.0,
+                Rule::Sca {
+                    q: pinning_for(g, d, eps),
+                },
+                d,
+            )
+            .moves;
+            let wait = stationary_solved(
+                g,
+                1.0,
+                Rule::Sca {
+                    q: pinning_for(g, 1, eps),
+                },
+                1,
+            )
+            .moves
+                / d as f64;
             pin / wait
         };
         let biased = pin_over_wait(&pair(1.0, 0.3), 2, 1e-2);
-        assert!(biased > 1.05, "on the biased pair pinning must move more: {biased} (measured 1.113)");
+        assert!(
+            biased > 1.05,
+            "on the biased pair pinning must move more: {biased} (measured 1.113)"
+        );
         let g = frustrated();
         let tri = pin_over_wait(&g, 3, 1e-3);
-        assert!(tri < 0.97, "on the frustrated triangle waiting must move more: {tri} (measured 0.944)");
+        assert!(
+            tri < 0.97,
+            "on the frustrated triangle waiting must move more: {tri} (measured 0.944)"
+        );
         let predicted = 3.0 * sca_rate_constant(&g, 1.0, 1) / sca_rate_constant(&g, 1.0, 3);
-        assert!((tri - predicted).abs() < 0.01, "first order predicts {predicted}, exact {tri}");
+        assert!(
+            (tri - predicted).abs() < 0.01,
+            "first order predicts {predicted}, exact {tri}"
+        );
     }
 
     fn singletons(n: usize) -> Vec<Vec<usize>> {
@@ -790,7 +938,13 @@ mod tests {
     /// divided by the number of classes, written out here from the heat-bath rule.
     #[test]
     fn a_coloured_fabric_read_fresh_samples_boltzmann() {
-        for g in [pair(1.0, 0.0), pair(1.0, 0.3), triangle(), frustrated(), sk4()] {
+        for g in [
+            pair(1.0, 0.0),
+            pair(1.0, 0.3),
+            triangle(),
+            frustrated(),
+            sk4(),
+        ] {
             let n = g.n;
             let bolt = boltzmann(&g, 1.0).expect("small");
             let s = stationary_coloured(&g, 1.0, &singletons(n), 1);
@@ -808,13 +962,21 @@ mod tests {
                     p * (0..n)
                         .map(|i| {
                             let f = g.field(i, &sp);
-                            if sp[i] > 0 { 1.0 / (1.0 + (2.0 * f).exp()) } else { 1.0 / (1.0 + (-2.0 * f).exp()) }
+                            if sp[i] > 0 {
+                                1.0 / (1.0 + (2.0 * f).exp())
+                            } else {
+                                1.0 / (1.0 + (-2.0 * f).exp())
+                            }
                         })
                         .sum::<f64>()
                 })
                 .sum::<f64>()
                 / n as f64;
-            assert!((s.moves - moves).abs() < 1e-12, "n {n}: moves {} vs {moves}", s.moves);
+            assert!(
+                (s.moves - moves).abs() < 1e-12,
+                "n {n}: moves {} vs {moves}",
+                s.moves
+            );
         }
     }
 
@@ -834,7 +996,10 @@ mod tests {
     fn a_coloured_pair_read_late_is_the_product_of_its_marginals() {
         let g = pair(1.0, 0.0);
         let fresh = aligned(&g, &stationary_coloured(&g, 1.0, &singletons(2), 1).law);
-        assert!((fresh - 0.880_797_077_977_882).abs() < 1e-12, "fresh: agree {fresh}");
+        assert!(
+            (fresh - 0.880_797_077_977_882).abs() < 1e-12,
+            "fresh: agree {fresh}"
+        );
         for d in 2..=5 {
             let late = aligned(&g, &stationary_coloured(&g, 1.0, &singletons(2), d).law);
             assert!((late - 0.5).abs() < 1e-12, "d {d}: agree {late}, not 1/2");
@@ -842,16 +1007,30 @@ mod tests {
         let g = pair(1.0, 0.3);
         let bolt = boltzmann(&g, 1.0).expect("small");
         let (m0, m1) = (bolt[1] + bolt[3], bolt[2] + bolt[3]);
-        let product = [(1.0 - m0) * (1.0 - m1), m0 * (1.0 - m1), (1.0 - m0) * m1, m0 * m1];
-        assert!(total_variation(&product, &bolt) > 0.25, "the product is far from the joint law");
+        let product = [
+            (1.0 - m0) * (1.0 - m1),
+            m0 * (1.0 - m1),
+            (1.0 - m0) * m1,
+            m0 * m1,
+        ];
+        assert!(
+            total_variation(&product, &bolt) > 0.25,
+            "the product is far from the joint law"
+        );
         // The synchronous pair interleaves the same way, so its law is the same product.
         let sync = peretto(&g, 1.0).expect("small");
-        assert!(total_variation(&product, &sync) < 1e-12, "Peretto's law for a pair is the product too");
+        assert!(
+            total_variation(&product, &sync) < 1e-12,
+            "Peretto's law for a pair is the product too"
+        );
         for d in 2..=5 {
             let s = stationary_coloured(&g, 1.0, &singletons(2), d);
             for law in std::iter::once(&s.law).chain(&s.after) {
                 let tv = total_variation(law, &product);
-                assert!(tv < 1e-12, "d {d}: TV {tv:e} from the product of the marginals");
+                assert!(
+                    tv < 1e-12,
+                    "d {d}: TV {tv:e} from the product of the marginals"
+                );
             }
         }
     }
@@ -869,7 +1048,10 @@ mod tests {
         let bolt = boltzmann(&g, 1.0).expect("small");
         let s = stationary_coloured(&g, 1.0, &singletons(3), 2);
         let tv = total_variation(&s.law, &bolt);
-        assert!((tv - 0.161_573).abs() < 1e-5, "d 2: TV {tv} from Boltzmann (measured 0.161573)");
+        assert!(
+            (tv - 0.161_573).abs() < 1e-5,
+            "d 2: TV {tv} from Boltzmann (measured 0.161573)"
+        );
         let phases: Vec<f64> = s.after.iter().map(|l| total_variation(l, &bolt)).collect();
         for (got, want) in phases.iter().zip([0.195_177, 0.174_953, 0.189_097]) {
             assert!((got - want).abs() < 1e-5, "d 2: per-phase TVs {phases:?}");
@@ -888,7 +1070,10 @@ mod tests {
             ring.rotate_right(1);
             ring[0] = next;
             if t >= 1000 {
-                let x = (0..3).filter(|&i| ring[0][i] > 0).map(|i| 1usize << i).sum::<usize>();
+                let x = (0..3)
+                    .filter(|&i| ring[0][i] > 0)
+                    .map(|i| 1usize << i)
+                    .sum::<usize>();
                 seen[c][x] += 1.0;
             }
         }
@@ -909,19 +1094,30 @@ mod tests {
     fn a_coloured_fabric_feels_the_delay_that_an_every_tick_one_does_not() {
         for g in [pair(1.0, 0.3), frustrated()] {
             let n = g.n;
-            let every: Vec<Vec<f64>> = (1..=3).map(|d| stationary_solved(&g, 1.0, Rule::HeatBath, d).law).collect();
+            let every: Vec<Vec<f64>> = (1..=3)
+                .map(|d| stationary_solved(&g, 1.0, Rule::HeatBath, d).law)
+                .collect();
             let all: Vec<usize> = (0..n).collect();
             for d in 1..=3 {
                 let blind = total_variation(&every[d - 1], &every[0]);
-                assert!(blind < 1e-10, "n {n}, d {d}: the every-tick law moved {blind:e}");
+                assert!(
+                    blind < 1e-10,
+                    "n {n}, d {d}: the every-tick law moved {blind:e}"
+                );
                 let one = stationary_coloured(&g, 1.0, std::slice::from_ref(&all), d).law;
                 let same = total_variation(&one, &every[d - 1]);
-                assert!(same < 1e-10, "n {n}, d {d}: one class vs every tick, TV {same:e}");
+                assert!(
+                    same < 1e-10,
+                    "n {n}, d {d}: one class vs every tick, TV {same:e}"
+                );
             }
             let fresh = stationary_coloured(&g, 1.0, &singletons(n), 1).law;
             let late = stationary_coloured(&g, 1.0, &singletons(n), 2).law;
             let moved = total_variation(&fresh, &late);
-            assert!(moved > 0.1, "n {n}: the coloured law moved only {moved} with a two-tick read");
+            assert!(
+                moved > 0.1,
+                "n {n}: the coloured law moved only {moved} with a two-tick read"
+            );
         }
     }
 }

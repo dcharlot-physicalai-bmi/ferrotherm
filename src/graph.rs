@@ -39,7 +39,11 @@ impl GraphBuilder {
     #[must_use]
     /// A builder over `n` nodes, all unbiased and uncoupled.
     pub fn new(n: usize) -> Self {
-        GraphBuilder { n, edges: Vec::new(), bias: vec![0.0; n] }
+        GraphBuilder {
+            n,
+            edges: Vec::new(),
+            bias: vec![0.0; n],
+        }
     }
 
     /// Node count, so a caller across an FFI boundary can bounds-check before adding an edge.
@@ -54,7 +58,11 @@ impl GraphBuilder {
     ///
     /// If either index is past the node count, or they are equal -- a self-coupling is a constant.
     pub fn couple(&mut self, i: usize, j: usize, jij: f64) {
-        assert!(i < self.n && j < self.n && i != j, "bad edge ({i},{j}) n={}", self.n);
+        assert!(
+            i < self.n && j < self.n && i != j,
+            "bad edge ({i},{j}) n={}",
+            self.n
+        );
         self.edges.push((i as u32, j as u32, jij));
     }
 
@@ -97,7 +105,8 @@ impl GraphBuilder {
         //
         // A BTreeMap iterates in key order. The merge goes from O(m) to O(m log m), which is
         // nothing beside the sampling it feeds, and the whole stack becomes byte-reproducible.
-        let mut merged: std::collections::BTreeMap<(u32, u32), f64> = std::collections::BTreeMap::new();
+        let mut merged: std::collections::BTreeMap<(u32, u32), f64> =
+            std::collections::BTreeMap::new();
         for (a, b, j) in self.edges {
             let key = if a < b { (a, b) } else { (b, a) };
             *merged.entry(key).or_insert(0.0) += j;
@@ -130,7 +139,16 @@ impl GraphBuilder {
         for i in 0..n {
             classes[colors[i] as usize].push(i as u32);
         }
-        Graph { n, offset, nbr, w, h: self.bias, colors, classes, n_edges: merged.len() }
+        Graph {
+            n,
+            offset,
+            nbr,
+            w,
+            h: self.bias,
+            colors,
+            classes,
+            n_edges: merged.len(),
+        }
     }
 }
 
@@ -190,8 +208,9 @@ impl Graph {
     pub fn flip_gap_max(&self) -> Option<f64> {
         let g = (0..self.n)
             .map(|i| {
-                let s: f64 =
-                    (self.offset[i]..self.offset[i + 1]).map(|k| self.w[k].abs()).sum();
+                let s: f64 = (self.offset[i]..self.offset[i + 1])
+                    .map(|k| self.w[k].abs())
+                    .sum();
                 2.0 * (s + self.h[i].abs())
             })
             .fold(0.0f64, f64::max);
@@ -218,7 +237,10 @@ impl Graph {
     #[must_use]
     /// The largest neighbour count over all nodes; `0` on an empty graph.
     pub fn max_degree(&self) -> usize {
-        (0..self.n).map(|i| self.offset[i + 1] - self.offset[i]).max().unwrap_or(0)
+        (0..self.n)
+            .map(|i| self.offset[i + 1] - self.offset[i])
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -268,11 +290,7 @@ fn color_for(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
     // so this branch changes results on exactly the graphs where a sweep gets cheaper.
     let d = color_dsatur(n, offset, nbr);
     let d_used = d.iter().max().map_or(0, |&c| c as usize + 1);
-    if d_used < used {
-        d
-    } else {
-        greedy
-    }
+    if d_used < used { d } else { greedy }
 }
 
 /// Breadth-first two-colouring, or `None` when an edge joins two nodes of the same part.
@@ -390,7 +408,10 @@ fn color_dsatur(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
 /// Colours DSATUR needs for this graph, for measurement and for the tests that compare it.
 #[must_use]
 pub fn dsatur_colours(g: &Graph) -> usize {
-    color_dsatur(g.n, &g.offset, &g.nbr).iter().max().map_or(0, |&c| c as usize + 1)
+    color_dsatur(g.n, &g.offset, &g.nbr)
+        .iter()
+        .max()
+        .map_or(0, |&c| c as usize + 1)
 }
 
 fn color_greedy(n: usize, offset: &[usize], nbr: &[u32]) -> Vec<u16> {
@@ -458,7 +479,10 @@ mod tests {
     fn chimera_takes_two_colours_and_even_classes() {
         let g = crate::ising::chimera(8, 8, 4, 1.0);
         let nc = g.colors.iter().max().map_or(0, |&c| c as usize + 1);
-        assert_eq!(nc, 2, "chimera is bipartite; three colours is a wasted pass");
+        assert_eq!(
+            nc, 2,
+            "chimera is bipartite; three colours is a wasted pass"
+        );
         let mut sizes = vec![0usize; nc];
         for &c in &g.colors {
             sizes[c as usize] += 1;
@@ -479,7 +503,10 @@ mod tests {
     fn an_odd_ring_is_not_forced_into_two_colours() {
         let g = crate::ising::ring(7, 1.0, 0.0);
         let nc = g.colors.iter().max().map_or(0, |&c| c as usize + 1);
-        assert_eq!(nc, 3, "an odd cycle needs three, and asking for two must not succeed");
+        assert_eq!(
+            nc, 3,
+            "an odd cycle needs three, and asking for two must not succeed"
+        );
         for i in 0..g.n {
             for k in g.offset[i]..g.offset[i + 1] {
                 assert_ne!(g.colors[i], g.colors[g.nbr[k] as usize], "still proper");
@@ -502,8 +529,14 @@ mod tests {
         for g in &cases {
             let greedy = color_greedy(g.n, &g.offset, &g.nbr);
             let used = greedy.iter().max().map_or(0, |&c| c as usize + 1);
-            assert!(used < 3, "this case is meant to test the untouched path, not the other one");
-            assert_eq!(g.colors, greedy, "an already-good colouring must not be rewritten");
+            assert!(
+                used < 3,
+                "this case is meant to test the untouched path, not the other one"
+            );
+            assert_eq!(
+                g.colors, greedy,
+                "an already-good colouring must not be rewritten"
+            );
         }
     }
 
@@ -513,7 +546,9 @@ mod tests {
         let mut gb = GraphBuilder::new(100);
         let mut x = 1u64;
         for _ in 0..300 {
-            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let a = (x >> 33) as usize % 100;
             let b = (x >> 13) as usize % 100;
             if a != b {
@@ -523,7 +558,10 @@ mod tests {
         let g = gb.build();
         for i in 0..g.n {
             for k in g.offset[i]..g.offset[i + 1] {
-                assert_ne!(g.colors[i], g.colors[g.nbr[k] as usize], "adjacent same color");
+                assert_ne!(
+                    g.colors[i], g.colors[g.nbr[k] as usize],
+                    "adjacent same color"
+                );
             }
         }
         // classes partition the vertex set
@@ -555,8 +593,14 @@ mod tests {
             bits.push(g.energy(&s.s).to_bits());
             states.push(s.s.clone());
         }
-        assert!(orders.windows(2).all(|w| w[0] == w[1]), "CSR neighbour order must not vary");
-        assert!(states.windows(2).all(|w| w[0] == w[1]), "the sampled state must not vary");
+        assert!(
+            orders.windows(2).all(|w| w[0] == w[1]),
+            "CSR neighbour order must not vary"
+        );
+        assert!(
+            states.windows(2).all(|w| w[0] == w[1]),
+            "the sampled state must not vary"
+        );
         assert!(
             bits.windows(2).all(|w| w[0] == w[1]),
             "energies must be BIT-identical WITHIN a platform, not merely equal to the digits that \
@@ -589,7 +633,11 @@ mod tests {
         };
         let first = build();
         for _ in 0..4 {
-            assert_eq!(build(), first, "the same model must compile to the same bytes");
+            assert_eq!(
+                build(),
+                first,
+                "the same model must compile to the same bytes"
+            );
         }
     }
 }
@@ -623,8 +671,16 @@ mod dsatur_tests {
         ];
         for (name, g, adopted, dsatur) in cases {
             assert!(proper(&g), "{name}: the adopted colouring is not proper");
-            assert_eq!(g.classes.len(), adopted, "{name}: colour classes actually used");
-            assert_eq!(dsatur_colours(&g), dsatur, "{name}: what DSATUR alone would spend");
+            assert_eq!(
+                g.classes.len(),
+                adopted,
+                "{name}: colour classes actually used"
+            );
+            assert_eq!(
+                dsatur_colours(&g),
+                dsatur,
+                "{name}: what DSATUR alone would spend"
+            );
             assert_eq!(
                 g.classes.iter().map(std::vec::Vec::len).sum::<usize>(),
                 g.n,
@@ -644,7 +700,10 @@ mod dsatur_tests {
         let greedy_used = greedy.iter().max().map_or(0, |&c| c as usize + 1);
         assert_eq!(greedy_used, 6, "index-order greedy on Zephyr");
         assert_eq!(g.graph.classes.len(), 5, "and the graph uses one fewer");
-        assert!(two_color(g.graph.n, &g.graph.offset, &g.graph.nbr).is_none(), "not bipartite");
+        assert!(
+            two_color(g.graph.n, &g.graph.offset, &g.graph.nbr).is_none(),
+            "not bipartite"
+        );
     }
 
     /// DSATUR must be exact where the answer is known, or it is not DSATUR.

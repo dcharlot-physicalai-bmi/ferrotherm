@@ -18,7 +18,10 @@ fn main() {
     let l = 64usize;
     let g = lattice2d(l, 1.0);
     println!("2D Ising {l}x{l}, periodic, J=1 — |M| sampled vs Onsager exact (infinite lattice)");
-    println!("  {:>7} {:>12} {:>12} {:>9}", "beta", "|M| sampled", "M exact", "|delta|");
+    println!(
+        "  {:>7} {:>12} {:>12} {:>9}",
+        "beta", "|M| sampled", "M exact", "|delta|"
+    );
 
     let mut worst: f64 = 0.0;
     for &(beta, burn, meas, tol) in &[
@@ -51,6 +54,13 @@ fn main() {
         );
     }
     let ok = worst <= 0.0;
-    println!("  verdict: {}", if ok { "PASS — sampler reproduces the exact 2D Ising solution" } else { "FAIL" });
+    println!(
+        "  verdict: {}",
+        if ok {
+            "PASS — sampler reproduces the exact 2D Ising solution"
+        } else {
+            "FAIL"
+        }
+    );
     std::process::exit(if ok { 0 } else { 1 });
 }

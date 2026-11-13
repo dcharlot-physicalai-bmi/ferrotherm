@@ -38,8 +38,13 @@ fn report(name: &str, dev: &mut dyn Device) -> bool {
             .filter(|(_, count, price)| *count > 0 && !price.is_finite())
             .map(|(what, _, _)| *what)
             .collect();
-            let (list, verb) = (unpriced.join(", "), if unpriced.len() == 1 { "is" } else { "are" });
-            println!("  no joules figure for {name}: it did {list}, and those prices {verb} unstated.");
+            let (list, verb) = (
+                unpriced.join(", "),
+                if unpriced.len() == 1 { "is" } else { "are" },
+            );
+            println!(
+                "  no joules figure for {name}: it did {list}, and those prices {verb} unstated."
+            );
             println!("  Borrowing another machine's would look exactly like a measurement.");
         }
     }
@@ -49,7 +54,10 @@ fn report(name: &str, dev: &mut dyn Device) -> bool {
 
 fn main() {
     let cpu = report("cpu", &mut ferrotherm::fabric::Cpu::default());
-    let rtl = report("ferrotherm-pbit-rtl", &mut ferrotherm::hdl::RtlFabric::new());
+    let rtl = report(
+        "ferrotherm-pbit-rtl",
+        &mut ferrotherm::hdl::RtlFabric::new(),
+    );
 
     if !cpu {
         println!("WE FAIL OUR OWN SUITE ON THE CPU. That is published as-is.");

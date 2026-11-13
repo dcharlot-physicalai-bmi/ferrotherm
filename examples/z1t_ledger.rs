@@ -31,18 +31,27 @@ fn main() {
         s.total() * 1e9,
         s.baseline_joules * 1e6
     );
-    let f = s.factor().expect("the published split prices a real unit of work");
+    let f = s
+        .factor()
+        .expect("the published split prices a real unit of work");
     println!("  -> {f:.1}x   (the post says \"up to 140x\"; this reproduces it)\n");
 
     // ---- 1. the ceiling: what the thermodynamic half is worth, at most, ever ----
-    let ceiling = s.ceiling().expect("the FPGA half is nonzero, which is the whole point");
+    let ceiling = s
+        .ceiling()
+        .expect("the FPGA half is nonzero, which is the whole point");
     let headroom = s.headroom().expect("likewise");
     println!("1. WHAT THE SAMPLER IS WORTH");
-    println!("   Z1's share of the hybrid's energy:        {:.1}%", s.accel_share().unwrap() * 100.0);
+    println!(
+        "   Z1's share of the hybrid's energy:        {:.1}%",
+        s.accel_share().unwrap() * 100.0
+    );
     println!("   headline with Z1 at EXACTLY zero joules:  {ceiling:.1}x");
     println!("   so every future improvement to the sampler, summed over all time, is worth");
-    println!("   {:.1}% -- and the remaining orders of magnitude are the FPGA's to find.\n",
-             (headroom - 1.0) * 100.0);
+    println!(
+        "   {:.1}% -- and the remaining orders of magnitude are the FPGA's to find.\n",
+        (headroom - 1.0) * 100.0
+    );
 
     // ---- 2. the opponent: the multiplier is linear in the baseline, so quote the axis ----
     println!("2. WHICH OPPONENT (the post gives all three; the headline quotes the first)");
@@ -63,9 +72,18 @@ fn main() {
     // Also the post: "we need about an order of magnitude more FLOPs with our sparser Z1T model to
     // achieve the same loss as a GPT-2 model". Both cannot be inside the same multiplier.
     const ISO_LOSS_FLOPS: f64 = 10.0;
-    println!("3. WHICH UNIT OF WORK  (charging the post's own ~{ISO_LOSS_FLOPS:.0}x iso-loss FLOP penalty)");
-    println!("   {:>16}  {:>12}  {:>12}", "baseline", "iso-parameter", "iso-loss");
-    for (label, k) in [("H100 @ 10% MFU", 1.0), ("H100 @ 50% MFU", 0.2), ("H100 @100% MFU", 0.1)] {
+    println!(
+        "3. WHICH UNIT OF WORK  (charging the post's own ~{ISO_LOSS_FLOPS:.0}x iso-loss FLOP penalty)"
+    );
+    println!(
+        "   {:>16}  {:>12}  {:>12}",
+        "baseline", "iso-parameter", "iso-loss"
+    );
+    for (label, k) in [
+        ("H100 @ 10% MFU", 1.0),
+        ("H100 @ 50% MFU", 0.2),
+        ("H100 @100% MFU", 0.1),
+    ] {
         let iso_param = s.with_baseline_scaled(k);
         let iso_loss = iso_param.with_work_multiplier(ISO_LOSS_FLOPS);
         println!(
@@ -91,15 +109,22 @@ fn main() {
             Err(e) => println!("   {target:>6.0}x: {e}"),
         }
     }
-    let free = Split { accel_joules: 0.0, ..s };
+    let free = Split {
+        accel_joules: 0.0,
+        ..s
+    };
     println!(
         "   ... and with Z1 running FREE it is still {:.2}x. The sampler is not what is in the way.",
         free.host_speedup_for(1000.0).unwrap()
     );
     println!("\n   The post says this itself: \"the FPGA consumes the vast majority (>95%) of the");
     println!("   energy... potentially reaching up to 1000x greater energy efficiency than GPUs\"");
-    println!("   with a chip designed for these models. That is a correct diagnosis of a bottleneck");
-    println!("   in a part that is not the thermodynamic one, and it is the honest version of 140x.");
+    println!(
+        "   with a chip designed for these models. That is a correct diagnosis of a bottleneck"
+    );
+    println!(
+        "   in a part that is not the thermodynamic one, and it is the honest version of 140x."
+    );
 
     // ---- 5. what is measured, and what is not ----
     println!("\n5. PROVENANCE");

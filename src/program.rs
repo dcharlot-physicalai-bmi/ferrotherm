@@ -172,7 +172,12 @@ impl Program {
                         s[p_theta] += if flip { sigma(-th) } else { -p_flip };
                     }
                 }
-                Gate::CtrlGauss { u, err, p_k, sigma: sg } => {
+                Gate::CtrlGauss {
+                    u,
+                    err,
+                    p_k,
+                    sigma: sg,
+                } => {
                     let k = params[p_k];
                     let mean = k * st.reals[err];
                     let z = gauss(rng);
@@ -209,7 +214,12 @@ impl Program {
                         tr.push((gi, mask));
                     }
                 }
-                Gate::GibbsK { g, sweeps, beta, p_h0 } => {
+                Gate::GibbsK {
+                    g,
+                    sweeps,
+                    beta,
+                    p_h0,
+                } => {
                     let gr = &self.graphs[g];
                     let mut updated = 0u64;
                     for _ in 0..sweeps {
@@ -267,7 +277,15 @@ impl Program {
         for e in 0..episodes {
             let mut rng = Pcg::new(seed, e as u64);
             let mut sc = vec![0.0; self.n_params];
-            let st = self.run(init, &mut rng, Some(&mut sc), Force::None, params, None, None);
+            let st = self.run(
+                init,
+                &mut rng,
+                Some(&mut sc),
+                Force::None,
+                params,
+                None,
+                None,
+            );
             losses.push(loss(&st));
             scores.push(sc);
         }
@@ -278,8 +296,11 @@ impl Program {
             // LEAVE ONE OUT. Each episode has its own stream (`Pcg::new(seed, e)`), so the mean of
             // the other losses is independent of this episode's score and subtracts nothing in
             // expectation. The whole-batch mean is not independent of it -- see the doc above.
-            let baseline =
-                if episodes > 1 { (total - losses[e]) / (episodes - 1) as f64 } else { 0.0 };
+            let baseline = if episodes > 1 {
+                (total - losses[e]) / (episodes - 1) as f64
+            } else {
+                0.0
+            };
             let adv = losses[e] - baseline;
             for j in 0..self.n_params {
                 grad[j] += adv * scores[e][j];
@@ -293,10 +314,10 @@ impl Program {
 
     /// Parameter-shift gradient for the `PNot` at `gate_idx`:
     /// sigma'(theta) * (E[L | forced flip] - E[L | forced hold]), common random numbers.
-///
-/// # Panics
-///
-/// If the gate at `gate_idx` is not a [`Gate::PNot`]; the parameter shift is defined for that gate.
+    ///
+    /// # Panics
+    ///
+    /// If the gate at `gate_idx` is not a [`Gate::PNot`]; the parameter shift is defined for that gate.
     pub fn pshift_grad_pnot<F: Fn(&State) -> f64>(
         &self,
         gate_idx: usize,
@@ -314,9 +335,31 @@ impl Program {
         let mut diff = 0.0;
         for e in 0..episodes {
             let mut r1 = Pcg::new(seed, e as u64);
-            let a = self.run(init, &mut r1, None, Force::PNot { gate_idx, flip: true }, params, None, None);
+            let a = self.run(
+                init,
+                &mut r1,
+                None,
+                Force::PNot {
+                    gate_idx,
+                    flip: true,
+                },
+                params,
+                None,
+                None,
+            );
             let mut r2 = Pcg::new(seed, e as u64);
-            let b = self.run(init, &mut r2, None, Force::PNot { gate_idx, flip: false }, params, None, None);
+            let b = self.run(
+                init,
+                &mut r2,
+                None,
+                Force::PNot {
+                    gate_idx,
+                    flip: false,
+                },
+                params,
+                None,
+                None,
+            );
             diff += loss(&a) - loss(&b);
         }
         dsig * diff / episodes as f64
@@ -342,7 +385,15 @@ impl Program {
         for e in 0..episodes {
             let mut rng = Pcg::new(seed, e as u64);
             trace.clear();
-            let st = self.run(init, &mut rng, None, Force::None, params, None, Some(&mut trace));
+            let st = self.run(
+                init,
+                &mut rng,
+                None,
+                Force::None,
+                params,
+                None,
+                Some(&mut trace),
+            );
             let f = loss(&st);
             mean += f;
             for &(gi, traj_mask) in &trace {
@@ -475,13 +526,20 @@ mod tests {
         let g = gb.build();
         let prog = Program {
             gates: vec![
-                Gate::BoltzExact { g: 0, beta: 0.8, p_h0: 0 },
+                Gate::BoltzExact {
+                    g: 0,
+                    beta: 0.8,
+                    p_h0: 0,
+                },
                 Gate::PNot { bit: 0, p_theta: 3 },
             ],
             graphs: vec![g],
             n_params: 4,
         };
-        let init = State { bits: vec![1, 1, 1], reals: vec![] };
+        let init = State {
+            bits: vec![1, 1, 1],
+            reals: vec![],
+        };
         let params = [0.3, -0.2, 0.1, 0.4];
         let loss = |s: &State| {
             s.bits[0] as f64 + 0.7 * s.bits[1] as f64 + 0.4 * (s.bits[0] * s.bits[2]) as f64
@@ -553,7 +611,10 @@ mod tests {
             graphs: vec![],
             n_params: 1,
         };
-        let init = State { bits: vec![1], reals: vec![] };
+        let init = State {
+            bits: vec![1],
+            reals: vec![],
+        };
         let th = 0.3;
         let (g, _) = prog.reinforce_grad(&init, &[th], &|s: &State| s.bits[0] as f64, 400_000, 99);
         let want = -2.0 * sigma(th) * sigma(-th);

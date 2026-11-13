@@ -23,7 +23,7 @@ categories = ["science", "api-bindings", "simulation"]
 
 [dependencies]
 ferrotherm = { version = "0.44", path = ".." }
-ureq = "2"
+ureq = "3"
 
 [dev-dependencies]
 

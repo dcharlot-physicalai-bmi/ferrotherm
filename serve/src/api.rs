@@ -3,14 +3,14 @@
 //! Every handler takes a JSON request and returns a JSON result or an error string. The transports
 //! in `http` and `mcp` do nothing but move bytes and shape envelopes.
 
-use crate::json::{parse, Json};
+use crate::json::{Json, parse};
+use ferrotherm::certify::Certificate;
 use ferrotherm::encode::Encoding;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising;
-use ferrotherm::certify::Certificate;
-use ferrotherm::model::{Constraint, Expr, Lit, Model, Rel, Sense};
 use ferrotherm::ledger::{Ledger, Prices, Z1_SPICE};
+use ferrotherm::model::{Constraint, Expr, Lit, Model, Rel, Sense};
 use std::time::Instant;
 
 /// Ceilings that keep one request from monopolising the process. They are advertised in
@@ -84,11 +84,18 @@ pub fn graph_from(v: &Json) -> Result<Graph, String> {
     let mut b = GraphBuilder::new(n);
 
     if let Some(cs) = v.get("couplings") {
-        let cs = cs.as_arr().ok_or("\"couplings\" must be an array of [i, j, J]")?;
+        let cs = cs
+            .as_arr()
+            .ok_or("\"couplings\" must be an array of [i, j, J]")?;
         for (k, c) in cs.iter().enumerate() {
-            let t = c.as_arr().ok_or_else(|| format!("coupling {k} must be [i, j, J]"))?;
+            let t = c
+                .as_arr()
+                .ok_or_else(|| format!("coupling {k} must be [i, j, J]"))?;
             if t.len() != 3 {
-                return Err(format!("coupling {k} must have 3 entries [i, j, J], got {}", t.len()));
+                return Err(format!(
+                    "coupling {k} must have 3 entries [i, j, J], got {}",
+                    t.len()
+                ));
             }
             let (i, j) = (idx(&t[0], n, k, "i")?, idx(&t[1], n, k, "j")?);
             if i == j {
@@ -97,7 +104,9 @@ pub fn graph_from(v: &Json) -> Result<Graph, String> {
                      put it in \"biases\""
                 ));
             }
-            let w = t[2].as_f64().ok_or_else(|| format!("coupling {k}: J must be a number"))?;
+            let w = t[2]
+                .as_f64()
+                .ok_or_else(|| format!("coupling {k}: J must be a number"))?;
             if !w.is_finite() {
                 return Err(format!("coupling {k}: J must be finite"));
             }
@@ -107,12 +116,19 @@ pub fn graph_from(v: &Json) -> Result<Graph, String> {
     if let Some(hs) = v.get("biases") {
         let hs = hs.as_arr().ok_or("\"biases\" must be an array of [i, h]")?;
         for (k, e) in hs.iter().enumerate() {
-            let t = e.as_arr().ok_or_else(|| format!("bias {k} must be [i, h]"))?;
+            let t = e
+                .as_arr()
+                .ok_or_else(|| format!("bias {k} must be [i, h]"))?;
             if t.len() != 2 {
-                return Err(format!("bias {k} must have 2 entries [i, h], got {}", t.len()));
+                return Err(format!(
+                    "bias {k} must have 2 entries [i, h], got {}",
+                    t.len()
+                ));
             }
             let i = idx(&t[0], n, k, "i")?;
-            let h = t[1].as_f64().ok_or_else(|| format!("bias {k}: h must be a number"))?;
+            let h = t[1]
+                .as_f64()
+                .ok_or_else(|| format!("bias {k}: h must be a number"))?;
             if !h.is_finite() {
                 return Err(format!("bias {k}: h must be finite"));
             }
@@ -127,15 +143,21 @@ fn bound_nodes(n: usize) -> Result<(), String> {
         return Err("graph must have at least one node".into());
     }
     if n > MAX_NODES {
-        return Err(format!("graph has {n} nodes, over the {MAX_NODES} ceiling for one request"));
+        return Err(format!(
+            "graph has {n} nodes, over the {MAX_NODES} ceiling for one request"
+        ));
     }
     Ok(())
 }
 
 fn idx(v: &Json, n: usize, k: usize, which: &str) -> Result<usize, String> {
-    let i = v.as_usize().ok_or_else(|| format!("entry {k}: {which} must be a non-negative integer"))?;
+    let i = v
+        .as_usize()
+        .ok_or_else(|| format!("entry {k}: {which} must be a non-negative integer"))?;
     if i >= n {
-        return Err(format!("entry {k}: {which} = {i} is out of range for a graph of {n} nodes"));
+        return Err(format!(
+            "entry {k}: {which} = {i} is out of range for a graph of {n} nodes"
+        ));
     }
     Ok(i)
 }
@@ -147,7 +169,10 @@ fn req_usize(v: &Json, key: &str) -> Result<usize, String> {
 }
 
 fn opt_f64(v: &Json, key: &str, dflt: f64) -> f64 {
-    v.get(key).and_then(super::json::Json::as_f64).filter(|f| f.is_finite()).unwrap_or(dflt)
+    v.get(key)
+        .and_then(super::json::Json::as_f64)
+        .filter(|f| f.is_finite())
+        .unwrap_or(dflt)
 }
 
 /// Refuse a run whose TOTAL cost exceeds the ceiling.
@@ -178,7 +203,10 @@ fn value_of(v: &Json, key: &str, dflt: i64, what: &str) -> Result<i64, String> {
     match v.get(key) {
         None => Ok(dflt),
         Some(x) => x.as_i64().ok_or_else(|| {
-            format!("{what}: \"{key}\" must be a whole number, not {}", describe(x))
+            format!(
+                "{what}: \"{key}\" must be a whole number, not {}",
+                describe(x)
+            )
         }),
     }
 }
@@ -196,7 +224,9 @@ fn describe(v: &Json) -> &'static str {
 }
 
 fn opt_usize(v: &Json, key: &str, dflt: usize) -> usize {
-    v.get(key).and_then(super::json::Json::as_usize).unwrap_or(dflt)
+    v.get(key)
+        .and_then(super::json::Json::as_usize)
+        .unwrap_or(dflt)
 }
 
 /// Base64, hand-rolled: this crate has no dependencies and one encoder does not justify the first.
@@ -208,8 +238,16 @@ fn b64(bytes: &[u8]) -> String {
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(A[(n >> 18 & 63) as usize] as char);
         out.push(A[(n >> 12 & 63) as usize] as char);
-        out.push(if c.len() > 1 { A[(n >> 6 & 63) as usize] as char } else { '=' });
-        out.push(if c.len() > 2 { A[(n & 63) as usize] as char } else { '=' });
+        out.push(if c.len() > 1 {
+            A[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            A[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -220,7 +258,13 @@ fn ledger_json(l: &Ledger, p: &Prices, wall_s: f64) -> Json {
     // the note is generated from the prices rather than written here -- a hardcoded note is how a
     // figure ends up labelled with the wrong machine when the prices change underneath it.
     let (fs, fr, fw) = l.shares(p);
-    let num = |v: f64| if v.is_finite() { Json::n(v) } else { Json::Null };
+    let num = |v: f64| {
+        if v.is_finite() {
+            Json::n(v)
+        } else {
+            Json::Null
+        }
+    };
     Json::obj(vec![
         ("node_updates", Json::n(l.samples as f64)),
         ("reads", Json::n(l.reads as f64)),
@@ -236,7 +280,11 @@ fn ledger_json(l: &Ledger, p: &Prices, wall_s: f64) -> Json {
         ("priced_as", Json::s(p.source)),
         (
             "share",
-            Json::obj(vec![("sample", num(fs)), ("read", num(fr)), ("write", num(fw))]),
+            Json::obj(vec![
+                ("sample", num(fs)),
+                ("read", num(fr)),
+                ("write", num(fw)),
+            ]),
         ),
         ("wall_seconds", Json::n(wall_s)),
         (
@@ -315,7 +363,12 @@ fn certificate_json(c: &Certificate, capped: Option<usize>) -> Json {
         ("passed", Json::Bool(c.passed())),
         (
             "findings",
-            Json::Arr(c.findings.iter().map(|f| Json::Str(f.to_string())).collect()),
+            Json::Arr(
+                c.findings
+                    .iter()
+                    .map(|f| Json::Str(f.to_string()))
+                    .collect(),
+            ),
         ),
     ];
     if let (Some(tv), Some(fl)) = (c.tv_exact, c.noise_floor) {
@@ -323,10 +376,7 @@ fn certificate_json(c: &Certificate, capped: Option<usize>) -> Json {
         out.push(("noise_floor", Json::n(fl)));
     }
     if let Some(n) = capped {
-        out.push((
-            "draws_capped_to",
-            Json::n(n as f64),
-        ));
+        out.push(("draws_capped_to", Json::n(n as f64)));
         out.push((
             "cap_note",
             Json::s(
@@ -371,7 +421,10 @@ pub fn sample(req: &Json) -> Result<Json, String> {
         return Err("\"beta\" must be non-negative (beta = 1/T)".into());
     }
     let sweeps = opt_usize(req, "sweeps", 100);
-    let seed = req.get("seed").and_then(super::json::Json::as_u64).unwrap_or(0);
+    let seed = req
+        .get("seed")
+        .and_then(super::json::Json::as_u64)
+        .unwrap_or(0);
     let threads = opt_usize(req, "threads", 1).max(1);
 
     // Read the recording parameters BEFORE the ceiling, because they are most of the cost.
@@ -381,7 +434,11 @@ pub fn sample(req: &Json) -> Result<Json, String> {
     // model or quietly allocate a gigabyte, the draw count is reduced and the reduction is reported.
     let max_draws = (RETAINED_SPIN_BUDGET / g.n.max(1)).max(16);
     let draws = want_draws.min(max_draws);
-    let capped = if draws < want_draws { Some(draws) } else { None };
+    let capped = if draws < want_draws {
+        Some(draws)
+    } else {
+        None
+    };
     bound_updates(g.n, sweeps, draws, thin)?;
 
     let t0 = Instant::now();
@@ -389,12 +446,16 @@ pub fn sample(req: &Json) -> Result<Json, String> {
     let mut smp = Sampler::new(&g, beta, seed);
     if let Some(cl) = req.get("clamp").and_then(Json::as_arr) {
         for (k, e) in cl.iter().enumerate() {
-            let t = e.as_arr().ok_or_else(|| format!("clamp {k} must be [i, value]"))?;
+            let t = e
+                .as_arr()
+                .ok_or_else(|| format!("clamp {k} must be [i, value]"))?;
             if t.len() != 2 {
                 return Err(format!("clamp {k} must be [i, value]"));
             }
             let i = idx(&t[0], g.n, k, "i")?;
-            let val = t[1].as_f64().ok_or_else(|| format!("clamp {k}: value must be -1 or +1"))?;
+            let val = t[1]
+                .as_f64()
+                .ok_or_else(|| format!("clamp {k}: value must be -1 or +1"))?;
             if val != 1.0 && val != -1.0 {
                 return Err(format!("clamp {k}: value must be -1 or +1, got {val}"));
             }
@@ -435,12 +496,21 @@ pub fn sample(req: &Json) -> Result<Json, String> {
     ];
     // A million-node state is not something to paste into a chat transcript; it is returned only
     // when asked for, and the summary statistics above are what a caller usually wants.
-    if req.get("return_state").and_then(super::json::Json::as_bool).unwrap_or(g.n <= 4096) {
+    if req
+        .get("return_state")
+        .and_then(super::json::Json::as_bool)
+        .unwrap_or(g.n <= 4096)
+    {
         out.push(("state", state_json(&s)));
     } else {
-        out.push(("state_omitted", Json::s("pass \"return_state\": true to include it")));
+        out.push((
+            "state_omitted",
+            Json::s("pass \"return_state\": true to include it"),
+        ));
     }
-    Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Ok(Json::Obj(
+        out.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    ))
 }
 
 /// Simulated annealing down a geometric beta ladder, tracking the best state seen.
@@ -466,7 +536,10 @@ pub fn anneal(req: &Json) -> Result<Json, String> {
     // straight from the request body into an allocation.
     let stages = opt_usize(req, "stages", 60).clamp(2, 10_000);
     let per = opt_usize(req, "sweeps_per_stage", 40).clamp(1, 100_000);
-    let seed = req.get("seed").and_then(super::json::Json::as_u64).unwrap_or(0);
+    let seed = req
+        .get("seed")
+        .and_then(super::json::Json::as_u64)
+        .unwrap_or(0);
     if !(beta_min > 0.0 && beta_max > beta_min) {
         return Err("need 0 < beta_min < beta_max".into());
     }
@@ -500,12 +573,21 @@ pub fn anneal(req: &Json) -> Result<Json, String> {
         ("seed", Json::n(seed as f64)),
         ("ledger", ledger_json(&led, &Z1_SPICE, wall)),
     ];
-    if req.get("return_state").and_then(super::json::Json::as_bool).unwrap_or(g.n <= 4096) {
+    if req
+        .get("return_state")
+        .and_then(super::json::Json::as_bool)
+        .unwrap_or(g.n <= 4096)
+    {
         out.push(("state", state_json(&best)));
     } else {
-        out.push(("state_omitted", Json::s("pass \"return_state\": true to include it")));
+        out.push((
+            "state_omitted",
+            Json::s("pass \"return_state\": true to include it"),
+        ));
     }
-    Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Ok(Json::Obj(
+        out.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    ))
 }
 
 /// Energy of a supplied state under a supplied graph.
@@ -517,13 +599,22 @@ pub fn anneal(req: &Json) -> Result<Json, String> {
 /// HTTP boundary.
 pub fn energy(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
-    let sv = req.get("state").and_then(Json::as_arr).ok_or("missing \"state\" array")?;
+    let sv = req
+        .get("state")
+        .and_then(Json::as_arr)
+        .ok_or("missing \"state\" array")?;
     if sv.len() != g.n {
-        return Err(format!("state has {} entries but the graph has {} nodes", sv.len(), g.n));
+        return Err(format!(
+            "state has {} entries but the graph has {} nodes",
+            sv.len(),
+            g.n
+        ));
     }
     let mut s = Vec::with_capacity(g.n);
     for (i, x) in sv.iter().enumerate() {
-        let v = x.as_f64().ok_or_else(|| format!("state[{i}] must be -1 or +1"))?;
+        let v = x
+            .as_f64()
+            .ok_or_else(|| format!("state[{i}] must be -1 or +1"))?;
         if v != 1.0 && v != -1.0 {
             return Err(format!("state[{i}] must be -1 or +1, got {v}"));
         }
@@ -561,14 +652,20 @@ pub fn bound(req: &Json) -> Result<Json, String> {
     let rounds = opt_usize(req, "forest_rounds", 40).clamp(0, 10_000);
     let max_cycle = opt_usize(req, "max_cycle", 6).clamp(0, 64);
     let sdp_sweeps = opt_usize(req, "sdp_sweeps", 200).clamp(1, 100_000);
-    let seed = req.get("seed").and_then(super::json::Json::as_u64).unwrap_or(1);
+    let seed = req
+        .get("seed")
+        .and_then(super::json::Json::as_u64)
+        .unwrap_or(1);
 
     // The SDP factors a dense n x n matrix, so its cost is n^3 in the NODE COUNT and does not care
     // how sparse the graph is. Refused rather than attempted: an unbounded Cholesky here is a way
     // to take the server down with a valid-looking request.
     const SDP_MAX_NODES: usize = 2_048;
     let sdp = if g.n <= SDP_MAX_NODES {
-        let p = ferrotherm::sdp::Params { sweeps: sdp_sweeps, ..ferrotherm::sdp::Params::default() };
+        let p = ferrotherm::sdp::Params {
+            sweeps: sdp_sweeps,
+            ..ferrotherm::sdp::Params::default()
+        };
         let (_, cert) = ferrotherm::sdp::certified(&g, &p, seed);
         // Re-verified here, not trusted: rebuild the cost matrix from the graph and re-run the
         // positive-definiteness proof before the number leaves this process.
@@ -586,7 +683,9 @@ pub fn bound(req: &Json) -> Result<Json, String> {
     }
     let (which, best) = pairs
         .iter()
-        .fold(("decoupled", f64::NEG_INFINITY), |acc, &(n, v)| if v > acc.1 { (n, v) } else { acc });
+        .fold(("decoupled", f64::NEG_INFINITY), |acc, &(n, v)| {
+            if v > acc.1 { (n, v) } else { acc }
+        });
 
     let mut out = vec![
         ("nodes", Json::n(g.n as f64)),
@@ -609,11 +708,17 @@ pub fn bound(req: &Json) -> Result<Json, String> {
 
     if let Some(sv) = req.get("state").and_then(Json::as_arr) {
         if sv.len() != g.n {
-            return Err(format!("state has {} entries but the graph has {} nodes", sv.len(), g.n));
+            return Err(format!(
+                "state has {} entries but the graph has {} nodes",
+                sv.len(),
+                g.n
+            ));
         }
         let mut s = Vec::with_capacity(g.n);
         for (i, x) in sv.iter().enumerate() {
-            let v = x.as_f64().ok_or_else(|| format!("state[{i}] must be -1 or +1"))?;
+            let v = x
+                .as_f64()
+                .ok_or_else(|| format!("state[{i}] must be -1 or +1"))?;
             if v != 1.0 && v != -1.0 {
                 return Err(format!("state[{i}] must be -1 or +1, got {v}"));
             }
@@ -623,7 +728,9 @@ pub fn bound(req: &Json) -> Result<Json, String> {
         out.push(("energy", Json::n(e)));
         out.push(("gap", Json::n(e - best)));
     }
-    Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Ok(Json::Obj(
+        out.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    ))
 }
 
 /// **Exact** max-cut on a planar graph, in polynomial time.
@@ -670,12 +777,24 @@ pub fn exact_planar(req: &Json) -> Result<Json, String> {
         ("odd_faces", Json::n(out.odd_faces as f64)),
         ("wall_seconds", Json::n(wall)),
     ];
-    if req.get("return_state").and_then(super::json::Json::as_bool).unwrap_or(g.n <= 4096) {
+    if req
+        .get("return_state")
+        .and_then(super::json::Json::as_bool)
+        .unwrap_or(g.n <= 4096)
+    {
         fields.push(("state", state_json(&out.state)));
     } else {
-        fields.push(("state_omitted", Json::s("pass \"return_state\": true to include it")));
+        fields.push((
+            "state_omitted",
+            Json::s("pass \"return_state\": true to include it"),
+        ));
     }
-    Ok(Json::Obj(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Ok(Json::Obj(
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    ))
 }
 
 /// An **upper bound** on the maximum cut of a toroidal grid.
@@ -697,19 +816,19 @@ pub fn toroidal_bound(req: &Json) -> Result<Json, String> {
     }
     const MAX_NODES: usize = 20_000;
     if g.n > MAX_NODES {
-        return Err(format!("{} nodes, over the {MAX_NODES} ceiling: the matching is cubic", g.n));
+        return Err(format!(
+            "{} nodes, over the {MAX_NODES} ceiling: the matching is cubic",
+            g.n
+        ));
     }
     let emb = ferrotherm::planar::torus_grid_of(&g).ok_or(
         "not a toroidal grid. The structure is recovered from the edge list -- a match on all 2n \
          edges -- rather than assumed, so this is a statement about the graph, not a limitation",
     )?;
     let t0 = Instant::now();
-    let b = ferrotherm::planarcut::bound_on_surface(
-        &g,
-        &emb,
-        &ferrotherm::planarcut::Params { scale },
-    )
-    .map_err(|e| e.to_string())?;
+    let b =
+        ferrotherm::planarcut::bound_on_surface(&g, &emb, &ferrotherm::planarcut::Params { scale })
+            .map_err(|e| e.to_string())?;
     let wall = t0.elapsed().as_secs_f64();
     let mut fields = vec![
         ("nodes", Json::n(g.n as f64)),
@@ -724,11 +843,20 @@ pub fn toroidal_bound(req: &Json) -> Result<Json, String> {
     ];
     if let (Some(s), Some(e)) = (&b.state, b.energy) {
         fields.push(("energy", Json::n(e)));
-        if req.get("return_state").and_then(super::json::Json::as_bool).unwrap_or(g.n <= 4096) {
+        if req
+            .get("return_state")
+            .and_then(super::json::Json::as_bool)
+            .unwrap_or(g.n <= 4096)
+        {
             fields.push(("state", state_json(s)));
         }
     }
-    Ok(Json::Obj(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Ok(Json::Obj(
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    ))
 }
 
 /// Identity on a state, so every arm of `optimize` returns the same shape.
@@ -749,8 +877,15 @@ fn o_state(s: Vec<i8>) -> Vec<i8> {
 /// HTTP boundary.
 pub fn optimize(req: &Json) -> Result<Json, String> {
     let g = graph_from(req.get("graph").ok_or("missing \"graph\"")?)?;
-    let method = req.get("method").and_then(Json::as_str).unwrap_or("tabu").to_string();
-    let seed = req.get("seed").and_then(super::json::Json::as_u64).unwrap_or(0);
+    let method = req
+        .get("method")
+        .and_then(Json::as_str)
+        .unwrap_or("tabu")
+        .to_string();
+    let seed = req
+        .get("seed")
+        .and_then(super::json::Json::as_u64)
+        .unwrap_or(0);
     let t0 = Instant::now();
     let mut led = Ledger::default();
 
@@ -868,7 +1003,11 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                     ("cluster_moves", Json::n(o.icm_moves as f64)),
                     (
                         "mean_cluster_size",
-                        Json::n(if o.icm_moves == 0 { 0.0 } else { o.icm_spins as f64 / o.icm_moves as f64 }),
+                        Json::n(if o.icm_moves == 0 {
+                            0.0
+                        } else {
+                            o.icm_spins as f64 / o.icm_moves as f64
+                        }),
                     ),
                 ],
             )
@@ -883,8 +1022,12 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
             // its own beta -- and the literal 4 this used to carry sat at a ratio of 7.5, three
             // times worse in solution quality than anything on the plateau. See
             // `ferrotherm::sqa::TROTTER_RATIO`.
-            let trotter = opt_usize(req, "trotter", ferrotherm::sqa::Params::slices_for(beta, gmax))
-                .clamp(1, 1024);
+            let trotter = opt_usize(
+                req,
+                "trotter",
+                ferrotherm::sqa::Params::slices_for(beta, gmax),
+            )
+            .clamp(1, 1024);
             let gmin = opt_f64(req, "gamma_min", 0.05);
             let steps = opt_usize(req, "steps", 200).clamp(1, 1_000_000);
             if !(beta > 0.0 && gmax >= gmin && gmin >= 0.0) {
@@ -992,7 +1135,11 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                     ("beta_max", Json::n(beta_max)),
                     (
                         "ln_z",
-                        if o.ln_z_is_absolute { Json::n(o.ln_z) } else { Json::Null },
+                        if o.ln_z_is_absolute {
+                            Json::n(o.ln_z)
+                        } else {
+                            Json::Null
+                        },
                     ),
                     // THE NUMBER THAT SAYS WHETHER TO BELIEVE ln_z. 1 is ideal; the population size
                     // means every survivor descends from one ancestor.
@@ -1015,12 +1162,17 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
                 .unwrap_or(20_000_000)
                 .clamp(1, 2_000_000_000);
             let incumbent = req.get("incumbent").and_then(Json::as_arr).map(|sv| {
-                sv.iter().map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 }).collect::<Vec<i8>>()
+                sv.iter()
+                    .map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 })
+                    .collect::<Vec<i8>>()
             });
             // `sdp_depth` is exposed because it is the one dial whose value is instance-dependent:
             // it buys a much tighter bound at the top of the tree and costs a Cholesky per node to
             // do it, and which way that lands depends on the density of the graph in the request.
-            let sdp_depth = req.get("sdp_depth").and_then(super::json::Json::as_usize).filter(|d| *d <= 16);
+            let sdp_depth = req
+                .get("sdp_depth")
+                .and_then(super::json::Json::as_usize)
+                .filter(|d| *d <= 16);
             let p = ferrotherm::branch::Params {
                 max_nodes,
                 incumbent,
@@ -1049,7 +1201,7 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
             return Err(format!(
                 "unknown method {other:?}; expected \"tabu\", \"breakout\", \"cluster\", \
                  \"quantum\", \"goemans_williamson\", \"population\" or \"branch\""
-            ))
+            ));
         }
     };
 
@@ -1065,12 +1217,21 @@ pub fn optimize(req: &Json) -> Result<Json, String> {
         ("ledger", ledger_json(&led, &Z1_SPICE, wall)),
     ];
     out.append(&mut extra);
-    if req.get("return_state").and_then(super::json::Json::as_bool).unwrap_or(g.n <= 4096) {
+    if req
+        .get("return_state")
+        .and_then(super::json::Json::as_bool)
+        .unwrap_or(g.n <= 4096)
+    {
         out.push(("state", state_json(&state)));
     } else {
-        out.push(("state_omitted", Json::s("pass \"return_state\": true to include it")));
+        out.push((
+            "state_omitted",
+            Json::s("pass \"return_state\": true to include it"),
+        ));
     }
-    Ok(Json::Obj(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Ok(Json::Obj(
+        out.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    ))
 }
 
 /// Enumerate the exact Boltzmann distribution and compare the sampler against it.
@@ -1098,7 +1259,10 @@ pub fn verify(req: &Json) -> Result<Json, String> {
     // beta that correlation biases the histogram badly enough to fail verification on a sampler
     // that is in fact correct. Thinning is the cure; the autocorrelation is the disease.
     let thin = opt_usize(req, "thin", 1).max(1);
-    let seed = req.get("seed").and_then(super::json::Json::as_u64).unwrap_or(0);
+    let seed = req
+        .get("seed")
+        .and_then(super::json::Json::as_u64)
+        .unwrap_or(0);
     // Capped at 20 nodes, so the graph is small -- but `draws` defaults to 20,000 and `thin` is a
     // caller's number, so the sweep count is not bounded by the node count.
     bound_updates(g.n, sweeps, draws, thin)?;
@@ -1172,33 +1336,92 @@ pub fn capabilities() -> Json {
         (
             "operations",
             Json::Arr(vec![
-                op("sample", "Draw a state by block-Gibbs at fixed beta.", "graph, beta, sweeps, seed, threads, clamp, return_state"),
-                op("anneal", "Minimise energy down a geometric beta ladder.", "graph, beta_min, beta_max, stages, sweeps_per_stage, seed"),
-                op("energy", "Energy and magnetization of a given state.", "graph, state"),
-                op("verify", "Compare the sampler to the exact distribution (n <= 20).", "graph, beta, draws, sweeps, seed"),
-                op("bound", "Lower bounds on the ground energy, and the gap of a supplied state. Any size.", "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed"),
-                op("exact_planar", "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.", "graph, scale, return_state"),
-                op("toroidal_bound", "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.", "graph, scale, return_state"),
-                op("optimize", "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.", "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent (branch, tabu and breakout all take one now), sdp_depth, return_state"),
-                op("solve", "State a problem with named variables and constraints; get named values back. Constraint types: not_equal, equal, fix, cardinality, at_most, at_least, exactly_one, at_most_one, all_different, and linear -- a WEIGHTED row (3a + 4b + 5c <= 7), which no counting constraint can express. \"method\" chooses the solver -- anneal (default), tabu, breakout, or branch, which is the only one that PROVES its answer.", "variables, constraints, objective, tries, penalty, schedule, method, effort"),
-                op("hubo", "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.", "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed"),
-                op("fit", "FIT a Boltzmann machine to data and get the trained model back as a graph. The only operation here that produces a model rather than consuming one; its \"graph\" is the shape every other operation takes, so fit then sample, anneal, bound or verify with no export step.", "visible, hidden, data, epochs, k, positive_sweeps, learning_rate, batch, seed"),
+                op(
+                    "sample",
+                    "Draw a state by block-Gibbs at fixed beta.",
+                    "graph, beta, sweeps, seed, threads, clamp, return_state",
+                ),
+                op(
+                    "anneal",
+                    "Minimise energy down a geometric beta ladder.",
+                    "graph, beta_min, beta_max, stages, sweeps_per_stage, seed",
+                ),
+                op(
+                    "energy",
+                    "Energy and magnetization of a given state.",
+                    "graph, state",
+                ),
+                op(
+                    "verify",
+                    "Compare the sampler to the exact distribution (n <= 20).",
+                    "graph, beta, draws, sweeps, seed",
+                ),
+                op(
+                    "bound",
+                    "Lower bounds on the ground energy, and the gap of a supplied state. Any size.",
+                    "graph, state, forest_rounds, max_cycle, sdp_sweeps, seed",
+                ),
+                op(
+                    "exact_planar",
+                    "EXACT max-cut on a planar graph, in polynomial time. Not a search: it returns the maximum, not the best found.",
+                    "graph, scale, return_state",
+                ),
+                op(
+                    "toroidal_bound",
+                    "An UPPER bound on the maximum cut of a toroidal grid -- the side of the G-set table nobody publishes.",
+                    "graph, scale, return_state",
+                ),
+                op(
+                    "optimize",
+                    "Minimise by tabu search, breakout local search, isoenergetic cluster moves, simulated quantum annealing, Goemans-Williamson rounding, population annealing, or branch and bound.",
+                    "graph, method, seed, iterations, population, stages, beta_max, max_nodes, incumbent (branch, tabu and breakout all take one now), sdp_depth, return_state",
+                ),
+                op(
+                    "solve",
+                    "State a problem with named variables and constraints; get named values back. Constraint types: not_equal, equal, fix, cardinality, at_most, at_least, exactly_one, at_most_one, all_different, and linear -- a WEIGHTED row (3a + 4b + 5c <= 7), which no counting constraint can express. \"method\" chooses the solver -- anneal (default), tabu, breakout, or branch, which is the only one that PROVES its answer.",
+                    "variables, constraints, objective, tries, penalty, schedule, method, effort",
+                ),
+                op(
+                    "hubo",
+                    "Minimise a HIGHER-ORDER model natively -- terms of any arity, no ancillas and no penalty to get right. Use this rather than a three-or-more-variable objective term in \"solve\" whenever the target is a CPU.",
+                    "spins, terms, beta_min, beta_max, stages, sweeps_per_stage, seed",
+                ),
+                op(
+                    "fit",
+                    "FIT a Boltzmann machine to data and get the trained model back as a graph. The only operation here that produces a model rather than consuming one; its \"graph\" is the shape every other operation takes, so fit then sample, anneal, bound or verify with no export step.",
+                    "visible, hidden, data, epochs, k, positive_sweeps, learning_rate, batch, seed",
+                ),
             ]),
         ),
         (
             "graph_spec",
             Json::obj(vec![
-                ("explicit", Json::s("{\"n\": 4, \"couplings\": [[0,1,1.0]], \"biases\": [[0,0.5]]}")),
-                ("builtin_ring", Json::s("{\"builtin\": \"ring\", \"n\": 16, \"j\": 1.0, \"h\": 0.0}")),
-                ("builtin_lattice", Json::s("{\"builtin\": \"lattice2d\", \"l\": 32, \"j\": 1.0}")),
-                ("convention", Json::s("States are -1/+1. Energy is -sum_ij J_ij s_i s_j - sum_i h_i s_i.")),
+                (
+                    "explicit",
+                    Json::s("{\"n\": 4, \"couplings\": [[0,1,1.0]], \"biases\": [[0,0.5]]}"),
+                ),
+                (
+                    "builtin_ring",
+                    Json::s("{\"builtin\": \"ring\", \"n\": 16, \"j\": 1.0, \"h\": 0.0}"),
+                ),
+                (
+                    "builtin_lattice",
+                    Json::s("{\"builtin\": \"lattice2d\", \"l\": 32, \"j\": 1.0}"),
+                ),
+                (
+                    "convention",
+                    Json::s("States are -1/+1. Energy is -sum_ij J_ij s_i s_j - sum_i h_i s_i."),
+                ),
             ]),
         ),
         (
             "limits",
             Json::obj(vec![
                 ("max_nodes", Json::n(MAX_NODES as f64)),
-                ("max_node_updates_per_request", Json::n(MAX_NODE_UPDATES as f64)),
+                (
+                    "max_node_updates_per_request",
+                    Json::n(MAX_NODE_UPDATES as f64),
+                ),
                 ("exact_verification_max_nodes", Json::n(20.0)),
             ]),
         ),
@@ -1269,7 +1492,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                             "{name}: unknown encoding {other:?}; known: one-hot (exact, k spins), \
                              domain-wall (exact, k-1 spins), binary (ceil(log2 k) spins, and NOT \
                              exact unless k is a power of two)"
-                        ))
+                        ));
                     }
                 }
             }
@@ -1277,7 +1500,9 @@ pub fn solve(req: &Json) -> Result<Json, String> {
 
         let h = match (v.get("values"), v.get("lo"), v.get("hi")) {
             (Some(k), _, _) => {
-                let k = k.as_usize().ok_or_else(|| format!("{name}: \"values\" must be an integer"))?;
+                let k = k
+                    .as_usize()
+                    .ok_or_else(|| format!("{name}: \"values\" must be an integer"))?;
                 if k < 2 {
                     return Err(format!("{name}: a variable with {k} values is a constant"));
                 }
@@ -1293,16 +1518,21 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 }
                 m.integer_as(&name, lo, hi, encoding)
             }
-            _ => return Err(format!("{name}: give either \"values\" or both \"lo\" and \"hi\"")),
+            _ => {
+                return Err(format!(
+                    "{name}: give either \"values\" or both \"lo\" and \"hi\""
+                ));
+            }
         };
         handles.push(h);
         names.push(name);
     }
 
     let find = |n: &str| -> Result<usize, String> {
-        names.iter().position(|x| x == n).ok_or_else(|| {
-            format!("no variable named {n:?}; declared: {}", names.join(", "))
-        })
+        names
+            .iter()
+            .position(|x| x == n)
+            .ok_or_else(|| format!("no variable named {n:?}; declared: {}", names.join(", ")))
     };
 
     if let Some(cs) = req.get("constraints").and_then(Json::as_arr) {
@@ -1330,13 +1560,14 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 })?),
             };
             if let Some(w) = soft
-                && (!w.is_finite() || w <= 0.0) {
-                    return Err(format!(
-                        "constraint {i} ({kind}): \"soft\" must be a positive, finite price, not \
+                && (!w.is_finite() || w <= 0.0)
+            {
+                return Err(format!(
+                    "constraint {i} ({kind}): \"soft\" must be a positive, finite price, not \
                          {w}. A price of zero or less is not a preference -- omit the field to make \
                          the constraint hard."
-                    ));
-                }
+                ));
+            }
 
             match kind {
                 "not_equal" | "equal" => {
@@ -1362,9 +1593,13 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     m.fix(handles[v], val);
                 }
                 "at_most" | "at_least" => {
-                    let k = c.get("k").and_then(super::json::Json::as_usize)
+                    let k = c
+                        .get("k")
+                        .and_then(super::json::Json::as_usize)
                         .ok_or_else(|| format!("{kind} needs \"k\""))?;
-                    let items = c.get("of").and_then(Json::as_arr)
+                    let items = c
+                        .get("of")
+                        .and_then(Json::as_arr)
                         .ok_or_else(|| format!("{kind} needs \"of\""))?;
                     let mut lits = Vec::new();
                     for it in items {
@@ -1379,7 +1614,9 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     }
                 }
                 "exactly_one" | "at_most_one" => {
-                    let items = c.get("of").and_then(Json::as_arr)
+                    let items = c
+                        .get("of")
+                        .and_then(Json::as_arr)
                         .ok_or_else(|| format!("{kind} needs \"of\""))?;
                     let mut lits = Vec::new();
                     for it in items {
@@ -1402,16 +1639,19 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     // Takes "of": [{"var": name}, ...] -- variables, not literals. A "value" here
                     // would be meaningless and is ignored rather than silently constraining
                     // something else.
-                    let items = c.get("of").and_then(Json::as_arr)
+                    let items = c
+                        .get("of")
+                        .and_then(Json::as_arr)
                         .ok_or("all_different needs \"of\"")?;
                     if items.len() < 2 {
                         return Err("all_different needs at least two variables".into());
                     }
                     let mut vars = Vec::new();
                     for it in items {
-                        let vn = it.get("var").and_then(Json::as_str).ok_or(
-                            "each entry in all_different's \"of\" needs a \"var\"",
-                        )?;
+                        let vn = it
+                            .get("var")
+                            .and_then(Json::as_str)
+                            .ok_or("each entry in all_different's \"of\" needs a \"var\"")?;
                         let h = handles[find(vn)?];
                         if !vars.contains(&h) {
                             vars.push(h);
@@ -1420,8 +1660,14 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                     m.all_different(vars);
                 }
                 "cardinality" => {
-                    let k = c.get("k").and_then(super::json::Json::as_usize).ok_or("cardinality needs \"k\"")?;
-                    let items = c.get("of").and_then(Json::as_arr).ok_or("cardinality needs \"of\"")?;
+                    let k = c
+                        .get("k")
+                        .and_then(super::json::Json::as_usize)
+                        .ok_or("cardinality needs \"k\"")?;
+                    let items = c
+                        .get("of")
+                        .and_then(Json::as_arr)
+                        .ok_or("cardinality needs \"of\"")?;
                     let mut lits = Vec::new();
                     for it in items {
                         let vn = it.get("var").and_then(Json::as_str).unwrap_or("");
@@ -1445,15 +1691,17 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                         other => {
                             return Err(format!(
                                 "linear: \"rel\" is \"<=\", \">=\" or \"=\", not {other:?}"
-                            ))
+                            ));
                         }
                     };
                     let rhs = c
                         .get("rhs")
                         .and_then(super::json::Json::as_f64)
                         .ok_or("linear needs a numeric \"rhs\"")?;
-                    let items =
-                        c.get("of").and_then(Json::as_arr).ok_or("linear needs \"of\"")?;
+                    let items = c
+                        .get("of")
+                        .and_then(Json::as_arr)
+                        .ok_or("linear needs \"of\"")?;
                     if items.is_empty() {
                         return Err("linear needs at least one term in \"of\"".into());
                     }
@@ -1478,7 +1726,7 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                         "unknown constraint {other:?}; known: not_equal, equal, fix, \
                          cardinality, at_most, at_least, exactly_one, at_most_one, \
                          all_different, linear"
-                    ))
+                    ));
                 }
             }
 
@@ -1498,13 +1746,22 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         let maximize = match o.get("maximize") {
             None => false,
             Some(x) => x.as_bool().ok_or_else(|| {
-                format!("objective: \"maximize\" must be true or false, not {}", describe(x))
+                format!(
+                    "objective: \"maximize\" must be true or false, not {}",
+                    describe(x)
+                )
             })?,
         };
-        let terms = o.get("terms").and_then(Json::as_arr).ok_or("objective needs \"terms\"")?;
+        let terms = o
+            .get("terms")
+            .and_then(Json::as_arr)
+            .ok_or("objective needs \"terms\"")?;
         let mut e = Expr::zero();
         for t in terms {
-            let w = t.get("weight").and_then(super::json::Json::as_f64).unwrap_or(1.0);
+            let w = t
+                .get("weight")
+                .and_then(super::json::Json::as_f64)
+                .unwrap_or(1.0);
 
             // A term is one variable, a pair, or a PRODUCT of any number written as "of". The pair
             // form stays: it reads well for the common case, and removing it would break callers.
@@ -1533,7 +1790,14 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                 None => e.plus(Expr::lit(w, a)),
             };
         }
-        m.objective(if maximize { Sense::Maximize } else { Sense::Minimize }, e);
+        m.objective(
+            if maximize {
+                Sense::Maximize
+            } else {
+                Sense::Minimize
+            },
+            e,
+        );
     }
 
     if let Some(p) = req.get("penalty").and_then(super::json::Json::as_f64) {
@@ -1555,8 +1819,14 @@ pub fn solve(req: &Json) -> Result<Json, String> {
     let sched = match ladder {
         None => None,
         Some(s) => {
-            let hot = s.get("beta_hot").and_then(super::json::Json::as_f64).unwrap_or(d.0);
-            let cold = s.get("beta_cold").and_then(super::json::Json::as_f64).unwrap_or(d.1);
+            let hot = s
+                .get("beta_hot")
+                .and_then(super::json::Json::as_f64)
+                .unwrap_or(d.0);
+            let cold = s
+                .get("beta_cold")
+                .and_then(super::json::Json::as_f64)
+                .unwrap_or(d.1);
             let stages = opt_usize(s, "stages", d.2).clamp(2, 10_000);
             let per = opt_usize(s, "sweeps", d.3).clamp(1, 100_000);
             if !hot.is_finite() || !cold.is_finite() || cold <= hot {
@@ -1565,7 +1835,9 @@ pub fn solve(req: &Json) -> Result<Json, String> {
                      must be real numbers. Annealing runs hot to cold."
                 ));
             }
-            Some(ferrotherm::schedule::Schedule::geometric(hot, cold, stages, per))
+            Some(ferrotherm::schedule::Schedule::geometric(
+                hot, cold, stages, per,
+            ))
         }
     };
 
@@ -1598,7 +1870,10 @@ pub fn solve(req: &Json) -> Result<Json, String> {
     }
     let sweeps_total = match &sched {
         // Sum the stages' own sweep counts rather than assuming a uniform ladder.
-        Some(s) => s.stages().iter().fold(0usize, |a, st| a.saturating_add(st.sweeps)),
+        Some(s) => s
+            .stages()
+            .iter()
+            .fold(0usize, |a, st| a.saturating_add(st.sweeps)),
         None => 1,
     };
     bound_updates(compiled.spins(), sweeps_total.saturating_mul(tries), 0, 1)?;
@@ -1608,7 +1883,10 @@ pub fn solve(req: &Json) -> Result<Json, String> {
     // it is the reason this exists: the modelling layer -- the one every document here says to
     // reach for first -- was the one layer that could not certify its own answer.
     let method = req.get("method").and_then(Json::as_str).unwrap_or("anneal");
-    let effort = req.get("effort").and_then(super::json::Json::as_usize).unwrap_or(0);
+    let effort = req
+        .get("effort")
+        .and_then(super::json::Json::as_usize)
+        .unwrap_or(0);
     let chosen = match method {
         "anneal" => None,
         "tabu" => Some(ferrotherm::model::Method::Tabu {
@@ -1618,12 +1896,16 @@ pub fn solve(req: &Json) -> Result<Json, String> {
             iterations: if effort == 0 { 50_000 } else { effort },
         }),
         "branch" => Some(ferrotherm::model::Method::Branch {
-            max_nodes: if effort == 0 { 20_000_000 } else { effort as u64 },
+            max_nodes: if effort == 0 {
+                20_000_000
+            } else {
+                effort as u64
+            },
         }),
         other => {
             return Err(format!(
                 "unknown method {other:?}; one of \"anneal\", \"tabu\", \"breakout\", \"branch\""
-            ))
+            ));
         }
     };
     let sol = match chosen {
@@ -1708,10 +1990,16 @@ pub fn solve(req: &Json) -> Result<Json, String> {
         // The same program as an ommx.v1.Instance, base64 because JSON has no bytes. OMMX is the
         // interchange format this corner of the field converged on, so this is what makes a
         // ferrotherm answer readable by everyone else's tooling.
-        ("ommx_b64", Json::Str(b64(&ferrotherm::ommx::export(&compiled.graph).bytes))),
+        (
+            "ommx_b64",
+            Json::Str(b64(&ferrotherm::ommx::export(&compiled.graph).bytes)),
+        ),
         // ferrotherm_energy(s) == ommx_objective(x) + this. Dropping it would hand back an instance
         // with the same optimum and the wrong value.
-        ("ommx_constant", Json::n(ferrotherm::ommx::export(&compiled.graph).constant)),
+        (
+            "ommx_constant",
+            Json::n(ferrotherm::ommx::export(&compiled.graph).constant),
+        ),
         (
             "note",
             Json::s(
@@ -1751,7 +2039,9 @@ pub fn solve(req: &Json) -> Result<Json, String> {
 pub fn hubo(req: &Json) -> Result<Json, String> {
     let n = value_of(req, "spins", 0, "hubo")?;
     if n < 1 {
-        return Err("\"spins\" must be at least 1: a model with no variables can hold no term".into());
+        return Err(
+            "\"spins\" must be at least 1: a model with no variables can hold no term".into(),
+        );
     }
     let terms = req
         .get("terms")
@@ -1807,7 +2097,10 @@ pub fn hubo(req: &Json) -> Result<Json, String> {
 
     Ok(Json::obj(vec![
         ("energy", Json::n(out.energy)),
-        ("state", Json::Arr(out.state.iter().map(|&s| Json::n(s as f64)).collect())),
+        (
+            "state",
+            Json::Arr(out.state.iter().map(|&s| Json::n(s as f64)).collect()),
+        ),
         ("spins", Json::n(h.len() as f64)),
         ("terms", Json::n(h.terms() as f64)),
         ("max_arity", Json::n(h.max_arity() as f64)),
@@ -1848,37 +2141,48 @@ pub fn hubo(req: &Json) -> Result<Json, String> {
 pub fn fit(req: &Json) -> Result<Json, String> {
     let visible = value_of(req, "visible", 0, "fit")?;
     if visible < 1 {
-        return Err("\"visible\" must be at least 1: a machine with no visible units has nothing \
+        return Err(
+            "\"visible\" must be at least 1: a machine with no visible units has nothing \
                     to clamp data onto"
-            .into());
+                .into(),
+        );
     }
     let visible = visible as usize;
 
     let hidden: Vec<usize> = match req.get("hidden") {
         Some(h) => {
-            let arr = h
-                .as_arr()
-                .ok_or("\"hidden\" is an array of layer widths, outermost last: [12] is an RBM, \
-                        [6, 6] is two layers")?;
+            let arr = h.as_arr().ok_or(
+                "\"hidden\" is an array of layer widths, outermost last: [12] is an RBM, \
+                        [6, 6] is two layers",
+            )?;
             let mut out = Vec::with_capacity(arr.len());
             for (i, w) in arr.iter().enumerate() {
                 let w = w
                     .as_i64()
                     .ok_or_else(|| format!("hidden[{i}] must be a whole number"))?;
                 if w < 1 {
-                    return Err(format!("hidden[{i}] is {w}, and a layer needs at least one unit"));
+                    return Err(format!(
+                        "hidden[{i}] is {w}, and a layer needs at least one unit"
+                    ));
                 }
                 out.push(w as usize);
             }
             out
         }
-        None => return Err("missing \"hidden\": [12] for a restricted Boltzmann machine of twelve \
-                            hidden units, [6, 6] for a two-layer deep one".into()),
+        None => {
+            return Err(
+                "missing \"hidden\": [12] for a restricted Boltzmann machine of twelve \
+                            hidden units, [6, 6] for a two-layer deep one"
+                    .into(),
+            );
+        }
     };
     if hidden.is_empty() {
-        return Err("\"hidden\" is empty; a machine with no latent units can only learn the \
+        return Err(
+            "\"hidden\" is empty; a machine with no latent units can only learn the \
                     independent statistics of each visible unit"
-            .into());
+                .into(),
+        );
     }
 
     let rows = dataset_from(req, visible)?;
@@ -1896,7 +2200,10 @@ pub fn fit(req: &Json) -> Result<Json, String> {
         // training something larger than this crate can judge exactly will want it -- and the
         // module's own measurements say it does NOT help at sizes where the exact likelihood is
         // computable, which is why it is not the default.
-        persistent: req.get("persistent").and_then(super::json::Json::as_bool).unwrap_or(d.persistent),
+        persistent: req
+            .get("persistent")
+            .and_then(super::json::Json::as_bool)
+            .unwrap_or(d.persistent),
     };
     if !(p.learning_rate > 0.0) || !p.learning_rate.is_finite() {
         return Err(format!(
@@ -1916,7 +2223,9 @@ pub fn fit(req: &Json) -> Result<Json, String> {
 
     let floor = -(visible as f64) * core::f64::consts::LN_2;
     let ceiling = -(data.rows.len() as f64).ln();
-    let learned = out.log_likelihood.map(|v| (v - floor) / (ceiling - floor) * 100.0);
+    let learned = out
+        .log_likelihood
+        .map(|v| (v - floor) / (ceiling - floor) * 100.0);
 
     let mut couplings = Vec::new();
     for i in 0..g.n {
@@ -1931,13 +2240,12 @@ pub fn fit(req: &Json) -> Result<Json, String> {
             }
         }
     }
-    let biases: Vec<Json> = g
-        .h
-        .iter()
-        .enumerate()
-        .filter(|&(_, &b)| b != 0.0)
-        .map(|(i, &b)| Json::Arr(vec![Json::n(i as f64), Json::n(b)]))
-        .collect();
+    let biases: Vec<Json> =
+        g.h.iter()
+            .enumerate()
+            .filter(|&(_, &b)| b != 0.0)
+            .map(|(i, &b)| Json::Arr(vec![Json::n(i as f64), Json::n(b)]))
+            .collect();
 
     let num = |v: Option<f64>| v.map_or(Json::Null, Json::n);
     Ok(Json::obj(vec![
@@ -1952,7 +2260,10 @@ pub fn fit(req: &Json) -> Result<Json, String> {
             ]),
         ),
         ("visible", Json::n(visible as f64)),
-        ("hidden", Json::Arr(hidden.iter().map(|&w| Json::n(w as f64)).collect())),
+        (
+            "hidden",
+            Json::Arr(hidden.iter().map(|&w| Json::n(w as f64)).collect()),
+        ),
         ("spins", Json::n(g.n as f64)),
         ("edges", Json::n(g.n_edges as f64)),
         ("rows", Json::n(data.rows.len() as f64)),
@@ -1982,9 +2293,9 @@ pub fn fit(req: &Json) -> Result<Json, String> {
 
 /// The dataset a fit request names, either by benchmark or written out.
 fn dataset_from(req: &Json, visible: usize) -> Result<Vec<Vec<i8>>, String> {
-    let d = req.get("data").ok_or(
-        "missing \"data\": either rows of -1 and +1, or the name \"bars-and-stripes-N\"",
-    )?;
+    let d = req
+        .get("data")
+        .ok_or("missing \"data\": either rows of -1 and +1, or the name \"bars-and-stripes-N\"")?;
     if let Some(name) = d.as_str() {
         let side = name
             .strip_prefix("bars-and-stripes-")
@@ -1996,7 +2307,9 @@ fn dataset_from(req: &Json, visible: usize) -> Result<Vec<Vec<i8>>, String> {
                 )
             })?;
         if !(1..=8).contains(&side) {
-            return Err(format!("\"bars-and-stripes-{side}\" needs N between 1 and 8"));
+            return Err(format!(
+                "\"bars-and-stripes-{side}\" needs N between 1 and 8"
+            ));
         }
         let ds = ferrotherm::ebm::bars_and_stripes(side);
         if ds.visible != visible {
@@ -2008,9 +2321,9 @@ fn dataset_from(req: &Json, visible: usize) -> Result<Vec<Vec<i8>>, String> {
         }
         return Ok(ds.rows);
     }
-    let arr = d.as_arr().ok_or(
-        "\"data\" is either an array of rows or the name \"bars-and-stripes-N\"",
-    )?;
+    let arr = d
+        .as_arr()
+        .ok_or("\"data\" is either an array of rows or the name \"bars-and-stripes-N\"")?;
     if arr.is_empty() {
         return Err("\"data\" is empty; there is nothing to fit".into());
     }
@@ -2033,7 +2346,7 @@ fn dataset_from(req: &Json, visible: usize) -> Result<Vec<Vec<i8>>, String> {
                 _ => {
                     return Err(format!(
                         "data[{i}][{j}] must be -1 or +1; a spin has no other values"
-                    ))
+                    ));
                 }
             }
         }
@@ -2049,7 +2362,9 @@ fn dataset_from(req: &Json, visible: usize) -> Result<Vec<Vec<i8>>, String> {
 /// would return a worse answer with nothing to say why. The library ignores it because a Rust
 /// caller can read the field back; a request cannot.
 fn start_from(req: &Json, n: usize) -> Result<Option<Vec<i8>>, String> {
-    let Some(sv) = req.get("incumbent").and_then(Json::as_arr) else { return Ok(None) };
+    let Some(sv) = req.get("incumbent").and_then(Json::as_arr) else {
+        return Ok(None);
+    };
     if sv.len() != n {
         return Err(format!(
             "\"incumbent\" has {} entries but the graph has {n} nodes",
@@ -2057,7 +2372,9 @@ fn start_from(req: &Json, n: usize) -> Result<Option<Vec<i8>>, String> {
         ));
     }
     Ok(Some(
-        sv.iter().map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 }).collect(),
+        sv.iter()
+            .map(|x| if x.as_f64() == Some(1.0) { 1i8 } else { -1 })
+            .collect(),
     ))
 }
 
@@ -2120,10 +2437,19 @@ mod tests {
 
         // Both ends of the scale are DERIVED, not measured: every weight starts at zero, so an
         // untrained machine is uniform over 2^9 images and can only score -9 ln 2.
-        let untrained = out.get("log_likelihood_untrained").and_then(Json::as_f64).unwrap();
-        assert!((untrained + 9.0 * core::f64::consts::LN_2).abs() < 1e-12, "{untrained}");
+        let untrained = out
+            .get("log_likelihood_untrained")
+            .and_then(Json::as_f64)
+            .unwrap();
+        assert!(
+            (untrained + 9.0 * core::f64::consts::LN_2).abs() < 1e-12,
+            "{untrained}"
+        );
         let learned = out.get("learned_percent").and_then(Json::as_f64).unwrap();
-        assert!(learned > 85.0, "a wide machine on this data reaches the nineties: {learned}");
+        assert!(
+            learned > 85.0,
+            "a wide machine on this data reaches the nineties: {learned}"
+        );
 
         let g = out.get("graph").expect("the fit must return its model");
         assert_eq!(g.get("n").and_then(Json::as_f64), Some(21.0));
@@ -2137,12 +2463,8 @@ mod tests {
         // fitted model is DENSE compared with the lattices these operations usually see, so this
         // also checks the marshalling at a shape the rest of the suite never produces.
         let with_graph = |extra: &str| {
-            crate::json::parse(&format!(
-                "{{\"graph\":{}{}}}",
-                crate::json::write(g),
-                extra
-            ))
-            .unwrap()
+            crate::json::parse(&format!("{{\"graph\":{}{}}}", crate::json::write(g), extra))
+                .unwrap()
         };
         let annealed = anneal(&with_graph(r#","seed":1"#)).expect("anneal takes a fitted model");
         let e = annealed.get("best_energy").and_then(Json::as_f64).unwrap();
@@ -2151,11 +2473,20 @@ mod tests {
         let b = bounded.get("best").and_then(Json::as_f64).unwrap();
         // One-sided and the only direction that can be asserted: a sound bound never exceeds an
         // energy actually attained.
-        assert!(b <= e + 1e-9, "bound {b} must not exceed an attained energy {e}");
+        assert!(
+            b <= e + 1e-9,
+            "bound {b} must not exceed an attained energy {e}"
+        );
 
         let sampled = sample(&with_graph(r#","beta":1.0,"sweeps":200,"seed":2"#))
             .expect("sample takes a fitted model");
-        assert!(sampled.get("energy").and_then(Json::as_f64).unwrap().is_finite());
+        assert!(
+            sampled
+                .get("energy")
+                .and_then(Json::as_f64)
+                .unwrap()
+                .is_finite()
+        );
     }
 
     /// A fit request that cannot be honoured says which part, in the caller's own terms.
@@ -2185,7 +2516,10 @@ mod tests {
         .unwrap();
         let out = fit(&big).expect("a 28-spin machine still fits");
         assert!(matches!(out.get("log_likelihood"), Some(Json::Null)));
-        assert!(out.get("graph").is_some(), "the model is real even when its score is not taken");
+        assert!(
+            out.get("graph").is_some(),
+            "the model is real even when its score is not taken"
+        );
     }
 
     #[test]
@@ -2195,13 +2529,23 @@ mod tests {
         // either. But a one-hot over k values carries k(k-1)/2 couplings: 499,500 of them, which
         // took 6.7 s and returned a 17 MB reply. Every existing ceiling measured a dimension that
         // was not the one growing.
-        let req = crate::json::parse(r#"{"variables":[{"name":"x","values":1000}],"tries":1}"#).unwrap();
-        let Err(e) = solve(&req) else { panic!("499,500 couplings from 46 bytes must be refused") };
-        assert!(e.contains("couplings"), "names the dimension that grew: {e}");
-        assert!(e.contains("DomainWall"), "and the encoding that is linear: {e}");
+        let req =
+            crate::json::parse(r#"{"variables":[{"name":"x","values":1000}],"tries":1}"#).unwrap();
+        let Err(e) = solve(&req) else {
+            panic!("499,500 couplings from 46 bytes must be refused")
+        };
+        assert!(
+            e.contains("couplings"),
+            "names the dimension that grew: {e}"
+        );
+        assert!(
+            e.contains("DomainWall"),
+            "and the encoding that is linear: {e}"
+        );
 
         // Well under the ceiling, and still served.
-        let ok = crate::json::parse(r#"{"variables":[{"name":"x","values":60}],"tries":1}"#).unwrap();
+        let ok =
+            crate::json::parse(r#"{"variables":[{"name":"x","values":60}],"tries":1}"#).unwrap();
         assert!(solve(&ok).is_ok(), "1,770 couplings is an ordinary model");
     }
 
@@ -2229,14 +2573,20 @@ mod tests {
 
     #[test]
     fn samples_a_builtin_lattice() {
-        let r = run("sample", r#"{"graph":{"builtin":"lattice2d","l":8},"beta":0.5,"sweeps":50}"#)
-            .unwrap();
+        let r = run(
+            "sample",
+            r#"{"graph":{"builtin":"lattice2d","l":8},"beta":0.5,"sweeps":50}"#,
+        )
+        .unwrap();
         assert_eq!(r.get("nodes").unwrap().as_f64(), Some(64.0));
         assert_eq!(r.get("state").unwrap().as_arr().unwrap().len(), 64);
         // Certification is not free and the ledger says so: 50 burn-in sweeps plus 128 recorded
         // draws at thin 1. A run that returns one state cannot be checked, so this is the price.
         let led = r.get("ledger").unwrap();
-        assert_eq!(led.get("node_updates").unwrap().as_f64(), Some(64.0 * (50.0 + 128.0)));
+        assert_eq!(
+            led.get("node_updates").unwrap().as_f64(),
+            Some(64.0 * (50.0 + 128.0))
+        );
 
         // And the READS, which this endpoint used to give away. 128 recorded draws of 64 nodes,
         // plus the one final `read_all` that produces the returned state. Before `collect`, the
@@ -2245,7 +2595,9 @@ mod tests {
         // the larger part of the joules this same response reports.
         assert_eq!(led.get("reads").unwrap().as_f64(), Some(64.0 * 129.0));
 
-        let c = r.get("certificate").expect("every sample must carry a certificate");
+        let c = r
+            .get("certificate")
+            .expect("every sample must carry a certificate");
         assert_eq!(c.get("draws").unwrap().as_f64(), Some(128.0));
         assert!(c.get("beta_effective").is_some());
         assert!(c.get("passed").unwrap().as_bool().is_some());
@@ -2254,10 +2606,16 @@ mod tests {
         let s = r.get("samples").expect("a sampler's answer is its samples");
         assert_eq!(s.get("draws").unwrap().as_f64(), Some(128.0));
         let distinct = s.get("distinct").unwrap().as_f64().unwrap();
-        assert!(distinct > 1.0 && distinct <= 128.0, "distinct states: {distinct}");
+        assert!(
+            distinct > 1.0 && distinct <= 128.0,
+            "distinct states: {distinct}"
+        );
         let m = s.get("magnetization").expect("with an error bar");
         assert!(m.get("stderr").unwrap().as_f64().unwrap() > 0.0);
-        assert!(m.get("ess").unwrap().as_f64().unwrap() <= 128.0, "ess cannot exceed the draws");
+        assert!(
+            m.get("ess").unwrap().as_f64().unwrap() <= 128.0,
+            "ess cannot exceed the draws"
+        );
         assert!(s.get("chain_tau").unwrap().as_f64().unwrap() >= 0.5);
         assert!(s.get("energy").unwrap().get("value").is_some());
     }
@@ -2271,7 +2629,11 @@ mod tests {
             assert_eq!(x.get(k), y.get(k), "{k} differs between identical runs");
         }
         for k in ["node_updates", "reads", "writes", "joules_z1_spice"] {
-            assert_eq!(x.get("ledger").unwrap().get(k), y.get("ledger").unwrap().get(k), "ledger {k}");
+            assert_eq!(
+                x.get("ledger").unwrap().get(k),
+                y.get("ledger").unwrap().get(k),
+                "ledger {k}"
+            );
         }
     }
 
@@ -2280,11 +2642,17 @@ mod tests {
         // The whole point of the verify tool: it must pass on a graph we can enumerate. The bar is
         // the sampling noise floor the tool itself reports, not a number picked by hand -- with
         // 40k draws over 256 states, finite-sample scatter alone puts TV near 0.04.
-        let r = run("verify", r#"{"graph":{"builtin":"ring","n":8,"j":1.0},"beta":0.4,"draws":40000}"#)
-            .unwrap();
+        let r = run(
+            "verify",
+            r#"{"graph":{"builtin":"ring","n":8,"j":1.0},"beta":0.4,"draws":40000}"#,
+        )
+        .unwrap();
         let tv = r.get("total_variation_distance").unwrap().as_f64().unwrap();
         let floor = r.get("expected_sampling_noise").unwrap().as_f64().unwrap();
-        assert!(tv < floor, "TV {tv} exceeds the {floor} noise floor; sampler disagrees with exact");
+        assert!(
+            tv < floor,
+            "TV {tv} exceeds the {floor} noise floor; sampler disagrees with exact"
+        );
     }
 
     #[test]
@@ -2295,26 +2663,60 @@ mod tests {
         // is a real effect worth catching, and thinning the chain is the cure -- which makes this
         // both the negative control for the check above and the demonstration of "thin".
         let g = r#"{"builtin":"ring","n":8,"j":1.0}"#;
-        let tight = run("verify", &format!(r#"{{"graph":{g},"beta":1.6,"draws":40000,"thin":1}}"#))
+        let tight = run(
+            "verify",
+            &format!(r#"{{"graph":{g},"beta":1.6,"draws":40000,"thin":1}}"#),
+        )
+        .unwrap();
+        let thinned = run(
+            "verify",
+            &format!(r#"{{"graph":{g},"beta":1.6,"draws":40000,"thin":40}}"#),
+        )
+        .unwrap();
+        let floor = tight
+            .get("expected_sampling_noise")
+            .unwrap()
+            .as_f64()
             .unwrap();
-        let thinned = run("verify", &format!(r#"{{"graph":{g},"beta":1.6,"draws":40000,"thin":40}}"#))
-            .unwrap();
-        let floor = tight.get("expected_sampling_noise").unwrap().as_f64().unwrap();
         let (a, b) = (
-            tight.get("total_variation_distance").unwrap().as_f64().unwrap(),
-            thinned.get("total_variation_distance").unwrap().as_f64().unwrap(),
+            tight
+                .get("total_variation_distance")
+                .unwrap()
+                .as_f64()
+                .unwrap(),
+            thinned
+                .get("total_variation_distance")
+                .unwrap()
+                .as_f64()
+                .unwrap(),
         );
-        assert!(a > floor, "correlated draws should exceed the {floor} floor, got {a}");
-        assert!(b < floor, "thinning to 40 sweeps should drop under the {floor} floor, got {b}");
+        assert!(
+            a > floor,
+            "correlated draws should exceed the {floor} floor, got {a}"
+        );
+        assert!(
+            b < floor,
+            "thinning to 40 sweeps should drop under the {floor} floor, got {b}"
+        );
     }
 
     #[test]
     fn energy_agrees_with_the_sampler() {
-        let s = run("sample", r#"{"graph":{"builtin":"ring","n":12},"beta":1.0,"seed":3}"#).unwrap();
+        let s = run(
+            "sample",
+            r#"{"graph":{"builtin":"ring","n":12},"beta":1.0,"seed":3}"#,
+        )
+        .unwrap();
         let state = crate::json::write(s.get("state").unwrap());
-        let e = run("energy", &format!(r#"{{"graph":{{"builtin":"ring","n":12}},"state":{state}}}"#))
-            .unwrap();
-        assert_eq!(e.get("energy").unwrap().as_f64(), s.get("energy").unwrap().as_f64());
+        let e = run(
+            "energy",
+            &format!(r#"{{"graph":{{"builtin":"ring","n":12}},"state":{state}}}"#),
+        )
+        .unwrap();
+        assert_eq!(
+            e.get("energy").unwrap().as_f64(),
+            s.get("energy").unwrap().as_f64()
+        );
     }
 
     /// A bound is a bound, over HTTP as much as in Rust — and the gap is what the tool is for.
@@ -2328,21 +2730,41 @@ mod tests {
         }
         let g = format!(r#"{{"n":12,"couplings":[{}]}}"#, edges.join(","));
 
-        let proof = dispatch("optimize", &parse(&format!(r#"{{"graph":{g},"method":"branch"}}"#)).unwrap()).unwrap();
-        assert_eq!(proof.get("proved_optimal").and_then(Json::as_bool), Some(true));
+        let proof = dispatch(
+            "optimize",
+            &parse(&format!(r#"{{"graph":{g},"method":"branch"}}"#)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            proof.get("proved_optimal").and_then(Json::as_bool),
+            Some(true)
+        );
         let truth = proof.get("best_energy").unwrap().as_f64().unwrap();
-        assert!((truth - -10.0).abs() < 1e-9, "a frustrated 12-ring bottoms out at -10, got {truth}");
+        assert!(
+            (truth - -10.0).abs() < 1e-9,
+            "a frustrated 12-ring bottoms out at -10, got {truth}"
+        );
 
         let state = crate::json::write(proof.get("state").unwrap());
-        let b = dispatch("bound", &parse(&format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap()).unwrap();
+        let b = dispatch(
+            "bound",
+            &parse(&format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap(),
+        )
+        .unwrap();
         for k in ["decoupled", "forest", "odd_cycle"] {
             let v = b.get(k).unwrap().as_f64().unwrap();
-            assert!(v <= truth + 1e-9, "{k} bound {v} exceeds the proved minimum {truth}");
+            assert!(
+                v <= truth + 1e-9,
+                "{k} bound {v} exceeds the proved minimum {truth}"
+            );
         }
         // `sdp` is a number when the certificate re-verified and a REFUSAL STRING when it did not.
         // Either is fine; a wrong number is not.
         if let Some(v) = b.get("sdp").and_then(Json::as_f64) {
-            assert!(v <= truth + 1e-9, "sdp bound {v} exceeds the proved minimum {truth}");
+            assert!(
+                v <= truth + 1e-9,
+                "sdp bound {v} exceeds the proved minimum {truth}"
+            );
         }
         let best = b.get("best").unwrap().as_f64().unwrap();
         assert!(best <= truth + 1e-9);
@@ -2376,27 +2798,46 @@ mod tests {
             }
         }
         let g = format!(r#"{{"n":16,"couplings":[{}]}}"#, e.join(","));
-        let r = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{g}}}"#)).unwrap()).unwrap();
+        let r = dispatch(
+            "exact_planar",
+            &parse(&format!(r#"{{"graph":{g}}}"#)).unwrap(),
+        )
+        .unwrap();
         assert_eq!(r.get("cut").and_then(Json::as_f64), Some(24.0));
         assert_eq!(r.get("energy").and_then(Json::as_f64), Some(-24.0));
         assert_eq!(r.get("exact").and_then(Json::as_bool), Some(true));
         assert_eq!(r.get("faces").and_then(Json::as_f64), Some(10.0));
 
         // And no search can beat it, which is the check that makes "exact" mean something.
-        let o = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{g},"method":"breakout","iterations":50000}}"#)).unwrap()).unwrap();
+        let o = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{g},"method":"breakout","iterations":50000}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert!(o.get("best_energy").unwrap().as_f64().unwrap() >= -24.0 - 1e-9);
 
         // A periodic lattice is a TORUS. Refused, and the reply says which of the four it is.
         let torus = r#"{"builtin":"lattice2d","l":4,"j":1.0}"#;
-        let err = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap())
-            .unwrap_err();
+        let err = dispatch(
+            "exact_planar",
+            &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap(),
+        )
+        .unwrap_err();
         assert!(err.contains("not planar"), "{err}");
 
         // A field makes it a different problem, not a harder one.
-        let fielded = format!(r#"{{"n":16,"couplings":[{}],"biases":[[0,0.5]]}}"#, e.join(","));
-        let err = dispatch("exact_planar", &parse(&format!(r#"{{"graph":{fielded}}}"#)).unwrap())
-            .unwrap_err();
+        let fielded = format!(
+            r#"{{"n":16,"couplings":[{}],"biases":[[0,0.5]]}}"#,
+            e.join(",")
+        );
+        let err = dispatch(
+            "exact_planar",
+            &parse(&format!(r#"{{"graph":{fielded}}}"#)).unwrap(),
+        )
+        .unwrap_err();
         assert!(err.contains("field"), "{err}");
     }
 
@@ -2404,17 +2845,25 @@ mod tests {
     #[test]
     fn the_toroidal_bound_bounds_and_declines_what_is_not_a_torus() {
         let torus = r#"{"builtin":"lattice2d","l":6,"j":-1.0}"#;
-        let r = dispatch("toroidal_bound", &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap())
-            .unwrap();
+        let r = dispatch(
+            "toroidal_bound",
+            &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap(),
+        )
+        .unwrap();
         // A 6x6 periodic lattice is bipartite: all 72 edges cut, and the bound is achieved.
         assert_eq!(r.get("upper_bound").and_then(Json::as_f64), Some(72.0));
         assert_eq!(r.get("attained").and_then(Json::as_bool), Some(true));
         assert_eq!(r.get("genus").and_then(Json::as_f64), Some(1.0));
 
         // The planar solver declines the same graph, which is the distinction being drawn.
-        assert!(dispatch("exact_planar", &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap())
+        assert!(
+            dispatch(
+                "exact_planar",
+                &parse(&format!(r#"{{"graph":{torus}}}"#)).unwrap()
+            )
             .unwrap_err()
-            .contains("not planar"));
+            .contains("not planar")
+        );
 
         // And this one declines an open grid, saying it is a statement about the graph.
         let mut e = Vec::new();
@@ -2430,8 +2879,11 @@ mod tests {
             }
         }
         let open = format!(r#"{{"n":16,"couplings":[{}]}}"#, e.join(","));
-        let err = dispatch("toroidal_bound", &parse(&format!(r#"{{"graph":{open}}}"#)).unwrap())
-            .unwrap_err();
+        let err = dispatch(
+            "toroidal_bound",
+            &parse(&format!(r#"{{"graph":{open}}}"#)).unwrap(),
+        )
+        .unwrap_err();
         assert!(err.contains("not a toroidal grid"), "{err}");
     }
 
@@ -2441,33 +2893,81 @@ mod tests {
     fn the_closed_gaps_report_their_own_caveats_over_http() {
         // A 6x6 ANTIferromagnet is bipartite and inside the GW hypothesis: 72 cuttable edges.
         let anti = r#"{"builtin":"lattice2d","l":6,"j":-1.0}"#;
-        let r = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{anti},"method":"goemans_williamson","hyperplanes":64}}"#)).unwrap()).unwrap();
+        let r = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{anti},"method":"goemans_williamson","hyperplanes":64}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(r.get("guaranteed").and_then(Json::as_bool), Some(true));
         assert_eq!(r.get("cut").and_then(Json::as_f64), Some(72.0));
 
         // A ferromagnet is OUTSIDE it, and the reply must say so rather than claim a ratio.
         let ferro = r#"{"builtin":"lattice2d","l":6,"j":1.0}"#;
-        let f = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{ferro},"method":"goemans_williamson"}}"#)).unwrap()).unwrap();
+        let f = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{ferro},"method":"goemans_williamson"}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(f.get("guaranteed").and_then(Json::as_bool), Some(false));
-        assert!(f.get("guarantee_note").unwrap().as_str().unwrap().contains("no ratio"));
+        assert!(
+            f.get("guarantee_note")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("no ratio")
+        );
 
         // Cluster moves fire and find the ferromagnetic ground state.
-        let c = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{ferro},"method":"cluster","rungs":8,"rounds":200}}"#)).unwrap()).unwrap();
+        let c = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{ferro},"method":"cluster","rungs":8,"rounds":200}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(c.get("best_energy").and_then(Json::as_f64), Some(-72.0));
         assert!(c.get("cluster_moves").unwrap().as_f64().unwrap() > 0.0);
 
         // Simulated quantum annealing, and the note that says what it is not.
-        let q = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{ferro},"method":"quantum","trotter":4,"steps":200}}"#)).unwrap()).unwrap();
+        let q = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{ferro},"method":"quantum","trotter":4,"steps":200}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(q.get("best_energy").and_then(Json::as_f64), Some(-72.0));
-        assert!(q.get("note").unwrap().as_str().unwrap().contains("no quantum claim"));
+        assert!(
+            q.get("note")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("no quantum claim")
+        );
         // One slice is the CONTROL and says so, rather than being a silent degenerate case.
-        let one = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{ferro},"method":"quantum","trotter":1}}"#)).unwrap()).unwrap();
-        assert!(one.get("note").unwrap().as_str().unwrap().contains("CLASSICAL"));
+        let one = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{ferro},"method":"quantum","trotter":1}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            one.get("note")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("CLASSICAL")
+        );
         assert_eq!(one.get("max_j_perp").and_then(Json::as_f64), Some(0.0));
 
         // A field breaks the isoenergetic argument, and the reason is the reply.
@@ -2475,9 +2975,15 @@ mod tests {
         for i in 0..8usize {
             e.push(format!("[{i},{},1]", (i + 1) % 8));
         }
-        let fielded = format!(r#"{{"n":8,"couplings":[{}],"biases":[[3,0.5]]}}"#, e.join(","));
-        let err = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{fielded},"method":"cluster"}}"#)).unwrap()).unwrap_err();
+        let fielded = format!(
+            r#"{{"n":8,"couplings":[{}],"biases":[[3,0.5]]}}"#,
+            e.join(",")
+        );
+        let err = dispatch(
+            "optimize",
+            &parse(&format!(r#"{{"graph":{fielded},"method":"cluster"}}"#)).unwrap(),
+        )
+        .unwrap_err();
         assert!(err.contains("isoenergetic"), "{err}");
     }
 
@@ -2487,39 +2993,87 @@ mod tests {
     fn optimize_carries_each_method_own_diagnostic() {
         let g = r#"{"builtin":"ring","n":16,"j":1.0,"h":0.0}"#;
 
-        let tabu = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{g},"method":"tabu","iterations":2000}}"#)).unwrap()).unwrap();
-        assert_eq!(tabu.get("iterations_run").and_then(Json::as_f64), Some(2000.0));
+        let tabu = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{g},"method":"tabu","iterations":2000}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            tabu.get("iterations_run").and_then(Json::as_f64),
+            Some(2000.0)
+        );
 
-        let pa = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{g},"method":"population","population":128,"stages":20}}"#)).unwrap()).unwrap();
+        let pa = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{g},"method":"population","population":128,"stages":20}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         let rho = pa.get("rho").unwrap().as_f64().unwrap();
-        assert!((1.0..=128.0).contains(&rho), "rho {rho} outside [1, population]");
+        assert!(
+            (1.0..=128.0).contains(&rho),
+            "rho {rho} outside [1, population]"
+        );
         assert!(pa.get("rho_reading").and_then(Json::as_str).is_some());
         // Z(0) = 2^n and Z never falls as beta rises, so ln Z is at least n ln 2.
         let ln_z = pa.get("ln_z").unwrap().as_f64().unwrap();
         assert!(ln_z >= 16.0 * std::f64::consts::LN_2 - 1e-9, "ln_z {ln_z}");
 
-        let br = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{g},"method":"branch","max_nodes":5}}"#)).unwrap()).unwrap();
-        assert_eq!(br.get("proved_optimal").and_then(Json::as_bool), Some(false));
+        let br = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{g},"method":"branch","max_nodes":5}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            br.get("proved_optimal").and_then(Json::as_bool),
+            Some(false)
+        );
         assert_eq!(br.get("hit_limit").and_then(Json::as_bool), Some(true));
 
-        let bl = dispatch("optimize", &parse(&format!(
-            r#"{{"graph":{g},"method":"breakout","iterations":20000}}"#)).unwrap()).unwrap();
-        assert_eq!(bl.get("iterations_run").and_then(Json::as_f64), Some(20000.0));
+        let bl = dispatch(
+            "optimize",
+            &parse(&format!(
+                r#"{{"graph":{g},"method":"breakout","iterations":20000}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            bl.get("iterations_run").and_then(Json::as_f64),
+            Some(20000.0)
+        );
         // The claim BLS makes is about what happens BETWEEN local optima. A run with one descent
         // spent 20,000 flips inside a single basin and is not the algorithm.
-        assert!(bl.get("descents").unwrap().as_f64().unwrap() > 1.0, "{:?}", bl.get("descents"));
-        let mix = bl.get("perturbations").expect("the adaptive mix is the algorithm");
+        assert!(
+            bl.get("descents").unwrap().as_f64().unwrap() > 1.0,
+            "{:?}",
+            bl.get("descents")
+        );
+        let mix = bl
+            .get("perturbations")
+            .expect("the adaptive mix is the algorithm");
         let total: f64 = ["directed_one", "directed_two", "random"]
             .iter()
             .map(|k| mix.get(k).and_then(Json::as_f64).unwrap_or(-1.0))
             .sum();
         assert!(total > 0.0, "no perturbation of any kind fired: {mix:?}");
 
-        let e = dispatch("optimize", &parse(&format!(r#"{{"graph":{g},"method":"anneal"}}"#)).unwrap());
-        assert!(e.unwrap_err().contains("unknown method"), "a typo must not silently pick a default");
+        let e = dispatch(
+            "optimize",
+            &parse(&format!(r#"{{"graph":{g},"method":"anneal"}}"#)).unwrap(),
+        );
+        assert!(
+            e.unwrap_err().contains("unknown method"),
+            "a typo must not silently pick a default"
+        );
     }
 
     /// Every solver returns the energy OF THE STATE IT RETURNS, recomputed rather than carried.
@@ -2532,12 +3086,15 @@ mod tests {
             )).unwrap()).unwrap();
             let reported = r.get("best_energy").unwrap().as_f64().unwrap();
             let state = crate::json::write(r.get("state").unwrap());
-            let scored = dispatch("energy", &parse(&format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap())
-                .unwrap()
-                .get("energy")
-                .unwrap()
-                .as_f64()
-                .unwrap();
+            let scored = dispatch(
+                "energy",
+                &parse(&format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap(),
+            )
+            .unwrap()
+            .get("energy")
+            .unwrap()
+            .as_f64()
+            .unwrap();
             assert!(
                 (reported - scored).abs() < 1e-9,
                 "{method} reported {reported}, its own state scores {scored}"
@@ -2548,9 +3105,16 @@ mod tests {
     #[test]
     fn anneal_beats_a_hot_sample() {
         let g = r#"{"builtin":"lattice2d","l":10,"j":1.0}"#;
-        let a = run("anneal", &format!(r#"{{"graph":{g},"beta_min":0.05,"beta_max":4.0,"stages":30}}"#))
-            .unwrap();
-        let hot = run("sample", &format!(r#"{{"graph":{g},"beta":0.05,"sweeps":600}}"#)).unwrap();
+        let a = run(
+            "anneal",
+            &format!(r#"{{"graph":{g},"beta_min":0.05,"beta_max":4.0,"stages":30}}"#),
+        )
+        .unwrap();
+        let hot = run(
+            "sample",
+            &format!(r#"{{"graph":{g},"beta":0.05,"sweeps":600}}"#),
+        )
+        .unwrap();
         let (ea, eh) = (
             a.get("best_energy").unwrap().as_f64().unwrap(),
             hot.get("energy").unwrap().as_f64().unwrap(),
@@ -2572,8 +3136,11 @@ mod tests {
 
     #[test]
     fn refuses_a_job_it_cannot_finish() {
-        let e = run("sample", r#"{"graph":{"builtin":"lattice2d","l":2000},"sweeps":100000}"#)
-            .unwrap_err();
+        let e = run(
+            "sample",
+            r#"{"graph":{"builtin":"lattice2d","l":2000},"sweeps":100000}"#,
+        )
+        .unwrap_err();
         assert!(e.contains("ceiling"), "{e}");
     }
 
@@ -2613,13 +3180,20 @@ mod tests {
         )
         .unwrap();
         let c = r.get("certificate").unwrap();
-        assert!(c.get("draws_capped_to").is_some(), "a 360k-spin graph must cap its draws");
+        assert!(
+            c.get("draws_capped_to").is_some(),
+            "a 360k-spin graph must cap its draws"
+        );
         assert!(c.get("draws").unwrap().as_f64().unwrap() < 1000.0);
     }
 
     #[test]
     fn large_graphs_omit_the_state_by_default() {
-        let r = run("sample", r#"{"graph":{"builtin":"lattice2d","l":100},"sweeps":2}"#).unwrap();
+        let r = run(
+            "sample",
+            r#"{"graph":{"builtin":"lattice2d","l":100},"sweeps":2}"#,
+        )
+        .unwrap();
         assert!(r.get("state").is_none());
         assert!(r.get("state_omitted").is_some());
     }
@@ -2636,12 +3210,14 @@ mod solve_tests {
 
     #[test]
     fn graph_colouring_in_the_problems_own_words() {
-        let r = go(r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3},
+        let r = go(
+            r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3},
                        {"name":"c","values":3}],
                        "constraints":[{"type":"not_equal","a":"a","b":"b"},
                                       {"type":"not_equal","a":"b","b":"c"},
-                                      {"type":"not_equal","a":"a","b":"c"}],"tries":20}"#)
-            .unwrap();
+                                      {"type":"not_equal","a":"a","b":"c"}],"tries":20}"#,
+        )
+        .unwrap();
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
         let v = r.get("values").unwrap();
         let (a, b, c) = (
@@ -2649,7 +3225,10 @@ mod solve_tests {
             v.get("b").unwrap().as_f64().unwrap(),
             v.get("c").unwrap().as_f64().unwrap(),
         );
-        assert!(a != b && b != c && a != c, "a triangle needs three colours: {a} {b} {c}");
+        assert!(
+            a != b && b != c && a != c,
+            "a triangle needs three colours: {a} {b} {c}"
+        );
         assert!(r.get("ftp").unwrap().as_str().unwrap().starts_with("ftp 1"));
     }
 
@@ -2657,8 +3236,11 @@ mod solve_tests {
     fn an_integer_comes_back_in_its_own_units() {
         let r = go(r#"{"variables":[{"name":"t","lo":10,"hi":20}],
                        "constraints":[{"type":"fix","var":"t","value":13}],"tries":8}"#)
-            .unwrap();
-        assert_eq!(r.get("values").unwrap().get("t").unwrap().as_f64(), Some(13.0));
+        .unwrap();
+        assert_eq!(
+            r.get("values").unwrap().get("t").unwrap().as_f64(),
+            Some(13.0)
+        );
     }
 
     #[test]
@@ -2667,7 +3249,7 @@ mod solve_tests {
         // than an answer to a question they did not ask.
         let e = go(r#"{"variables":[{"name":"t","lo":10,"hi":20}],
                        "constraints":[{"type":"fix","var":"t","value":3}],"tries":4}"#)
-            .unwrap_err();
+        .unwrap_err();
         assert!(e.contains("10..=20") && e.contains('t'), "{e}");
     }
 
@@ -2677,22 +3259,27 @@ mod solve_tests {
         // negative value at all.
         let r = go(r#"{"variables":[{"name":"t","lo":-40,"hi":-10}],
                        "constraints":[{"type":"fix","var":"t","value":-25}],"tries":8}"#)
-            .unwrap();
-        assert_eq!(r.get("values").unwrap().get("t").unwrap().as_f64(), Some(-25.0));
+        .unwrap();
+        assert_eq!(
+            r.get("values").unwrap().get("t").unwrap().as_f64(),
+            Some(-25.0)
+        );
     }
 
     #[test]
     fn cardinality_and_an_objective_together() {
         // Pick exactly two of five, preferring the most valuable.
-        let r = go(r#"{"variables":[{"name":"b0","values":2},{"name":"b1","values":2},
+        let r = go(
+            r#"{"variables":[{"name":"b0","values":2},{"name":"b1","values":2},
                        {"name":"b2","values":2},{"name":"b3","values":2},{"name":"b4","values":2}],
                        "constraints":[{"type":"cardinality","k":2,"of":[
                          {"var":"b0","value":1},{"var":"b1","value":1},{"var":"b2","value":1},
                          {"var":"b3","value":1},{"var":"b4","value":1}]}],
                        "objective":{"maximize":true,"terms":[
                          {"var":"b3","value":1,"weight":3},{"var":"b4","value":1,"weight":4},
-                         {"var":"b0","value":1,"weight":1}]},"tries":40}"#)
-            .unwrap();
+                         {"var":"b0","value":1,"weight":1}]},"tries":40}"#,
+        )
+        .unwrap();
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
         let v = r.get("values").unwrap();
         let on: Vec<&str> = ["b0", "b1", "b2", "b3", "b4"]
@@ -2701,7 +3288,10 @@ mod solve_tests {
             .copied()
             .collect();
         assert_eq!(on.len(), 2, "exactly two: {on:?}");
-        assert!(on.contains(&"b3") && on.contains(&"b4"), "the valuable two: {on:?}");
+        assert!(
+            on.contains(&"b3") && on.contains(&"b4"),
+            "the valuable two: {on:?}"
+        );
     }
 
     #[test]
@@ -2709,9 +3299,16 @@ mod solve_tests {
         let r = go(r#"{"variables":[{"name":"x","values":4}],
                        "objective":{"maximize":true,"terms":[{"var":"x","value":3,"weight":9}]},
                        "tries":10}"#)
-            .unwrap();
-        assert_eq!(r.get("penalty").unwrap().as_f64(), Some(18.0), "twice the largest weight");
-        assert_eq!(r.get("values").unwrap().get("x").unwrap().as_f64(), Some(3.0));
+        .unwrap();
+        assert_eq!(
+            r.get("penalty").unwrap().as_f64(),
+            Some(18.0),
+            "twice the largest weight"
+        );
+        assert_eq!(
+            r.get("values").unwrap().get("x").unwrap().as_f64(),
+            Some(3.0)
+        );
     }
 
     #[test]
@@ -2722,12 +3319,24 @@ mod solve_tests {
             (r#"{"variables":[{"values":3}]}"#, "needs a \"name\""),
             (r#"{"variables":[{"name":"a","values":1}]}"#, "constant"),
             (r#"{"variables":[{"name":"a","lo":5,"hi":5}]}"#, "hi > lo"),
-            (r#"{"variables":[{"name":"a","values":2},{"name":"a","values":2}]}"#, "both named"),
-            (r#"{"variables":[{"name":"a","values":2}],"constraints":[{"type":"nope"}]}"#, "unknown constraint"),
-            (r#"{"variables":[{"name":"a","values":2}],"constraints":[{"type":"equal","a":"a","b":"zz"}]}"#, "no variable named"),
+            (
+                r#"{"variables":[{"name":"a","values":2},{"name":"a","values":2}]}"#,
+                "both named",
+            ),
+            (
+                r#"{"variables":[{"name":"a","values":2}],"constraints":[{"type":"nope"}]}"#,
+                "unknown constraint",
+            ),
+            (
+                r#"{"variables":[{"name":"a","values":2}],"constraints":[{"type":"equal","a":"a","b":"zz"}]}"#,
+                "no variable named",
+            ),
         ] {
             let e = go(body).unwrap_err();
-            assert!(e.contains(needle), "{body}\n  said: {e}\n  wanted: {needle}");
+            assert!(
+                e.contains(needle),
+                "{body}\n  said: {e}\n  wanted: {needle}"
+            );
         }
     }
 }
@@ -2744,15 +3353,17 @@ mod inequality_tests {
     #[test]
     fn at_most_caps_a_rewarded_selection() {
         // Everything is worth taking, so only the constraint stops it.
-        let r = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
+        let r = go(
+            r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
                        {"name":"c","values":2},{"name":"d","values":2}],
                        "constraints":[{"type":"at_most","k":2,"of":[
                          {"var":"a","value":1},{"var":"b","value":1},
                          {"var":"c","value":1},{"var":"d","value":1}]}],
                        "objective":{"maximize":true,"terms":[
                          {"var":"a","value":1},{"var":"b","value":1},
-                         {"var":"c","value":1},{"var":"d","value":1}]},"tries":60}"#)
-            .unwrap();
+                         {"var":"c","value":1},{"var":"d","value":1}]},"tries":60}"#,
+        )
+        .unwrap();
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
         let v = r.get("values").unwrap();
         let on = ["a", "b", "c", "d"]
@@ -2764,32 +3375,40 @@ mod inequality_tests {
 
     #[test]
     fn at_least_forces_a_floor() {
-        let r = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
+        let r = go(
+            r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2},
                        {"name":"c","values":2},{"name":"d","values":2}],
                        "constraints":[{"type":"at_least","k":3,"of":[
                          {"var":"a","value":1},{"var":"b","value":1},
                          {"var":"c","value":1},{"var":"d","value":1}]}],
                        "objective":{"maximize":true,"terms":[
                          {"var":"a","value":0},{"var":"b","value":0},
-                         {"var":"c","value":0},{"var":"d","value":0}]},"tries":60}"#)
-            .unwrap();
+                         {"var":"c","value":0},{"var":"d","value":0}]},"tries":60}"#,
+        )
+        .unwrap();
         let v = r.get("values").unwrap();
         let on = ["a", "b", "c", "d"]
             .iter()
             .filter(|n| v.get(n).unwrap().as_f64() == Some(1.0))
             .count();
-        assert!(on >= 3, "the floor must hold against an objective pushing the other way, got {on}");
+        assert!(
+            on >= 3,
+            "the floor must hold against an objective pushing the other way, got {on}"
+        );
     }
 
     #[test]
     fn the_slack_costs_spins_and_says_nothing() {
         // A caller should see the price in `spins` and never see the slack among the values.
-        let plain = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],"tries":4}"#)
-            .unwrap();
-        let ineq = go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],
+        let plain =
+            go(r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],"tries":4}"#)
+                .unwrap();
+        let ineq = go(
+            r#"{"variables":[{"name":"a","values":2},{"name":"b","values":2}],
                           "constraints":[{"type":"at_most","k":1,"of":[
-                            {"var":"a","value":1},{"var":"b","value":1}]}],"tries":4}"#)
-            .unwrap();
+                            {"var":"a","value":1},{"var":"b","value":1}]}],"tries":4}"#,
+        )
+        .unwrap();
         assert!(
             ineq.get("spins").unwrap().as_f64() > plain.get("spins").unwrap().as_f64(),
             "an inequality costs spins"
@@ -2798,7 +3417,11 @@ mod inequality_tests {
             Json::Obj(m) => m.iter().map(|(k, _)| k).collect(),
             _ => Vec::new(),
         };
-        assert_eq!(keys.len(), 2, "and reports only the caller's variables: {keys:?}");
+        assert_eq!(
+            keys.len(),
+            2,
+            "and reports only the caller's variables: {keys:?}"
+        );
     }
 }
 
@@ -2824,59 +3447,98 @@ mod silent_wrongness {
     fn an_objective_term_can_name_any_number_of_variables() {
         // "these three together", which this surface could not say: it offered one variable or a
         // pair and nothing wider.
-        let r = dispatch("solve", &crate::json::parse(
-            r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3},
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3},
                              {"name":"c","values":3}],
                  "objective":{"maximize":true,"terms":[
                      {"weight":9,"of":[{"var":"a","value":2},{"var":"b","value":2},
                                        {"var":"c","value":2}]}]},
-                 "tries":24}"#).unwrap()).unwrap();
+                 "tries":24}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let v = r.get("values").unwrap();
         for k in ["a", "b", "c"] {
-            assert_eq!(v.get(k).unwrap().as_f64(), Some(2.0),
-                       "the reward is only paid when all three hold ({k})");
+            assert_eq!(
+                v.get(k).unwrap().as_f64(),
+                Some(2.0),
+                "the reward is only paid when all three hold ({k})"
+            );
         }
-        assert!(r.get("ancillas").unwrap().as_f64().unwrap() > 0.0,
-                "and the reply says what the lowering cost");
+        assert!(
+            r.get("ancillas").unwrap().as_f64().unwrap() > 0.0,
+            "and the reply says what the lowering cost"
+        );
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
 
         // a pairwise model reports none, so the field is a real signal rather than decoration
-        let flat = dispatch("solve", &crate::json::parse(
-            r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3}],
-                 "constraints":[{"type":"not_equal","a":"a","b":"b"}],"tries":8}"#).unwrap()).unwrap();
+        let flat = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":3},{"name":"b","values":3}],
+                 "constraints":[{"type":"not_equal","a":"a","b":"b"}],"tries":8}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(flat.get("ancillas").unwrap().as_f64(), Some(0.0));
 
         // and an empty product is refused rather than quietly ignored
-        assert!(dispatch("solve", &crate::json::parse(
-            r#"{"variables":[{"name":"a","values":3}],
-                 "objective":{"maximize":true,"terms":[{"weight":1,"of":[]}]}}"#).unwrap()).is_err());
+        assert!(
+            dispatch(
+                "solve",
+                &crate::json::parse(
+                    r#"{"variables":[{"name":"a","values":3}],
+                 "objective":{"maximize":true,"terms":[{"weight":1,"of":[]}]}}"#
+                )
+                .unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn counting_constraints_take_any_number_of_entries() {
         // Nine of them, which the positional C form cannot express. The JSON surface always could;
         // this pins that it stays true.
-        let vars: String = (0..9).map(|i| format!(r#"{{"name":"s{i}","values":2}}"#))
-            .collect::<Vec<_>>().join(",");
-        let of: String = (0..9).map(|i| format!(r#"{{"var":"s{i}","value":1}}"#))
-            .collect::<Vec<_>>().join(",");
-        let terms: String = (0..9).map(|i| format!(r#"{{"var":"s{i}","value":1,"weight":{}}}"#, 9 - i))
-            .collect::<Vec<_>>().join(",");
-        let r = dispatch("solve", &crate::json::parse(&format!(
-            r#"{{"variables":[{vars}],
+        let vars: String = (0..9)
+            .map(|i| format!(r#"{{"name":"s{i}","values":2}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let of: String = (0..9)
+            .map(|i| format!(r#"{{"var":"s{i}","value":1}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let terms: String = (0..9)
+            .map(|i| format!(r#"{{"var":"s{i}","value":1,"weight":{}}}"#, 9 - i))
+            .collect::<Vec<_>>()
+            .join(",");
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(&format!(
+                r#"{{"variables":[{vars}],
                  "constraints":[{{"type":"at_most","k":2,"of":[{of}]}}],
                  "objective":{{"maximize":true,"terms":[{terms}]}},"tries":16}}"#
-        )).unwrap()).unwrap();
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
         let v = r.get("values").unwrap();
-        let on = (0..9).filter(|i| v.get(&format!("s{i}")).unwrap().as_f64() == Some(1.0)).count();
+        let on = (0..9)
+            .filter(|i| v.get(&format!("s{i}")).unwrap().as_f64() == Some(1.0))
+            .count();
         assert_eq!(on, 2, "at most 2 of nine");
     }
 
     #[test]
     fn exactly_one_and_at_most_one_are_reachable_and_cheaper() {
-        let body = |kind: &str| format!(
-            r#"{{"variables":[{{"name":"a","values":2}},{{"name":"b","values":2}},
+        let body = |kind: &str| {
+            format!(
+                r#"{{"variables":[{{"name":"a","values":2}},{{"name":"b","values":2}},
                               {{"name":"c","values":2}}],
                  "constraints":[{{"type":"{kind}","of":[{{"var":"a","value":1}},
                                                         {{"var":"b","value":1}},
@@ -2885,85 +3547,141 @@ mod silent_wrongness {
                                "terms":[{{"var":"a","value":1,"weight":1}},
                                         {{"var":"b","value":1,"weight":1}},
                                         {{"var":"c","value":1,"weight":1}}]}},"tries":16}}"#
-        );
+            )
+        };
         let count = |kind: &str| {
             let r = dispatch("solve", &crate::json::parse(&body(kind)).unwrap()).unwrap();
             let v = r.get("values").unwrap();
-            let n = ["a", "b", "c"].iter()
-                .filter(|k| v.get(k).unwrap().as_f64() == Some(1.0)).count();
-            (n, r.get("spins").unwrap().as_f64().unwrap(),
-             r.get("feasible").unwrap().as_bool() == Some(true))
+            let n = ["a", "b", "c"]
+                .iter()
+                .filter(|k| v.get(k).unwrap().as_f64() == Some(1.0))
+                .count();
+            (
+                n,
+                r.get("spins").unwrap().as_f64().unwrap(),
+                r.get("feasible").unwrap().as_bool() == Some(true),
+            )
         };
         // pushed off, at-most-one takes none and exactly-one still takes one
         assert_eq!(count("exactly_one"), (1, 6.0, true));
         assert_eq!(count("at_most_one"), (0, 6.0, true));
 
         // and neither costs a slack variable, where the inequality form does
-        let r = dispatch("solve", &crate::json::parse(&body("at_most").replace(
-            r#""type":"at_most""#, r#""type":"at_most","k":1"#)).unwrap()).unwrap();
-        assert!(r.get("spins").unwrap().as_f64().unwrap() > 6.0,
-                "at_most k=1 pays for a slack variable that at_most_one does not");
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(
+                &body("at_most").replace(r#""type":"at_most""#, r#""type":"at_most","k":1"#),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            r.get("spins").unwrap().as_f64().unwrap() > 6.0,
+            "at_most k=1 pays for a slack variable that at_most_one does not"
+        );
 
-        let e = dispatch("solve", &crate::json::parse(
-            r#"{"variables":[{"name":"a","values":2}],
-                "constraints":[{"type":"nonsense","of":[]}]}"#).unwrap()).unwrap_err();
-        assert!(e.contains("exactly_one") && e.contains("at_most_one"),
-                "the known list must include them: {e}");
+        let e = dispatch(
+            "solve",
+            &crate::json::parse(
+                r#"{"variables":[{"name":"a","values":2}],
+                "constraints":[{"type":"nonsense","of":[]}]}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("exactly_one") && e.contains("at_most_one"),
+            "the known list must include them: {e}"
+        );
     }
 
     #[test]
     fn a_caller_can_lengthen_the_annealing_ladder() {
-        let body = |sched: &str| format!(
-            r#"{{"variables":[{{"name":"a","values":3}},{{"name":"b","values":3}}],
+        let body = |sched: &str| {
+            format!(
+                r#"{{"variables":[{{"name":"a","values":3}},{{"name":"b","values":3}}],
                  "constraints":[{{"type":"not_equal","a":"a","b":"a2"}}],"tries":4{sched}}}"#
-        ).replace("\"a2\"", "\"b\"");
+            )
+            .replace("\"a2\"", "\"b\"")
+        };
 
         // the default ladder still works with no schedule given
         let r = dispatch("solve", &crate::json::parse(&body("")).unwrap()).unwrap();
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
 
         // and a caller's own ladder is accepted
-        let r = dispatch("solve", &crate::json::parse(
-            &body(r#","schedule":{"beta_hot":0.05,"beta_cold":6.0,"stages":60,"sweeps":20}"#)
-        ).unwrap()).unwrap();
+        let r = dispatch(
+            "solve",
+            &crate::json::parse(&body(
+                r#","schedule":{"beta_hot":0.05,"beta_cold":6.0,"stages":60,"sweeps":20}"#,
+            ))
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
 
         // partially given: the rest come from the default
-        assert!(dispatch("solve", &crate::json::parse(
-            &body(r#","schedule":{"stages":40}"#)
-        ).unwrap()).is_ok());
+        assert!(
+            dispatch(
+                "solve",
+                &crate::json::parse(&body(r#","schedule":{"stages":40}"#)).unwrap()
+            )
+            .is_ok()
+        );
 
         // a ladder that runs backwards is refused rather than silently substituted
-        let e = dispatch("solve", &crate::json::parse(
-            &body(r#","schedule":{"beta_hot":8.0,"beta_cold":0.05}"#)
-        ).unwrap()).unwrap_err();
-        assert!(e.contains("must exceed") && e.contains("hot to cold"), "{e}");
+        let e = dispatch(
+            "solve",
+            &crate::json::parse(&body(r#","schedule":{"beta_hot":8.0,"beta_cold":0.05}"#)).unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("must exceed") && e.contains("hot to cold"),
+            "{e}"
+        );
     }
 
     #[test]
     fn the_ceiling_counts_the_whole_run_not_just_the_burn_in() {
         // A ceiling that only looks at burn-in is not a ceiling. This request declared 1,024 node
         // updates at the gate and then did a quarter of a billion in the recording loop.
-        let sneaky = r#"{"graph":{"builtin":"lattice2d","l":32},"sweeps":1,"draws":128,"thin":2000}"#;
+        let sneaky =
+            r#"{"graph":{"builtin":"lattice2d","l":32},"sweeps":1,"draws":128,"thin":2000}"#;
         let cheap = r#"{"graph":{"builtin":"lattice2d","l":32},"sweeps":1,"draws":8,"thin":2}"#;
 
         // it is under the real ceiling, so it must still be ACCEPTED -- the point is the accounting
         let r = dispatch("sample", &crate::json::parse(sneaky).unwrap()).unwrap();
-        let updates = r.get("ledger").and_then(|l| l.get("node_updates")).and_then(Json::as_f64);
-        assert!(updates.unwrap() > 2.0e8, "the run really is that large: {updates:?}");
+        let updates = r
+            .get("ledger")
+            .and_then(|l| l.get("node_updates"))
+            .and_then(Json::as_f64);
+        assert!(
+            updates.unwrap() > 2.0e8,
+            "the run really is that large: {updates:?}"
+        );
 
         // and a request past the ceiling is refused on the recording loop alone
-        let over = r#"{"graph":{"builtin":"lattice2d","l":64},"sweeps":1,"draws":100000,"thin":100000}"#.to_string();
+        let over =
+            r#"{"graph":{"builtin":"lattice2d","l":64},"sweeps":1,"draws":100000,"thin":100000}"#
+                .to_string();
         let e = dispatch("sample", &crate::json::parse(&over).unwrap()).unwrap_err();
-        assert!(e.contains("draws") && e.contains("thin") && e.contains("ceiling"), "{e}");
+        assert!(
+            e.contains("draws") && e.contains("thin") && e.contains("ceiling"),
+            "{e}"
+        );
 
         // the cheap one is unaffected
         assert!(dispatch("sample", &crate::json::parse(cheap).unwrap()).is_ok());
 
         // verify had no ceiling at all
-        let e = dispatch("verify", &crate::json::parse(
-            r#"{"graph":{"builtin":"ring","n":20},"draws":100000000,"thin":100000}"#
-        ).unwrap()).unwrap_err();
+        let e = dispatch(
+            "verify",
+            &crate::json::parse(
+                r#"{"graph":{"builtin":"ring","n":20},"draws":100000000,"thin":100000}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
         assert!(e.contains("ceiling"), "{e}");
     }
 
@@ -2972,29 +3690,52 @@ mod silent_wrongness {
         // `as_bool` returned None for a JSON number, `unwrap_or(false)` made that Minimize, and the
         // caller got the OPPOSITE of what they asked for. Not a degraded answer -- the other one.
         let terms = r#"[{"var":"x","value":0,"weight":1},{"var":"x","value":4,"weight":5}]"#;
-        let req = |m: &str| format!(
-            r#"{{"variables":[{{"name":"x","values":5}}],"objective":{{"maximize":{m},"terms":{terms}}},"tries":10}}"#
-        );
+        let req = |m: &str| {
+            format!(
+                r#"{{"variables":[{{"name":"x","values":5}}],"objective":{{"maximize":{m},"terms":{terms}}},"tries":10}}"#
+            )
+        };
         assert_eq!(value_of_x(&req("true")), Some(4.0), "the plain form");
-        assert_eq!(value_of_x(&req("1")), Some(4.0), "and the integer form agrees with it");
-        assert_eq!(value_of_x(&req("false")), value_of_x(&req("0")), "as do both false forms");
-        assert_ne!(value_of_x(&req("true")), value_of_x(&req("false")), "and the two differ");
+        assert_eq!(
+            value_of_x(&req("1")),
+            Some(4.0),
+            "and the integer form agrees with it"
+        );
+        assert_eq!(
+            value_of_x(&req("false")),
+            value_of_x(&req("0")),
+            "as do both false forms"
+        );
+        assert_ne!(
+            value_of_x(&req("true")),
+            value_of_x(&req("false")),
+            "and the two differ"
+        );
 
         // anything that is neither is refused rather than read as false
         let e = go(&req(r#""yes""#)).unwrap_err();
-        assert!(e.contains("must be true or false") && e.contains("a string"), "{e}");
+        assert!(
+            e.contains("must be true or false") && e.contains("a string"),
+            "{e}"
+        );
     }
 
     #[test]
     fn a_value_that_is_not_a_number_is_refused() {
         // `"13"` -- what a shell pipeline or a templating layer produces -- used to become 0.
         let e = go(r#"{"variables":[{"name":"x","values":20}],
-                       "constraints":[{"type":"fix","var":"x","value":"13"}],"tries":4}"#).unwrap_err();
+                       "constraints":[{"type":"fix","var":"x","value":"13"}],"tries":4}"#)
+        .unwrap_err();
         assert!(e.contains("whole number") && e.contains("a string"), "{e}");
 
         // and the number still works, so the check is not just refusing everything
-        assert_eq!(value_of_x(r#"{"variables":[{"name":"x","values":20}],
-                       "constraints":[{"type":"fix","var":"x","value":13}],"tries":4}"#), Some(13.0));
+        assert_eq!(
+            value_of_x(
+                r#"{"variables":[{"name":"x","values":20}],
+                       "constraints":[{"type":"fix","var":"x","value":13}],"tries":4}"#
+            ),
+            Some(13.0)
+        );
 
         // every place a value is read, not just `fix`
         for body in [
@@ -3005,7 +3746,10 @@ mod silent_wrongness {
             r#"{"variables":[{"name":"x","values":3}],
                 "objective":{"maximize":true,"terms":[{"var":"x","value":"2","weight":1}]}}"#,
         ] {
-            assert!(go(body).is_err(), "a string value should be refused here: {body}");
+            assert!(
+                go(body).is_err(),
+                "a string value should be refused here: {body}"
+            );
         }
     }
 
@@ -3019,7 +3763,10 @@ mod silent_wrongness {
                      "constraints":[{{"type":"{kind}","a":"a","b":"a"}}],"tries":4}}"#
             ));
             let e = e.unwrap_err();
-            assert!(e.contains("cannot be compared with itself") && e.contains('a'), "{kind}: {e}");
+            assert!(
+                e.contains("cannot be compared with itself") && e.contains('a'),
+                "{kind}: {e}"
+            );
         }
     }
 
@@ -3032,8 +3779,16 @@ mod silent_wrongness {
                           "terms":[{"var":"a","value":1,"weight":1},{"var":"b","value":1,"weight":1}]},
              "tries":12}"#).unwrap();
         let v = r.get("values").unwrap();
-        assert_eq!(v.get("a").unwrap().as_f64(), Some(0.0), "at most 0 means none");
-        assert_eq!(v.get("b").unwrap().as_f64(), Some(0.0), "even against a reward on both");
+        assert_eq!(
+            v.get("a").unwrap().as_f64(),
+            Some(0.0),
+            "at most 0 means none"
+        );
+        assert_eq!(
+            v.get("b").unwrap().as_f64(),
+            Some(0.0),
+            "even against a reward on both"
+        );
         assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true));
 
         // the mirror boundary: at least all of them
@@ -3043,8 +3798,11 @@ mod silent_wrongness {
                           "terms":[{"var":"a","value":1,"weight":1},{"var":"b","value":1,"weight":1}]},
              "tries":12}"#).unwrap();
         let v = r.get("values").unwrap();
-        assert_eq!((v.get("a").unwrap().as_f64(), v.get("b").unwrap().as_f64()),
-                   (Some(1.0), Some(1.0)), "at least 2 of 2 means both, against a penalty on both");
+        assert_eq!(
+            (v.get("a").unwrap().as_f64(), v.get("b").unwrap().as_f64()),
+            (Some(1.0), Some(1.0)),
+            "at least 2 of 2 means both, against a penalty on both"
+        );
     }
 
     #[test]
@@ -3063,23 +3821,45 @@ mod silent_wrongness {
         };
 
         let soft = dispatch("solve", &crate::json::parse(&body(r#","soft":1"#)).unwrap()).unwrap();
-        assert_eq!(soft.get("feasible").unwrap().as_bool(), Some(true), "{soft:?}");
+        assert_eq!(
+            soft.get("feasible").unwrap().as_bool(),
+            Some(true),
+            "{soft:?}"
+        );
         let broke = soft.get("violated").unwrap().as_arr().unwrap();
-        assert_eq!(broke.len(), 1, "the cheap preference should have been traded: {soft:?}");
+        assert_eq!(
+            broke.len(),
+            1,
+            "the cheap preference should have been traded: {soft:?}"
+        );
         assert_eq!(broke[0].get("hard").unwrap().as_bool(), Some(false));
         assert_eq!(broke[0].get("cost").unwrap().as_f64(), Some(1.0));
         assert_eq!(soft.get("soft_cost").unwrap().as_f64(), Some(1.0));
 
         // The identical constraint as a rule: the solver keeps it and gives up the objective.
         let hard = dispatch("solve", &crate::json::parse(&body("")).unwrap()).unwrap();
-        assert_eq!(hard.get("feasible").unwrap().as_bool(), Some(true), "{hard:?}");
-        assert!(hard.get("violated").unwrap().as_arr().unwrap().is_empty(), "{hard:?}");
+        assert_eq!(
+            hard.get("feasible").unwrap().as_bool(),
+            Some(true),
+            "{hard:?}"
+        );
+        assert!(
+            hard.get("violated").unwrap().as_arr().unwrap().is_empty(),
+            "{hard:?}"
+        );
         assert_eq!(hard.get("soft_cost").unwrap().as_f64(), Some(0.0));
 
         // And priced above the objective, the preference is kept rather than traded. Same field,
         // opposite outcome: this is the knob doing what it says.
-        let dear = dispatch("solve", &crate::json::parse(&body(r#","soft":50"#)).unwrap()).unwrap();
-        assert!(dear.get("violated").unwrap().as_arr().unwrap().is_empty(), "{dear:?}");
+        let dear = dispatch(
+            "solve",
+            &crate::json::parse(&body(r#","soft":50"#)).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            dear.get("violated").unwrap().as_arr().unwrap().is_empty(),
+            "{dear:?}"
+        );
         assert_eq!(dear.get("soft_cost").unwrap().as_f64(), Some(0.0));
     }
 
@@ -3114,7 +3894,12 @@ mod silent_wrongness {
         // HARD constraint where a preference was asked for, which is the opposite instruction,
         // returned with feasible: true and nothing to suggest anything went wrong. Five bugs of
         // exactly this shape have already been found on this surface.
-        for bad in [r#""soft":"5""#, r#""soft":true"#, r#""soft":0"#, r#""soft":-3"#] {
+        for bad in [
+            r#""soft":"5""#,
+            r#""soft":true"#,
+            r#""soft":0"#,
+            r#""soft":-3"#,
+        ] {
             let e = dispatch(
                 "solve",
                 &crate::json::parse(&format!(
@@ -3124,7 +3909,10 @@ mod silent_wrongness {
                 .unwrap(),
             )
             .unwrap_err();
-            assert!(e.contains("soft"), "{bad} should be refused by name, got: {e}");
+            assert!(
+                e.contains("soft"),
+                "{bad} should be refused by name, got: {e}"
+            );
         }
     }
 
@@ -3152,7 +3940,10 @@ mod silent_wrongness {
         let vals = r.get("values").unwrap();
         let at = |k: &str| vals.get(k).unwrap().as_f64().unwrap();
         let load = 3.0 * at("a") + 4.0 * at("b") + 5.0 * at("c");
-        assert_eq!(load, 7.0, "the row BINDS, and 3 + 4 is the best that fits: {r:?}");
+        assert_eq!(
+            load, 7.0,
+            "the row BINDS, and 3 + 4 is the best that fits: {r:?}"
+        );
 
         // A row nothing can satisfy is refused by arithmetic, with the reason.
         let e = dispatch(
@@ -3202,7 +3993,11 @@ mod silent_wrongness {
             .map(|k| vals.get(k).unwrap().as_f64().unwrap())
             .collect();
         got.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(got, vec![0.0, 1.0, 2.0, 3.0], "a permutation, every value once: {r:?}");
+        assert_eq!(
+            got,
+            vec![0.0, 1.0, 2.0, 3.0],
+            "a permutation, every value once: {r:?}"
+        );
     }
 
     #[test]
@@ -3222,15 +4017,24 @@ mod silent_wrongness {
         )
         .unwrap_err();
         assert!(e.contains("No assignment can satisfy"), "must say why: {e}");
-        assert!(e.contains('5') && e.contains('3'), "and name the counts: {e}");
+        assert!(
+            e.contains('5') && e.contains('3'),
+            "and name the counts: {e}"
+        );
     }
 
     #[test]
     fn all_different_needs_variables_and_says_so() {
         for (body, want) in [
-            (r#""constraints":[{"type":"all_different","of":[{"var":"a"}]}]"#, "at least two"),
+            (
+                r#""constraints":[{"type":"all_different","of":[{"var":"a"}]}]"#,
+                "at least two",
+            ),
             (r#""constraints":[{"type":"all_different"}]"#, "needs"),
-            (r#""constraints":[{"type":"all_different","of":[{"value":1},{"var":"b"}]}]"#, "\"var\""),
+            (
+                r#""constraints":[{"type":"all_different","of":[{"value":1},{"var":"b"}]}]"#,
+                "\"var\"",
+            ),
         ] {
             let e = dispatch(
                 "solve",
@@ -3271,7 +4075,10 @@ mod silent_wrongness {
             &crate::json::parse(r#"{"variables":[{"name":"a","values":5}],"tries":4}"#).unwrap(),
         )
         .unwrap();
-        assert!(clean.get("caveats").unwrap().as_arr().unwrap().is_empty(), "{clean:?}");
+        assert!(
+            clean.get("caveats").unwrap().as_arr().unwrap().is_empty(),
+            "{clean:?}"
+        );
     }
 
     #[test]
@@ -3287,7 +4094,11 @@ mod silent_wrongness {
         .unwrap();
         let b64s = r.get("ommx_b64").unwrap().as_str().unwrap();
         assert!(!b64s.is_empty());
-        assert_eq!(b64s.len() % 4, 0, "base64 must be padded to a multiple of four");
+        assert_eq!(
+            b64s.len() % 4,
+            0,
+            "base64 must be padded to a multiple of four"
+        );
         assert!(r.get("ommx_constant").unwrap().as_f64().is_some());
 
         // Decode and check it is the instance the library would have produced directly, so the
@@ -3301,7 +4112,10 @@ mod silent_wrongness {
             m.compile().unwrap()
         };
         let direct = ferrotherm::ommx::export(&compiled_again.graph);
-        assert_eq!(decoded, direct.bytes, "the HTTP payload must be the library's own bytes");
+        assert_eq!(
+            decoded, direct.bytes,
+            "the HTTP payload must be the library's own bytes"
+        );
     }
 
     /// Decode base64, for the test above only.
@@ -3316,8 +4130,12 @@ mod silent_wrongness {
                 n |= idx(c) << (18 - 6 * k);
             }
             out.push((n >> 16) as u8);
-            if chunk.len() > 2 { out.push((n >> 8) as u8); }
-            if chunk.len() > 3 { out.push(n as u8); }
+            if chunk.len() > 2 {
+                out.push((n >> 8) as u8);
+            }
+            if chunk.len() > 3 {
+                out.push(n as u8);
+            }
         }
         out
     }

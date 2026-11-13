@@ -303,7 +303,11 @@ impl Workload {
 /// comparison the 32 and 64 tests already make: the per-site gap to Onsager is strictly
 /// smaller than the exact 16×16 gap, and two seeds agree to 0.05 per site.
 pub fn grid_scaling(trials: usize, warmup: usize, draws: usize) -> Vec<Workload> {
-    GRID_SIDES.iter().copied().map(|side| grid_scale_one(side, trials, warmup, draws)).collect()
+    GRID_SIDES
+        .iter()
+        .copied()
+        .map(|side| grid_scale_one(side, trials, warmup, draws))
+        .collect()
 }
 
 fn grid_scale_id(side: usize) -> &'static str {
@@ -331,7 +335,8 @@ fn grid_scale_one(side: usize, trials: usize, mut warmup: usize, mut draws: usiz
     let beta = 0.3;
     let n = side * side;
     let (exact_energy, oracle) = if side <= crate::oracle::ISING_TM_MAX_SIDE {
-        let tm = crate::oracle::ising_open_transfer(side, j, beta).expect("side is inside the transfer matrix");
+        let tm = crate::oracle::ising_open_transfer(side, j, beta)
+            .expect("side is inside the transfer matrix");
         (Some(tm.mean_energy), "transfer matrix")
     } else {
         (
@@ -340,9 +345,15 @@ fn grid_scale_one(side: usize, trials: usize, mut warmup: usize, mut draws: usiz
         )
     };
     let source = match side {
-        8 => "Open 8x8 Ising, J=1, beta=0.3. Grid-scale sweep. exact_energy is the transfer matrix.",
-        16 => "Open 16x16 Ising, J=1, beta=0.3. Grid-scale sweep. exact_energy is the transfer matrix.",
-        _ => "Open Ising grid, J=1, beta=0.3, side in the id. Past the transfer matrix. Parity is the Onsager gap against the exact 16x16 gap, plus two-seed agreement of 0.05 per site. Onsager is not stored as the finite mean.",
+        8 => {
+            "Open 8x8 Ising, J=1, beta=0.3. Grid-scale sweep. exact_energy is the transfer matrix."
+        }
+        16 => {
+            "Open 16x16 Ising, J=1, beta=0.3. Grid-scale sweep. exact_energy is the transfer matrix."
+        }
+        _ => {
+            "Open Ising grid, J=1, beta=0.3, side in the id. Past the transfer matrix. Parity is the Onsager gap against the exact 16x16 gap, plus two-seed agreement of 0.05 per site. Onsager is not stored as the finite mean."
+        }
     };
     Workload {
         id: grid_scale_id(side),
@@ -374,8 +385,24 @@ pub fn scaling(trials: usize, warmup: usize, draws: usize) -> Vec<Workload> {
     out.push(potts_square(8, 3, trials, warmup, draws));
     out.push(potts_square(4, 4, trials, warmup, draws));
     out.push(potts_square(8, 4, trials, warmup, draws));
-    out.push(three_body_sized(12, 18, 20, 0x5453_5032, trials, warmup, draws));
-    out.push(three_body_sized(16, 24, 24, 0x5453_5033, trials, warmup, draws));
+    out.push(three_body_sized(
+        12,
+        18,
+        20,
+        0x5453_5032,
+        trials,
+        warmup,
+        draws,
+    ));
+    out.push(three_body_sized(
+        16,
+        24,
+        24,
+        0x5453_5033,
+        trials,
+        warmup,
+        draws,
+    ));
     out
 }
 
@@ -393,15 +420,23 @@ fn ising_square(side: usize, trials: usize, warmup: usize, draws: usize) -> Work
         }
     }
     let computed = if side <= crate::oracle::ISING_TM_MAX_SIDE {
-        let tm = crate::oracle::ising_open_transfer(side, j, beta).expect("side is inside the transfer-matrix range");
+        let tm = crate::oracle::ising_open_transfer(side, j, beta)
+            .expect("side is inside the transfer-matrix range");
         assert!(tm.log_z.is_finite(), "transfer matrix log Z");
         if side == 4 {
-            let enumerated = crate::oracle::ising_enumerated_mean(side, j, beta).expect("4x4 enumerates");
-            assert!((tm.mean_energy - enumerated).abs() < 1e-6, "4x4 transfer matrix left enumeration");
+            let enumerated =
+                crate::oracle::ising_enumerated_mean(side, j, beta).expect("4x4 enumerates");
+            assert!(
+                (tm.mean_energy - enumerated).abs() < 1e-6,
+                "4x4 transfer matrix left enumeration"
+            );
         }
         if side == 8 {
             let kac = crate::oracle::ising_kac_ward_energy(side, j, beta).expect("8x8 Kac-Ward");
-            assert!((tm.mean_energy - kac).abs() < 1e-5, "8x8 transfer matrix left Kac-Ward");
+            assert!(
+                (tm.mean_energy - kac).abs() < 1e-5,
+                "8x8 transfer matrix left Kac-Ward"
+            );
         }
         tm.mean_energy
     } else {
@@ -446,11 +481,21 @@ fn ising_square(side: usize, trials: usize, warmup: usize, draws: usize) -> Work
 
 fn source_ising(side: usize) -> &'static str {
     match side {
-        4 => "Open 4x4 Ising, J=1, beta=0.3. Exact by enumeration (2^16) and by the transfer matrix. Checkerboard blocks are the two-colour Gibbs THRML's Ising quickstart uses (https://docs.thrml.ai/en/latest/).",
-        8 => "Open 8x8 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean, cross-checked against the Kac-Ward determinant. Checkerboard block Gibbs, as in THRML's Ising quickstart.",
-        16 => "Open 16x16 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean. A dense 2^32 transfer matrix is not this number. Checkerboard block Gibbs.",
-        32 => "Open 32x32 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is the mean of a long ferrotherm reference chain on this finite lattice, not Onsager's infinite lattice. Checkerboard block Gibbs.",
-        _ => "Open 64x64 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is the mean of a long ferrotherm reference chain on this finite lattice, not Onsager's infinite lattice. Checkerboard block Gibbs.",
+        4 => {
+            "Open 4x4 Ising, J=1, beta=0.3. Exact by enumeration (2^16) and by the transfer matrix. Checkerboard blocks are the two-colour Gibbs THRML's Ising quickstart uses (https://docs.thrml.ai/en/latest/)."
+        }
+        8 => {
+            "Open 8x8 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean, cross-checked against the Kac-Ward determinant. Checkerboard block Gibbs, as in THRML's Ising quickstart."
+        }
+        16 => {
+            "Open 16x16 Ising, J=1, beta=0.3. exact_energy is the transfer-matrix mean. A dense 2^32 transfer matrix is not this number. Checkerboard block Gibbs."
+        }
+        32 => {
+            "Open 32x32 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is the mean of a long ferrotherm reference chain on this finite lattice, not Onsager's infinite lattice. Checkerboard block Gibbs."
+        }
+        _ => {
+            "Open 64x64 Ising, J=1, beta=0.3. Past the transfer matrix. exact_energy is the mean of a long ferrotherm reference chain on this finite lattice, not Onsager's infinite lattice. Checkerboard block Gibbs."
+        }
     }
 }
 
@@ -470,15 +515,21 @@ fn potts_square(side: usize, q: usize, trials: usize, warmup: usize, draws: usiz
             }
         }
     }
-    let tm = crate::oracle::potts_open_transfer(side, q, j, beta).expect("potts side is inside the transfer-matrix range");
+    let tm = crate::oracle::potts_open_transfer(side, q, j, beta)
+        .expect("potts side is inside the transfer-matrix range");
     assert!(tm.log_z.is_finite(), "potts transfer matrix log Z");
     if q == 3 && side == 4 {
         let small = crate::oracle::potts_open_transfer(3, 3, j, beta).expect("3x3 q=3");
-        let enumerated = crate::oracle::potts_enumerated_mean(3, 3, j, beta).expect("3x3 q=3 enumerates");
-        assert!((small.mean_energy - enumerated).abs() < 1e-6, "q=3 3x3 transfer matrix left enumeration");
+        let enumerated =
+            crate::oracle::potts_enumerated_mean(3, 3, j, beta).expect("3x3 q=3 enumerates");
+        assert!(
+            (small.mean_energy - enumerated).abs() < 1e-6,
+            "q=3 3x3 transfer matrix left enumeration"
+        );
     }
     if q == 3 && side == 4 {
-        let brute = crate::oracle::potts_open_brute_mean(4, 3, j, beta).expect("4x4 q=3 enumerates");
+        let brute =
+            crate::oracle::potts_open_brute_mean(4, 3, j, beta).expect("4x4 q=3 enumerates");
         assert!(
             (tm.mean_energy - brute).abs() < 1e-4,
             "4x4 q=3 transfer matrix {} brute force {}",
@@ -491,7 +542,11 @@ fn potts_square(side: usize, q: usize, trials: usize, warmup: usize, draws: usiz
     for i in 0..n {
         let x = i % side;
         let y = i / side;
-        if (x + y).is_multiple_of(2) { even.push(i); } else { odd.push(i); }
+        if (x + y).is_multiple_of(2) {
+            even.push(i);
+        } else {
+            odd.push(i);
+        }
     }
     let id: &'static str = match (q, side) {
         (3, 4) => "potts_open_q3_4x4",
@@ -501,10 +556,18 @@ fn potts_square(side: usize, q: usize, trials: usize, warmup: usize, draws: usiz
         _ => "potts_open_scaled",
     };
     let source: &'static str = match (q, side) {
-        (3, 4) => "Open 4x4 q=3 Potts, J=1, beta=0.5, below potts::critical_beta. exact_energy is the row transfer matrix. Blocks are the checkerboard, which is THRML's parallel colouring; ferrotherm's Potts heat bath still scans sites in index order.",
-        (3, 8) => "Open 8x8 q=3 Potts, J=1, beta=0.5. exact_energy is the row transfer matrix (3^8 states per row). Not the codon-optimisation gene, which is not enumerable.",
-        (4, 4) => "Open 4x4 q=4 Potts, J=1, beta=0.5, below potts::critical_beta(4). exact_energy is the row transfer matrix.",
-        _ => "Open 8x8 q=4 Potts, J=1, beta=0.5. exact_energy is the row transfer matrix (4^8 states per row).",
+        (3, 4) => {
+            "Open 4x4 q=3 Potts, J=1, beta=0.5, below potts::critical_beta. exact_energy is the row transfer matrix. Blocks are the checkerboard, which is THRML's parallel colouring; ferrotherm's Potts heat bath still scans sites in index order."
+        }
+        (3, 8) => {
+            "Open 8x8 q=3 Potts, J=1, beta=0.5. exact_energy is the row transfer matrix (3^8 states per row). Not the codon-optimisation gene, which is not enumerable."
+        }
+        (4, 4) => {
+            "Open 4x4 q=4 Potts, J=1, beta=0.5, below potts::critical_beta(4). exact_energy is the row transfer matrix."
+        }
+        _ => {
+            "Open 8x8 q=4 Potts, J=1, beta=0.5. exact_energy is the row transfer matrix (4^8 states per row)."
+        }
     };
     Workload {
         id,
@@ -592,7 +655,10 @@ fn three_body_sized(
 }
 
 fn classes_of(g: &ferrotherm::graph::Graph) -> Vec<Vec<usize>> {
-    g.classes.iter().map(|c| c.iter().map(|&i| i as usize).collect()).collect()
+    g.classes
+        .iter()
+        .map(|c| c.iter().map(|&i| i as usize).collect())
+        .collect()
 }
 
 fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
@@ -765,7 +831,10 @@ mod tests {
         assert_eq!(a.edges.len(), 12);
         assert_eq!(a.triples.len(), 10);
         assert_eq!(a.biases.len(), 8);
-        assert_eq!(a.edges, b.edges, "the pin is a function of the seed, not of the clock");
+        assert_eq!(
+            a.edges, b.edges,
+            "the pin is a function of the seed, not of the clock"
+        );
         assert_eq!(a.triples, b.triples);
         assert_eq!(a.biases, b.biases);
         let mut seen_edges = std::collections::BTreeSet::new();
@@ -780,7 +849,10 @@ mod tests {
         }
         // A proper colouring: no term sits inside one block.
         let colour_of = |site: usize| -> usize {
-            a.blocks.iter().position(|b| b.contains(&site)).expect("site coloured")
+            a.blocks
+                .iter()
+                .position(|b| b.contains(&site))
+                .expect("site coloured")
         };
         for (i, j, _) in &a.edges {
             assert_ne!(colour_of(*i), colour_of(*j));
@@ -826,7 +898,10 @@ mod tests {
         assert!(big.source.contains("reference chain"));
         assert_eq!(big.oracle, "long reference chain on the finite lattice");
         assert_eq!(four.oracle, "transfer matrix cross-checked by enumeration");
-        let d12 = scale.iter().find(|w| w.id == "tsp_iv4_three_body_d12").unwrap();
+        let d12 = scale
+            .iter()
+            .find(|w| w.id == "tsp_iv4_three_body_d12")
+            .unwrap();
         assert_eq!(d12.n, 12);
         assert_eq!(d12.edges.len(), 18);
         assert_eq!(d12.triples.len(), 20);
@@ -859,17 +934,32 @@ mod tests {
         assert!(eight.exact_energy.is_some());
         assert_eq!(eight.warmup, GRID_SIDE8_PARITY_WARMUP);
         assert_eq!(eight.draws, GRID_SIDE8_PARITY_DRAWS);
-        let sixteen = grids.iter().find(|w| w.id == "grid_scale_ising_16").unwrap();
+        let sixteen = grids
+            .iter()
+            .find(|w| w.id == "grid_scale_ising_16")
+            .unwrap();
         assert_eq!(sixteen.warmup, 40);
         assert_eq!(sixteen.draws, 64);
-        assert!(eight.edges.is_empty(), "the spec is the GRID line, not an edge dump");
+        assert!(
+            eight.edges.is_empty(),
+            "the spec is the GRID line, not an edge dump"
+        );
         assert_eq!(eight.open_grid(), Some((8, 1.0)));
-        let big = grids.iter().find(|w| w.id == "grid_scale_ising_4096").unwrap();
-        assert!(big.exact_energy.is_none(), "4096 has no finite-lattice mean stored");
+        let big = grids
+            .iter()
+            .find(|w| w.id == "grid_scale_ising_4096")
+            .unwrap();
+        assert!(
+            big.exact_energy.is_none(),
+            "4096 has no finite-lattice mean stored"
+        );
         assert_eq!(big.n, 4096 * 4096);
         let text = write_spec(&grids);
         assert!(text.contains("GRID side=64 j=1.0000000000000000"));
-        assert!(!text.contains("0,1,1.0000000000000000"), "edges were written out");
+        assert!(
+            !text.contains("0,1,1.0000000000000000"),
+            "edges were written out"
+        );
         let canonical = canonical(2, 40, 64);
         assert!(canonical.iter().all(|w| w.open_grid().is_none()));
     }
@@ -878,6 +968,9 @@ mod tests {
     fn potts_blocks_are_the_index_scan() {
         let w = potts_path(1, 1, 1);
         assert_eq!(w.q, 3);
-        assert_eq!(w.blocks, vec![vec![0], vec![1], vec![2], vec![3], vec![4], vec![5]]);
+        assert_eq!(
+            w.blocks,
+            vec![vec![0], vec![1], vec![2], vec![3], vec![4], vec![5]]
+        );
     }
 }

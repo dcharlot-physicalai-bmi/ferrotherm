@@ -111,8 +111,10 @@ fn main() {
     };
     let name = path.rsplit('/').next().unwrap_or(&path);
     let degree = 2.0 * inst.edges as f64 / inst.nodes as f64;
-    println!("{name}: {} nodes, {} edges, mean degree {degree:.1}, W = {}",
-             inst.nodes, inst.edges, inst.total_weight);
+    println!(
+        "{name}: {} nodes, {} edges, mean degree {degree:.1}, W = {}",
+        inst.nodes, inst.edges, inst.total_weight
+    );
 
     // ---- the cut, from the sampler --------------------------------------------------------------
     //
@@ -137,7 +139,10 @@ fn main() {
     // The cut has to be recomputed from the STATE, not carried from the loop: a cut reported by the
     // thing that searched for it is the one number in this file nothing else would catch.
     let verified = inst.cut(&best_state);
-    assert!((verified - best).abs() < 1e-9, "reported {best}, state gives {verified}");
+    assert!(
+        (verified - best).abs() < 1e-9,
+        "reported {best}, state gives {verified}"
+    );
     println!("  cut found      {best:>12.0}   (8 restarts x 200-stage ladder, {t_sample})");
 
     // ---- the upper bound ------------------------------------------------------------------------
@@ -154,7 +159,10 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(sdp::Params::default().sweeps);
-    let params = sdp::Params { sweeps, ..sdp::Params::default() };
+    let params = sdp::Params {
+        sweeps,
+        ..sdp::Params::default()
+    };
     let ((f, c, sd, cert), t_bound) = Timing::around(|| {
         let f = bound::forest(&inst.graph, 40);
         let c = bound::odd_cycle(&inst.graph, 6);
@@ -167,13 +175,24 @@ fn main() {
     // produced it. A bound that only its own author can reproduce is not a bound.
     let sdp_ok = cert.verify(&inst.graph);
 
-    println!("  forest ub      {:>12.0}   ({} forests, peak at round {} of {})",
-             inst.cut_upper_bound(f.value), f.parts, f.best_round, f.rounds);
-    println!("  odd-cycle ub   {:>12.0}   ({} edge-disjoint frustrated cycles)",
-             inst.cut_upper_bound(c.value), c.parts);
+    println!(
+        "  forest ub      {:>12.0}   ({} forests, peak at round {} of {})",
+        inst.cut_upper_bound(f.value),
+        f.parts,
+        f.best_round,
+        f.rounds
+    );
+    println!(
+        "  odd-cycle ub   {:>12.0}   ({} edge-disjoint frustrated cycles)",
+        inst.cut_upper_bound(c.value),
+        c.parts
+    );
     match &sdp_ok {
-        Ok(v) => println!("  sdp ub         {:>12.0}   (rank {}, {sweeps} sweeps, re-verified independently)",
-                          inst.cut_upper_bound(*v), cert.rank),
+        Ok(v) => println!(
+            "  sdp ub         {:>12.0}   (rank {}, {sweeps} sweeps, re-verified independently)",
+            inst.cut_upper_bound(*v),
+            cert.rank
+        ),
         Err(e) => println!("  sdp ub                 --   REFUSED: {e}"),
     }
 
@@ -182,8 +201,14 @@ fn main() {
     // is not a tie-break, it is the result.
     let mut best_bound = &f;
     let mut which = "forest";
-    if c.value >= best_bound.value { best_bound = &c; which = "odd-cycle"; }
-    if sdp_ok.is_ok() && sd.value >= best_bound.value { best_bound = &sd; which = "sdp"; }
+    if c.value >= best_bound.value {
+        best_bound = &c;
+        which = "odd-cycle";
+    }
+    if sdp_ok.is_ok() && sd.value >= best_bound.value {
+        best_bound = &sd;
+        which = "sdp";
+    }
     let ub = inst.cut_upper_bound(best_bound.value);
     println!("  upper bound    {ub:>12.0}   ({which}, {t_bound})");
 
@@ -198,7 +223,11 @@ fn main() {
     // The explanation once, at the bottom, rather than four lines of prose per row. The BOUNDS and
     // the CUT above are unaffected by contention -- they are the same numbers on any machine -- so
     // the caveat is scoped to the seconds and says so.
-    for c in [t_sample.caveat(), t_bound.caveat()].into_iter().flatten().take(1) {
+    for c in [t_sample.caveat(), t_bound.caveat()]
+        .into_iter()
+        .flatten()
+        .take(1)
+    {
         println!("\n  NOTE ON THE TIMINGS: {c}");
     }
 

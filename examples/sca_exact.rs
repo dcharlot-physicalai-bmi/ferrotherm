@@ -37,7 +37,9 @@
 //! ```text
 //! cargo run --release --example sca_exact
 //! ```
-use ferrotherm::autocorr::{boltzmann, sca_law, spins, tau_int_fundamental, total_variation, Kernel};
+use ferrotherm::autocorr::{
+    Kernel, boltzmann, sca_law, spins, tau_int_fundamental, total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -108,11 +110,17 @@ fn first_order_constant(g: &Graph, beta: f64) -> f64 {
     let phi: Vec<f64> = (0..bolt.len())
         .map(|x| {
             let s = spins(x, g.n);
-            (0..g.n).map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp()).sum()
+            (0..g.n)
+                .map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp())
+                .sum()
         })
         .collect();
     let mean: f64 = bolt.iter().zip(&phi).map(|(p, f)| p * f).sum();
-    0.5 * bolt.iter().zip(&phi).map(|(p, f)| p * (f - mean).abs()).sum::<f64>()
+    0.5 * bolt
+        .iter()
+        .zip(&phi)
+        .map(|(p, f)| p * (f - mean).abs())
+        .sum::<f64>()
 }
 
 fn tv_at(g: &Graph, beta: f64, q: f64, bolt: &[f64]) -> f64 {
@@ -152,7 +160,8 @@ fn kamakura_windows(g: &Graph, beta: f64, eps: f64) -> (f64, f64) {
             kbar = kbar.max(g.field(i, &s).abs());
         }
     }
-    let v: f64 = 0.5 * g.w.iter().map(|w| w * w).sum::<f64>() + g.h.iter().map(|h| h * h).sum::<f64>();
+    let v: f64 =
+        0.5 * g.w.iter().map(|w| w * w).sum::<f64>() + g.h.iter().map(|h| h * h).sum::<f64>();
     let ln_n = (g.n as f64).ln();
     let more_flips = 0.5 * (ln_n - beta * kbar);
     let close = 0.5 * (ln_n + beta * kbar - (eps * v.sqrt() / (2.0 * kbar)).ln());
@@ -161,21 +170,31 @@ fn kamakura_windows(g: &Graph, beta: f64, eps: f64) -> (f64, f64) {
 
 /// `tau_int` of the energy and of the magnetisation, in steps of the kernel.
 fn taus(g: &Graph, beta: f64, kernel: Kernel) -> (f64, f64) {
-    let e = tau_int_fundamental(g, beta, kernel, |s| g.energy(s)).expect("dense").tau_int;
-    let m = tau_int_fundamental(g, beta, kernel, |s| s.iter().map(|&v| f64::from(v)).sum()).expect("dense").tau_int;
+    let e = tau_int_fundamental(g, beta, kernel, |s| g.energy(s))
+        .expect("dense")
+        .tau_int;
+    let m = tau_int_fundamental(g, beta, kernel, |s| s.iter().map(|&v| f64::from(v)).sum())
+        .expect("dense")
+        .tau_int;
     (e, m)
 }
 
 fn main() {
-    let fixtures: [(&str, Graph); 3] =
-        [("5x2 +-J grid", grid_glass(5, 2, 7)), ("10-ring + chords", chorded_ring(3)), ("SK, n = 10", sk(10, 11))];
+    let fixtures: [(&str, Graph); 3] = [
+        ("5x2 +-J grid", grid_glass(5, 2, 7)),
+        ("10-ring + chords", chorded_ring(3)),
+        ("SK, n = 10", sk(10, 11)),
+    ];
     let betas = [0.5f64, 1.0, 2.0];
     let qs = [0.0f64, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
     let targets = [1e-1f64, 1e-2, 1e-3];
 
     for (name, g) in &fixtures {
         let chi = g.classes.len() as f64;
-        println!("\n=== {name}: n = {}, {chi} colour classes (the coloured sweep is {chi} ticks)", g.n);
+        println!(
+            "\n=== {name}: n = {}, {chi} colour classes (the coloured sweep is {chi} ticks)",
+            g.n
+        );
         for &beta in &betas {
             let bolt = boltzmann(g, beta).expect("small");
             let c = first_order_constant(g, beta);
@@ -184,7 +203,9 @@ fn main() {
             println!(
                 "\n  beta = {beta}: coloured sweep tau_E {ce:.2} ticks, tau_M {cm:.2} ticks, exact law; first-order c = {c:.4}"
             );
-            println!("     q    TV(SCA, Boltzmann)   TV e^2q / c   tau_E (ticks)  tau_M (ticks)   E / coloured   M / coloured");
+            println!(
+                "     q    TV(SCA, Boltzmann)   TV e^2q / c   tau_E (ticks)  tau_M (ticks)   E / coloured   M / coloured"
+            );
             for &q in &qs {
                 let tv = tv_at(g, beta, q, &bolt);
                 let (e, m) = taus(g, beta, Kernel::Sca { q });
@@ -220,18 +241,31 @@ fn main() {
     // it read 0.058, 0.060, 0.062, 0.049 -- flat within one instance's spread, so the suggestion is
     // not supported at these sizes.
     println!("\n=== SK trend at beta = 1: SCA tau_E / coloured tau_E, both in ticks");
-    println!("   n   colours   coloured tau_E   at TV 1e-1   at TV 1e-2   first-order break-even eps");
+    println!(
+        "   n   colours   coloured tau_E   at TV 1e-1   at TV 1e-2   first-order break-even eps"
+    );
     for n in [6usize, 8, 10, 12] {
         let g = sk(n, 11);
         let beta = 1.0;
         let chi = g.classes.len() as f64;
         let bolt = boltzmann(&g, beta).expect("small");
-        let tau = |k: Kernel| tau_int_fundamental(&g, beta, k, |s| g.energy(s)).expect("dense").tau_int;
+        let tau = |k: Kernel| {
+            tau_int_fundamental(&g, beta, k, |s| g.energy(s))
+                .expect("dense")
+                .tau_int
+        };
         let col = tau(Kernel::ChromaticGibbs) * chi;
-        let at = |eps: f64| tau(Kernel::Sca { q: q_star(&g, beta, eps, &bolt).expect("reached") }) / col;
+        let at = |eps: f64| {
+            tau(Kernel::Sca {
+                q: q_star(&g, beta, eps, &bolt).expect("reached"),
+            }) / col
+        };
         let (r1, r2) = (at(1e-1), at(1e-2));
         let a = tau(Kernel::Sca { q: 4.0 }) * (-8.0f64).exp();
         let c = first_order_constant(&g, beta);
-        println!("  {n:2}   {chi:7}   {col:14.2}   {r1:10.3}   {r2:10.3}   {:.4}", a * c / col);
+        println!(
+            "  {n:2}   {chi:7}   {col:14.2}   {r1:10.3}   {r2:10.3}   {:.4}",
+            a * c / col
+        );
     }
 }

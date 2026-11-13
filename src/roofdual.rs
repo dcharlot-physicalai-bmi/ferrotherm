@@ -151,7 +151,13 @@ impl RoofDual {
     /// If `g` has a different spin count from the run that produced this.
     #[must_use]
     pub fn simplify(&self, g: &Graph) -> Reduced {
-        assert_eq!(g.n, self.labels.len(), "graph has {} spins, labelling has {}", g.n, self.labels.len());
+        assert_eq!(
+            g.n,
+            self.labels.len(),
+            "graph has {} spins, labelling has {}",
+            g.n,
+            self.labels.len()
+        );
         let pinned = self.labels.clone();
         // New index for each surviving spin; usize::MAX marks a pinned one, and is never used as an
         // index because every read is guarded by `pinned[i].is_none()`.
@@ -187,7 +193,12 @@ impl RoofDual {
                 }
             }
         }
-        Reduced { graph: gb.build(), free, offset, pinned }
+        Reduced {
+            graph: gb.build(),
+            free,
+            offset,
+            pinned,
+        }
     }
 }
 
@@ -214,7 +225,13 @@ impl Reduced {
     /// If `sub` is not one spin per node of [`Reduced::graph`].
     #[must_use]
     pub fn lift(&self, sub: &[i8]) -> Vec<i8> {
-        assert_eq!(sub.len(), self.free.len(), "expected {} free spins, got {}", self.free.len(), sub.len());
+        assert_eq!(
+            sub.len(),
+            self.free.len(),
+            "expected {} free spins, got {}",
+            self.free.len(),
+            sub.len()
+        );
         let mut s = vec![0i8; self.pinned.len()];
         for i in 0..self.pinned.len() {
             if let Some(v) = self.pinned[i] {
@@ -318,7 +335,9 @@ pub fn roof_dual_with(g: &Graph, tol: Option<f64>) -> RoofDual {
         }
     }
 
-    let tol = tol.filter(|t| t.is_finite() && *t >= 0.0).unwrap_or_else(|| TOL_REL * net.cmax());
+    let tol = tol
+        .filter(|t| t.is_finite() && *t >= 0.0)
+        .unwrap_or_else(|| TOL_REL * net.cmax());
     let (flow, augmentations) = net.maxflow(src, snk, tol);
 
     // Every capacity, constant and partial sum in the whole construction is under this. Overstating
@@ -349,7 +368,13 @@ pub fn roof_dual_with(g: &Graph, tol: Option<f64>) -> RoofDual {
         }
     }
     let labels = net.walk_to_a_consistent_cut(&from_src, n, snk, tol);
-    RoofDual { bound, fixed, labels, flow, augmentations }
+    RoofDual {
+        bound,
+        fixed,
+        labels,
+        flow,
+        augmentations,
+    }
 }
 
 fn finite(g: &Graph) -> bool {
@@ -367,7 +392,12 @@ struct Net {
 
 impl Net {
     fn new(nodes: usize) -> Self {
-        Net { to: Vec::new(), cap: Vec::new(), adj: vec![Vec::new(); nodes], ops: 0 }
+        Net {
+            to: Vec::new(),
+            cap: Vec::new(),
+            adj: vec![Vec::new(); nodes],
+            ops: 0,
+        }
     }
 
     fn arc(&mut self, u: usize, v: usize, c: f64) {
@@ -434,7 +464,14 @@ impl Net {
 
     /// One blocking flow, iteratively — the path is an explicit stack, so depth is not the call
     /// stack's problem on a graph with a hundred thousand nodes.
-    fn blocking(&mut self, s: usize, t: usize, level: &[i32], it: &mut [usize], tol: f64) -> (f64, usize) {
+    fn blocking(
+        &mut self,
+        s: usize,
+        t: usize,
+        level: &[i32],
+        it: &mut [usize],
+        tol: f64,
+    ) -> (f64, usize) {
         let mut total = 0.0;
         let mut augmentations = 0usize;
         let mut path: Vec<usize> = Vec::new();
@@ -483,7 +520,9 @@ impl Net {
                 return (total, augmentations);
             }
             // Dead end: retreat, and never look down that arc again this phase.
-            let e = path.pop().expect("a non-source node was reached along a path");
+            let e = path
+                .pop()
+                .expect("a non-source node was reached along a path");
             u = self.tail(e);
             it[u] += 1;
         }
@@ -506,7 +545,13 @@ impl Net {
     ///
     /// `O(n m)` worst case, and it is why this labels the zero-field ferromagnet — where the
     /// smallest min-cut alone labels nothing at all — rather than shrugging at it.
-    fn walk_to_a_consistent_cut(&self, from_src: &[bool], n: usize, snk: usize, tol: f64) -> Vec<Option<i8>> {
+    fn walk_to_a_consistent_cut(
+        &self,
+        from_src: &[bool],
+        n: usize,
+        snk: usize,
+        tol: f64,
+    ) -> Vec<Option<i8>> {
         let mut inside = from_src.to_vec();
         for i in 0..n {
             let (u, v) = (i, n + i);
@@ -666,7 +711,9 @@ mod tests {
         let mut first = true;
         for mask in 0u64..(1u64 << (2 * n)) {
             let y: Vec<f64> = (0..n).map(|i| f64::from((mask >> i) as u32 & 1)).collect();
-            let z: Vec<f64> = (0..n).map(|i| f64::from((mask >> (n + i)) as u32 & 1)).collect();
+            let z: Vec<f64> = (0..n)
+                .map(|i| f64::from((mask >> (n + i)) as u32 & 1))
+                .collect();
             let e = relaxed(g, &y, &z);
             if e < best - 1e-12 {
                 best = e;
@@ -700,7 +747,9 @@ mod tests {
         let mut best = f64::INFINITY;
         let mut set = Vec::new();
         for mask in 0u32..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             let e = g.energy(&s);
             if e < best - 1e-9 {
                 best = e;
@@ -759,11 +808,16 @@ mod tests {
         for seed in 0..40u64 {
             let g = random_graph(7, 0.6, 1.0, false, seed);
             for mask in 0u32..(1u32 << g.n) {
-                let s: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 let y: Vec<f64> = s.iter().map(|&v| if v > 0 { 1.0 } else { 0.0 }).collect();
                 let z: Vec<f64> = y.iter().map(|v| 1.0 - v).collect();
                 let (got, want) = (relaxed(&g, &y, &z), g.energy(&s));
-                assert!((got - want).abs() < 1e-9, "seed {seed} mask {mask}: G={got} E={want}");
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "seed {seed} mask {mask}: G={got} E={want}"
+                );
             }
         }
     }
@@ -775,11 +829,23 @@ mod tests {
     #[test]
     fn the_flow_computes_the_minimum_of_the_relaxation() {
         for seed in 0..60u64 {
-            let g = if seed % 2 == 0 { random_graph(6, 0.7, 1.0, false, seed) } else { dyadic_graph(6, 0.8, seed) };
+            let g = if seed % 2 == 0 {
+                random_graph(6, 0.7, 1.0, false, seed)
+            } else {
+                dyadic_graph(6, 0.8, seed)
+            };
             let r = roof_dual(&g);
             let (truth, _) = relaxed_truth(&g);
-            assert!(r.bound <= truth + 1e-9, "seed {seed}: bound {} above the relaxation {truth}", r.bound);
-            assert!(r.bound >= truth - 1e-6, "seed {seed}: bound {} below the relaxation {truth}", r.bound);
+            assert!(
+                r.bound <= truth + 1e-9,
+                "seed {seed}: bound {} above the relaxation {truth}",
+                r.bound
+            );
+            assert!(
+                r.bound >= truth - 1e-6,
+                "seed {seed}: bound {} below the relaxation {truth}",
+                r.bound
+            );
         }
     }
 
@@ -792,16 +858,30 @@ mod tests {
         for seed in 0..200u64 {
             for &(n, p, field) in &[(8usize, 0.4, 1.0), (10, 0.3, 0.0), (12, 0.25, 2.0)] {
                 let g = random_graph(n, p, field, false, seed * 7 + n as u64);
-                let truth = el.ground_state(&g).expect("small enough to eliminate").ground_energy.unwrap();
+                let truth = el
+                    .ground_state(&g)
+                    .expect("small enough to eliminate")
+                    .ground_energy
+                    .unwrap();
                 let r = roof_dual(&g);
-                assert!(r.bound <= truth + 1e-12, "n={n} seed={seed}: bound {} > ground {truth}", r.bound);
+                assert!(
+                    r.bound <= truth + 1e-12,
+                    "n={n} seed={seed}: bound {} > ground {truth}",
+                    r.bound
+                );
                 worst = worst.max(truth - r.bound);
                 // And the `Bound` view must agree with the module it borrows: a gap is never negative.
                 let s = el.ground_state(&g).unwrap().ground_state.unwrap();
-                assert!(r.as_bound().gap(&g, &s) >= 0.0, "negative gap at n={n} seed={seed}");
+                assert!(
+                    r.as_bound().gap(&g, &s) >= 0.0,
+                    "negative gap at n={n} seed={seed}"
+                );
             }
         }
-        assert!(worst > 0.0, "every instance was solved exactly -- this test is not exercising the gap");
+        assert!(
+            worst > 0.0,
+            "every instance was solved exactly -- this test is not exercising the gap"
+        );
     }
 
     /// PERSISTENCY, the claim worth having: a spin in `fixed` takes that value in EVERY ground
@@ -811,19 +891,30 @@ mod tests {
     fn every_fixed_spin_holds_in_every_optimum() {
         let mut pinned = 0usize;
         for seed in 0..300u64 {
-            let g = if seed % 2 == 0 { dyadic_graph(9, 0.35, seed) } else { random_graph(9, 0.35, 1.0, false, seed) };
+            let g = if seed % 2 == 0 {
+                dyadic_graph(9, 0.35, seed)
+            } else {
+                random_graph(9, 0.35, 1.0, false, seed)
+            };
             let r = roof_dual(&g);
             let (_, opts) = optima(&g);
             for i in 0..g.n {
                 if let Some(v) = r.fixed[i] {
                     pinned += 1;
                     for s in &opts {
-                        assert_eq!(s[i], v, "seed {seed}: spin {i} pinned to {v}, optimum has {}", s[i]);
+                        assert_eq!(
+                            s[i], v,
+                            "seed {seed}: spin {i} pinned to {v}, optimum has {}",
+                            s[i]
+                        );
                     }
                 }
             }
         }
-        assert!(pinned > 500, "only {pinned} spins pinned across 300 instances -- the test is vacuous");
+        assert!(
+            pinned > 500,
+            "only {pinned} spins pinned across 300 instances -- the test is vacuous"
+        );
     }
 
     /// WEAK PERSISTENCY: the single-minimiser labelling is jointly extendable — SOME optimum agrees
@@ -842,13 +933,23 @@ mod tests {
             };
             let r = roof_dual(&g);
             let (_, opts) = optima(&g);
-            let ok = opts.iter().any(|s| (0..g.n).all(|i| r.labels[i].is_none_or(|v| s[i] == v)));
-            assert!(ok, "seed {seed}: no optimum agrees with the labelling {:?}", r.labels);
+            let ok = opts
+                .iter()
+                .any(|s| (0..g.n).all(|i| r.labels[i].is_none_or(|v| s[i] == v)));
+            assert!(
+                ok,
+                "seed {seed}: no optimum agrees with the labelling {:?}",
+                r.labels
+            );
             // And a pinned spin must carry the same value here, since `fixed` is the subset of the
             // labelling that survives every min-cut.
             for i in 0..g.n {
                 if let Some(v) = r.fixed[i] {
-                    assert_eq!(r.labels[i], Some(v), "seed {seed}: spin {i} disagrees with its own label");
+                    assert_eq!(
+                        r.labels[i],
+                        Some(v),
+                        "seed {seed}: spin {i} disagrees with its own label"
+                    );
                 }
             }
         }
@@ -864,7 +965,10 @@ mod tests {
             let g = dyadic_graph(6, 0.7, seed);
             let r = roof_dual_with(&g, Some(0.0));
             let (_, agree) = relaxed_truth(&g);
-            assert_eq!(r.fixed, agree, "seed {seed}: reachability and enumeration disagree");
+            assert_eq!(
+                r.fixed, agree,
+                "seed {seed}: reachability and enumeration disagree"
+            );
         }
     }
 
@@ -880,10 +984,22 @@ mod tests {
             let r = roof_dual(&g);
             let truth = el.ground_state(&g).unwrap();
             let want = truth.ground_energy.unwrap();
-            assert!((r.bound - want).abs() < 1e-9, "seed {seed}: bound {} vs ground {want}", r.bound);
-            assert_eq!(r.n_fixed(), g.n, "seed {seed}: submodular instance left {} spins free", g.n - r.n_fixed());
+            assert!(
+                (r.bound - want).abs() < 1e-9,
+                "seed {seed}: bound {} vs ground {want}",
+                r.bound
+            );
+            assert_eq!(
+                r.n_fixed(),
+                g.n,
+                "seed {seed}: submodular instance left {} spins free",
+                g.n - r.n_fixed()
+            );
             let s = r.ground_state().expect("complete labelling");
-            assert!((g.energy(&s) - want).abs() < 1e-9, "seed {seed}: named state is not optimal");
+            assert!(
+                (g.energy(&s) - want).abs() < 1e-9,
+                "seed {seed}: named state is not optimal"
+            );
         }
     }
 
@@ -901,9 +1017,18 @@ mod tests {
         let g = gb.build();
         let r = roof_dual(&g);
         let want: f64 = -h.iter().map(|x| x.abs()).sum::<f64>();
-        assert!((r.bound - want).abs() < 1e-12, "bound {} vs -sum|h| {want}", r.bound);
+        assert!(
+            (r.bound - want).abs() < 1e-12,
+            "bound {} vs -sum|h| {want}",
+            r.bound
+        );
         for i in 0..n {
-            assert_eq!(r.fixed[i], Some(if h[i] > 0.0 { 1 } else { -1 }), "spin {i} with h={}", h[i]);
+            assert_eq!(
+                r.fixed[i],
+                Some(if h[i] > 0.0 { 1 } else { -1 }),
+                "spin {i} with h={}",
+                h[i]
+            );
         }
     }
 
@@ -920,9 +1045,20 @@ mod tests {
         let g = gb.build();
         let r = roof_dual(&g);
         let (truth, _) = optima(&g);
-        assert!((truth - (-1.0)).abs() < 1e-12, "fixture is wrong: ground {truth}");
-        assert!((r.bound - (-3.0)).abs() < 1e-9, "bound {} is not the trivial floor", r.bound);
-        assert_eq!(r.n_fixed(), 0, "a spin-flip symmetric instance cannot pin anything");
+        assert!(
+            (truth - (-1.0)).abs() < 1e-12,
+            "fixture is wrong: ground {truth}"
+        );
+        assert!(
+            (r.bound - (-3.0)).abs() < 1e-9,
+            "bound {} is not the trivial floor",
+            r.bound
+        );
+        assert_eq!(
+            r.n_fixed(),
+            0,
+            "a spin-flip symmetric instance cannot pin anything"
+        );
         assert_eq!(r.n_labelled(), 0, "and nothing consistent to label either");
     }
 
@@ -932,7 +1068,11 @@ mod tests {
     fn eliminating_the_pinned_spins_preserves_the_optimum() {
         let mut reduced_any = false;
         for seed in 0..200u64 {
-            let g = if seed % 2 == 0 { dyadic_graph(10, 0.3, seed) } else { random_graph(10, 0.3, 1.0, false, seed) };
+            let g = if seed % 2 == 0 {
+                dyadic_graph(10, 0.3, seed)
+            } else {
+                random_graph(10, 0.3, 1.0, false, seed)
+            };
             let r = roof_dual(&g);
             let red = r.simplify(&g);
             let (truth, _) = optima(&g);
@@ -946,9 +1086,15 @@ mod tests {
                 red.offset
             );
             let lifted = red.lift(&sub_opts[0]);
-            assert!((g.energy(&lifted) - truth).abs() < 1e-9, "seed {seed}: lifted state is not optimal");
+            assert!(
+                (g.energy(&lifted) - truth).abs() < 1e-9,
+                "seed {seed}: lifted state is not optimal"
+            );
         }
-        assert!(reduced_any, "nothing was ever eliminated -- the test is vacuous");
+        assert!(
+            reduced_any,
+            "nothing was ever eliminated -- the test is vacuous"
+        );
     }
 
     /// NEGATING EVERY FIELD NEGATES EVERY ANSWER: `E(s; -h, w) = E(-s; h, w)`, so the two models
@@ -958,7 +1104,11 @@ mod tests {
     #[test]
     fn negating_every_field_mirrors_every_pinned_spin() {
         for seed in 0..300u64 {
-            let g = if seed % 2 == 0 { dyadic_graph(9, 0.4, seed) } else { random_graph(9, 0.4, 1.5, false, seed) };
+            let g = if seed % 2 == 0 {
+                dyadic_graph(9, 0.4, seed)
+            } else {
+                random_graph(9, 0.4, 1.5, false, seed)
+            };
             let mut gb = GraphBuilder::new(g.n);
             for i in 0..g.n {
                 gb.bias(i, -g.h[i]);
@@ -971,9 +1121,18 @@ mod tests {
             }
             let flipped = gb.build();
             let (a, b) = (roof_dual(&g), roof_dual(&flipped));
-            assert!((a.bound - b.bound).abs() < 1e-9, "seed {seed}: {} vs {}", a.bound, b.bound);
+            assert!(
+                (a.bound - b.bound).abs() < 1e-9,
+                "seed {seed}: {} vs {}",
+                a.bound,
+                b.bound
+            );
             for i in 0..g.n {
-                assert_eq!(b.fixed[i], a.fixed[i].map(|v| -v), "seed {seed}: spin {i} does not mirror");
+                assert_eq!(
+                    b.fixed[i],
+                    a.fixed[i].map(|v| -v),
+                    "seed {seed}: spin {i} does not mirror"
+                );
             }
         }
     }
@@ -1002,10 +1161,17 @@ mod tests {
             let loose = roof_dual_with(&g, Some(1e-3));
             for i in 0..g.n {
                 if let Some(v) = loose.fixed[i] {
-                    assert_eq!(tight.fixed[i], Some(v), "seed {seed}: spin {i} pinned only when loose");
+                    assert_eq!(
+                        tight.fixed[i],
+                        Some(v),
+                        "seed {seed}: spin {i} pinned only when loose"
+                    );
                 }
             }
-            assert!(loose.n_fixed() <= tight.n_fixed(), "seed {seed}: loose pinned more");
+            assert!(
+                loose.n_fixed() <= tight.n_fixed(),
+                "seed {seed}: loose pinned more"
+            );
         }
     }
 
@@ -1018,4 +1184,3 @@ mod tests {
         assert_eq!(r.ground_state(), Some(Vec::new()));
     }
 }
-

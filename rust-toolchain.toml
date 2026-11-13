@@ -1,0 +1,19 @@
+# The toolchain this workspace is built, tested, and released with.
+# Channel is an exact stable release, not the floating `stable` alias.
+# Verified against https://static.rust-lang.org/dist/channel-rust-stable.toml
+# on 2026-11-13: rustc 1.100.0 (0ef1bc386 2026-11-09), manifest date 2026-11-12.
+#
+# `rust-version` in the manifests stays 1.96. That line is the policy floor
+# `scripts/check-msrv.sh` compiles, not this pin. 1.100.0 is what CI and a
+# checkout use.
+#
+# Components: rustfmt and clippy are the fmt and `-D warnings` gates.
+# Targets: wasm32-unknown-unknown is the browser cdylib; aarch64-unknown-linux-gnu
+# is the Jetson harness typecheck (`scripts/check-aarch64-harness.sh`). The
+# macOS and Windows release jobs compile on those hosts, so those triples are
+# the runner's default host rather than extra targets here. The `gpu` feature
+# is the host Vulkan/Metal/DX12 backend and does not add a Rust target.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown", "aarch64-unknown-linux-gnu"]

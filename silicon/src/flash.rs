@@ -7,7 +7,15 @@
 //!
 //! Pin map (FT2232H interface A): TCK=AD0, TDI=AD1, TDO=AD2 (input), TMS=AD3 (idle high).
 
-use nusb::transfer::{ControlOut, ControlType, Recipient, RequestBuffer};
+use std::time::Duration;
+
+use nusb::MaybeFuture;
+use nusb::transfer::{Buffer, Bulk, ControlOut, ControlType, In, Out, Recipient};
+
+/// Bound on one USB transfer. nusb 0.2's blocking transfer takes a timeout and
+/// cancels when it expires; the previous API waited forever. Five seconds is
+/// far longer than an MPSSE chunk at the 10 MHz TCK this driver sets.
+const USB_TIMEOUT: Duration = Duration::from_secs(5);
 
 const FTDI_EP_OUT: u8 = 0x02;
 const FTDI_EP_IN: u8 = 0x81;
@@ -65,6 +73,8 @@ pub const IR_BYPASS: u8 = 0x3F;
 /// [`Tap`] guarantee where a sequence starts and ends.
 pub struct Ftdi {
     iface: nusb::Interface,
+    ep_out: nusb::Endpoint<Bulk, Out>,
+    ep_in: nusb::Endpoint<Bulk, In>,
 }
 
 impl Ftdi {
@@ -74,32 +84,52 @@ impl Ftdi {
     ///
     /// The USB enumeration error, or text naming the needle when no matching FT2232H is attached.
     pub fn open(needle: &str) -> Result<(Ftdi, String), String> {
-        let devs = nusb::list_devices().map_err(|e| format!("usb list: {e}"))?;
+        let devs = nusb::list_devices()
+            .wait()
+            .map_err(|e| format!("usb list: {e}"))?;
         for d in devs {
             if d.vendor_id() == 0x0403 && d.product_id() == 0x6010 {
                 let prod = d.product_string().unwrap_or("").to_string();
                 if prod.contains(needle) {
-                    let dev = d.open().map_err(|e| format!("open: {e}"))?;
-                    let iface = dev.claim_interface(0).map_err(|e| format!("claim: {e}"))?;
-                    let f = Ftdi { iface };
+                    let dev = d.open().wait().map_err(|e| format!("open: {e}"))?;
+                    let iface = dev
+                        .claim_interface(0)
+                        .wait()
+                        .map_err(|e| format!("claim: {e}"))?;
+                    let f = Ftdi {
+                        ep_out: iface
+                            .endpoint::<Bulk, Out>(FTDI_EP_OUT)
+                            .map_err(|e| format!("bulk out endpoint: {e}"))?,
+                        ep_in: iface
+                            .endpoint::<Bulk, In>(FTDI_EP_IN)
+                            .map_err(|e| format!("bulk in endpoint: {e}"))?,
+                        iface,
+                    };
                     f.enable_mpsse()?;
                     return Ok((f, prod));
                 }
             }
         }
-        Err(format!("no FT2232H with product containing '{needle}' found"))
+        Err(format!(
+            "no FT2232H with product containing '{needle}' found"
+        ))
     }
 
     fn ctrl(&self, request: u8, value: u16, index: u16) -> Result<(), String> {
-        let c = pollster::block_on(self.iface.control_out(ControlOut {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request,
-            value,
-            index,
-            data: &[],
-        }));
-        c.status.map_err(|e| format!("ctrl 0x{request:02X}: {e:?}"))
+        self.iface
+            .control_out(
+                ControlOut {
+                    control_type: ControlType::Vendor,
+                    recipient: Recipient::Device,
+                    request,
+                    value,
+                    index,
+                    data: &[],
+                },
+                USB_TIMEOUT,
+            )
+            .wait()
+            .map_err(|e| format!("ctrl 0x{request:02X}: {e:?}"))
     }
 
     fn enable_mpsse(&self) -> Result<(), String> {
@@ -118,10 +148,12 @@ impl Ftdi {
     ///
     /// The USB transfer's own error, as text. A short write is an error here rather than a partial
     /// success: half an MPSSE command leaves the engine interpreting payload as opcodes.
-    pub fn write(&self, data: &[u8]) -> Result<(), String> {
+    pub fn write(&mut self, data: &[u8]) -> Result<(), String> {
         for chunk in data.chunks(4096) {
-            let c = pollster::block_on(self.iface.bulk_out(FTDI_EP_OUT, chunk.to_vec()));
-            c.status.map_err(|e| format!("bulk out: {e:?}"))?;
+            let completion = self
+                .ep_out
+                .transfer_blocking(chunk.to_vec().into(), USB_TIMEOUT);
+            completion.status.map_err(|e| format!("bulk out: {e:?}"))?;
         }
         Ok(())
     }
@@ -131,16 +163,16 @@ impl Ftdi {
     /// # Errors
     ///
     /// The USB transfer's error, as text.
-    pub fn read(&self, n: usize) -> Result<Vec<u8>, String> {
+    pub fn read(&mut self, n: usize) -> Result<Vec<u8>, String> {
         let mut out = Vec::with_capacity(n);
         let mut spins = 0;
         while out.len() < n {
-            let c = pollster::block_on(
-                self.iface.bulk_in(FTDI_EP_IN, RequestBuffer::new(512)),
-            );
-            c.status.map_err(|e| format!("bulk in: {e:?}"))?;
-            if c.data.len() > 2 {
-                out.extend_from_slice(&c.data[2..]);
+            let completion = self.ep_in.transfer_blocking(Buffer::new(512), USB_TIMEOUT);
+            completion.status.map_err(|e| format!("bulk in: {e:?}"))?;
+            // FTDI bulk-IN packets carry a 2-byte modem-status header before payload.
+            let data = &completion.buffer[..];
+            if data.len() > 2 {
+                out.extend_from_slice(&data[2..]);
             }
             spins += 1;
             if spins > 400 {
@@ -178,13 +210,17 @@ impl Tap {
     /// # Errors
     ///
     /// The USB write's error, as text.
-    pub fn new(ftdi: Ftdi) -> Result<Tap, String> {
+    pub fn new(mut ftdi: Ftdi) -> Result<Tap, String> {
         // 60 MHz base clock, loopback off, TCK = 60/((1+2)*2) = 10 MHz, pins idle.
         ftdi.write(&[
             MPSSE_DIS_DIV5,
             MPSSE_LOOPBACK_DIS,
-            MPSSE_SET_DIVISOR, 2, 0x00,
-            MPSSE_SET_LOW, PIN_IDLE, PIN_DIR,
+            MPSSE_SET_DIVISOR,
+            2,
+            0x00,
+            MPSSE_SET_LOW,
+            PIN_IDLE,
+            PIN_DIR,
         ])?;
         let mut t = Tap { ftdi };
         t.reset()?;
@@ -208,9 +244,15 @@ impl Tap {
     pub fn shift_ir(&mut self, ir: u8) -> Result<(), String> {
         let last = (ir >> (IR_LEN - 1)) & 1;
         self.ftdi.write(&[
-            CLK_TMS, 0x03, 0x03,                       // RTI -> Shift-IR (TMS 1,1,0,0)
-            CLK_BITS_OUT, IR_LEN - 2, ir & 0x1F,       // first 5 bits
-            CLK_TMS, 0x02, (last << 7) | 0x03,         // last bit + Exit1,Update,RTI
+            CLK_TMS,
+            0x03,
+            0x03, // RTI -> Shift-IR (TMS 1,1,0,0)
+            CLK_BITS_OUT,
+            IR_LEN - 2,
+            ir & 0x1F, // first 5 bits
+            CLK_TMS,
+            0x02,
+            (last << 7) | 0x03, // last bit + Exit1,Update,RTI
         ])
     }
 
@@ -433,7 +475,7 @@ impl Tap {
     ///
     /// The USB transfer's error, as text.
     pub fn read_frames(&mut self, far: u32, n_frames: usize) -> Result<Vec<u32>, String> {
-        use crate::bitstream::{cmd, reg, type1_read, type1_write, DUMMY, NOOP, SYNC};
+        use crate::bitstream::{DUMMY, NOOP, SYNC, cmd, reg, type1_read, type1_write};
         const WORDS: usize = 101;
         let want = (n_frames + 1) * WORDS; // +1 for the dummy frame
         self.reset()?;
@@ -503,7 +545,11 @@ impl Tap {
     ///
     /// The USB transfer's error, or [`crate::capture::CaptureError`]'s message when the buffer
     /// that came back cannot carry the frames requested.
-    pub fn restore_capture_frames(&mut self, far: u32, n_frames: usize) -> Result<Vec<u32>, String> {
+    pub fn restore_capture_frames(
+        &mut self,
+        far: u32,
+        n_frames: usize,
+    ) -> Result<Vec<u32>, String> {
         let want = crate::capture::readback_words(n_frames);
         self.reset()?;
         self.cfg_in_words(&crate::capture::restore_capture_and_read(far, n_frames))?;
@@ -548,39 +594,59 @@ pub struct Stat(
 impl Stat {
     /// Bit 0: the bitstream failed its CRC. A load that reports this did not take.
     #[must_use]
-    pub fn crc_error(&self) -> bool { self.0 & 1 != 0 }
+    pub fn crc_error(&self) -> bool {
+        self.0 & 1 != 0
+    }
     /// Bit 1: decryption error. Set when an encrypted bitstream meets the wrong key.
     #[must_use]
-    pub fn dec_error(&self) -> bool { self.0 >> 1 & 1 != 0 }
+    pub fn dec_error(&self) -> bool {
+        self.0 >> 1 & 1 != 0
+    }
     /// Bit 2: the bitstream's IDCODE did not match the part. The usual cause of a silent
     /// no-configuration: a bitstream built for a different device.
     #[must_use]
-    pub fn id_error(&self) -> bool { self.0 >> 2 & 1 != 0 }
+    pub fn id_error(&self) -> bool {
+        self.0 >> 2 & 1 != 0
+    }
     /// Bit 3: the DONE pin. High means the device finished startup and the design is running.
     #[must_use]
-    pub fn done(&self) -> bool { self.0 >> 3 & 1 != 0 }
+    pub fn done(&self) -> bool {
+        self.0 >> 3 & 1 != 0
+    }
     /// Bit 4: DONE has been released by the startup sequence.
     #[must_use]
-    pub fn release_done(&self) -> bool { self.0 >> 4 & 1 != 0 }
+    pub fn release_done(&self) -> bool {
+        self.0 >> 4 & 1 != 0
+    }
     /// Bit 5: the `INIT_B` pin, which is low while configuration memory is being cleared.
     #[must_use]
-    pub fn init_b(&self) -> bool { self.0 >> 5 & 1 != 0 }
+    pub fn init_b(&self) -> bool {
+        self.0 >> 5 & 1 != 0
+    }
     /// Bit 6: configuration memory has finished clearing and the device will accept a bitstream.
     #[must_use]
-    pub fn init_complete(&self) -> bool { self.0 >> 6 & 1 != 0 }
+    pub fn init_complete(&self) -> bool {
+        self.0 >> 6 & 1 != 0
+    }
     /// Bits 7-9: the sampled MODE pins, which say where the device tried to boot from.
     ///
     /// **This differs between a SPI boot and a JTAG load** — 0x5 against 0x6 on these boards — so an
     /// exact-match check against a boot-time reference reports a successful JTAG load as a failure.
     /// See [`Stat::configured`], which excludes it for that reason.
     #[must_use]
-    pub fn mode(&self) -> u8 { (self.0 >> 7 & 0x7) as u8 }
+    pub fn mode(&self) -> u8 {
+        (self.0 >> 7 & 0x7) as u8
+    }
     /// Bit 13: End Of Startup. Together with DONE this is what "the design is running" means.
     #[must_use]
-    pub fn eos(&self) -> bool { self.0 >> 13 & 1 != 0 }
+    pub fn eos(&self) -> bool {
+        self.0 >> 13 & 1 != 0
+    }
     /// Bit 16: the part is secured, so readback of configuration data is disabled.
     #[must_use]
-    pub fn part_secured(&self) -> bool { self.0 >> 16 & 1 != 0 }
+    pub fn part_secured(&self) -> bool {
+        self.0 >> 16 & 1 != 0
+    }
     /// Whether the fabric is configured and started.
     ///
     /// EMPIRICALLY established on an XC7A100T, not taken from a bit table: a cleared device
@@ -633,16 +699,26 @@ mod tests {
     fn large_payloads_split_into_multiple_commands() {
         assert_eq!(MPSSE_MAX_BYTES, 65536);
         let payload = vec![0xA5u8; 104_139];
-        let chunks: Vec<_> = payload[..payload.len() - 1].chunks(MPSSE_MAX_BYTES).collect();
+        let chunks: Vec<_> = payload[..payload.len() - 1]
+            .chunks(MPSSE_MAX_BYTES)
+            .collect();
         assert_eq!(chunks.len(), 2, "104 KB needs two commands");
         for c in &chunks {
             assert!(c.len() <= MPSSE_MAX_BYTES);
             let len_field = (c.len() - 1) as u16;
-            assert_eq!(len_field as usize + 1, c.len(), "length field must not wrap");
+            assert_eq!(
+                len_field as usize + 1,
+                c.len(),
+                "length field must not wrap"
+            );
         }
         // the naive single-command encoding would have claimed this many bytes:
         let wrapped = ((payload.len() - 2) as u16) as usize + 1;
-        assert_ne!(wrapped, payload.len() - 1, "the wrap this test exists to prevent");
+        assert_ne!(
+            wrapped,
+            payload.len() - 1,
+            "the wrap this test exists to prevent"
+        );
     }
 
     #[test]

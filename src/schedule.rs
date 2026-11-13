@@ -31,7 +31,10 @@ pub struct Penalties {
 
 impl Default for Penalties {
     fn default() -> Self {
-        Penalties { domain_wall: 1.0, copy: 1.0 }
+        Penalties {
+            domain_wall: 1.0,
+            copy: 1.0,
+        }
     }
 }
 
@@ -81,7 +84,13 @@ impl Schedule {
     /// One temperature, held.
     #[must_use]
     pub fn constant(beta: f64, sweeps: usize) -> Self {
-        Schedule { stages: vec![Stage { beta, sweeps, penalties: Penalties::default() }] }
+        Schedule {
+            stages: vec![Stage {
+                beta,
+                sweeps,
+                penalties: Penalties::default(),
+            }],
+        }
     }
 
     /// A geometric ladder from `beta_min` to `beta_max` over `stages` rungs.
@@ -95,7 +104,10 @@ impl Schedule {
     /// above it.
     #[must_use]
     pub fn geometric(beta_min: f64, beta_max: f64, stages: usize, sweeps_per: usize) -> Self {
-        assert!(beta_min > 0.0, "beta_min must be positive; a geometric ladder cannot start at 0");
+        assert!(
+            beta_min > 0.0,
+            "beta_min must be positive; a geometric ladder cannot start at 0"
+        );
         assert!(beta_max > beta_min, "need beta_max > beta_min");
         assert!(stages >= 2, "a ladder needs at least 2 rungs");
         let r = (beta_max / beta_min).powf(1.0 / (stages - 1) as f64);
@@ -160,7 +172,12 @@ impl Schedule {
         g: &crate::graph::Graph,
     ) -> Result<Self, NoScale> {
         let scale = g.flip_gap_max().ok_or(NoScale)?;
-        Ok(Self::geometric(bhat_lo / scale, bhat_hi / scale, stages, per))
+        Ok(Self::geometric(
+            bhat_lo / scale,
+            bhat_hi / scale,
+            stages,
+            per,
+        ))
     }
 
     /// [`Self::DEFAULT_LADDER_HAT`], measured against this instance's own energy scale.
@@ -168,7 +185,11 @@ impl Schedule {
     /// # Errors
     ///
     /// [`NoScale`], as [`Self::geometric_dimensionless`].
-    pub fn for_instance(g: &crate::graph::Graph, stages: usize, per: usize) -> Result<Self, NoScale> {
+    pub fn for_instance(
+        g: &crate::graph::Graph,
+        stages: usize,
+        per: usize,
+    ) -> Result<Self, NoScale> {
         let (lo, hi, _, _) = Self::DEFAULT_LADDER_HAT;
         Self::geometric_dimensionless(lo, hi, stages, per, g)
     }
@@ -276,7 +297,11 @@ impl From<&[(f64, usize)]> for Schedule {
         Schedule {
             stages: v
                 .iter()
-                .map(|&(beta, sweeps)| Stage { beta, sweeps, penalties: Penalties::default() })
+                .map(|&(beta, sweeps)| Stage {
+                    beta,
+                    sweeps,
+                    penalties: Penalties::default(),
+                })
                 .collect(),
         }
     }
@@ -285,7 +310,7 @@ impl From<&[(f64, usize)]> for Schedule {
 #[cfg(test)]
 mod scale_invariance {
     use super::*;
-    use crate::graph::{rescaled, Graph};
+    use crate::graph::{Graph, rescaled};
 
     fn families() -> Vec<(&'static str, Graph)> {
         vec![
@@ -294,7 +319,10 @@ mod scale_invariance {
             // couplings, so a family with h == 0 cannot tell the two transformations apart and a
             // test built only on lattices would pass for either.
             ("ring(12, 1.0, 0.3)", crate::ising::ring(12, 1.0, 0.3)),
-            ("frustrated_loops(6, 40, 3)", crate::planted::frustrated_loops(6, 40, 3).graph),
+            (
+                "frustrated_loops(6, 40, 3)",
+                crate::planted::frustrated_loops(6, 40, 3).graph,
+            ),
         ]
     }
 
@@ -316,12 +344,19 @@ mod scale_invariance {
 
                 // The ladder itself is exactly 1/k times the original.
                 for (a, b) in base.stages().iter().zip(sk.stages()) {
-                    assert_eq!(a.beta / k, b.beta, "{name} at k={k}: ladder is not exactly scaled");
+                    assert_eq!(
+                        a.beta / k,
+                        b.beta,
+                        "{name} at k={k}: ladder is not exactly scaled"
+                    );
                 }
 
                 let (s0, e0) = crate::tempering::anneal_scheduled(&g, &base, 7, None);
                 let (s1, e1) = crate::tempering::anneal_scheduled(&gk, &sk, 7, None);
-                assert_eq!(s0, s1, "{name} at k={k}: a change of units moved the answer");
+                assert_eq!(
+                    s0, s1,
+                    "{name} at k={k}: a change of units moved the answer"
+                );
                 assert_eq!(e0 * k, e1, "{name} at k={k}: energy did not scale exactly");
             }
         }
@@ -341,7 +376,10 @@ mod scale_invariance {
         let shipped = Schedule::geometric(lo, hi, stages, per);
         assert_eq!(derived.stages().len(), shipped.stages().len());
         for (a, b) in derived.stages().iter().zip(shipped.stages()) {
-            assert_eq!(a.beta, b.beta, "the derived ladder must BE the shipped one here");
+            assert_eq!(
+                a.beta, b.beta,
+                "the derived ladder must BE the shipped one here"
+            );
         }
     }
 
@@ -409,7 +447,9 @@ mod tests {
 
     #[test]
     fn penalties_ramp_independently_of_temperature() {
-        let s = Schedule::geometric(0.1, 2.0, 10, 5).ramp_domain_wall(0.5, 8.0).ramp_copy(1.0, 4.0);
+        let s = Schedule::geometric(0.1, 2.0, 10, 5)
+            .ramp_domain_wall(0.5, 8.0)
+            .ramp_copy(1.0, 4.0);
         let st = s.stages();
         assert!((st[0].penalties.domain_wall - 0.5).abs() < 1e-12);
         assert!((st[9].penalties.domain_wall - 8.0).abs() < 1e-12);

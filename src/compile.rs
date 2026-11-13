@@ -151,7 +151,11 @@ impl Kernel {
         for m in 0..n_free_states {
             let w = (nbe[m] - mx).exp();
             let o = m & out_mask;
-            let w_pos = if zy[o] > 0.0 { target[o] * w / zy[o] } else { 0.0 };
+            let w_pos = if zy[o] > 0.0 {
+                target[o] * w / zy[o]
+            } else {
+                0.0
+            };
             let w_neg = w / z;
             let mut idx = 0;
             for &(a, b) in &self.e_ff {
@@ -477,7 +481,9 @@ pub fn patch_kernel(w: usize, h: usize, roles: &[u8], beta: f64, seed: u64) -> K
                 (true, true) => {} // input-input: constant under clamping, dropped
                 (true, false) => e_if.push((in_map[a], free_map[b])),
                 (false, true) => e_if.push((in_map[b], free_map[a])),
-                (false, false) => e_ff.push((free_map[a].min(free_map[b]), free_map[a].max(free_map[b]))),
+                (false, false) => {
+                    e_ff.push((free_map[a].min(free_map[b]), free_map[a].max(free_map[b])));
+                }
             }
         }
     }
@@ -502,13 +508,7 @@ pub type Cpt = Vec<Vec<f64>>;
 
 /// Fit a kernel to a target CPT under input distribution `mu` (weights over x masks).
 /// Full-batch exact gradient descent; returns the CE trajectory (first, last).
-pub fn fit(
-    kernel: &mut Kernel,
-    target: &Cpt,
-    mu: &[f64],
-    iters: usize,
-    lr: f64,
-) -> (f64, f64) {
+pub fn fit(kernel: &mut Kernel, target: &Cpt, mu: &[f64], iters: usize, lr: f64) -> (f64, f64) {
     let n_in = kernel.n_in;
     let mut first = 0.0;
     let mut last = 0.0;
@@ -522,7 +522,9 @@ pub fn fit(
         let mut grad = vec![0.0; kernel.n_params()];
         let mut ce = 0.0;
         for &(xm, wx) in &xs {
-            let x: Vec<i8> = (0..n_in).map(|b| if xm >> b & 1 == 1 { 1 } else { -1 }).collect();
+            let x: Vec<i8> = (0..n_in)
+                .map(|b| if xm >> b & 1 == 1 { 1 } else { -1 })
+                .collect();
             ce += kernel.ce_grad(&x, &target[xm], wx, &mut grad);
         }
         kernel.apply_grad(&grad, lr);
@@ -543,7 +545,9 @@ pub fn factor_eps(kernel: &Kernel, target: &Cpt, mu: &[f64]) -> f64 {
         if wx <= 0.0 {
             continue;
         }
-        let x: Vec<i8> = (0..n_in).map(|b| if xm >> b & 1 == 1 { 1 } else { -1 }).collect();
+        let x: Vec<i8> = (0..n_in)
+            .map(|b| if xm >> b & 1 == 1 { 1 } else { -1 })
+            .collect();
         eps += wx * kernel.kl_from_target(&x, &target[xm]);
     }
     eps
@@ -588,7 +592,17 @@ mod tests {
             };
             let ce_at = |kk: &Kernel| {
                 let q = kk.exact_conditional(&x);
-                -target.iter().zip(&q).map(|(t, p)| if *t > 0.0 { t * p.max(1e-300).ln() } else { 0.0 }).sum::<f64>()
+                -target
+                    .iter()
+                    .zip(&q)
+                    .map(|(t, p)| {
+                        if *t > 0.0 {
+                            t * p.max(1e-300).ln()
+                        } else {
+                            0.0
+                        }
+                    })
+                    .sum::<f64>()
             };
             bump(&mut k, pi, d);
             let up = ce_at(&k);
@@ -596,7 +610,12 @@ mod tests {
             let dn = ce_at(&k);
             bump(&mut k, pi, d);
             let fd = (up - dn) / (2.0 * d);
-            assert!((grad[pi] - fd).abs() < 1e-6, "param {pi}: exact {} fd {}", grad[pi], fd);
+            assert!(
+                (grad[pi] - fd).abs() < 1e-6,
+                "param {pi}: exact {} fd {}",
+                grad[pi],
+                fd
+            );
         }
     }
 
@@ -614,7 +633,12 @@ mod tests {
         let ce2 = k.ce_grad_onehot(&x, y_star, 1.0, &mut g2);
         assert!((ce1 - ce2).abs() < 1e-10, "CE {ce1} vs {ce2}");
         for j in 0..g1.len() {
-            assert!((g1[j] - g2[j]).abs() < 1e-10, "grad[{j}] {} vs {}", g1[j], g2[j]);
+            assert!(
+                (g1[j] - g2[j]).abs() < 1e-10,
+                "grad[{j}] {} vs {}",
+                g1[j],
+                g2[j]
+            );
         }
         assert!((k.nll_onehot(&x, y_star) - ce2).abs() < 1e-10);
         let _ = k.argmax_out(&x);

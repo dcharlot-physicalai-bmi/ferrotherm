@@ -59,8 +59,16 @@ fn glass(l: usize, seed: u64) -> Graph {
     for y in 0..l {
         for x in 0..l {
             let i = y * l + x;
-            b.couple(i, y * l + (x + 1) % l, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-            b.couple(i, ((y + 1) % l) * l + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+            b.couple(
+                i,
+                y * l + (x + 1) % l,
+                if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+            );
+            b.couple(
+                i,
+                ((y + 1) % l) * l + x,
+                if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+            );
         }
     }
     b.build()
@@ -99,7 +107,10 @@ fn instance(family: usize, size: usize, seed: u64) -> (String, Graph) {
         (format!("lattice {l}x{l}"), glass(l, seed))
     } else {
         let (m, t) = [(4usize, 4usize), (6, 4), (8, 4)][size];
-        (format!("chimera C_{m},{m},{t}"), ising::chimera_glass(m, m, t, seed))
+        (
+            format!("chimera C_{m},{m},{t}"),
+            ising::chimera_glass(m, m, t, seed),
+        )
     }
 }
 
@@ -133,7 +144,10 @@ fn main() {
                 sw += sweeps_from(&g, &start, budget, seed);
                 bl += bls::search(
                     &g,
-                    &bls::Params { iterations: budget, ..Default::default() },
+                    &bls::Params {
+                        iterations: budget,
+                        ..Default::default()
+                    },
                     seed,
                 )
                 .energy;
@@ -150,7 +164,10 @@ fn main() {
                 // tabu figures are not the same run and the comparison is not free.
                 tb += tabu::search(
                     &g,
-                    &tabu::Params { iterations: budget, ..Default::default() },
+                    &tabu::Params {
+                        iterations: budget,
+                        ..Default::default()
+                    },
                     seed,
                 )
                 .energy;

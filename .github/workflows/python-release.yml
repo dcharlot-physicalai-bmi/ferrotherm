@@ -36,11 +36,11 @@ jobs:
           - { name: macos-arm64,   os: macos-14,     target: aarch64-apple-darwin }
           - { name: windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           # Any interpreter in the supported range builds the same wheel: the package is ctypes,
           # not a C extension, so this is a build host rather than a compatibility axis.
@@ -106,12 +106,12 @@ jobs:
             aarch64-apple-darwin)  cp target/${{ matrix.target }}/release/libferrotherm.dylib julia-staging/ ;;
             x86_64-pc-windows-msvc) cp target/${{ matrix.target }}/release/ferrotherm.dll julia-staging/ ;;
           esac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lib-${{ matrix.name }}
           path: julia-staging/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.name }}
           path: python/dist/*.whl
@@ -128,12 +128,15 @@ jobs:
     runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Rust
         run: |
+          # manylinux_2_28 is the glibc pin. The compiler inside it is the same
+          # 1.100.0 the rest of CI uses; the image is what keeps the wheel linkable
+          # on glibc 2.28, and that image does not move.
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain stable
+            | sh -s -- -y --profile minimal --default-toolchain 1.100.0
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build the library
@@ -180,12 +183,12 @@ jobs:
           PY
           "$PY" -m pytest -q test_model.py
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-linux-x86_64
           path: python/dist/*.whl
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lib-linux-x86_64
           path: target/release/libferrotherm.so
@@ -204,14 +207,14 @@ jobs:
       # To create the release the manifest's URLs point at, and to commit the manifest back.
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The manifest commit pushes to main, which needs a real ref rather than a detached tag.
           fetch-depth: 0
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
-          version: "1.12"
-      - uses: actions/download-artifact@v4
+          version: "1.13"
+      - uses: actions/download-artifact@v8
         with:
           pattern: lib-*
           path: libs
@@ -263,7 +266,7 @@ jobs:
             println("the JLL loads the library it names")'
           git checkout Artifacts.toml 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: julia-artifacts
           path: |
@@ -340,13 +343,13 @@ jobs:
     permissions:
       id-token: write        # Trusted Publishing: no API token anywhere
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
           merge-multiple: true
       - run: ls -la dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
         with:
           # So a re-run of a tag -- which is how a broken release job gets fixed -- does not fail on
           # the version it already published successfully.

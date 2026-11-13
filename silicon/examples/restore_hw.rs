@@ -61,10 +61,21 @@ fn main() {
     'scan: for bottom_half in [false, true] {
         for row in 0..3u8 {
             for column in 0..96u16 {
-                let far = Far { block_type: 0, bottom_half, row, column, minor: 0 }.encode();
-                let Ok(a) = tap.capture_frames(far, FRAMES) else { continue };
+                let far = Far {
+                    block_type: 0,
+                    bottom_half,
+                    row,
+                    column,
+                    minor: 0,
+                }
+                .encode();
+                let Ok(a) = tap.capture_frames(far, FRAMES) else {
+                    continue;
+                };
                 std::thread::sleep(std::time::Duration::from_millis(30));
-                let Ok(b) = tap.capture_frames(far, FRAMES) else { continue };
+                let Ok(b) = tap.capture_frames(far, FRAMES) else {
+                    continue;
+                };
                 if differing_bits(&a, &b) > 0 {
                     live.push(far);
                     println!("    live column at FAR 0x{far:08X}");
@@ -92,7 +103,10 @@ fn main() {
     // long one. Measured before the verdict rather than offered after it as an excuse.
     println!();
     println!("  can these columns hold a value? bits moving between two captures, by delay");
-    println!("  {:>10}  {:>7}  {:>7}  {:>7}  {:>7}   reading", "FAR", "0 ms", "1 ms", "10 ms", "100 ms");
+    println!(
+        "  {:>10}  {:>7}  {:>7}  {:>7}  {:>7}   reading",
+        "FAR", "0 ms", "1 ms", "10 ms", "100 ms"
+    );
     let mut free_running = 0usize;
     for &far in &live {
         let mut d = Vec::new();
@@ -112,8 +126,15 @@ fn main() {
         }
         println!(
             "  0x{far:08X}  {:>7.0}  {:>7.0}  {:>7.0}  {:>7.0}   {}",
-            d[0], d[1], d[2], d[3],
-            if flat { "free-running" } else { "accumulates with time" }
+            d[0],
+            d[1],
+            d[2],
+            d[3],
+            if flat {
+                "free-running"
+            } else {
+                "accumulates with time"
+            }
         );
     }
 
@@ -124,14 +145,19 @@ fn main() {
     // error is taken over the passes, not over the bits.
     println!();
     println!("  imposing a captured state and asking for it back, {PASSES} paired passes");
-    println!("  {:>10}  {:>10}  {:>10}  {:>14}  {}", "FAR", "restore", "control", "diff +- se", "verdict");
+    println!(
+        "  {:>10}  {:>10}  {:>10}  {:>14}  verdict",
+        "FAR", "restore", "control", "diff +- se"
+    );
     let (mut resolved, mut tried) = (0usize, 0usize);
     for &far in &live {
         let mut diffs = Vec::new();
         let (mut sum_r, mut sum_c) = (0.0f64, 0.0f64);
         for _ in 0..PASSES {
             let c1 = tap.capture_frames(far, FRAMES).expect("c1");
-            let r = tap.restore_capture_frames(far, FRAMES).expect("restore+capture");
+            let r = tap
+                .restore_capture_frames(far, FRAMES)
+                .expect("restore+capture");
             let d_restore = f64::from(differing_bits(&c1, &r));
 
             let c2 = tap.capture_frames(far, FRAMES).expect("c2");
@@ -155,28 +181,51 @@ fn main() {
         }
         println!(
             "  0x{far:08X}  {:>10.1}  {:>10.1}  {:>7.1} +-{:>4.1}  {}",
-            sum_r / n, sum_c / n, mean, se,
-            if held { "state came back" } else if sigma > 3.0 { "restore made it WORSE" } else { "no effect at 3 sigma" }
+            sum_r / n,
+            sum_c / n,
+            mean,
+            se,
+            if held {
+                "state came back"
+            } else if sigma > 3.0 {
+                "restore made it WORSE"
+            } else {
+                "no effect at 3 sigma"
+            }
         );
     }
 
     println!();
     println!("  {resolved} of {tried} columns returned the state they were given.");
     if resolved == tried && tried > 0 {
-        println!("  The imposed state survived the round trip and free-running state did not, so the");
-        println!("  captured bits are written INTO the flip-flops by GRESTORE and read back OUT of them");
+        println!(
+            "  The imposed state survived the round trip and free-running state did not, so the"
+        );
+        println!(
+            "  captured bits are written INTO the flip-flops by GRESTORE and read back OUT of them"
+        );
         println!("  by GCAPTURE. A read-only function of configuration memory cannot do that.");
     } else if free_running == tried {
-        println!("  AND EVERY COLUMN IS FREE-RUNNING, which is why. A value imposed on a flip-flop that");
-        println!("  reclocks every fabric cycle is gone before the next command reaches it, so this");
+        println!(
+            "  AND EVERY COLUMN IS FREE-RUNNING, which is why. A value imposed on a flip-flop that"
+        );
+        println!(
+            "  reclocks every fabric cycle is gone before the next command reaches it, so this"
+        );
         println!("  design cannot answer the question however GRESTORE behaves. The negative is a");
         println!("  property of the fixture, not evidence against the opcode.");
     } else {
-        println!("  Some columns can hold a value and still did not return it, which IS evidence about");
+        println!(
+            "  Some columns can hold a value and still did not return it, which IS evidence about"
+        );
         println!("  GRESTORE rather than about the fixture. Worth a closer look at those columns.");
     }
     println!();
-    println!("  WHAT WOULD SETTLE IT: a design whose state HOLDS between two commands, so a value can");
-    println!("  be imposed and read back. That is our own sequential fabric, which this crate does not");
+    println!(
+        "  WHAT WOULD SETTLE IT: a design whose state HOLDS between two commands, so a value can"
+    );
+    println!(
+        "  be imposed and read back. That is our own sequential fabric, which this crate does not"
+    );
     println!("  yet assemble -- `lib.rs` says so where a Device would otherwise be returned.");
 }
