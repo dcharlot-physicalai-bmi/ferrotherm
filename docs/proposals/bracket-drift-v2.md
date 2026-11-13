@@ -2,7 +2,7 @@
 
 Proposal only. It is not applied to attempt 037 or to any published grade. The 3σ test stays as it ran.
 
-Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload, is the energy this note is about. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit PUBLISH_SHA_PLACEHOLDER. The drift numbers below are `baseline_drift_w` on the 300 trials of each meter in that receipt. They are not a new grade.
+Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload, is the energy this note is about. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit 22d3e720714c76e73389998d36e5b8159e89fe96. The drift numbers below are `baseline_drift_w` on the 300 trials of each meter in that receipt. They are not a new grade.
 
 ## Measured drift
 

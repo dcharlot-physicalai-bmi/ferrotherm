@@ -1,6 +1,6 @@
 # Uncertainty budget
 
-Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit PUBLISH_SHA_PLACEHOLDER.
+Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit 22d3e720714c76e73389998d36e5b8159e89fe96.
 
 These are the small accuracy-suite workloads, n=5 through the open 64×64 (n=4096). This is not a large-grid energy claim. Package energy and NVML energy are not J/ESS and are not in the quotient table.
 
@@ -106,7 +106,7 @@ Attribution refused on 300 of 300 trials. The drift stored on these rows is the 
 
 ## `ising_open_4x4` is under investigation
 
-Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit PUBLISH_SHA_PLACEHOLDER.
+Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit 22d3e720714c76e73389998d36e5b8159e89fe96.
 
 The ferrotherm core mean on that row is `1.22954420e-4`, above the open 8×8 mean `5.19702797e-5`. The quotient is not cited. The traces say the difference is a real per-repetition cost.
 
